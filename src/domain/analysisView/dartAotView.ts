@@ -1,14 +1,15 @@
+import { evidenceFileTarget } from "../evidence.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { flutterResultSchemas } from "../flutter/flutterBuildAnalysis.js";
-import { err, ok, type Result } from "../result.js";
+import { err, ok } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -47,9 +48,12 @@ export const dartAotViewContextSchema = z.strictObject({
 /** Reuse authenticated AOT Evidence without opening the APK or rescanning its ELF. */
 export const projectDartAotView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "dart-aot")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof dartAotViewRequestSchema>
+  >(admitted, "summary", "dart-aot");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -81,7 +85,7 @@ export const projectDartAotView = (
     unknowns: [
       "String-pool entries are byte-pattern observations, not recovered typed classes or functions.",
       "Counts ending in _at_least remain lower bounds; exhausting returned strings does not establish a complete snapshot inventory.",
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject; its normalized target identity cannot be cross-checked against a subject digest.",
           ]
@@ -90,16 +94,16 @@ export const projectDartAotView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: { ...report, string_pool },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const collection = report.string_pool[view.collection];
   const items = collection.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "dart-aot",
+    kind: "dart-aot" as const,
     view,
     ...shared,
     items,

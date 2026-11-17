@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   jsonObjectSchema,
+  ownedJsonObjectSchema,
   jsonValueSchema,
   jsonValueValidationIssue,
   jsonValueValidationSteps,
@@ -40,6 +41,23 @@ it("still parses only JSON values at runtime", () => {
     expect(jsonValueSchema.safeParse(value).success).toBe(true);
   for (const value of [undefined, Number.NaN, Infinity, () => 0, [undefined]])
     expect(jsonValueSchema.safeParse(value).success).toBe(false);
+});
+
+it("retains owned object identity while caller objects remain isolated", () => {
+  const source = JSON.parse('{"__proto__":{"name":"recorded"},"items":[1]}');
+  const owned = ownedJsonObjectSchema.parse(source);
+  const copied = jsonObjectSchema.parse(source);
+  expect(owned).toBe(source);
+  expect(copied).not.toBe(source);
+  expect(copied["__proto__"]).not.toBe(source["__proto__"]);
+  expect(Object.hasOwn(owned, "__proto__")).toBe(true);
+  expect(JSON.stringify(owned)).toBe(JSON.stringify(copied));
+  for (const input of [null, [], { value: undefined }, { value: Infinity }])
+    expect(ownedJsonObjectSchema.safeParse(input).success).toBe(false);
+  for (const io of ["input", "output"] as const)
+    expect(z.toJSONSchema(ownedJsonObjectSchema, { io })).toEqual(
+      z.toJSONSchema(jsonObjectSchema, { io }),
+    );
 });
 
 it("rejects sparse arrays and enumerable symbol-keyed object members", () => {

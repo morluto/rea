@@ -1,11 +1,12 @@
+import type { AppConfig } from "../config/types.js";
 import { z } from "zod";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -14,7 +15,9 @@ import {
   AnalysisInputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
-  resourceConstraintRecovery,
+  cancelledBy,
+  carriedReason,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -23,7 +26,8 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
-import { idaProtocol } from "./IdaConfiguration.js";
+import { idaCompatibilityProfile } from "./IdaConfiguration.js";
+import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
@@ -31,16 +35,18 @@ import { isX86OnlyTarget } from "./IdaCallGraph.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
 import {
   IDA_LIMITATIONS,
-  IDA_OPERATIONS,
-  IDA_PROVIDER_IDENTITY,
-  idaProfileAdmits,
+  idaOperationUnavailableReason,
   type IdaOperation,
 } from "./IdaProviderCapabilities.js";
 import {
+  IDA_OPERATIONS,
+  IDA_PROVIDER_IDENTITY,
+} from "./IdaProviderMetadata.js";
+import {
   absentDatabaseCloseSchema,
+  attachedMetadataSchema,
   closeDatabaseSchema,
   databaseListSchema,
-  legacyMetadataSchema,
   modernHealthSchema,
   openDatabaseSchema,
   rejectedOpenDatabaseSchema,
@@ -52,19 +58,19 @@ import {
 } from "./IdaWorkspace.js";
 import { parseIdaInput } from "./IdaInput.js";
 import { createEvidence } from "../domain/evidence.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisClientFailureContext,
+  analysisClientFailureForOperation,
+} from "../providers/AnalysisClientFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
-const legacyTools = [
-  "get_metadata",
-  "list_functions",
-  "list_strings",
-  "get_function_by_name",
-  "get_function_by_address",
-  "decompile_function",
-  "disassemble_function",
-  "get_callers",
-  "get_callees",
-  "get_xrefs_to",
-];
 const modernTools = [
   "idb_open",
   "idb_list",
@@ -82,9 +88,6 @@ const operationSet: ReadonlySet<string> = new Set(IDA_OPERATIONS);
 
 const isIdaOperation = (operation: string): operation is IdaOperation =>
   operationSet.has(operation);
-const wasCancelled = (options: ExecutionOptions | undefined): boolean =>
-  options?.signal?.aborted === true;
-
 interface IdaOperationFailureContext {
   runner: IdaOperationRunner | undefined;
   metadataBefore: JsonValue | undefined;
@@ -107,7 +110,6 @@ interface UpstreamSession {
 
 /** A failed cleanup retains its private workspace and reports the remaining resource. */
 class IdaCleanupError extends ProviderAdapterError {
-  override readonly cleanupIncomplete = true;
   constructor(
     path: string,
     cause: unknown,
@@ -115,6 +117,11 @@ class IdaCleanupError extends ProviderAdapterError {
   ) {
     super("ida", "close", {
       cause,
+      cleanup: {
+        reason:
+          "IDA connection or private workspace cleanup remains unverified.",
+        resources: [path],
+      },
       capturedOutput:
         cause instanceof AnalysisError ? cause.capturedOutput : undefined,
       diagnostics: {
@@ -124,9 +131,7 @@ class IdaCleanupError extends ProviderAdapterError {
         failure_reason:
           cause instanceof AnalysisError
             ? (cause.diagnostics?.reason ?? cause.message)
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
+            : errorMessage(cause),
         workspace: path,
         ...(sessions === undefined
           ? {}
@@ -148,7 +153,6 @@ class IdaCleanupError extends ProviderAdapterError {
             }),
       },
     });
-    this.setCleanupResources([path]);
   }
 }
 
@@ -186,6 +190,74 @@ class IdaIdentityRefusal extends AnalysisProtocolError {
   }
 }
 
+const IDA_RECOVERY =
+  "Check the configured upstream MCP registration and selected target; see docs/providers/ida-provider.md.";
+
+/**
+ * Attribute a typed failure to the accepted operation and the redacted
+ * endpoint it reached. A startup failure #start already attributed passes
+ * through, as does every other typed failure.
+ */
+const idaAttribution = (
+  cause: AnalysisError,
+  operation: string,
+  endpoint: Readonly<Record<string, string>>,
+  options: ExecutionOptions | undefined,
+): AnalysisError => {
+  if (cause instanceof IdaIdentityRefusal)
+    return new AnalysisOutputError(operation, cause.reason, {
+      cause,
+      userMessage: cause.reason,
+      remediationAction: cause.recovery,
+      diagnostics: cause.diagnostics,
+    });
+  if (cause instanceof AnalysisCancelledError)
+    return cancelledBy(
+      operation,
+      carriedReason(
+        cause.cause === undefined ? options?.signal?.reason : cause.cause,
+      ),
+      {
+        capturedOutput: cause.capturedOutput,
+        diagnostics: { ...cause.diagnostics, ...endpoint },
+        partialObservation: cause.partialObservation,
+        cleanup:
+          cause.cleanup ??
+          (cause.cleanupIncomplete
+            ? { reason: cause.message, resources: cause.cleanupResources }
+            : undefined),
+      },
+    )
+      .bindCleanupDependencies([cause])
+      .bindCleanupResourceOwner(cause);
+  if (
+    cause instanceof AnalysisTimeoutError ||
+    cause instanceof AnalysisResourceConstraintError
+  )
+    // #start has already attributed a startup failure and its endpoint;
+    // wrapping it again would replace the producer cause with an intermediate.
+    return cause.operation === operation &&
+      cause.diagnostics?.startup_operation !== undefined
+      ? cause
+      : analysisClientFailureForOperation(
+          cause,
+          "ida",
+          operation,
+          endpoint,
+        ).bindCleanupResourceOwner(cause);
+  if (cause instanceof ProviderAdapterError && cause.operation === "transport")
+    return analysisClientFailureForOperation(cause, "ida", operation, {
+      ...endpoint,
+      recovery: IDA_RECOVERY,
+    }).bindCleanupResourceOwner(cause);
+  if (cause instanceof AnalysisProtocolError && "endpoint" in endpoint)
+    return new AnalysisProtocolError(cause.message, {
+      ...analysisClientFailureContext(cause, "ida", operation),
+      diagnostics: { ...cause.diagnostics, ...endpoint },
+    }).bindCleanupResourceOwner(cause);
+  return cause;
+};
+
 /** Serial read-only session whose lifecycle authority excludes an attached GUI. */
 export class IdaSessionClient implements AnalysisClient {
   #tail: Promise<void> = Promise.resolve();
@@ -212,6 +284,10 @@ export class IdaSessionClient implements AnalysisClient {
     private readonly target: BinaryTarget,
     private readonly connection: IdaMcpConnection,
     private readonly profile?: AnalysisProfileCommitment,
+    private readonly regexSettings?: Pick<
+      AppConfig,
+      "regexMatchingDeadline" | "regexWorkerHeapRequest"
+    >,
   ) {}
 
   execute(
@@ -238,12 +314,8 @@ export class IdaSessionClient implements AnalysisClient {
       return Promise.resolve(undefined);
     const call = this.#tail.then(() => {
       if (!this.#ready || this.#closed || this.#closing) return undefined;
-      if (wasCancelled(options))
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options?.signal?.reason,
-          }),
-        );
+      if (isAborted(options?.signal))
+        return err(cancelledBy(operation, options?.signal));
       return this.#execute(operation, parameters, options, true);
     });
     this.#tail = call.then(
@@ -251,12 +323,8 @@ export class IdaSessionClient implements AnalysisClient {
       () => undefined,
     );
     const result = await waitForAbortable(call, options?.signal);
-    return result === ABORTED
-      ? err(
-          new AnalysisCancelledError(operation, {
-            cause: options?.signal?.reason,
-          }),
-        )
+    return result instanceof AbortedWait
+      ? err(cancelledBy(operation, result))
       : result;
   }
 
@@ -272,12 +340,8 @@ export class IdaSessionClient implements AnalysisClient {
           "IDA session is closing or closed; reopen the target.",
         ),
       );
-    if (wasCancelled(options))
-      return err(
-        new AnalysisCancelledError(operation, {
-          cause: options?.signal?.reason,
-        }),
-      );
+    if (isAborted(options?.signal))
+      return err(cancelledBy(operation, options?.signal));
     if (operation !== "health" && !isIdaOperation(operation))
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -286,26 +350,19 @@ export class IdaSessionClient implements AnalysisClient {
           "This integration admits read-only analysis operations only.",
         ),
       );
-    if (
-      operation !== "health" &&
-      !idaProfileAdmits(operation, this.config.mode)
-    )
+    const unavailableReason =
+      operation === "health"
+        ? undefined
+        : idaOperationUnavailableReason(
+            operation,
+            idaCompatibilityProfile(this.config),
+          );
+    if (unavailableReason !== undefined)
       return err(
         new AnalysisCapabilityUnavailableError(
           "ida",
           operation,
-          "This operation is available for the modern headless profile only.",
-        ),
-      );
-    if (
-      operation === "procedure_callers" &&
-      idaProtocol(this.config) !== "legacy"
-    )
-      return err(
-        new AnalysisCapabilityUnavailableError(
-          "ida",
-          operation,
-          "This upstream profile does not prove direct callers.",
+          unavailableReason,
         ),
       );
     if (operation !== "health") {
@@ -343,10 +400,8 @@ export class IdaSessionClient implements AnalysisClient {
       if (!readyOnly) await this.#start(operation);
       const before = await this.#observe(options);
       failureContext.metadataBefore = before;
-      if (wasCancelled(options))
-        throw new AnalysisCancelledError(operation, {
-          cause: options?.signal?.reason,
-        });
+      if (isAborted(options?.signal))
+        throw cancelledBy(operation, options?.signal);
       if (operation === "health") return this.#health(before);
       if (!isIdaOperation(operation))
         throw new AnalysisProtocolError(
@@ -355,20 +410,16 @@ export class IdaSessionClient implements AnalysisClient {
       const runner = this.#runner(options);
       failureContext.runner = runner;
       const result = await runner.run(operation, parameters);
-      if (wasCancelled(options))
-        throw new AnalysisCancelledError(operation, {
-          cause: options?.signal?.reason,
-        });
+      if (isAborted(options?.signal))
+        throw cancelledBy(operation, options?.signal);
       failureContext.postOperationIdentityCheck = "started";
       const after = await this.#observe(
         options,
         (observed) => (failureContext.metadataAfter = observed),
       );
       failureContext.postOperationIdentityCheck = "verified";
-      if (wasCancelled(options))
-        throw new AnalysisCancelledError(operation, {
-          cause: options?.signal?.reason,
-        });
+      if (isAborted(options?.signal))
+        throw cancelledBy(operation, options?.signal);
       return ok(
         createAnalysisExecution(result, IDA_PROVIDER_IDENTITY, {
           rawResult: {
@@ -401,9 +452,11 @@ export class IdaSessionClient implements AnalysisClient {
   #runner(options: ExecutionOptions | undefined): IdaOperationRunner {
     return new IdaOperationRunner(
       this.connection,
-      idaProtocol(this.config),
+      idaCompatibilityProfile(this.config).protocol,
       this.#database,
       {
+        regexMatchingDeadline: this.regexSettings?.regexMatchingDeadline,
+        regexWorkerHeapRequest: this.regexSettings?.regexWorkerHeapRequest,
         signal: options?.signal,
         selectorOrigin: options?.selectorOrigin,
         x86Only: isX86OnlyTarget(this.target),
@@ -441,81 +494,57 @@ export class IdaSessionClient implements AnalysisClient {
     cause: unknown,
     options: ExecutionOptions | undefined,
     context: IdaOperationFailureContext,
-  ) {
-    let failure: AnalysisError;
-    if (cause instanceof IdaIdentityRefusal) {
-      failure = new AnalysisOutputError(operation, cause.reason, {
-        cause,
-        userMessage: cause.reason,
-        remediationAction: cause.recovery,
-        diagnostics: cause.diagnostics,
-      });
-    } else if (cause instanceof AnalysisCancelledError) {
-      failure = new AnalysisCancelledError(operation, {
-        cause:
-          cause.cause === undefined ? options?.signal?.reason : cause.cause,
-        capturedOutput: cause.capturedOutput,
-        diagnostics: cause.diagnostics,
-        partialObservation: cause.partialObservation,
-        cleanup:
-          cause.cleanup ??
-          (cause.cleanupIncomplete
-            ? { reason: cause.message, resources: cause.cleanupResources }
-            : undefined),
-      })
-        .bindCleanupDependencies([cause])
-        .bindCleanupResourceOwner(cause);
-    } else if (
-      cause instanceof AnalysisTimeoutError &&
-      cause.operation !== operation
-    ) {
-      failure = new AnalysisTimeoutError(operation, cause.timeoutMs, {
-        cause,
-        capturedOutput: cause.capturedOutput,
-        diagnostics: cause.diagnostics,
-        partialObservation: cause.partialObservation,
-        cleanup: cause.cleanup,
-        ...(cause.userMessage === undefined
-          ? {}
-          : { userMessage: cause.userMessage }),
-        ...(cause.remediationAction === undefined
-          ? {}
-          : { remediationAction: cause.remediationAction }),
-      })
-        .bindCleanupDependencies([cause])
-        .bindCleanupResourceOwner(cause);
-    } else if (
-      cause instanceof ProviderAdapterError &&
-      cause.operation === "transport"
-    )
-      failure = new ProviderAdapterError("ida", operation, {
-        cause,
-        capturedOutput: cause.capturedOutput,
-        partialObservation: cause.partialObservation,
-        cleanup: cause.cleanup,
+  ): Result<never, AnalysisError> {
+    // The validated registration owns the exact endpoint spelling. Apply the
+    // same credential exclusions used for upstream transport diagnostics.
+    const endpoint =
+      !(cause instanceof ArtifactReaderFailure) && "url" in this.config
+        ? {
+            endpoint: createIdaDiagnosticRedactor(this.config).url(
+              this.config.url,
+            ),
+          }
+        : {};
+    // What IDA reports for an upstream failure nothing typed recognised.
+    const adapterFailure = (raw: unknown) =>
+      new ProviderAdapterError("ida", operation, {
+        cause: raw,
         diagnostics: {
-          ...cause.diagnostics,
-          recovery:
-            "Check the configured upstream MCP registration and selected target; see docs/ida-provider.md.",
-        },
-      });
-    else if (cause instanceof AnalysisError) failure = cause;
-    else if (cause instanceof z.ZodError)
-      failure = new AnalysisOutputError(
-        operation,
-        `IDA MCP returned malformed or unsupported producer data: ${cause.issues.map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`).join("; ")}`,
-        { cause },
-      );
-    else
-      failure = new ProviderAdapterError("ida", operation, {
-        cause,
-        diagnostics: {
+          ...endpoint,
           reason:
-            cause instanceof Error ? cause.message : "Unknown upstream failure",
-          recovery:
-            "Check the configured upstream MCP registration and selected target; see docs/ida-provider.md.",
+            raw instanceof Error ? raw.message : "Unknown upstream failure",
+          recovery: IDA_RECOVERY,
         },
       });
+    const failure = classifyProviderFailure(cause, {
+      providerId: "ida",
+      operation,
+      attribute: (typed) => idaAttribution(typed, operation, endpoint, options),
+      recognise: (raw) =>
+        raw instanceof z.ZodError
+          ? new AnalysisOutputError(
+              operation,
+              `IDA MCP returned malformed or unsupported producer data: ${raw.issues.map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`).join("; ")}`,
+              { cause: raw },
+            )
+          : undefined,
+      // The attributed primary is composed with the read's unresolved cleanup.
+      readCleanup: (read, primary) => {
+        const cleanup = new ProviderCleanupError(
+          "ida",
+          read.cleanup.resources,
+          { reason: read.cleanup.reason },
+          { operation, cause: read },
+        );
+        bindArtifactFileCleanup(read, cleanup);
+        return analysisErrorWithCleanupDependencies(
+          primary ?? adapterFailure(read),
+          cleanup,
+          operation,
+        );
+      },
+      unclassified: adapterFailure,
+    });
     // Only operation calls made after target identity/readiness validation can
     // become partial Evidence. The failing call itself is absent from `raw`
     // when its transport or MCP envelope could not be decoded.
@@ -599,46 +628,19 @@ export class IdaSessionClient implements AnalysisClient {
         cause.operation === "transport"
       )
         throw cause;
-      const options = {
-        cause,
-        capturedOutput: cause.capturedOutput,
-        partialObservation: cause.partialObservation,
-        cleanup: cause.cleanup,
-        ...(cause.userMessage === undefined
-          ? {}
-          : { userMessage: cause.userMessage }),
-        diagnostics: {
-          ...cause.diagnostics,
-          startup_operation: cause.operation,
-        },
-      };
-      const action =
-        cause.remediationAction === undefined
-          ? {}
-          : { remediationAction: cause.remediationAction };
       // Startup is shared, but each accepted operation owns its attribution.
-      // Keep the original cached failure unchanged for later callers.
-      const failure =
-        cause instanceof AnalysisTimeoutError
-          ? new AnalysisTimeoutError(operation, cause.timeoutMs, {
-              ...options,
-              ...action,
-            })
-          : cause instanceof AnalysisResourceConstraintError
-            ? new AnalysisResourceConstraintError(
-                operation,
-                cause.resource,
-                cause.reason,
-                cause.reportedLimits,
-                { ...options, ...resourceConstraintRecovery(cause) },
-              )
-            : new ProviderAdapterError(cause.providerId, operation, {
-                ...options,
-                ...action,
-              });
-      throw failure
-        .bindCleanupDependencies([cause])
-        .bindCleanupResourceOwner(cause);
+      // The shared boundary preserves typed outcome and cleanup facts without
+      // mutating the cached startup failure.
+      throw analysisClientFailureForOperation(cause, "ida", operation, {
+        startup_operation: cause.operation,
+        ...("url" in this.config
+          ? {
+              endpoint: createIdaDiagnosticRedactor(this.config).url(
+                this.config.url,
+              ),
+            }
+          : {}),
+      }).bindCleanupResourceOwner(cause);
     }
   }
 
@@ -646,15 +648,14 @@ export class IdaSessionClient implements AnalysisClient {
     const tools = new Set(await this.connection.connect());
     this.#callGraphAdvertised = tools.has("callgraph");
     this.#surveyAdvertised = tools.has("survey_binary");
-    const expected =
-      this.config.protocol === "native"
-        ? nativeTools
-        : this.config.mode === "attached"
-          ? legacyTools
-          : modernTools;
+    const profile = idaCompatibilityProfile(this.config);
+    const expected = {
+      native: nativeTools,
+      modern: modernTools,
+    }[profile.protocol];
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0) {
-      const summary = `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
+      const summary = `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the native IDA MCP tool catalog; headless mode requires the database supervisor profile. See docs/providers/ida-provider.md.`;
       // The caller cannot act on a profile mismatch it never sees, so the
       // missing names travel as adapter diagnostics rather than a bare message.
       throw new ProviderAdapterError("ida", "initialize", {
@@ -662,15 +663,10 @@ export class IdaSessionClient implements AnalysisClient {
         diagnostics: {
           reason: summary,
           mode: this.config.mode,
-          expected_profile:
-            this.config.protocol === "native"
-              ? "native"
-              : this.config.mode === "attached"
-                ? "legacy-1.4"
-                : "database-supervisor",
+          expected_profile: profile.diagnosticIdentity,
           missing_tools: [...missing],
           recovery:
-            "Install an IDA MCP build that serves the selected profile; see docs/ida-provider.md.",
+            "Install an IDA MCP build that serves the selected profile; see docs/providers/ida-provider.md.",
         },
       });
     }
@@ -754,15 +750,8 @@ export class IdaSessionClient implements AnalysisClient {
   ): Promise<JsonValue> {
     let identity: string;
     if (this.config.mode === "attached") {
-      const raw =
-        this.config.protocol === "native"
-          ? await this.#nativeMetadata(options?.signal)
-          : await this.connection.call(
-              "get_metadata",
-              {},
-              { signal: options?.signal },
-            );
-      const metadata = legacyMetadataSchema.parse(raw);
+      const raw = await this.#nativeMetadata(options?.signal);
+      const metadata = attachedMetadataSchema.parse(raw);
       this.#metadata = raw;
       onObserved?.(raw);
       if (metadata.sha256.toLowerCase() !== this.target.sha256.toLowerCase())
@@ -1001,12 +990,24 @@ export class IdaSessionClient implements AnalysisClient {
       return ok(null);
     } catch (cause: unknown) {
       this.connection.detach();
+      const path = this.#workspace?.directory ?? "IDA MCP connection";
+      const failure = new IdaCleanupError(
+        path,
+        cause,
+        this.#unreleasedSessions(),
+      );
+      const client = this;
+      // The failure reads this client's later successful close.
+      const owner = {
+        get cleanupResources() {
+          return client.#closed ? [] : [path];
+        },
+        get cleanupReleased() {
+          return client.#closed;
+        },
+      };
       return err(
-        new IdaCleanupError(
-          this.#workspace?.directory ?? "IDA MCP connection",
-          cause,
-          this.#unreleasedSessions(),
-        ),
+        failure.bindCleanupResourceOwner(owner).bindCleanupReleaseClaim(owner),
       );
     }
   }

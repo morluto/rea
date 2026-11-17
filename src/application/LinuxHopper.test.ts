@@ -4,21 +4,20 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  formatCommandForDisplay,
   installLinuxHopper,
-  linuxPackageManagerCommands,
+  linuxHopperInstallDisclosure,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   supportsReaHost,
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
   type LinuxDistribution,
-  type LinuxHopperDownload,
   type LinuxHopperInstallHost,
   type LinuxHopperLauncherStatus,
   type LinuxPackageInstallFailure,
   type LinuxPackageInstallOutcome,
 } from "./LinuxHopper.js";
+import type { HopperDownload } from "./HopperDownload.js";
 import { err, ok } from "../domain/result.js";
 import {
   type LinuxPackageFamily,
@@ -30,19 +29,6 @@ import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import * as nativeCommands from "../process/ExecFileOutput.js";
 import * as pythonRuntime from "./LinuxHopperPython.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-
-describe("Linux package-manager command display", () => {
-  it("preserves argument boundaries for paths with spaces and quotes", () => {
-    expect(
-      formatCommandForDisplay("pkexec", [
-        "pacman",
-        "-U",
-        "/tmp/rea test/hopper.arch",
-        "apostrophe'path",
-      ]),
-    ).toBe('pkexec pacman -U "/tmp/rea test/hopper.arch" "apostrophe\'path"');
-  });
-});
 
 class RecordingLinuxHost implements LinuxHopperInstallHost {
   distributionValue: LinuxDistribution | undefined = {
@@ -74,9 +60,13 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     Promise.resolve(this.distributionValue);
   release = (family: LinuxPackageFamily) =>
     Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
-  download = (url: string): Promise<LinuxHopperDownload> => {
+  download = (url: string): Promise<HopperDownload> => {
     this.downloads.push(url);
-    return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
+    return Promise.resolve(
+      this.archiveOk
+        ? ok(this.archive)
+        : err({ url, kind: "http_status", httpStatus: 503 }),
+    );
   };
   createTemporaryDirectory = (): Promise<string> =>
     Promise.resolve("/tmp/rea test");
@@ -259,47 +249,34 @@ describe("Linux Hopper installation", () => {
   ] as const)(
     "selects the %s native package manager and dependencies",
     (family, executable, packages) => {
-      expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", true),
-      ).toContainEqual(
-        expect.objectContaining({
-          executable,
-          args: expect.arrayContaining([...packages]),
-        }),
+      const root = linuxHopperInstallDisclosure(family, true).commands;
+      const nonRoot = linuxHopperInstallDisclosure(family, false).commands;
+      expect(root.some((command) => command.startsWith(`${executable} `))).toBe(
+        true,
       );
+      for (const dependency of packages)
+        expect(
+          root.some((command) => command.split(" ").includes(dependency)),
+        ).toBe(true);
       expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", false),
-      ).toContainEqual(
-        expect.objectContaining({
-          executable: "pkexec",
-          args: expect.arrayContaining([executable, "/tmp/Hopper package"]),
-        }),
-      );
+        nonRoot.some(
+          (command) =>
+            command.startsWith(`pkexec ${executable} `) &&
+            command.includes(`"<verified-hopper.${family}>"`),
+        ),
+      ).toBe(true);
     },
   );
 
   it.each([true, false])(
     "keeps installed apt dependencies at their versions while Hopper may upgrade (root: %s)",
     (isRoot) => {
-      const prefix = isRoot ? [] : ["pkexec"];
+      const prefix = isRoot ? "" : "pkexec ";
       expect(
-        linuxPackageManagerCommands("deb", "/tmp/Hopper package", isRoot).map(
-          ({ executable, args }) => [executable, ...args],
-        ),
+        linuxHopperInstallDisclosure("deb", isRoot).commands.slice(0, 2),
       ).toEqual([
-        [
-          ...prefix,
-          "apt-get",
-          "install",
-          "-y",
-          "--no-upgrade",
-          "xvfb",
-          "xauth",
-          "python3",
-          "libx11-6",
-          "libxtst6",
-        ],
-        [...prefix, "apt-get", "install", "-y", "/tmp/Hopper package"],
+        `${prefix}apt-get install -y --no-upgrade xvfb xauth python3 libx11-6 libxtst6`,
+        `${prefix}apt-get install -y "<verified-hopper.deb>"`,
       ]);
     },
   );
@@ -394,7 +371,19 @@ describe("Linux Hopper installation failure classification", () => {
       ...(scenario === "package manager failure"
         ? { packageFailure: host.packageFailure }
         : {}),
+      ...(scenario === "package request failure"
+        ? {
+            download: {
+              request: "package",
+              url: host.downloads[0],
+              kind: "http_status",
+              httpStatus: 503,
+            },
+          }
+        : {}),
     });
+    if (scenario === "package request failure")
+      expect(host.cleaned).toEqual([]);
     if (host.installed.length > 0)
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
   });
@@ -629,4 +618,70 @@ it("reports missing ldd as unresolved launcher inspection while retaining actual
   } finally {
     await host.close?.();
   }
+});
+
+it.each(["physical", "abort-name", "caller", "node-wrapper"] as const)(
+  "attributes a rejected archive write through cleanup (%s)",
+  async (kind) => {
+    const host = new RecordingLinuxHost();
+    const controller = new AbortController();
+    const reason = { caller: "stop during archive write" };
+    const physical = Object.assign(new Error("archive write denied"), {
+      code: "EACCES",
+      name: kind === "abort-name" ? "AbortError" : "Error",
+    });
+    const wrapped = Object.assign(
+      new Error("operation aborted", { cause: reason }),
+      {
+        name: "AbortError",
+        code: "ABORT_ERR",
+      },
+    );
+    host.writeArchive = async () => {
+      controller.abort(reason);
+      throw kind === "caller"
+        ? reason
+        : kind === "node-wrapper"
+          ? wrapped
+          : physical;
+    };
+    host.cleanupFails = true;
+    const result = await installLinuxHopper(host, {
+      signal: controller.signal,
+    });
+    const cancelled = kind === "caller" || kind === "node-wrapper";
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: cancelled ? "cancelled" : "archive_write",
+      cleanupFailure: {
+        path: "/tmp/rea test",
+        reason: "temporary path is busy",
+      },
+    });
+    if (result.status !== "failed") throw new Error("Expected failed write");
+    if (cancelled) expect(result.cancellationReason).toBe(reason);
+    else
+      expect(result.operationFailure).toMatchObject({
+        operation: "archive_write",
+        systemCode: "EACCES",
+        detail: physical.message,
+      });
+    expect(host.installed).toEqual([]);
+    expect(host.cleaned).toEqual(["/tmp/rea test"]);
+  },
+);
+
+it("preserves the package producer's cancellation when a later caller reason differs", async () => {
+  const host = new RecordingLinuxHost();
+  const controller = new AbortController();
+  const producerReason = { producer: "package operation cancelled" };
+  host.installPackage = async () => {
+    controller.abort({ caller: "later stop" });
+    return { status: "cancelled", cause: producerReason };
+  };
+  const result = await installLinuxHopper(host, { signal: controller.signal });
+  expect(result).toMatchObject({ status: "failed", reason: "cancelled" });
+  if (result.status !== "failed") throw new Error("Expected cancellation");
+  expect(result.cancellationReason).toBe(producerReason);
+  expect(host.cleaned).toEqual(["/tmp/rea test"]);
 });

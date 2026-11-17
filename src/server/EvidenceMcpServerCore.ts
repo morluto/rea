@@ -1,4 +1,7 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
+import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
 
 import {
   specTypeSchemas,
@@ -14,6 +17,7 @@ import {
   type McpServerOptions,
   type RegisteredTool,
   type RegisteredPrompt,
+  type ServerContext,
   type PromptCallback,
   type RequestId,
   type ScopeChallengeHandler,
@@ -24,19 +28,27 @@ import {
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
+import { transportClosedByOwner } from "./transportOwnerClose.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import {
-  presentAdvertisedInputSchema,
-  type CompactInputSchemaPresentation,
-} from "../contracts/compactInputSchema.js";
-import type { createCatalogIdentity } from "../catalogIdentity.js";
+  advertiseToolInput,
+  advertiseToolOutput,
+  type AdvertisedToolPresentation,
+} from "../contracts/advertisedTool.js";
+import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  CallerAbort,
+  OwnerCancellation,
+  type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { projectAnalysisErrorWithoutPartialObservation } from "../domain/analysisErrorProjection.js";
+import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
+import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -51,10 +63,51 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
-
-export type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
+import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";
+import {
+  currentMcpToolRequest,
+  McpToolRequest,
+  runMcpToolRequest,
+} from "./McpToolRequest.js";
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
+
+/** Capture caller selections and issues at the canonical SDK validation boundary. */
+const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
+  tool: string,
+  schema: Schema,
+): Schema => {
+  const standard = schema["~standard"];
+  if (standard.vendor !== "zod") return schema;
+  return {
+    ...schema,
+    "~standard": {
+      ...standard,
+      validate: (value: unknown) => {
+        const context = currentMcpToolRequest();
+        const capture = (
+          result: Awaited<ReturnType<typeof standard.validate>>,
+        ) => {
+          if (context?.tool === tool && result.issues !== undefined)
+            context.validation = {
+              issues: result.issues as readonly z.core.$ZodIssue[],
+              input: value,
+            };
+          if (result.issues === undefined)
+            context?.captureCallerParameters(tool, value, result.value);
+          return result;
+        };
+        const result = standard.validate(value);
+        return result instanceof Promise
+          ? result.then(capture)
+          : capture(result);
+      },
+    },
+  } as Schema;
+};
 
 /** Signal for the completion request currently being dispatched by the SDK. */
 export const currentMcpRequestSignal = (): AbortSignal | undefined =>
@@ -73,9 +126,6 @@ const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
   );
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** Recognize the SDK's argument diagnostic after its wire size is checked. */
 const sdkInputValidationDiagnostic = (
   text: string | undefined,
@@ -86,6 +136,77 @@ const sdkInputValidationDiagnostic = (
   if (!text.startsWith(prefix) || text[prefix.length] !== ":") return undefined;
   const diagnostic = text.slice(prefix.length + 1).trimStart();
   return diagnostic.length === 0 ? undefined : diagnostic;
+};
+
+/** Place an SDK diagnostic at a field only when that same issue produced it. */
+const partitionSdkDiagnostic = (
+  validation: McpToolRequest["validation"],
+  groups: readonly (readonly AnalysisInputIssue[])[] | undefined,
+  diagnostic: string,
+):
+  | { issues: readonly AnalysisInputIssue[]; remaining: string | undefined }
+  | undefined => {
+  if (
+    validation === undefined ||
+    groups === undefined ||
+    validation.issues.length !== groups.length
+  )
+    return undefined;
+  let offset = 0;
+  const consume = (text: string): boolean => {
+    if (!diagnostic.startsWith(text, offset)) return false;
+    offset += text.length;
+    return true;
+  };
+  const mapped: AnalysisInputIssue[] = [];
+  const remaining: string[] = [];
+  for (let index = 0; index < validation.issues.length; index += 1) {
+    const raw = validation.issues[index];
+    const group = groups[index];
+    if (raw === undefined || group === undefined) return undefined;
+    if (index > 0 && !consume(", ")) return undefined;
+    const start = offset;
+    for (let part = 0; part < raw.path.length; part += 1) {
+      if (part > 0 && !consume(".")) return undefined;
+      if (!consume(String(raw.path[part]))) return undefined;
+    }
+    if (raw.path.length > 0 && !consume(": ")) return undefined;
+    if (!consume(raw.message)) return undefined;
+    const issue = group.length === 1 ? group[0] : undefined;
+    const sameField =
+      issue !== undefined &&
+      raw.path.length === issue.path.length &&
+      raw.path.every((part, i) => part === issue.path[i]);
+    const sameMessage =
+      issue?.message !== undefined && issue.message === raw.message;
+    const direct =
+      raw.code !== "invalid_union" &&
+      raw.code !== "invalid_key" &&
+      raw.code !== "unrecognized_keys";
+    if (
+      sameField &&
+      issue !== undefined &&
+      (sameMessage || (direct && issue.message === undefined))
+    ) {
+      mapped.push(
+        issue.message === undefined
+          ? { ...issue, message: raw.message }
+          : issue,
+      );
+    } else {
+      for (const issue of group) mapped.push(issue);
+      const explainedByIssues =
+        raw.code === "unrecognized_keys" &&
+        group.length > 0 &&
+        group.every((item) => item.message !== undefined);
+      if (!explainedByIssues) remaining.push(diagnostic.slice(start, offset));
+    }
+  }
+  if (offset !== diagnostic.length) return undefined;
+  return {
+    issues: mapped,
+    remaining: remaining.length === 0 ? undefined : remaining.join(", "),
+  };
 };
 
 /** Replace the tool payload after the SDK codec while retaining its envelope. */
@@ -109,10 +230,14 @@ const replaceToolResultPayload = (
   };
 };
 
-/** Remove only client-facing output schemas; SDK registrations stay canonical. */
-const omitOutputSchemasFromToolsList = (
+/**
+ * Rewrite only client-facing output schemas; SDK registrations stay canonical.
+ * The presentation bounds each advertised schema or omits it entirely.
+ */
+const presentOutputSchemasForToolsList = (
   message: JSONRPCMessage,
   requestId: RequestId,
+  presentation: AdvertisedToolPresentation["output"],
 ): JSONRPCMessage => {
   if (
     !isJSONRPCResultResponse(message) ||
@@ -126,9 +251,12 @@ const omitOutputSchemasFromToolsList = (
     result: {
       ...message.result,
       tools: message.result.tools.map((tool: unknown) => {
-        if (!isRecord(tool)) return tool;
-        const { outputSchema: _outputSchema, ...advertisedTool } = tool;
-        return advertisedTool;
+        if (!isRecord(tool) || !isRecord(tool.outputSchema)) return tool;
+        const { outputSchema: canonical, ...advertisedTool } = tool;
+        const outputSchema = advertiseToolOutput(canonical, presentation);
+        return outputSchema === undefined
+          ? advertisedTool
+          : { ...advertisedTool, outputSchema };
       }),
     },
   } as JSONRPCMessage;
@@ -140,13 +268,21 @@ export const forgetPendingMcpRequest = (
   pendingToolLists: Set<RequestId>,
   pendingCompletions: Map<RequestId, AbortController>,
   id: RequestId,
+  reason: CallerAbort | OwnerCancellation,
 ): void => {
   pendingTools.delete(id);
   pendingToolLists.delete(id);
-  pendingCompletions.get(id)?.abort();
+  pendingCompletions.get(id)?.abort(reason);
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
+import { isRecord } from "../kernel/isRecord.js";
+import {
+  advertisedToolPresentation,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Standard-schema registration boundary shared with deferred SDK bindings. */
 export interface StandardToolRegistration {
@@ -162,13 +298,60 @@ export interface StandardToolRegistration {
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
+  private readonly registrations = new Map<string, RegisteredTool>();
+  private progressiveCatalog: ProgressiveToolCatalog | undefined;
+  private catalogChangeDepth = 0;
+  private catalogChanged = false;
+  analysisSettings: AnalysisSettings | undefined;
+  /** Transport-owned Evidence uses the same lifetime as application writes. */
+  withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
 
   /** Composition supplies identity without importing the canonical schema graph. */
   get catalogIdentity(): ReturnType<typeof createCatalogIdentity> {
     if (this.identity === undefined)
       throw new Error("MCP catalog identity has not been configured");
-    return this.identity;
+    return this.progressiveCatalog?.identity ?? this.identity;
+  }
+
+  /** Install discovery after canonical registrations, before connecting. */
+  enableProgressiveCatalog(): void {
+    if (this.progressiveCatalog !== undefined) return;
+    const catalog = new ProgressiveToolCatalog(
+      this.registrations,
+      this.catalogIdentity,
+      (change) => {
+        this.catalogChangeDepth++;
+        try {
+          change();
+        } finally {
+          this.catalogChangeDepth--;
+          if (this.catalogChangeDepth === 0 && this.catalogChanged) {
+            this.catalogChanged = false;
+            super.sendToolListChanged();
+          }
+        }
+      },
+      () => this.delivery,
+    );
+    this.progressiveCatalog = catalog;
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    super.registerTool(
+      name,
+      { ...config, ...this.presentInput(name, config) },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
+  }
+
+  override sendToolListChanged(): void {
+    if (this.catalogChangeDepth > 0) this.catalogChanged = true;
+    else super.sendToolListChanged();
   }
 
   /** Attach the process-owned session only after lazy runtime construction. */
@@ -202,31 +385,43 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredPrompt {
     return super.registerPrompt(name, config, callback);
   }
-  private readonly compactPresentation:
-    | CompactInputSchemaPresentation
-    | undefined;
+  private readonly presentation: AdvertisedToolPresentation;
+  private readonly maximumInputElements: number;
+  private readonly evidenceReferenceAlternatives = new Set<string>();
+
+  protected registerEvidenceReferenceAlternative(name: string): void {
+    this.evidenceReferenceAlternatives.add(name);
+  }
 
   constructor(
     info: Implementation,
     options: McpServerOptions,
     private recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     public delivery: ToolResultDelivery,
-    compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
-    private readonly omitOutputSchemas = false,
+    compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
+    outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
+      undefined,
+    ),
     identity?: ReturnType<typeof createCatalogIdentity>,
+    readonly advertisedToolFamilies:
+      | ReadonlySet<string>
+      | undefined = undefined,
   ) {
-    super(info, options);
-    this.compactPresentation =
-      compactPresentation === undefined
-        ? undefined
-        : { budgetBytes: compactPresentation.budgetBytes };
+    const maximumInputElements =
+      options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
+    super(info, { ...options, maxToolInputElements: maximumInputElements });
+    this.maximumInputElements = maximumInputElements;
+    this.presentation = advertisedToolPresentation(
+      outputSchemaProfile,
+      compactPresentation,
+    );
     this.identity = identity;
   }
 
   /**
-   * Compact advertised input schemas and optionally omit output-schema
-   * advertisements. Canonical parsers and contracts remain registered; the
-   * output-schema-off path validates successful structured results locally.
+   * Compact advertised input schemas and bound or omit output-schema
+   * advertisements. Canonical parsers and contracts remain registered; both
+   * output profiles validate successful structured results locally.
    * The signatures mirror the SDK's registrations so call sites keep their
    * inferred handler argument types.
    */
@@ -247,22 +442,120 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     },
     callback: ToolCallback<InputArgs>,
   ): RegisteredTool {
-    const budget = this.compactPresentation?.budgetBytes;
-    const inputSchema =
-      budget !== undefined &&
-      config !== undefined &&
-      hasAdvertisedInputJsonSchema(config.inputSchema)
-        ? transformAdvertisedInputJsonSchema(
-            config.inputSchema as Parameters<
-              typeof transformAdvertisedInputJsonSchema
-            >[0],
-            (projected) =>
-              presentAdvertisedInputSchema(projected, { budgetBytes: budget }),
-          )
-        : undefined;
-    const registeredConfig =
-      inputSchema === undefined ? config : { ...config, inputSchema };
-    return this.bindTool(name, registeredConfig as never, callback as never);
+    if (canReferenceInlineEvidence(config.inputSchema))
+      this.registerEvidenceReferenceAlternative(name);
+    const presented = this.presentInput(name, config);
+    const registeredConfig = {
+      ...config,
+      ...(presented.description === undefined
+        ? {}
+        : { description: presented.description }),
+      ...(presented.inputSchema === undefined
+        ? {}
+        : {
+            inputSchema: captureInputValidation(
+              name,
+              presented.inputSchema as StandardSchemaWithJSON,
+            ),
+          }),
+    };
+    const scoped = async (input: never, context: never) => {
+      const request = currentMcpToolRequest();
+      request?.beginHandler();
+      try {
+        const normalized = (original: ServerContext): ServerContext =>
+          request === undefined
+            ? original
+            : {
+                ...original,
+                mcpReq: {
+                  ...original.mcpReq,
+                  signal: AbortSignal.any([
+                    request.cancellation.signal,
+                    original.mcpReq.signal,
+                  ]),
+                },
+              };
+        const invoke = () =>
+          config.inputSchema === undefined
+            ? (callback as ToolCallback<undefined>)(
+                normalized(input as ServerContext),
+              )
+            : (callback as ToolCallback<StandardSchemaWithJSON>)(
+                input,
+                normalized(context as ServerContext),
+              );
+        return await (this.analysisSettings === undefined
+          ? invoke()
+          : this.analysisSettings.run(invoke));
+      } finally {
+        request?.finishHandler();
+      }
+    };
+    const registered = this.bindTool(
+      name,
+      registeredConfig as never,
+      scoped as never,
+    );
+    if (!this.advertisesTool(name)) registered.disable();
+    return registered;
+  }
+
+  /**
+   * The input schema and tool description this server advertises for one
+   * registration: the compact presentation, whose guidance joins the
+   * description. A registration without an input schema is unchanged. Every
+   * listed tool, including
+   * transport discovery, takes this one path.
+   */
+  private presentInput<Schema>(
+    name: string,
+    config: { readonly description?: string; readonly inputSchema?: Schema },
+  ): { description?: string; inputSchema?: Schema } {
+    const { description, inputSchema } = config;
+    const { input } = this.presentation;
+    if (inputSchema === undefined || !hasAdvertisedInputJsonSchema(inputSchema))
+      return config;
+    return {
+      ...this.describeTool(name, () => {
+        const projected = (inputSchema as StandardSchemaWithJSON)[
+          "~standard"
+        ].jsonSchema.input({ target: "draft-2020-12" });
+        return isRecord(projected)
+          ? advertiseToolInput(description, projected, input).description
+          : description;
+      }),
+      inputSchema: transformAdvertisedInputJsonSchema(
+        inputSchema,
+        (projected) =>
+          advertiseToolInput(description, projected, input).inputSchema,
+      ),
+    };
+  }
+
+  /**
+   * The listed description: guidance the compact input schema omits follows
+   * the registered description. Reading it projects the schema.
+   */
+  protected describeTool(
+    _name: string,
+    advertised: () => string | undefined,
+  ): { description?: string } {
+    const described = advertised();
+    return described === undefined ? {} : { description: described };
+  }
+
+  /** Whether this process advertises one named operation. */
+  advertisesTool(_name: string): boolean {
+    return true;
+  }
+
+  /** Provider probes consult the registration scope before doing work. */
+  advertisesFamily(family: string): boolean {
+    return (
+      this.advertisedToolFamilies === undefined ||
+      this.advertisedToolFamilies.has(family)
+    );
   }
 
   protected bindTool(
@@ -270,17 +563,29 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     config: StandardToolRegistration,
     callback: ToolCallback<StandardSchemaWithJSON | undefined>,
   ): RegisteredTool {
-    return super.registerTool(name, config as never, callback as never);
+    const registered = super.registerTool(
+      name,
+      config as never,
+      callback as never,
+    );
+    this.registrations.set(name, registered);
+    return registered;
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
+    // HTTP reuses the analysis server after draining the previous transport.
+    // Reset visibility while disconnected, before the next initialize/list.
+    if (!this.isConnected()) this.progressiveCatalog?.reset();
     return super.connect(
       new ErrorEvidenceTransport(
         transport,
         () => this.recordEvidence,
         () => this.delivery,
-        this.omitOutputSchemas,
+        () => this.withAdmittedAnalysis,
+        this.presentation.output,
+        this.maximumInputElements,
+        this.evidenceReferenceAlternatives,
       ),
     );
   }
@@ -292,8 +597,10 @@ class ErrorEvidenceTransport implements Transport {
   onmessage: Transport["onmessage"];
   readonly hasPerRequestStream?: boolean;
   private readonly pendingTools = new Map<RequestId, string>();
+  private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
   private readonly pendingToolLists = new Set<RequestId>();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
+  private closing = false;
 
   private get recordEvidence(): EvidenceWriter["recordEvidence"] | undefined {
     return this.currentEvidenceWriter();
@@ -309,7 +616,10 @@ class ErrorEvidenceTransport implements Transport {
       | EvidenceWriter["recordEvidence"]
       | undefined,
     private readonly currentDelivery: () => ToolResultDelivery,
-    private readonly omitOutputSchemas: boolean,
+    private readonly currentAdmission: () => WithAdmittedAnalysis | undefined,
+    private readonly outputPresentation: AdvertisedToolPresentation["output"],
+    private readonly maximumInputElements: number,
+    private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -336,12 +646,16 @@ class ErrorEvidenceTransport implements Transport {
           return;
         }
       }
+      let validation: McpToolRequest | undefined;
       if (
         isJSONRPCRequest(message) &&
         message.method === "tools/call" &&
         typeof message.params?.["name"] === "string"
-      )
+      ) {
         this.pendingTools.set(message.id, message.params["name"]);
+        validation = new McpToolRequest(message.id, message.params["name"]);
+        this.pendingValidation.set(message.id, validation);
+      }
       if (isJSONRPCRequest(message) && message.method === "tools/list")
         this.pendingToolLists.add(message.id);
       if (isJSONRPCRequest(message) && message.method === "completion/complete")
@@ -353,19 +667,29 @@ class ErrorEvidenceTransport implements Transport {
         message.method === "notifications/cancelled"
       ) {
         const id = message.params?.["requestId"];
-        if (typeof id === "string" || typeof id === "number")
+        if (typeof id === "string" || typeof id === "number") {
+          const cancellation = new CallerAbort(
+            "request-cancelled",
+            message.params?.["reason"],
+          );
+          this.pendingValidation.get(id)?.cancel(cancellation);
+          this.pendingValidation.delete(id);
           forgetPendingMcpRequest(
             this.pendingTools,
             this.pendingToolLists,
             this.pendingCompletions,
             id,
+            cancellation,
           );
+        }
       }
       const completion =
         isJSONRPCRequest(message) && message.method === "completion/complete"
           ? this.pendingCompletions.get(message.id)
           : undefined;
-      if (completion === undefined) this.onmessage?.(message, extra);
+      if (validation !== undefined)
+        runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
+      else if (completion === undefined) this.onmessage?.(message, extra);
       else
         currentRequestSignal.run(completion.signal, () =>
           this.onmessage?.(message, extra),
@@ -373,10 +697,17 @@ class ErrorEvidenceTransport implements Transport {
     };
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
+      const disconnected =
+        this.closing || transportClosedByOwner(this.transport)
+          ? OwnerCancellation.ownerClosed
+          : new CallerAbort("client-disconnected");
       this.pendingTools.clear();
+      for (const validation of this.pendingValidation.values())
+        validation.cancel(disconnected);
+      this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
-        completion.abort();
+        completion.abort(disconnected);
       this.pendingCompletions.clear();
       this.onclose?.();
     };
@@ -394,13 +725,17 @@ class ErrorEvidenceTransport implements Transport {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     try {
       await this.transport.close();
     } finally {
       this.pendingTools.clear();
+      for (const validation of this.pendingValidation.values())
+        validation.cancel(OwnerCancellation.ownerClosed);
+      this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
-        completion.abort();
+        completion.abort(OwnerCancellation.ownerClosed);
       this.pendingCompletions.clear();
     }
   }
@@ -423,47 +758,105 @@ class ErrorEvidenceTransport implements Transport {
         ? message.id
         : undefined;
     const tool = id === undefined ? undefined : this.pendingTools.get(id);
-    const omitToolSchemas =
-      this.omitOutputSchemas &&
-      id !== undefined &&
-      this.pendingToolLists.has(id);
+    const scopedRequest = currentMcpToolRequest();
+    const request =
+      id === undefined ||
+      (!isJSONRPCResultResponse(message) && !isJSONRPCErrorResponse(message))
+        ? undefined
+        : (this.pendingValidation.get(id) ??
+          (scopedRequest?.id === id ? scopedRequest : undefined));
+    const rewritesOutputSchemas =
+      id !== undefined && this.pendingToolLists.has(id);
     try {
-      const recovered = this.recoverProtocolError(message, tool);
-      const advertised = omitToolSchemas
-        ? omitOutputSchemasFromToolsList(recovered, id)
-        : recovered;
+      const publish = async (): Promise<void> => {
+        const recovered = this.recoverProtocolError(message, tool);
+        const advertised = rewritesOutputSchemas
+          ? presentOutputSchemasForToolsList(
+              recovered,
+              id,
+              this.outputPresentation,
+            )
+          : recovered;
+        await this.publish(advertised, tool, options, request);
+      };
+      const admission = this.currentAdmission();
       if (
-        isJSONRPCResultResponse(advertised) &&
-        isCallToolResult(advertised.result) &&
-        advertised.result.isError === true
+        admission !== undefined &&
+        request?.holdsAdmission !== true &&
+        isJSONRPCResultResponse(message) &&
+        isCallToolResult(message.result) &&
+        message.result.isError === true
       ) {
-        // Keep the complete typed JSON in content. Error projections are not
-        // success outputSchema data; oversized recovery must consume their
-        // private structured carrier before it is removed from the wire.
-        const { structuredContent: _diagnostic, ...result } = advertised.result;
-        // Errors the SDK builds itself (input validation, a thrown handler)
-        // bypass ToolResultDelivery; mark them for target-content tools too.
-        const marked =
-          tool !== undefined &&
-          toolReturnsTargetContent(tool) &&
-          !carriesTargetContentMarker(result)
-            ? {
-                ...result,
-                _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
-              }
-            : result;
-        await this.transport.send({ ...advertised, result: marked }, options);
-      } else await this.transport.send(advertised, options);
+        // SDK failures bypass application handlers. Admit both retention and
+        // publication so reset cannot clear a newly offered reference between
+        // those two steps, and shutdown/cancellation cannot create a late write.
+        const admitted = await admission(
+          tool ?? "mcp_tool_error",
+          request?.cancellation.signal,
+          publish,
+        );
+        if (!admitted.ok)
+          await this.publish(
+            {
+              ...message,
+              result: replaceToolResultPayload(
+                message.result,
+                this.delivery.toErrorToolResult(
+                  admitted.error,
+                  tool !== undefined && toolReturnsTargetContent(tool),
+                ),
+              ),
+            },
+            tool,
+            options,
+            request,
+          );
+      } else await publish();
     } finally {
+      request?.finishPublication();
       if (!isJSONRPCRequest(message) && id !== undefined) {
+        this.pendingValidation.delete(id);
+        // The reply settled the request, so REA ends any work it left behind.
         forgetPendingMcpRequest(
           this.pendingTools,
           this.pendingToolLists,
           this.pendingCompletions,
           id,
+          OwnerCancellation.ownerClosed,
         );
       }
     }
+  }
+
+  /** Keep the SDK wire envelope while removing private diagnostic carriers. */
+  private async publish(
+    message: JSONRPCMessage,
+    tool: string | undefined,
+    options: TransportSendOptions | undefined,
+    request: McpToolRequest | undefined,
+  ): Promise<void> {
+    request?.beginPublication();
+    if (
+      !isJSONRPCResultResponse(message) ||
+      !isCallToolResult(message.result) ||
+      message.result.isError !== true
+    ) {
+      await this.transport.send(message, options);
+      return;
+    }
+    // Oversized recovery has already consumed this private structured carrier.
+    const { structuredContent: _diagnostic, ...result } = message.result;
+    // SDK-built errors bypass ToolResultDelivery's target-content marker.
+    const marked =
+      tool !== undefined &&
+      toolReturnsTargetContent(tool) &&
+      !carriesTargetContentMarker(result)
+        ? {
+            ...result,
+            _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
+          }
+        : result;
+    await this.transport.send({ ...message, result: marked }, options);
   }
 
   private recoverError(
@@ -508,11 +901,12 @@ class ErrorEvidenceTransport implements Transport {
         ? encodeToolResult(structured, budget, "error-text", targetContent)
         : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
     const normalized = encoded.ok
-      ? this.normalizeSdkValidationError(
+      ? this.normalizeSdkInputError(
           message,
           tool,
           targetContent,
-          sdkInputValidationDiagnostic(sdkDiagnostic, tool),
+          sdkDiagnostic,
+          this.pendingValidation.get(message.id)?.validation,
         )
       : undefined;
     if (
@@ -547,7 +941,7 @@ class ErrorEvidenceTransport implements Transport {
     // The SDK error contains its rendered issue, not a separate argument bag;
     // transport authentication and caller arguments are never added here.
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("unsupported-subject"),
       { id: "rea-mcp", name: "REA MCP delivery", version: "1" },
       {
         operation: "mcp_tool_error",
@@ -602,7 +996,11 @@ class ErrorEvidenceTransport implements Transport {
             }
           : { retention: recorded === undefined ? "unavailable" : "failed" }),
         ...(recorded !== undefined && !recorded.ok
-          ? { retention_error: projectAnalysisError(recorded.error) }
+          ? {
+              retention_error: projectAnalysisErrorWithoutPartialObservation(
+                recorded.error,
+              ),
+            }
           : {}),
       },
       targetContent,
@@ -671,25 +1069,86 @@ class ErrorEvidenceTransport implements Transport {
       : fitted;
   }
 
-  private normalizeSdkValidationError(
+  private normalizeSdkInputError(
     message: JSONRPCMessage,
     tool: string | undefined,
     targetContent: boolean,
-    diagnostic: string | undefined,
+    text: string | undefined,
+    validation: McpToolRequest["validation"],
   ): JSONRPCMessage | undefined {
     if (
       tool === undefined ||
-      diagnostic === undefined ||
+      text === undefined ||
       !isJSONRPCResultResponse(message) ||
       !isCallToolResult(message.result)
     )
       return undefined;
+    // The SDK owns counting and refusal before Standard Schema validation.
+    // Recognize its exact wire refusal using our configured fact, without
+    // reparsing the arguments or manufacturing a complete element count.
+    if (
+      text ===
+      `Invalid arguments for tool ${tool}: arguments contain more than the maximum of ${String(this.maximumInputElements)} elements`
+    ) {
+      const error = new AnalysisResourceConstraintError(
+        tool,
+        "transport",
+        "The MCP tool arguments exceed the configured input element allowance; schema validation and tool execution did not start.",
+        { max_input_elements: this.maximumInputElements },
+        {
+          remediationAction:
+            tool === "inspect_analysis_view"
+              ? 'If using inline Evidence, save the Evidence record as a local JSON file and use source {"kind":"evidence-file","path":"..."}; if it is retained, use its retained-evidence ID. Otherwise reduce the combined array elements and object members, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+              : this.evidenceReferenceAlternatives.has(tool)
+                ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+                : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
+        },
+      );
+      const result = this.delivery.toErrorToolResult(error, targetContent);
+      return {
+        ...message,
+        result: replaceToolResultPayload(message.result, result),
+      };
+    }
+    const diagnostic = sdkInputValidationDiagnostic(text, tool);
+    if (diagnostic === undefined) return undefined;
+    const groups =
+      validation === undefined
+        ? undefined
+        : projectInputIssueGroupsWithinBudget(
+            validation.issues,
+            validation.input,
+            this.delivery.resultBudgetBytes,
+            tool,
+          );
+    const projectionLimited = validation !== undefined && groups === undefined;
+    const summary = `The arguments for MCP tool ${tool} do not match its advertised input schema.`;
+    const partitioned = partitionSdkDiagnostic(validation, groups, diagnostic);
+    const issues = partitioned?.issues ?? groups?.flat();
     const error = new AnalysisInputError(
       tool,
       {
-        userMessage: `The arguments for MCP tool ${tool} do not match its advertised input schema.`,
+        userMessage:
+          issues === undefined
+            ? projectionLimited
+              ? `${summary} Field-level issue projection exceeded its response-derived allowance.`
+              : summary
+            : partitioned !== undefined
+              ? partitioned.remaining === undefined
+                ? summary
+                : `${summary} ${partitioned.remaining}`
+              : `${summary} ${diagnostic}`,
       },
-      [{ path: [], reason: "invalid_value", message: diagnostic }],
+      issues ?? [
+        {
+          path: [],
+          reason: "invalid_value",
+          message: diagnostic,
+          ...(projectionLimited
+            ? { observed: { field_details: "omitted" } }
+            : {}),
+        },
+      ],
     );
     const result = this.delivery.toErrorToolResult(error, targetContent);
     return {

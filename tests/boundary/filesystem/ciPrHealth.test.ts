@@ -11,7 +11,6 @@ import {
   matchRunToPullRequest,
   writePrCiHealthReport,
 } from "../../../scripts/ci/pr-ci-health.mjs";
-import { createGhApiRequest } from "../../../scripts/ci/github-api.mjs";
 import type {
   PrCiPullRequest,
   PrCiWorkflowRun,
@@ -355,8 +354,9 @@ it.each([false, true])(
       now: observedAt,
       apiRequest,
     });
-    expect(report.scan.workflowRunPages).toBe(5);
+    expect(report.scan.workflowRunPages).toBe(10);
     expect(report.scan.workflowRunInventoryComplete).toBe(false);
+    expect(report.lookbackHours).toBe(12);
     const firstPull = report.pullRequests[0];
     if (firstPull === undefined) throw new Error("fixture PR was not scanned");
     expect(firstPull.ci).toMatchObject({
@@ -409,7 +409,7 @@ it("public CLI uses only GET and produces a report from fixture GitHub responses
   await writeFile(
     ghResponse,
     JSON.stringify([
-      [rawPull(51, { mergeable: true })],
+      [rawPull(51, { mergeable: true, created_at: new Date().toISOString() })],
       { total_count: 0, workflow_runs: [] },
     ]),
   );
@@ -453,23 +453,44 @@ it("public CLI uses only GET and produces a report from fixture GitHub responses
 
 it("rejects non-GET methods before launching the GitHub client", async () => {
   const fixture = await createFixture();
-  const request = createGhApiRequest({
-    env: {
-      ...process.env,
-      PATH: `${fixture.fakeBin}${delimiter}${process.env.PATH ?? ""}`,
-      CI_GH_CALLS: join(fixture.directory, "should-not-exist"),
-    },
-  });
-  await expect(
-    request("POST", "repos/owner/rea/pulls", {
-      requests: 0,
-      startedAt: observedAt,
-      limitMs: 1_000,
-    }),
-  ).rejects.toThrow("read-only GET");
-  await expect(
-    readFile(join(fixture.directory, "should-not-exist")),
-  ).rejects.toMatchObject({ code: "ENOENT" });
+  const marker = join(fixture.directory, "gh-invoked");
+  const preload = join(fixture.directory, "watch-gh.cjs");
+  await writeFile(
+    preload,
+    `const fs = require("node:fs");
+const util = require("node:util");
+const child = require("node:child_process");
+child.execFile = () => { throw new Error("Unexpected callback invocation"); };
+child.execFile[util.promisify.custom] = async () => {
+  fs.appendFileSync(process.env.CI_GH_CALLS, "called\\n");
+  return { stdout: "{}", stderr: "" };
+};
+require("node:module").syncBuiltinESMExports();
+`,
+  );
+  const transport = new URL(
+    "../../../scripts/ci/github-api.mjs",
+    import.meta.url,
+  ).href;
+  await executeWorkflowFixture(
+    process.execPath,
+    [
+      "--require",
+      preload,
+      "--input-type=module",
+      "-e",
+      `
+      import assert from "node:assert/strict";
+      import { createGhApiRequest } from ${JSON.stringify(transport)};
+      const request = createGhApiRequest();
+      const budget = { requests: 0, startedAt: Date.now(), limitMs: 10_000 };
+      await assert.rejects(request("POST", "repos/owner/rea/pulls", budget), /read-only GET/);
+      await request("GET", "repos/owner/rea/pulls", budget);
+    `,
+    ],
+    { cwd: fixture.directory, env: { ...process.env, CI_GH_CALLS: marker } },
+  );
+  expect(await readFile(marker, "utf8")).toBe("called\n");
 });
 
 function validPull(overrides: Partial<PrCiPullRequest> = {}): PrCiPullRequest {
@@ -578,6 +599,32 @@ it("keeps a proven newest run even when two older matched runs have equal timest
   expect(result.runs).toHaveLength(3);
 });
 
+it("queries workflow runs with full ISO timestamp precision across the configured hour window", async () => {
+  const endpoints: string[] = [];
+  const midDay = Date.parse("2026-10-14T18:17:00Z");
+  const report = await collectPrCiHealth({
+    repository: "owner/rea",
+    repositoryId: 11,
+    defaultBranch: "main",
+    now: midDay,
+    apiRequest: async (_method, endpoint) => {
+      endpoints.push(endpoint);
+      if (endpoint.includes("/pulls?"))
+        return [
+          rawPull(91, { mergeable: true, created_at: "2026-10-14T12:00:00Z" }),
+          rawPull(92, { mergeable: true, created_at: "2026-10-14T05:00:00Z" }),
+        ];
+      return { workflow_runs: [] };
+    },
+  });
+  expect(report.lookbackHours).toBe(12);
+  expect(report.scan.cutoff).toBe("2026-10-14T06:17:00.000Z");
+  expect(report.pullRequests.map((pull) => pull.number)).toEqual([91]);
+  expect(endpoints).toContain(
+    "repos/owner/rea/actions/workflows/ci.yml/runs?event=pull_request&created=%3E%3D2026-10-14T06%3A17%3A00.000Z&per_page=100&page=1",
+  );
+});
+
 function run(overrides: Partial<PrCiWorkflowRun> = {}): PrCiWorkflowRun {
   return {
     id: 77,
@@ -597,7 +644,7 @@ function rawPull(number: number, overrides: Record<string, unknown> = {}) {
   return {
     number,
     draft: false,
-    created_at: "2026-10-13T00:00:00Z",
+    created_at: "2026-10-13T18:00:00Z",
     html_url: `https://github.com/owner/rea/pull/${String(number)}`,
     base: { ref: "main", repo: { id: 11 } },
     head: {

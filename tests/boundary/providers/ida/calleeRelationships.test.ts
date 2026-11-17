@@ -1,6 +1,9 @@
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
+import { IDA_COMPATIBILITY_PROFILES } from "../../../../src/ida/IdaConfiguration.js";
+import { idaCapabilities } from "../../../../src/ida/IdaProviderCapabilities.js";
 import {
   callGraphSession,
   edge,
@@ -28,17 +31,38 @@ const armSession = () =>
     leafRoots: ["0x2000", "0x3000"],
   });
 
-it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", async () => {
+it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier", async () => {
   const { client } = await armSession();
   try {
+    const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false);
+    const callers = declared.find(
+      ({ operation }) => operation === "procedure_callers",
+    );
+    expect(callers).toMatchObject({
+      available: false,
+      reason: expect.any(String),
+    });
+    expect(
+      declared.find(({ operation }) => operation === "procedure_callees"),
+    ).toMatchObject({ available: true });
+    expect(
+      await client.execute("procedure_callers", { procedure: "main" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "procedure_callers",
+        reason: callers?.reason,
+      },
+    });
     const result = await client.execute("analyze_function", {
       procedure: "main",
     });
     if (!result.ok) throw result.error;
     expect(result.value.relationshipCoverage).toMatchObject({
       status: "unknown",
-      reason:
-        "Callers: Upstream xrefs do not establish direct caller relationships.",
+      reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
+
       diagnostics: expect.arrayContaining([
         expect.stringContaining("targets IDA does not recognize as functions"),
       ]),
@@ -153,16 +177,26 @@ it("traverses every ARM64 callee in a call path without a goal and records no fa
         { source_address: "0x1000", target_address: "0x3000" },
       ],
       failures: [],
+      // The recorded graph is complete; possible undiscovered calls remain unknown.
       truncated: false,
       limitations: expect.arrayContaining([
         "This relationship read does not establish calls to targets IDA does not recognize as functions; imports and other non-function call targets remain unknown.",
       ]),
       residual_unknowns: [],
-      relationship_coverage: {
-        "0x1000": { status: "complete" },
-        "0x2000": { status: "complete" },
-        "0x3000": { status: "complete" },
-      },
+      relationship_coverage: Object.fromEntries(
+        ["0x1000", "0x2000", "0x3000"].map((address) => [
+          address,
+          {
+            status: "complete",
+            discovery: {
+              callees: {
+                status: "unknown",
+                reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+              },
+            },
+          },
+        ]),
+      ),
     });
     expect(
       requestedRoots(producer),

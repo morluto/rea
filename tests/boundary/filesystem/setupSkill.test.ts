@@ -22,6 +22,7 @@ import {
   canonicalSkillNeedsInstall,
   existingSkillDestinations,
   installCanonicalSkill,
+  readSkillFile,
   readInstalledSkillIdentity,
   skillDestinations,
   type SkillInstallFileOperations,
@@ -37,6 +38,32 @@ import { SkillFilePublication } from "../../../src/application/SkillFilePublicat
 import { z } from "zod";
 import { skillReferenceIssues } from "../../../scripts/lib/docs-facts.mjs";
 
+/** The host whose skill locations these tests exercise. */
+const testPlatform = process.platform;
+
+/** Setup's skill selection on the tested host, without extra settings. */
+const destinationsOf = (home: string, clientIds: readonly string[]) =>
+  skillDestinations(home, clientIds, {}, testPlatform);
+const installSkill = (home: string, clientIds: readonly string[]) =>
+  installCanonicalSkill(home, clientIds, {}, testPlatform);
+const skillNeedsInstall = (home: string, clientIds: readonly string[]) =>
+  canonicalSkillNeedsInstall(home, clientIds, {}, testPlatform);
+
+describe("managed skill file read boundary", () => {
+  it("rejects linked and oversized managed guide files", async () => {
+    const root = await createTestTempDirectory("rea-guidance-file-boundary-");
+    const target = join(root, "guide.md");
+    const link = join(root, "linked-guide.md");
+    const oversized = join(root, "oversized-guide.md");
+    await writeFile(target, "safe guide content");
+    await symlink(target, link);
+    await writeFile(oversized, "larger than limit");
+
+    await expect(readSkillFile(link)).rejects.toThrow();
+    await expect(readSkillFile(oversized, undefined, 4)).rejects.toThrow();
+  });
+});
+
 const expectPermissionMode = async (
   path: string,
   expected: number,
@@ -48,7 +75,7 @@ const expectPermissionMode = async (
 describe("skill recovery backup selection", () => {
   it("reuses a verified existing backup without copying it again", async () => {
     const home = await createTestTempDirectory("rea-skill-matching-backup-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = destinationsOf(home, []);
     if (destination === undefined) throw new Error("Missing shared skill root");
     const manifest = join(destination.path, "SKILL.md");
     const current = "currently installed instructions\n";
@@ -66,12 +93,12 @@ describe("skill recovery backup selection", () => {
 
     expect(result).toEqual({ ok: true, value: "installed" });
     expect(await readFile(`${manifest}.rea.backup`, "utf8")).toBe(current);
-    expect(await canonicalSkillNeedsInstall(home, [])).toBe(false);
+    expect(await skillNeedsInstall(home, [])).toBe(false);
   });
 
   it("advertises a current recovery snapshot when the first backup is historical", async () => {
     const home = await createTestTempDirectory("rea-skill-historical-backup-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = destinationsOf(home, []);
     if (destination === undefined) throw new Error("Missing shared skill root");
     const manifest = join(destination.path, "SKILL.md");
     const current = "currently installed instructions V2\n";
@@ -124,7 +151,7 @@ describe("skill recovery backup selection", () => {
 describe("skill recovery byte preservation", () => {
   it("backs up and restores the exact bytes of invalid UTF-8 before replacing a skill", async () => {
     const home = await createTestTempDirectory("rea-skill-damaged-bytes-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = destinationsOf(home, []);
     if (destination === undefined) throw new Error("Missing shared skill root");
     const manifest = join(destination.path, "SKILL.md");
     const original = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0xff, 0x0a]);
@@ -166,9 +193,9 @@ describe("skill directory admission", () => {
     const directory = await createTestTempDirectory(
       "rea-skill-linked-maintenance-",
     );
-    const installed = await installCanonicalSkill(directory, ["claude_code"]);
+    const installed = await installSkill(directory, ["claude_code"]);
     expect(installed.ok).toBe(true);
-    const [selected] = skillDestinations(directory, ["claude_code"]);
+    const [selected] = destinationsOf(directory, ["claude_code"]);
     if (selected === undefined) throw new Error("Missing skill destination");
     const references = join(selected.path, "references");
     const retained = join(directory, "retained-references");
@@ -178,7 +205,9 @@ describe("skill directory admission", () => {
       references,
       process.platform === "win32" ? "junction" : "dir",
     );
-    expect(await existingSkillDestinations(directory)).toEqual({
+    expect(
+      await existingSkillDestinations(directory, {}, testPlatform),
+    ).toEqual({
       destinations: [],
       issues: [],
     });
@@ -194,10 +223,8 @@ describe("skill directory admission", () => {
       const directory = await createTestTempDirectory(
         "rea-skill-unreadable-reference-",
       );
-      expect((await installCanonicalSkill(directory, ["claude_code"])).ok).toBe(
-        true,
-      );
-      const [selected] = skillDestinations(directory, ["claude_code"]);
+      expect((await installSkill(directory, ["claude_code"])).ok).toBe(true);
+      const [selected] = destinationsOf(directory, ["claude_code"]);
       if (selected === undefined) throw new Error("Missing skill destination");
       const manifest = join(selected.path, "SKILL.md");
       if (manifestState === "stale")
@@ -209,9 +236,12 @@ describe("skill directory admission", () => {
       ].map((relative) => join(selected.path, relative));
       for (const reference of references) await chmod(reference, 0o000);
       try {
-        const identity = await readInstalledSkillIdentity(directory, [
-          "claude_code",
-        ]);
+        const identity = await readInstalledSkillIdentity(
+          directory,
+          ["claude_code"],
+          {},
+          testPlatform,
+        );
         const issues = references.map((path) =>
           expect.objectContaining({
             path,
@@ -246,7 +276,7 @@ describe("skill directory admission", () => {
     "refuses a linked skill %s before changing any selected destination",
     async (linkedDirectory) => {
       const home = await createTestTempDirectory("rea-skill-linked-root-");
-      const destinations = skillDestinations(home, ["shared", "claude_code"]);
+      const destinations = destinationsOf(home, ["shared", "claude_code"]);
       const selected = destinations.find(
         ({ client }) => client === "claude_code",
       );
@@ -267,10 +297,7 @@ describe("skill directory admission", () => {
         process.platform === "win32" ? "junction" : "dir",
       );
 
-      const result = await installCanonicalSkill(home, [
-        "shared",
-        "claude_code",
-      ]);
+      const result = await installSkill(home, ["shared", "claude_code"]);
       if (result.ok) throw new Error("Expected linked directory refusal");
       expect(result.error.stage).toBe("prepare");
       expect(result.error.path).toBe(linked);
@@ -342,7 +369,7 @@ describe("canonical skill transaction", () => {
 
   it("rolls back attempted writes independently and preserves original modes", async () => {
     const home = await createTestTempDirectory("rea-skill-rollback-failure-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = destinationsOf(home, []);
     if (destination === undefined) throw new Error("Missing shared skill root");
     const root = destination.path;
     const manifest = join(root, "SKILL.md");
@@ -422,7 +449,7 @@ describe("canonical skill discovery", () => {
       await writeFile(destination, original, { mode: 0o200 });
       try {
         await chmod(destination, 0o200);
-        const result = await installCanonicalSkill(home);
+        const result = await installSkill(home, []);
         if (result.ok) throw new Error("Expected unreadable skill failure");
         expect(result.error.stage).toBe("prepare");
       } finally {
@@ -466,19 +493,34 @@ describe("canonical skill discovery", () => {
     });
 
     expect(
-      await canonicalSkillNeedsInstall(home, ["claude_code"], {
-        CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
-      }),
+      await canonicalSkillNeedsInstall(
+        home,
+        ["claude_code"],
+        {
+          CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
+        },
+        testPlatform,
+      ),
     ).toBe(true);
     expect(
-      await installCanonicalSkill(home, ["claude_code"], {
-        CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
-      }),
+      await installCanonicalSkill(
+        home,
+        ["claude_code"],
+        {
+          CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
+        },
+        testPlatform,
+      ),
     ).toMatchObject({ ok: true, value: "installed" });
     expect(
-      await canonicalSkillNeedsInstall(home, ["claude_code"], {
-        CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
-      }),
+      await canonicalSkillNeedsInstall(
+        home,
+        ["claude_code"],
+        {
+          CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
+        },
+        testPlatform,
+      ),
     ).toBe(false);
     await expect(access(claudeSkill)).resolves.toBeUndefined();
     await expect(
@@ -510,24 +552,27 @@ describe("canonical skill discovery", () => {
     });
     const doctorScope = { clients: ["claude_code", "codex"], skill: true };
 
-    expect(
-      await installCanonicalSkill(home, ["claude_code", "codex"]),
-    ).toMatchObject({ ok: true, value: "installed" });
+    expect(await installSkill(home, ["claude_code", "codex"])).toMatchObject({
+      ok: true,
+      value: "installed",
+    });
     await rm(sharedSkill);
     expect(
       (await runDoctor(undefined, host, doctorScope)).identity?.skill.state,
     ).toBe("stale");
-    expect(
-      await installCanonicalSkill(home, ["claude_code", "codex"]),
-    ).toMatchObject({ ok: true, value: "installed" });
+    expect(await installSkill(home, ["claude_code", "codex"])).toMatchObject({
+      ok: true,
+      value: "installed",
+    });
     for (const skill of [sharedSkill, claudeSkill]) {
       await writeFile(skill, "selected copy changed\n");
       expect(
         (await runDoctor(undefined, host, doctorScope)).identity?.skill.state,
       ).toBe("stale");
-      expect(
-        await installCanonicalSkill(home, ["claude_code", "codex"]),
-      ).toMatchObject({ ok: true, value: "installed" });
+      expect(await installSkill(home, ["claude_code", "codex"])).toMatchObject({
+        ok: true,
+        value: "installed",
+      });
       expect(
         (await runDoctor(undefined, host, doctorScope)).identity?.skill.state,
       ).toBe("aligned");
@@ -554,8 +599,8 @@ describe("canonical skill transaction", () => {
     await writeFile(nativeGuide, "stale filesystem-write permission grant\n");
     await writeFile(sibling, "unrelated skill\n");
 
-    expect(await canonicalSkillNeedsInstall(home)).toBe(true);
-    expect(await installCanonicalSkill(home)).toMatchObject({
+    expect(await skillNeedsInstall(home, [])).toBe(true);
+    expect(await installSkill(home, [])).toMatchObject({
       ok: true,
       value: "installed",
     });
@@ -620,8 +665,8 @@ describe("canonical skill transaction", () => {
         "utf8",
       ),
     ).toContain("analyze_javascript_application");
-    expect(await canonicalSkillNeedsInstall(home)).toBe(false);
-    expect(await installCanonicalSkill(home)).toMatchObject({
+    expect(await skillNeedsInstall(home, [])).toBe(false);
+    expect(await installSkill(home, [])).toMatchObject({
       ok: true,
       value: "unchanged",
     });
@@ -630,7 +675,7 @@ describe("canonical skill transaction", () => {
 
   it("binds portable conformance to the generated skill bytes that setup installs", async () => {
     const home = await createTestTempDirectory("rea-skill-commitment-");
-    expect(await installCanonicalSkill(home)).toMatchObject({
+    expect(await installSkill(home, [])).toMatchObject({
       ok: true,
       value: "installed",
     });
@@ -638,6 +683,7 @@ describe("canonical skill transaction", () => {
       "SKILL.md",
       "references/android-applications.md",
       "references/connection-and-recovery.md",
+      "references/desktop-build.md",
       "references/environments.md",
       "references/evidence-workflows.md",
       "references/javascript-applications.md",
@@ -694,7 +740,7 @@ it("doctor verifies installed instructions and references even when metadata is 
   expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
     "missing",
   );
-  expect(await installCanonicalSkill(home)).toMatchObject({
+  expect(await installSkill(home, [])).toMatchObject({
     ok: true,
     value: "installed",
   });
@@ -711,7 +757,7 @@ it("doctor verifies installed instructions and references even when metadata is 
     expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
       "stale",
     );
-    expect(await installCanonicalSkill(home)).toMatchObject({
+    expect(await installSkill(home, [])).toMatchObject({
       ok: true,
       value: "installed",
     });
@@ -719,4 +765,27 @@ it("doctor verifies installed instructions and references even when metadata is 
       "aligned",
     );
   }
+});
+
+it("reads installed frontmatter metadata without treating body examples as identity", async () => {
+  const home = await createTestTempDirectory("rea-installed-metadata-");
+  const installed = await installSkill(home, ["claude_code"]);
+  expect(installed.ok).toBe(true);
+  const destination = destinationsOf(home, ["claude_code"])[0];
+  if (destination === undefined) throw new Error("Missing skill destination");
+  const manifest = join(destination.path, "SKILL.md");
+  await writeFile(
+    manifest,
+    "---\nname: reverse-engineer-anything\nmetadata:\n  version: '49'\n  tool_count: -1\n---\n\n```yaml\nmetadata:\n  version: \"counterfeit\"\n  tool_count: 42\n```\n",
+  );
+  expect(
+    await readInstalledSkillIdentity(home, ["claude_code"], {}, testPlatform),
+  ).toMatchObject({ version: "49", toolCount: null, canonical: false });
+  await writeFile(
+    manifest,
+    '---\nname: reverse-engineer-anything\n---\n\n```yaml\nmetadata:\n  version: "counterfeit"\n  tool_count: 42\n```\n',
+  );
+  expect(
+    await readInstalledSkillIdentity(home, ["claude_code"], {}, testPlatform),
+  ).toMatchObject({ version: null, toolCount: null, canonical: false });
 });

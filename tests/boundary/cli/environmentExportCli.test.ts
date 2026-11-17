@@ -46,13 +46,18 @@ cliTest(
         NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      details: { operation: "environment-export" },
+      code: "cleanup_incomplete",
+      details: {
+        operation: "environment-export",
+        cleanup: "incomplete",
+        resources: [files.manifestPath],
+        diagnostics: { input_path: files.manifestPath, input_role: "manifest" },
+        cleanup_reason: "controlled persistent close failure",
+      },
     });
-    expect(JSON.stringify(result.json)).toContain("cleanup");
     await expect(readFile(join(directory, "README.md"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -70,6 +75,38 @@ const BUNDLE_FILES = [
 ];
 
 cliTest(
+  "refuses unaddressable service names before writing a bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bundle-hostname-cli-");
+    const files = await writeEnvironmentServeFiles(root);
+    for (const name of ["4294967296", "123", "a".repeat(64)]) {
+      const directory = join(root, `bundle-${name}`);
+      const result = await cli.run({
+        arguments: [
+          "environment-export",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          directory,
+          "--name",
+          name,
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "environment-export",
+          issues: [{ path: ["name"] }],
+        },
+      });
+      await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  },
+);
+
+cliTest(
   "writes the bundle folder from the fixture pair and prints the written files with sizes",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-export-cli-");
@@ -84,7 +121,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
@@ -103,6 +139,8 @@ cliTest(
     expect(document.files.map((file) => file.path).sort()).toEqual(
       BUNDLE_FILES,
     );
+    for (const file of document.files)
+      expect(file.bytes).toBe((await stat(join(directory, file.path))).size);
     const written = (
       await readdir(directory, { recursive: true, withFileTypes: true })
     )
@@ -170,7 +208,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -212,7 +249,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -249,7 +285,6 @@ cliTest.skipIf(process.platform === "win32")(
         NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 30_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     for (const relative of BUNDLE_FILES) {
@@ -291,7 +326,6 @@ cliTest.skipIf(process.platform === "win32")(
         packagePath,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -346,7 +380,6 @@ cliTest.skipIf(HOST_PATH_MAX[process.platform] === undefined)(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

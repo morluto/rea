@@ -1,4 +1,4 @@
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
@@ -9,6 +9,13 @@ export interface ReferenceSourceGitDirectory {
   readonly commonDirectory: string;
 }
 
+/** A cancellation observed by the Git directory locator itself. */
+export class ReferenceSourceGitDirectoryCancelled extends Error {
+  constructor(readonly reason: unknown) {
+    super("Git directory lookup cancelled", { cause: reason });
+  }
+}
+
 /** Locate the nearest repository without running Git or following config includes. */
 export const locateReferenceSourceGitDirectory = async (
   root: string,
@@ -17,7 +24,8 @@ export const locateReferenceSourceGitDirectory = async (
 ): Promise<ReferenceSourceGitDirectory | undefined> => {
   let repository = root;
   for (;;) {
-    signal?.throwIfAborted();
+    if (signal?.aborted === true)
+      throw new ReferenceSourceGitDirectoryCancelled(signal.reason);
     const dotgit = join(repository, ".git");
     let metadata;
     try {
@@ -40,7 +48,7 @@ export const locateReferenceSourceGitDirectory = async (
     }
     // Derived joins and the Git library normalize paths lexically. Admit the
     // physical directory first, while the source pointer stays in its file.
-    const gitDirectory = await realpath(selectedGitDirectory);
+    const gitDirectory = await resolveGitDirectory(selectedGitDirectory);
     let common: string | undefined;
     try {
       common = (await readText(join(gitDirectory, "commondir"))).replace(
@@ -54,9 +62,25 @@ export const locateReferenceSourceGitDirectory = async (
     const commonDirectory =
       common === undefined
         ? gitDirectory
-        : await realpath(absoluteCallerPath(common, { cwd: gitDirectory }));
+        : await resolveGitDirectory(
+            absoluteCallerPath(common, { cwd: gitDirectory }),
+          );
     return { repository, gitDirectory, commonDirectory };
   }
+};
+
+const resolveGitDirectory = async (path: string): Promise<string> => {
+  // Darwin realpath can collapse file/.. even when native lookup rejects it.
+  // Admit the selected traversal before deriving paths for metadata consumers.
+  if (!(await stat(path)).isDirectory())
+    throw Object.assign(
+      new Error(`Git metadata path is not a directory: ${path}`),
+      {
+        code: "ENOTDIR",
+        path,
+      },
+    );
+  return realpath(path);
 };
 
 const hasCode = (cause: unknown, code: string): boolean =>

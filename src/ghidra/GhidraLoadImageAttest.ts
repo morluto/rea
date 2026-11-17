@@ -1,6 +1,6 @@
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -15,6 +15,10 @@ import {
   attestGhidraRawBinaryLoadImage,
 } from "./GhidraLoadImageValues.js";
 import { attestGhidraDolLoadImage } from "./GhidraDolLoadImage.js";
+import {
+  ghidraUnverifiedLoadImageReason,
+  isGhidraVerifiedLoadImageFormat,
+} from "./GhidraVerifiedLoadImageFormats.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import type { GhidraClient } from "./GhidraClient.js";
@@ -48,8 +52,7 @@ export const attestGhidraNativeLoadImage = async (
   if (!result.ok) return result;
   return input.signal?.aborted
     ? err(
-        new AnalysisCancelledError(input.operation, {
-          cause: input.signal.reason,
+        cancelledBy(input.operation, input.signal, {
           partialObservation: {
             kind: "native-load-image",
             stage: "completed",
@@ -64,7 +67,7 @@ const comparisonFailure = (
   input: NativeLoadImageAttestationInput,
   reason: string,
   cause?: unknown,
-): AnalysisError =>
+): ProviderAdapterError =>
   new ProviderAdapterError("ghidra", input.operation, {
     diagnostics: { reason },
     ...(cause === undefined ? {} : { cause }),
@@ -90,7 +93,7 @@ const compareLoadImage = async (
   // These formats have no additional source work; retain already-derived PE facts.
   if (
     target.format === "pe" ||
-    !["dos-mz", "dos-com", "raw-binary", "gamecube-dol"].includes(target.format)
+    !isGhidraVerifiedLoadImageFormat(target.format)
   ) {
     if (target.format === "pe" && nativeAotResult === undefined)
       return err(
@@ -101,8 +104,7 @@ const compareLoadImage = async (
       );
     const represented = nativeLoadImageSchema.safeParse({
       status: "unsupported",
-      reason:
-        "Independent load-image verification currently supports DOS MZ, explicit DOS COM, and caller-supplied raw-binary targets only.",
+      reason: ghidraUnverifiedLoadImageReason(),
       observations:
         target.format !== "pe" || nativeAotResult === undefined
           ? observations
@@ -131,8 +133,7 @@ const compareLoadImage = async (
   }
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      cancelledBy(operation, signal, {
         partialObservation: {
           kind: "native-load-image",
           stage: "measured",

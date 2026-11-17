@@ -9,6 +9,7 @@ upstream texts; they do not change [REA's MIT license](../LICENSE).
 | `npm-dependencies.txt`                                 | Every package path in the root lockfile, with its exact version, declared license, scope, download URL, and integrity. Includes development and optional platform entries.                                                                                                                |
 | `npm-runtime-notices.txt`                              | Original license, copyright, and NOTICE texts collected from integrity-verified locked runtime npm archives across all platforms; also the license of Rolldown's generated runtime helpers. The archive manifest's name and version are checked.                                          |
 | `protobuf-es-v2.16.0-LICENSE.txt`                      | Original Apache license omitted from the protobuf-es npm archive, preserved from its v2.16.0 source commit. Its embedded Google BSD notice is retained in `npm-runtime-notices.txt`.                                                                                                      |
+| `microsoft-uf2-MIT.txt`                                | Unchanged `LICENSE.txt` from microsoft/uf2 revision `cf3bd7f9c274b949528f8cd6a19eef2502a687d2`, for the UF2 family names copied from its `utils/uf2families.json`.                                                                                                                        |
 | `nativeaot-parser-MIT.txt`                             | Original Washi notice for derived NativeAOT parser code; source revision is recorded in the parser and the root notices.                                                                                                                                                                  |
 | `dotnet-runtime-MIT.txt`                               | Original .NET Foundation MIT text from the NativeAOT reference revision `a3b2d40328be0be3f8dd43f0e5cc925b8827b044`.                                                                                                                                                                       |
 | `ghidra-12.1.4-{LICENSE,NOTICE,DISCLAIMER}.txt`        | Unchanged top-level documents from `Ghidra_12.1.4_build`. Ghidra is not bundled; these reference copies do not replace its component and GPL support-program notices. The US-government-specific disclaimer applies to Ghidra, not to REA.                                                |
@@ -33,6 +34,11 @@ integrity and package identity, and read license/NOTICE/copyright documents
 without installing packages or executing lifecycle scripts. It includes
 optional platform packages that may not be present in one local installation.
 Temporary archives were removed after collection.
+
+The `incur@0.6.1` notice remains for the CLI code derived from that release,
+even though Incur is no longer an npm dependency. Its preserved MIT text and
+the copyright headers in the derived source remain unchanged. Other remaining
+runtime archive identities and notices are unchanged by this removal.
 
 For releases that omit original documents, the collection uses pinned upstream
 texts, embedded source/README license sections, or the same release's parent

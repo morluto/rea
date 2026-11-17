@@ -73,8 +73,11 @@ export const classifyFilesystemEffects = (
       const metadataChanged =
         beforeFile.type !== afterFile.type ||
         beforeFile.mode !== afterFile.mode ||
-        beforeFile.size !== afterFile.size ||
-        beforeFile.symlink_target !== afterFile.symlink_target;
+        beforeFile.size !== afterFile.size;
+      const beforeTarget =
+        beforeFile.type === "symlink" ? beforeFile.symlink_target_hex : null;
+      const afterTarget =
+        afterFile.type === "symlink" ? afterFile.symlink_target_hex : null;
       if (
         !metadataChanged &&
         beforeFile.type === "file" &&
@@ -92,7 +95,9 @@ export const classifyFilesystemEffects = (
       return {
         path,
         status:
-          metadataChanged || beforeFile.sha256 !== afterFile.sha256
+          metadataChanged ||
+          beforeTarget !== afterTarget ||
+          beforeFile.sha256 !== afterFile.sha256
             ? "modified"
             : "unchanged",
         before: beforeFile,

@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { resolve } from "node:path";
@@ -7,19 +8,17 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface PathInputCase {
   readonly name: string;
   readonly field: string;
   readonly valid: Readonly<Record<string, unknown>>;
   readonly invalid: Readonly<Record<string, unknown>>;
-  readonly issuePath?: readonly string[];
+  readonly issuePath: readonly string[];
 }
 
-const createMcp = async (
-  firmwareCalls: string[],
-  profile?: "full" | "compact",
-) => {
+const createMcp = async (firmwareCalls: string[], profile?: "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("Invalid path input must not acquire a binary provider");
   });
@@ -37,7 +36,10 @@ const createMcp = async (
       },
     },
   );
-  const client = new Client({ name: "absolute-path-schema", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-schema", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 
@@ -74,11 +76,14 @@ const standaloneAnalysisCases = (
 ): readonly PathInputCase[] =>
   [
     { name: "inspect_go_binary", input: {} },
+    { name: "inspect_recorded_crash", input: {} },
+    { name: "inspect_binary_layout", input: {} },
     { name: "inspect_rust_binary", input: {} },
     { name: "inspect_evm_interface", input: { encoding: "hex" } },
     { name: "inspect_sqlite_database", input: {} },
     { name: "inspect_pe_resources", input: {} },
     { name: "inspect_native_exports", input: {} },
+    { name: "inspect_elf_dependencies", input: {} },
     { name: "inspect_electron_fuses", input: {} },
     { name: "inspect_packet_capture", input: { fields: ["ip.addr"] } },
     {
@@ -102,10 +107,22 @@ const inputCases = (
     field: string,
     valid: Readonly<Record<string, unknown>>,
     invalid: Readonly<Record<string, unknown>>,
-  ): PathInputCase => ({ name, field, valid, invalid });
+  ): PathInputCase => ({
+    name,
+    field,
+    valid,
+    invalid,
+    issuePath: field.split("."),
+  });
 
   return [
     pathCase("open_binary", "path", { path: absolute }, { path: relative }),
+    pathCase(
+      "extract_artifact",
+      "output_root",
+      { output_root: absolute },
+      { output_root: relative },
+    ),
     pathCase(
       "analyze_javascript_application",
       "input_path",
@@ -129,6 +146,24 @@ const inputCases = (
       "path",
       { path: absolute },
       { path: relative },
+    ),
+    pathCase(
+      "import_evidence_bundle",
+      "path",
+      { path: absolute },
+      { path: relative },
+    ),
+    pathCase(
+      "compare_bundles",
+      "left_bundle_path",
+      { left_bundle_path: absolute, right_bundle_path: absolute },
+      { left_bundle_path: relative, right_bundle_path: absolute },
+    ),
+    pathCase(
+      "compare_bundles",
+      "right_bundle_path",
+      { left_bundle_path: absolute, right_bundle_path: absolute },
+      { left_bundle_path: absolute, right_bundle_path: relative },
     ),
     pathCase(
       "binary_session",
@@ -212,31 +247,66 @@ const inputCases = (
   ];
 };
 
-it("advertises full host-absolute path constraints after SDK schema conversion", async () => {
+it("advertises portable absolute-path constraints after SDK schema conversion", async () => {
   const firmwareCalls: string[] = [];
-  const { client, close } = await createMcp(firmwareCalls, "full");
+  const { client, close } = await createMcp(firmwareCalls, "compact");
   try {
     const listed = await client.listTools();
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const absolute = resolve("rea-absolute-input");
     const relative = "relative-input";
-
-    for (const { name, field, valid, invalid } of inputCases(
-      absolute,
-      relative,
-    )) {
-      const schema = listed.tools.find(
-        (tool) => tool.name === name,
-      )?.inputSchema;
-      if (schema === undefined)
+    const schemaCases = [
+      ...inputCases(absolute, relative),
+      {
+        name: "inspect_go_binary",
+        field: "path NUL",
+        valid: { path: absolute },
+        invalid: { path: `${absolute}\0` },
+      },
+      {
+        name: "import_evidence_bundle",
+        field: "path NUL",
+        valid: { path: absolute },
+        invalid: { path: `${absolute}\0` },
+      },
+      {
+        name: "compare_bundles",
+        field: "left_bundle_path empty",
+        valid: { left_bundle_path: absolute, right_bundle_path: absolute },
+        invalid: { left_bundle_path: "", right_bundle_path: absolute },
+      },
+      {
+        name: "compare_bundles",
+        field: "left_bundle_path NUL",
+        valid: { left_bundle_path: absolute, right_bundle_path: absolute },
+        invalid: {
+          left_bundle_path: `${absolute}\0`,
+          right_bundle_path: absolute,
+        },
+      },
+    ];
+    const checked: string[] = [];
+    for (const { name, field, valid, invalid } of schemaCases) {
+      if (!listed.tools.some((tool) => tool.name === name))
         throw new Error(`Missing advertised tool ${name}`);
-      const validate = ajv.compile(schema);
+      // The canonical projection keeps portable constraints; handlers enforce
+      // the executing host's stricter path rules.
+      const validate = ajv.compile(canonicalInputSchema(name));
       expect(validate(invalid), `${name}.${field}`).toBe(false);
       expect(
         validate(valid),
         `${name}.${field}: ${JSON.stringify(validate.errors)}`,
       ).toBe(true);
+      checked.push(`${name}.${field}`);
     }
+    expect(checked).toEqual(
+      expect.arrayContaining([
+        "open_binary.path",
+        "extract_firmware.output_directory",
+        "inspect_go_binary.path NUL",
+        "compare_bundles.left_bundle_path empty",
+      ]),
+    );
     expect(firmwareCalls).toEqual([]);
   } finally {
     await close();
@@ -247,19 +317,111 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];
   const { client, close } = await createMcp(firmwareCalls);
   try {
-    for (const { name, field, invalid, issuePath } of inputCases(
-      resolve("rea-absolute-input"),
-      "relative-input",
-    )) {
+    const cases = inputCases(resolve("rea-absolute-input"), "relative-input");
+    const checked: string[] = [];
+    for (const { name, field, invalid, issuePath } of cases) {
       const result = await client.callTool({ name, arguments: invalid });
       expect(result.isError, `${name}.${field}`).toBe(true);
-      expect(JSON.stringify(result), `${name}.${field}`).toContain("absolute");
-      if (issuePath !== undefined)
-        expect(parseMcpToolError(result).error.details).toMatchObject({
-          operation: name,
-          issues: [{ path: issuePath, reason: "invalid_format" }],
-        });
+      expect(parseMcpToolError(result).error, `${name}.${field}`).toMatchObject(
+        {
+          code: "invalid_request",
+          details: {
+            operation: name,
+            issues: [
+              expect.objectContaining({
+                path: issuePath,
+                reason: "invalid_format",
+                expected: "regex",
+              }),
+            ],
+          },
+        },
+      );
+      checked.push(`${name}.${field}`);
     }
+    expect(checked).toEqual(
+      expect.arrayContaining([
+        "open_binary.path",
+        "open_binary.snapshot_path",
+        "extract_firmware.path",
+        "extract_firmware.output_directory",
+        "inspect_analysis_view.source.path",
+        "capture_browser_scenario.browser.executable_path",
+        "capture_electron_scenario.application_root",
+      ]),
+    );
+    expect(firmwareCalls).toEqual([]);
+  } finally {
+    await close();
+  }
+});
+
+// advertisedDialect.test.ts proves no schema profile advertises the
+// surrogate escape; this case proves the handlers still refuse such paths.
+it("rejects unpaired surrogates through in-memory MCP handlers", async () => {
+  const firmwareCalls: string[] = [];
+  const { client, close } = await createMcp(firmwareCalls);
+  try {
+    const absolute = resolve("rea-absolute-input");
+    const cases = inputCases(absolute, `${absolute}\ud800`);
+    const checked: string[] = [];
+    for (const { name, field, invalid, issuePath } of cases) {
+      const result = await client.callTool({ name, arguments: invalid });
+      expect(result.isError, `${name}.${field}`).toBe(true);
+      expect(parseMcpToolError(result).error, `${name}.${field}`).toMatchObject(
+        {
+          code: "invalid_request",
+          details: {
+            operation: name,
+            issues: [
+              {
+                path: issuePath,
+                reason: "invalid_format",
+                expected: "regex",
+                message:
+                  "Local filesystem paths must contain well-formed Unicode",
+              },
+            ],
+          },
+        },
+      );
+      checked.push(`${name}.${field}`);
+    }
+    expect(checked).toEqual(
+      expect.arrayContaining([
+        "open_binary.path",
+        "open_binary.snapshot_path",
+        "extract_firmware.path",
+        "extract_firmware.output_directory",
+        "inspect_analysis_view.source.path",
+        "capture_browser_scenario.browser.executable_path",
+        "capture_electron_scenario.application_root",
+      ]),
+    );
+
+    // Disassembly symbols share the rule and its correction shape.
+    const symbol = await client.callTool({
+      name: "inspect_with_objdump",
+      arguments: {
+        path: absolute,
+        operation: "disassemble",
+        symbol: "main\ud800",
+      },
+    });
+    expect(symbol.isError).toBe(true);
+    expect(parseMcpToolError(symbol).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["symbol"],
+            reason: "invalid_format",
+            expected: "regex",
+            message: "Symbol must be well-formed Unicode.",
+          },
+        ],
+      },
+    });
     expect(firmwareCalls).toEqual([]);
   } finally {
     await close();

@@ -1,34 +1,58 @@
-import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
+import { completeOrUnknownCoverageSchema } from "../coverage.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
+import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
+  rustcCommitOmissionSchema,
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
+import { err, ok } from "../result.js";
 import {
-  canBorrowParsedJsonSnapshot,
-  freezeOwnedJsonTreeSnapshot,
-  isImmutableJsonSnapshot,
-} from "../immutableJson.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+  createAnalysisViewResultReader,
+  type AnalysisViewParent,
+} from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
+
+const RUST_BINARY_RUNTIME_UNKNOWN =
+  "Embedded dependency records do not authenticate build provenance or establish complete runtime dependencies or target behavior.";
+
+/** Unknowns owned by the Rust binary view. Other projections reuse them. */
+export const rustBinaryUnknowns = (
+  report: RustBinary,
+): {
+  readonly values: readonly string[];
+  readonly required: readonly string[];
+} => {
+  const metadata = report.auditable_metadata;
+  return {
+    required: [RUST_BINARY_RUNTIME_UNKNOWN],
+    values: [
+      RUST_BINARY_RUNTIME_UNKNOWN,
+      ...(metadata === null
+        ? [
+            "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
+          ]
+        : []),
+    ],
+  };
+};
 export const rustBinarySummarySchema = z.strictObject({
   bytes: count,
   format: rustBinarySchema.shape.format,
@@ -54,40 +78,17 @@ export const rustBinarySummarySchema = z.strictObject({
     .omit({ hashes: true })
     .extend({ hashes_count: count })
     .nullable(),
+  rustc_commit_omission: rustcCommitOmissionSchema.exactOptional(),
 });
 export const rustBinaryViewContextSchema = z.strictObject({
   source_coverage: z.strictObject({
     auditable_metadata_available: z.boolean(),
-    embedded_records: z.enum(["complete", "unknown"]),
+    embedded_records: completeOrUnknownCoverageSchema,
     runtime_dependencies: z.literal("unknown"),
   }),
 });
 
-// Exact immutable Evidence identity, not a path or a live-file result cache.
-// Mutable/merely frozen imports are validated normally; no failures are cached.
-const checkedReports = new WeakMap<object, RustBinary>();
-const parseReport = (
-  parent: AnalysisViewParent,
-): Result<RustBinary, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const known = reusable ? checkedReports.get(key) : undefined;
-  if (known !== undefined) return ok(known);
-  const parsed = parseAnalysisViewResult(rustBinarySchema, parent);
-  if (!parsed.ok) return parsed;
-  if (reusable) {
-    const report = canBorrowParsedJsonSnapshot(key, parsed.value)
-      ? key
-      : freezeOwnedJsonTreeSnapshot(parsed.value);
-    checkedReports.set(key, report);
-    return ok(report);
-  }
-  return parsed;
-};
+const parseReport = createAnalysisViewResultReader(rustBinarySchema);
 
 const summarize = (
   report: RustBinary,
@@ -114,6 +115,13 @@ const summarize = (
             cyclic_packages: metadata.cyclic_dependency_indices.length,
           },
         };
+  let compilerSummary: z.output<
+    typeof rustBinarySummarySchema
+  >["rustc_commit"] = null;
+  if (compiler !== null) {
+    const { hashes, ...facts } = compiler;
+    compilerSummary = { ...facts, hashes_count: hashes.length };
+  }
   return {
     format: report.format,
     architecture: report.architecture,
@@ -124,56 +132,42 @@ const summarize = (
       : { selected_slice: report.selected_slice }),
     bytes: artifact.bytes,
     auditable_metadata: section,
-    rustc_commit:
-      compiler === null
-        ? null
-        : {
-            evidence_kind: compiler.evidence_kind,
-            hashes_count: compiler.hashes.length,
-          },
+    rustc_commit: compilerSummary,
+    ...(report.rustc_commit_omission === undefined
+      ? {}
+      : { rustc_commit_omission: report.rustc_commit_omission }),
   };
 };
 
 /** Query owner-normalized facts without reopening a source or walking dependency paths. */
 export const projectRustBinaryView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "rust")
     return err(
       analysisViewInputError([
         {
           path: ["view"],
           reason: "invalid_value",
-          message: "Rust Evidence supports summary and rust views.",
+          message: "Rust Evidence supports summary, rust and cyclonedx views.",
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof rustBinaryViewRequestSchema>
+  >(view, "summary", "rust");
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
-  if (
-    subject == null ||
-    subject.local_path !== report.artifact.path ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
-    subject.format !== metadataReportSubjectFormat(report) ||
-    subject.architecture !==
-      (binaryMetadataArchitecture(report.architecture) ?? null)
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Rust parent subject must identify the report's exact artifact.",
-        },
-      ]),
-    );
+  const subject = requireMetadataReportSubject(
+    parent,
+    report,
+    "Rust parent subject must identify the report's exact artifact.",
+  );
+  if (!subject.ok) return subject;
   const metadata = report.auditable_metadata;
-  const unknown =
-    "Embedded dependency records do not authenticate build provenance or establish complete runtime dependencies or target behavior.";
+  const unknowns = rustBinaryUnknowns(report);
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_rust_binary" as const,
@@ -191,27 +185,29 @@ export const projectRustBinaryView = (
       "limitations",
     ),
     unknowns: boundedViewMessages(
-      [
-        unknown,
-        ...(metadata === null
-          ? [
-              "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
-            ]
-          : []),
-      ],
+      unknowns.values,
       parent.evidenceId,
       "unknowns",
-      [unknown],
+      unknowns.required,
     ),
   };
   const summary = summarize(report);
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
+    });
+  if (metadata === null)
+    return ok({
+      kind: "rust" as const,
+      view,
+      ...shared,
+      rust: summary,
+      page: { collection: view.collection, rows: [] },
+      coverage: unavailableViewCoverage(),
     });
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
@@ -222,7 +218,7 @@ export const projectRustBinaryView = (
     const versions =
       view.versions === undefined ? undefined : new Set(view.versions);
     const selected = selectViewRows(
-      metadata?.packages ?? [],
+      metadata.packages,
       view,
       (row, index) =>
         (indices?.has(index) ?? true) &&
@@ -244,11 +240,11 @@ export const projectRustBinaryView = (
       }),
     );
     return ok({
-      kind: "rust",
+      kind: "rust" as const,
       view,
       ...shared,
       rust: summary,
-      page: { collection: "packages", rows: selected.rows },
+      page: { collection: "packages" as const, rows: selected.rows },
       coverage: pageViewCoverage(
         view.offset,
         selected.rows.length,
@@ -261,7 +257,7 @@ export const projectRustBinaryView = (
   const to =
     view.to_indices === undefined ? undefined : new Set(view.to_indices);
   const selected = selectViewRows(
-    metadata?.dependency_edges ?? [],
+    metadata.dependency_edges,
     view,
     (row, index) =>
       (indices?.has(index) ?? true) &&
@@ -276,11 +272,11 @@ export const projectRustBinaryView = (
     }),
   );
   return ok({
-    kind: "rust",
+    kind: "rust" as const,
     view,
     ...shared,
     rust: summary,
-    page: { collection: "edges", rows: selected.rows },
+    page: { collection: "edges" as const, rows: selected.rows },
     coverage: pageViewCoverage(
       view.offset,
       selected.rows.length,

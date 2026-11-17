@@ -1,11 +1,13 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   ProviderProcessSupervisor,
   type ProcessDiagnosticBudget,
 } from "./ProviderProcess.js";
-import { redactCapturedTransportCredential } from "./ProviderDiagnosticRedaction.js";
+import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 
 it("retains final stderr between verified exit and output close during stop", async () => {
   const producer = Object.assign(new EventEmitter(), {
@@ -29,19 +31,33 @@ it("retains final stderr between verified exit and output close during stop", as
     },
   });
   const stopped = owner.stop();
-  expect(owner.stop()).toBe(stopped);
-  await started;
-  // Let cleanup observe exit before delivering the separately acknowledged output.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  producer.stderr.end("final launcher diagnostic");
-  producer.stdout.end();
-  producer.emit("close", 2, null);
-  await expect(stopped).resolves.toEqual({ status: "verified-cleanup" });
-  expect(owner.snapshot()).toMatchObject({
-    stderr: { text: "final launcher diagnostic" },
-    exitCode: 2,
-  });
-  expect(await owner.waitForOutputClose(0)).toBe(true);
+  await withVerifierCleanup(async () => {
+    expect(owner.stop()).toBe(stopped);
+    await awaitAcknowledgement(started, stopped, "process cleanup");
+    // Let cleanup observe exit before delivering the separately acknowledged output.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    producer.stderr.end("final launcher diagnostic");
+    producer.stdout.end();
+    producer.emit("close", 2, null);
+    await expect(stopped).resolves.toEqual({ status: "verified-cleanup" });
+    expect(owner.snapshot()).toMatchObject({
+      stderr: { text: "final launcher diagnostic" },
+      exitCode: 2,
+    });
+    expect(await owner.waitForOutputClose(0)).toBe(true);
+  }, [
+    () => {
+      producer.stderr.end();
+      producer.stdout.end();
+      if (!owner.observedOutputClose()) producer.emit("close", 2, null);
+    },
+    async () => {
+      await stopped;
+    },
+    () => owner.dispose(),
+    () => producer.stderr.destroy(),
+    () => producer.stdout.destroy(),
+  ]);
 });
 
 it("bounds late output retention and drain without changing verified cleanup", async () => {
@@ -105,7 +121,9 @@ it("retries process cleanup with capture attached until output closes", async ()
     },
   });
   await expect(owner.stop()).resolves.toMatchObject({ status: "incomplete" });
+  expect(owner.snapshot().stopRequested).toBe(true);
   producer.stderr.write("retained during retry");
+  producer.emit("exit", 0, null);
   fails = false;
   const retried = owner.stop();
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -113,6 +131,7 @@ it("retries process cleanup with capture attached until output closes", async ()
   producer.stdout.end();
   producer.emit("close", 0, null);
   await expect(retried).resolves.toEqual({ status: "verified-cleanup" });
+  expect(owner.snapshot().stopRequested).toBe(true);
   expect(owner.snapshot().stderr.text).toBe(
     "retained during retry and final tail",
   );
@@ -525,13 +544,9 @@ it.each(["stdout", "stderr"] as const)(
         observedBytes: Buffer.byteLength(token),
         text: token.slice(0, 8),
       });
-      expect(
-        redactCapturedTransportCredential(
-          scoped.snapshot[stream],
-          token,
-          "[REDACTED]",
-        ),
-      ).toBe("[REDACTED]");
+      expect(redactExplicitOutput(scoped.snapshot[stream], [token])).toBe(
+        "[REDACTED]",
+      );
     } finally {
       supervisor.dispose();
       producer.stdout.destroy();
@@ -752,9 +767,15 @@ it("unreferences process and stream handles when stop reports incomplete cleanup
   }
 });
 
-it.each(["close", "abort"] as const)(
-  "awaits output without a deadline until %s",
-  async (outcome) => {
+it.each([
+  { outcome: "close", timeoutMs: undefined },
+  { outcome: "abort", timeoutMs: undefined },
+  { outcome: "close", timeoutMs: 5000 },
+  { outcome: "abort", timeoutMs: 5000 },
+] as const)(
+  "releases output wait resources after $outcome with timeout $timeoutMs",
+  async ({ outcome, timeoutMs }) => {
+    vi.useFakeTimers();
     const producer = Object.assign(new EventEmitter(), {
       stdout: new PassThrough(),
       stderr: new PassThrough(),
@@ -770,7 +791,7 @@ it.each(["close", "abort"] as const)(
     const removeListener = vi.spyOn(controller.signal, "removeEventListener");
     let settled = false;
     const pending = owner
-      .waitForOutputClose(undefined, controller.signal)
+      .waitForOutputClose(timeoutMs, controller.signal)
       .then((result) => {
         settled = true;
         return result;
@@ -781,11 +802,13 @@ it.each(["close", "abort"] as const)(
       if (outcome === "close") producer.emit("close", 0, null);
       else controller.abort();
       expect(await pending).toBe(outcome === "close");
+      expect(vi.getTimerCount()).toBe(0);
       expect(removeListener).toHaveBeenCalledWith(
         "abort",
         expect.any(Function),
       );
     } finally {
+      vi.useRealTimers();
       removeListener.mockRestore();
       owner.dispose();
       producer.stdout.destroy();
@@ -850,6 +873,38 @@ it("marks a stop the owner requested before any signal it sends", async () => {
   expect(unowned.snapshot()).toMatchObject({ signal: "SIGKILL" });
   expect(unowned.snapshot()).not.toHaveProperty("stopRequested");
 
+  for (const ownsProcessLifetime of [false, true] as const) {
+    const exited = producer();
+    const finalized = new ProviderProcessSupervisor(
+      ownsProcessLifetime
+        ? {
+            process: exited,
+            ownsProcessLifetime: true,
+            cleanup: async () => ({ cleaned: true, signaled: false }),
+          }
+        : { process: exited, ownsProcessLifetime: false },
+    );
+    exited.emit("exit", null, "SIGKILL");
+    exited.stdout.end();
+    exited.stderr.end();
+    exited.emit("close", null, "SIGKILL");
+    await expect(finalized.stop()).resolves.toEqual({
+      status: ownsProcessLifetime ? "verified-cleanup" : "not-owned",
+    });
+    expect(finalized.snapshot()).toMatchObject({ signal: "SIGKILL" });
+    expect(finalized.snapshot()).not.toHaveProperty("stopRequested");
+  }
+
+  const borrowed = producer();
+  const observer = new ProviderProcessSupervisor({
+    process: borrowed,
+    ownsProcessLifetime: false,
+  });
+  await expect(observer.stop()).resolves.toEqual({ status: "not-owned" });
+  expect(observer.snapshot()).not.toHaveProperty("stopRequested");
+  borrowed.stdout.destroy();
+  borrowed.stderr.destroy();
+
   const stopped = producer();
   const owner = new ProviderProcessSupervisor({
     process: stopped,
@@ -869,4 +924,53 @@ it("marks a stop the owner requested before any signal it sends", async () => {
     signal: "SIGKILL",
     stopRequested: true,
   });
+});
+
+it("retains a stream's latest bytes in tail retention, with checkpoints over what remains", () => {
+  const producer = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    kill: () => false,
+  });
+  const supervisor = new ProviderProcessSupervisor(
+    { process: producer, ownsProcessLifetime: false },
+    {
+      maxDiagnosticBytes: { stdout: 0, stderr: 6 },
+      diagnosticRetention: "tail",
+    },
+  );
+  try {
+    const first = supervisor.checkpointOutput();
+    producer.stderr.write("abcd");
+    producer.stderr.write("efgh");
+    producer.stderr.write("ij");
+    expect(supervisor.snapshot()).toMatchObject({
+      diagnosticTruncated: true,
+      stderr: { text: "efghij", bytes: 6, observedBytes: 10 },
+    });
+    // Bytes before the retained tail are gone, so that range is incomplete.
+    expect(supervisor.snapshotOutputSince(first)).toMatchObject({
+      complete: false,
+      snapshot: { stderr: { text: "efghij" } },
+    });
+    const later = supervisor.checkpointOutput();
+    producer.stderr.write("kl");
+    expect(supervisor.snapshotOutputSince(later)).toMatchObject({
+      complete: true,
+      snapshot: { stderr: { text: "kl", bytes: 2 } },
+    });
+    // A character the cut would split is dropped whole, not decoded as U+FFFD.
+    producer.stderr.write(Buffer.from("é12345"));
+    expect(supervisor.snapshot().stderr).toEqual({
+      text: "12345",
+      bytes: 5,
+      observedBytes: 19,
+    });
+  } finally {
+    supervisor.dispose();
+    producer.stdout.destroy();
+    producer.stderr.destroy();
+  }
 });

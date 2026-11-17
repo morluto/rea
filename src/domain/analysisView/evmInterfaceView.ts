@@ -1,20 +1,24 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { evmInterfaceSchema } from "../evm/evmInterface.js";
-import { err, ok, type Result } from "../result.js";
+import { err, ok } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisTextPage } from "./analysisViewText.js";
+import {
+  analysisTextPage,
+  analysisTextPageItemSchema,
+} from "./analysisViewText.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 /** Retained inferred candidates or exact text; offsets for text count UTF-16 code units. */
 export const evmViewRequestSchema = z.strictObject({
@@ -26,7 +30,7 @@ export const evmViewRequestSchema = z.strictObject({
 
 export const evmViewItemSchema = z.union([
   evmInterfaceSchema.shape.functions,
-  z.strictObject({ text: z.string(), unit: z.literal("utf16-code-units") }),
+  analysisTextPageItemSchema,
 ]);
 
 /** Complete inferred interface facts without the unrequested hex or duplicated stdout. */
@@ -48,9 +52,12 @@ export const evmSummarySchema = z.strictObject({
 /** Select already authenticated producer facts; no interpreter or provider is invoked. */
 export const projectEvmInterfaceView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "evm")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof evmViewRequestSchema>
+  >(admitted, "summary", "evm");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -63,11 +70,11 @@ export const projectEvmInterfaceView = (
   const parsed = parseAnalysisViewResult(evmInterfaceSchema, parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  const subject = evidenceFileTarget(parent);
   if (
-    parent.subject == null ||
-    parent.subject.format !== "file" ||
-    parent.subject.local_path !== report.artifact.path ||
-    parent.subject.digest.sha256 !== report.artifact.sha256
+    subject == null ||
+    subject.format !== "file" ||
+    subject.sha256 !== report.artifact.sha256
   )
     return err(
       analysisViewInputError([
@@ -75,7 +82,7 @@ export const projectEvmInterfaceView = (
           path: ["source", "subject"],
           reason: "invalid_value",
           message:
-            "EVM parent subject must identify the report's exact carrier path and SHA-256.",
+            "EVM parent subject must identify the report's carrier format and SHA-256.",
         },
       ]),
     );
@@ -93,7 +100,7 @@ export const projectEvmInterfaceView = (
     const { hex: _hex, ...bytecode } = report.bytecode;
     const { stdout, ...diagnostics } = report.diagnostics;
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -106,16 +113,13 @@ export const projectEvmInterfaceView = (
         diagnostics: { ...diagnostics, stdout_code_units: stdout.length },
         limitations: report.limitations,
       },
-      coverage: completeWithinViewCoverage(
-        report.functions.length,
-        report.functions.length,
-      ),
+      coverage: completeWithinViewCoverage(report.functions.length),
     });
   }
   if (view.facet === "functions") {
     const item = report.functions.slice(view.offset, view.offset + view.limit);
     return ok({
-      kind: "evm",
+      kind: "evm" as const,
       view,
       item,
       ...shared,
@@ -131,5 +135,7 @@ export const projectEvmInterfaceView = (
       ? report.bytecode.hex
       : report.diagnostics[view.facet];
   const page = analysisTextPage(text, view.offset, view.limit, view.facet);
-  return page.ok ? ok({ kind: "evm", view, ...page.value, ...shared }) : page;
+  return page.ok
+    ? ok({ kind: "evm" as const, view, ...page.value, ...shared })
+    : page;
 };

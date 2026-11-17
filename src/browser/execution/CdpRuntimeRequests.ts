@@ -3,14 +3,15 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import type { CdpEvent } from "../CdpConnection.js";
-import {
-  runtimeRequestSchema,
-  runtimeStackSchema,
-} from "./CdpRuntimeProtocol.js";
+import type { CdpReceivedEvent } from "../CdpConnection.js";
+import { runtimeStackSchema } from "./CdpRuntimeProtocol.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 import { sanitizeRuntimeInitiator } from "./CdpRuntimeInitiator.js";
-import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
+import {
+  assertRuntimeRetention,
+  RuntimeRetention,
+} from "./CdpRuntimeRetention.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 type RuntimeRequestSources = Pick<
   CdpRuntimeSources,
@@ -28,19 +29,27 @@ type RuntimeRequestSources = Pick<
 export class CdpRuntimeRequests {
   readonly items: WebExecution["requests"] = [];
   excluded = 0;
-  #bytes = 0;
+  readonly #retention: RuntimeRetention;
   #failure: AnalysisError | undefined;
-  constructor(readonly sources: RuntimeRequestSources) {}
+  constructor(readonly sources: RuntimeRequestSources) {
+    this.#retention = new RuntimeRetention(
+      sources.session.operation,
+      "requests",
+    );
+  }
 
   /** Retain only armed-window requests from the selected main frame and selected origins. */
-  ingest(event: CdpEvent): void {
+  ingest(event: CdpReceivedEvent): void {
+    const registered = event.registered;
     if (
-      event.method !== "Network.requestWillBeSent" ||
+      registered?.method !== "Network.requestWillBeSent" ||
       this.#failure !== undefined
     )
       return;
     try {
-      const request = runtimeRequestSchema.parse(event.params);
+      const declaration = registered.payload.runtime;
+      if (!declaration.success) throw declaration.error;
+      const request = declaration.data;
       const url = sanitizeBrowserUrl(request.request.url);
       if (
         request.frameId !== this.sources.session.target.frame_id ||
@@ -98,12 +107,7 @@ export class CdpRuntimeRequests {
         async_parent_ids: parents,
         causal_attribution: "unknown",
       };
-      this.#bytes += Buffer.byteLength(JSON.stringify(retained));
-      assertRuntimeRetention(
-        this.sources.session.operation,
-        "requests",
-        this.#bytes,
-      );
+      this.#retention.charge(Buffer.byteLength(JSON.stringify(retained)));
       this.items.push(retained);
     } catch (cause: unknown) {
       this.#failure =
@@ -111,7 +115,7 @@ export class CdpRuntimeRequests {
           ? cause
           : new AnalysisOutputError(
               this.sources.session.operation,
-              cause instanceof Error ? cause.message : String(cause),
+              errorMessage(cause),
             );
     }
   }

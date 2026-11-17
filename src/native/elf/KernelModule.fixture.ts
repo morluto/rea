@@ -1,5 +1,3 @@
-import { MODULE_SIGNATURE_MAGIC } from "../../domain/native/kernelModule.js";
-
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
 
 const write16 = (
@@ -75,7 +73,13 @@ export const moduleSignatureTrailer = (
   const info = Buffer.alloc(12);
   info[2] = 2;
   info.writeUInt32BE(sigLen >>> 0, 8);
-  return concat(pkcs7, info, Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1"));
+  // Linux MODULE_SIG_STRING includes the final newline:
+  // https://code.googlesource.com/linux/torvalds/linux/+/78273df7f646f8daf2604ec714bea0897cd03aae/include/linux/module_signature.h
+  return concat(
+    pkcs7,
+    info,
+    Buffer.from("~Module signature appended~\n", "latin1"),
+  );
 };
 
 export interface KernelModuleFixtureOptions {
@@ -94,10 +98,11 @@ export interface KernelModuleFixtureOptions {
   readonly signature?: Buffer | null;
   /** Declare a second `.modinfo` section with the same bytes. */
   readonly repeatModinfo?: boolean;
-  /** Extra empty file-backed sections that share one name-table string. */
+  /** Extra file-backed sections that share one name-table string; empty by default. */
   readonly sharedNameSections?: {
     readonly name: string;
     readonly count: number;
+    readonly body?: Buffer;
   };
 }
 
@@ -165,7 +170,11 @@ export const kernelModuleFixture = (
   const shared = options.sharedNameSections;
   if (shared !== undefined)
     for (let index = 0; index < shared.count; index++)
-      bodies.push({ name: shared.name, type: 1, body: Buffer.alloc(0) });
+      bodies.push({
+        name: shared.name,
+        type: 1,
+        body: shared.body ?? Buffer.alloc(0),
+      });
   const labels = [
     ...new Set([...bodies.map((section) => section.name), ".shstrtab"]),
   ];

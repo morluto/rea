@@ -1,10 +1,10 @@
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
   managedTableRowCounts,
   type ManagedMetadataInventory,
-} from "./ManagedMetadataInventory.js";
+} from "../domain/managed/managedMetadataInventory.js";
 
 /** Shared artifact and token identity facts for successful managed PE projections. */
 export const managedPeInspectionEnvelope = (

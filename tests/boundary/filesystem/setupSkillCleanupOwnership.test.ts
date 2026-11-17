@@ -9,13 +9,10 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
-import {
-  runDoctorOwned,
-  type DoctorHost,
-} from "../../../src/application/Doctor.js";
+import { runDoctorOwned } from "../../../src/application/Doctor.js";
 import {
   readSkillFile,
   skillDestinations,
@@ -31,6 +28,8 @@ import {
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -96,7 +95,7 @@ describe("setup skill backup cleanup ownership", () => {
       if (stage !== "verification") await writeFile(backup, original);
       const close = failFirstCloses(backup);
       const host = systemSetupHost(
-        { platform: "linux", homeDirectory: home } as DoctorHost,
+        createDoctorHostFixture({ platform: "linux", homeDirectory: home }),
         { HOME: home },
       );
 
@@ -127,6 +126,7 @@ describe("setup skill backup cleanup ownership", () => {
           { approved: true, installHopper: false, structured: true },
           {
             ...host,
+            nodeVersion: "24.22.1",
             initialSetupState: async () => {
               throw primary;
             },
@@ -188,7 +188,7 @@ describe("skill regular-file cleanup ownership", () => {
     await writeFile(manifest, "stale managed skill\n");
     const close = failFirstCloses(manifest);
     const host = systemSetupHost(
-      { platform: "linux", homeDirectory: home } as DoctorHost,
+      createDoctorHostFixture({ platform: "linux", homeDirectory: home }),
       { HOME: home },
     );
 
@@ -221,20 +221,13 @@ describe("skill regular-file cleanup ownership", () => {
 
   it("waits for an admitted skill read before its resource scope closes", async () => {
     const home = await createTestTempDirectory("rea-setup-skill-inflight-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = skillDestinations(home, [], {}, process.platform);
     if (destination === undefined) throw new Error("Shared skill root missing");
     const manifest = join(destination.path, "SKILL.md");
     await mkdir(dirname(manifest), { recursive: true });
     await writeFile(manifest, "stale managed skill\n");
     const resources = new ArtifactResourceScope();
-    let beginRead!: () => void;
-    const readStarted = new Promise<void>((resolve) => {
-      beginRead = resolve;
-    });
-    let unblockRead!: () => void;
-    const readGate = new Promise<void>((resolve) => {
-      unblockRead = resolve;
-    });
+    const skillRead = phaseGate();
     let heldRead = false;
     openMock.mockImplementation(async (...args) => {
       const handle = await actualFs.open(...args);
@@ -242,37 +235,43 @@ describe("skill regular-file cleanup ownership", () => {
       heldRead = true;
       const nativeRead = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
-        beginRead();
-        await readGate;
+        await skillRead.hold();
         return nativeRead(...readArgs);
       });
       return handle;
     });
 
-    try {
-      const reading = readSkillFile(manifest, resources);
-      await readStarted;
+    const reading = readSkillFile(manifest, resources);
+    let closing: Promise<void> | undefined;
+    await withVerifierCleanup(async () => {
+      await skillRead.reached(reading, "skill read");
       let closed = false;
-      const closing = resources.close().then(() => {
+      closing = resources.close().then(() => {
         closed = true;
       });
       await Promise.resolve();
       expect(closed).toBe(false);
-      unblockRead();
+      skillRead.release();
       expect(await reading).toBe("stale managed skill\n");
       await closing;
       expect(closed).toBe(true);
-    } finally {
-      unblockRead();
-      await resources.close();
-    }
+    }, [
+      skillRead.release,
+      async () => {
+        await reading;
+      },
+      async () => {
+        await closing;
+      },
+      () => resources.close(),
+    ]);
   });
 });
 
 describe("skill cleanup diagnostics", () => {
   it("preserves read and host cleanup failures when doctor identity cannot complete", async () => {
     const home = await createTestTempDirectory("rea-doctor-skill-close-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = skillDestinations(home, [], {}, process.platform);
     if (destination === undefined) throw new Error("Shared skill root missing");
     const manifest = join(destination.path, "SKILL.md");
     await mkdir(dirname(manifest), { recursive: true });
@@ -330,7 +329,7 @@ describe("skill cleanup diagnostics", () => {
 
   it("returns uninstall changes with a failed cleanup item for a retained handle", async () => {
     const home = await createTestTempDirectory("rea-uninstall-skill-close-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = skillDestinations(home, [], {}, process.platform);
     if (destination === undefined) throw new Error("Shared skill root missing");
     const manifest = join(destination.path, "SKILL.md");
     await mkdir(dirname(manifest), { recursive: true });
@@ -352,11 +351,42 @@ describe("skill cleanup diagnostics", () => {
           detail: expect.stringContaining(manifest),
         }),
       );
+      expect(result.cleanup?.resources).toEqual([manifest]);
+      const primary = new ConfigurationError(
+        "Controlled uninstall discovery failure",
+        {
+          settings: [
+            { setting: "fixture", constraint: "Controlled primary failure" },
+          ],
+        },
+      );
+      const failure = await runUninstall(false, {
+        ...host,
+        clients: async () => {
+          throw primary;
+        },
+      }).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(AnalysisError);
+      if (!(failure instanceof AnalysisError))
+        throw new Error("Expected typed uninstall and cleanup failure");
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(failure.cleanupResources).toEqual([manifest]);
+      expect(failure.diagnostics?.primary_error).toEqual(
+        projectAnalysisError(primary),
+      );
       expect(close.attempts.length).toBeGreaterThan(0);
       expect(new Set(close.attempts).size).toBe(1);
       const attemptsBeforeClose = close.attempts.length;
       close.release();
       expect(await host.close?.()).toBeUndefined();
+      expect(result.cleanup).toBeUndefined();
+      expect(failure.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(failure)).toMatchObject(
+        projectAnalysisError(primary),
+      );
       expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
       expect(new Set(close.attempts).size).toBe(1);
       expect(close.attempts[0]?.fd).toBe(-1);

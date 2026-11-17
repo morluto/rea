@@ -30,6 +30,14 @@ cliTest.for([
   ],
   ["a loader that returns only cached exports", loaderSource(CACHE_HIT, ""), 0],
   ["a loader without returns", loaderSource("", ""), 0],
+  [
+    "a binding destructured from the canonical loader's result",
+    loaderSource(CACHE_HIT, "\n    return module.exports;").replace(
+      "new (n(45840).BrowserWindow)({});",
+      "var electron = n(45840); var { BrowserWindow } = electron; new BrowserWindow({});",
+    ),
+    1,
+  ],
 ] as const)(
   "attributes the BrowserWindow to Electron only through %s",
   async ([, source, windows], { cli }) => {

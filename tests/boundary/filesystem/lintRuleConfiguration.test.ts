@@ -1,5 +1,5 @@
 import { parse } from "@babel/parser";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect } from "vitest";
@@ -104,6 +104,16 @@ const cases: readonly AcceptanceCase[] = [
     `,
     exitCode: 0,
     diagnostics: [],
+  },
+  {
+    name: "rejects test-owned wait deadlines through the repository plugin",
+    filename: testSource,
+    source: `
+      import { expect } from "vitest";
+      await expect.poll(() => true, { timeout: 5_000 }).toBe(true);
+    `,
+    exitCode: 1,
+    diagnostics: [{ code: "rea(project-wait-deadline)", severity: "error" }],
   },
   {
     name: "rejects an unreturned promise callback containing assertions",
@@ -249,7 +259,6 @@ for (const scenario of cases) {
       ],
       {
         cwd: project,
-        timeoutMs: 15_000,
       },
     );
     expect(result.signal, result.stderr).toBeNull();
@@ -268,3 +277,42 @@ for (const scenario of cases) {
     }
   });
 }
+
+processTest(
+  "preserves portable regex escapes while fixing unnecessary ones",
+  async ({ processes }) => {
+    const project = await createTestTempDirectory("rea-lint-regex-fix-");
+    const configuration = await writeRepositoryOxlintConfiguration(project);
+    const path = join(project, applicationSource);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      String.raw`export const intentional = /[+\-]/u;
+export const unnecessary = /\!/;
+`,
+    );
+
+    const result = await processes.run(
+      process.execPath,
+      [
+        oxlint,
+        "--config",
+        configuration,
+        "--threads",
+        "1",
+        "--fix",
+        applicationSource,
+      ],
+      { cwd: project },
+    );
+    expect(result.signal, result.stderr).toBeNull();
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+
+    const fixed = await readFile(path, "utf8");
+    expect(fixed).toContain(String.raw`export const intentional = /[+\-]/u;`);
+    expect(fixed).toContain("export const unnecessary = /!/;");
+    const advertised = /intentional\s*=\s*\/(.+)\/u/u.exec(fixed)?.[1];
+    if (advertised === undefined) throw new Error("Fixed regex was not found");
+    expect(() => new RegExp(advertised, "v")).not.toThrow();
+  },
+);

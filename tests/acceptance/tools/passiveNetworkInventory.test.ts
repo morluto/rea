@@ -187,9 +187,13 @@ cliTest.for(cases)(
     await Promise.all(
       paths.map((path, index) => writeFile(path, serialized[index]!)),
     );
-    const response = await cli.run({
+    const options = {
       arguments: ["compare-web-captures", ...paths, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
+    };
+    const response = await cli.run({
+      ...options,
+      freshProcess: name === "added" || name === "removed",
     });
     expect(response.exitCode, response.stderr).toBe(0);
     expectComparison(response.json, name, change);

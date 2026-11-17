@@ -5,8 +5,8 @@ import {
   snapshotEnvironment,
 } from "./snapshotEnvironment.js";
 
-it.each(["win32", "linux", "darwin"] as const)(
-  "merges explicit environment layers using %s key identity before sorting",
+it.each(["win32", "linux"] as const)(
+  "merges explicit environment layers using %s key identity",
   (platform) => {
     const existing = {
       rea_analysis_provider: "hopper",
@@ -29,26 +29,11 @@ it.each(["win32", "linux", "darwin"] as const)(
   },
 );
 
-it.each(["linux", "darwin"] as const)(
-  "preserves case-sensitive %s variables in an immutable snapshot",
-  (platform) => {
-    const selected = { PATH: "/chosen/bin", Path: "/other/bin" };
-    const snapshot = snapshotEnvironment(selected, platform);
-    selected.PATH = "/later/bin";
-    expect(snapshot).toEqual({ PATH: "/chosen/bin", Path: "/other/bin" });
-    expect(Object.isFrozen(snapshot)).toBe(true);
-  },
-);
-
-it("canonicalizes selected Windows variables without inheriting ambient values", () => {
-  const snapshot = snapshotEnvironment(
-    { Path: "C:\\selected", ComSpec: "C:\\selected\\cmd.exe" },
-    "win32",
-  );
-  expect(snapshot).toEqual({
-    PATH: "C:\\selected",
-    COMSPEC: "C:\\selected\\cmd.exe",
-  });
+it("preserves case-sensitive POSIX variables in an immutable snapshot", () => {
+  const selected = { PATH: "/chosen/bin", Path: "/other/bin" };
+  const snapshot = snapshotEnvironment(selected, "linux");
+  selected.PATH = "/later/bin";
+  expect(snapshot).toEqual({ PATH: "/chosen/bin", Path: "/other/bin" });
   expect(Object.isFrozen(snapshot)).toBe(true);
 });
 

@@ -1,40 +1,20 @@
 import {
   inspectSignalDecodersInputSchema,
   signalDecodersSchema,
-  type InspectSignalDecodersInput,
 } from "../../domain/signals/signalDecoders.js";
-import type {
-  AnalysisExecution,
-  ExecutionOptions,
-} from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   decodeSignalRecordingInputSchema,
   signalRecordingSchema,
-  type DecodeSignalRecordingInput,
 } from "../../domain/signals/signalRecording.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-
-export interface SignalRecordingPort {
-  /** Release per-call resources before returning, or retain failed cleanup for close/retry. */
-  decode(
-    input: DecodeSignalRecordingInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  inspectDecoders(
-    input: InspectSignalDecodersInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  close(): Promise<void>;
-}
+import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { SignalRecordingPort } from "../../ports/signals/SignalRecordingPort.js";
 
 /** One shared validation and Evidence owner for CLI and MCP. */
 export class SignalRecordingService {
@@ -47,27 +27,23 @@ export class SignalRecordingService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "decode_signal_recording";
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
-    const input = decodeSignalRecordingInputSchema.safeParse(raw);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(operation, input.error.issues, raw, {
-          cause: input.error,
-        }),
-      );
-    const decoded = await this.provider.decode(input.data, options);
+    const input = parseAnalysisInput(
+      operation,
+      raw,
+      decodeSignalRecordingInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const decoded = await this.provider.decode(input.value, options);
     if (!decoded.ok) return decoded;
     const execution = decoded.value;
     const report = signalRecordingSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      execution.subject?.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
+      execution.subject?.path !== input.value.path ||
       execution.subject.sha256 !== report.data.artifact.sha256 ||
-      JSON.stringify(report.data.selection) !== JSON.stringify(input.data)
+      JSON.stringify(report.data.selection) !== JSON.stringify(input.value)
     )
       return err(
         new AnalysisOutputError(
@@ -78,7 +54,7 @@ export class SignalRecordingService {
     return completeProviderEvidence(
       createAnalysisExecutionEvidence(
         operation,
-        input.data,
+        input.value,
         execution,
         "observed",
       ),
@@ -90,24 +66,20 @@ export class SignalRecordingService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "inspect_signal_decoders";
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
-    const input = inspectSignalDecodersInputSchema.safeParse(raw);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(operation, input.error.issues, raw, {
-          cause: input.error,
-        }),
-      );
-    const decoded = await this.provider.inspectDecoders(input.data, options);
+    const input = parseAnalysisInput(
+      operation,
+      raw,
+      inspectSignalDecodersInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const decoded = await this.provider.inspectDecoders(input.value, options);
     if (!decoded.ok) return decoded;
     const execution = decoded.value;
     const report = signalDecodersSchema.safeParse(execution.result);
     if (
       !report.success ||
-      JSON.stringify(report.data.selection) !== JSON.stringify(input.data) ||
+      JSON.stringify(report.data.selection) !== JSON.stringify(input.value) ||
       execution.subject?.path !== report.data.tool.path ||
       execution.subject.sha256 !== report.data.tool.sha256
     )
@@ -120,7 +92,7 @@ export class SignalRecordingService {
     return completeProviderEvidence(
       createAnalysisExecutionEvidence(
         operation,
-        input.data,
+        input.value,
         execution,
         "observed",
       ),

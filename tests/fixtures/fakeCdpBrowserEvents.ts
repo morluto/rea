@@ -67,7 +67,7 @@ const emitMainWebMcpTools = (
         description: "Search orders; authorization=Bearer tool-secret",
         frameId: "frame-main",
         backendNodeId: 42,
-        inputSchema: options.webMcpInputSchema ?? {
+        inputSchema: {
           type: "object",
           properties: inputSchemaProperties,
           required: ["orderId"],
@@ -112,7 +112,7 @@ const emitMainWebMcpTools = (
       ...(options.webMcpFrameCount !== undefined && options.webMcpFrameCount > 0
         ? [
             {
-              name: "beyond_frame_limit_tool",
+              name: "last_frame_tool",
               description: "Registered in an in-scope frame after index 999",
               frameId: `webmcp-frame-${String(options.webMcpFrameCount - 1)}`,
             },
@@ -276,7 +276,7 @@ const emitSessionTimeline = (
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
       initiator: { type: "other" },
-      redirectResponse: { status: 302 },
+      redirectResponse: { url: allowed, status: 302 },
       timestamp: 13,
     });
     event(socket, "Network.requestWillBeSent", command.sessionId, {
@@ -726,9 +726,17 @@ const emitCaptureNavigation = (
       : command.method === "Page.captureScreenshot"
         ? options.navigateDuringScreenshotUrl
         : undefined;
+  // Page capture navigation reports its new document's loader, as Chrome
+  // does; the screenshot one omits it, leaving the document unproven.
   if (navigationUrl !== undefined)
     event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: { id: "frame-main", url: navigationUrl },
+      frame: {
+        id: "frame-main",
+        ...(command.method === "DOMSnapshot.captureSnapshot"
+          ? { loaderId: "loader-navigated" }
+          : {}),
+        url: navigationUrl,
+      },
     });
 };
 

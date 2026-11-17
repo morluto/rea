@@ -268,6 +268,50 @@ it("reports event-family selection mismatch as unknown", () => {
       ),
     }),
   );
+  for (const diff of both) {
+    expect(diff.reason?.match(/Event family selections differ/gu)).toHaveLength(
+      1,
+    );
+    expect(
+      diff.reason?.match(/Network content selections differ/gu),
+    ).toHaveLength(1);
+  }
+});
+
+it("reports a shared unknown redirect predecessor only once", () => {
+  const original = networkCapture(1, 0);
+  const capture = browserScenarioCaptureSchema.parse({
+    ...original,
+    events: {
+      ...original.events,
+      items: original.events.items.map((event) =>
+        event.kind === "request"
+          ? { ...event, redirected_from_transaction_state: "unknown" }
+          : event,
+      ),
+    },
+  });
+  const compare = (value: BrowserScenarioCapture) =>
+    compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: value,
+        after_scenario: value,
+      }),
+    );
+  expect(compare(original).overall_status).toBe("unchanged");
+  const result = compare(capture);
+  expect(result.overall_status).toBe("unknown");
+  const diffs = result.steps.flatMap((step) =>
+    step.artifact_diffs.filter((diff) => diff.artifact === "events"),
+  );
+  expect(diffs.length).toBeGreaterThan(0);
+  for (const diff of diffs) {
+    expect(diff.status).toBe("unknown");
+    expect(diff.before_sha256).toBe(diff.after_sha256);
+    expect(diff.reason).toMatch(
+      /redirect predecessor evidence.*missing.*network transaction identity.*unknown/iu,
+    );
+  }
 });
 
 const concurrentCapture = (
@@ -317,6 +361,7 @@ const concurrentCapture = (
   ).map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -377,6 +422,7 @@ const redirectChainCapture = (swapLeaves = false, reverseReceipt = false) => {
     .map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -401,6 +447,52 @@ describe("browser scenario network event order", () => {
     expect(compare(redirectChainCapture(true)).overall_status).toBe("changed");
   });
 
+  it("keeps duplicate request identities incomparable without dropping occurrences", () => {
+    const capture = concurrentCapture(["a", "b"], { a: 200, b: 404 });
+    const request = capture.events.items.find(
+      (event) => event.kind === "request",
+    );
+    if (request === undefined) throw new Error("Expected request fixture");
+    const ambiguous = browserScenarioCaptureSchema.parse({
+      ...capture,
+      events: {
+        ...capture.events,
+        retained: capture.events.retained + 1,
+        items: [
+          ...capture.events.items,
+          { ...request, sequence: capture.events.retained + 1, step_index: 1 },
+        ],
+      },
+    });
+    for (const [before_scenario, after_scenario] of [
+      [ambiguous, ambiguous],
+      [ambiguous, capture],
+      [capture, ambiguous],
+    ] as const) {
+      const input = compareBrowserScenariosInputSchema.parse({
+        before_scenario,
+        after_scenario,
+      });
+      const compared = compareBrowserScenarios(input);
+      expect(compared.overall_status).toBe("unknown");
+      expect(
+        compared.steps.flatMap((step) => step.artifact_diffs),
+      ).toContainEqual(
+        expect.objectContaining({
+          artifact: "events",
+          status: "unknown",
+          reason: expect.stringContaining("Multiple requests share"),
+        }),
+      );
+      expect(input.before_scenario.events.items).toEqual(
+        before_scenario.events.items,
+      );
+      expect(input.after_scenario.events.items).toEqual(
+        after_scenario.events.items,
+      );
+    }
+  });
+
   it("keeps missing and cyclic redirect ancestry incomparable", () => {
     for (const predecessor of ["missing", "middle-a", null]) {
       const capture = redirectChainCapture();
@@ -409,7 +501,8 @@ describe("browser scenario network event order", () => {
           ? {
               ...event,
               redirected_from_transaction_id: predecessor,
-              redirected_from_transaction_state: undefined,
+              redirected_from_transaction_state:
+                predecessor === null ? ("unknown" as const) : undefined,
             }
           : event,
       );
@@ -518,6 +611,7 @@ describe("browser scenario network comparison stability", () => {
               kind: "request",
               transaction_id: "orphan-request",
               redirected_from_transaction_id: null,
+              redirected_from_transaction_state: "unknown",
               method: "GET",
               url: {
                 url: "https://app.example.test/orphan",
@@ -932,7 +1026,7 @@ describe("browser scenario comparison validation", () => {
     ).toBe(false);
   });
 
-  it("returns every aligned step beyond the former capture ceiling", () => {
+  it("returns every aligned step of long scenarios", () => {
     const before = multiStepScenarioCapture(130, "before");
     const after = multiStepScenarioCapture(130, "after");
     const result = compareBrowserScenarios(
@@ -982,6 +1076,61 @@ describe("browser scenario comparison validation", () => {
           step_id: "open-settings",
         }),
       ]),
+    });
+  });
+
+  const duplicateLastStepCapture = () => {
+    const base = scenarioCapture({});
+    return {
+      ...base,
+      scenario: { ...base.scenario, action_count: 2 },
+      steps: [...base.steps, { ...base.steps[1]!, step_index: 2 }],
+    };
+  };
+
+  it("keeps a duplicated step id unaligned without classifying it as absent", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: duplicateLastStepCapture(),
+        after_scenario: scenarioCapture({}),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_before_step_id",
+          step_id: "open-settings",
+        }),
+      ],
+    });
+  });
+
+  it("mirrors the duplicate classification when the later capture repeats the id", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: scenarioCapture({}),
+        after_scenario: duplicateLastStepCapture(),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_after_step_id",
+          step_id: "open-settings",
+        }),
+      ],
     });
   });
 

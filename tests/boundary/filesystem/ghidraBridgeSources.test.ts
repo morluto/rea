@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import {
   chmod,
-  copyFile,
   cp,
   mkdir,
   readFile,
@@ -22,6 +21,7 @@ import {
   SUPPORTED_GHIDRA_VERSION,
 } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const execute = promisify(execFile);
 
@@ -46,6 +46,7 @@ const installation = async (
     javac,
     [
       "#!/bin/sh",
+      'printf "invoked\\n" >> "$REA_JAVAC_MARKER"',
       'if [ "$1" = "-version" ]; then echo "javac 21.0.12"; exit 0; fi',
       ...(compilerStatus === 0
         ? ["exit 0"]
@@ -60,8 +61,10 @@ const installation = async (
   await mkdir(scratchParent);
   return {
     scratchParent,
+    javacMarker: join(root, "javac-invocations"),
     environment: {
       ...process.env,
+      REA_JAVAC_MARKER: join(root, "javac-invocations"),
       GHIDRA_INSTALL_DIR: install,
       JAVA_HOME: javaHome,
       TMPDIR: scratchParent,
@@ -102,7 +105,7 @@ const admissionCases: readonly AdmissionCase[] = [
   {
     name: "malformed Unicode escape",
     properties: "application.version=12.1.4\nother=\\u00xx\n",
-    error: "Malformed Unicode escape in Java properties file",
+    error: "malformed_unicode_escape",
   },
 ];
 
@@ -145,16 +148,11 @@ it.skipIf(process.platform === "win32").each([
   "rejects a $action launcher source before compilation: $source",
   async ({ source, action }) => {
     const repository = await createTestTempDirectory("rea-ghidra-source-set-");
-    await mkdir(join(repository, "scripts"));
-    await mkdir(join(repository, "src/ghidra"), { recursive: true });
     await writeFile(join(repository, "package.json"), '{"type":"module"}\n');
-    for (const path of [
-      "scripts/verify-ghidra-bridge-sources.mjs",
-      "src/ghidra/GhidraBridgeSources.ts",
-      "src/ghidra/GhidraJavaProperties.ts",
-      "src/ghidra/GhidraReleasePolicy.ts",
-    ])
-      await copyFile(resolve(path), join(repository, path));
+    await copyScriptsWithImports(
+      ["scripts/verify-ghidra-bridge-sources.mjs"],
+      repository,
+    );
     await cp(resolve("bridge/ghidra"), join(repository, "bridge/ghidra"), {
       recursive: true,
     });
@@ -193,6 +191,9 @@ it.skipIf(process.platform === "win32").each([
       ),
     });
     expect(await readdir(fixture.scratchParent)).toEqual([]);
+    await expect(readFile(fixture.javacMarker)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
 

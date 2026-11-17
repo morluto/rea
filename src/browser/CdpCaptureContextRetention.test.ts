@@ -1,15 +1,29 @@
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { describe, expect, it } from "vitest";
 
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
 import {
   ingestElectronScriptEvent,
   type ElectronScriptDraft,
 } from "./CdpElectronScriptEvents.js";
+import { receiveCdpEvent, type CdpEvent } from "./CdpConnection.js";
+
+/** Deliver one producer event as the connection does, parsed by its registered schema. */
+const ingest = (events: CdpCaptureEvents, event: CdpEvent): void =>
+  events.ingest(receiveCdpEvent(event));
 
 describe("CDP execution-context retention", () => {
   it.each([
+    {
+      frameId: "",
+      hasSourceURL: true,
+      expectedFrame: null,
+      expectedLabel: true,
+    },
     {
       frameId: "frame-other",
       hasSourceURL: true,
@@ -27,8 +41,9 @@ describe("CDP execution-context retention", () => {
     ({ frameId, hasSourceURL, expectedFrame, expectedLabel }) => {
       const scripts: ElectronScriptDraft[] = [];
       const completeness = new CdpCaptureCompleteness();
+      const retention = { bytes: 2 };
       ingestElectronScriptEvent({
-        event: {
+        event: receiveCdpEvent({
           method: "Debugger.scriptParsed",
           params: {
             scriptId: "script",
@@ -37,10 +52,12 @@ describe("CDP execution-context retention", () => {
             executionContextAuxData: { frameId },
             hasSourceURL,
           },
-        },
+        }),
         scripts,
-        retention: { bytes: 2 },
-        executionContextFrames: new Map([["7", "frame-main"]]),
+        retention,
+        executionContextFrames: new Map<string, CdpContextFrameClaim>([
+          ["7", { state: "observed", frameId: "frame-main" }],
+        ]),
         completeness,
       });
       expect(scripts[0]).toMatchObject({
@@ -51,6 +68,9 @@ describe("CDP execution-context retention", () => {
           execution_context_frame_id: "frame-main",
         },
       });
+      expect(retention.bytes).toBe(
+        jsonValueByteLength(scripts.map((script) => ({ ...script }))),
+      );
       expect(completeness.snapshot().excluded).toContainEqual({
         section: "scripts",
         reason: "invalid_protocol_value",
@@ -68,16 +88,18 @@ describe("CDP execution-context retention", () => {
       request,
       new Set(["https://app.example.test"]),
     );
-    browser.beginAuthorizedFrame("frame-old");
-    browser.ingest({
+    browser.beginAuthorizedFrame(
+      new CdpTargetDocument({ frameId: "frame-old" }),
+    );
+    ingest(browser, {
       method: "Runtime.executionContextCreated",
       params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
     });
-    browser.ingest({
+    ingest(browser, {
       method: "Runtime.executionContextDestroyed",
       params: { executionContextId: 7 },
     });
-    browser.ingest({
+    ingest(browser, {
       method: "Debugger.scriptParsed",
       params: {
         scriptId: "script-1",
@@ -89,21 +111,24 @@ describe("CDP execution-context retention", () => {
     if (script === undefined) throw new TypeError("Expected captured script");
     expect(browser.frameForScript(script, new Set(["frame-old"]))).toBeNull();
 
-    const electronFrames = new Map<string, string>();
+    const electronFrames = new Map<string, CdpContextFrameClaim>();
     const retention = { bytes: 2 };
     const completeness = new CdpCaptureCompleteness();
     ingestElectronScriptEvent({
-      event: {
+      event: receiveCdpEvent({
         method: "Runtime.executionContextCreated",
         params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
-      },
+      }),
       scripts: [],
       retention,
       executionContextFrames: electronFrames,
       completeness,
     });
     ingestElectronScriptEvent({
-      event: { method: "Runtime.executionContextsCleared", params: {} },
+      event: receiveCdpEvent({
+        method: "Runtime.executionContextsCleared",
+        params: {},
+      }),
       scripts: [],
       retention,
       executionContextFrames: electronFrames,
@@ -111,7 +136,9 @@ describe("CDP execution-context retention", () => {
     });
     expect(electronFrames.size).toBe(0);
   });
+});
 
+describe("CDP script frame attribution", () => {
   it("keeps a script on the frame stored when it was parsed", () => {
     const request = inspectWebPageInputSchema.parse({
       cdp_endpoint: "http://127.0.0.1:9222",
@@ -122,13 +149,17 @@ describe("CDP execution-context retention", () => {
       request,
       new Set(["https://app.example.test"]),
     );
-    browser.beginAuthorizedFrame("frame-old");
-    browser.beginAuthorizedFrame("frame-new");
-    browser.ingest({
+    browser.beginAuthorizedFrame(
+      new CdpTargetDocument({ frameId: "frame-old" }),
+    );
+    browser.beginAuthorizedFrame(
+      new CdpTargetDocument({ frameId: "frame-new" }),
+    );
+    ingest(browser, {
       method: "Runtime.executionContextCreated",
       params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
     });
-    browser.ingest({
+    ingest(browser, {
       method: "Debugger.scriptParsed",
       params: {
         scriptId: "script-1",
@@ -136,7 +167,7 @@ describe("CDP execution-context retention", () => {
         executionContextId: 7,
       },
     });
-    browser.ingest({
+    ingest(browser, {
       method: "Runtime.executionContextCreated",
       params: { context: { id: 7, auxData: { frameId: "frame-new" } } },
     });
@@ -147,3 +178,111 @@ describe("CDP execution-context retention", () => {
     ).toBe("frame-old");
   });
 });
+
+it.each([
+  {
+    name: "missing auxiliary data",
+    replacement: { id: 7 },
+    expectedClaim: { state: "missing", frameId: undefined },
+  },
+  {
+    name: "missing frame",
+    replacement: { id: 7, auxData: {} },
+    expectedClaim: { state: "missing", frameId: undefined },
+  },
+  {
+    name: "empty frame",
+    replacement: { id: 7, auxData: { frameId: "" } },
+    expectedClaim: { state: "invalid", frameId: "" },
+  },
+  {
+    name: "null frame",
+    replacement: { id: 7, auxData: { frameId: null } },
+    expectedClaim: { state: "invalid", frameId: undefined },
+  },
+  {
+    name: "numeric frame",
+    replacement: { id: 7, auxData: { frameId: 42 } },
+    expectedClaim: { state: "invalid", frameId: undefined },
+  },
+  {
+    name: "malformed auxiliary data",
+    replacement: { id: 7, auxData: null },
+    expectedClaim: { state: "invalid", frameId: undefined },
+  },
+])(
+  "removes reused context authority after $name without rebinding earlier scripts",
+  ({ replacement, expectedClaim }) => {
+    const browser = new CdpCaptureEvents(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        allowed_origins: ["https://app.example.test"],
+        target_id: "page-1",
+      }),
+      new Set(["https://app.example.test"]),
+    );
+    browser.beginAuthorizedFrame(
+      new CdpTargetDocument({ frameId: "frame-old" }),
+    );
+    const scripts: ElectronScriptDraft[] = [];
+    const executionContextFrames = new Map<string, CdpContextFrameClaim>();
+    const completeness = new CdpCaptureCompleteness();
+    const retention = { bytes: 2 };
+    const events = [
+      {
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
+      },
+      {
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: "before",
+          url: "https://app.example.test/app.js",
+          executionContextId: 7,
+        },
+      },
+      {
+        method: "Runtime.executionContextCreated",
+        params: { context: replacement },
+      },
+      {
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: "after",
+          url: "https://app.example.test/app.js",
+          executionContextId: 7,
+        },
+      },
+    ];
+    for (const event of events) {
+      ingest(browser, event);
+      ingestElectronScriptEvent({
+        event: receiveCdpEvent(event),
+        scripts,
+        executionContextFrames,
+        completeness,
+        retention,
+      });
+    }
+    const before = browser.scripts.get("before");
+    const after = browser.scripts.get("after");
+    if (before === undefined || after === undefined)
+      throw new Error("Expected both script records");
+    expect(browser.frameForScript(before, new Set(["frame-old"]))).toBe(
+      "frame-old",
+    );
+    expect(browser.frameForScript(after, new Set(["frame-old"]))).toBeNull();
+    expect(after.frameId).toBeNull();
+    expect(
+      scripts.map(({ scriptId, frameId }) => ({ scriptId, frameId })),
+    ).toEqual([
+      { scriptId: "before", frameId: "frame-old" },
+      { scriptId: "after", frameId: null },
+    ]);
+    expect(executionContextFrames.get("7")).toEqual(expectedClaim);
+    expect(browser.executionContextFrames.get("7")).toEqual(expectedClaim);
+    expect(retention.bytes).toBe(
+      jsonValueByteLength(scripts.map((script) => ({ ...script }))),
+    );
+  },
+);

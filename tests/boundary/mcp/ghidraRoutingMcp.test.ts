@@ -1,6 +1,9 @@
+import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
-import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { ok } from "../../../src/domain/result.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 
@@ -75,5 +78,78 @@ describe("Ghidra MCP capability routing", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
+
+  it("keeps a Ghidra null-pseudocode observation's limitations on its batch item", async () => {
+    const bodyless = "0x401020";
+    const caveat =
+      "Ghidra Listing shows a terminal call at 0x401020 without a return.";
+    const harness = await connectGhidraMcp(
+      "ghidra-batch-null",
+      (operation, input) =>
+        Promise.resolve(
+          ok(
+            operation === "procedure_address"
+              ? String(input.procedure)
+              : operation === "procedure_pseudo_code" &&
+                  input.procedure === bodyless
+                ? { value: null, limitations: [caveat] }
+                : ghidraFixtureResult(operation, input),
+          ),
+        ),
+    );
+    try {
+      const direct = await harness.mcp.callTool({
+        name: "procedure_pseudo_code",
+        arguments: { procedure: bodyless },
+      });
+      expect(direct.isError).not.toBe(true);
+      const observed = parseEvidence(direct.structuredContent);
+      expect(observed.normalized_result).toBeNull();
+      expect(observed.limitations).toContain(caveat);
+
+      const batch = await harness.mcp.callTool({
+        name: "batch_decompile",
+        arguments: { addresses: ["0x401000", bodyless] },
+      });
+      expect(batch.isError).not.toBe(true);
+      const result = batchDecompileResultSchema.parse(
+        toolContract("batch_decompile").outputSchema.parse(
+          batch.structuredContent,
+        ).normalized_result,
+      );
+      // The successful item keeps its own observation's caveats (#8350).
+      const answered = parseEvidence(
+        (
+          await harness.mcp.callTool({
+            name: "procedure_pseudo_code",
+            arguments: { procedure: "0x401000" },
+          })
+        ).structuredContent,
+      );
+      const answeredLimitations = [...new Set(answered.limitations)];
+      if (answeredLimitations.length === 0)
+        expect(result.items[0]).not.toHaveProperty("limitations");
+      else
+        expect(result.items[0]).toMatchObject({
+          limitations: answeredLimitations,
+        });
+      expect(result).toEqual({
+        items: [
+          expect.objectContaining({ address: "0x401000", status: "ok" }),
+          expect.objectContaining({
+            address: bodyless,
+            status: "unavailable",
+            reason: "no_pseudocode",
+            limitations: [...new Set(observed.limitations)],
+          }),
+        ],
+        total: 2,
+        succeeded: 1,
+        failed: 1,
+      });
+    } finally {
+      await harness.close();
+    }
+  });
 });

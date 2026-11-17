@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
@@ -11,6 +13,7 @@ import {
   type ProviderProcessHandle,
 } from "../../../src/process/ProviderProcess.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import {
   createRizinTestManager,
@@ -143,6 +146,68 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   return provider;
 };
+
+it.skipIf(process.platform === "win32")(
+  "aborts an in-flight Rizin start as owner-closed when the manager closes",
+  async () => {
+    const rizinSpawn = phaseArrival();
+    const manager = new RizinDebugSessionManager(process.env, {
+      platform: "linux",
+      // Ownership preparation that only an abort of the start ends.
+      spawnProcess: (options) =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+          rizinSpawn.arrive();
+        }),
+    });
+    managers.push(manager);
+    const starting = manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    await rizinSpawn.reached(starting, "Rizin spawn");
+
+    await manager.closeAll();
+    const started = await starting;
+    expect(started).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: OwnerCancellation.ownerClosed,
+      },
+    });
+  },
+);
+
+it("refuses a Rizin start made after closeAll began as owner-closed, keeping a caller's own abort reason", async () => {
+  const manager = new RizinDebugSessionManager(process.env, {
+    platform: "linux",
+    spawnProcess: () => {
+      throw new Error("a refused start must not spawn Rizin");
+    },
+  });
+  managers.push(manager);
+  await manager.closeAll();
+  const input = { path: "/tmp/fixture.bin", inferior_tty: "/dev/null" };
+  await expect(manager.start(input)).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
+    },
+  });
+  const caller = new AbortController();
+  const reason = new Error("caller stopped waiting");
+  caller.abort(reason);
+  await expect(manager.start(input, caller.signal)).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cause: reason },
+  });
+});
 
 it("keeps persistent Rizin sessions unavailable on Windows", async () => {
   const rizin = await createRizinTestManager(
@@ -444,8 +509,10 @@ process.stdin.on("data", (chunk) => {
         },
       });
     if (executed.ok)
-      expect(executed.value.evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(executed.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
   },
 );
@@ -604,10 +671,10 @@ process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 40 },
-    );
+    const manager = createRizinTestManager({
+      REA_RIZIN_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+    });
     managers.push(manager);
     const started = await manager.start({
       path: "/tmp/fixture.bin",
@@ -664,10 +731,10 @@ process.stdin.on("data", (chunk) => {
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 5_000 },
-    );
+    const manager = createRizinTestManager({
+      REA_RIZIN_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "5000",
+    });
     managers.push(manager);
     const callerSelectedPath = "./cancelled/../fixture.bin";
     const resolvedPath = absoluteCallerPath(callerSelectedPath);
@@ -678,13 +745,16 @@ process.stdin.on("data", (chunk) => {
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
-
-    const result = await manager.execute(
+    const pending = manager.execute(
       started.value.session_id,
       "slow",
       controller.signal,
     );
+    await expect
+      .poll(() => manager.status(started.value.session_id)?.output_invalid_utf8)
+      .toBe(true);
+    controller.abort();
+    const result = await pending;
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -748,17 +818,34 @@ it.skipIf(process.platform === "win32")(
       `#!/usr/bin/env node\nprocess.stdin.resume();\nsetInterval(() => {}, 1000);\n`,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager({
-      REA_RIZIN_COMMAND: provider,
-    });
+    const rizinSpawn = phaseArrival();
+    const manager = createRizinTestManager(
+      { REA_RIZIN_COMMAND: provider },
+      {
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          rizinSpawn.arrive();
+          return launched;
+        },
+      },
+    );
     managers.push(manager);
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
-
-    const started = await manager.start(
+    const starting = manager.start(
       { path: "/tmp/fixture.bin", inferior_tty: await rizinTestInferiorTty() },
       controller.signal,
     );
+    const started = await withVerifierCleanup(async () => {
+      await rizinSpawn.reached(starting, "Rizin spawn");
+      controller.abort();
+      return await starting;
+    }, [
+      () => controller.abort(),
+      async () => {
+        await starting;
+      },
+      () => manager.closeAll(),
+    ]);
 
     expect(started.ok).toBe(false);
     if (!started.ok) expect(started.error._tag).toBe("AnalysisCancelledError");
@@ -842,6 +929,7 @@ process.stdin.on("data", (chunk) => {
           }
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "owned output writer is still active",
           };
         },
@@ -884,8 +972,8 @@ process.stdin.on("data", (chunk) => {
       const partialEvidence = evidenceSchema.parse(
         exited.error.partialObservation,
       );
-      expect(partialEvidence.limitations.join(" ")).toContain(
-        "Rizin exited before the command-completion marker; retained frame output is partial and command completion is unknown.",
+      expect(partialEvidence.limitations.join(" ")).toMatch(
+        /Rizin exited.*output is partial.*completion is unknown/iu,
       );
     }
     const writerPid = Number(await readFile(writerPidPath, "utf8"));

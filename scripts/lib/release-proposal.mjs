@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, relative } from "node:path";
+import { dirname, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { requireCompleteReleaseHistory } from "./release-notes.mjs";
+import { readMergedReleasePullRequest } from "./release-pull-request.mjs";
 
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -12,6 +13,15 @@ const project = fileURLToPath(new URL("../../", import.meta.url));
 const patch = fileURLToPath(
   new URL("../../patches/release-please+17.3.0.patch", import.meta.url),
 );
+
+export function describeReleaseProposalError(error) {
+  if (!(error instanceof Error)) return String(error);
+  const description = error.message || error.name || "Unknown error";
+  const status = error.status;
+  return Number.isInteger(status) && status >= 400 && status <= 599
+    ? `${description} (HTTP ${status})`
+    : description;
+}
 
 export async function applyReleasePleasePatch(
   directory = dirname(require.resolve("release-please/package.json")),
@@ -24,7 +34,13 @@ export async function applyReleasePleasePatch(
       "The release proposal patch requires release-please 17.3.0",
     );
   }
-  const args = ["--directory", relative(project, directory), patch];
+  // Git prefixes patch filenames with a slash-separated path, even on Windows.
+  // Split only native separators so POSIX backslashes remain filename bytes.
+  const args = [
+    "--directory",
+    relative(project, directory).split(sep).join("/"),
+    patch,
+  ];
   const check = async (reverse) => {
     try {
       await execute(
@@ -58,4 +74,23 @@ export async function releaseProposalSearchDepth(run, sourceSha) {
     throw new Error("Git returned an invalid release history size");
   }
   return count;
+}
+
+/** The merged-release workflow owns tag creation; its push needs no proposal. */
+export async function createReleaseProposal(run, context, loadManifest) {
+  if (context.eventName === "push" && context.targetBranch === "main") {
+    const release = await readMergedReleasePullRequest(run, {
+      repository: context.repository,
+      source: context.sourceSha,
+      targetBranch: context.targetBranch,
+    });
+    if (release !== undefined)
+      return { kind: "release-merge", pullRequest: release.number };
+  }
+  const depth = await releaseProposalSearchDepth(run, context.sourceSha);
+  const manifest = await loadManifest(depth);
+  return {
+    kind: "proposal",
+    pullRequests: (await manifest.createPullRequests()).filter(Boolean),
+  };
 }

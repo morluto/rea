@@ -1,20 +1,25 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  firmwareFailure,
+  AnalysisCleanupLease,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  firmwareFailureDialect,
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { firmwareResultSchemas } from "../domain/firmware/firmwareAnalysis.js";
+import {
+  firmwareResultSchemas,
+  MAX_FIRMWARE_EXTRACTION_DEPTH,
+} from "../domain/firmware/firmwareAnalysis.js";
 import type { FirmwareFileAccess, FirmwareEntry } from "./FirmwareFiles.js";
 import type { normalizeUnblobReport } from "./FirmwareReports.js";
 import type { extractionGap } from "../domain/firmware/firmwareAnalysis.js";
@@ -33,8 +38,7 @@ const GAP_CONTINUATIONS: Record<ExtractionGap["kind"], string> = {
     "No static extraction continues past encryption; treat the region as unexamined rather than empty or corrupt.",
   "extractor-failure":
     "The producer retained this chunk's extraction problem in diagnostics. Review the reported failure, then rerun extract_firmware on the same immutable input with a fresh output_directory; the region is not decoded content.",
-  "depth-limited":
-    "Rerun extract_firmware with a higher max_depth (up to 10) and a fresh output_directory to descend into this path.",
+  "depth-limited": `Rerun extract_firmware with a higher max_depth (up to ${MAX_FIRMWARE_EXTRACTION_DEPTH}) and a fresh output_directory to descend into this path.`,
   "unpublished-entry":
     "The entry is retained as metadata; only regular files are published, without executable permission bits.",
 };
@@ -44,15 +48,14 @@ const UNNAMED_DEPENDENCY_CONTINUATION =
 
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
-
-/** The depth ceiling cannot be raised past the input schema maximum. */
-const MAX_EXTRACTION_DEPTH = 10;
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const depthContinuation = (
   maxDepth: number,
   publishedChildPaths: readonly string[],
 ): string =>
-  maxDepth < MAX_EXTRACTION_DEPTH
+  maxDepth < MAX_FIRMWARE_EXTRACTION_DEPTH
     ? GAP_CONTINUATIONS["depth-limited"]
     : publishedChildPaths.length > 0
       ? `This extraction already ran at the lane's maximum depth. To continue, rerun extract_firmware with path set to any eligible published child below this path and a fresh output directory; each child listed here restarts the depth budget: ${publishedChildPaths.map((path) => JSON.stringify(path)).join(", ")}.`
@@ -60,11 +63,11 @@ const depthContinuation = (
 
 // Use a different analyzer on the actual published child; repeating the same
 // whole-child extraction with unchanged handlers would reproduce this gap.
-const nestedUnknownContinuation = (
+const nestedRegionContinuation = (
   publishedFile: { readonly path: string; readonly size: number } | undefined,
 ): string => {
   const base =
-    "This unknown chunk was carved from a nested extraction, so its range is relative to the published child named by this gap's input_path, not to the original input.";
+    "This region is within a nested extraction, so its range is relative to the published child named by this gap's input_path, not to the original input.";
   return publishedFile !== undefined &&
     publishedFile.size > 0 &&
     publishedFile.size <= FIRMWARE_LIMITS.inputBytes
@@ -142,6 +145,9 @@ export const publishFirmwareExtraction = async (context: {
           relative_path: entry.relativePath,
           kind: entry.kind,
           link_target: entry.linkTarget,
+          ...(entry.linkTargetHex === undefined
+            ? {}
+            : { link_target_hex: entry.linkTargetHex }),
         });
         continue;
       }
@@ -221,19 +227,22 @@ export const publishFirmwareExtraction = async (context: {
         : new AnalysisCleanupLease(async () => {
             await ownedTree.rollback();
           });
-    const primary = firmwareFailure(
+    const primary = classifyProviderFailure(
       outputDirectoryAdmissionRefusal(
         "extract_firmware",
         "output_directory",
         cause,
       ),
-      {
+      firmwareFailureDialect({
         engine: "unblob",
         operation: "extract_firmware",
-        deadline: context.deadline,
+        phase: {
+          signal: context.signal,
+          deadline: context.deadline,
+          publication: progress(),
+        },
         treeCleanupLease: treeLease,
-        publication: progress(),
-      },
+      }),
     );
     try {
       await treeLease?.release();
@@ -249,12 +258,8 @@ export const publishFirmwareExtraction = async (context: {
         "unblob",
         [context.outputDirectory, context.workspacePath],
         {
-          reason:
-            cleanupCause instanceof Error
-              ? cleanupCause.message
-              : String(cleanupCause),
-          previous_error:
-            cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cleanupCause),
+          previous_error: errorMessage(cause),
         },
         {
           cause: cleanupCause,
@@ -268,11 +273,11 @@ export const publishFirmwareExtraction = async (context: {
         context.retainCleanup(tree, treeLease, cleanup);
       if (publishedResult !== undefined)
         primary.retainPartialObservation(publishedResult);
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "extract_firmware",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     if (tree?.published === true && result !== undefined) return result;
     throw primary;
@@ -378,7 +383,7 @@ const extractionGaps = (
   const continuation = (instruction: string): string => {
     const known = instructions.get(instruction);
     if (known !== undefined) return known;
-    const id = createHash("sha256").update(instruction).digest("hex");
+    const id = sha256Hex(instruction);
     instructions.set(instruction, id);
     return id;
   };
@@ -388,7 +393,7 @@ const extractionGaps = (
   );
   const nestedContinuationId = (inputPath: string): string => {
     return continuation(
-      nestedUnknownContinuation(publishedFiles.get(inputPath)),
+      nestedRegionContinuation(publishedFiles.get(inputPath)),
     );
   };
   const chunkGaps = (
@@ -414,7 +419,7 @@ const extractionGaps = (
   // fresh firmware input could actually accept; the index is only needed
   // when a depth row will actually consult it.
   const ceilingReached =
-    maxDepth >= MAX_EXTRACTION_DEPTH &&
+    maxDepth >= MAX_FIRMWARE_EXTRACTION_DEPTH &&
     normalized.depth_limited_paths.length > 0;
   const reRootablePaths = new Map<string, Set<string>>();
   if (ceilingReached)

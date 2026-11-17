@@ -1,26 +1,19 @@
-import { z } from "zod";
+import {
+  DEFAULT_REGEX_MATCHING_DEADLINE_MS,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 export const REGEX_MATCHING_DEADLINE_SETTING = "REA_REGEX_MATCHING_DEADLINE_MS";
 
-/** Matching deadline used when the setting is unset. Today's fixed constant. */
-export const DEFAULT_REGEX_MATCHING_DEADLINE_MS = 5_000;
-
-/**
- * Largest delay Node schedules exactly. A `setTimeout` delay above this
- * signed 32-bit bound is clamped to 1 ms, so a matching deadline past it
- * would expire immediately. The setting stops here instead of growing
- * without a bound. The floor is 1 ms: zero and negative values are not a
- * deadline.
- */
-export const MAXIMUM_REGEX_MATCHING_DEADLINE_MS = 2_147_483_647;
-
 /** Effective regex matching deadline and where its value came from. */
 export interface RegexMatchingDeadline {
   readonly deadlineMs: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
 }
 
 export const DEFAULT_REGEX_MATCHING_DEADLINE: RegexMatchingDeadline = {
@@ -28,23 +21,14 @@ export const DEFAULT_REGEX_MATCHING_DEADLINE: RegexMatchingDeadline = {
   source: "default",
 };
 
-export const regexMatchingDeadlineConstraint = `${REGEX_MATCHING_DEADLINE_SETTING} must be a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms; the default is ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
-
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinDeadlineRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return parsed >= 1n && parsed <= BigInt(MAXIMUM_REGEX_MATCHING_DEADLINE_MS);
-};
+const regexMatchingDeadlineConstraint = `${REGEX_MATCHING_DEADLINE_SETTING} must be a positive decimal integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} ms; the default is ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
 
 /** Optional decimal millisecond count for the supervised regex matching deadline. */
-export const regexMatchingDeadlineMsSchema = z
-  .string()
-  .regex(decimalInteger, { error: regexMatchingDeadlineConstraint })
-  .refine(withinDeadlineRange, { error: regexMatchingDeadlineConstraint })
-  .transform(Number);
+export const regexMatchingDeadlineMsSchema = positiveDecimalIntegerSchema(
+  1,
+  MAX_NODE_TIMER_DELAY_MS,
+  regexMatchingDeadlineConstraint,
+);
 
 /** Resolve the effective deadline from one environment value. */
 export const parseRegexMatchingDeadline = (
@@ -74,6 +58,9 @@ export const parseRegexMatchingDeadline = (
 export const resolveRegexMatchingDeadline = (
   environment: Readonly<Record<string, string | undefined>>,
 ): RegexMatchingDeadline => {
+  const override = currentAnalysisSettingOverride("regex.matching_deadline_ms");
+  if (override !== undefined)
+    return { deadlineMs: override, source: "runtime" };
   const parsed = parseRegexMatchingDeadline(
     environment[REGEX_MATCHING_DEADLINE_SETTING],
   );
@@ -81,12 +68,25 @@ export const resolveRegexMatchingDeadline = (
   return parsed.value;
 };
 
-/** How to read and change the effective supervised matching deadline. */
+const regexMatchingDeadlineFacts = (deadline: RegexMatchingDeadline): string =>
+  `The effective ${REGEX_MATCHING_DEADLINE_SETTING} value is ${String(deadline.deadlineMs)} ms (source ${deadline.source}; default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms, floor 1 ms, maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms).`;
+
+/** Recovery after this REA process has exited. The next invocation reads the launch seed. */
 export const regexMatchingDeadlineRecovery = (
   deadline: RegexMatchingDeadline,
 ): string =>
   [
-    `The effective ${REGEX_MATCHING_DEADLINE_SETTING} value is ${String(deadline.deadlineMs)} ms (source ${deadline.source}; default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms, floor 1 ms, maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms).`,
-    `Set ${REGEX_MATCHING_DEADLINE_SETTING} in the environment that starts REA to a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)}, then restart REA.`,
+    regexMatchingDeadlineFacts(deadline),
+    `Set ${REGEX_MATCHING_DEADLINE_SETTING} in the environment that starts the next REA invocation. It must be a positive decimal integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}.`,
+    "The worker old-generation heap does not raise this deadline.",
+  ].join(" ");
+
+/** Recovery while the same REA session can still call update_analysis_settings. */
+export const regexMatchingDeadlineContinuingRecovery = (
+  deadline: RegexMatchingDeadline,
+): string =>
+  [
+    regexMatchingDeadlineFacts(deadline),
+    `Call update_analysis_settings with setting regex.matching_deadline_ms. It applies to the next match in this session. The launch seed remains ${REGEX_MATCHING_DEADLINE_SETTING}.`,
     "The worker old-generation heap does not raise this deadline.",
   ].join(" ");

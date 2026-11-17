@@ -1,8 +1,13 @@
 import { isUtf8 } from "node:buffer";
 import {
-  RustAuditableFormatFailure,
-  RustAuditableResourceFailure,
-} from "./RustAuditableReader.js";
+  decodeLimit,
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+
+/** The ParseFailure format of WebAssembly section framing. */
+export const WASM_FORMAT = "wasm";
 
 /**
  * Producer output holds a few dozen sections. The format sets no bound, and a
@@ -12,7 +17,7 @@ import {
 export const MAX_WASM_SECTIONS = 65_536;
 const PREAMBLE = Buffer.from("\0asm", "latin1");
 const CORE_MODULE_VERSION = Buffer.from([1, 0, 0, 0]);
-const COMPONENT_LAYER = 1;
+const COMPONENT_LAYER = Buffer.from([1, 0]);
 const CUSTOM_SECTION = 0;
 const DATA_SECTION = 11;
 const DEPENDENCY_SECTION = Buffer.from(".dep-v0", "latin1");
@@ -37,44 +42,45 @@ export const hasWasmPreamble = (bytes: Buffer): boolean =>
 
 /**
  * Walk the section framing of one WebAssembly core module without validating,
- * instantiating or executing it. Components embed core modules as universal
- * Mach-O files embed slices, so they are refused rather than selecting one.
+ * instantiating or executing it. Components embed several core modules and no
+ * input selects one, so they are refused.
  */
 export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
   if (bytes.length < 8)
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "WebAssembly header is truncated",
-    );
-  if (bytes.readUInt16LE(6) === COMPONENT_LAYER)
-    throw new RustAuditableFormatFailure(
-      "unsupported",
+    throw truncatedInput(WASM_FORMAT, "WebAssembly header is truncated", {
+      offset: 0,
+    });
+  if (bytes.subarray(6, 8).equals(COMPONENT_LAYER))
+    throw unsupportedInput(
+      WASM_FORMAT,
       "WebAssembly components are unsupported; their embedded core modules are not inspected",
+      { offset: 6, field: "layer" },
     );
   if (!bytes.subarray(4, 8).equals(CORE_MODULE_VERSION))
-    throw new RustAuditableFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      WASM_FORMAT,
       "Only version 1 WebAssembly core modules are supported",
+      { offset: 4, field: "version" },
     );
   const dependencies: WasmSectionRange[] = [];
   let data: WasmSectionRange | null = null;
   let cursor = 8;
   for (let sections = 0; cursor < bytes.length; sections += 1) {
     if (sections === MAX_WASM_SECTIONS)
-      throw new RustAuditableResourceFailure(
-        {
-          resource: "cpu",
-          reported_limits: { maximum_wasm_sections: MAX_WASM_SECTIONS },
-        },
+      throw decodeLimit(
+        WASM_FORMAT,
         `WebAssembly module declares more than ${MAX_WASM_SECTIONS} sections`,
+        { name: "max_wasm_sections", maximum: MAX_WASM_SECTIONS },
+        { offset: cursor },
       );
     const id = bytes[cursor]!;
     const size = readU32(bytes, cursor + 1, bytes.length, "section size");
     const end = size.end + size.value;
     if (end > bytes.length)
-      throw new RustAuditableFormatFailure(
-        "malformed",
+      throw truncatedInput(
+        WASM_FORMAT,
         "WebAssembly section extends past the end of the file",
+        { offset: cursor, field: "section" },
       );
     if (id === CUSTOM_SECTION) {
       const custom = customSection(bytes, size.end, end);
@@ -86,9 +92,10 @@ export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
         });
     } else if (id === DATA_SECTION) {
       if (data !== null)
-        throw new RustAuditableFormatFailure(
-          "malformed",
+        throw malformedInput(
+          WASM_FORMAT,
           "WebAssembly module declares more than one data section",
+          { offset: cursor, field: "data section" },
         );
       data = { offset: size.end, size: size.value };
     }
@@ -105,16 +112,18 @@ const customSection = (
 ): { readonly name: Buffer; readonly payload: number } => {
   const length = readU32(bytes, start, end, "custom section name length");
   if (length.value > end - length.end)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      WASM_FORMAT,
       "WebAssembly custom section name extends past its section",
+      { offset: start, field: "custom section name" },
     );
   const payload = length.end + length.value;
   const name = bytes.subarray(length.end, payload);
   if (!isUtf8(name))
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      WASM_FORMAT,
       "WebAssembly custom section name is not valid UTF-8",
+      { offset: length.end, field: "custom section name" },
     );
   return { name, payload };
 };
@@ -134,8 +143,9 @@ const readU32 = (
     value += (byte & 0x7f) * 2 ** (7 * index);
     if ((byte & 0x80) === 0) return { value, end: offset + index + 1 };
   }
-  throw new RustAuditableFormatFailure(
-    "malformed",
+  throw malformedInput(
+    WASM_FORMAT,
     `WebAssembly ${label} is not a complete 32-bit LEB128 integer`,
+    { offset, field: label },
   );
 };

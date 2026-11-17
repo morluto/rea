@@ -19,6 +19,8 @@ export const addJavaScriptHtmlRoles = (
 ): void => {
   const byHtml = new Map<string, typeof context.analysis.html_scripts>();
   for (const script of context.analysis.html_scripts) {
+    if (script.script_type !== "classic" && script.script_type !== "module")
+      continue;
     const existing = byHtml.get(script.html_path);
     byHtml.set(
       script.html_path,

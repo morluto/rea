@@ -5,6 +5,7 @@ import type { JavaScriptSemanticGraphNode } from "./javascriptSemanticGraphSchem
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptSemanticQueryInput } from "./javascriptSemanticQuerySchemas.js";
+import { semanticCallLiteralValues } from "./javascriptSemanticCallLiterals.js";
 
 /** Derive the stable identity for one graph-bound query. */
 export const javaScriptSemanticQueryIdentifier = (
@@ -55,9 +56,27 @@ export const resolveJavaScriptSemanticQuerySeeds = (
         )
       : [],
   );
+  const seed = input.seed;
+  const representedCalls = new Set(
+    seed.kind === "literal"
+      ? graph.nodes.flatMap((node) =>
+          node.kind === "expression" &&
+          node.properties.literal_argument_value === seed.value &&
+          typeof node.properties.literal_argument_call_site_node_id === "string"
+            ? [node.properties.literal_argument_call_site_node_id]
+            : [],
+        )
+      : [],
+  );
   return graph.nodes
     .filter((node) =>
-      seedMatches(node, input, fingerprintFunctions, unresolvedAccesses),
+      seedMatches(
+        node,
+        input,
+        fingerprintFunctions,
+        unresolvedAccesses,
+        representedCalls,
+      ),
     )
     .map(({ node_id }) => node_id)
     .sort(compareUnicodeCodePoints);
@@ -68,14 +87,25 @@ const seedMatches = (
   input: JavaScriptSemanticQueryInput,
   fingerprintFunctions: ReadonlySet<string>,
   unresolvedAccesses: ReadonlySet<string>,
+  representedCalls: ReadonlySet<string>,
 ): boolean => {
   const seed = input.seed;
   if (seed.kind === "semantic-node") return node.node_id === seed.node_id;
   if (seed.kind === "application-node")
     return node.application_node_ids.includes(seed.node_id);
   if (seed.kind === "function") return fingerprintFunctions.has(node.node_id);
-  if (seed.kind === "literal")
-    return node.kind === "literal" && node.properties.value === seed.value;
+  if (seed.kind === "literal") {
+    if (node.kind === "literal") return node.properties.value === seed.value;
+    if (
+      node.kind === "expression" &&
+      typeof node.properties.literal_argument_call_site_node_id === "string"
+    )
+      return node.properties.literal_argument_value === seed.value;
+    if (representedCalls.has(node.node_id)) return false;
+    return semanticCallLiteralValues(node).some(
+      (value) => value === seed.value,
+    );
+  }
   if (seed.kind === "property") {
     if (node.kind === "property-slot")
       return node.properties.name === seed.name;

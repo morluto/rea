@@ -16,6 +16,7 @@ import type {
   IdaMcpConnection,
   IdaMcpConnectionDependencies,
 } from "../../../src/ida/IdaMcpConnection.js";
+import { idaConnectionDependencies } from "../../support/idaConnectionDependencies.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -48,7 +49,7 @@ type IdaTransportFixtureOptions = {
   readonly toolContentType?: string;
   readonly toolResponseBody?: string | Buffer;
   readonly configurationHeaders?: Readonly<Record<string, string>>;
-  readonly connectionDependencies?: IdaMcpConnectionDependencies;
+  readonly connectionDependencies?: Partial<IdaMcpConnectionDependencies>;
 };
 const fixtureResponse = (
   input: z.infer<typeof requestSchema>,
@@ -184,11 +185,11 @@ const fixture = async (options: IdaTransportFixtureOptions = {}) => {
       url: `http://127.0.0.1:${address.port}/mcp`,
       headers: configurationHeaders,
       mode: native ? "attached" : "headless",
-      ...(native ? { protocol: "native" as const } : {}),
+      protocol: native ? "native" : "modern",
       timeoutMs: 2000,
     },
     {},
-    connectionDependencies,
+    idaConnectionDependencies(connectionDependencies),
   );
   cleanups.push(() => connection.close());
   return {
@@ -212,6 +213,20 @@ it("uses the pinned SDK for a local Streamable HTTP handshake, paged discovery, 
   expect(
     headers.every((value) => value === "Bearer transport-fixture-secret"),
   ).toBe(true);
+});
+
+it("retains own structured fields through the SDK before scalar-wrapper selection", async () => {
+  const structuredContent = {
+    ["__proto__"]: { observed: true },
+    result: "ordinary field",
+    nested: [{ ["__proto__"]: "nested fact" }],
+  };
+  const { connection } = await fixture({
+    toolResult: { content: [], structuredContent },
+  });
+  await connection.connect();
+  const result = await connection.call("first", {});
+  expect(JSON.stringify(result)).toBe(JSON.stringify(structuredContent));
 });
 
 it("omits an oversized HTTP error body before retaining or redacting it", async () => {
@@ -258,7 +273,7 @@ it("reads native metadata resources and complete JSON text through the real SDK 
   expect(methods).toContain("resources/read");
 });
 
-it("accepts a legacy stdio reply over the SDK default while staying bounded", async () => {
+it("accepts a large structured stdio reply over the SDK default while staying bounded", async () => {
   const script = String.raw`
 let input = "";
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\n");
@@ -274,7 +289,7 @@ process.stdin.on("data", (chunk) => {
     const result = request.method === "initialize"
       ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "large-reply-fixture", version: "1" } }
       : request.method === "tools/list"
-        ? { tools: [{ name: "list_strings", inputSchema: { type: "object", properties: {} } }] }
+        ? { tools: [{ name: "find_regex", inputSchema: { type: "object", properties: {} } }] }
         : { content: [{ type: "text", text: "fixture" }], structuredContent: { result: "x".repeat(11 * 1024 * 1024) } };
     send({ jsonrpc: "2.0", id: request.id, result });
   }
@@ -285,14 +300,16 @@ process.stdin.on("data", (chunk) => {
       command: process.execPath,
       args: ["-e", script],
       env: {},
-      mode: "attached",
+      mode: "headless",
+      protocol: "modern",
       timeoutMs: 10_000,
     },
     {},
+    idaConnectionDependencies(),
   );
   cleanups.push(() => connection.close());
-  expect(await connection.connect()).toEqual(["list_strings"]);
-  expect(await connection.call("list_strings", {})).toEqual(
+  expect(await connection.connect()).toEqual(["find_regex"]);
+  expect(await connection.call("find_regex", {})).toEqual(
     "x".repeat(11 * 1024 * 1024),
   );
 });

@@ -1,9 +1,16 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -11,12 +18,12 @@ import {
   evidenceResultOf,
   expandToolAvailability,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
   createCacheProvider,
-  createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import {
@@ -39,14 +46,17 @@ const goMcpTest = mcpTest.extend<{
     const session = createTestBinarySession(() => {
       throw new Error("Go metadata must not start a deep provider");
     });
-    try {
+    await withVerifierCleanup(async () => {
       const client = await mcp.connect(
         createServer({ kind: "session", session }),
       );
       await use({ client, session });
-    } finally {
-      await session.close();
-    }
+    }, [
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   },
 });
 
@@ -59,21 +69,22 @@ mcpTest(
     const fixture = createGoBinaryFixture({ bits: 32, byteOrder: "big" });
     fixture.bytes.writeUInt16BE(8, 18); // ELF EM_MIPS.
     await writeFile(path, fixture.bytes);
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
-    const closeStarted = createDeferred<void>();
+    const goInspection = phaseGate();
+    const inspectionClose = phaseArrival();
     const provider = new GoBinaryProvider();
     const session = createTestBinarySession(createCacheProvider([]));
     const service = new GoBinaryService({
+      close: () => provider.close(),
       identity: provider.identity,
       inspect: async (input, options) => {
         const result = await provider.inspect(input, options);
-        entered.resolve();
-        await release.promise;
+        await goInspection.hold();
         return result;
       },
     });
-    try {
+    let inspection: ReturnType<Client["callTool"]> | undefined;
+    let closing: ReturnType<Client["callTool"]> | undefined;
+    await withVerifierCleanup(async () => {
       const client = await mcp.connect(
         createServer({ kind: "session", session }, { goBinary: service }),
       );
@@ -83,20 +94,20 @@ mcpTest(
       });
       expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
       client.setNotificationHandler("notifications/progress", () => {
-        closeStarted.resolve();
+        inspectionClose.arrive();
       });
-      const inspection = client.callTool({
+      inspection = client.callTool({
         name: "inspect_go_binary",
         arguments: { path },
       });
-      await entered.promise;
-      const closing = client.callTool({
+      await goInspection.reached(inspection, "Go inspection");
+      closing = client.callTool({
         name: "close_binary",
         arguments: { snapshot_path: snapshotPath },
         _meta: { progressToken: "go-close-race" },
       });
-      await closeStarted.promise;
-      release.resolve();
+      await inspectionClose.reached(closing, "Go snapshot close");
+      goInspection.release();
       const inspected = await inspection;
       expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(
         true,
@@ -104,7 +115,7 @@ mcpTest(
       const evidence = evidenceResultOf(goBinarySchema).parse(
         inspected.structuredContent,
       );
-      expect(evidence.subject?.architecture).toBe("mips");
+      expect(fileIdentity(evidence.subject).architecture).toBe("mips");
       expect(evidence.normalized_result).toMatchObject({
         architecture: "mips",
         bits: 32,
@@ -115,11 +126,26 @@ mcpTest(
       const snapshot = await readAnalysisSnapshot(snapshotPath);
       if (!snapshot.ok) throw snapshot.error;
       expect(snapshot.value.evidence_bundle.records).toContainEqual(evidence);
+      expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+      const reset = await client.callTool({
+        name: "reset_investigation",
+        arguments: {},
+      });
+      expect(reset.isError, JSON.stringify(reset.content)).not.toBe(true);
       expect(session.evidenceById(evidence.evidence_id)).toBeUndefined();
-    } finally {
-      release.resolve();
-      await session.close();
-    }
+    }, [
+      () => goInspection.release(),
+      async () => {
+        await Promise.allSettled([
+          ...(inspection === undefined ? [] : [inspection]),
+          ...(closing === undefined ? [] : [closing]),
+        ]);
+      },
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   },
 );
 
@@ -157,6 +183,69 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
   );
 }
 
+goMcpTest.skipIf(process.platform === "win32")(
+  "suggests a resolved regular file after rejecting a selected symlink",
+  async ({ go: { client } }) => {
+    const root = await createTestTempDirectory("rea-go-mcp-symlink-");
+    const original = join(root, "original.elf");
+    const selected = join(root, "selected");
+    await writeFile(original, createGoBinaryFixture().bytes);
+    await symlink(original, selected);
+
+    const rejected = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: selected },
+    });
+    const diagnostic = parseMcpToolError(rejected).error;
+    expect(diagnostic).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["path"], reason: "invalid_format" }],
+      },
+      remediation: { action: expect.stringContaining(original) },
+    });
+    expect(diagnostic).not.toHaveProperty("recovery");
+
+    const retried = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: original },
+    });
+    expect(retried.isError).not.toBe(true);
+  },
+);
+
+for (const targetKind of ["dangling", "directory"] as const) {
+  goMcpTest.skipIf(process.platform === "win32")(
+    `keeps a ${targetKind} symlink rejection without a resolved-file hint`,
+    async ({ go: { client } }) => {
+      const root = await createTestTempDirectory("rea-go-mcp-symlink-");
+      const target = join(root, "target");
+      const selected = join(root, "selected");
+      if (targetKind === "directory") await mkdir(target);
+      await symlink(target, selected);
+
+      const rejected = await client.callTool({
+        name: "inspect_go_binary",
+        arguments: { path: selected },
+      });
+      const diagnostic = parseMcpToolError(rejected).error;
+      expect(diagnostic).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: expect.stringContaining(selected),
+            },
+          ],
+        },
+      });
+      expect(diagnostic.remediation.action).not.toContain(target);
+    },
+  );
+}
+
 goMcpTest(
   "preserves invalid embedded Go text bytes through MCP",
   async ({ go: { client, session } }) => {
@@ -190,7 +279,6 @@ goMcpTest(
         name: "inspect_go_binary",
         arguments: { path },
       });
-      expect(response.isError).toBe(true);
       expect(parseMcpToolError(response)).toMatchObject({
         error: {
           code: fixture.code,
@@ -226,24 +314,33 @@ goMcpTest(
     const advertised = (await client.listTools()).tools.find(
       (tool) => tool.name === "inspect_go_binary",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Go metadata must publish both schemas");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     expect(
       ajv.validate(inputSchema, { path: "/artifacts/program", execute: true }),
     ).toBe(false);
-    expect(ajv.validate(inputSchema, { path: "/artifacts/\0program" })).toBe(
-      false,
-    );
     expect(advertised.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
+    });
+    const nulPath = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: "/artifacts/\0program" },
+    });
+    expect(parseMcpToolError(nulPath)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+      },
     });
     const root = await createTestTempDirectory("rea-go-mcp-");
     const path = join(root, "application");
@@ -251,15 +348,11 @@ goMcpTest(
       moduleText: "path\texample.com/tool\nnew-record\tfuture\n",
     });
     await writeFile(path, fixture.bytes);
-    const response = await client.callTool({
-      name: "inspect_go_binary",
-      arguments: { path },
-    });
+    const response = await client.callTool(
+      { name: "inspect_go_binary", arguments: { path } },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = evidenceResultOf(goBinarySchema).parse(
       response.structuredContent,
     );
@@ -278,7 +371,6 @@ goMcpTest(
       name: "inspect_go_binary",
       arguments: { path: "relative.bin" },
     });
-    expect(invalid.isError).toBe(true);
     expect(parseMcpToolError(invalid)).toMatchObject({
       error: {
         code: "invalid_request",
@@ -287,3 +379,36 @@ goMcpTest(
     });
   },
 );
+
+goMcpTest("projects retained Go Evidence as CycloneDX", async ({ go }) => {
+  const root = await createTestTempDirectory("rea-go-mcp-cyclonedx-");
+  const path = join(root, "application");
+  await writeFile(path, createGoBinaryFixture().bytes);
+  const inspected = await go.client.callTool({
+    name: "inspect_go_binary",
+    arguments: { path },
+  });
+  expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
+  const parent = parseEvidence(inspected.structuredContent);
+  const viewed = await go.client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: { kind: "cyclonedx" },
+    },
+  });
+  expect(viewed.isError, JSON.stringify(viewed.content)).not.toBe(true);
+  const result = analysisViewResultSchema.parse(
+    parseEvidence(viewed.structuredContent).normalized_result,
+  );
+  if (result.kind !== "cyclonedx") throw new Error("Expected a CycloneDX view");
+  const document = result.document;
+  expect(document).toMatchObject({
+    bomFormat: "CycloneDX",
+    specVersion: "1.6",
+    compositions: [{ aggregate: "unknown" }],
+  });
+  expect(JSON.stringify(document)).toContain(
+    "pkg:golang/example.com/tool@%28devel%29",
+  );
+});

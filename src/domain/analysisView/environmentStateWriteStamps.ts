@@ -1,6 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
+  ownMember,
+  setOwnMember,
   IDENTITY_NAMES,
   isObject,
   same,
@@ -18,6 +20,10 @@ import {
   containsDelimited,
   isUuid,
   readClock,
+  formatClock,
+  sequenceNumber,
+  spelledLike,
+  type ClockFormat,
 } from "./environmentStateWriteValues.js";
 
 /** A clock value counts as written by the request when it lies this close to the request's start. */
@@ -81,7 +87,8 @@ export const envelopeOf = (
 ): { readonly member: string; readonly object: JsonObject } | undefined => {
   if (!isObject(body)) return undefined;
   const members = Object.keys(body);
-  const wrapped = members.length === 1 ? body[members[0]!] : undefined;
+  const wrapped =
+    members.length === 1 ? ownMember(body, members[0]!) : undefined;
   return Array.isArray(wrapped) && wrapped.length === 1 && isObject(wrapped[0]!)
     ? { member: members[0]!, object: wrapped[0] }
     : undefined;
@@ -154,7 +161,7 @@ const sharedBesides = (
   others: readonly JsonObject[],
 ): boolean => {
   const held = others.flatMap((other) => {
-    const value = other[field];
+    const value = ownMember(other, field);
     return value !== undefined && isObject(value) ? [value] : [];
   });
   return (
@@ -163,9 +170,9 @@ const sharedBesides = (
       [...new Set([...Object.keys(other), ...Object.keys(object)])].every(
         (key) =>
           members.includes(key)
-            ? readClock(other[key]) !== undefined &&
-              !same(other[key], object[key])
-            : same(other[key], object[key]),
+            ? readClock(ownMember(other, key)) !== undefined &&
+              !same(ownMember(other, key), ownMember(object, key))
+            : same(ownMember(other, key), ownMember(object, key)),
       ),
     )
   );
@@ -179,7 +186,9 @@ const nestedRule = (
   others: readonly JsonObject[],
 ): FieldRule | undefined => {
   const formats = new Set(
-    members.map((key) => JSON.stringify(readClock(object[key])?.format)),
+    members.map((key) =>
+      JSON.stringify(readClock(ownMember(object, key))?.format),
+    ),
   );
   return members.length > 0 &&
     formats.size === 1 &&
@@ -188,7 +197,7 @@ const nestedRule = (
         field,
         rule: "nested-clock",
         members: [...members],
-        format: readClock(object[members[0]!])!.format,
+        format: readClock(ownMember(object, members[0]!))!.format,
       }
     : undefined;
 };
@@ -207,7 +216,7 @@ export const nestedClockRule = (
     return undefined;
   const changed = [
     ...new Set([...Object.keys(before), ...Object.keys(after)]),
-  ].filter((key) => !same(before[key], after[key]));
+  ].filter((key) => !same(ownMember(before, key), ownMember(after, key)));
   return changed.every(
     (key) =>
       Object.hasOwn(after, key) && isClockNear(after[key]!, evidence.startMs),
@@ -232,10 +241,189 @@ export const createdNestedClock = (
   );
   // A clock read before the request, past a whole second's truncation, belongs to an entity made earlier.
   const stamped = members.every((key) => {
-    const ms = readClock(value[key])!.ms;
+    const ms = readClock(ownMember(value, key))!.ms;
     return ms >= startMs - TRUNCATION_MS && ms <= startMs + NESTED_WINDOW_MS;
   });
   return stamped ? nestedRule(field, value, members, evidence.type) : undefined;
+};
+
+/** Whether an application that answers a clock as `written` stores it as `read` spells it: both ISO, the read at a coarser precision and otherwise alike. Replay and serving respell an update's clocks by this one rule. */
+export const readSpellsCoarser = (
+  written: JsonValue | undefined,
+  read: JsonValue | undefined,
+): boolean => {
+  const [value, stored] = [readClock(written), readClock(read)];
+  return (
+    value?.format.kind === "iso" &&
+    stored?.format.kind === "iso" &&
+    stored.format.fraction < value.format.fraction &&
+    same({ ...stored.format, fraction: 0 }, { ...value.format, fraction: 0 })
+  );
+};
+
+/** An update's fields as its application stores them: each clock at the coarser precision its plan's read-back spelled it. */
+export const readSpelledClocks = (
+  rules: readonly FieldRule[],
+  written: JsonObject,
+  read: JsonObject | undefined,
+): JsonObject => {
+  if (read === undefined) return written;
+  const fields = { ...written };
+  for (const rule of rules) {
+    if (rule.rule !== "clock") continue;
+    const answered = ownMember(written, rule.field);
+    const shown = ownMember(read, rule.field);
+    if (!readSpellsCoarser(answered, shown)) continue;
+    const clock = readClock(answered)!;
+    const spelled = formatClock(
+      clock.ms,
+      readClock(shown)!.format,
+      clock.subMillisecond,
+    );
+    if (spelled !== undefined) setOwnMember(fields, rule.field, spelled);
+  }
+  return fields;
+};
+
+/** Whether a clock is one a request starting at `startMs` stamped, in the given format. */
+export const stampedBy = (
+  value: JsonValue | undefined,
+  format: ClockFormat,
+  startMs: number | undefined,
+): boolean => {
+  const clock = readClock(value);
+  return (
+    clock !== undefined &&
+    startMs !== undefined &&
+    same(clock.format, format) &&
+    clock.ms >= startMs - TRUNCATION_MS &&
+    clock.ms <= startMs + NESTED_WINDOW_MS
+  );
+};
+
+/** The largest integer the objects hold at a member, spelled as the exemplar spells it. */
+const largestAt = (
+  objects: readonly JsonObject[],
+  member: string,
+  exemplar: JsonValue | undefined,
+): number | undefined => {
+  let largest: number | undefined;
+  for (const object of objects) {
+    const value = sequenceNumber(ownMember(object, member), exemplar);
+    if (value !== undefined && (largest === undefined || value > largest))
+      largest = value;
+  }
+  return largest;
+};
+
+/** The objects held entities keep at a field. */
+export const heldObjects = (
+  entities: readonly JsonObject[],
+  field: string,
+): JsonObject[] =>
+  entities.flatMap((entity) => {
+    const value = ownMember(entity, field);
+    return value !== undefined && isObject(value) ? [value] : [];
+  });
+
+/** One past the largest integer held objects show at a member, never below a start. */
+export const nextMadeCount = (
+  objects: readonly JsonObject[],
+  count: { readonly member: string; readonly start: number },
+  exemplar: JsonValue | undefined,
+): number => {
+  const largest = largestAt(objects, count.member, exemplar);
+  return Math.max(
+    largest === undefined ? count.start : largest + 1,
+    count.start,
+  );
+};
+
+/**
+ * On a create, an object the application made with the entity: members holding a clock the request stamped, others the
+ * entity's own identity or one past the largest integer held objects show there, and the rest as every held object
+ * shows them. Undefined without a stamped clock, since only that shows the request made the object.
+ */
+export const createdMadeObject = (
+  field: string,
+  value: JsonValue,
+  evidence: {
+    readonly startMs: number | undefined;
+    readonly type: readonly JsonObject[];
+    readonly entity: JsonObject;
+    readonly idField: string;
+  },
+): FieldRule | undefined => {
+  const { startMs } = evidence;
+  if (!isObject(value) || startMs === undefined) return undefined;
+  const keys = Object.keys(value);
+  const clocks = keys.filter((key) => {
+    const ms = readClock(value[key])?.ms;
+    return (
+      ms !== undefined &&
+      ms >= startMs - TRUNCATION_MS &&
+      ms <= startMs + NESTED_WINDOW_MS
+    );
+  });
+  const format =
+    clocks.length === 0 ? undefined : readClock(value[clocks[0]!])!.format;
+  if (
+    format === undefined ||
+    clocks.some((key) => !same(readClock(value[key])!.format, format))
+  )
+    return undefined;
+  const id = scalarText(ownMember(evidence.entity, evidence.idField));
+  const own = keys.filter(
+    (key) =>
+      !clocks.includes(key) &&
+      id !== undefined &&
+      scalarText(value[key]) === id,
+  );
+  const held = heldObjects(evidence.type, field);
+  const counts = keys.flatMap((key) => {
+    if (clocks.includes(key) || own.includes(key)) return [];
+    const integer = sequenceNumber(value[key]);
+    const largest = largestAt(held, key, value[key]);
+    return integer !== undefined &&
+      largest !== undefined &&
+      integer === largest + 1
+      ? [{ member: key, start: integer }]
+      : [];
+  });
+  const varying = new Set([
+    ...clocks,
+    ...own,
+    ...counts.map(({ member }) => member),
+  ]);
+  const alike = held.every((object) =>
+    [...new Set([...Object.keys(object), ...keys])].every(
+      (key) =>
+        varying.has(key) || same(ownMember(object, key), ownMember(value, key)),
+    ),
+  );
+  return alike
+    ? { field, rule: "made-object", clocks, format, own, counts }
+    : undefined;
+};
+
+/** A served made object: the exemplar's, its clocks set to the write's clock and each count to the value `next` gives; its own members follow the entity's identity once written. */
+export const madeObjectValue = (
+  base: JsonValue | undefined,
+  rule: Extract<FieldRule, { rule: "made-object" }>,
+  clock: JsonValue,
+  next: (count: { readonly member: string; readonly start: number }) => number,
+): Result<JsonValue, string> => {
+  if (base === undefined || !isObject(base))
+    return err(`The plan holds no ${rule.field} object to make.`);
+  const made: JsonObject = { ...base };
+  for (const member of rule.clocks) setOwnMember(made, member, clock);
+  for (const count of rule.counts)
+    setOwnMember(
+      made,
+      count.member,
+      spelledLike(ownMember(base, count.member) ?? "", next(count)),
+    );
+  return ok(made);
 };
 
 /** A served nested clock: the object the entity holds, or the observed one for a create, with its stamped members set to the clock. */
@@ -257,13 +445,14 @@ export const createdToken = (
   entity: JsonObject,
   type: readonly JsonObject[],
 ): "independent" | "linked" | undefined => {
-  const value = entity[field];
+  const value = ownMember(entity, field);
   if (
     !isOpaqueToken(value) ||
     type.length === 0 ||
     !type.every(
       (member) =>
-        member[field] !== value && isOpaqueToken(member[field], value),
+        ownMember(member, field) !== value &&
+        isOpaqueToken(ownMember(member, field), value),
     )
   )
     return undefined;
@@ -294,8 +483,8 @@ export const freshToken = (
   evidence: ChangeEvidence,
   field: string,
 ): boolean => {
-  const before = evidence.before[field];
-  const after = evidence.after[field];
+  const before = ownMember(evidence.before, field);
+  const after = ownMember(evidence.after, field);
   return (
     isOpaqueToken(after, before) &&
     isOpaqueToken(before) &&
@@ -337,7 +526,7 @@ export const stampRule = (
   evidence: ChangeEvidence,
   field: string,
 ): FieldRule | undefined => {
-  const after = evidence.after[field];
+  const after = ownMember(evidence.after, field);
   const creator = creatorOf(field);
   if (typeof after !== "string" || after.length === 0 || creator === undefined)
     return undefined;
@@ -395,7 +584,7 @@ export const derivedRule = (
   evidence: ChangeEvidence,
   field: string,
 ): FieldRule | undefined => {
-  const after = evidence.after[field];
+  const after = ownMember(evidence.after, field);
   if (after === undefined || readClock(after) !== undefined) return undefined;
   const { body } = evidence.call;
   const unstored = Object.keys(body).filter(
@@ -403,7 +592,8 @@ export const derivedRule = (
       !Object.hasOwn(evidence.after, member) &&
       !Object.hasOwn(evidence.before, member),
   );
-  const text = unstored.length === 1 ? textOf(body[unstored[0]!]) : undefined;
+  const text =
+    unstored.length === 1 ? textOf(ownMember(body, unstored[0]!)) : undefined;
   const shown = typeof after === "string" ? after : JSON.stringify(after);
   return text !== undefined &&
     text.length >= DERIVED_TEXT_MIN &&
@@ -412,7 +602,7 @@ export const derivedRule = (
         field,
         rule: "derived",
         value: after,
-        from: evidence.before[field] ?? null,
+        from: ownMember(evidence.before, field) ?? null,
         member: unstored[0]!,
       }
     : undefined;
@@ -428,14 +618,14 @@ export const stampProblem = (
     if (
       rule.rule === "derived" &&
       Object.hasOwn(sent, rule.member) &&
-      !same(before[rule.field] ?? null, rule.from)
+      !same(ownMember(before, rule.field) ?? null, rule.from)
     )
       return `Member ${rule.member} is accepted only on an entity whose ${rule.field} is as the recorded call found it, since the application derives ${rule.field} from it.`;
     if (rule.rule === "held-clock" && !Object.hasOwn(sent, rule.field))
       return `Member ${rule.field} must be sent with the value the entity holds, as the recorded call did.`;
     if (
       rule.rule === "held-clock" &&
-      !same(sent[rule.field], before[rule.field])
+      !same(ownMember(sent, rule.field), ownMember(before, rule.field))
     )
       return `Member ${rule.field} must repeat the value the entity holds, as the recorded call did.`;
   }
@@ -448,7 +638,7 @@ const nestedIdentities = (entity: JsonObject): Map<string, Set<string>> => {
   for (const [field, nested] of Object.entries(entity)) {
     if (!isObject(nested)) continue;
     const texts = IDENTITY_NAMES.flatMap((name) => {
-      const text = scalarText(nested[name]);
+      const text = scalarText(ownMember(nested, name));
       return text === undefined ? [] : [text];
     });
     if (texts.length === 0) continue;
@@ -480,7 +670,10 @@ const stateOf = (
     Object.keys(entity).some(
       (field) =>
         field !== member &&
-        others.every((other) => unset(other[field]) !== unset(entity[field])),
+        others.every(
+          (other) =>
+            unset(ownMember(other, field)) !== unset(ownMember(entity, field)),
+        ),
     )
   );
 };
@@ -512,7 +705,10 @@ export const pinnedEchoes = (
   );
 };
 
-/** An update's fields as stored: each nested clock as the first later read of the entity shows it restamped, else as the call showed it. */
+/**
+ * A write's fields as stored: each nested clock as the first later read of the entity shows it restamped, else as the
+ * call showed it.
+ */
 export const restampedFields = (
   search: ObservationSearch,
   target: Parameters<typeof laterObservation>[1],
@@ -527,11 +723,11 @@ export const restampedFields = (
   const fields = { ...shown };
   for (const rule of nested) {
     const read = storedRestamp(
-      shown[rule.field],
-      later?.object[rule.field],
+      ownMember(shown, rule.field),
+      ownMember(later?.object, rule.field),
       rule.members,
     );
-    if (read !== undefined) fields[rule.field] = read;
+    if (read !== undefined) setOwnMember(fields, rule.field, read);
   }
   return fields;
 };
@@ -546,10 +742,13 @@ export const storedRestamp = (
   if (!isObject(own) || !isObject(read)) return undefined;
   for (const key of new Set([...Object.keys(own), ...Object.keys(read)])) {
     if (!members.includes(key)) {
-      if (!same(own[key], read[key])) return undefined;
+      if (!same(ownMember(own, key), ownMember(read, key))) return undefined;
       continue;
     }
-    const [written, stored] = [readClock(own[key]), readClock(read[key])];
+    const [written, stored] = [
+      readClock(ownMember(own, key)),
+      readClock(ownMember(read, key)),
+    ];
     if (
       written === undefined ||
       stored === undefined ||

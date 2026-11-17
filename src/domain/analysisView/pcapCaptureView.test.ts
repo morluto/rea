@@ -1,11 +1,17 @@
 import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
-const capture = (tsharkStderr: string): AnalysisViewParent => {
+const capture = (
+  tsharkStderr: string,
+  dnsQueries: {
+    query: string;
+    query_labels_hex: string[] | null;
+    response_addresses: string[];
+    response_address_count: number;
+  }[] = [],
+): AnalysisViewParent => {
   const target = {
     path: "/recordings/input.pcap",
     sha256: "c".repeat(64),
@@ -16,9 +22,15 @@ const capture = (tsharkStderr: string): AnalysisViewParent => {
       tshark_command: "/usr/bin/tshark",
       tshark_source: "path",
       tshark_version: "4.6.6",
+      tshark_resolved_path: null,
+      tshark_sha256: null,
+      tshark_identity_status: "unresolved",
       capinfos_command: "/usr/bin/capinfos",
       capinfos_source: "path",
       capinfos_version: "4.6.6",
+      capinfos_resolved_path: null,
+      capinfos_sha256: null,
+      capinfos_identity_status: "unresolved",
     },
     target,
     file_type: "pcap",
@@ -30,8 +42,8 @@ const capture = (tsharkStderr: string): AnalysisViewParent => {
     snapshot_length: null,
     endpoints: [],
     endpoint_count: 0,
-    dns_queries: [],
-    dns_query_count: 0,
+    dns_queries: dnsQueries,
+    dns_query_count: dnsQueries.length,
     tls_sni_values: [],
     tls_sni_count: 0,
     protocol_distribution: [],
@@ -57,6 +69,7 @@ const capture = (tsharkStderr: string): AnalysisViewParent => {
     },
   );
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: report,
@@ -73,23 +86,6 @@ const diagnostics = (offset: number, limit: number) =>
     offset,
     limit,
   }) as const;
-
-it("reads historical capture Evidence without inventing executable identity", () => {
-  const result = projectAnalysisView(capture(""), { kind: "summary" });
-  if (!result.ok) throw result.error;
-  if (result.value.kind !== "summary")
-    throw new Error("Expected a packet summary.");
-  if (!("client" in result.value.summary))
-    throw new Error("Expected packet client facts.");
-  expect(result.value.summary.client).toMatchObject({
-    tshark_resolved_path: null,
-    tshark_sha256: null,
-    tshark_identity_status: "unresolved",
-    capinfos_resolved_path: null,
-    capinfos_sha256: null,
-    capinfos_identity_status: "unresolved",
-  });
-});
 
 it("pages diagnostics without splitting a surrogate pair", () => {
   const parent = capture("ab😀cd");
@@ -114,3 +110,83 @@ it("pages diagnostics without splitting a surrogate pair", () => {
   }
   expect(text).toBe("ab😀cd");
 });
+
+it("selects colliding DNS displays by label identity and retains unknown occurrences", () => {
+  const parent = capture("", [
+    {
+      query: "a.b",
+      query_labels_hex: ["612e62"],
+      response_addresses: ["192.0.2.1"],
+      response_address_count: 1,
+    },
+    {
+      query: "a.b",
+      query_labels_hex: ["61", "62"],
+      response_addresses: ["192.0.2.2"],
+      response_address_count: 1,
+    },
+    {
+      query: "a.b",
+      query_labels_hex: null,
+      response_addresses: ["192.0.2.3"],
+      response_address_count: 1,
+    },
+    {
+      query: "a.b",
+      query_labels_hex: null,
+      response_addresses: ["192.0.2.4"],
+      response_address_count: 1,
+    },
+  ]);
+  const view = {
+    kind: "pcap",
+    facet: "dns-addresses",
+    query: "a.b",
+    offset: 0,
+    limit: 64,
+  } as const;
+  expect(projectAnalysisView(parent, view)).toMatchObject({ ok: false });
+  expect(
+    projectAnalysisView(parent, { ...view, query_labels_hex: ["61", "62"] }),
+  ).toMatchObject({ ok: true, value: { page: { items: ["192.0.2.2"] } } });
+  expect(
+    projectAnalysisView(parent, { ...view, query_index: 3 }),
+  ).toMatchObject({ ok: true, value: { page: { items: ["192.0.2.4"] } } });
+});
+
+it.each([
+  ["executable identity", ["client", "tshark_identity_status"]],
+  ["DNS label identity", ["dns_queries", 0, "query_labels_hex"]],
+] as const)(
+  "refuses capture Evidence that omits %s instead of defaulting it",
+  (_label, path) => {
+    const parent = capture("", [
+      {
+        query: "a.example",
+        query_labels_hex: ["61", "6578616d706c65"],
+        response_addresses: ["192.0.2.9"],
+        response_address_count: 1,
+      },
+    ]);
+    const report = structuredClone(parent.normalizedResult) as Record<
+      string,
+      unknown
+    >;
+    let owner: unknown = report;
+    for (const key of path.slice(0, -1))
+      owner = (owner as Record<string | number, unknown>)[key];
+    delete (owner as Record<string | number, unknown>)[path.at(-1)!];
+    expect(
+      projectAnalysisView(
+        { ...parent, normalizedResult: report },
+        { kind: "summary" },
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["source", "normalized_result", ...path] }],
+      },
+    });
+  },
+);

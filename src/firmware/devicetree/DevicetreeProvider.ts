@@ -1,38 +1,31 @@
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
-  completedStableArtifact,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import type { DevicetreePort } from "../../application/binaryDiagnostics/DevicetreePort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { DevicetreePort } from "../../ports/binaryDiagnostics/DevicetreePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_DEVICETREE_FILE_BYTES,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import { err, ok } from "../../domain/result.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
-import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
+import {
+  devicetreeLimitOf,
+  parseDevicetree,
+} from "../../domain/firmware/devicetreeParser.js";
 
 const OPERATION = "inspect_devicetree";
 
@@ -45,26 +38,19 @@ export class DevicetreeProvider implements DevicetreePort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         DEVICETREE_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
   async inspect(input: InspectDevicetreeInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -84,7 +70,7 @@ export class DevicetreeProvider implements DevicetreePort {
         );
       });
     } catch (cause) {
-      return err(devicetreeFailure(cause, input));
+      return err(devicetreeFailure(cause, input, snapshot));
     }
   }
 }
@@ -94,54 +80,26 @@ const devicetreeFailurePrimary = (
   input: InspectDevicetreeInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof DevicetreeLimitFailure)
+  const limit = devicetreeLimitOf(cause);
+  if (limit !== undefined && cause instanceof Error)
     return new AnalysisResourceConstraintError(
       OPERATION,
-      cause.limit === "decoded_bytes" ? "memory" : "capacity",
+      limit.limit === "decoded_bytes" ? "memory" : "capacity",
       cause.message,
       {
-        limit: cause.limit,
-        selected:
-          cause.limit === "decoded_bytes" ? 33554432 : input[cause.limit],
+        limit: limit.limit,
+        selected: limit.maximum,
       },
       { cause, retryable: false, remediationAction: cause.message },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -164,28 +122,15 @@ const devicetreeFailurePrimary = (
     }
 
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected devicetree blob could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "devicetree blob",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
@@ -197,31 +142,21 @@ const devicetreeFailurePrimary = (
   );
 };
 
-const devicetreeFailure = (cause: unknown, input: InspectDevicetreeInput) => {
+const devicetreeFailure = (
+  cause: unknown,
+  input: InspectDevicetreeInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = devicetreeFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
   );
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined)
-    // The one stable read completed before finalization failed; keep its identity.
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path: input.path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      }),
-    );
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     DEVICETREE_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
+    snapshot,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

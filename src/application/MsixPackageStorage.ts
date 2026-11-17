@@ -2,6 +2,7 @@ import { lstat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * How one MSIX-packaged client reads its AppData configuration. A package
@@ -54,7 +55,7 @@ const pathWithin = (path: string, root: string): boolean => {
  * processes see those files at virtual AppData locations; other processes do
  * not, and Windows removes them with the package.
  */
-export const packagePrivateStorageFamily = (
+const packagePrivateStorageFamily = (
   canonicalPath: string,
   packagesDirectory: string,
 ): string | undefined => {
@@ -132,7 +133,7 @@ const canonicalDestination = (
       }
       return err({
         path,
-        detail: cause instanceof Error ? cause.message : String(cause),
+        detail: errorMessage(cause),
       });
     }
   }
@@ -141,7 +142,7 @@ const canonicalDestination = (
 export const redirectedWriteBlocker = (
   view: MsixPackageView | undefined,
   targets: readonly string[],
-  operation: "setup" | "uninstall",
+  operation: "setup" | "uninstall" | "mcp add",
   canonicalPath: (path: string) => string = realpathSync.native,
 ): string | undefined => {
   if (view?.processView !== "redirected" || targets.length === 0)
@@ -195,7 +196,7 @@ export const packageReadTargetChanged = async (
     return err({
       _tag: "MsixReadTargetInspectionFailure",
       path: view.privateConfigPath,
-      detail: cause instanceof Error ? cause.message : String(cause),
+      detail: errorMessage(cause),
       cause,
     });
   }

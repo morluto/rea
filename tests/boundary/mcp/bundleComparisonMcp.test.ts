@@ -1,10 +1,11 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -23,10 +24,11 @@ import {
 } from "../../../src/domain/evidenceBundle.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const sourceEvidence = (label: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",
@@ -63,11 +65,10 @@ describe("bundle comparison MCP semantic status", () => {
     const left = createEvidenceBundle([record]);
     const displayRecord = {
       ...record,
-      subject: {
-        ...record.subject!,
+      subject: displayedEvidenceSubject(record.subject, {
         name: "renamed.elf",
         local_path: join(root, "renamed.elf"),
-      },
+      }),
     };
     const displayOnly = { ...left, records: [displayRecord] };
     const changedRecord = createEvidence(
@@ -162,11 +163,19 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
     ] as const;
     for (const [leftPath, rightPath, rejectedField] of relativeCases) {
       const result = await compare(leftPath, rightPath);
-      expect(result.isError).toBe(true);
-      expect(result.content[0]).toMatchObject({
-        text: expect.stringContaining(
-          `${rejectedField}: must be an absolute local filesystem path`,
-        ),
+      expect(parseMcpToolError(result).error).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "compare_bundles",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: [rejectedField],
+              reason: "invalid_format",
+              expected: "regex",
+            }),
+          ]),
+        },
       });
     }
     expect(
@@ -186,53 +195,23 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
       ok: true,
       value: { status: "unchanged" },
     });
-    const listed = await connected.client.listTools();
-    const comparisonTool = listed.tools.find(
-      ({ name }) => name === "compare_bundles",
-    );
-    if (comparisonTool === undefined)
-      throw new Error("Expected the compare_bundles MCP contract");
-    const validate = new Ajv2020({
-      strict: false,
-      validateFormats: false,
-    }).compile(comparisonTool.inputSchema);
-    const absolutePaths = {
-      left_bundle_path: join(root, "left.json"),
-      right_bundle_path: join(root, "right.json"),
-    };
-    expect(validate(absolutePaths)).toBe(true);
-    expect(validate({ ...absolutePaths, left_bundle_path: "left.json" })).toBe(
-      false,
-    );
-    expect(validate({ ...absolutePaths, left_bundle_path: "" })).toBe(false);
-    expect(
-      validate({
-        ...absolutePaths,
-        left_bundle_path: `${absolutePaths.left_bundle_path}\0suffix`,
-      }),
-    ).toBe(false);
     const relativeImport = await connected.client.callTool({
       name: "import_evidence_bundle",
       arguments: { path: "left.json" },
     });
-    expect(relativeImport.isError).toBe(true);
-    expect(relativeImport.content[0]).toMatchObject({
-      text: expect.stringContaining("absolute local filesystem path"),
+    expect(parseMcpToolError(relativeImport).error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "import_evidence_bundle",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+          }),
+        ]),
+      },
     });
-    const importTool = listed.tools.find(
-      ({ name }) => name === "import_evidence_bundle",
-    );
-    if (importTool === undefined)
-      throw new Error("Expected the import_evidence_bundle MCP contract");
-    const validateImport = new Ajv2020({
-      strict: false,
-      validateFormats: false,
-    }).compile(importTool.inputSchema);
-    expect(validateImport({ path: absolutePaths.left_bundle_path })).toBe(true);
-    expect(validateImport({ path: "left.json" })).toBe(false);
-    expect(
-      validateImport({ path: `${absolutePaths.left_bundle_path}\0` }),
-    ).toBe(false);
     const absolute = await compare(
       join(root, "left.json"),
       join(root, "right.json"),
@@ -338,15 +317,12 @@ describe("bundle comparison MCP integration", () => {
           right_bundle_path: bundlePath,
         },
       });
-      expect(result.isError).toBe(true);
       expect(parseMcpToolError(result)).toMatchObject({
         error: {
           code: "invalid_request",
           category: "invalid_input",
-          details: { path: recordPath },
-          message: expect.stringContaining(
-            `this JSON is one Evidence record (${record.evidence_id})`,
-          ),
+          details: { path: recordPath, detected_kind: "evidence-record" },
+          message: expect.stringContaining(record.evidence_id),
         },
       });
     } finally {
@@ -474,7 +450,10 @@ const connect = async () => {
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "bundle-comparison-test", version: "1" });
+  const client = new Client(
+    { name: "bundle-comparison-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

@@ -14,7 +14,11 @@ import {
   type BrowserScenarioAction,
   type BrowserScenarioUrl,
   type BrowserScenarioValue,
+  SAVED_URL_PLACEHOLDER,
+  savedPlaceholderNames,
+  validBasicCredentialUsername,
 } from "./browserScenarioValues.js";
+import type { JsonValue } from "./jsonValue.js";
 
 export const browserScenarioInputSchema = z.strictObject({
   browser: browserScenarioBrowserSchema.describe(
@@ -61,6 +65,47 @@ const secretReferencesInValue = (
   value: BrowserScenarioValue | undefined,
 ): readonly string[] => (value?.source === "secret" ? [value.secret_id] : []);
 
+/** A request step's header values, with Basic credentials as their two parts. */
+const headerValues = (
+  action: Extract<BrowserScenarioAction, { action: "request" }>,
+) =>
+  action.headers.flatMap(({ value }) =>
+    value.source === "basic_credentials" ? value.parts : [value],
+  );
+
+/** Every string in a JSON value, at any depth. */
+const jsonStrings = (value: JsonValue | undefined): readonly string[] => {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(jsonStrings);
+  if (value !== null && typeof value === "object")
+    return Object.values(value).flatMap(jsonStrings);
+  return [];
+};
+
+/** The saved values a step sends: `{saved:name}` in a request path, JSON string or goto URL, and saved header values and credential parts. */
+const sentSavedNames = (action: BrowserScenarioAction): readonly string[] => {
+  if (action.action === "goto")
+    return savedPlaceholderNames(action.destination.url, SAVED_URL_PLACEHOLDER);
+  if (action.action !== "request") return [];
+  return [
+    ...[action.path, ...jsonStrings(action.json)].flatMap((text) =>
+      savedPlaceholderNames(text),
+    ),
+    ...headerValues(action).flatMap((value) =>
+      value.source === "saved" ? [value.name] : [],
+    ),
+  ];
+};
+
+/** The names a step saves: a request's `save`, or a UI step's `save_response`. */
+const savedNames = (action: BrowserScenarioAction): readonly string[] =>
+  action.action === "request"
+    ? action.save.map(({ name }) => name)
+    : (action.action === "click" || action.action === "press") &&
+        action.save_response !== undefined
+      ? action.save_response.save.map(({ name }) => name)
+      : [];
+
 const destinationSecretReferences = (
   destination: BrowserScenarioUrl,
 ): readonly string[] =>
@@ -76,11 +121,29 @@ const actionSecretReferences = (
   if (action.action === "request")
     return [
       ...action.query.flatMap(({ value }) => secretReferencesInValue(value)),
-      ...action.headers.flatMap(({ value }) =>
+      ...headerValues(action).flatMap((value) =>
         value.source === "secret" ? [value.secret_id] : [],
       ),
     ];
   return [];
+};
+
+/** Each saved value a step sends was saved by an earlier step. */
+const validateSavedValues = (
+  scenario: ScenarioShape,
+  context: z.RefinementCtx,
+): void => {
+  const saved = new Set<string>();
+  scenario.actions.forEach((action, index) => {
+    for (const name of new Set(sentSavedNames(action)))
+      if (!saved.has(name))
+        addIssue(
+          context,
+          ["actions", index],
+          `Step ${action.step_id} sends saved value ${name}, which no earlier step saves`,
+        );
+    for (const name of savedNames(action)) saved.add(name);
+  });
 };
 
 /** Request steps stay on the start origin and send a body only with methods that carry one. */
@@ -132,27 +195,48 @@ const validateRequestSteps = (
           ["actions", index, "headers", position, "value", "value"],
           "A header value cannot carry line breaks or control characters",
         );
+      const username =
+        header.value.source === "basic_credentials"
+          ? header.value.parts[0]
+          : undefined;
+      if (
+        username?.source === "literal" &&
+        !validBasicCredentialUsername(username.value)
+      )
+        addIssue(
+          context,
+          ["actions", index, "headers", position, "value", "parts", 0, "value"],
+          "A Basic username cannot contain a colon, which separates the username from the password",
+        );
+      // Evidence records literals as written, so a password must come from a reference.
+      const password =
+        header.value.source === "basic_credentials"
+          ? header.value.parts[1]
+          : undefined;
+      if (password?.source === "literal" && password.value !== "")
+        addIssue(
+          context,
+          ["actions", index, "headers", position, "value", "parts", 1],
+          "Basic credentials take their password from a declared secret, a saved value, a cookie or local storage, not a literal",
+        );
     });
   });
 };
 
-const validateStorage = (scenario: ScenarioShape): readonly string[] => {
-  const references: string[] = [];
-  scenario.storage.cookies.forEach((cookie) => {
-    references.push(...secretReferencesInValue(cookie.value));
-    references.push(...destinationSecretReferences(cookie.destination));
-  });
+function* storageSecretReferences(scenario: ScenarioShape): Generator<string> {
+  for (const cookie of scenario.storage.cookies) {
+    yield* secretReferencesInValue(cookie.value);
+    yield* destinationSecretReferences(cookie.destination);
+  }
   for (const collection of ["local_storage", "session_storage"] as const)
-    scenario.storage[collection].forEach((storage) => {
+    for (const storage of scenario.storage[collection])
       for (const entry of storage.entries)
-        references.push(...secretReferencesInValue(entry.value));
-    });
-  return references;
-};
+        yield* secretReferencesInValue(entry.value);
+}
 
 const validateSecretReferences = (
   scenario: ScenarioShape,
-  references: readonly string[],
+  references: ReadonlySet<string>,
   context: z.RefinementCtx,
 ): void => {
   const declared = new Set(scenario.secrets.map(({ secret_id: id }) => id));
@@ -198,9 +282,13 @@ const validateBrowserScenario = (
   );
 
   validateRequestSteps(scenario, context);
-  const references = scenario.actions.flatMap(actionSecretReferences);
-  references.push(...destinationSecretReferences(scenario.start_url));
-  references.push(...validateStorage(scenario));
+  validateSavedValues(scenario, context);
+  // Reference identity is global; source uses remain in the parsed scenario.
+  const references = new Set(scenario.actions.flatMap(actionSecretReferences));
+  for (const reference of destinationSecretReferences(scenario.start_url))
+    references.add(reference);
+  for (const reference of storageSecretReferences(scenario))
+    references.add(reference);
   validateSecretReferences(scenario, references, context);
 };
 

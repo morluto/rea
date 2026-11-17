@@ -1,7 +1,8 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { ZodError } from "zod";
 
 import { FirmwareAnalysisService } from "./FirmwareAnalysisService.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
   type FirmwareOperation,
@@ -29,7 +30,7 @@ const fixture = (
     source_revision: null,
     worker_count: 1,
   };
-  const normalized = firmwareResultSchemas[operation].parse(
+  const facts =
     operation === "inspect_firmware_regions"
       ? { engine, input_size: 1, regions: [], coverage: "signature_scan" }
       : {
@@ -46,12 +47,14 @@ const fixture = (
           extraction_gaps: [],
           extraction_continuations: [],
           published_bytes: 0,
-        },
-  );
+        };
   const execution = createAnalysisExecution(
     budget === null
-      ? normalized
-      : { ...normalized, analysis_timeout_ms: budget },
+      ? facts
+      : firmwareResultSchemas[operation].parse({
+          ...facts,
+          analysis_timeout_ms: budget,
+        }),
     { id: "fixture", name: "Fixture firmware", version: "1" },
     {
       subject: {
@@ -64,6 +67,44 @@ const fixture = (
   );
   return { input, execution };
 };
+
+it.each([
+  {
+    input: {},
+    issue: { path: ["path"], reason: "missing_argument" },
+  },
+  {
+    input: { path: 17 },
+    issue: { path: ["path"], reason: "invalid_type" },
+  },
+  {
+    input: { path: "/firmware.bin", range: { offset: -1, length: 1 } },
+    issue: { path: ["range", "offset"], reason: "out_of_range" },
+  },
+  {
+    input: { path: "/firmware.bin", unexpected: "caller value" },
+    issue: { path: ["unexpected"], reason: "unknown_argument" },
+  },
+])(
+  "rejects malformed firmware inputs with caller-relative issues: $issue",
+  async ({ input, issue }) => {
+    const execute = vi.fn<FirmwareAnalysisService["provider"]["execute"]>();
+    const result = await new FirmwareAnalysisService({ execute }).execute(
+      "extract_firmware",
+      { output_directory: "/output", ...input },
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "extract_firmware",
+        cause: expect.any(ZodError),
+        issues: expect.arrayContaining([expect.objectContaining(issue)]),
+      },
+    });
+  },
+);
 
 it.each(["inspect_firmware_regions", "extract_firmware"] as const)(
   "retains %s Evidence after late cancellation and preserves provider failure precedence",
@@ -185,10 +226,10 @@ for (const operation of [
     },
   );
 
-  it(`keeps historical ${operation} budget omissions unknown`, () => {
+  it(`refuses a ${operation} result without its analysis budget`, () => {
     const { execution } = fixture(operation, null);
     expect(
-      firmwareResultSchemas[operation].parse(execution.result),
-    ).not.toHaveProperty("analysis_timeout_ms");
+      firmwareResultSchemas[operation].safeParse(execution.result).success,
+    ).toBe(false);
   });
 }

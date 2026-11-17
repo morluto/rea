@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
@@ -44,6 +45,52 @@ it("accepts and replaces caller path metadata for the same semantic record", () 
   expect(ledger.get(original.evidence_id)?.caller_input_path).toBe(
     "./selected-alias",
   );
+});
+
+it("replaces auxiliary caller spelling on duplicate import and ignores record key order", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result: true,
+  });
+  const first = withEvidenceCallerInputPath(original, "./same-schema", {
+    operations_path: "./queries",
+    other: "./unchanged",
+  });
+  const second = withEvidenceCallerInputPath(original, "./same-schema", {
+    other: "./unchanged",
+    operations_path: "./alias/../queries",
+  });
+  const ledger = new EvidenceLedger();
+  expect(ledger.record(first).ok).toBe(true);
+  expect(second.evidence_id).toBe(first.evidence_id);
+  const imported = ledger.import(createEvidenceBundle([second]));
+  expect(imported).toMatchObject({
+    ok: true,
+    value: {
+      recordsAdded: 0,
+      changed: true,
+      replacements: [{ kind: "metadata" }],
+    },
+  });
+  expect(ledger.get(first.evidence_id)?.caller_input_paths).toEqual(
+    second.caller_input_paths,
+  );
+  expect(first.caller_input_paths?.operations_path).toBe("./queries");
+  const reordered = withEvidenceCallerInputPath(original, "./same-schema", {
+    operations_path: "./alias/../queries",
+    other: "./unchanged",
+  });
+  expect(ledger.import(createEvidenceBundle([reordered]))).toMatchObject({
+    ok: true,
+    value: { changed: false, replacements: [] },
+  });
+  const unannotated = withEvidenceCallerInputPath(original, "./same-schema");
+  expect(ledger.import(createEvidenceBundle([unannotated]))).toMatchObject({
+    ok: true,
+    value: { changed: true },
+  });
+  expect(ledger.get(first.evidence_id)?.caller_input_paths).toBeUndefined();
 });
 
 describe("evidence ledger recording", () => {
@@ -263,7 +310,7 @@ describe("evidence ledger metadata imports", () => {
     expect(ledger.export().records).toHaveLength(10_001);
   });
 
-  it("retains inline evidence larger than the former session byte quota", () => {
+  it("retains an inline Evidence record above 64 MiB", () => {
     const ledger = new EvidenceLedger();
     const record = createEvidence(TARGET, PROVIDER, {
       operation: "health",
@@ -285,20 +332,23 @@ describe("evidence bundle imports", () => {
     const result = new EvidenceLedger().import(record);
     expect(result).toMatchObject({
       ok: false,
-      error: {
-        _tag: "AnalysisInputError",
-        userMessage: expect.stringContaining(
-          `this JSON is one Evidence record (${record.evidence_id})`,
-        ),
-      },
+      error: { _tag: "AnalysisInputError" },
     });
     if (result.ok) throw new Error("Expected a wrong-kind import failure");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      message: expect.stringContaining(
-        `this JSON is one Evidence record (${record.evidence_id})`,
-      ),
+      message: expect.stringContaining(record.evidence_id),
+      details: {
+        operation: "import_evidence_bundle",
+        issues: [
+          {
+            path: [],
+            reason: "invalid_value",
+            observed: { detected_kind: "evidence-record" },
+          },
+        ],
+      },
     });
   });
 
@@ -326,12 +376,12 @@ describe("evidence bundle imports", () => {
 
   it("atomically rejects Evidence plus an invalid unknown", () => {
     const ledger = new EvidenceLedger();
-    const output = createEvidence(undefined, PROVIDER, {
+    const output = createEvidence(unknownTarget("not-observed"), PROVIDER, {
       operation: "derived",
       parameters: {},
       result: { status: "unknown" },
     });
-    const mutation = createEvidence(undefined, PROVIDER, {
+    const mutation = createEvidence(unknownTarget("not-observed"), PROVIDER, {
       predicateType: "rea.residual-unknown-mutation",
       operation: "record_unknown",
       parameters: {},

@@ -9,10 +9,8 @@ import {
   appleIpsMetadataLine,
   appleIpsReport,
 } from "../../../tests/fixtures/binaryDiagnostics/appleIps.js";
-import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
-} from "./AppleIps.errors.js";
+import { AppleIpsResourceFailure } from "./AppleIps.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 
 const input = inspectAppleIpsInputSchema.parse({
@@ -45,7 +43,7 @@ it.each(
           : `${metadata}\n${body}${character}`,
     );
     expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-      AppleIpsFormatFailure,
+      ParseFailureError,
     );
   },
 );
@@ -57,6 +55,30 @@ it("accepts only JSON whitespace around each object", () => {
   expect(parseAppleIps(bytes, artifact(bytes), input).coverage.status).toBe(
     "complete",
   );
+});
+
+it("accepts previously recorded rows that omit newly added unknown-key fields", () => {
+  const bytes = appleIpsBytes();
+  const current = parseAppleIps(bytes, artifact(bytes), input);
+  expect(current.threads.length).toBeGreaterThan(0);
+  expect(current.threads[0]?.frames.length).toBeGreaterThan(0);
+  expect(current.images.length).toBeGreaterThan(0);
+  const historical = {
+    ...current,
+    threads: current.threads.map(
+      ({ unlisted_keys: _threadKeys, ...thread }) => ({
+        ...thread,
+        frames: thread.frames.map(
+          ({ unlisted_keys: _frameKeys, ...frame }) => frame,
+        ),
+      }),
+    ),
+    images: current.images.map(
+      ({ unlisted_keys: _imageKeys, ...image }) => image,
+    ),
+  };
+  expect(appleIpsSchema.safeParse(historical).success).toBe(true);
+  expect(appleIpsSchema.safeParse(current).success).toBe(true);
 });
 
 it.each([
@@ -78,7 +100,9 @@ it.each([
   expect(parsed.coverage.type_mismatches).toEqual([
     {
       path: "body.usedImages[0].uuid",
-      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      expected: expect.stringMatching(
+        /32 hexadecimal UUID digits.*optional.*hyphens/iu,
+      ),
       observed: "malformed UUID string",
       recorded_value: recorded,
     },
@@ -168,23 +192,26 @@ it("reads a 309 crash report, uppercase UUID, and lossless register", () => {
 
 it("refuses a stackshot bug_type without a crash body", () => {
   const bytes = appleIpsBytes({ bugType: "288" });
-  expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
-  );
+  let failure: unknown;
   try {
     parseAppleIps(bytes, artifact(bytes), input);
   } catch (cause) {
-    expect(cause).toMatchObject({
-      kind: "unsupported",
-      message: expect.stringContaining("288"),
-    });
+    failure = cause;
   }
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      format: "apple-ips",
+      detail: expect.stringContaining("288"),
+    },
+  });
 });
 
 it("fails closed on a truncated crash body", () => {
   const bytes = appleIpsBytes({ truncateBody: true });
   expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -310,7 +337,9 @@ it("keeps empty observed text and JSON keys distinct from omitted fields", () =>
   expect(parsed.coverage.type_mismatches).toEqual([
     {
       path: "body.usedImages[0].uuid",
-      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      expected: expect.stringMatching(
+        /32 hexadecimal UUID digits.*optional.*hyphens/iu,
+      ),
       observed: "malformed UUID string",
       recorded_value: "",
     },
@@ -383,11 +412,7 @@ it("keeps ReportCrash-shaped producer facts and reports complete coverage", () =
     description: "(Data Abort) byte read Translation fault",
   });
   expect(parsed.exception?.unlisted_keys).toEqual(["rawCodes"]);
-  expect(parsed.termination?.unlisted_keys).toEqual([
-    "flags",
-    "byProc",
-    "byPid",
-  ]);
+  expect(parsed.termination?.unlisted_keys).toEqual([]);
   expect(parsed.unlisted_body_keys).toContain("sharedCache");
   expect(parsed.unlisted_body_keys).not.toContain("osVersion");
   expect(parsed.metadata.unlisted_keys).toContain("slice_uuid");
@@ -400,6 +425,70 @@ it("keeps ReportCrash-shaped producer facts and reports complete coverage", () =
     registers: 6,
     type_mismatches: [],
   });
+});
+
+it("keeps the documented terminating process, parent pid and metadata members", () => {
+  const parsed = report({});
+  expect(parsed.termination).toMatchObject({
+    flags: { decimal: "0", hex: "0x0" },
+    by_pid: { decimal: "4242", hex: "0x1092" },
+    by_proc: "exc handler",
+  });
+  expect(parsed.process.parent_pid).toEqual({ decimal: "100", hex: "0x64" });
+  expect(parsed.metadata).toMatchObject({
+    build_version: "",
+    platform: { decimal: "1", hex: "0x1" },
+  });
+  expect(parsed.metadata.unlisted_keys).not.toContain("build_version");
+  expect(parsed.metadata.unlisted_keys).not.toContain("platform");
+  expect(parsed.unlisted_body_keys).not.toContain("parentPid");
+  expect(parsed.coverage.status).toBe("complete");
+  const wrong = parse(
+    Buffer.from(
+      appleIpsReport().replace('"byPid": 4242', '"byPid": "4242"'),
+      "utf8",
+    ),
+  );
+  expect(wrong.termination?.by_pid).toBeNull();
+  expect(wrong.coverage.type_mismatches).toContainEqual(
+    expect.objectContaining({
+      path: "body.termination.byPid",
+      expected: "integer",
+    }),
+  );
+});
+
+it("keeps the recorded image name and symbol offset", () => {
+  const parsed = report({});
+  expect(parsed.images.map((image) => image.name)).toEqual([
+    "rea-crash-fixture",
+    null,
+  ]);
+  expect(parsed.threads[0]?.frames[0]).toMatchObject({
+    recorded_symbol: "rea_fixture_fault",
+    symbol_location: { decimal: "12", hex: "0xc" },
+  });
+  expect(parsed.threads[1]?.frames[0]?.symbol_location).toEqual({
+    decimal: "0",
+    hex: "0x0",
+  });
+  expect(parsed.coverage.status).toBe("complete");
+  const wrong = parse(
+    Buffer.from(
+      appleIpsReport().replace(
+        '"symbolLocation": 12',
+        '"symbolLocation": "12"',
+      ),
+      "utf8",
+    ),
+  );
+  expect(wrong.threads[0]?.frames[0]?.symbol_location).toBeNull();
+  expect(wrong.coverage.type_mismatches).toContainEqual(
+    expect.objectContaining({
+      path: "body.threads[0].frames[0].symbolLocation",
+      expected: "integer",
+    }),
+  );
 });
 
 it("assigns frame roles by recorded row without inventing inline stack addresses", () => {
@@ -478,8 +567,10 @@ it.each(["-1", "4294967296", `1${"0".repeat(1000)}`])(
 );
 
 it("bounds rejected index text before retaining it", () => {
-  const bytes = withBody(
-    '{"faultingThread":4294967296,"threads":[],"usedImages":[]}',
+  // A bare metadata line: its recorded platform integer would also count toward this allowance.
+  const bytes = Buffer.from(
+    '{"bug_type":"309"}\n{"faultingThread":4294967296,"threads":[],"usedImages":[]}',
+    "utf8",
   );
   expect(() =>
     parseAppleIps(bytes, artifact(bytes), {
@@ -572,6 +663,78 @@ it("reports wrong-type collections as partial instead of empty and complete", ()
   expect(empty.coverage.status).toBe("complete");
 });
 
+it("keeps the nested Rosetta registers of a translated process", () => {
+  const parsed = parse(
+    withBody(`{
+      "translated": true,
+      "threads": [
+        {
+          "threadState": {
+            "flavor": "x86_THREAD_STATE",
+            "rip": { "value": 4294983680 },
+            "rosetta": { "tmp0": { "value": 7 }, "tmp1": 8 }
+          }
+        }
+      ],
+      "usedImages": []
+    }`),
+  );
+  expect(parsed.threads[0]?.registers).toEqual([
+    {
+      name: "rip",
+      value: { decimal: "4294983680", hex: "0x100004000" },
+      description: null,
+    },
+    {
+      name: "rosetta.tmp0",
+      value: { decimal: "7", hex: "0x7" },
+      description: null,
+    },
+    {
+      name: "rosetta.tmp1",
+      value: { decimal: "8", hex: "0x8" },
+      description: null,
+    },
+  ]);
+  expect(parsed.coverage).toMatchObject({
+    status: "complete",
+    registers: 3,
+    type_mismatches: [],
+  });
+});
+
+it.each([
+  { rosetta: "7", observed: "integer" },
+  { rosetta: '"invalid"', observed: "string" },
+  { rosetta: "[]", observed: "array" },
+])(
+  "reports a $observed Rosetta container without losing ordinary registers",
+  ({ rosetta, observed }) => {
+    const parsed = parse(
+      withBody(`{
+      "threads": [{ "threadState": { "rip": 1, "rosetta": ${rosetta}, "rsp": 2 } }],
+      "usedImages": []
+    }`),
+      { max_registers: 2 },
+    );
+    expect(parsed.threads[0]?.registers.map(({ name }) => name)).toEqual([
+      "rip",
+      "rsp",
+    ]);
+    expect(parsed.coverage).toMatchObject({
+      status: "partial",
+      registers: 2,
+      type_mismatches: [
+        {
+          path: "body.threads[0].threadState.rosetta",
+          expected: "object",
+          observed,
+        },
+      ],
+    });
+  },
+);
+
 it("records wrong-type rows, scalars and registers with their source path", () => {
   const parsed = parse(
     withBody(`{
@@ -583,7 +746,7 @@ it("records wrong-type rows, scalars and registers with their source path", () =
         7,
         {
           "frames": [{ "imageIndex": 99999999999, "imageOffset": "8" }, []],
-          "threadState": { "flavor": 1, "x": [1, "two", { "value": null }, {}], "rosetta": { "tmp0": 1 } }
+          "threadState": { "flavor": 1, "x": [1, "two", { "value": null }, {}], "rosetta": { "tmp0": "one" } }
         }
       ],
       "usedImages": [null, { "base": 1.0 }]
@@ -639,9 +802,9 @@ it("records wrong-type rows, scalars and registers with their source path", () =
       observed: "absent",
     },
     {
-      path: "body.threads[1].threadState.rosetta.value",
-      expected: "integer",
-      observed: "absent",
+      path: "body.threads[1].threadState.rosetta.tmp0",
+      expected: "integer or object with integer value",
+      observed: "string",
     },
     {
       path: "body.threads[1].threadState.flavor",
@@ -697,6 +860,69 @@ it("budgets register slots before expanding threadState rows", () => {
   );
   expect(() => parse(registerFlood(5), { max_registers: 4 })).toThrow(
     AppleIpsResourceFailure,
+  );
+});
+
+it("budgets Rosetta registers with the ordinary registers they follow", () => {
+  const rosetta = (third: string): Buffer =>
+    withBody(
+      `{"threads":[{"threadState":{"x":[0],"rosetta":{"tmp0":0,"tmp1":0,"tmp2":${third}}}}],"usedImages":[]}`,
+    );
+  expect(parse(rosetta("0"), { max_registers: 4 }).coverage).toMatchObject({
+    status: "complete",
+    registers: 4,
+  });
+  // The register past the allowance is invalid JSON; the budget must refuse first.
+  expect(() => parse(rosetta("?"), { max_registers: 3 })).toThrow(
+    expect.objectContaining({ boundary: "registers", maximum: 3 }),
+  );
+});
+
+it("keeps valid registers around a malformed Rosetta member at the exact slot limit", () => {
+  const parsed = parse(
+    withBody(`{
+      "translated": true,
+      "threads": [{
+        "threadState": {
+          "flavor": "x86_THREAD_STATE",
+          "rip": { "value": 1 },
+          "rosetta": { "tmp0": { "value": 2 }, "tmp1": "invalid" },
+          "rsp": { "value": 3 }
+        }
+      }],
+      "usedImages": []
+    }`),
+    { max_registers: 4 },
+  );
+  expect(parsed.threads[0]?.registers.map(({ name }) => name)).toEqual([
+    "rip",
+    "rosetta.tmp0",
+    "rsp",
+  ]);
+  expect(parsed.coverage).toMatchObject({
+    status: "partial",
+    registers: 3,
+    type_mismatches: [
+      {
+        path: "body.threads[0].threadState.rosetta.tmp1",
+        expected: "integer or object with integer value",
+        observed: "string",
+      },
+    ],
+  });
+});
+
+it("shares the register allowance across Rosetta groups and later ordinary registers", () => {
+  const mixed = (last: string): Buffer =>
+    withBody(
+      `{"threads":[{"threadState":{"rosetta":{"tmp0":0}}},{"threadState":{"rosetta":{"tmp1":0},"rip":${last}}}],"usedImages":[]}`,
+    );
+  expect(parse(mixed("0"), { max_registers: 3 }).coverage).toMatchObject({
+    status: "complete",
+    registers: 3,
+  });
+  expect(() => parse(mixed("?"), { max_registers: 2 })).toThrow(
+    expect.objectContaining({ boundary: "registers", maximum: 2 }),
   );
 });
 

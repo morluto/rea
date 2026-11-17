@@ -9,12 +9,13 @@ import { resolveSourceToBundleReference } from "../../src/application/javascript
 import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthenticationHeadroom.js";
 import * as workflow from "../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { historicalSourceGraphSchema } from "../../src/domain/referenceSourceGraph.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createServer } from "../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 vi.mock("../../src/application/JsonAuthenticationHeadroom.js", { spy: true });
 vi.mock(
@@ -81,7 +82,7 @@ it("attributes file-I/O cancellation to the comparison and preserves its exact c
       controller.signal,
       resources,
     );
-    await held.firstRead;
+    await held.reached(pending, "first file read");
     controller.abort(cause);
     held.release();
     const result = await pending;
@@ -122,15 +123,15 @@ it.each(["validation", "comparison"] as const)(
       const actual = await vi.importActual<typeof workflow>(
         "../../src/application/javascript/JavaScriptApplicationWorkflowService.js",
       );
-      vi.mocked(workflow.compareSourceToBundleEvidence).mockImplementationOnce(
-        (input) => {
-          const compared = actual.compareSourceToBundleEvidence(input);
-          setImmediate(() =>
-            controller.abort(new Error("cancel during graph comparison")),
-          );
-          return compared;
-        },
-      );
+      vi.mocked(
+        workflow.executeSourceToBundleComparison,
+      ).mockImplementationOnce(async (...args) => {
+        const compared = await actual.executeSourceToBundleComparison(...args);
+        setImmediate(() =>
+          controller.abort(new Error("cancel during graph comparison")),
+        );
+        return compared;
+      });
     }
     let settle: (() => void) | undefined;
     const settled = new Promise<void>((resolve) => {
@@ -196,7 +197,10 @@ const connectedComparison = async () => {
     throw new Error("Comparison must not start a native provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "source-cancel", version: "1" });
+  const client = new Client(
+    { name: "source-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

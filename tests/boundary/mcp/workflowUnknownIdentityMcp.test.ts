@@ -1,9 +1,10 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -28,14 +29,12 @@ const withClient = async (
 
 const pathSource = () => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Call-path fixtures must be artifact-bound");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
       path: `${template.subject.local_path}/workflow-unknown-path`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -64,13 +63,11 @@ const pathSource = () => {
 
 const incompleteRight = (suffix: string) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.right;
-  if (template.subject === null)
-    throw new Error("Comparison fixtures must be artifact-bound");
   return createEvidence(
     {
       path: `${template.subject.local_path}/${suffix}`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
