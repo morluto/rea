@@ -870,6 +870,7 @@
 * **snapshot:** type the CLI detail comparison ([c52bf54](https://github.com/morluto/rea/commit/c52bf54ce3d751eaedaa029d0a16553bb7d8f535)), closes [#7442](https://github.com/morluto/rea/issues/7442)
 * state the current contract in tests named after removed limits ([#11588](https://github.com/morluto/rea/issues/11588)) ([e3eb4c1](https://github.com/morluto/rea/commit/e3eb4c174962aa84ab4686c8cafd214799bffb87)), closes [#10515](https://github.com/morluto/rea/issues/10515)
 * **support:** copy isolated-repository scripts with their runtime import closure ([#11281](https://github.com/morluto/rea/issues/11281)) ([a93a9f4](https://github.com/morluto/rea/commit/a93a9f43c97bd0578174749e6441ec265478990d))
+* **uf2:** consolidate partial inventory proof in MCP ([#11874](https://github.com/morluto/rea/issues/11874)) ([86506ed](https://github.com/morluto/rea/commit/86506ed5ab3431f84042043477c3c8a7adb2d8e1))
 * use shared lazy validation for stdio MCP clients ([6452c86](https://github.com/morluto/rea/commit/6452c86cdc7a4262e3eae663a639bdff7b9f4191))
 * **verifiers:** give the Hopper receipt fixture the provider's coverage ([45a4271](https://github.com/morluto/rea/commit/45a427109d2da23a0739f0540245cef901d589ed)), closes [#8067](https://github.com/morluto/rea/issues/8067)
 * **verify:** copy the ADB and Ghidra bridge-source verifiers with their import closure ([#11314](https://github.com/morluto/rea/issues/11314)) ([e313654](https://github.com/morluto/rea/commit/e313654f810fda4f0d1c24406f58b0332ac11850))
