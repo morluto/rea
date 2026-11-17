@@ -793,6 +793,8 @@
 * drop a frozen bridge sentence and a pcap deadline override ([982ea7f](https://github.com/morluto/rea/commit/982ea7fa9fd78c3f500146d8b69650561aebca79))
 * **elf:** verify debuglink checksums at the file boundary ([#11863](https://github.com/morluto/rea/issues/11863)) ([adaa04d](https://github.com/morluto/rea/commit/adaa04d9cef58eb23d665d211356b213bfc87e3b))
 * **environment:** bound create explanation by request-body reads instead of elapsed time ([#11657](https://github.com/morluto/rea/issues/11657)) ([9901e8d](https://github.com/morluto/rea/commit/9901e8dfcd7684d2bb5b025fe668f32b4c941297))
+* **environment:** check coverage diagnostics without repeating projection ([#11900](https://github.com/morluto/rea/issues/11900)) ([14b15ba](https://github.com/morluto/rea/commit/14b15ba8a5de5c7ebfb8a8d6da4a73c6e69751c3))
+* **environment:** isolate manifest identifier spelling cases ([#11901](https://github.com/morluto/rea/issues/11901)) ([16fb48f](https://github.com/morluto/rea/commit/16fb48f9b72072c97d77b4e827ef8fe768083147))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
 * **environment:** verify registry pins in the exported bundle ([#11870](https://github.com/morluto/rea/issues/11870)) ([e9cc643](https://github.com/morluto/rea/commit/e9cc643198938c3d88f353c4dc0cf8f92f56ecce))
 * **errors:** assert recovery kind and retryability instead of remediation prose ([#10791](https://github.com/morluto/rea/issues/10791)) ([8d7eaf9](https://github.com/morluto/rea/commit/8d7eaf9693dcee5f400c8818a9575ee6cac29db6)), closes [#10508](https://github.com/morluto/rea/issues/10508)
