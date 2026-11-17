@@ -108,6 +108,7 @@ const isScriptConsumer = (path) =>
   !isHelper(path) &&
   !isCheckerInput(path) &&
   !STATIC_CHECKER_CONFIG.test(path) &&
+  !path.startsWith(".github/ISSUE_TEMPLATE/") &&
   (/^scripts\/.+\.(?:m?[jt]s|cjs)$/u.test(path) ||
     (/^[^/]+\.(?:m?[jt]s|cjs|json)$/u.test(path) &&
       path !== "package-lock.json") ||
@@ -118,6 +119,8 @@ const DOCS_CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
 // non-module inputs (unmapped fixtures, data, scripts, workflows, package
 // metadata) are not traced, so they run everything.
 const isProse = (path) =>
+  path === "LICENSE" ||
+  path.startsWith(".github/ISSUE_TEMPLATE/") ||
   (path.endsWith(".md") && !/^(src|tests)\//u.test(path)) ||
   (path.startsWith("docs/") &&
     !DOCS_CODE.test(path) &&

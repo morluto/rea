@@ -66,7 +66,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: node scripts/ci/codeql-scope.mjs
+        run: node scripts/ci/codeql-scope.mjs >> "$GITHUB_OUTPUT"
 
   analyze:
     needs: scope

@@ -692,6 +692,17 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      # Include runner ImageOS/ImageVersion and a UTC date bucket so runner image
+      # rollouts invalidate immediately and cached MinGW outputs refresh daily.
+      - name: Compute Windows native cache key
+        id: windows-native-key
+        env:
+          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', 'package.json') }}
+        run: |
+          utc_date="$(date -u +%Y-%m-%d)"
+          printf 'key=rea-windows-native-v2-%s-%s-%s-%s-%s-%s\n' \
+            "${RUNNER_OS}" "${RUNNER_ARCH}" "${ImageOS:-ubuntu}" "${ImageVersion:-rolling}" "${utc_date}" "${SOURCE_HASH}" \
+            >> "${GITHUB_OUTPUT}"
       - name: Restore Windows native build outputs
         id: windows-native-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -700,7 +711,7 @@ jobs:
             native/windows/build/
             .cache/windows-native-inspection-fixture/
             .cache/windows-process-boundary/
-          key: rea-windows-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', 'package.json') }}
+          key: ${{ steps.windows-native-key.outputs.key }}
       - name: Prepare cross compiler
         if: steps.windows-native-cache.outputs.cache-hit != 'true'
         run: |

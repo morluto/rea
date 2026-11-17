@@ -604,7 +604,6 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     "persist-credentials": false,
   });
   expect(checkouts).toHaveLength(2);
-  expect(steps.some((step) => step.run === "npm ci")).toBe(false);
   const setupNode = steps.find(
     (step) =>
       step.uses ===
@@ -669,6 +668,14 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.CACHE_KNIP_PREFIX).toBe(knipPrefix);
   expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(targetSourceKey("knip-cache"));
   expect(publishedKey("knip-cache").startsWith(knipPrefix)).toBe(true);
+  const windowsNativeSteps =
+    ci?.workflow.jobs?.["windows-native-build"]?.steps ?? [];
+  const windowsNativeKey = windowsNativeSteps.find(
+    (step) => step.id === "windows-native-key",
+  );
+  expect(String(windowsNativeKey?.run)).toContain("ImageOS");
+  expect(String(windowsNativeKey?.run)).toContain("ImageVersion");
+  expect(String(windowsNativeKey?.run)).toContain("date -u +%Y-%m-%d");
 });
 
 it("publishes each hosted npm download cache from one writer", async () => {

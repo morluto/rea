@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -163,17 +162,8 @@ if (
     },
     gitCodeqlRepository(),
   );
-  if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `run=${plan.run}\nlanguages=${JSON.stringify(plan.languages)}\n`,
-    );
-  }
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(
-      process.env.GITHUB_STEP_SUMMARY,
-      `### CodeQL language selection\n\n${plan.reason}\n`,
-    );
-  }
-  console.log(JSON.stringify(plan));
+  process.stderr.write(`CodeQL language selection: ${plan.reason}\n`);
+  process.stdout.write(
+    `run=${String(plan.run)}\nlanguages=${JSON.stringify(plan.languages)}\n`,
+  );
 }

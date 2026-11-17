@@ -105,7 +105,9 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
     "tests/boundary/filesystem/mermaid.test.ts":
       'read("docs/architecture/architecture.mermaid");',
     "tests/boundary/filesystem/licenses.test.ts":
-      'read("licenses/npm-dependencies.txt");',
+      'read("licenses/npm-dependencies.txt"); read("LICENSE");',
+    "tests/boundary/filesystem/issueTemplate.test.ts":
+      'read(".github/ISSUE_TEMPLATE/bug_report.yml");',
   };
   // A declaration, guard/layer baseline, blame-ignore list or schema summary adds no tests…
   expect(
@@ -133,6 +135,12 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   expect(
     selectedFiles(plan(["licenses/npm-dependencies.txt"], sources)),
   ).toEqual(["tests/boundary/filesystem/licenses.test.ts"]);
+  expect(selectedFiles(plan(["LICENSE"], sources))).toEqual([
+    "tests/boundary/filesystem/licenses.test.ts",
+  ]);
+  expect(
+    selectedFiles(plan([".github/ISSUE_TEMPLATE/bug_report.yml"], sources)),
+  ).toEqual(["tests/boundary/filesystem/issueTemplate.test.ts"]);
   // Authored code under docs/ stays untraced so it falls back to the full suite.
   expect(plan(["docs/.vitepress/config.ts"], sources)).toMatchObject({
     mode: "full",

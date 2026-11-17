@@ -550,6 +550,12 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
     runtime: false,
     package: false,
   });
+  expect(await classifyPaths(["LICENSE"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {
