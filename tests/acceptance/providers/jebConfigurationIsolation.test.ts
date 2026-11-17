@@ -179,7 +179,7 @@ test("keeps compiled CLI discovery usable while JEB rejects its malformed timeou
       expect.objectContaining({
         id: "jeb",
         configured: true,
-        available: false,
+        available: null,
       }),
     ]),
     scope_checks: expect.arrayContaining([
@@ -250,7 +250,7 @@ test("registers an unprobed JEB endpoint without advertising service readiness o
           expect.objectContaining({
             id: "jeb",
             configured: true,
-            available: false,
+            available: null,
             registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
             checks: expect.arrayContaining([
               expect.objectContaining({
@@ -270,6 +270,32 @@ test("registers an unprobed JEB endpoint without advertising service readiness o
     expect(
       await readFile(workspace.path("codex/config.toml"), "utf8"),
     ).toContain(endpoint);
+    const selected = await cli.run({
+      arguments: ["doctor", "--client", "codex", "--provider", "jeb", "--json"],
+      environment: {
+        ...environment,
+        REA_JEB_MCP_URL: "invalid terminal endpoint",
+        REA_JEB_MCP_TIMEOUT_MS: "invalid",
+      },
+    });
+    expect(selected.exitCode, selected.stderr).toBe(1);
+    expect(selected.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "jeb",
+          configured: true,
+          available: null,
+          registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
+          checks: [
+            expect.objectContaining({ name: "registration", ok: true }),
+            expect.objectContaining({
+              name: "availability",
+              code: "not_probed",
+            }),
+          ],
+        }),
+      ]),
+    });
     expect(requests).toBe(0);
   } finally {
     if (server.listening)
@@ -315,7 +341,7 @@ test.for([
         expect.objectContaining({
           id: "jeb",
           configured,
-          available: false,
+          available: null,
           registrationEnvironment: {},
           checks: expect.arrayContaining([
             expect.objectContaining({

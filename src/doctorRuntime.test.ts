@@ -573,18 +573,74 @@ test("probes the selected client's registration environment instead of the termi
   await opencodeRegistration(home, {
     GHIDRA_INSTALL_DIR: "/opt/ghidra",
     REA_JADX_MCP_JAR: "/opt/jadx.jar",
+    REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp",
+    REA_JEB_MCP_TIMEOUT_MS: "900000",
   });
-  const host = createSystemDoctorHost({ HOME: home });
+  const host = createSystemDoctorHost({
+    HOME: home,
+    REA_JEB_MCP_URL: "invalid",
+    REA_JEB_MCP_TIMEOUT_MS: "invalid",
+  });
   try {
     const inspections = await host.providerInspections?.(["opencode"]);
     expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
       true,
     );
     expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
+    expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+      configured: true,
+      available: null,
+      registrationEnvironment: { REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp" },
+      checks: [
+        expect.objectContaining({ name: "registration", ok: true }),
+        expect.objectContaining({ name: "availability", code: "not_probed" }),
+      ],
+    });
   } finally {
     await host.close?.();
   }
 });
+
+it.each(["REA_JEB_MCP_URL", "REA_JEB_MCP_TIMEOUT_MS"])(
+  "does not substitute terminal JEB settings for unresolved %s",
+  async (setting) => {
+    const home = await createTestTempDirectory("rea-qwen-jeb-setting-");
+    await mkdir(join(home, ".qwen"), { recursive: true });
+    await writeFile(
+      join(home, ".qwen/settings.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "node",
+            args: ["rea"],
+            env: { [setting]: "${SELECTED_JEB_VALUE}" },
+          },
+        },
+      }),
+    );
+    const host = createSystemDoctorHost({
+      HOME: home,
+      REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp",
+      REA_JEB_MCP_TIMEOUT_MS: "900000",
+    });
+    try {
+      const inspections = await host.providerInspections?.(["qwen_code"]);
+      expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+        configured: null,
+        available: null,
+        registrationEnvironment: {},
+        checks: [
+          expect.objectContaining({
+            code: "registration_environment_unknown",
+            classification: "unknown",
+          }),
+        ],
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
 
 test("keeps reading this terminal when no client is selected", async () => {
   const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");
@@ -909,6 +965,17 @@ test("does not use terminal readiness when a selected registration is malformed"
       configured: null,
       available: null,
       checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+    expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+      configured: null,
+      available: null,
+      registrationEnvironment: {},
+      checks: [
+        expect.objectContaining({
+          code: "registration_environment_unknown",
+          classification: "unknown",
+        }),
+      ],
     });
     const report = await runDoctor(undefined, host, {
       clients: ["opencode"],

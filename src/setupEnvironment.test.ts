@@ -4,8 +4,8 @@ import {
   withoutPackageRunnerIdentity,
 } from "./application/ClientRegistrationIdentity.js";
 import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
+import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -49,7 +49,7 @@ it.each([undefined, "/caller/tools with spaces/ilspycmd"])(
 );
 
 it("plans setup and uninstall against selected home and client overrides", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-selected-setup-"));
+  const root = await createTestTempDirectory("rea-selected-setup-");
   const environment = {
     HOME: join(root, "selected-home"),
     USERPROFILE: join(root, "selected-home"),
@@ -59,9 +59,9 @@ it("plans setup and uninstall against selected home and client overrides", async
   vi.stubEnv("HOME", join(root, "ambient-home"));
   vi.stubEnv("CODEX_HOME", join(root, "ambient-codex"));
   vi.stubEnv("npm_command", "other");
+  const doctor = createDoctorHostFixture({ homeDirectory: environment.HOME });
+  const host = systemSetupHost(doctor, environment);
   try {
-    const doctor = createDoctorHostFixture({ homeDirectory: environment.HOME });
-    const host = systemSetupHost(doctor, environment);
     const result = await runSetup(
       {
         ...options(false),
@@ -102,7 +102,7 @@ it("plans setup and uninstall against selected home and client overrides", async
     );
     expect(JSON.stringify(result)).not.toContain("ambient-");
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await host.close?.();
   }
 });
 
@@ -119,7 +119,7 @@ it("composes provider diagnostics from selected configuration rather than ambien
   expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(true);
   expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
     configured: true,
-    available: false,
+    available: null,
   });
   expect(JSON.stringify(inspections)).toContain("/selected/ghidra");
   expect(JSON.stringify(inspections)).toContain("/selected/ida.json");
@@ -129,7 +129,7 @@ it("composes provider diagnostics from selected configuration rather than ambien
 });
 
 it("writes a configured JEB endpoint from the reviewed plan into the client registration", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-jeb-setup-"));
+  const root = await createTestTempDirectory("rea-jeb-setup-");
   const endpoint = "http://127.0.0.1:9999/mcp";
   const environment = {
     HOME: join(root, "home"),
@@ -140,11 +140,11 @@ it("writes a configured JEB endpoint from the reviewed plan into the client regi
   };
   vi.stubEnv("REA_JEB_MCP_URL", "http://127.0.0.1:8888/mcp");
   vi.stubEnv("REA_JEB_MCP_TIMEOUT_MS", "1.5");
+  const host = systemSetupHost(
+    createSystemDoctorHost(environment),
+    environment,
+  );
   try {
-    const host = systemSetupHost(
-      createSystemDoctorHost(environment),
-      environment,
-    );
     const result = await runSetup(
       { ...options(true), clientIds: ["codex"], installSkill: false },
       host,
@@ -164,7 +164,7 @@ it("writes a configured JEB endpoint from the reviewed plan into the client regi
     expect(saved).toContain("900000");
     expect(saved).not.toContain("8888");
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await host.close?.();
   }
 });
 
@@ -236,19 +236,19 @@ it("includes the macOS Hopper installer diagnostic in setup remediation", async 
 });
 
 it("preserves a validated selected JEB endpoint in setup registrations without claiming live readiness", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-jeb-setup-"));
+  const root = await createTestTempDirectory("rea-jeb-setup-");
   const endpoint = "http://127.0.0.1:8425/mcp/";
   const ambientEndpoint = "http://127.0.0.1:8426/mcp";
   vi.stubEnv("REA_JEB_MCP_URL", ambientEndpoint);
+  const environment = {
+    HOME: root,
+    USERPROFILE: root,
+    CODEX_HOME: join(root, "codex"),
+    REA_JEB_MCP_URL: endpoint,
+  };
+  const doctorHost = createSystemDoctorHost(environment);
+  const setupHost = systemSetupHost(doctorHost, environment);
   try {
-    const environment = {
-      HOME: root,
-      USERPROFILE: root,
-      CODEX_HOME: join(root, "codex"),
-      REA_JEB_MCP_URL: endpoint,
-    };
-    const doctorHost = createSystemDoctorHost(environment);
-    const setupHost = systemSetupHost(doctorHost, environment);
     const state = await setupHost.initialSetupState();
 
     expect(state.providerEnvironment).toHaveProperty(
@@ -270,8 +270,7 @@ it("preserves a validated selected JEB endpoint in setup registrations without c
       ambientEndpoint,
     );
   } finally {
-    vi.unstubAllEnvs();
-    await rm(root, { recursive: true, force: true });
+    await setupHost.close?.();
   }
 });
 

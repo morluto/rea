@@ -6,6 +6,12 @@ import { parseJebMcpTimeoutMs } from "../../config/environment.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { parseJebMcpEndpoint } from "../../config/jebMcpEndpoint.js";
 
+/** Settings consumed by syntax-only registration inspection. */
+export const JEB_DOCTOR_SETTINGS = [
+  "REA_JEB_MCP_URL",
+  "REA_JEB_MCP_TIMEOUT_MS",
+] as const;
+
 /** Check selected JEB settings without launching the engine, retaining the validated endpoint independently of readiness. */
 export const inspectJebRegistration = (
   environment: Readonly<Record<string, string | undefined>>,
@@ -55,7 +61,7 @@ export const inspectJebRegistration = (
     // mandatory full-audit check or suppressing first-run provider setup.
     configured: selected,
     // Valid registration is not proof that a compatible service is running.
-    available: false,
+    available: valid && requestTimeout.ok ? null : false,
     providerVersion: null,
     registrationEnvironment:
       valid && value !== undefined && value.length > 0

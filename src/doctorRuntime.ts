@@ -47,7 +47,10 @@ import {
   linuxHopperPythonUnavailable,
 } from "./application/LinuxHopperPython.js";
 import { settleConcurrent } from "./application/settleConcurrent.js";
-import { inspectJebRegistration } from "./application/jeb/JebRegistrationInspection.js";
+import {
+  inspectJebRegistration,
+  JEB_DOCTOR_SETTINGS,
+} from "./application/jeb/JebRegistrationInspection.js";
 
 /**
  * A selected client's own environment, when its registration records one.
@@ -181,6 +184,7 @@ const readSelectedRegistration = async (
 
 /** Registration settings read by each provider's readiness probe. */
 const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
+  jeb: JEB_DOCTOR_SETTINGS,
   ghidra: GHIDRA_DOCTOR_SETTINGS,
   ida: IDA_DOCTOR_SETTINGS,
   jadx: JADX_DOCTOR_SETTINGS,
@@ -428,7 +432,14 @@ export const createSystemDoctorHost = (
         platform,
       );
       return await settleConcurrent([
-        Promise.resolve(inspectJebRegistration(environment)),
+        Promise.resolve(
+          unresolvedProvider(
+            "jeb",
+            selected,
+            inspectionEnvironment,
+            platform,
+          ) ?? inspectJebRegistration(inspectionEnvironment),
+        ),
         ghidraUnresolved !== undefined
           ? Promise.resolve(ghidraUnresolved)
           : withProbeResourceScope(

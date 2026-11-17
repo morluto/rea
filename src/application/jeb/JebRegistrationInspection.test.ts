@@ -10,7 +10,7 @@ it("keeps the JEB endpoint for setup without launching the engine", () => {
   expect(inspection).toMatchObject({
     id: "jeb",
     configured: true,
-    available: false,
+    available: null,
     providerVersion: null,
   });
   expect(inspection.checks[0]?.detail).toContain("no JEB process was launched");
@@ -32,7 +32,7 @@ it("keeps the JEB endpoint for setup without launching the engine", () => {
     }),
   ).toMatchObject({
     configured: true,
-    available: false,
+    available: null,
     registrationEnvironment: {
       REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp",
     },
@@ -45,5 +45,20 @@ it("keeps the JEB endpoint for setup without launching the engine", () => {
     configured: true,
     available: false,
     registrationEnvironment: {},
+  });
+});
+
+it("reports invalid timeout settings as invalid rather than unprobed readiness", () => {
+  expect(
+    inspectJebRegistration({ REA_JEB_MCP_TIMEOUT_MS: "invalid" }),
+  ).toMatchObject({
+    configured: true,
+    available: false,
+    checks: expect.arrayContaining([
+      expect.objectContaining({
+        name: "request-timeout",
+        code: "invalid_configuration",
+      }),
+    ]),
   });
 });
