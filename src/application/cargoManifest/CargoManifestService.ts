@@ -96,11 +96,10 @@ const manifestFileSizeRefusal = (
     operation,
     cause.boundary ?? "file-size",
     cause.message,
-    fixedAllowanceOptions(
-      "The Cargo manifest input allowance",
-      "input",
-      { limit: CARGO_MANIFEST_MAX_FILE_BYTES, unit: "bytes" },
-    ).fixedAllowance,
+    fixedAllowanceOptions("The Cargo manifest input allowance", "input", {
+      limit: CARGO_MANIFEST_MAX_FILE_BYTES,
+      unit: "bytes",
+    }).fixedAllowance,
     details,
   );
 
