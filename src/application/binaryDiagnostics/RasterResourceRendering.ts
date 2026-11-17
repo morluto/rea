@@ -274,7 +274,7 @@ function colors(
         return unavailable(
           "Caller palette does not cover every possible packed selector/LUT entry.",
         );
-      entries.push([...color]);
+      entries.push([color[0], color[1], color[2], color[3]]);
     } else {
       const at = policy.paletteRange.offset + index * 4;
       const expand = (v: number) =>

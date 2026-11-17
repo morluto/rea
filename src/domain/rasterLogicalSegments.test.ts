@@ -1,6 +1,7 @@
 import { crc32 } from "node:zlib";
 import { fgsRecordFixture } from "../../tests/fixtures/structuredRaster.js";
 import { expect, it } from "vitest";
+import { ParseFailureError } from "./parseFailure.js";
 import {
   materializeRasterSegments,
   parseFgsRasterSegments,
@@ -35,7 +36,7 @@ it("rejects overlaps, out of range and oversized spans before allocation", () =>
   ])
     expect(() =>
       materializeRasterSegments(new Uint8Array(4), segments),
-    ).toThrow(RangeError);
+    ).toThrow(ParseFailureError);
 });
 it("requires footer integrity before interpreting FGS record markers", () => {
   expect(() => parseFgsRasterSegments(new Uint8Array(64))).toThrow(/footer/);
@@ -56,7 +57,7 @@ it("validates FGS monotonic records, declared length, and CRC with independent e
         crc32(bytes.subarray(0, bytes.length - 4)),
         bytes.length - 4,
       );
-    expect(() => parseFgsRasterSegments(bytes)).toThrow(RangeError);
+    expect(() => parseFgsRasterSegments(bytes)).toThrow(ParseFailureError);
   }
 });
 
@@ -71,5 +72,119 @@ it("rejects a truncated FGS record even with a repaired footer size and CRC", ()
     crc32(truncated.subarray(0, truncated.length - 4)),
     truncated.length - 4,
   );
-  expect(() => parseFgsRasterSegments(truncated)).toThrow(/Invalid/);
+  expect(() => parseFgsRasterSegments(truncated)).toThrow(/Truncated/);
+});
+
+it.each([
+  ["footer", new Uint8Array(8), "truncated", "fgs-records"],
+  ["integrity", new Uint8Array(64), "malformed", "fgs-records"],
+  ["input bytes", new Uint8Array(16 * 1024 * 1024 + 1), "limit", "fgs-records"],
+] as const)(
+  "preserves typed %s parser failures",
+  (_name, bytes, kind, format) => {
+    try {
+      parseFgsRasterSegments(bytes);
+      throw new Error("Expected parser refusal");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      expect(cause).toMatchObject({ failure: { kind, format } });
+    }
+  },
+);
+it("reports a logical span limit as a named decode budget, not malformed mapping", () => {
+  expect(() =>
+    materializeRasterSegments(new Uint8Array(2), [
+      { logicalOffset: 0, fileOffset: 0, length: 1 },
+      { logicalOffset: 16 * 1024 * 1024, fileOffset: 1, length: 1 },
+    ]),
+  ).toThrow(
+    expect.objectContaining({
+      failure: {
+        kind: "limit",
+        format: "raster-logical-segments",
+        detail: expect.any(String),
+        limit: {
+          name: "raster-logical-span-bytes",
+          maximum: 16 * 1024 * 1024,
+          required: 16 * 1024 * 1024 + 1,
+        },
+      },
+    }),
+  );
+});
+it("preserves truncated record facts after valid footer integrity", () => {
+  const valid = fgsRecordFixture(new Uint8Array(88));
+  const bytes = Buffer.concat([
+    valid.subarray(0, valid.length - 20),
+    valid.subarray(valid.length - 16),
+  ]);
+  bytes.writeUInt32LE(bytes.length, bytes.length - 8);
+  bytes.writeUInt32LE(
+    crc32(bytes.subarray(0, bytes.length - 4)),
+    bytes.length - 4,
+  );
+  expect(() => parseFgsRasterSegments(bytes)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "truncated",
+        format: "fgs-records",
+        offset: 56,
+        field: "record.payload",
+      }),
+    }),
+  );
+});
+it("names the segment-count refusal before iterating or copying entries", () => {
+  const segments = Array.from({ length: 500001 }, () => ({
+    logicalOffset: 0,
+    fileOffset: 0,
+    length: 1,
+  }));
+  expect(() => materializeRasterSegments(new Uint8Array(1), segments)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: {
+          name: "raster-logical-segment-count",
+          maximum: 500000,
+          required: 500001,
+        },
+      }),
+    }),
+  );
+});
+it("distinguishes a truncated record header from malformed record lengths", () => {
+  const repair = (body: Buffer) => {
+    const footer = fgsRecordFixture(new Uint8Array(4)).subarray(-16),
+      bytes = Buffer.concat([body, footer]);
+    bytes.writeUInt32LE(bytes.length, bytes.length - 8);
+    bytes.writeUInt32LE(
+      crc32(bytes.subarray(0, bytes.length - 4)),
+      bytes.length - 4,
+    );
+    return bytes;
+  };
+  expect(() =>
+    parseFgsRasterSegments(repair(Buffer.from([255, 255, 255, 0x24]))),
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "truncated",
+        offset: 0,
+        field: "record.header",
+      }),
+    }),
+  );
+  const header = Buffer.alloc(12);
+  header.set([255, 255, 255, 0x24]);
+  header.writeUInt32LE(3, 4);
+  expect(() => parseFgsRasterSegments(repair(header))).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "malformed",
+        offset: 0,
+        field: "record",
+      }),
+    }),
+  );
 });

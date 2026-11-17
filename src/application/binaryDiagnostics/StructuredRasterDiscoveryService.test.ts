@@ -1,6 +1,7 @@
 import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import * as rendering from "./RasterResourceRendering.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   structuredRasterFixture,
@@ -162,6 +163,113 @@ it("exposes explicit family alternatives and colored previews in logical coordin
       true,
     );
   } finally {
+    await service.close();
+  }
+});
+
+it.each([1, 2])(
+  "retains completed scan and earlier previews when color preview %i is cancelled",
+  async (cancelAt) => {
+    const root = await createTestTempDirectory("rea-preview-cancel-");
+    const path = join(root, "bytes");
+    await writeFile(path, structuredRasterFixture());
+    const controller = new AbortController();
+    const reason = new Error("cancel optional preview");
+    const original = rendering.renderRasterResourceThumbnail;
+    let calls = 0;
+    const spy = vi
+      .spyOn(rendering, "renderRasterResourceThumbnail")
+      .mockImplementation(async (...args) => {
+        if (++calls === cancelAt) {
+          controller.abort(reason);
+          controller.signal.throwIfAborted();
+        }
+        return original(...args);
+      });
+    const service = new StructuredRasterDiscoveryService();
+    try {
+      const result = await service.inspect(
+        {
+          path,
+          max_resources: 3,
+          max_previews: 2,
+          color_policy: {
+            kind: "rgba-palette",
+            entries: [
+              [0, 0, 0, 255],
+              [255, 255, 255, 255],
+            ],
+            index_space: "selector",
+            sentinel: "disabled",
+          },
+        },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.partialObservation).toBeDefined();
+      const observation = result.error.partialObservation;
+      if (observation === undefined || !("normalized_result" in observation))
+        throw new Error("Expected retained raster Evidence");
+      const report = structuredRasterCandidatesSchema.parse(
+        observation.normalized_result,
+      );
+      expect(report.coverage.complete).toBe(true);
+      expect(report.projection.returnedResources).toBe(3);
+      expect(report.projection.previews).toBe(cancelAt - 1);
+      expect(
+        report.tables.flatMap((t) => t.resources).filter((r) => r.preview)
+          .length,
+      ).toBe(cancelAt - 1);
+      expect(
+        report.tables.flatMap((t) => t.resources)[cancelAt - 1]
+          ?.previewUnavailable,
+      ).toMatch(/cancel/i);
+    } finally {
+      spy.mockRestore();
+      await service.close();
+    }
+  },
+);
+
+it("does not relabel an unrelated preview failure as cancellation", async () => {
+  const root = await createTestTempDirectory("rea-preview-failure-");
+  const path = join(root, "bytes");
+  await writeFile(path, structuredRasterFixture());
+  const controller = new AbortController();
+  const failure = new Error("unexpected preview failure");
+  const spy = vi
+    .spyOn(rendering, "renderRasterResourceThumbnail")
+    .mockImplementation(async () => {
+      controller.abort(new Error("unrelated cancellation"));
+      throw failure;
+    });
+  const service = new StructuredRasterDiscoveryService();
+  try {
+    const result = await service.inspect(
+      {
+        path,
+        max_previews: 1,
+        color_policy: {
+          kind: "rgba-palette",
+          entries: [
+            [0, 0, 0, 255],
+            [255, 255, 255, 255],
+          ],
+          index_space: "selector",
+          sentinel: "disabled",
+        },
+      },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected preview failure");
+    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(result.error.cause).toBe(failure);
+  } finally {
+    spy.mockRestore();
     await service.close();
   }
 });

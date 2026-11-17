@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, onTestFinished } from "vitest";
@@ -45,6 +46,29 @@ mcpTest(
       output_directory,
       expected_sha256: sha256Hex(bytes),
     };
+    if (!advertised) throw new Error("Export contract was not advertised");
+    const validate = new Ajv2020({ strict: false }).compile(
+      advertised.inputSchema,
+    );
+    for (const [entry, accepted] of [
+      [[0, 1, 254, 255], true],
+      [[0, 1, 2], false],
+      [[0, 1, 2, 3, 4], false],
+      [[0, 1, 2, 256], false],
+      [[0, 1, 2, "3"], false],
+    ] as const) {
+      const input = {
+        ...arguments_,
+        color_policy: {
+          kind: "rgba-palette",
+          entries: [entry],
+          index_space: "selector",
+          sentinel: "disabled",
+        },
+      };
+      expect(validate(input)).toBe(accepted);
+      expect(contract.inputSchema.safeParse(input).success).toBe(accepted);
+    }
     const response = await client.callTool({
       name: contract.name,
       arguments: arguments_,

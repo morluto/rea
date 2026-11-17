@@ -119,3 +119,22 @@ projection. All 1,121 applicable LUT references reconstructed matching bytes.
 The source hash was unchanged. One local run took about 6.2 seconds with about
 241 MiB peak process RSS. These private-data results are not public CI fixtures
 and do not establish universal discovery, hardware colors or Windows behavior.
+
+## Review follow-up: cancellation, budgets and public schemas
+
+Color-preview cancellation now preserves the completed discovery scan and any
+already completed previews in cancellation evidence. Only the exact caller abort
+reason is handled at that optional-preview boundary; unrelated failures remain
+errors. Regression tests cancel the first and a later preview.
+
+PNG rendering uses its own transient-memory ceiling independently of remaining
+export disk bytes. The publication owner still admits actual encoded file sizes
+and rolls back outputs when the aggregate disk ceiling is exceeded. Synthetic
+filesystem regressions cover both a fitting export and disk-capacity rollback.
+
+Explicit RGBA palettes use the shared fixed-tuple schema. Tests validate four
+byte channels, reject short/long/malformed entries, and exercise the schema
+returned by the public MCP tools listing. Container and logical-mapping errors
+now use the shared parse-failure owner: malformed data, truncation and named
+capacity limits retain their format/site/cause rather than becoming one generic
+invalid-value error.

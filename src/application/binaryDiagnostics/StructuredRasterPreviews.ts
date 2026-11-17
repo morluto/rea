@@ -52,74 +52,96 @@ export async function createRasterPreviews(
     input.max_previews === 0
   )
     return results;
-  const registries = selectRasterRegistries(
-    prepared.family?.registries ?? [],
-    prepared.logical.logicalBase,
-    input.registry_selection,
-  );
-  const coverage = prepareRasterRenderCoverage(
-    prepared.logical.bytes.length,
-    prepared.logical.coverage,
-    signal,
-  );
-  if (coverage.status !== "prepared") {
-    for (const r of resources)
-      results.set(r.descriptorOffset, { previewUnavailable: coverage.reason });
-    return results;
-  }
-  let count = 0;
-  for (const r of resources) {
-    if (count >= input.max_previews) break;
-    let layout: RasterRenderLayout | undefined;
-    const registry = registries.length === 1 ? registries[0] : undefined;
-    if (prepared.family)
-      layout =
-        registry?.bindingStatus === "unique"
-          ? registry.bindings.find(
-              (b) => b.descriptorOffset === r.descriptorOffset,
-            )
-          : undefined;
-    else layout = genericPreviewLayout(r);
-    const resolved = resolveRasterColorPolicy(policy, registry);
-    if (
-      !layout ||
-      !resolved ||
-      (input.registry_selection && registries.length !== 1)
-    ) {
-      results.set(r.descriptorOffset, {
-        previewUnavailable:
-          "Color preview needs a unique admitted layout and palette; select one registry alternative when ambiguous. No colors were guessed.",
-      });
-      continue;
-    }
-    const rendered = await renderRasterResourceThumbnail(
-      prepared.logical.bytes,
-      layout,
-      resolved,
-      {
-        coverage: coverage.coverage,
-        maxSide: input.thumbnail_side,
-        ...(signal ? { signal } : {}),
-      },
+  try {
+    const registries = selectRasterRegistries(
+      prepared.family?.registries ?? [],
+      prepared.logical.logicalBase,
+      input.registry_selection,
     );
-    if (rendered.status !== "rendered")
-      results.set(r.descriptorOffset, { previewUnavailable: rendered.reason });
-    else {
-      count++;
-      results.set(r.descriptorOffset, {
-        preview: {
-          kind:
-            policy.kind === "rgba-palette" ? "caller-rgba" : "profile-declared",
-          width: rendered.width,
-          height: rendered.height,
-          pngBase64: rendered.png.toString("base64"),
-          assumptions: [
-            `Explicit rendering policy: ${JSON.stringify(policy)}. Layout ${layout.layout}, ${layout.rowOrder}, ${layout.bitOrder}; ${layout.provenance ?? "inferred generic layout"}.`,
-            ...rendered.interpretation.assumptions,
-          ],
-        },
-      });
+    const coverage = prepareRasterRenderCoverage(
+      prepared.logical.bytes.length,
+      prepared.logical.coverage,
+      signal,
+    );
+    if (coverage.status !== "prepared") {
+      for (const r of resources)
+        results.set(r.descriptorOffset, {
+          previewUnavailable: coverage.reason,
+        });
+      return results;
     }
+    let count = 0;
+    for (const r of resources) {
+      if (count >= input.max_previews) break;
+      let layout: RasterRenderLayout | undefined;
+      const registry = registries.length === 1 ? registries[0] : undefined;
+      if (prepared.family)
+        layout =
+          registry?.bindingStatus === "unique"
+            ? registry.bindings.find(
+                (b) => b.descriptorOffset === r.descriptorOffset,
+              )
+            : undefined;
+      else layout = genericPreviewLayout(r);
+      const resolved = resolveRasterColorPolicy(policy, registry);
+      if (
+        !layout ||
+        !resolved ||
+        (input.registry_selection && registries.length !== 1)
+      ) {
+        results.set(r.descriptorOffset, {
+          previewUnavailable:
+            "Color preview needs a unique admitted layout and palette; select one registry alternative when ambiguous. No colors were guessed.",
+        });
+        continue;
+      }
+      const rendered = await renderRasterResourceThumbnail(
+        prepared.logical.bytes,
+        layout,
+        resolved,
+        {
+          coverage: coverage.coverage,
+          maxSide: input.thumbnail_side,
+          ...(signal ? { signal } : {}),
+        },
+      );
+      if (rendered.status !== "rendered")
+        results.set(r.descriptorOffset, {
+          previewUnavailable: rendered.reason,
+        });
+      else {
+        count++;
+        results.set(r.descriptorOffset, {
+          preview: {
+            kind:
+              policy.kind === "rgba-palette"
+                ? "caller-rgba"
+                : "profile-declared",
+            width: rendered.width,
+            height: rendered.height,
+            pngBase64: rendered.png.toString("base64"),
+            assumptions: [
+              `Explicit rendering policy: ${JSON.stringify(policy)}. Layout ${layout.layout}, ${layout.rowOrder}, ${layout.bitOrder}; ${layout.provenance ?? "inferred generic layout"}.`,
+              ...rendered.interpretation.assumptions,
+            ],
+          },
+        });
+      }
+    }
+  } catch (cause) {
+    // Optional presentation must not erase the completed descriptor scan. Only
+    // the exact signal reason is cancellation; unrelated rendering failures
+    // retain their normal classification even if the signal is also aborted.
+    if (!signal?.aborted || cause !== signal.reason) throw cause;
+    for (const resource of resources)
+      if (!results.has(resource.descriptorOffset))
+        results.set(resource.descriptorOffset, {
+          previewUnavailable:
+            "Optional color preview cancelled after descriptor analysis completed.",
+        });
+    // Return the completed scan projection through the snapshot owner. Its
+    // completion boundary publishes cancellation with this report retained as
+    // partialObservation, rather than treating this as a successful operation.
   }
   return results;
 }

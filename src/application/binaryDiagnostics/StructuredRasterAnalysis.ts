@@ -3,9 +3,14 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { discoverStructuredRasters } from "../../domain/structuredRasterDiscovery.js";
 import {
   materializeRasterSegments,
-  RasterLogicalInputError,
   parseFgsRasterSegments,
 } from "../../domain/rasterLogicalSegments.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import type { z } from "zod";
 import type { inspectStructuredRasterCandidatesInputSchema } from "../../domain/native/structuredRasterCandidates.js";
 export type StructuredRasterAnalysisInput = Pick<
@@ -45,8 +50,29 @@ export function prepareStructuredRasterAnalysis(
     try {
       return action();
     } catch (cause) {
-      if (cause instanceof RasterLogicalInputError)
-        throw invalid(field, cause.message);
+      if (
+        isParseLimit(cause, "fgs-records") ||
+        isParseLimit(cause, "raster-logical-segments")
+      ) {
+        const { limit } = cause.failure;
+        const countLimit =
+          limit.name === "raster-logical-segment-count" ||
+          limit.name === "fgs-record-count";
+        throw parseLimitConstraint(operation, "capacity", cause, {
+          path: input.path,
+          ...fixedAllowanceOptions(limit.name, countLimit ? "count" : "bytes", {
+            limit: limit.maximum,
+            unit: countLimit ? "entries" : "bytes",
+          }),
+        });
+      }
+      const formatFailure = parseFailureAnalysisError(
+        operation,
+        input.path,
+        cause,
+        field,
+      );
+      if (formatFailure !== undefined) throw formatFailure;
       throw cause;
     }
   };

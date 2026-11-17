@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fixedTupleSchema } from "../fixedTupleSchema.js";
 const byte = z.number().int().min(0).max(255);
 const sentinel = z.enum(["profile", "disabled"]);
 /** Choices are explicit; neither theme nor alpha is inferred from image bytes. */
@@ -7,7 +8,7 @@ export const rasterColorPolicyInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("rgba-palette"),
     entries: z
-      .array(z.tuple([byte, byte, byte, byte]))
+      .array(fixedTupleSchema([byte, byte, byte, byte]))
       .min(1)
       .max(256),
     index_space: z.enum(["selector", "lookup-low-byte"]),

@@ -151,10 +151,9 @@ async function writeResources(
           {
             coverage,
             ...(signal ? { signal } : {}),
-            maxOutputBytes: Math.min(
-              writer.remainingBytes,
-              RASTER_RENDER_MAX_WORKING_BYTES,
-            ),
+            // Renderer allowance bounds transient working buffers, not disk bytes.
+            // Publication separately admits the encoded PNG against aggregate output.
+            maxOutputBytes: RASTER_RENDER_MAX_WORKING_BYTES,
           },
         );
         if (rendered.status === "limit-exceeded") failLimit(rendered);
