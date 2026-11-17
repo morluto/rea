@@ -272,9 +272,11 @@ const parsePom = (
       MAVEN_GRADLE_METADATA_XML_NODES,
       nodes,
     );
+  // Maven's XML reader applies XML 1.0 end-of-line handling, so a POM saved
+  // with CRLF yields the same property and coordinate text as one with LF.
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
-    lineEndings: "preserve",
+    lineEndings: "normalize",
   });
   if (!parsed.ok)
     throw parsed.error.kind === "unsupported"
