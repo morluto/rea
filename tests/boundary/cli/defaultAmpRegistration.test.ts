@@ -1,26 +1,61 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
-import { Parser, z } from "incur";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { decode } from "@toon-format/toon";
 
 import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";
-import { splitIncurBuiltinArguments } from "../../../src/cliBuiltinArguments.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+const PRESERVED_HOME_ENTRIES = new Set([
+  "registration-environment.mjs",
+  "registration-bin",
+  "unexpected-acquisition.log",
+]);
+
+let sharedRoot = "";
+let sharedHome = "";
+let sharedEnvironment: NodeJS.ProcessEnv = {};
+
+beforeAll(async () => {
+  sharedRoot = (await createTestWorkspace("rea-default-amp-")).root;
+  sharedHome = join(sharedRoot, "home");
+  sharedEnvironment = await registrationEnvironment(sharedHome);
+});
+
+afterAll(async () => {
+  if (sharedRoot !== "") {
+    await removeTestWorkspace(sharedRoot);
+  }
+});
 
 const fixture = async (initial: string) => {
-  const home = await createTestTempDirectory("rea-default-amp-");
-  const directory = join(home, ".config", "amp");
+  for (const entry of await readdir(sharedHome)) {
+    if (!PRESERVED_HOME_ENTRIES.has(entry)) {
+      await rm(join(sharedHome, entry), { recursive: true, force: true });
+    }
+  }
+  const directory = join(sharedHome, ".config", "amp");
   const settings = join(directory, "settings.json");
   await mkdir(directory, { recursive: true });
   await writeFile(settings, initial);
   return {
-    home,
+    home: sharedHome,
     directory,
     settings,
-    environment: await registrationEnvironment(home),
+    environment: sharedEnvironment,
   };
 };
 const original = `${JSON.stringify({
@@ -98,7 +133,7 @@ cliTest(
       "null\n",
       '{"amp.mcpServers":[]}\n',
       original,
-    ]) {
+    ] as const) {
       const f = await fixture(initial);
       if (initial === original) await mkdir(`${f.settings}.rea.backup`);
       for (const json of [false, true]) {
@@ -186,7 +221,7 @@ cliTest(
   },
 );
 
-it("timing splitting matches Incur after output values and before the terminator", () => {
+it("preserves recorded timing consumption before the terminator and retains following data", () => {
   for (const flag of [
     "--timings",
     "--no-timings",
@@ -194,22 +229,27 @@ it("timing splitting matches Incur after output values and before the terminator
     "--timings=true",
     "--timings=other",
   ]) {
-    for (const command of [
-      [flag, "mcp", "add"],
-      ["mcp", "add", "--agent", flag, "amp"],
-      ["mcp", "add", "--command", flag],
-      ["mcp", "add", "--", flag],
-    ]) {
-      const expected = Parser.parseGlobals(
-        command,
-        z.object({ timings: z.boolean().default(false) }),
-        undefined,
-        { validate: false },
-      ).rest;
-      expect(splitIncurBuiltinArguments(command).command).toEqual(expected);
+    for (const [command, expected] of [
+      [
+        [flag, "mcp", "add"],
+        ["mcp", "add"],
+      ],
+      [
+        ["mcp", "add", "--agent", flag, "amp"],
+        ["mcp", "add", "--agent", "amp"],
+      ],
+      [
+        ["mcp", "add", "--command", flag],
+        ["mcp", "add", "--command"],
+      ],
+      [
+        ["mcp", "add", "--", flag],
+        ["mcp", "add", "--", flag],
+      ],
+    ] as const) {
+      expect(parseCliGlobalArguments(command).command).toEqual(expected);
       expect(
-        splitIncurBuiltinArguments(["--filter-output", flag, ...command])
-          .command,
+        parseCliGlobalArguments(["--filter-output", flag, ...command]).command,
       ).toEqual(expected);
     }
   }

@@ -71,7 +71,7 @@ Setup registers REA with your agent and installs matching workflow instructions.
 ## Quick start
 
 On Linux, Ghidra, JADX, firmware tool launches and static JavaScript/Electron
-analysis require a procps-compatible `ps` on REA's `PATH` for process ownership
+analysis require a procps-compatible system `ps` for process ownership
 checks. Recovery steps are in `docs/getting-started/installation.md` under
 "Linux owned-process prerequisite".
 
@@ -96,17 +96,16 @@ Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 manual MCP registration, Claude Code/Codex plugins, and the Cursor Marketplace
 plugin.
 
-MCP uses compact input schemas by default to reduce context overhead. Set
-`REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
-complete advertised field guidance and nested validation details. Both profiles
-keep the full tool set and canonical server validation. See
-"Compact input schema profile" in the MCP contracts guide.
+MCP advertises compact input schemas to reduce context overhead; guidance a
+compact schema omits follows the tool description. The full tool set and
+canonical server validation are unchanged. See "Compact input schema profile"
+in the MCP contracts guide.
 
-Complete output schemas are advertised by default. If your client caps the
-complete `tools/list` frame, set `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to
-bound each advertised output schema, or `off` to omit output schemas entirely.
-Both settings keep canonical server-side validation and complete structured
-results. See "Output schemas" in the MCP contracts guide.
+Output schemas are omitted from `tools/list` by default: no model API reads
+them, and REA validates every result itself. Set
+`REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to advertise each output schema within
+a 4,096-byte budget. Both settings keep canonical server-side validation and
+complete structured results. See "Output schemas" in the MCP contracts guide.
 
 ### Ask your agent
 
@@ -207,6 +206,8 @@ Additional tools and host support depend on the target:
 | PE imports              | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                        | Built-in static PE inspection; [PE imports](docs/pe-imports.md)                                                                                                      |
 | Windows shortcuts       | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                      | Built-in static LNK inspection; [Windows shortcuts](docs/guides/native/windows-shortcut.md)                                                                          |
 | ELF notes               | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                   | Built-in static ELF inspection; [ELF notes](docs/elf-notes.md)                                                                                                       |
+| DWARF compile units     | Compile-unit name, directory, producer, language, and dwo_name                                    | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](docs/guides/native/dwarf-units.md)                                                             |
+| ELF dependencies        | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                             | Built-in static ELF inspection; [ELF dependencies](docs/elf-dependencies.md)                                                                                         |
 | Binary hardening        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                               | Built-in static header inspection; [binary hardening](docs/binary-hardening.md)                                                                                      |
 | Apple IPS crashes       | .ips metadata, threads, images, registers and documented crash classes                            | Built-in static JSON inspection; [Apple IPS](docs/apple-ips.md)                                                                                                      |
 | Linux kernel modules    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                       | Built-in static ELF inspection; [kernel modules](docs/kernel-modules.md)                                                                                             |

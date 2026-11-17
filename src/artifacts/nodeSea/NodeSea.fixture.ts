@@ -1,5 +1,5 @@
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
 /** Node 24 SEA blob magic: https://github.com/nodejs/node/blob/v24.12.0/src/node_sea.h */
 export const NODE_SEA_FIXTURE_MAGIC = 0x143da20;

@@ -77,6 +77,8 @@ cliTest.skipIf(process.platform !== "darwin")(
       expect(before.length).toBeGreaterThan(0);
       expect(await attachedImagePaths()).toContain(resolvedImage);
       const busy = await cli.run({
+        // Each command must release its own attachment when its process ends.
+        freshProcess: true,
         arguments: ["inspect-artifact", image, "--json"],
       });
       expect(busy.exitCode, busy.stdout).toBe(1);
@@ -115,6 +117,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     }
     expect(await mountedDevices()).toEqual([]);
     const control = await cli.run({
+      freshProcess: true,
       arguments: ["inspect-artifact", image, "--json"],
     });
     expect(control.exitCode, control.stdout).toBe(0);

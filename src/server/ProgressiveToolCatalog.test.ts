@@ -24,7 +24,7 @@ const connect = async (
     undefined,
     new ToolResultDelivery(options.replyBytes ?? 1024 * 1024),
     undefined,
-    "full",
+    undefined,
     {
       counts: {
         cli_commands: 0,

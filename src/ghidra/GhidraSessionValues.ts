@@ -11,6 +11,7 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
 import { GHIDRA_RISCV_CALLING_CONVENTION_IDS } from "./GhidraRiscvProfile.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
@@ -205,8 +206,6 @@ export const parseGhidraSessionInfo = (
 
 /** Require acknowledgement that the private bridge loop has ended. */
 export const isGhidraShutdownAcknowledgement = (value: JsonValue): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
+  isRecord(value) &&
   value.shutdown === true &&
   value.project_ephemeral === true;

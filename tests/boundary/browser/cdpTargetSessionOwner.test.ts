@@ -3,6 +3,7 @@ import type { Duplex } from "node:stream";
 
 import { WebSocket, WebSocketServer } from "ws";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import { CdpTargetSessionOwner } from "../../../src/browser/CdpTargetSessionOwner.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
@@ -15,7 +16,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { waitFor } from "../../support/testWait.js";
 
 it.each(["connect", "acquireBrowserSocket"] as const)(
   "refuses %s after clean shutdown without inventing retained cleanup",
@@ -51,21 +52,15 @@ it("joins a late owned handshake and waits for its active operation", async () =
   const http = createServer();
   const webSockets = new WebSocketServer({ noServer: true });
   let port = 0;
-  let releaseUpgrade: (() => void) | undefined;
-  let upgradeReceived: (() => void) | undefined;
-  const received = new Promise<void>((resolve) => {
-    upgradeReceived = resolve;
-  });
-  const allow = new Promise<void>((resolve) => {
-    releaseUpgrade = resolve;
-  });
+  const lateUpgrade = phaseGate();
   http.on("upgrade", (request, socket, head) => {
-    upgradeReceived?.();
-    void allow.then(() =>
-      webSockets.handleUpgrade(request, socket, head, (webSocket) =>
-        webSockets.emit("connection", webSocket, request),
-      ),
-    );
+    void lateUpgrade
+      .hold()
+      .then(() =>
+        webSockets.handleUpgrade(request, socket, head, (webSocket) =>
+          webSockets.emit("connection", webSocket, request),
+        ),
+      );
   });
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
   const address = http.address();
@@ -75,7 +70,7 @@ it("joins a late owned handshake and waits for its active operation", async () =
   const owner = new CdpTargetSessionOwner();
   let connecting: Promise<CdpConnection> | undefined;
   onTestFinished(async () => {
-    releaseUpgrade?.();
+    lateUpgrade.release();
     if (connecting !== undefined) {
       const pendingConnection = await connecting;
       await owner.finish(pendingConnection);
@@ -95,7 +90,7 @@ it("joins a late owned handshake and waits for its active operation", async () =
     {},
     "late-handshake",
   );
-  await received;
+  await lateUpgrade.reached(connecting, "late WebSocket upgrade");
   const closing = owner.close();
   let closed = false;
   void closing.then(() => {
@@ -103,13 +98,13 @@ it("joins a late owned handshake and waits for its active operation", async () =
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(closed).toBe(false);
-  releaseUpgrade?.();
+  lateUpgrade.release();
   const connection = await connecting;
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(closed).toBe(false);
   await owner.finish(connection);
   await closing;
-  await vi.waitFor(() => expect(webSockets.clients.size).toBe(0));
+  await waitFor(() => expect(webSockets.clients.size).toBe(0));
 });
 
 it("retries only the failed transport and does not repeat successful child cleanup", async () => {
@@ -157,13 +152,13 @@ it("retries only the failed transport and does not repeat successful child clean
   }
 
   await owner.retryPending();
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
   const cleanup = vi.fn(async () => undefined);
   await owner.finish(active, cleanup);
   await owner.retryPending();
   await owner.close();
   expect(cleanup).toHaveBeenCalledTimes(1);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   expect(browser.commands.map(({ method }) => method)).not.toContain(
     "Target.closeTarget",
   );
@@ -201,7 +196,7 @@ it("accepts asynchronous terminate success only after the close event", async ()
     terminate.mockRestore();
   }
   await owner.close();
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 it("clears returned inspection and shutdown cleanup status only after socket release", async () => {
@@ -241,7 +236,7 @@ it("clears returned inspection and shutdown cleanup status only after socket rel
   expect(browser.activeConnectionCount()).toBe(1);
   denied = false;
   await provider.close();
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(retry.cleanupIncomplete).toBe(false);
   expect(result.error.partialObservation).toBe(observation);
@@ -308,7 +303,7 @@ it("keeps retry aggregates incomplete until every reported socket is released", 
   expect(errors.map((error) => error.cleanupIncomplete)).toEqual([false, true]);
   expect(aggregate.cleanupIncomplete).toBe(true);
   expect(mixed.cleanupResources).toEqual(["second-socket"]);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(2));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(2));
   denied.clear();
   await owner.retryPending();
   expect(errors.map((error) => error.cleanupIncomplete)).toEqual([
@@ -317,7 +312,7 @@ it("keeps retry aggregates incomplete until every reported socket is released", 
   ]);
   expect(aggregate.cleanupIncomplete).toBe(false);
   expect(mixed.cleanupIncomplete).toBe(false);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
   await owner.finish(active);
 });
 
@@ -366,8 +361,9 @@ it("surfaces cold-start acquireBrowserSocket cleanup failure to live waiters wit
         (cause: unknown) => cause,
       ),
     ]);
+    // The errors already record the failed close; Node reports a rejection
+    // left unhandled from that turn before the next check phase.
     await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(unhandled).toEqual([]);
     if (
       !(firstError instanceof AnalysisError) ||
@@ -407,15 +403,12 @@ it("surfaces cold-start acquireBrowserSocket cleanup failure to live waiters wit
 it("surfaces cold-start acquireBrowserSocket cleanup failure when the last waiter aborts without unhandled rejections", async () => {
   const http = createServer();
   const upgradeSockets = new Set<Duplex>();
-  let upgradeReceived: (() => void) | undefined;
-  const received = new Promise<void>((resolve) => {
-    upgradeReceived = resolve;
-  });
+  const upgradeReceipt = phaseArrival();
   http.on("upgrade", (_request, socket) => {
     upgradeSockets.add(socket);
     socket.on("close", () => upgradeSockets.delete(socket));
     socket.on("error", () => undefined);
-    upgradeReceived?.();
+    upgradeReceipt.arrive();
   });
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
   const address = http.address();
@@ -459,8 +452,7 @@ it("surfaces cold-start acquireBrowserSocket cleanup failure when the last waite
       { signal: secondController.signal },
       limits,
     );
-    await awaitAcknowledgement(
-      received,
+    await upgradeReceipt.reached(
       Promise.all([first, second]),
       "cold browser-socket upgrade",
     );
@@ -480,8 +472,9 @@ it("surfaces cold-start acquireBrowserSocket cleanup failure when the last waite
       () => undefined,
       (cause: unknown) => cause,
     );
+    // The errors already record the failed close; Node reports a rejection
+    // left unhandled from that turn before the next check phase.
     await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(unhandled).toEqual([]);
     if (!(secondError instanceof AnalysisError))
       throw new Error("Expected last waiter cleanup-incomplete failure");

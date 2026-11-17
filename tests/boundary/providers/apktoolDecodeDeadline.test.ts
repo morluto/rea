@@ -47,7 +47,7 @@ it.skipIf(process.platform === "win32")(
               ({ kind }) => kind === "running",
             );
           },
-          { timeout: 8_000, interval: 25 },
+          { interval: 25 },
         )
         .toBe(true);
       const outcome = await awaitApktoolOperation(pending, 15_000);
@@ -72,7 +72,7 @@ it.skipIf(process.platform === "win32")(
             (await Promise.all(launched.map(observePosixProcess))).every(
               ({ kind }) => kind !== "running",
             ),
-          { timeout: 5_000, interval: 25 },
+          { interval: 25 },
         )
         .toBe(true);
     } finally {

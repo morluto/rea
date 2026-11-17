@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { afterEach, expect, it } from "vitest";
 
@@ -22,7 +23,11 @@ it.skipIf(process.platform === "win32")(
     const probe = inspectApktoolClient(
       { command: fixture.command, commandSource: "environment" },
       commands,
-      { signal: controller.signal, environment: process.env },
+      {
+        signal: controller.signal,
+        environment: process.env,
+        platform: HOST_PLATFORM.platform,
+      },
     ).catch((cause: unknown) => cause);
     try {
       let launched: readonly number[] = [];
@@ -36,7 +41,7 @@ it.skipIf(process.platform === "win32")(
               ({ kind }) => kind === "running",
             );
           },
-          { timeout: 10_000, interval: 25 },
+          { interval: 25 },
         )
         .toBe(true);
       controller.abort();
@@ -50,7 +55,7 @@ it.skipIf(process.platform === "win32")(
             (await Promise.all(launched.map(observePosixProcess))).every(
               ({ kind }) => kind !== "running",
             ),
-          { timeout: 5_000, interval: 25 },
+          { interval: 25 },
         )
         .toBe(true);
     } finally {

@@ -1,3 +1,7 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createPackageWithOptions } from "@electron/asar";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -5,7 +9,7 @@ import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { join, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 
@@ -19,12 +23,20 @@ import {
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const createSelectionClient = () => {
-  const client = new Client({
-    name: "javascript-source-selection",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-source-selection",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -33,7 +45,6 @@ const createSelectionClient = () => {
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
       // Exact advertised constraints require the complete schema profile.
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
     },
     stderr: "pipe",
   });
@@ -134,7 +145,7 @@ it("advertises exact source selection and retains its scope through summary, Evi
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(schema);
+    }).compile(canonicalInputSchema("analyze_javascript_application"));
     expect(validate({ input_path: root, source_paths: ["main.mjs"] })).toBe(
       true,
     );
@@ -149,14 +160,12 @@ it("advertises exact source selection and retains its scope through summary, Evi
       },
     });
     expect(selected.isError, JSON.stringify(selected.content)).not.toBe(true);
-    if (definition?.outputSchema === undefined)
+    if (definition === undefined)
       throw new Error("Missing advertised application output contract");
     const validateOutput = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(
-      z.record(z.string(), z.unknown()).parse(definition.outputSchema),
-    );
+    }).compile(canonicalOutputSchema(definition.name));
     expect(
       validateOutput(selected.structuredContent),
       JSON.stringify(validateOutput.errors),

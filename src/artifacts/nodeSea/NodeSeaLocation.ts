@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
   readArtifactRange as readExact,
@@ -7,27 +8,34 @@ import { readMachoSectionHeader } from "../../domain/apple/machoSectionHeader.js
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
-import { parsePeResources } from "../../native/pe/PeResourceParser.js";
+import {
+  parsePeResources,
+  peResourceLimitBoundary,
+} from "../../domain/pe/peResourceInventory.js";
 import {
   hasPeResourceName,
   readPeResourceLayout,
-} from "../../native/pe/PeResourceLayout.js";
+} from "../../domain/pe/peResourceLayout.js";
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+  type PeResources,
 } from "../../domain/native/peResources.js";
 import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactParseFailure,
+  artifactReaderLimitFailure,
+  abortIfNeeded,
+} from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 import {
   readFatContainerHeader,
   readFatHeaderPrefix,
@@ -51,9 +59,8 @@ import {
   observeNodeSeaFuseMatches,
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
 const RT_RCDATA = 10;
@@ -184,6 +191,7 @@ export const scanNodeSeaFuse = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Node SEA carrier shrank during the fuse scan",
+        { integrityCheck: "read-coverage" },
       );
     const window = carry.length === 0 ? chunk : Buffer.concat([carry, chunk]);
     for (const match of window
@@ -257,7 +265,12 @@ const locateFatMachO = async (
   const found: BlobRange[] = [];
   for (const [index, slice] of header.slices.entries()) {
     if (slice === undefined || header.rangeIssues[index] != null) continue;
-    found.push(...(await locateThinMachO(carrier, slice.offset, slice.size)));
+    for (const range of await locateThinMachO(
+      carrier,
+      slice.offset,
+      slice.size,
+    ))
+      found.push(range);
   }
   return found;
 };
@@ -309,8 +322,8 @@ const locateThinMachO = async (
         throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
       return found;
     }
-    if (cmd === LC_SEGMENT || cmd === LC_SEGMENT_64) {
-      const segment64 = cmd === LC_SEGMENT_64;
+    if (cmd === LC.SEGMENT || cmd === LC.SEGMENT_64) {
+      const segment64 = cmd === LC.SEGMENT_64;
       const sectionSize = segment64 ? 80 : 68;
       const parsedSegment = readMachoSegmentHeader(
         commands.subarray(offset, offset + cmdsize),
@@ -442,7 +455,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else for (const range of scanned) found.push(range);
     }
   // The runtime locates the blob through PT_NOTE segments. Injectors can
   // leave stale or misaligned SHT_NOTE entries, so section notes are only a
@@ -490,7 +503,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else for (const range of scanned) found.push(range);
     }
   if (found.length > 0 && opaque)
     throw formatFailure(NODE_SEA_ELF_TABLE_TRUNCATED);
@@ -668,25 +681,30 @@ const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
   try {
     layout = readPeResourceLayout(bytes);
   } catch (cause) {
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+    if (cause instanceof ParseFailureError && cause.kind === "malformed")
       return [];
     throw cause;
   }
-  const resources = await parsePeResources(
-    bytes,
-    {
-      path: "<admitted SEA carrier>",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.length,
-    },
-    {
-      path: "/admitted-sea-carrier",
-      max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
-      max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-    },
-    carrier.signal,
-    layout,
-  );
+  let resources: PeResources;
+  try {
+    resources = await parsePeResources(
+      bytes,
+      {
+        path: "<admitted SEA carrier>",
+        sha256: sha256Hex(bytes),
+        bytes: bytes.length,
+      },
+      {
+        path: "/admitted-sea-carrier",
+        max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
+        max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+      },
+      carrier.signal,
+      layout,
+    );
+  } catch (cause) {
+    throw artifactParseFailure(cause, carrier.signal, peResourceLimitBoundary);
+  }
   return resources.resources.flatMap((resource) => {
     if (
       resource.type.kind !== "id" ||

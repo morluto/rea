@@ -5,41 +5,11 @@ import {
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
 
-import { TestRunner, test as base } from "vitest";
+import { test as base } from "vitest";
+
+import { runningTestDeadline } from "../runningTestDeadline.js";
 
 const SHUTDOWN_GRACE_MS = 1_000;
-/** Minimum time kept back from a test deadline to stop a child and report it. */
-const MIN_REPORT_RESERVE_MS = 5_000;
-
-/**
- * Default child deadline: the test's remaining deadline, less a reserve for
- * stopping the child and reporting its captured output. A hung child then fails
- * with its output instead of an opaque test timeout, without a fixed value that
- * assumes a host's speed. Undefined when the test itself has no deadline.
- */
-export const remainingProcessDeadline = (
-  testDeadlineMs: number,
-  elapsedMs: number,
-): number | undefined => {
-  if (!(testDeadlineMs > 0)) return undefined;
-  const reserve = Math.max(MIN_REPORT_RESERVE_MS, testDeadlineMs / 10);
-  return Math.max(
-    SHUTDOWN_GRACE_MS,
-    Math.floor(testDeadlineMs - elapsedMs - reserve),
-  );
-};
-
-/**
- * Deadline left for a child started by the running test, or undefined outside
- * a test. Uses the real clock, so tests that fake `Date` keep a real deadline.
- */
-const currentTestProcessDeadline = (): number | undefined => {
-  const test = TestRunner.getCurrentTest();
-  const started = test?.result?.startTime;
-  if (test === undefined || started === undefined) return undefined;
-  const now = performance.timeOrigin + performance.now();
-  return remainingProcessDeadline(test.timeout, now - started);
-};
 
 /** Captured output and termination state from one child process. */
 export interface ProcessResult {
@@ -135,7 +105,7 @@ export const createTestProcessRegistry = (
     run: async (command, arguments_, options = {}) => {
       const {
         input,
-        timeoutMs = currentTestProcessDeadline(),
+        timeoutMs = runningTestDeadline(),
         ...spawnOptions
       } = options;
       const child = spawn(command, arguments_, spawnOptions);

@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 
@@ -72,7 +73,7 @@ const resourceKeyMatchSchema = z.strictObject({
 });
 
 const analysisCoverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial", "unknown"]),
+  status: coverageStatusSchema,
   reason: z.string().nullable(),
 });
 export type AppleAssetAnalysisCoverage = z.infer<typeof analysisCoverageSchema>;

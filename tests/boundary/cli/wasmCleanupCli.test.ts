@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect } from "vitest";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

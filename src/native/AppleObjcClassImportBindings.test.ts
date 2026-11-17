@@ -1,8 +1,9 @@
+import { malformedInput } from "../domain/parseFailure.js";
 import { describe, expect, it } from "vitest";
 
-import type { PointerFixups } from "./AppleMachoFixups.js";
+import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
-import type { MachoLayout } from "./AppleMachoSelection.js";
+import type { MachoLayout } from "../domain/apple/appleMachoSelection.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
 const createInput = (
@@ -59,7 +60,7 @@ const createInput = (
     offset: (address, size = 1) => {
       if (address === 0x1000n && size === 8) return 0;
       if (address === 0x1008n && size === 8) return 8;
-      throw new RangeError("address is outside fixture");
+      throw malformedInput("macho", "address is outside fixture");
     },
   };
   return {
@@ -222,5 +223,19 @@ describe("Objective-C import binding address inspection", () => {
         createInput({ addresses: [], addressesComplete: true }),
       ).coverage,
     ).toMatchObject({ status: "not_requested", reason: null, examined: 0 });
+  });
+});
+
+describe("Objective-C import binding candidate completeness", () => {
+  it("reports coverage unknown when the candidates' completeness was not stated", () => {
+    for (const addresses of [["0x1000", "0x1008"], []])
+      expect(
+        inspectObjcClassImportBindings(
+          createInput({ addresses, addressesComplete: undefined }),
+        ).coverage,
+      ).toMatchObject({
+        status: "unknown",
+        reason: expect.stringContaining("did not state"),
+      });
   });
 });

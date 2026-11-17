@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { parseConfig } from "../../../../src/config/parseConfig.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
+import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { ok } from "../../../../src/domain/result.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
@@ -138,6 +139,7 @@ describe.skipIf(process.platform === "win32")(
             observed_oome: [
               {
                 stream: "stderr",
+                area: "heap",
                 line: expect.stringContaining("java.lang.OutOfMemoryError"),
               },
             ],
@@ -239,6 +241,35 @@ describe.skipIf(process.platform === "win32")(
         },
       });
       expect(projected.remediation.action).not.toContain("rea doctor");
+    });
+
+    it("keeps the cgroup evidence while a sampled file's failed close is retained", async () => {
+      let released = false;
+      const stuck = new OwnedFileHandle({
+        fd: 1_000_000,
+        close: async () => {
+          if (!released) throw new Error("close denied");
+        },
+      } as unknown as FileHandle);
+      let reads = 0;
+      const projected = await failedOperation("sigkill_tools", {
+        readMemoryCgroup: async ({ retainFailedClose }) => {
+          // The post-kill sample leaves an owner pending for session cleanup.
+          if (reads === 1) retainFailedClose("/proc/self/cgroup", stuck);
+          return { path: "/", oomKills: reads++, memoryMax: 3_221_225_472 };
+        },
+      });
+      released = true;
+      expect(reads).toBe(2);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          diagnostics: {
+            exit_signal: "SIGKILL",
+            memory_cgroup: { oom_kill_before: 0, oom_kill_after: 1 },
+          },
+        },
+      });
     });
 
     it("names the signal when no cgroup attributes the kill", async () => {

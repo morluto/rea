@@ -11,9 +11,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const bundleRuntime = async (root) => {
   const compiledRoot = resolve(root, "dist");
   // CLI, MCP, workers and updater fixtures share one release-identity owner.
-  const metadataModule = join(compiledRoot, "generatedPackageMetadata.js");
+  // The recorded CLI command registrars stay one replaceable build fact too.
+  const recordedModules = new Set(
+    ["generatedPackageMetadata.js", "recordedCliCommandRegistrations.js"].map(
+      (name) => join(compiledRoot, name),
+    ),
+  );
   const isMetadataModule = (id) =>
-    isAbsolute(id) && resolve(id) === metadataModule;
+    isAbsolute(id) && recordedModules.has(resolve(id));
   const { rolldown, RUNTIME_MODULE_ID } = await import("rolldown");
   const { imports = {} } = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),
@@ -122,7 +127,7 @@ export const bundleRuntime = async (root) => {
                 return `${path.replace(/\.js$/u, "").split(sep).join("__")}-[hash].js`;
               },
         paths: (id) =>
-          isMetadataModule(id) ? "../generatedPackageMetadata.js" : id,
+          isMetadataModule(id) ? `../${relative(compiledRoot, id)}` : id,
         minifyInternalExports: directory === "mcp",
         codeSplitting: true,
         strictExecutionOrder: true,

@@ -1,3 +1,8 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  EVIDENCE_FORMAT_REVISION,
+  RECREATE_EVIDENCE_GUIDANCE,
+} from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
@@ -22,12 +27,12 @@ import {
   updateResidualUnknown,
 } from "../../../src/domain/residualUnknown.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const revisionBundle = () => {
   const records = ["open", "investigate"].map((operation) =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation, parameters: {}, result: { observed: operation } },
     ),
@@ -78,7 +83,7 @@ cliTest(
       [["compare", "bundle.json", ""], "right"],
       [["evidence-export", "missing.json", ""], "output"],
     ] as const) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [...args, "--json"],
         cwd: root,
       });
@@ -138,7 +143,7 @@ cliTest(
       ["evidence-export", { source: " bundle.json", output: " exported.json" }],
       ["compare", { left: " bundle.json", right: " other.json" }],
     ] as const) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [command, "--schema", "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -246,7 +251,7 @@ cliTest.for([
           : operation === "compare-left"
             ? ["compare", path, canonical]
             : ["compare", canonical, path];
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: [...arguments_, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -325,7 +330,7 @@ cliTest(
       await writeFile(source, JSON.stringify(bundle));
       for (const full of [false, true]) {
         const output = join(root, `${label}-${String(full)}.json`);
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: [
             "evidence-export",
             source,
@@ -364,8 +369,7 @@ cliTest(
     expect(result.json).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      details: { path },
-      message: expect.stringContaining("this JSON is one Evidence record"),
+      details: { path, detected_kind: "evidence-record" },
     });
   },
 );
@@ -387,7 +391,7 @@ cliTest(
       { ...bundle, unknowns: bundle.unknowns.slice(1) },
     ]) {
       await writeFile(path, JSON.stringify(invalid));
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["evidence-import", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -408,13 +412,13 @@ cliTest(
       JSON.parse('{"__proto__":{"answer":7},"normal":{"answer":7}}'),
     );
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
     await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
 
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, detail: "complete" }),
@@ -451,7 +455,7 @@ cliTest(
       literal: "&copy; <br>",
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "ordinary-json",
@@ -466,12 +470,12 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const json = await runFileCli(cli, { arguments: [...base, "--json"] });
+    const json = await cli.run({ arguments: [...base, "--json"] });
     expect(json.exitCode, json.stderr).toBe(0);
     expect(json.stdout).toContain(JSON.stringify(result.text));
     expect(json.stdout).toContain(JSON.stringify(result.type));
     expect(json.stdout).toContain(JSON.stringify(result.literal));
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [...base, "--format", "md"],
     });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
@@ -482,12 +486,15 @@ cliTest(
 );
 
 cliTest(
-  "diagnoses an obsolete explicit-null Evidence commitment",
+  "refuses an earlier-format record inside a current bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
     const record = PRE_66_NULL_COVERAGE_EVIDENCE;
+    // A current-format bundle carrying an earlier record is refused by the
+    // record's own format marker, before its ID is checked.
     const bundle = {
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       providers: [record.provider],
       environments: [],
@@ -497,16 +504,14 @@ cliTest(
       records: [record],
     };
     await writeFile(path, JSON.stringify(bundle));
-    const imported = await runFileCli(cli, {
+    const imported = await cli.run({
       arguments: ["evidence-import", path, "--json"],
     });
     expect(imported.exitCode).toBe(1);
     expect(imported.json).toMatchObject({
       code: "evidence_integrity_mismatch",
       retryable: false,
-      message: expect.stringContaining(
-        "earlier relationship_coverage identity commitment",
-      ),
+      message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
     });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
@@ -516,9 +521,7 @@ cliTest(
       error: {
         code: "evidence_integrity_mismatch",
         retryable: false,
-        message: expect.stringContaining(
-          "earlier relationship_coverage identity commitment",
-        ),
+        message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
       },
     });
   },

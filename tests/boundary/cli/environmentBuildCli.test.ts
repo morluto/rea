@@ -101,6 +101,26 @@ cliTest(
     expect(projected.exitCode, projected.stderr).toBe(0);
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, projected.stdout);
+    for (const command of [
+      "environment-build",
+      "environment-export",
+    ] as const) {
+      const parent = join(root, `${command}-refused`);
+      await mkdir(parent);
+      // Do not use join for the last segment: the caller's spelling matters.
+      const destination = `${join(parent, "a", "b", "c")}${sep}..`;
+      const args =
+        command === "environment-build"
+          ? [command, har, destination, "--json"]
+          : [command, manifest, "--evidence", capture, destination, "--json"];
+      const refused = await cli.run({ arguments: args });
+      expect(refused.exitCode, refused.stderr).toBe(1);
+      expect(refused.json).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["directory"] }] },
+      });
+      expect(await readdir(parent)).toEqual([]);
+    }
     const exported = await cli.run({
       arguments: [
         "environment-export",
@@ -287,5 +307,28 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
     expect((await readdir(root)).includes("bundle")).toBe(
       dryRun === "--dry-run=false",
     );
+  },
+);
+
+cliTest(
+  "reports its default build-stage logging through the routed CLI driver",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-environment-build-logs-");
+    const har = join(root, "grafana.har");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    // Without REA_LOG_LEVEL the build logs its stages at info on stderr.
+    const invocation = {
+      arguments: ["environment-build", har, "--dry-run", "--json"],
+    };
+    const routed = await cli.run(invocation);
+    const fresh = await cli.run({ ...invocation, freshProcess: true });
+    expect(fresh.stderr).toContain("Building environment");
+    const stages = (stderr: string) =>
+      stderr
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => (JSON.parse(line) as { stage?: unknown }).stage);
+    expect(stages(routed.stderr)).toEqual(stages(fresh.stderr));
+    expect(routed.exitCode).toBe(fresh.exitCode);
   },
 );
