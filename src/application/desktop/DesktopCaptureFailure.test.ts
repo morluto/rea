@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { DesktopSessionCleanupError } from "../../desktop/DesktopApplicationSession.js";
+import { DesktopSessionCleanupError } from "../../ports/DesktopApplicationSession.js";
+import { createDesktopCaptureProvider } from "../../desktop/DesktopCaptureProvider.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import { walkHomeState } from "../../desktop/HomeStateWalker.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
@@ -238,11 +239,33 @@ describe("failedCaptureError", () => {
 
 describe("projectFailure", () => {
   it.each([
-    { oversized: false, category: "cancelled" },
-    { oversized: true, category: "execution_failure" },
+    {
+      oversized: false,
+      closeFails: true,
+      category: "cancelled",
+      code: "cleanup_incomplete",
+    },
+    {
+      oversized: true,
+      closeFails: true,
+      category: "execution_failure",
+      code: "cleanup_incomplete",
+    },
+    {
+      oversized: false,
+      closeFails: false,
+      category: "cancelled",
+      code: "cancelled",
+    },
+    {
+      oversized: true,
+      closeFails: false,
+      category: "invalid_input",
+      code: "invalid_request",
+    },
   ])(
-    "preserves the physical read outcome beside final cancellation and cleanup (oversized: $oversized)",
-    async ({ oversized, category }) => {
+    "preserves the physical read outcome beside final cancellation (oversized: $oversized, close fails: $closeFails)",
+    async ({ oversized, closeFails, category, code }) => {
       const root = await createTestTempDirectory("desktop-inventory-cancel-");
       const entry = join(root, "notes.desktop");
       await writeFile(
@@ -254,13 +277,15 @@ describe("projectFailure", () => {
       const controller = new AbortController();
       const reason = new Error("cancelled while closing the desktop entry");
       let owner: OwnedFileHandle | undefined;
+      const actualClose = OwnedFileHandle.prototype.close;
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
-        .mockImplementation(function (this: OwnedFileHandle) {
+        .mockImplementation(async function (this: OwnedFileHandle) {
           // oxlint-disable-next-line typescript/no-this-alias -- Release the exact denied descriptor after the public call.
           owner = this;
+          if (!closeFails) await actualClose.call(this);
           controller.abort(reason);
-          return Promise.reject(new Error("close denied"));
+          if (closeFails) throw new Error("close denied");
         });
       try {
         const result = await captureDesktopApplication(
@@ -280,6 +305,7 @@ describe("projectFailure", () => {
           {
             platform: "linux",
             callerDirectory: root,
+            desktop: createDesktopCaptureProvider(),
             environment: {
               HOME: root,
               DISPLAY: ":controlled",
@@ -297,10 +323,14 @@ describe("projectFailure", () => {
         expect(owner).toBeDefined();
         expect(result).toMatchObject({
           error: "Desktop capture failed",
-          code: "cleanup_incomplete",
+          code,
           category,
-          details: { resources: [entry] },
+          ...(closeFails ? { details: { resources: [entry] } } : {}),
         });
+        if (oversized && !closeFails)
+          expect(result).toMatchObject({
+            message: expect.stringContaining("larger than 1 MiB"),
+          });
       } finally {
         close.mockRestore();
         await owner?.close();

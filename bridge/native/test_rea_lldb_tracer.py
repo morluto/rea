@@ -618,5 +618,86 @@ class NativeTraceBudgetTests(unittest.TestCase):
                     )
 
 
+class NativeStopAttributionTests(unittest.TestCase):
+    SIGNAL, EXCEPTION, BREAKPOINT = 5, 6, 3
+
+    def thread(self, reason, data=(), pc=0x928, description="stop"):
+        frame = types.SimpleNamespace(GetPC=lambda: pc)
+        return types.SimpleNamespace(
+            GetStopReason=lambda: reason,
+            GetStopReasonDataCount=lambda: len(data),
+            GetStopReasonDataAtIndex=lambda index: data[index],
+            GetFrameAtIndex=lambda _index: frame,
+            GetStopDescription=lambda _size: description,
+        )
+
+    @staticmethod
+    def breakpoint(*addresses):
+        return types.SimpleNamespace(
+            FindLocationByAddress=lambda address: types.SimpleNamespace(
+                IsValid=lambda: address in addresses
+            )
+        )
+
+    def stop(self, threads, created):
+        context = {
+            "process": threads,
+            "created": created,
+            "unattributed_breakpoint_stops": 0,
+            "config": {"capture_limits": {"other_stops": 10}},
+        }
+        hits = []
+
+        def handle(_context, frame, index):
+            hits.append((frame.GetPC(), index))
+            return None
+
+        other_stops = []
+        with patch.object(tracer.lldb, "eStopReasonSignal", self.SIGNAL, create=True), patch.object(
+            tracer.lldb, "eStopReasonException", self.EXCEPTION, create=True
+        ), patch.object(tracer, "_handle_breakpoint", side_effect=handle):
+            outcome = tracer._handle_stop(context, other_stops)
+        return outcome, hits, other_stops, context["unattributed_breakpoint_stops"]
+
+    def test_trap_at_requested_location_is_that_requests_hit(self):
+        trap = (tracer.MACH_EXC_BREAKPOINT, 1, 0x928)
+        outcome, hits, other_stops, unattributed = self.stop(
+            [self.thread(self.EXCEPTION, trap, description="EXC_BREAKPOINT (code=1, subcode=0x928)")],
+            [[self.breakpoint(0x928)], [self.breakpoint(0x500)], [self.breakpoint(0x500), self.breakpoint(0x928)]],
+        )
+        self.assertIsNone(outcome)
+        self.assertEqual(hits, [(0x928, 0), (0x928, 2)])
+        self.assertEqual(other_stops, [])
+        self.assertEqual(unattributed, 0)
+
+    def test_unattributed_trap_or_stop_on_a_location_is_retained_and_counted(self):
+        created = [[self.breakpoint(0x928)]]
+        for thread in (
+            self.thread(self.EXCEPTION, (tracer.MACH_EXC_BREAKPOINT, 1, 0x700), pc=0x700, description="elsewhere"),
+            self.thread(self.EXCEPTION, (tracer.MACH_EXC_BREAKPOINT, 1, 0x928), pc=0x92C, description="moved"),
+            self.thread(self.SIGNAL, (17,), pc=0x928, description="signal SIGSTOP"),
+            self.thread(self.EXCEPTION, (1, 2, 0x10), pc=0x928, description="EXC_BAD_ACCESS"),
+        ):
+            outcome, hits, other_stops, unattributed = self.stop([thread], created)
+            self.assertIsNone(outcome)
+            self.assertEqual(hits, [])
+            self.assertEqual(other_stops, [thread.GetStopDescription(256)])
+            self.assertEqual(unattributed, 1)
+
+    def test_other_stops_are_not_counted_as_possible_hits(self):
+        outcome, hits, other_stops, unattributed = self.stop(
+            [
+                self.thread(self.SIGNAL, (11,), pc=0x700, description="signal SIGSEGV"),
+                self.thread(self.EXCEPTION, (1, 2, 0x928), pc=0x700, description="EXC_BAD_ACCESS"),
+                self.thread(self.BREAKPOINT, (1, 1), description="breakpoint 1.1"),
+            ],
+            [[self.breakpoint(0x928)]],
+        )
+        self.assertIsNone(outcome)
+        self.assertEqual(hits, [])
+        self.assertEqual(other_stops, ["signal SIGSEGV", "EXC_BAD_ACCESS"])
+        self.assertEqual(unattributed, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

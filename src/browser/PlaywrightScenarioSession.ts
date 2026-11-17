@@ -1,7 +1,7 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import type { BrowserContext } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
@@ -494,6 +494,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     action: BrowserScenarioAction,
     signal?: AbortSignal,
   ): Promise<void> {
+    // A policy connection lost after the previous step's check would leave
+    // this action's documents unprotected; report it before acting.
+    this.serviceWorkers?.assertConnected();
     await withPlaywrightExecutionBoundary(
       () =>
         performPlaywrightScenarioAction({

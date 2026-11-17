@@ -11,20 +11,16 @@ const hasNonLoopbackIpv4 = Object.values(networkInterfaces())
 processTest.skipIf(process.platform !== "win32" && !hasNonLoopbackIpv4)(
   "storage fixture binds to IPv4 loopback and serves localhost",
   async ({ processes }) => {
-    const result = await processes.run(
-      process.execPath,
-      [
-        fileURLToPath(
-          new URL(
-            "../../fixtures/browserFixtureHttpTargets.mjs",
-            import.meta.url,
-          ),
+    const result = await processes.run(process.execPath, [
+      fileURLToPath(
+        new URL(
+          "../../fixtures/browserFixtureHttpTargets.mjs",
+          import.meta.url,
         ),
-        "storage",
-        "listener-scope",
-      ],
-      { timeoutMs: 15_000 },
-    );
+      ),
+      "storage",
+      "listener-scope",
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).toBe("");

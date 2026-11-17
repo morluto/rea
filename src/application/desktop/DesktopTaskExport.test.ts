@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
-import { namesApp, shippedSeedCheckView } from "./DesktopTaskExport.js";
+import { shippedSeedCheckView } from "./DesktopTaskExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   HOME,
@@ -802,17 +802,20 @@ describe("exportDesktopApplication with a task's prompt", () => {
     expect(naming(named.result.limitations)).toEqual([]);
   });
 
-  it("does not treat a word that only contains the app's name as naming it", () => {
-    const dia = { title: "Dia", name: "dia", aptPackage: "dia" };
-    expect(namesApp("Update the diagram and save it.", dia)).toBe(false);
-    expect(namesApp("In Dia, add a box.", dia)).toBe(true);
-    expect(
-      namesApp("In Notes, write down milk.", {
-        title: "Notes",
-        name: "notes",
-        aptPackage: "notes",
-      }),
-    ).toBe(true);
+  it("does not treat a word that only contains the app's name as naming it", async () => {
+    const checks = [
+      { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+    ];
+    const exported = await exportWithTasks({
+      ...task(checks),
+      prompt: "Update the notesheet and save it.",
+    });
+    if (exported.result instanceof Error) throw exported.result;
+    expect(exported.result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/prompt.*does not name the app/iu),
+      ]),
+    );
   });
 });
 

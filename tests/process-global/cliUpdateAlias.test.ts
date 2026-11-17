@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 import { createCli } from "../../src/cli.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
+import { HOST_PLATFORM } from "../../src/platform/HostPlatform.js";
 
 const mocks = vi.hoisted(() => ({
   run: vi.fn(),
@@ -97,17 +98,36 @@ it.each(["json", "jsonl", "yaml", "toon", "md"])(
     const expected = await serve(cli, ["update", "--format", format]);
     const actual = await serve(cli, ["--format", format, "--update"]);
     expect(actual).toEqual(expected);
-    expect(actual.exitCode).toBe(0);
-    expect(actual.stdout).toContain(PRODUCT_IDENTITY.packageVersion);
+    if (format === "jsonl") {
+      // Direct serve follows the public writer's record-collection contract.
+      expect(actual.exitCode).toBe(1);
+      expect(JSON.parse(actual.stdout)).toMatchObject({
+        $rea: "jsonl/v1",
+        type: "error",
+        ok: false,
+        result: {
+          code: "invalid_request",
+          remediation: { action: expect.stringContaining("--format json") },
+        },
+      });
+    } else {
+      expect(actual.exitCode).toBe(0);
+      expect(actual.stdout).toContain(PRODUCT_IDENTITY.packageVersion);
+    }
     expect(mocks.run).toHaveBeenCalledTimes(2);
     expect(mocks.run).toHaveBeenLastCalledWith(
       PRODUCT_IDENTITY.packageVersion,
       { owner: "selected-update-host" },
       "structured",
     );
-    expect(mocks.host).toHaveBeenLastCalledWith(undefined, undefined, {
-      REA_SELECTED_UPDATE: "original",
-    });
+    expect(mocks.host).toHaveBeenLastCalledWith(
+      undefined,
+      undefined,
+      {
+        REA_SELECTED_UPDATE: "original",
+      },
+      HOST_PLATFORM.platform,
+    );
     expect(mocks.dependencyInstall).not.toHaveBeenCalled();
   },
 );

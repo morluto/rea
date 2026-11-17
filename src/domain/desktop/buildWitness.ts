@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { jsonValueSchema } from "../jsonValue.js";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { err, ok, type Result } from "../result.js";
 import type { TaskCheckOutcome, TaskFileView } from "./appTaskChecks.js";
 import type { ComputerAction } from "./computerActions.js";
@@ -221,14 +222,17 @@ export const admitWitnessStage = (
   return ok(log.total);
 };
 
-const fileViewSchema = z.looseObject({
+const fileViewSchema = z.object({
   format: z.string().nullable(),
   view: jsonValueSchema.nullable(),
-  error: z.string().nullish(),
+  error: z
+    .string()
+    .nullish()
+    .transform((error) => error ?? null),
 });
 const statePartSchema = z.looseObject({
   kind: z.literal("data"),
-  data: z.looseObject({ state: z.record(z.string(), fileViewSchema) }),
+  data: z.looseObject({ state: jsonRecordSchema(fileViewSchema) }),
 });
 
 /**
@@ -241,18 +245,7 @@ export const appStateViews = (
   for (const part of parts) {
     const parsed = statePartSchema.safeParse(part);
     if (parsed.success)
-      return ok(
-        new Map(
-          Object.entries(parsed.data.data.state).map(([path, entry]) => [
-            path,
-            {
-              format: entry.format,
-              view: entry.view,
-              error: entry.error ?? null,
-            },
-          ]),
-        ),
-      );
+      return ok(new Map(Object.entries(parsed.data.data.state)));
   }
   return err(
     "The app's data/get returned no state views; witness a bundle exported by REA, whose app serves them.",

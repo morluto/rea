@@ -2,11 +2,12 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseArrival } from "../../../support/lifecycleHarness.js";
 
 import {
   resolveXcrunTool,
   type NativeCommandLauncher,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 
 const realpathState = vi.hoisted(() => ({
   resolve: undefined as ((path: string) => Promise<string>) | undefined,
@@ -56,100 +57,121 @@ afterEach(() => {
 });
 
 it("keeps a realpath I/O failure primary when cancellation is observed before rejection", async () => {
-  let realpathStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    realpathStarted = resolve;
-  });
-  let rejectRealpath!: (cause: unknown) => void;
+  const realpathStart = phaseArrival();
+  let rejectRealpath: ((cause: unknown) => void) | undefined;
   realpathState.resolve = () =>
     new Promise<string>((_resolve, reject) => {
+      if (controller.signal.aborted) {
+        reject(controller.signal.reason);
+        return;
+      }
       rejectRealpath = reject;
-      realpathStarted();
+      realpathStart.arrive();
     });
   const controller = new AbortController();
   const cancellationReason = { source: "caller", phase: "tool resolution" };
   const pending = resolveXcrunTool("file", {}, controller.signal, launcher);
-  await started;
-  controller.abort(cancellationReason);
-  const ioFailure = Object.assign(new Error("fixture realpath failure"), {
-    code: "EACCES",
-  });
-  rejectRealpath(ioFailure);
+  try {
+    await realpathStart.reached(pending, "native tool realpath");
+    controller.abort(cancellationReason);
+    const ioFailure = Object.assign(new Error("fixture realpath failure"), {
+      code: "EACCES",
+    });
+    rejectRealpath?.(ioFailure);
 
-  const result = await pending;
-  if (result.ok) throw new Error("Expected realpath I/O failure");
-  expect(result.error).toMatchObject({
-    reason: "io",
-    cancellation: { reason: cancellationReason },
-  });
-  expect(result.error.cancellation?.reason).toBe(cancellationReason);
-  expect(result.error.cause).toBe(ioFailure);
+    const result = await pending;
+    if (result.ok) throw new Error("Expected realpath I/O failure");
+    expect(result.error).toMatchObject({
+      reason: "io",
+      cancellation: { reason: cancellationReason },
+    });
+    expect(result.error.cancellation?.reason).toBe(cancellationReason);
+    expect(result.error.cause).toBe(ioFailure);
+  } finally {
+    controller.abort(cancellationReason);
+    rejectRealpath?.(new Error("fixture cleanup"));
+    await pending;
+  }
 });
 
 it("retains exact cancellation observed after successful tool path resolution", async () => {
-  let finishRealpath!: () => void;
-  let realpathStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    realpathStarted = resolve;
-  });
+  let finishRealpath: (() => void) | undefined;
+  const realpathStart = phaseArrival();
   realpathState.resolve = () =>
-    new Promise<string>((resolve) => {
+    new Promise<string>((resolve, reject) => {
+      if (controller.signal.aborted) {
+        reject(controller.signal.reason);
+        return;
+      }
       finishRealpath = () => resolve("/controlled/physical-tool");
-      realpathStarted();
+      realpathStart.arrive();
     });
   const controller = new AbortController();
   const cancellationReason = { source: "caller", phase: "tool selection" };
   const pending = resolveXcrunTool("file", {}, controller.signal, launcher);
-  await started;
-  controller.abort(cancellationReason);
-  finishRealpath();
+  try {
+    await realpathStart.reached(pending, "native tool realpath");
+    controller.abort(cancellationReason);
+    finishRealpath?.();
 
-  const result = await pending;
-  if (result.ok) throw new Error("Expected selection cancellation");
-  expect(result.error).toMatchObject({
-    reason: "cancelled",
-    cancellation: { reason: cancellationReason },
-  });
-  expect(result.error.cancellation?.reason).toBe(cancellationReason);
-  expect(result.error.cause).toMatchObject({
-    reason: "cancelled",
-    cause: cancellationReason,
-  });
+    const result = await pending;
+    if (result.ok) throw new Error("Expected selection cancellation");
+    expect(result.error).toMatchObject({
+      reason: "cancelled",
+      cancellation: { reason: cancellationReason },
+    });
+    expect(result.error.cancellation?.reason).toBe(cancellationReason);
+    expect(result.error.cause).toMatchObject({
+      reason: "cancelled",
+      cause: cancellationReason,
+    });
+  } finally {
+    controller.abort(cancellationReason);
+    finishRealpath?.();
+    await pending;
+  }
 });
 
 it.skipIf(process.platform === "win32")(
   "uses the AbortError cause as the exact tool-hash cancellation fact",
   async () => {
-    let finishRealpath!: () => void;
-    let realpathStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      realpathStarted = resolve;
-    });
+    let finishRealpath: (() => void) | undefined;
+    const realpathStart = phaseArrival();
     realpathState.resolve = () =>
-      new Promise<string>((resolve) => {
+      new Promise<string>((resolve, reject) => {
+        if (controller.signal.aborted) {
+          reject(controller.signal.reason);
+          return;
+        }
         finishRealpath = () => resolve("/dev/zero");
-        realpathStarted();
+        realpathStart.arrive();
       });
     const controller = new AbortController();
     const cancellationReason = { source: "caller", phase: "tool hash" };
     const pending = resolveXcrunTool("file", {}, controller.signal, launcher);
-    await started;
-    finishRealpath();
-    setImmediate(() => controller.abort(cancellationReason));
+    try {
+      await realpathStart.reached(pending, "native tool hash selection");
+      finishRealpath?.();
+      setImmediate(() => controller.abort(cancellationReason));
 
-    const result = await pending;
-    if (result.ok) throw new Error("Expected hash cancellation");
-    expect(result.error).toMatchObject({
-      reason: "cancelled",
-      cancellation: { reason: cancellationReason },
-    });
-    expect(result.error.cause).toMatchObject({
-      name: "AbortError",
-      code: "ABORT_ERR",
-      cause: cancellationReason,
-    });
-    expect(result.error.cancellation?.reason).toBe(cancellationReason);
-    expect(result.error.cause).toBeInstanceOf(Error);
-    expect((result.error.cause as Error).cause).toBe(cancellationReason);
+      const result = await pending;
+      if (result.ok) throw new Error("Expected hash cancellation");
+      expect(result.error).toMatchObject({
+        reason: "cancelled",
+        cancellation: { reason: cancellationReason },
+      });
+      expect(result.error.cause).toMatchObject({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        cause: cancellationReason,
+      });
+      expect(result.error.cancellation?.reason).toBe(cancellationReason);
+      expect(result.error.cause).toBeInstanceOf(Error);
+      expect((result.error.cause as Error).cause).toBe(cancellationReason);
+    } finally {
+      controller.abort(cancellationReason);
+      finishRealpath?.();
+      await pending;
+    }
   },
 );

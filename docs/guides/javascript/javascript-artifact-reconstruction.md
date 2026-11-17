@@ -456,9 +456,13 @@ RPC client syntax also contributes network endpoint candidates, in both
 - `graphql:query`, `graphql:mutation`, and `graphql:subscription` record a
   named operation found at the start of a string or cooked template literal —
   the name must be followed by variable definitions (`($`), a directive, or a
-  selection set starting with a field name — or in a precompiled
-  `OperationDefinition` document object. A standalone Source object's `body`
-  remains an operation candidate even when it has `locationOffset` metadata.
+  selection set starting with a field, named fragment spread, or inline fragment
+  — or in a precompiled `OperationDefinition` document object. A precompiled
+  operation name must be one complete GraphQL Name token (ASCII letters,
+  digits, and underscores, with no leading digit). Recognition is limited to
+  static operation headers; it does not validate a complete GraphQL document or
+  prove that the application sends the operation. A standalone Source object's
+  `body` remains an operation candidate even when it has `locationOffset` metadata.
   A graphql-tag `loc.source.body` copy is suppressed only when that source
   belongs to a recovered document with the same operation and its containing
   document, location and source have proven private metadata ownership. Writes,
@@ -810,15 +814,20 @@ retained graph capacity, worker memory and deadlines. Both
 `primitive_bytes` charges six estimated JSON bytes per UTF-16 code unit plus
 quotes before creating concatenated strings. Ordinary ASCII can exhaust that
 conservative estimate before its actual JSON encoding reaches the selected
-byte count. The [calibration record](../../verification/javascript-precision-calibration.md)
-keeps existing defaults for its measured literal-value tasks; it does not
-establish optimal candidate, getter or alias budgets for larger applications.
+byte count. Candidate, getter and alias budgets can be adjusted for larger
+applications.
 
 All fields accept positive safe integers; worker memory, execution and JSON
 representation bounds remain independently enforced. Omission keeps the defaults;
 invalid values fail validation. For example, retry a finite candidate-limit
 observation with `semantic_precision: {"primitive_candidates": 512}`. The CLI
 accepts `--semantic-precision '{"primitive_candidates":512}'` or a JSON file.
+For `analyze_web_bundle`, evaluator budgets actually reached by a captured script
+are recorded in `unknowns[]` with that script's key, the effective parameter
+limit and next-call recovery guidance. These results are partial and retain
+the findings already established. With `--full-output`, the CLI also names
+`--semantic-precision` in `meta.cli_controls`; selecting a low budget that was
+not reached does not add a limitation.
 An override applies to that next analysis without restarting REA, remains in
 Evidence parameters and effective coverage, and cannot change already retained
 facts. Increasing these budgets does not raise graph retention, worker heap,
@@ -827,6 +836,33 @@ remain unknown. Wrapper limitations name visits and depth separately so a
 caller can change the resource actually exhausted. Finite inline literal object
 spreads use iterative syntax traversal and no longer inherit a duplicate
 semantic-depth cut.
+
+Member-mutation analysis also has a work allowance of 524,288 alias states
+per source, selected by the `javascript.member_mutation_alias_states` setting
+(1 to 8,388,608). Change it with `update_analysis_settings` on MCP, or with
+`REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES` for CLI or future REA processes;
+it applies to the next `analyze_javascript_application`, `analyze_web_bundle`
+or `import-reference-source` operation. It is not a `semantic_precision` field.
+A source whose alias histories exceed it is refused with a
+`resource_constraint` that names the setting, its effective value and source,
+instead of exhausting the worker heap. Each scheduled state retains about
+1–2 KiB of worker heap until its query finishes, so a raised allowance usually
+needs a larger `max_heap_mb` too. In `analyze_javascript_application`, a
+source refused during the semantic phase keeps its completed static facts. One
+refused during the static phase still counts as parsed and keeps its
+syntax-level facts: parse status `partial`, syntax coverage,
+source map directives and vendor markers. Its `analysis_coverage.examination`
+is `not-examined` with `refused_phase: "member-mutations"` and an
+`unexamined_reason`, and findings that read mutation facts are not reported,
+because a partial mutation index would let later reads keep stale values; their
+absence is not evidence of absence. In `analyze_web_bundle`, a refused script
+still counts as parsed and keeps its parse status and text-level inferences
+such as vendor and bundle-runtime markers; its routes, endpoints and edges are
+not reported, and its `javascript_analysis` unknown carries the setting,
+remediation and `refused_phase: "member-mutations"`. `import-reference-source` keeps a refused
+file's declaration-level imports and records that its CommonJS require calls
+were not examined. Raising `max_heap_mb`, `analysis_timeout_ms` or
+`semantic_precision` alone does not admit the same source.
 
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous

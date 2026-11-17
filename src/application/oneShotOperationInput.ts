@@ -16,7 +16,10 @@ import {
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { parseAnalysisInput } from "./AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "./AnalysisInput.js";
 import { ok } from "../domain/result.js";
 
 /** Operations the direct workflow can perform without a persistent session. */
@@ -104,8 +107,8 @@ export const admitOneShotOperation = <Name extends OneShotOperation>(
   // Admission owns the selected request: preserve top-level omissions for
   // Evidence and snapshot identity while carrying each selected parsed value.
   // Nested defaults remain in the owning field's parsed value.
-  const selected = Object.fromEntries(
-    Object.entries(parsed.value).filter(([key]) => Object.hasOwn(input, key)),
+  const selected = callerAnalysisParameters(input)(
+    parsed.value,
   ) as SelectedInput;
   return ok({ name, input: selected });
 };

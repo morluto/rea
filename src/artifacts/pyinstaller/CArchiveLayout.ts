@@ -4,11 +4,13 @@ import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Magic at the start of a CArchive cookie. */
-export const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
+const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
 
 /** PyInstaller 2.1+ cookie size, including the 64-byte library name. */
 export const PYINSTALLER_COOKIE_V21_BYTES = 88;
@@ -299,9 +301,7 @@ const libraryName = (
     );
   if (text.length === 0) return ok(null);
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
-    );
+    return ok(strictUtf8Decoder("preserve").decode(text));
   } catch {
     return err(
       pyInstallerFailure(
@@ -318,9 +318,7 @@ const tocName = (bytes: Buffer): Result<string, PyInstallerFailure> => {
   if (text.length === 0)
     return err(pyInstallerFailure("format", "CArchive entry name is empty"));
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
-    );
+    return ok(strictUtf8Decoder("preserve").decode(text));
   } catch {
     return err(
       pyInstallerFailure("format", "CArchive entry name is not valid UTF-8"),
@@ -350,8 +348,7 @@ const validateCArchiveMembers = (
         entry.compressionFlag !== 0
       )
         return err(
-          pyInstallerFailure(
-            "integrity",
+          pyInstallerLayoutFailure(
             `CArchive declaration at table index ${String(entry.index)} has local payload or compression`,
           ),
         );
@@ -361,8 +358,7 @@ const validateCArchiveMembers = (
       entry.compressedSize !== entry.uncompressedSize
     )
       return err(
-        pyInstallerFailure(
-          "integrity",
+        pyInstallerLayoutFailure(
           `Stored CArchive member size disagrees with its table entry at table index ${String(entry.index)}`,
         ),
       );
@@ -390,8 +386,7 @@ const validateCArchiveMembers = (
       range.start < occupied
     )
       return err(
-        pyInstallerFailure(
-          "integrity",
+        pyInstallerLayoutFailure(
           `CArchive member extends outside the archive or overlaps another member at table index ${String(range.index)}`,
         ),
       );

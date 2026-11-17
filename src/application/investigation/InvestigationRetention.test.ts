@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it, vi } from "vitest";
 
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -82,7 +83,7 @@ it("returns only authenticated Evidence when a completed record exceeds retentio
   if (invalid.ok) throw new Error("Expected integrity refusal");
   expect(invalid.error._tag).toBe("EvidenceIntegrityError");
   expect(invalid.error.partialObservation).toBeUndefined();
-  const mutable = createEvidence(undefined, provider, {
+  const mutable = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: { value: 1 },

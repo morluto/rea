@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import {
@@ -12,7 +13,7 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -26,6 +27,7 @@ import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import { LinuxOwnedProcessPrerequisiteError } from "../../process/ProcessOwnershipObservation.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const DATABASE_TARGET: BinaryTarget = {
   path: "/tmp/fixture.hop",
@@ -669,7 +671,10 @@ describe("analysis provider registry: rejection diagnostics", () => {
                 providerId: "alpha",
                 origin: "availability",
                 code: "version_unresolved",
-                remediation: expect.stringContaining("rea doctor") as unknown,
+                // doctor cannot check this provider, so it is not offered.
+                remediation: expect.not.stringContaining(
+                  "rea doctor",
+                ) as unknown,
               },
             ],
           },
@@ -974,20 +979,12 @@ describe("analysis provider registry: profile and cleanup failures", () => {
   it("owns a signal-ignoring profile probe until final completion and joins shutdown", async () => {
     const alpha = candidate("alpha");
     let observedSignal: AbortSignal | undefined;
-    let finish: (() => void) | undefined;
-    let started: (() => void) | undefined;
-    const pending = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
+    const probe = phaseGate();
     const ignoresCancellation: AnalysisProviderCandidate = {
       ...alpha.provider,
       resolveAnalysisProfile: async (target, options) => {
         observedSignal = options?.signal;
-        started?.();
-        await gate;
+        await probe.hold();
         return alpha.provider.resolveAnalysisProfile(target);
       },
     };
@@ -1004,7 +1001,7 @@ describe("analysis provider registry: profile and cleanup failures", () => {
     let closed = false;
     let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(pending, selecting, "profile probe");
+      await probe.reached(selecting, "profile probe");
       controller.abort(reason);
       closing = registry.closeOwnedResources().then((result) => {
         closed = true;
@@ -1016,7 +1013,7 @@ describe("analysis provider registry: profile and cleanup failures", () => {
       expect(registry.hasPendingOwnedResources()).toBe(true);
       expect(observedSignal?.aborted).toBe(true);
       expect(observedSignal?.reason).toBe(reason);
-      finish?.();
+      probe.release();
       const result = await selecting;
       expect(result).toMatchObject({
         ok: false,
@@ -1028,7 +1025,7 @@ describe("analysis provider registry: profile and cleanup failures", () => {
     }, [
       () => {
         controller.abort(reason);
-        finish?.();
+        probe.release();
       },
       async () => {
         await Promise.allSettled([selecting, closing]);
@@ -1263,7 +1260,7 @@ describe("profile resolution terminal facts", () => {
         },
         closeOwnedResources: async () => {
           if (!allowClose) return err(primary);
-          primary.resolveCleanup();
+          releaseOwnedCleanup(primary);
           return ok(null);
         },
       },
@@ -1324,7 +1321,7 @@ describe("automatic profile cleanup ownership", () => {
             },
             closeOwnedResources: async () => {
               if (!released.has(id)) return err(failures[id]);
-              failures[id].resolveCleanup();
+              releaseOwnedCleanup(failures[id]);
               return ok(null);
             },
           };
@@ -1393,22 +1390,14 @@ describe("automatic profile cleanup ownership", () => {
 it("registers before production and gates fresh selections until shutdown has joined finalization", async () => {
   const alpha = candidate("alpha");
   let calls = 0;
-  let enter: (() => void) | undefined;
-  let finish: (() => void) | undefined;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const finalization = phaseGate();
   const registry = new AnalysisProviderRegistry([
     {
       ...alpha.provider,
       resolveAnalysisProfile: async (target) => {
         calls++;
         if (calls === 1) {
-          enter?.();
-          await gate;
+          await finalization.hold();
         }
         return alpha.provider.resolveAnalysisProfile(target);
       },
@@ -1418,13 +1407,13 @@ it("registers before production and gates fresh selections until shutdown has jo
   let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
   let next: ReturnType<typeof registry.select> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, selecting, "profile finalization");
+    await finalization.reached(selecting, "profile finalization");
     closing = registry.closeOwnedResources();
     next = registry.select(DATABASE_TARGET, "alpha");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(calls).toBe(1);
     expect(registry.hasPendingOwnedResources()).toBe(true);
-    finish?.();
+    finalization.release();
     expect(await selecting).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
@@ -1434,7 +1423,7 @@ it("registers before production and gates fresh selections until shutdown has jo
     expect(calls).toBe(2);
     expect(registry.hasPendingOwnedResources()).toBe(false);
   }, [
-    () => finish?.(),
+    () => finalization.release(),
     async () => {
       await Promise.allSettled([selecting, closing, next]);
     },
@@ -1446,14 +1435,7 @@ it("registers before production and gates fresh selections until shutdown has jo
 
 it("joins cancelled readiness finalization and shutdown before admitting another observation", async () => {
   const base = candidate("alpha").provider;
-  let enter!: () => void;
-  let finish!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const readiness = phaseGate();
   let calls = 0;
   let observed: AbortSignal | undefined;
   const registry = new AnalysisProviderRegistry([
@@ -1465,8 +1447,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
         calls++;
         if (calls === 1) {
           observed = signal;
-          enter();
-          await gate;
+          await readiness.hold();
         }
         return base.inspectAvailability();
       },
@@ -1485,7 +1466,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
   let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
   let next: ReturnType<typeof registry.candidates> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, observing, "readiness observation");
+    await readiness.reached(observing, "readiness observation");
     controller.abort(reason);
     closing = registry.closeOwnedResources().then((value) => {
       closed = true;
@@ -1498,7 +1479,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
     expect(calls).toBe(1);
     expect(observed?.reason).toBe(reason);
     expect(registry.hasPendingOwnedResources()).toBe(true);
-    finish();
+    readiness.release();
     const failure = await observing;
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
     expect(failure.cause).toBe(reason);
@@ -1517,7 +1498,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
   }, [
     () => {
       controller.abort(reason);
-      finish();
+      readiness.release();
     },
     async () => {
       await Promise.allSettled([observing, closing, next]);
@@ -1529,7 +1510,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
 });
 
 it.each(["alpha", "beta"])(
-  "retains unknown owned-resource cleanup when %s has no completion signal",
+  "releases unflagged and flagged candidate receipts only after their owners confirm close (%s unflagged)",
   async (unknownOwner) => {
     const unknown = new ProviderAdapterError(unknownOwner, "close_binary", {
       userMessage: "cleanup completion unknown",
@@ -1541,7 +1522,7 @@ it.each(["alpha", "beta"])(
         ...candidate(id).provider,
         closeOwnedResources: async () => {
           if (!released) return err(id === unknownOwner ? unknown : tracked);
-          if (id !== unknownOwner) tracked.resolveCleanup();
+          if (id !== unknownOwner) releaseOwnedCleanup(tracked);
           return ok(null);
         },
       })),
@@ -1552,7 +1533,75 @@ it.each(["alpha", "beta"])(
     released = true;
     expect(await registry.closeOwnedResources()).toEqual(ok(null));
     expect(tracked.cleanupIncomplete).toBe(false);
-    expect(closed.error.cleanupIncomplete).toBe(true);
+    expect(closed.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+it.each([
+  ["returned", "physical"],
+  ["returned", "cancelled"],
+  ["thrown", "physical"],
+  ["thrown", "cancelled"],
+] as const)(
+  "retains an unflagged %s %s close failure until that candidate confirms completion",
+  async (delivery, kind) => {
+    const reason = { reason: "controlled caller cancellation" };
+    const physical = { reason: "controlled descriptor close failure" };
+    const original =
+      kind === "cancelled"
+        ? new AnalysisCancelledError("close_binary", { cause: reason })
+        : new ProviderAdapterError("alpha", "close_binary", {
+            cause: physical,
+            diagnostics: { reason: "descriptor close failed" },
+          });
+    const alpha = candidate("alpha").provider;
+    let released = false;
+    let inspections = 0;
+    let peerCloses = 0;
+    const registry = new AnalysisProviderRegistry([
+      {
+        ...alpha,
+        inspectAvailability: async (options) => {
+          inspections++;
+          return alpha.inspectAvailability(options);
+        },
+        closeOwnedResources: async () => {
+          if (released) return ok(null);
+          if (delivery === "thrown") throw original;
+          return err(original);
+        },
+      },
+      {
+        ...candidate("beta").provider,
+        closeOwnedResources: async () => {
+          peerCloses++;
+          return ok(null);
+        },
+      },
+    ]);
+    await withVerifierCleanup(async () => {
+      const closed = await registry.closeOwnedResources();
+      if (closed.ok) throw new Error("Expected incomplete candidate close");
+      expect(closed.error).toBeInstanceOf(ProviderCleanupError);
+      expect(closed.error.cause).toBe(original);
+      expect(closed.error.cleanupPrimary).toBe(original);
+      expect(original.cause).toBe(kind === "cancelled" ? reason : physical);
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(false);
+      expect(inspections).toBe(0);
+      expect(peerCloses).toBe(2);
+      released = true;
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      expect(closed.error.cleanupIncomplete).toBe(false);
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+      expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(true);
+      expect(inspections).toBe(1);
+    }, [
+      async () => {
+        released = true;
+        expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      },
+    ]);
   },
 );
 
@@ -1560,14 +1609,7 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
   const alpha = candidate("alpha").provider;
   const beta = candidate("beta").provider;
   const gamma = candidate("gamma").provider;
-  let finish!: () => void;
-  let enter!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const observation = phaseGate();
   const physical = new ProviderAdapterError("alpha", "binary_session", {
     diagnostics: { reason: "physical observation failed" },
   });
@@ -1587,13 +1629,12 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
     {
       ...beta,
       inspectAvailability: async () => {
-        enter();
-        await gate;
+        await observation.hold();
         throw cleanup;
       },
       closeOwnedResources: async () => {
         releases++;
-        cleanup.resolveCleanup();
+        releaseOwnedCleanup(cleanup);
         return ok(null);
       },
     },
@@ -1605,14 +1646,10 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
     return cause;
   });
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(
-      entered,
-      observing,
-      "mixed readiness observation",
-    );
+    await observation.reached(observing, "mixed readiness observation");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
-    finish();
+    observation.release();
     const failure = await observing;
     expect(failure.cleanupIncomplete).toBe(true);
     expect(failure.cleanupResources).toContain("beta retained prerequisite");
@@ -1646,7 +1683,7 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
     });
     expect(registry.hasPendingOwnedResources()).toBe(false);
   }, [
-    finish,
+    observation.release,
     async () => {
       await observing;
     },
@@ -1685,4 +1722,178 @@ it("registers selection before async readiness can race shutdown", async () => {
   expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(true);
   expect(calls).toBe(2);
   expect(registry.hasPendingOwnedResources()).toBe(false);
+});
+
+it.each(["typed", "untyped", "returned"] as const)(
+  "joins peer cleanup when a candidate close callback fails (%s)",
+  async (kind) => {
+    const failure = new ProviderCleanupError(
+      "alpha",
+      ["alpha profile reader"],
+      {
+        reason: "controlled close rejection",
+      },
+    );
+    let denied = true;
+    const rejection =
+      kind === "untyped" ? { reason: "opaque rejection" } : failure;
+    const closed: string[] = [];
+    const registry = new AnalysisProviderRegistry([
+      {
+        ...candidate("alpha").provider,
+        closeOwnedResources: async () => {
+          closed.push("alpha");
+          if (denied) {
+            if (kind === "returned") return err(failure);
+            throw rejection;
+          }
+          return ok(null);
+        },
+      },
+      {
+        ...candidate("beta").provider,
+        closeOwnedResources: async () => {
+          closed.push("beta");
+          return ok(null);
+        },
+      },
+    ]);
+    try {
+      const result = await registry.closeOwnedResources();
+      if (result.ok) throw new Error("Expected retained candidate cleanup");
+      if (kind !== "untyped") expect(result.error).toBe(failure);
+      else {
+        expect(result.error).toBeInstanceOf(ProviderCleanupError);
+        expect(result.error.cause).toBe(rejection);
+      }
+      expect(closed).toEqual(["alpha", "beta"]);
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      denied = false;
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+    } finally {
+      denied = false;
+      await registry.closeOwnedResources();
+    }
+  },
+);
+
+it.each(["alpha", "beta"] as const)(
+  "retains each candidate receipt until its own close succeeds (%s first)",
+  async (first) => {
+    const failures = {
+      alpha: new ProviderCleanupError("alpha", ["alpha-reader"], {}),
+      beta: new ProviderCleanupError("beta", ["beta-reader"], {}),
+    };
+    const released = new Set<string>();
+    const calls: string[] = [];
+    const registry = new AnalysisProviderRegistry([
+      ...(["alpha", "beta"] as const).map((id) => ({
+        ...candidate(id).provider,
+        closeOwnedResources: async () => {
+          calls.push(id);
+          if (released.has(id)) return ok(null);
+          if (id === "alpha") throw failures.alpha;
+          return err(failures.beta);
+        },
+      })),
+      {
+        ...candidate("gamma").provider,
+        closeOwnedResources: async () => {
+          calls.push("gamma");
+          return ok(null);
+        },
+      },
+    ]);
+    try {
+      const initial = await registry.closeOwnedResources();
+      if (initial.ok) throw new Error("Expected both retained candidates");
+      expect(calls).toEqual(["alpha", "beta", "gamma"]);
+      expect(initial.error.cleanupResources).toEqual([
+        "alpha-reader",
+        "beta-reader",
+      ]);
+      expect(initial.error.cause).toBeInstanceOf(AggregateError);
+      if (!(initial.error.cause instanceof AggregateError))
+        throw new Error("Expected attributed failures");
+      expect(initial.error.cause.errors).toEqual([
+        failures.alpha,
+        failures.beta,
+      ]);
+      released.add(first);
+      const partial = await registry.closeOwnedResources();
+      expect(partial.ok).toBe(false);
+      const remaining = first === "alpha" ? "beta" : "alpha";
+      expect(failures[first].cleanupIncomplete).toBe(false);
+      expect(failures[remaining].cleanupIncomplete).toBe(true);
+      expect(initial.error.cleanupIncomplete).toBe(true);
+      expect(initial.error.cleanupResources).toEqual([`${remaining}-reader`]);
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      released.add(remaining);
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      expect(initial.error.cleanupIncomplete).toBe(false);
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+    } finally {
+      released.add("alpha");
+      released.add("beta");
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    }
+  },
+);
+
+it("does not inspect a new selection after cancellation while its retained candidate cleanup settles", async () => {
+  const base = candidate("alpha").provider;
+  const failure = new ProviderCleanupError("alpha", ["profile-reader"], {});
+  let allowClose = false;
+  let inspections = 0;
+  const cleanupRetry = phaseGate();
+  const registry = new AnalysisProviderRegistry([
+    {
+      ...base,
+      inspectAvailability: () => {
+        inspections++;
+        return base.inspectAvailability();
+      },
+      closeOwnedResources: async () => {
+        if (!allowClose) throw failure;
+        await cleanupRetry.hold();
+        return ok(null);
+      },
+    },
+  ]);
+  const controller = new AbortController();
+  const reason = { request: "cancel while cleanup completes" };
+  let selecting: ReturnType<typeof registry.select> | undefined;
+  await withVerifierCleanup(async () => {
+    expect(await registry.closeOwnedResources()).toEqual(err(failure));
+    allowClose = true;
+    selecting = registry.select(DATABASE_TARGET, "alpha", {
+      signal: controller.signal,
+    });
+    await cleanupRetry.reached(selecting, "candidate cleanup retry");
+    controller.abort(reason);
+    cleanupRetry.release();
+    const result = await selecting;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(inspections).toBe(0);
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(registry.hasPendingOwnedResources()).toBe(false);
+    expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(true);
+    expect(inspections).toBe(1);
+  }, [
+    () => {
+      allowClose = true;
+      cleanupRetry.release();
+    },
+    async () => {
+      await selecting;
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
 });

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
@@ -27,17 +28,25 @@ const compare = async (input: unknown) => {
 };
 
 it("retains transitive provenance without treating dependencies as native observations and fails closed for a missing ancestor", async () => {
-  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_provenance",
-    parameters: {},
-    result: { provenance: "Synthetic ancestor" },
-  });
-  const dependency = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { provenance: "Synthetic dependency" },
-    evidenceLinks: [ancestor.evidence_id],
-  });
+  const ancestor = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_provenance",
+      parameters: {},
+      result: { provenance: "Synthetic ancestor" },
+    },
+  );
+  const dependency = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { provenance: "Synthetic dependency" },
+      evidenceLinks: [ancestor.evidence_id],
+    },
+  );
   const left = nativeMatchingInventory(
     "1",
     [{ address: "0x10", value: "main" }],
@@ -186,6 +195,40 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
     }
   }
 });
+
+it.each(["literals-only", "omissions-only", "paired", "unsupported"])(
+  "admits Swift literal facts and their coverage together (%s)",
+  async (coverage) => {
+    const detail = nativeMatchingDetails("1", "0x10", "0102", true)[0]!;
+    const dossier = functionDossierSchema.parse(detail.normalized_result);
+    delete dossier.swift_string_literals;
+    delete dossier.swift_string_literal_omissions;
+    const observed = createEvidence(
+      nativeMatchingTarget("1"),
+      nativeMatchingProvider,
+      {
+        operation: "analyze_function",
+        parameters: { procedure: "0x10" },
+        result: {
+          ...dossier,
+          ...(coverage === "literals-only" || coverage === "paired"
+            ? { swift_string_literals: [] }
+            : {}),
+          ...(coverage === "omissions-only" || coverage === "paired"
+            ? { swift_string_literal_omissions: [] }
+            : {}),
+        },
+      },
+    );
+    const result = await matchNativeFunctions({
+      left: nativeMatchingInventory("1", [{ address: "0x10", value: "main" }]),
+      right: nativeMatchingInventory("2", [{ address: "0x20", value: "main" }]),
+      left_observations: [observed],
+    });
+    expect(result.ok).toBe(coverage === "paired" || coverage === "unsupported");
+    if (!result.ok) expect(result.error._tag).toBe("EvidenceIntegrityError");
+  },
+);
 
 it.each(["", "ram:"])(
   "keeps informative %s CFG/call/string fingerprints as unresolved candidates and refuses incomplete structural observations",

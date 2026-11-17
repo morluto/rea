@@ -1,31 +1,26 @@
 import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
+  imageFileSizeRemediation,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  stableArtifactInputFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { BinaryHardeningPort } from "../../application/binaryDiagnostics/BinaryHardeningPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { BinaryHardeningPort } from "../../ports/binaryDiagnostics/BinaryHardeningPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   BINARY_HARDENING_LIMITATIONS,
@@ -37,12 +32,13 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import { readElfHardening } from "./ElfHardening.js";
 import { readMachoHardening } from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
 
@@ -131,11 +127,6 @@ export const readBinaryHardening = async (
   };
 };
 
-const fileSizeRemediation = (input: InspectBinaryHardeningInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_BINARY_HARDENING_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_BINARY_HARDENING_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
 const binaryHardeningFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectBinaryHardeningInput,
@@ -143,54 +134,23 @@ const binaryHardeningFailurePrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The binary hardening structural allowance",
-          "parser",
-        ),
-      },
-    );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...fixedAllowanceOptions(
+        "The binary hardening structural allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
+    });
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -204,33 +164,27 @@ const binaryHardeningFailurePrimary = (
         {
           cause,
           retryable: false,
-          remediationAction: fileSizeRemediation(input),
+          remediationAction: imageFileSizeRemediation(
+            input.max_file_bytes,
+            MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
+          ),
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(BINARY_HARDENING_PROVIDER.id, OPERATION, {
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

@@ -32,19 +32,20 @@ import {
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
-  assertSetupActive,
-  withSetupCancellation,
-} from "./SetupCancellation.js";
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
+import { withSetupCancellation } from "./SetupCancellation.js";
 import type {
   SetupSkillInstallError,
   SkillInstallResult,
 } from "./SetupSkill.js";
 import { planDesktopBuild } from "./SetupDesktopBuild.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import type {
   SetupHopperInstallFailure,
   SetupHopperInstallResult,
@@ -139,11 +140,11 @@ export const runSetup = async (
       primaryFailure.retainDiagnostics({ setup_effects: settledEffects });
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primaryFailure,
         cleanup,
         "setup",
-      ).bindCleanupDependencies([primaryFailure, cleanup]);
+      );
     throw new AggregateError(
       [primaryFailure, cleanup],
       "Setup and resource cleanup failed.",
@@ -173,19 +174,14 @@ export const runSetup = async (
   }
   // Cancellation observed only during the final doctor or cleanup is not success.
   if (options.signal?.aborted === true) {
-    const cancelled = new AnalysisCancelledError("setup", {
-      cause: options.signal.reason,
+    const cancelled = cancelledBy("setup", options.signal, {
       diagnostics: {
         setup_result: jsonValueSchema.parse(result),
         setup_effects: settledEffects,
       },
     });
     if (cleanup !== undefined)
-      throw analysisErrorWithCleanupFailure(
-        cancelled,
-        cleanup,
-        "setup",
-      ).bindCleanupDependencies([cancelled, cleanup]);
+      throw analysisErrorWithCleanupDependencies(cancelled, cleanup, "setup");
     throw cancelled;
   }
   if (cleanup === undefined) return result;
@@ -247,13 +243,18 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
-  // The advertised family scope is a registration setting, not a detected
-  // provider fact; merge it after discovery so it cannot suppress the
+  // Catalog loading and family scope are registration settings, not detected
+  // provider facts; merge them after discovery so they cannot suppress the
   // Hopper installation offer on an otherwise unconfigured machine.
   if (options.toolFamilies !== undefined)
     providerEnvironment = {
       ...providerEnvironment,
       REA_MCP_TOOL_FAMILIES: options.toolFamilies,
+    };
+  if (options.toolCatalogProfile !== undefined)
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_MCP_TOOL_CATALOG_PROFILE: options.toolCatalogProfile,
     };
   clientStates = discovery.clientStates;
   host.prepareClientSetup?.(discovery.installHopper, providerEnvironment);
@@ -417,6 +418,9 @@ const runSetupWorkflow = async (
   if (!approved && confirm !== undefined && !options.structured) {
     const decision = await confirm?.(plannedActions, {
       stage: "confirm",
+      ...(manualRemediation === undefined
+        ? {}
+        : { remediation: manualRemediation }),
       clientStates,
       selectedClientIds,
       clientSelectionAllowed: false,

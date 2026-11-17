@@ -6,7 +6,7 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientEnvironment } from "./SetupPlan.js";
-import { assertSetupActive } from "./SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 
 export const failedConfigurationMessage = (
   result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,
@@ -15,6 +15,7 @@ export const failedConfigurationMessage = (
     case "plugin":
       return result.detail;
     case "registration_ownership":
+    case "read_only_override":
       return result.detail;
     case "conflict":
       return "Agent configuration changed during setup. Review the current file and rerun setup.";

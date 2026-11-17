@@ -1,6 +1,6 @@
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { SetupHost } from "./SetupTypes.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 import { SetupSkillInstallError } from "./SetupSkill.js";
 
 /** Setup effect results contain caller-visible recovery facts, never ambient state. */
@@ -87,18 +87,4 @@ export const withSetupCancellation = (
     installSkill: guard(host.installSkill.bind(host), "install_skill"),
     doctor: guard(host.doctor.bind(host)),
   };
-};
-
-/** Preserve the caller's exact reason while setup unwinds its resource owners. */
-export const assertSetupActive = (
-  signal?: AbortSignal,
-  failure?: string,
-): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError("setup", {
-      cause: signal.reason,
-      ...(failure === undefined
-        ? {}
-        : { diagnostics: { setup_failure: failure } }),
-    });
 };
