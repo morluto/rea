@@ -6,7 +6,6 @@ import {
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS,
   DEFAULT_DEBUGGER_MAX_SESSIONS,
-  MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
   MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
   MAXIMUM_DEBUGGER_MAX_SESSIONS,
@@ -14,6 +13,7 @@ import {
   MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
   MINIMUM_DEBUGGER_MAX_SESSIONS,
+  MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -63,7 +63,7 @@ export const DEFAULT_DEBUGGER_COMMAND_DEADLINE: DebuggerAdmissionLimit = limit(
   DEBUGGER_COMMAND_DEADLINE_SETTING,
   DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
   MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-  MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+  MAX_NODE_TIMER_DELAY_MS,
   "ms",
 );
 export const DEFAULT_DEBUGGER_MAX_SESSIONS_LIMIT: DebuggerAdmissionLimit =
@@ -113,7 +113,7 @@ const debuggerMaxCommandOutputBytesConstraint = constraintFor(
 
 export const debuggerCommandDeadlineMsSchema = positiveDecimalIntegerSchema(
   MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-  MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+  MAX_NODE_TIMER_DELAY_MS,
   debuggerCommandDeadlineConstraint,
 );
 export const debuggerMaxSessionsSchema = positiveDecimalIntegerSchema(
@@ -268,15 +268,6 @@ export const debuggerConstructionLimits = (
   const again = parseDebuggerSessionLimits(startup);
   if (!again.ok) throw again.error;
   return again.value;
-};
-
-/** Refuse an invalid launch cap instead of falling back to the default. */
-export const resolveDebuggerSessionLimits = (
-  environment: Readonly<Record<string, string | undefined>>,
-): DebuggerSessionLimits => {
-  const parsed = parseDebuggerSessionLimits(environment);
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
 };
 
 /**

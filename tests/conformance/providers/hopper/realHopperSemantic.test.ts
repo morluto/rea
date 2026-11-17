@@ -85,7 +85,11 @@ describe("Hopper verifier fixture receipt", () => {
               .concat("identity")
               .map((dimension) => ({
                 dimension,
-                status: dimension === "references" ? "unknown" : "unchanged",
+                // Unknown caller/callee coverage leaves calls unknown too.
+                status:
+                  dimension === "references" || dimension === "calls"
+                    ? "unknown"
+                    : "unchanged",
               })),
           };
         const dossier = [...dossiers.values()].find(
@@ -96,7 +100,12 @@ describe("Hopper verifier fixture receipt", () => {
           return {
             normalized_result: dossier,
             structuredContent: {
-              relationship_coverage: { status: "complete" },
+              // The coverage the Hopper provider declares for analyze_function.
+              relationship_coverage: {
+                status: "unknown",
+                limited_directions: ["callers", "callees"],
+                reason: "Hopper caller and callee completeness is unknown.",
+              },
             },
           };
         if (request.name === "procedure_references")

@@ -3,11 +3,12 @@ import {
   processInspectionFailure,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
 import { constants as fsConstants } from "node:fs";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
   snapshotGhidraAnalysisSeeds,
@@ -16,7 +17,7 @@ import {
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { GhidraRiscvCallingConvention } from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { copyFile, mkdir, readFile, realpath } from "node:fs/promises";
+import { copyFile, mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
 
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";
@@ -33,7 +34,12 @@ import {
   primaryAnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  isAborted,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
@@ -41,8 +47,8 @@ import {
   execFileOutputFailure,
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   cleanupOwnedProcessGroup,
   type ProcessCleanupResult,
@@ -68,6 +74,7 @@ import {
   inspectGhidraPspExtension,
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
@@ -271,7 +278,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
   constructor(options: GhidraHeadlessLauncherOptions) {
     this.options = {
       ...options,
-      environment: snapshotEnvironment(options.environment, options.platform),
+      environment: snapshotEnvironment(
+        options.environment,
+        options.platform ?? HOST_PLATFORM.platform,
+      ),
     };
   }
 
@@ -283,13 +293,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     },
   ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>> {
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const paths = ghidraRuntimePaths(session.runtimeRoot);
-    const platform = this.options.platform ?? process.platform;
+    const platform = this.options.platform ?? HOST_PLATFORM.platform;
     const existingProject = this.options.existingProject;
     let started: SpawnedOwnedProviderProcess | undefined;
     let configuredMaxHeap: string | undefined;
@@ -422,11 +428,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         );
       }
       if (isAborted(options.signal))
-        return err(
-          new AnalysisCancelledError("open_binary", {
-            cause: options.signal?.reason,
-          }),
-        );
+        return err(cancelledBy("open_binary", options.signal));
       const headlessArguments = ghidraHeadlessArguments({
         platform,
         ...(psp === undefined ? {} : { psp: true as const }),
@@ -516,20 +518,15 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         environment,
         onStderr: (mode, stderr) => {
           if (stderr === "") return;
-          const bytes = Buffer.byteLength(stderr);
-          const redacted = redactCapturedTransportCredential(
-            { text: stderr, bytes, observedBytes: bytes },
-            session.token,
-            "[REDACTED]",
-          );
-          const bounded = boundedUtf8Text(
+          const redacted = redactExplicitText(stderr, [session.token]);
+          const bounded = utf8HeadExcerpt(
             redacted,
             GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
           );
           launchSupport.push({
             mode,
             stderr: bounded.text,
-            stderr_bytes: bytes,
+            stderr_bytes: Buffer.byteLength(stderr),
             stderr_truncated: bounded.truncated,
           });
         },
@@ -593,9 +590,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform,
       );
       if (isAborted(options.signal)) {
-        throw new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        });
+        throw cancelledBy("open_binary", options.signal);
       }
       return ok(partialLaunch);
     } catch (cause: unknown) {
@@ -605,9 +600,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ? cause
           : cause instanceof GhidraLaunchSupportError &&
               cause.cancellation !== undefined
-            ? new AnalysisCancelledError("open_binary", {
-                cause: cause.cancellation.reason,
-              })
+            ? cancelledBy(
+                "open_binary",
+                carriedReason(cause.cancellation.reason),
+              )
             : undefined);
       const capturedOutput = ghidraLaunchCommandOutput(cause);
       const primary =
@@ -655,7 +651,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         const primaryMessage =
           cancellation !== undefined
             ? cancellation.message
-            : `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+            : `Ghidra headless launch failed: ${errorMessage(cause)}`;
         return err(
           new GhidraLaunchError(
             `${primaryMessage}; process cleanup remains incomplete`,
@@ -841,7 +837,7 @@ const validateExistingProjectOptions = (
   if (existing !== undefined) {
     // The pre-imported project carries its own analysis; every import-time
     // selection is therefore rejected instead of silently ignored.
-    if ((options.platform ?? process.platform) === "win32")
+    if ((options.platform ?? HOST_PLATFORM.platform) === "win32")
       throw new GhidraAdmissionError("existing_project_windows");
     if (existing.programName.trim() === "")
       throw new GhidraAdmissionError("existing_project_program_name");
@@ -875,7 +871,7 @@ export const ghidraHeadlessArguments = (
   // Bridge script paths use the target platform's syntax, which differs from
   // the host when building a cross-platform invocation.
   const scriptPath =
-    (options.platform ?? process.platform) === "win32" ? win32 : posix;
+    (options.platform ?? HOST_PLATFORM.platform) === "win32" ? win32 : posix;
   const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
   const override = options.languageOverride;
   const rawBinary = options.rawBinary;
@@ -1060,7 +1056,7 @@ export const ghidraHeadlessArguments = (
           options.disabledAnalyzers.join(","),
         ]),
     ...(existing !== undefined ||
-    (options.platform ?? process.platform) === "win32"
+    (options.platform ?? HOST_PLATFORM.platform) === "win32"
       ? []
       : [
           "-postScript",
@@ -1199,5 +1195,3 @@ export const ghidraHeadlessJavaOptions = (
   // argv items instead of the shell-split analyzeHeadless option list.
   return { JDK_JAVA_OPTIONS: "", GHIDRA_HEADLESS_JAVA_OPTIONS: "" };
 };
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;

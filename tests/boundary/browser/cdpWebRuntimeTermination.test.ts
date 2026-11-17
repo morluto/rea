@@ -1,9 +1,10 @@
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
 import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
+import { waitFor } from "../../support/testWait.js";
 
 describe("runtime flat-session lifecycle", () => {
   it("rejects session detachment between counter startup and local arming", async () => {
@@ -228,7 +229,7 @@ describe("runtime disconnect ownership", () => {
       }),
       { signal: AbortSignal.timeout(2_000) },
     );
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(
         browser.commands.some(
           ({ method }) => method === "Profiler.stopPreciseCoverage",

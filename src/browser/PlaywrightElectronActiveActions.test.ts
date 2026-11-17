@@ -3,8 +3,9 @@ import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 // `npm run verify:electron`.
 import { afterEach, expect, it, vi } from "vitest";
 import type { ElectronApplication } from "playwright-core";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import {
   electronActiveObservationInputSchema,
@@ -405,7 +406,7 @@ it("runs an untargeted deep-link without requiring a BrowserWindow", async () =>
   ]);
 });
 
-it("honors caller-selected Electron waits beyond the former action timeout", async () => {
+it("honors a caller-selected Electron wait duration exactly", async () => {
   const input = electronActiveObservationInputSchema.parse({
     executable_path: "/opt/electron",
     application_path: "/opt/app/main.js",
@@ -598,6 +599,7 @@ const finalState = {
     observed_ipc: 0,
     observed_runtime: 0,
     hook_error: false,
+    single_instance_lock_refused: false,
   },
 };
 
@@ -791,20 +793,33 @@ it.each(["acquisition", "identity"] as const)(
       { signal: controller.signal },
       resources,
     );
-    await started.promise;
-    controller.abort(new Error("stop during selected window read"));
-    await Promise.resolve();
-    finish.resolve();
-    const outcome = await running;
-    expect(outcome.actions[0]).toMatchObject({
-      status: "cancelled",
-      target: null,
-    });
-    expect(page.locator).not.toHaveBeenCalled();
-    expect(dispose).toHaveBeenCalledOnce();
-    expect(resources.hasPending).toBe(false);
-    await resources.close();
-    expect(dispose).toHaveBeenCalledOnce();
+    try {
+      await awaitAcknowledgement(
+        started.promise,
+        running,
+        "selected window read",
+      );
+      controller.abort(new Error("stop during selected window read"));
+      await Promise.resolve();
+      finish.resolve();
+      const outcome = await running;
+      expect(outcome.actions[0]).toMatchObject({
+        status: "cancelled",
+        target: null,
+      });
+      expect(page.locator).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(resources.hasPending).toBe(false);
+      await resources.close();
+      expect(dispose).toHaveBeenCalledOnce();
+    } finally {
+      finish.resolve();
+      try {
+        await running;
+      } finally {
+        await resources.close();
+      }
+    }
   },
 );
 

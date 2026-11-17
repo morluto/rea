@@ -82,6 +82,7 @@ const captureEvidenceForEnvironmentSecret = async (value: string) => {
     new Date(0),
     new Date(1),
     executableIdentity,
+    { state: "withheld-by-caller" },
   );
   const base = emptyUnverifiedProcessCapture();
   const scenarioManifest = {

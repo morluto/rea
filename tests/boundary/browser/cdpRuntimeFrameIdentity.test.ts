@@ -79,11 +79,12 @@ const transitions = [
   { kind: "malformed", loader: true, reason: "protocol_error" },
   { kind: "foreign-malformed", loader: true, reason: "target_not_allowed" },
   { kind: "foreign-loader-change", loader: true, reason: "target_changed" },
-  { kind: "foreign", loader: false, reason: "target_changed" },
+  { kind: "foreign", loader: false, reason: "target_not_allowed" },
   { kind: "foreign", loader: true, reason: "target_not_allowed" },
   { kind: "missing", loader: true, reason: "protocol_error" },
   { kind: "frame-change", loader: true, reason: "target_changed" },
   { kind: "loader-change", loader: true, reason: "target_changed" },
+  { kind: "unsupported", loader: false, reason: "target_not_allowed" },
   { kind: "unsupported", loader: true, reason: "target_not_allowed" },
 ] as const;
 it.each(

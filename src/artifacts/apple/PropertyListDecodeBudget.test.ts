@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { parsePlistXmlSource } from "../../native/parsers/plist.js";
-import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
+import { preflightPropertyListDecode } from "../../domain/apple/propertyListDecodeBudget.js";
 
 const xmlPlist = (body: string): Buffer =>
   Buffer.from(

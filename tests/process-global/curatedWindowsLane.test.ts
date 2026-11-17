@@ -69,7 +69,7 @@ describe("curated Windows test lane", () => {
       paths.map(async (path) => ((await exists(path)) ? undefined : path)),
     );
     expect(missing.filter((path) => path !== undefined)).toEqual([]);
-  }, 10_000);
+  });
 
   it("keeps the native multi-megabyte output regression in the lane", async () => {
     expect(await explicitPaths("windows")).toContain(
@@ -113,6 +113,18 @@ describe("curated Windows test lane", () => {
         "src/contracts/sessionPathInputs.test.ts",
         "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
         "tests/boundary/mcp/rawBinaryMcp.test.ts",
+      ]),
+    );
+  });
+
+  it("keeps advertised schema checks in the lane", async () => {
+    // Windows hosts advertise their own absolute-path pattern (#7151); only
+    // this lane compiles it and validates host paths against it.
+    expect(await explicitPaths("windows")).toEqual(
+      expect.arrayContaining([
+        "tests/boundary/mcp/advertisedDialect.test.ts",
+        "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+        "tests/boundary/mcp/toolSchemaValidity.test.ts",
       ]),
     );
   });
@@ -188,7 +200,7 @@ it("keeps every explicit focused CI test path executable after file moves", asyn
     paths.map(async (path) => ((await exists(path)) ? undefined : path)),
   );
   expect(missing.filter((path) => path !== undefined)).toEqual([]);
-}, 10_000);
+});
 
 it("checks the complete source with the fallback compiler before Windows build reuse", async () => {
   const workflow = workflowSchema.parse(
@@ -201,4 +213,21 @@ it("checks the complete source with the fallback compiler before Windows build r
   const built = steps.findIndex((step) => step.run === "npm run build:cached");
   expect(checked).toBeGreaterThan(-1);
   expect(built).toBeGreaterThan(checked);
+  const vitestRuns = steps
+    .map((step) => step.run)
+    .filter((value) => value?.includes("npx vitest run"));
+  // One Node 24 curated run and one Node 22 path-boundary run; both cover the
+  // three native directory-identity suites without booting a second Node 24 Vitest process.
+  expect(vitestRuns).toHaveLength(2);
+  for (const run of vitestRuns) {
+    expect(run).toContain(
+      "tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptPackagePrecedence.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts",
+    );
+  }
 });

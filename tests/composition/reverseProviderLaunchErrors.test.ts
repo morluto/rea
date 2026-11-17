@@ -1,6 +1,8 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
+import * as processOutput from "../../src/process/ExecFileOutput.js";
 import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
 import {
   DarwinProcessOwnershipInspectionError,
@@ -33,21 +35,17 @@ import {
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
-it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
+it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EIO"] as const)(
   "preserves provider-launch %s and executable recovery independently of target admission",
   async (code) => {
     const { directory, path } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled executable launch rejection"),
-      { code },
-    );
+    // The owned supervisor rethrows the launcher's spawn error unchanged.
+    const hostFailure = spawnFailure(code, command);
     const service = new TestReverseEngineeringService({
       environment: { REA_OBJDUMP_COMMAND: command },
       runOwned: async () => {
-        throw new OwnedCommandFailure("process", "launch failed", null, null, {
-          cause: hostFailure,
-        });
+        throw hostFailure;
       },
     });
     try {
@@ -68,6 +66,7 @@ it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
               boundary: "provider-launch",
               command,
               system_code: code,
+              syscall: `spawn ${command}`,
             },
           },
           remediation: {
@@ -75,7 +74,9 @@ it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
           },
         });
         expect(projected.message).toContain(command);
-        expect(projected.message).toContain(code);
+        expect(projected.message).toContain(
+          code === "EIO" ? `EIO from spawn ${command}` : code,
+        );
         expect(projected.remediation.action).toContain("execute permission");
         expect(projected.remediation.action).not.toContain("another target");
       }
@@ -91,16 +92,12 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory, path } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled host capacity rejection"),
-      { code },
-    );
+    // The owned supervisor rethrows the launcher's spawn error unchanged.
+    const hostFailure = spawnFailure(code, command);
     const service = new TestReverseEngineeringService({
       environment: { REA_OBJDUMP_COMMAND: command },
       runOwned: async () => {
-        throw new OwnedCommandFailure("process", "launch failed", null, null, {
-          cause: hostFailure,
-        });
+        throw hostFailure;
       },
     });
     try {
@@ -149,16 +146,12 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory, path } = await createArtifact();
     const command = resolve(directory, "configured-rizin");
-    const hostFailure = Object.assign(
-      new Error("controlled host capacity rejection"),
-      { code },
-    );
+    // The owned supervisor rethrows the launcher's spawn error unchanged.
+    const hostFailure = spawnFailure(code, command);
     const service = new TestReverseEngineeringService({
       environment: { REA_RIZIN_COMMAND: command },
       runOwned: async () => {
-        throw new OwnedCommandFailure("process", "launch failed", null, null, {
-          cause: hostFailure,
-        });
+        throw hostFailure;
       },
     });
     try {
@@ -207,10 +200,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled ps host capacity rejection"),
-      { code },
-    );
+    const hostFailure = spawnFailure(code, "/bin/ps");
     const prepareSpy = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockRejectedValue(hostFailure);
@@ -257,10 +247,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled ps host capacity rejection"),
-      { code },
-    );
+    const hostFailure = spawnFailure(code, "/bin/ps");
     const prepareSpy = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockRejectedValue(new LinuxOwnedProcessPrerequisiteError(hostFailure));
@@ -543,6 +530,40 @@ it("preserves command deadline timeout when macOS helper preparation aborts with
   }
 });
 
+it("keeps caller cancellation primary when macOS helper preparation is cancelled with a spawn EMFILE reason", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const reason = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const darwinError = new DarwinProcessOwnershipInspectionError(
+    "Darwin process ownership helper preparation was cancelled",
+    {
+      cause: reason,
+      cancellation: { reason },
+    },
+  );
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      throw darwinError;
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("uses platform-aware recovery without /proc when Darwin baseline capture rejects identity_snapshot_unavailable", async () => {
   const { directory } = await createArtifact();
   const command = resolve(directory, "configured-objdump");
@@ -799,15 +820,13 @@ it("restricts Linux process ownership prerequisite remediation to missing ps and
   });
 
   let currentError: Error = eioError;
-  const host = createSystemProcessOwnershipHost(
-    "linux",
-    {},
-    {
-      execFileOutput: async () => {
-        throw currentError;
-      },
-    },
-  );
+  const command = vi
+    .spyOn(processOutput, "execFileOutput")
+    .mockImplementation(async () => {
+      throw currentError;
+    });
+  onTestFinished(() => command.mockRestore());
+  const host = createSystemProcessOwnershipHost("linux", {});
 
   currentError = eioError;
   const eioFailure = (await host
@@ -871,18 +890,13 @@ it("restricts Linux process ownership prerequisite remediation to missing ps and
   });
   expect(noCodeFailure.diagnostics).not.toHaveProperty("system_code");
 
-  const emptyTableHost = createSystemProcessOwnershipHost(
-    "linux",
-    {},
-    {
-      execFileOutput: async () => ({
-        stdout: "    1     0     1     0 Ss   /sbin/init\n",
-        stderr: "",
-        stdoutBytes: 40,
-        stderrBytes: 0,
-      }),
-    },
-  );
+  command.mockResolvedValue({
+    stdout: "    1     0     1     0 Ss   /sbin/init\n",
+    stderr: "",
+    stdoutBytes: 40,
+    stderrBytes: 0,
+  });
+  const emptyTableHost = createSystemProcessOwnershipHost("linux", {});
   const unreportedFailure = (await emptyTableHost
     .prepare?.()
     .catch((error: unknown) => error)) as LinuxOwnedProcessPrerequisiteError;
@@ -1006,7 +1020,7 @@ it("retains successful architecture and artifact output for an admitted provider
 });
 
 it("tracks observed launch failures and clears them after subsequent successful launch", async () => {
-  const { directory, path } = await createArtifact();
+  const { directory } = await createArtifact();
   const command = resolve(directory, "failing-objdump");
   let failLaunch = true;
   const service = new TestReverseEngineeringService({
