@@ -135,6 +135,67 @@ describe("browser probe request-body admission", () => {
   });
 });
 
+it("refuses a mapped bulk delete without selected request bodies", () => {
+  const seedProject = { id: "seed-project", name: "Seed project" };
+  const fixture = environmentStateServeFixture(
+    timedCaptureEvidence([
+      ["GET", "/api/projects", [seedProject]],
+      ["GET", "/api/projects/seed-project", seedProject],
+      ["GET", "/api/projects/seed-project/books", [{ id: "seed-book" }]],
+      [
+        "DELETE",
+        "/api/projects/seed-project/books",
+        [],
+        200,
+        [{ id: "seed-book" }],
+      ],
+      ["GET", "/api/projects/seed-project/books", []],
+    ]),
+  );
+  const report = compareEnvironment({
+    source: environmentServeSource(fixture),
+    captureValue: fixture.capture,
+    probes: [
+      {
+        label: "mapped-bulk-delete-without-body",
+        value: scenarioCaptureEvidence(
+          scenarioCaptureFixture(
+            [
+              {
+                method: "GET",
+                url: "/api/projects",
+                status: 200,
+                mediaType: "application/json",
+                body: JSON.stringify([
+                  { id: "live-project", name: "Seed project" },
+                ]),
+              },
+              {
+                method: "DELETE",
+                url: "/api/projects/live-project/books",
+                status: 200,
+                mediaType: "application/json",
+                body: "[]",
+              },
+            ],
+            {
+              request_body: false,
+              response_body: true,
+              header_values: false,
+            },
+          ),
+        ),
+      },
+    ],
+    operation: "environment-compare",
+  });
+  expect(report.ok).toBe(false);
+  if (report.ok) return;
+  expect(JSON.stringify(report.error)).toContain(
+    "capture.network.request_body",
+  );
+});
+
 describe("environment comparison of bulk writes", () => {
   it("sends a probe's bulk delete body to the served tool, which answers it from the state", () => {
     const fixture = environmentStateServeFixture(
