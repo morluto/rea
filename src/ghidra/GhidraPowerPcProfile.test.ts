@@ -64,9 +64,9 @@ describe("bounded Ghidra PowerPC admission", () => {
       architecture: "powerpc",
       language_id: "PowerPC:BE:32:default",
       compiler_spec_id: "default",
-      language_selection: "provider-pinned-v1",
+      language_selection: "provider-pinned",
       powerpc_elf: { elf_class: 32, byte_order: "big", type: 2, flags: 0 },
-      powerpc_support_lane: "elf32-be-exec-generic-v1",
+      powerpc_support_lane: "elf32-be-exec-generic",
     });
     expect(ghidraPinnedLanguage(target())).toEqual({
       languageId: "PowerPC:BE:32:default",
@@ -99,7 +99,7 @@ describe("bounded Ghidra PowerPC admission", () => {
     const parameters = resolved.value.profile?.parameters ?? {};
     expect(parameters).toMatchObject({
       language_id: "PowerPC:BE:32:e500",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual({
       languageId: "PowerPC:BE:32:e500",

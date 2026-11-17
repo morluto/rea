@@ -4,13 +4,15 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { assertArtifactFileSelectedSource } from "./ArtifactFileSource.js";
-import { assertArtifactSelectedSource } from "./ArtifactSelectedSource.js";
 import { readStableArtifact } from "../resources/readStableArtifact.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../domain/desktopApplication.js";
+import {
+  assertArtifactFileSelectedSource,
+  assertArtifactSelectedSource,
+  DirectoryArtifactReader,
+} from "../resources/index.js";
 
 it.skipIf(process.platform === "win32")(
   "admits a caller-selected directory symlink without changing its target identity",

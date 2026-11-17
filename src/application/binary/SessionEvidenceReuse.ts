@@ -1,8 +1,15 @@
+import { evidenceSubjectDisplay } from "../../domain/evidence.js";
 import { basename } from "node:path";
 import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import type { Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { equalJsonText } from "../../domain/jsonSerialization.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import { ok, type Result } from "../../domain/result.js";
+import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
+import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 
 // Proof belongs to the exact object issued by the session. A wrapper that
 // copies or transforms the observation cannot carry it forward.
@@ -21,12 +28,13 @@ export const bindSessionEvidenceExecution = (
   // Semantic IDs intentionally omit display paths and names. A duplicate in
   // the ledger can therefore refer to the same bytes at a different path.
   const selected = execution.subject;
+  const display = evidenceSubjectDisplay(evidence);
   if (
     selected == null
-      ? evidence.subject !== null
-      : evidence.subject === null ||
-        evidence.subject.local_path !== selected.path ||
-        evidence.subject.name !== (basename(selected.path) || "artifact")
+      ? display !== undefined
+      : display === undefined ||
+        display.local_path !== selected.path ||
+        display.name !== (basename(selected.path) || "artifact")
   )
     return execution;
   const subject =
@@ -52,7 +60,7 @@ export const bindSessionEvidenceExecution = (
   return result;
 };
 
-export const sessionEvidenceForExecution = (
+const sessionEvidenceForExecution = (
   execution: AnalysisExecution,
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
@@ -67,4 +75,57 @@ export const sessionEvidenceForExecution = (
   )
     return undefined;
   return evidence;
+};
+
+/** How one completed session execution becomes Evidence. */
+export interface CompletedOperationEvidenceOptions {
+  /** The subject when the provider names none. */
+  readonly target: BinaryTarget | null;
+  readonly admitRecovery?: RecoveryAdmission | undefined;
+  /** The session's records, to reuse the record it issued for this call. */
+  readonly evidenceById?: ((id: string) => Evidence | undefined) | undefined;
+}
+
+/**
+ * The Evidence of one completed provider operation, built once for every
+ * adapter: the record the session issued for this exact execution and
+ * parameters when it holds one, else a new record admitted against the
+ * completed analysis.
+ */
+export const completedOperationEvidence = (
+  operation: string,
+  parameters: Readonly<Record<string, JsonValue>>,
+  execution: AnalysisExecution,
+  options: CompletedOperationEvidenceOptions,
+): Result<Evidence, AnalysisError> => {
+  const reusable =
+    options.evidenceById === undefined
+      ? undefined
+      : sessionEvidenceForExecution(
+          execution,
+          operation,
+          parameters,
+          options.evidenceById,
+        );
+  if (reusable !== undefined) return ok(reusable);
+  const observation = {
+    ...execution,
+    subject:
+      execution.subject === undefined ? options.target : execution.subject,
+  };
+  const admitted = admitCompletedAnalysis(
+    operation,
+    parameters,
+    observation,
+    options.admitRecovery,
+  );
+  if (!admitted.ok) return admitted;
+  return ok(
+    createAnalysisExecutionEvidence(
+      operation,
+      parameters,
+      observation,
+      "observed",
+    ),
+  );
 };

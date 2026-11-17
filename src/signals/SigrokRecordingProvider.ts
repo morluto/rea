@@ -86,6 +86,7 @@ import {
 } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "decode_signal_recording";
 
@@ -312,9 +313,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             operation,
             {
               diagnostics: {
-                exit_code: output.exitCode ?? null,
-                stdout: output.stdout.text,
-                stderr: output.stderr.text,
+                exit_code: capturedOutput.exit_code ?? null,
+                stdout: capturedOutput.stdout,
+                stderr: capturedOutput.stderr,
               },
             },
           );
@@ -523,6 +524,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
               ...fixedAllowanceOptions(
                 "The sigrok decoder-discovery line allowance",
                 "capture",
+                { limit: cause.failure.limit.maximum, unit: "lines" },
               ),
             })
           : undefined,
@@ -540,7 +542,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         ),
       observedOutput,
       unclassified: (cause) => {
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         if (phase === "workspace")
           return privateWorkspaceFailure(
             SIGROK_PROVIDER_IDENTITY.id,

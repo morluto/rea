@@ -15,9 +15,10 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
+  readArtifactFileChunks,
+  abortIfNeeded,
+  artifactFileAdmissionFailure,
 } from "../../resources/index.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../../resources/index.js";
 import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,
@@ -27,7 +28,6 @@ import {
   type CArchiveEntry,
 } from "./CArchiveLayout.js";
 import type { PyInstallerMember } from "./CArchiveMembers.js";
-import { artifactFileAdmissionFailure } from "../ArtifactFileAdmission.js";
 import {
   reconstructedPycHeader,
   isHeaderlessPythonCode,

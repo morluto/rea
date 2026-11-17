@@ -1,7 +1,8 @@
 import { contractNamed } from "./contractCliDescription.js";
 import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
-import { z } from "incur";
+import { z } from "zod";
 import { cliDecimalField } from "./options.js";
+import { requirePresence } from "../domain/schemaConstraints.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createHistoricalSourceSummary } from "../domain/referenceSourceSummary.js";
@@ -24,9 +25,10 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS, cliCommandFor } from "../cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../contracts/cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
@@ -108,7 +110,7 @@ const registerCapabilityCommands = (
     CLI_COMMANDS.capabilities,
     CLI_COMMANDS.providers,
   ] as const) {
-    cli.command(command, {
+    registerCliCommand(cli, command, {
       description:
         command === "capabilities"
           ? "List provider capabilities and side effects"
@@ -251,15 +253,15 @@ const registerReferenceSourceCommand = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.importReferenceSource, {
+  registerCliCommand(cli, CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
       root: localPathStringSchema.describe(
         "Local source directory to import as historical reference",
       ),
     }),
-    options: z
-      .object({
+    options: requirePresence(
+      z.object({
         excludePaths: z
           .string()
           .optional()
@@ -281,22 +283,16 @@ const registerReferenceSourceCommand = (
               "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
             ),
         ),
-      })
-      .superRefine((options, context) => {
-        if (options.outlineDepth !== undefined && options.detail !== "summary")
-          context.addIssue({
-            code: "custom",
-            path: ["outlineDepth"],
-            message: "--outline-depth requires --detail summary",
-          });
-      })
-      .meta({
-        if: { required: ["outlineDepth"] },
-        then: {
-          required: ["detail"],
-          properties: { detail: { const: "summary" } },
-        },
       }),
+      [
+        {
+          when: "outlineDepth",
+          requires: "detail",
+          requiresValue: "summary",
+          message: "--outline-depth requires --detail summary",
+        },
+      ],
+    ),
     run: ({ args, options }) =>
       logCliCommand(
         logger,

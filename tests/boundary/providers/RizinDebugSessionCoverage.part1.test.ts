@@ -281,6 +281,7 @@ it
         stopMode === "is uncertain"
           ? async () => ({
               status: "incomplete",
+              code: "stop-failed",
               reason: "injected stop uncertainty",
             })
           : async () => ({ status: "stopped" });
@@ -343,7 +344,11 @@ it.skipIf(process.platform === "win32")(
     const fixture = createRizinCoverageHarness({
       stopOwnedProcess: async (supervisor) =>
         failCleanup
-          ? { status: "incomplete", reason: "injected fixture stop failure" }
+          ? {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "injected fixture stop failure",
+            }
           : supervisor.stop(),
     });
     const provider = await fixture.makeProvider(
@@ -434,6 +439,7 @@ it.skipIf(process.platform === "win32")(
           session.launched.process.kill("SIGTERM");
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "first stop result is uncertain",
           };
         }

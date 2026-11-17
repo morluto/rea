@@ -11,10 +11,10 @@ import {
 } from "../../../src/domain/native/nativeAotPe.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import type { DesktopFile } from "../../../src/domain/desktopApplication.js";
-import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
+import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readPeHeaders } from "../../../src/artifacts/pe/PeResourceLayout.js";
-import { peResourceFixture } from "../../../src/artifacts/pe/PeResources.fixture.js";
+import { readPeHeaders } from "../../../src/domain/pe/peResourceLayout.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { ElectronFuseService } from "../../../src/application/electron/ElectronFuseService.js";
 import { ElectronFuseProvider } from "../../../src/electron/ElectronFuseProvider.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -166,7 +166,7 @@ it("preserves fuse inspection after a short DOS header with a confirmed PE signa
     const inspected = await service.inspect({ path });
     expect(inspected).toMatchObject({
       ok: true,
-      value: { subject: { architecture: "x86_64" } },
+      value: { subject: { identity: { architecture: "x86_64" } } },
     });
   } finally {
     await service.close();

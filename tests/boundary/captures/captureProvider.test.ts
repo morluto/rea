@@ -1,3 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
@@ -12,7 +14,6 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
-import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
@@ -77,7 +78,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     async (input) => {
       calls++;
       if (mode === "launch-failure" && !input.arguments.includes("--version"))
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+        throw spawnFailure("E2BIG", input.command);
       if (mode === "file-limit" && !input.arguments.includes("--version")) {
         const stdout = { text: "", bytes: 0, observedBytes: 0 };
         const stderr = {
@@ -235,7 +236,7 @@ it("recovers the same capture with CLI producer budgets and retains a tighter in
   expect(analysisErrorRemediationAction(refused.error)).toContain(
     "producer_limits.input_bytes",
   );
-  const cli = Cli.create("capture-producer-budget", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -347,7 +348,7 @@ it("refuses producer frames outside the selected input read scope before paging"
 
 it("returns canonical alias output through the public packet-capture CLI", async () => {
   const f = await fixture("alias-canonical");
-  const cli = Cli.create("capture-alias-test", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -536,7 +537,13 @@ it.each(["capture", "fields"] as const)(
         : await f.service.inspectFields({ kind: "fields" });
     if (result.ok) throw new Error("Expected launch failure");
     expect(f.calls()).toBe(2);
-    expect(result.error.message).toContain("spawn E2BIG");
+    // A launch failure is not tool output: the shared owner reports the
+    // oversized argument list as a resource constraint.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "transport",
+      reportedLimits: { spawn_error: "E2BIG" },
+    });
     expect(result.error.capturedOutput).toBeUndefined();
   },
 );
@@ -1037,7 +1044,7 @@ it("retains completed discovery on late cancellation and cleanup failure", async
 
 it("preserves discovery resource ownership through CLI shutdown retries", async () => {
   const f = await fixture("cleanup", true);
-  const cli = Cli.create("discovery-cleanup", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   try {

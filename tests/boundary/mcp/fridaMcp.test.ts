@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -21,6 +22,8 @@ import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordS
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const UNOBSERVED = unknownTarget("not-observed");
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -296,7 +299,7 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
     expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(parent);
     expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
     // Inline/file projection validates the owning result and exact source selection.
-    const malformed = createEvidence(undefined, parent.provider ?? undefined, {
+    const malformed = createEvidence(UNOBSERVED, parent.provider ?? undefined, {
       operation: parent.operation,
       parameters: { session_id: "00000000-0000-4000-8000-000000000099" },
       result: parent.normalized_result,

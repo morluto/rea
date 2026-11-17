@@ -8,6 +8,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface PathInputCase {
   readonly name: string;
@@ -35,7 +36,10 @@ const createMcp = async (firmwareCalls: string[], profile?: "compact") => {
       },
     },
   );
-  const client = new Client({ name: "absolute-path-schema", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-schema", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 

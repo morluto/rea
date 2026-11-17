@@ -1,6 +1,6 @@
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
-import { createHash } from "node:crypto";
+import { excludedValues } from "../schemaConstraints.js";
 import { z } from "zod";
 import {
   androidManifestSplitsSchema,
@@ -16,6 +16,7 @@ import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const count = z.int().nonnegative();
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -65,15 +66,24 @@ export const androidJniLibraryIdentitySchema = z.strictObject({
   compressed_size: count.nullable(),
 });
 /**
- * Why one selected library has no facts. `integrity_check` names the reader
- * check an `integrity` failure violated; Evidence recorded before this field
- * has no check, which means the check is unknown.
+ * Why one selected library has no facts. An `integrity` failure names the
+ * reader check it violated in `integrity_check`; no other kind carries one.
  */
-const androidJniLibraryFailureSchema = z.strictObject({
-  kind: z.string(),
-  message: z.string(),
-  integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS).exactOptional(),
-});
+const androidJniLibraryFailureSchema = z.union([
+  z.strictObject({
+    kind: z.literal("integrity"),
+    message: z.string(),
+    integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS),
+  }),
+  z.strictObject({
+    kind: excludedValues(
+      z.string(),
+      ["integrity"],
+      "an integrity failure names its integrity_check",
+    ),
+    message: z.string(),
+  }),
+]);
 export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   abi_compatibility: z.enum(["consistent", "mismatch", "unknown"]),
   byte_order: z.enum(["little", "big"]).nullable(),
@@ -173,7 +183,7 @@ export const androidJniReportSchema = z.strictObject({
 export type AndroidJniReport = z.infer<typeof androidJniReportSchema>;
 export const ANDROID_JNI_REPORT_BYTES = 16 * 1024 * 1024;
 const id = (kind: string, parts: readonly unknown[]): string =>
-  `${kind}_${createHash("sha256").update(JSON.stringify(parts)).digest("hex")}`;
+  `${kind}_${sha256Hex(JSON.stringify(parts))}`;
 
 /** JNI escaping is over UTF-16 code units; it can fail for non-Java-source names. */
 export const expectedJniNames = (

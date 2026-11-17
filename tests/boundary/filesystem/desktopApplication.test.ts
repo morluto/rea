@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   mkdir,
   writeFile,
@@ -25,9 +26,9 @@ import {
   buildManagedPeFixture,
   buildNativePeFixture,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../../../src/dotnet/ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
-import { readAssemblyReference } from "../../../src/dotnet/ManagedMetadataInventoryRows.js";
+import { readManagedMetadataLayout } from "../../../src/domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
+import { readAssemblyReference } from "../../../src/domain/managed/managedMetadataInventoryRows.js";
 import {
   CPU,
   FILE_TYPE,
@@ -35,12 +36,12 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
   const service = createDesktopApplicationService();
@@ -1776,8 +1777,8 @@ it("keeps snapshot identity stable across limits that preserve source observatio
   expect(first.report.root.snapshot_sha256).toBe(
     second.report.root.snapshot_sha256,
   );
-  expect(first.evidence.subject?.digest.sha256).toBe(
-    second.evidence.subject?.digest.sha256,
+  expect(fileIdentity(first.evidence.subject).sha256).toBe(
+    fileIdentity(second.evidence.subject).sha256,
   );
   expect(first.evidence.evidence_id).not.toBe(second.evidence.evidence_id);
   expect(first.evidence.parameters).toMatchObject({

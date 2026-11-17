@@ -18,6 +18,7 @@ for new work, roadmap granularity and producer-owned contracts.
 
 ## Other feature records
 
+- [GDB executable selection](native/gdb-executable/spec.md) ([plan](native/gdb-executable/plan.md), [tasks](native/gdb-executable/tasks.md))
 - [Core WebAssembly interface comparison (#2356)](2356-wasm-interface-comparison/spec.md) ([plan](2356-wasm-interface-comparison/plan.md), [tasks](2356-wasm-interface-comparison/tasks.md), [verification](2356-wasm-interface-comparison/verification.md))
 - [Inspect APK signature schemes (v1–v3.1)](apk-signature/spec.md)
 - [Documentation organization](documentation/organization/spec.md) ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md), [verification](documentation/organization/verification.md))

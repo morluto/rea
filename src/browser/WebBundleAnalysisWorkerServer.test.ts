@@ -16,6 +16,7 @@ import {
   WEB_BUNDLE_WORKER_LIMITS,
 } from "./WebBundleAnalysisWorkerProtocol.js";
 import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { webBundleScriptAnalysisSchema } from "../domain/webBundleScriptAnalysis.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -147,6 +148,59 @@ const closeServer = async (
     clearTimeout(timeout);
   }
 };
+
+it("transfers reached semantic budgets and does not retain them for the next job", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-precision-"));
+  let worker: ChildProcessWithoutNullStreams | undefined;
+  try {
+    const server = await startServer(root);
+    worker = server.process;
+    expect(await server.next()).toMatchObject({ kind: "ready" });
+    const script = makeScript(
+      "const routes = {get path(){return '/a';}}; createBrowserRouter([{path:routes.path}]);",
+    );
+    const input = sourceDescriptor(script);
+    for (const getterExpansions of [1, 512]) {
+      const id = randomUUID();
+      await writeSource(root, id, input.bytes);
+      await send(worker, {
+        kind: "analyze",
+        id,
+        member_mutation_allowance: DEFAULT_ALLOWANCE,
+        semantic_precision: { getter_expansions: getterExpansions },
+        source: input.descriptor,
+        result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+      });
+      expect(await server.next()).toMatchObject({ kind: "phase", id });
+      const completed = await server.next();
+      expect(completed).toMatchObject({ kind: "complete", id });
+      if (completed.kind !== "complete") throw new Error("Expected result");
+      const bytes = await readFile(join(root, `${id}.result`));
+      expect(completed.result).toEqual({
+        bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+      const result = webBundleScriptAnalysisSchema.parse(
+        JSON.parse(bytes.toString("utf8")),
+      );
+      if (getterExpansions === 1)
+        expect(result).toMatchObject({
+          semantic_limits: [
+            {
+              limit: {
+                parameter: "semantic_precision.getter_expansions",
+                effective_value: 1,
+              },
+            },
+          ],
+        });
+      else expect(result).not.toHaveProperty("semantic_limits");
+    }
+  } finally {
+    if (worker !== undefined) await closeServer(worker);
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it("refuses with the allowance the parent sent and reports its limit", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-web-worker-work-"));

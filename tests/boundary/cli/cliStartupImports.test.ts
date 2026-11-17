@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const MARKER = "REA_TEST_RESOLVED ";
@@ -55,11 +56,11 @@ const DEFERRED_IMPORTS = [
   },
   {
     name: "catalog-identity",
-    path: "/dist/catalogIdentity.js",
+    path: "/dist/contracts/catalog/catalogIdentity.js",
   },
   {
     name: "server-identity",
-    path: "/dist/serverIdentity.js",
+    path: "/dist/process/ServerIdentity.js",
   },
   {
     name: "tool-contracts",
@@ -305,7 +306,10 @@ describe("MCP startup imports", () => {
     transport.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
-    const client = new Client({ name: "rea-startup-imports", version: "1" });
+    const client = new Client(
+      { name: "rea-startup-imports", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();

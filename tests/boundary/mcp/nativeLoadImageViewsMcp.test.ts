@@ -12,6 +12,7 @@ import {
   nativeRawLoadImageFixture,
 } from "../../fixtures/nativeLoadImage.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("preserves raw and DOL verification facts and selected DOL sections through the advertised SDK output", async () => {
   const { call } = await connectLocalToolsMcp();
@@ -118,7 +119,10 @@ it("delivers load-image summaries from the complete retained public-tool observa
     close: async () => ok(null),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "load-image-summary", version: "1" });
+  const client = new Client(
+    { name: "load-image-summary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

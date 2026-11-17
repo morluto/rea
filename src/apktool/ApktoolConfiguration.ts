@@ -10,7 +10,8 @@ import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { classifyLaunchFailure } from "../process/launchFailure.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -25,6 +26,7 @@ import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { randomUUID } from "node:crypto";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
@@ -487,10 +489,35 @@ const versionProbeFailure = (
       )
     );
   if (inspectionCancellation !== undefined) return inspectionCancellation;
-  if (
-    preparation !== undefined &&
-    !(cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-  )
+  if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
+    return new AnalysisTimeoutError(
+      "inspect_apktool_client",
+      VERSION_TIMEOUT_MS,
+      {
+        cause,
+        ...(output === undefined ? {} : { capturedOutput: output }),
+        ...apktoolVersionProbeTimeoutGuidance(),
+      },
+    );
+  const launch =
+    preparationHostCapacityFailure(cause) ?? launcherFailureOf(cause);
+  // The host, not the selected launcher, refused this launch.
+  if (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+    return classifyLaunchFailure(launch, {
+      providerId: "apktool",
+      operation: "inspect_apktool_client",
+      command: selection.command,
+      fixedArguments: true,
+      selection: APKTOOL_COMMAND_ENV,
+      details: {
+        cause,
+        diagnostics: {
+          selected_command: selection.command,
+          command_source: selection.commandSource,
+        },
+      },
+    });
+  if (preparation !== undefined)
     return new ProviderAdapterError("apktool", "inspect_apktool_client", {
       cause,
       diagnostics: {
@@ -509,19 +536,8 @@ const versionProbeFailure = (
         ? {}
         : { capturedOutput: preparation.capturedOutput }),
     });
-  if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-    return new AnalysisTimeoutError(
-      "inspect_apktool_client",
-      VERSION_TIMEOUT_MS,
-      {
-        cause,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        ...apktoolVersionProbeTimeoutGuidance(),
-      },
-    );
-  const refusal = classifyLaunchFailure(cause);
-  if (refusal !== undefined) {
-    const execDenied = refusal.kind === "not_executable";
+  if (launch?.kind === "missing" || launch?.kind === "not_executable") {
+    const execDenied = launch.kind === "not_executable";
     return new ApktoolConfigurationFailure(
       execDenied ? "command_not_executable" : "command_missing",
       execDenied
@@ -531,7 +547,7 @@ const versionProbeFailure = (
         ? APKTOOL_NOT_EXECUTABLE_REMEDIATION
         : APKTOOL_MISSING_REMEDIATION,
       {
-        filesystem_error: refusal.code,
+        filesystem_error: launch.code,
         selected_command: selection.command,
         command_source: selection.commandSource,
       },
@@ -553,8 +569,9 @@ const versionProbeFailure = (
         },
         ...(output === undefined ? {} : { capturedOutput: output }),
         ...fixedAllowanceOptions(
-          `The apktool version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+          "The apktool version-output capture allowance (decode_timeout_ms does not raise it)",
           "capture",
+          { limit: VERSION_MAX_OUTPUT_BYTES, unit: "bytes" },
         ),
       },
     );

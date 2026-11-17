@@ -29,7 +29,7 @@ import {
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import { listProceduresFact } from "../../domain/native/nativeOperationFacts.js";
@@ -236,11 +236,11 @@ export const decompileAll = async (
       primary !== closed.error &&
       closed.error.cleanupIncomplete
     ) {
-      failure = analysisErrorWithCleanupFailure(
+      failure = analysisErrorWithCleanupDependencies(
         primary,
         closed.error,
         "decompile_all",
-      ).bindCleanupDependencies([primary, closed.error]);
+      );
     }
     if (publishedOutput !== undefined)
       failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
@@ -645,7 +645,7 @@ const publishOne = async (input: {
         ? {
             code: "no_pseudocode",
             message:
-              "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh (CLI: --resume --retry-failed independent_fresh). The retry may use different analysis context.",
+              "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh. The retry may use different analysis context.",
           }
         : pseudocodeFailure(pseudocode);
     recordFailure(

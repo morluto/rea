@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import { displayedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
@@ -6,8 +8,13 @@ import {
   ANALYSIS_SNAPSHOT_PROFILE,
   ANALYSIS_SNAPSHOT_PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET,
+  snapshotExecution,
 } from "../../domain/analysisSnapshot.fixture.js";
-import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubject,
+  immutableEvidence,
+} from "../../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   createEvidenceBundle,
@@ -35,6 +42,7 @@ import {
   isSourceEvidenceRetainable,
 } from "./AnalysisSnapshotCache.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
+
 import { nativeCallGraphSchema } from "../../domain/native/nativeCallGraph.js";
 
 it.each(["provider", "workflow"] as const)(
@@ -71,7 +79,11 @@ it.each(["provider", "workflow"] as const)(
       execution: { ...execution, analysisProfile },
     };
     if (kind === "provider") cache.record(input);
-    else cache.recordWorkflow(input);
+    else
+      cache.recordWorkflow({
+        ...input,
+        execution: snapshotExecution(input.execution),
+      });
     const entries = () =>
       kind === "provider" ? cache.entries() : cache.workflowEntries();
     const expected = entries();
@@ -121,10 +133,12 @@ it("exports independent nested query, workflow and Evidence payloads", () => {
     operation: "analyze_function",
     parameters,
     execution: {
-      ...createAnalysisExecution(result, REA_WORKFLOW_PROVIDER, {
-        subject: target,
-        rawResult: result,
-      }),
+      ...snapshotExecution(
+        createAnalysisExecution(result, REA_WORKFLOW_PROVIDER, {
+          subject: target,
+          rawResult: result,
+        }),
+      ),
       analysisProfile: workflowProfile,
     },
   });
@@ -224,17 +238,19 @@ it.each(["provider", "workflow"] as const)(
         profile,
         operation,
         parameters,
-        execution: { ...execution, analysisProfile: evidenceProfile },
+        execution: snapshotExecution({
+          ...execution,
+          analysisProfile: evidenceProfile,
+        }),
       });
     expect(ledger.record(evidence).ok).toBe(true);
     const before = cache.export(target, profile, ledger.export());
     if (!before.ok) throw before.error;
     const nameOnly = {
       ...evidence,
-      subject:
-        evidence.subject === null
-          ? null
-          : { ...evidence.subject, name: "display-only-name" },
+      subject: displayedEvidenceSubject(evidence.subject, {
+        name: "display-only-name",
+      }),
     };
     const nameImport = ledger.import(createEvidenceBundle([nameOnly]));
     if (!nameImport.ok) throw nameImport.error;
@@ -251,14 +267,14 @@ it.each(["provider", "workflow"] as const)(
     });
     expect(ledger.record(alternative).ok).toBe(true);
     const relocate = (record: typeof evidence) => {
-      if (record.subject === null) throw new Error("Expected fixture subject");
+      if (record.subject.identity.kind !== "file")
+        throw new Error("Expected fixture subject");
       return {
         ...record,
-        subject: {
-          ...record.subject,
+        subject: displayedEvidenceSubject(record.subject, {
           local_path: "/relocated/fixture",
           name: "renamed",
-        },
+        }),
       };
     };
     const foreign = ledger.import(
@@ -284,14 +300,14 @@ it.each(["provider", "workflow"] as const)(
     if (!after.ok) throw after.error;
     const entries =
       kind === "provider" ? after.value.entries : after.value.workflow_entries;
-    expect(entries[0]?.execution.subject?.path).toBe("/relocated/fixture");
+    expect(entries[0]?.execution.subject.local_path).toBe("/relocated/fixture");
     expect(entries[0]?.execution.result).toBe("original");
     expect(after.value.evidence_bundle.records).toContainEqual(relocated);
     const originalEntries =
       kind === "provider"
         ? before.value.entries
         : before.value.workflow_entries;
-    expect(originalEntries[0]?.execution.subject?.path).toBe(target.path);
+    expect(originalEntries[0]?.execution.subject.local_path).toBe(target.path);
   },
 );
 
@@ -326,10 +342,14 @@ it.each(["provider", "workflow"] as const)(
       };
       if (kind === "provider")
         cache.record({ ...input, operation: "procedure_info" });
-      else cache.recordWorkflow(input);
+      else
+        cache.recordWorkflow({
+          ...input,
+          execution: snapshotExecution(input.execution),
+        });
       expect(
         ledger.record(
-          createEvidence(subject ?? undefined, provider, {
+          createEvidence(subject ?? unknownTarget("not-observed"), provider, {
             operation,
             parameters,
             result,
@@ -355,7 +375,9 @@ it.each(["provider", "workflow"] as const)(
     const saved =
       kind === "provider" ? snapshot.entries : snapshot.workflow_entries;
     expect(saved).toHaveLength(1);
-    expect(saved[0]?.execution.subject?.sha256).toBe(target.sha256);
+    expect(saved[0]?.execution.subject.identity).toMatchObject({
+      sha256: target.sha256,
+    });
     expect(snapshot.evidence_bundle.records).toHaveLength(1);
     expect(
       kind === "provider" ? cache.entries() : cache.workflowEntries(),
@@ -401,9 +423,11 @@ it("counts newly retained direct and workflow bindings when staging", () => {
     operation: "trace_feature",
     parameters: { query: "feature" },
     execution: {
-      ...createAnalysisExecution("workflow", REA_WORKFLOW_PROVIDER, {
-        subject: target,
-      }),
+      ...snapshotExecution(
+        createAnalysisExecution("workflow", REA_WORKFLOW_PROVIDER, {
+          subject: target,
+        }),
+      ),
       analysisProfile: workflowProfile,
     },
   });
@@ -531,11 +555,13 @@ it("binds an omitted subject to the selected target in snapshot replay", () => {
     ]),
   );
   if (!snapshot.ok) throw snapshot.error;
-  expect(snapshot.value.entries[0]?.execution.subject?.path).toBe(target.path);
+  expect(snapshot.value.entries[0]?.execution.subject.local_path).toBe(
+    target.path,
+  );
   const reparsed = parseAnalysisSnapshot(
     JSON.parse(serializeAnalysisSnapshot(snapshot.value)),
   );
-  expect(reparsed.entries[0]?.execution.subject?.path).toBe(target.path);
+  expect(reparsed.entries[0]?.execution.subject.local_path).toBe(target.path);
   cache.clear();
   const imported = cache.import(
     reparsed,
@@ -582,9 +608,11 @@ describe("analysis snapshot cache capacity", () => {
     const target = ANALYSIS_SNAPSHOT_TARGET;
     const profile = ANALYSIS_SNAPSHOT_PROFILE;
     const execution = {
-      ...createAnalysisExecution("workflow", REA_WORKFLOW_PROVIDER, {
-        subject: target,
-      }),
+      ...snapshotExecution(
+        createAnalysisExecution("workflow", REA_WORKFLOW_PROVIDER, {
+          subject: target,
+        }),
+      ),
       analysisProfile: workflowAnalysisProfile(profile),
     };
     const workflowInput = {
@@ -672,7 +700,7 @@ describe("analysis snapshot cache capacity", () => {
     cache.recordWorkflow({
       ...workflowInput,
       target: otherTarget,
-      execution: { ...execution, subject: otherTarget },
+      execution: { ...execution, subject: evidenceSubject(otherTarget) },
     });
     expect(cache.entries()).toEqual([]);
     expect(cache.workflowEntries()).toHaveLength(1);
@@ -1232,10 +1260,12 @@ it.each([
       operation,
       parameters,
       execution: {
-        ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
-          subject: target,
-          rawResult: oldResult,
-        }),
+        ...snapshotExecution(
+          createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+            subject: target,
+            rawResult: oldResult,
+          }),
+        ),
         analysisProfile: oldProfile,
       },
     });
@@ -1315,9 +1345,11 @@ it.each([1, 2])(
       limitations: [],
     };
     const execution = {
-      ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
-        subject: target,
-      }),
+      ...snapshotExecution(
+        createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+          subject: target,
+        }),
+      ),
       analysisProfile: oldProfile,
     };
     cache.recordWorkflow({ target, profile, operation, parameters, execution });
@@ -1506,17 +1538,17 @@ it("replays source-bearing entries only when their complete retained closure exi
       .lookup(target, profile, "procedure_info", parameters)
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-  if (source.subject === null) throw new Error("Expected source subject");
+  if (source.subject.identity.kind !== "file")
+    throw new Error("Expected source subject");
   const ledger = new EvidenceLedger();
   for (const record of [parent, source, leaf])
     expect(ledger.record(record).ok).toBe(true);
   const movedSource = {
     ...source,
-    subject: {
-      ...source.subject,
+    subject: displayedEvidenceSubject(source.subject, {
       local_path: "/relocated/source",
       name: "source",
-    },
+    }),
   };
   const replacement = ledger.import(createEvidenceBundle([movedSource]));
   if (!replacement.ok) throw replacement.error;

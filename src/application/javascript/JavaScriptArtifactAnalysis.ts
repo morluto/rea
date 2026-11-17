@@ -1,5 +1,4 @@
 import { boundedList } from "../../domain/boundedList.js";
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import { setImmediate } from "node:timers/promises";
@@ -46,8 +45,10 @@ import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactRefe
 import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
-import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
+import {
+  ArtifactReaderFailure,
+  translateArtifactFailure,
+} from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   AnalysisResourceConstraintError,
@@ -55,6 +56,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 interface MutableArtifactAnalysis {
   readonly jsonDocuments: JavaScriptJsonDocuments;
@@ -698,7 +700,7 @@ const collectSourceMapOriginals = (
         declaration_index: declarationIndex++,
         reference,
         content,
-        content_sha256: content === null ? null : sha256(content),
+        content_sha256: content === null ? null : sha256Hex(content),
         section_path,
       });
     }
@@ -784,6 +786,3 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;
-
-const sha256 = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");

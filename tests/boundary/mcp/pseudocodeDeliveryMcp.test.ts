@@ -11,6 +11,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const connectPseudocode = async (text: string | null) => {
   const harness = await connectGhidraMcp(
@@ -160,7 +161,7 @@ it.each([
     if (typeof result.parent_evidence_id !== "string")
       throw new Error("Missing parent reference");
     const parent = harness.session.evidenceById(result.parent_evidence_id);
-    if (parent === undefined || parent.subject === null)
+    if (parent === undefined || parent.subject.identity.kind !== "file")
       throw new Error("Missing retained artifact observation");
     const locations = [
       { kind: "artifact-path", path: parent.subject.local_path },
@@ -267,7 +268,10 @@ it("refuses summary delivery before calling a fixed provider without retention",
     },
     { environment: {} },
   );
-  const client = new Client({ name: "pseudocode-no-retention", version: "1" });
+  const client = new Client(
+    { name: "pseudocode-no-retention", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() =>
     closeVerifierResources([() => client.close(), () => server.close()]),
   );

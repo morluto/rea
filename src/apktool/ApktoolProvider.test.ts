@@ -191,7 +191,7 @@ it("recovers later string pages and an exhausted XML admission on the same APK",
     });
     if (!outcome.ok) throw outcome.error;
     expect(outcome.value.subject).toMatchObject({
-      digest: { sha256: apk.sha256 },
+      identity: { sha256: apk.sha256 },
     });
     return apktoolResultSchemas.decode_android_resources.parse(
       outcome.value.normalized_result,
@@ -247,7 +247,7 @@ it("returns table-only facts for a single selected primary table", async () => {
   if (!outcome.ok) throw outcome.error;
   expect(outcome.value).toMatchObject({
     parameters: { path: apk.path, string_tables_only: true },
-    subject: { digest: { sha256: apk.sha256 } },
+    subject: { identity: { sha256: apk.sha256 } },
     normalized_result: {
       strings: [],
       string_tables: [
@@ -298,7 +298,7 @@ sdkInfo:
   if (!outcome.ok) throw outcome.error;
   expect(outcome.value).toMatchObject({
     parameters: { path: apk.path },
-    subject: { digest: { sha256: apk.sha256 } },
+    subject: { identity: { sha256: apk.sha256 } },
     normalized_result: {
       client: { apktool_version: "3.0.3" },
       target: { path: apk.path, sha256: apk.sha256, bytes: apk.bytes },
@@ -355,7 +355,7 @@ it.each([
       const observation = {
         operation: "decode_android_resources",
         parameters: { path: apk.path, locales: ["de"] },
-        subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+        subject: { local_path: apk.path, identity: { sha256: apk.sha256 } },
         normalized_result: {
           metadata: { package_name: "com.rea.apktool.probe" },
           manifest: `${REAL_MANIFEST}\n`,
@@ -445,7 +445,7 @@ it.each(
       const observation = result.error.partialObservation;
       expect(observation).toMatchObject({
         operation: "decode_android_resources",
-        subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+        subject: { local_path: apk.path, identity: { sha256: apk.sha256 } },
         normalized_result: {
           coverage: "partial",
           metadata: {
@@ -815,12 +815,8 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
   if (!observation.ok) throw observation.error;
   expect(observation.value.subject).toMatchObject({
     local_path: apk.path,
-    format: "apk",
-    digest: { sha256: apk.sha256 },
+    identity: { format: "apk", sha256: apk.sha256 },
   });
-  expect(observation.value.limitations).not.toContainEqual(
-    expect.stringMatching(/artifact identity.*unavailable/iu),
-  );
   expect(await readFile(apk.path, "utf8")).toBe("changed original");
   const result = apktoolResultSchemas.decode_android_resources.parse(
     observation.value.normalized_result,
@@ -1228,7 +1224,7 @@ it("retains completed Evidence and live cleanup until a denied workspace removal
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toMatchObject({
       operation: "decode_android_resources",
-      subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+      subject: { local_path: apk.path, identity: { sha256: apk.sha256 } },
       normalized_result: {
         metadata: { package_name: "com.rea.apktool.probe" },
         strings: [
@@ -1387,7 +1383,10 @@ it.each(["decode", "projection"] as const)(
             }
           : {
               operation: "decode_android_resources",
-              subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+              subject: {
+                local_path: apk.path,
+                identity: { sha256: apk.sha256 },
+              },
               normalized_result: {
                 coverage: "partial",
                 metadata: { package_name: "com.rea.apktool.probe" },
@@ -1509,7 +1508,7 @@ it.each(["first-selected.apk", "second-selected.apk"])(
   },
 );
 
-it("reports launcher disappearance after version admission as a provider failure", async () => {
+it("reports launcher disappearance after version admission as apktool unavailable", async () => {
   const { command, root } = await writeApktoolStub(
     () =>
       `if [ "$1" = "--version" ]; then rm -- "$0"; ${VERSION_BLOCK}; exit 0; fi`,
@@ -1522,9 +1521,14 @@ it("reports launcher disappearance after version admission as a provider failure
       input: { path: apk.path, include_strings: true },
     });
     if (result.ok) throw new Error("Expected missing launcher");
+    // The shared launch owner classifies the real ENOENT spawn failure.
     expect(result.error).toMatchObject({
-      _tag: "ProviderAdapterError",
-      diagnostics: { target_path: apk.path, selected_command: command },
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "apktool",
+      diagnostics: {
+        boundary: "provider-launch",
+        system_code: "ENOENT",
+      },
     });
     expect(projectAnalysisError(result.error).code).not.toBe(
       "unsupported_target",

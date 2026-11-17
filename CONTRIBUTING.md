@@ -418,8 +418,8 @@ installs that bundle with Skills 1.7.2 using default repository-root discovery
 and checks every installed file, alongside the packaged setup checks.
 CI validates generated outputs and retains them as artifacts; do not commit
 them. Reviewed source metadata, including
-`src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json`, remains
-tracked and checked for freshness.
+`src/generatedPackageMetadata.ts`, `docs/error-contract.schema.json` and
+`docs/user-visible-errors.csv`, remains tracked and checked for freshness.
 
 The packaged skill contains instructions and inventory metadata, not runtime
 schema hashes. Its conformance commitment covers that exact bundle and portable

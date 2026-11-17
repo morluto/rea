@@ -8,6 +8,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { analysisRefusalRemediation } from "../../domain/analysisRefusal.js";
 import { elfNotesSchema } from "../../domain/native/elfNotes.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -85,13 +86,11 @@ describe("ELF note provider failures", () => {
   it("names the note text budget instead of host memory", async () => {
     const root = await createTestTempDirectory("rea-elf-note-text-budget-");
     const path = join(root, "program");
-    await writeFile(
-      path,
-      elfNoteFixture({
-        ownership: "program",
-        notes: elfNote("GNU", 3, Buffer.alloc(4096, 1)),
-      }),
-    );
+    const bytes = elfNoteFixture({
+      ownership: "program",
+      notes: elfNote("GNU", 3, Buffer.alloc(4096, 1)),
+    });
+    await writeFile(path, bytes);
     const result = await inspect(path);
     if (result.ok) throw new Error("Expected a text budget refusal");
     const error = result.error as AnalysisResourceConstraintError;
@@ -99,12 +98,22 @@ describe("ELF note provider failures", () => {
     expect(error.message).toMatch(/byte budget/u);
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain(
-      "ELF note text, hash, and scan budget",
+    // The ceiling is the image length plus decoded section names; this
+    // program-only fixture has no section names.
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit: bytes.length,
+      unit: "bytes",
+    });
+    expect(error.fixedAllowance).toBeDefined();
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_elf_notes",
+        ceiling: error.fixedAllowance!,
+      }),
     );
-    expect(projected.remediation.action).toMatch(/admitted image length/u);
-    expect(projected.remediation.action).toMatch(/do not raise it/u);
-    expect(projected.remediation.action).not.toMatch(/available host memory/u);
   });
 
   it("keeps a caller file-size budget distinct from host memory", async () => {
@@ -140,8 +149,9 @@ describe("ELF note provider failures", () => {
     expect(refused.error).toMatchObject({
       resource: "memory",
       reportedLimits: {
-        max_file_bytes: bytes.length + 1,
-        minimum_required_bytes: String(minimumMaxFileBytes),
+        boundary: "max_file_bytes",
+        maximum: bytes.length + 1,
+        required: String(minimumMaxFileBytes),
       },
       retryable: false,
     });

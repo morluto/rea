@@ -18,8 +18,8 @@ import {
   type ArtifactTraversalOptions,
   ArtifactResourceScope,
   assertArtifactReadActive,
+  ArtifactFileSource,
 } from "../resources/index.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 

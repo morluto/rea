@@ -11,10 +11,15 @@ import {
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseImmutableEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { projectInputIssuesBounded } from "../../domain/inputIssueProjection.js";
 import { readJsonFile } from "../JsonFiles.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The request cancellation and the scope retaining descriptors whose close failed. */
 export interface EvidenceFileReadOptions {
@@ -163,12 +168,7 @@ export const readEvidenceFileSource = async (
   if (!loaded.ok) return loaded;
   if (signal?.aborted) return err(cancelledBy(operation, signal));
   const value = loaded.value;
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.hasOwn(value, "records")
-  ) {
+  if (isRecord(value) && Object.hasOwn(value, "records")) {
     const bundle = authenticateEvidenceBundleValue(value, path, {
       operation,
       immutable: true,
@@ -195,13 +195,15 @@ export const readEvidenceFileSource = async (
   const parsed = safeParseImmutableEvidence(value);
   if (!parsed.ok)
     return err(
-      new EvidenceFileError("read", "wrong-kind", {
-        path,
-        cause: parsed.error,
-        contentIssues: boundedContentIssues(parsed.error.issues, value),
-        userMessage:
-          "The selected file does not contain valid Evidence. Repair or recreate the file and try again.",
-      }),
+      isUnsupportedEvidenceFormat(parsed.error)
+        ? unsupportedEvidenceFormatError(parsed.error)
+        : new EvidenceFileError("read", "wrong-kind", {
+            path,
+            cause: parsed.error,
+            contentIssues: boundedContentIssues(parsed.error.issues, value),
+            userMessage:
+              "The selected file does not contain valid Evidence. Repair or recreate the file and try again.",
+          }),
     );
   if (evidenceId !== undefined && parsed.value.evidence_id !== evidenceId)
     return err(

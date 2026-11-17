@@ -53,6 +53,7 @@ import {
   KUNA_VERIFIED_VERSION,
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** `kuna --version` exits before loading specs or an input; it needs no budget beyond this. */
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
@@ -176,7 +177,7 @@ export const kunaInstallationCancellation = (
 };
 
 /** One installation inspection's retained owners and originating errors. */
-interface KunaResourceScope {
+export interface KunaResourceScope {
   readonly owner: RetainedResourceScope;
   readonly cleanupResources: readonly string[] | undefined;
   readonly hasPending: boolean;
@@ -280,9 +281,6 @@ const failure = (
   reason: string,
   diagnostics: Readonly<Record<string, JsonValue>>,
 ): Result<never, KunaReadinessFailure> => err({ code, reason, diagnostics });
-
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 interface InstallationFileObservation {
   readonly phase: "fingerprint" | "identity";
@@ -407,7 +405,7 @@ export const inspectKunaInstallation = async (
   } catch (cause: unknown) {
     return failure(
       "executable_missing",
-      `Cannot execute REA_KUNA_COMMAND ${command}: ${message(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
+      `Cannot execute REA_KUNA_COMMAND ${command}: ${errorMessage(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
       { command },
     );
   }
@@ -445,7 +443,7 @@ export const inspectKunaInstallation = async (
       throw cause;
     return failure(
       "executable_missing",
-      `Cannot fingerprint ${executable}: ${message(stableFileHashCause(cause))}`,
+      `Cannot fingerprint ${executable}: ${errorMessage(stableFileHashCause(cause))}`,
       { command, executable },
     );
   }
@@ -518,7 +516,7 @@ export const inspectKunaInstallation = async (
     }
     return failure(
       "version_unresolved",
-      `${executable} --version failed: ${message(cause)}. ${KUNA_VERSION_PROBE_REMEDIATION}`,
+      `${executable} --version failed: ${errorMessage(cause)}. ${KUNA_VERSION_PROBE_REMEDIATION}`,
       {
         command,
         executable,
@@ -607,14 +605,14 @@ export const inspectKunaInstallation = async (
     }
     return failure(
       "executable_missing",
-      `Cannot observe ${executable} after its --version probe: ${message(stableFileHashCause(cause))}`,
+      `Cannot observe ${executable} after its --version probe: ${errorMessage(stableFileHashCause(cause))}`,
       {
         command,
         executable,
         version,
         verified: version === KUNA_VERIFIED_VERSION,
         identity_observation_phase: "post_probe",
-        identity_observation_failure: message(stableFileHashCause(cause)),
+        identity_observation_failure: errorMessage(stableFileHashCause(cause)),
         before_probe_sha256: beforeProbeFingerprint.sha256,
         before_probe_bytes: beforeProbeFingerprint.bytes,
         deadline_ms: deadline,

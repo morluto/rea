@@ -537,7 +537,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     expect(result.value.limitations).toContain(session.storageGaps[0]);
   });
 
-  it("returns an initial state and every step beyond the former action ceiling", async () => {
+  it("returns an initial state and every step of a long scenario", async () => {
     const session = new FakeSession("launch");
     const provider = new PlaywrightBrowserScenarioProvider(() =>
       Promise.resolve(session),

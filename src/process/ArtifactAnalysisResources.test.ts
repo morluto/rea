@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   artifactResourceDialect,
@@ -27,6 +28,7 @@ import {
 import { createEvidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
@@ -251,7 +253,7 @@ it("preserves the primary error and resolves cleanup status after retry", async 
     "producer returned malformed output",
     {
       partialObservation: createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           id: "fixture",
           name: "Fixture",
@@ -324,7 +326,7 @@ it("resolves each returned cleanup error with its own retained root", async () =
     },
   });
   const partial = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: null },
     {
       operation: "fixture-operation",
@@ -769,6 +771,7 @@ it("treats a fixed command-output cap as a non-retryable capture allowance", asy
       resource: "memory",
       reportedLimits: { output_bytes: 1024 },
       retryable: false,
+      fixedAllowance: { kind: "capture", limit: 1024, unit: "bytes" },
     });
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
@@ -811,7 +814,12 @@ it("retains a physical command failure when the owner also observed late cancell
       { command_timeout_ms: 100, output_bytes: 1024 },
       undefined,
     );
-    expect(error).toMatchObject({ _tag: "AnalysisOutputError" });
+    expect(error).toBeInstanceOf(UnclassifiedProviderFailure);
+    expect(error).toMatchObject({
+      providerId: "fixture",
+      examined: { failure_kind: "protocol", reason: "physical failure" },
+    });
+    expect(projectAnalysisError(error).code).toBe("execution_failure");
     expect(error.cause).toBe(failure);
   } finally {
     await resources.close();

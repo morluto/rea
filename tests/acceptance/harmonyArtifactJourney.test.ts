@@ -16,6 +16,7 @@ import {
   type HarmonyApplicationProjectionResult,
 } from "../../src/domain/harmony/harmonyApplication.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const expectProjectionParity = (
   graph: HarmonyApplicationProjectionResult,
@@ -121,7 +122,10 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
     NODE_OPTIONS: "--max-old-space-size=512",
     REA_LOG_LEVEL: "silent",
   };
-  const client = new Client({ name: "rea-harmony-acceptance", version: "1" });
+  const client = new Client(
+    { name: "rea-harmony-acceptance", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],

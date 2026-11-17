@@ -15,11 +15,12 @@ import {
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
 
 const OPERATION = "import_managed_reconstruction" as const;
 
 /** Validate the request envelope and authenticate its managed Evidence source once. */
-export const resolveManagedReconstructionEvidenceInput = (
+const resolveManagedReconstructionEvidenceInput = (
   rawInput: unknown,
   lookup?: EvidenceLookup,
   options: Pick<ExecutionOptions, "signal"> = {},
@@ -35,12 +36,30 @@ export const resolveManagedReconstructionEvidenceInput = (
   return resolveManagedReconstructionImport(parsed.value.input);
 };
 
-/** Execute from the source facts returned by the resolver. */
-export const importManagedReconstructionEvidenceResolved = (
-  resolved: ResolvedManagedReconstructionImport,
-): Result<Evidence, AnalysisError> => {
-  const result = executeManagedReconstructionImport(resolved);
-  return ok(createManagedReconstructionEvidence(resolved.request, result));
+/**
+ * Validate the raw request envelope, then authenticate and import its source;
+ * the authenticated static Evidence is the import's source.
+ */
+export const importManagedReconstructionExecution = (
+  rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const resolved = resolveManagedReconstructionEvidenceInput(
+    rawInput,
+    lookup,
+    options,
+  );
+  if (!resolved.ok) return resolved;
+  const result = executeManagedReconstructionImport(resolved.value);
+  return ok({
+    evidence: createManagedReconstructionEvidence(
+      resolved.value.request,
+      result,
+    ),
+    sources: [resolved.value.staticEvidence],
+    unknown: undefined,
+  });
 };
 
 /** Validate the raw request envelope, then authenticate and import its source. */
@@ -49,13 +68,12 @@ export const importManagedReconstructionEvidence = (
   lookup?: EvidenceLookup,
   options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<Evidence, AnalysisError> => {
-  const resolved = resolveManagedReconstructionEvidenceInput(
+  const imported = importManagedReconstructionExecution(
     rawInput,
     lookup,
     options,
   );
-  if (!resolved.ok) return resolved;
-  return importManagedReconstructionEvidenceResolved(resolved.value);
+  return imported.ok ? ok(imported.value.evidence) : imported;
 };
 
 const createManagedReconstructionEvidence = (

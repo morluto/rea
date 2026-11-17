@@ -9,6 +9,7 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "apktool", name: "Apktool", version: "2.7.0-dirty" };
 
@@ -93,7 +94,10 @@ it("advertises exact valid Apktool schemas and records inline evidence through M
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "apktool-boundary", version: "0.0.0" });
+  const client = new Client(
+    { name: "apktool-boundary", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 

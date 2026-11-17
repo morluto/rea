@@ -1,6 +1,7 @@
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
-import { classifyLaunchFailureCode } from "../process/launchFailure.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 import { randomUUID } from "node:crypto";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
@@ -23,6 +24,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   prepareOwnedCommand,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   OwnedCommandFailure,
 } from "../process/OwnedCommand.js";
@@ -164,6 +166,7 @@ export const inspectJadxJava = async (
           "jadx",
           operation,
         );
+        const hostConstraint = hostLaunchConstraint(command, cause);
         let primary: AnalysisError;
         if (observed !== undefined && !observed.ok) {
           if (cleanups.length === 0) return observed;
@@ -219,7 +222,11 @@ export const inspectJadxJava = async (
               },
             },
           });
-        } else if (preparation !== undefined && command?.reason !== "timeout") {
+        } else if (
+          preparation !== undefined &&
+          command?.reason !== "timeout" &&
+          hostConstraint === undefined
+        ) {
           primary = new ProviderAdapterError("jadx", operation, {
             cause,
             ...(output === undefined ? {} : { capturedOutput: output }),
@@ -243,6 +250,21 @@ export const inspectJadxJava = async (
           primary = new ProviderAdapterError("jadx", operation, {
             cause,
             ...(output === undefined ? {} : { capturedOutput: output }),
+          });
+        } else if (hostConstraint !== undefined) {
+          // The host, not the selected Java runtime, refused this launch.
+          primary = classifyLaunchFailure(hostConstraint, {
+            providerId: "jadx",
+            operation,
+            fixedArguments: true,
+            command: java,
+            details: {
+              cause,
+              diagnostics: {
+                java_executable: java,
+                phase: "module-inspection",
+              },
+            },
           });
         } else {
           const failure = commandProbeRefusal(
@@ -273,6 +295,19 @@ export const inspectJadxJava = async (
   }
 };
 
+/** A launch the host refused for capacity or argument size, not the runtime's fault. */
+const hostLaunchConstraint = (
+  command: Pick<OwnedCommandFailure, "processError"> | undefined,
+  cause: unknown,
+) => {
+  const launch =
+    preparationHostCapacityFailure(cause) ??
+    launcherFailureOf(command?.processError ?? cause);
+  return launch?.kind === "host-exhausted" || launch?.kind === "argument-list"
+    ? launch
+    : undefined;
+};
+
 const commandProbeRefusal = (
   java: string,
   command:
@@ -289,7 +324,7 @@ const commandProbeRefusal = (
     command?.processError ?? (cause instanceof Error ? cause : undefined);
   const systemCode =
     processError === undefined ? undefined : Reflect.get(processError, "code");
-  const missing = classifyLaunchFailureCode(systemCode)?.kind === "missing";
+  const missing = launcherFailureOf(processError)?.kind === "missing";
   const limited = command?.reason === "output-limit";
   const timedOut = command?.reason === "timeout";
   return {

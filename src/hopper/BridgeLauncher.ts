@@ -9,7 +9,7 @@ import {
   HopperCancelledError,
   HopperProcessError,
   HopperStartError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -49,7 +49,7 @@ import {
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
-} from "../process/HopperLease.js";
+} from "./HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
@@ -59,6 +59,7 @@ import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
 import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
@@ -333,9 +334,9 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         } catch (cause: unknown) {
           const failure = new HopperStartError({
             cause,
-            userMessage: `Previous Hopper image cleanup remains incomplete: ${cause instanceof Error ? cause.message : String(cause)}`,
+            userMessage: `Previous Hopper image cleanup remains incomplete: ${errorMessage(cause)}`,
             cleanup: {
-              reason: cause instanceof Error ? cause.message : String(cause),
+              reason: errorMessage(cause),
               resources: this.#preparedImageResources.cleanupResources,
             },
           });
