@@ -42,3 +42,5 @@ for new work, roadmap granularity and producer-owned contracts.
 
 - [Release exposure audit](artifacts/release-exposure/spec.md) ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))
 - [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))
+
+- [NuGet package inspection](artifacts/nuget-nupkg/spec.md) ([plan](artifacts/nuget-nupkg/plan.md), [tasks](artifacts/nuget-nupkg/tasks.md))
