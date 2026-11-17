@@ -4,7 +4,6 @@ import type { FridaInstrumentationPort } from "../application/frida/FridaInstrum
 import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
 import {
   adaptCliOutputArgumentsForIncur,
-  classifyMcpAddDiscovery,
   hasCliHelpFlag,
   normalizeCliArguments,
   splitIncurBuiltinArguments,
@@ -67,8 +66,7 @@ const adaptCliHelpOutput = <T extends object>(
   const mcpAddHelp =
     split.command[0] === "mcp" &&
     split.command[1] === "add" &&
-    classifyMcpAddDiscovery(split.flags) === "bypass" &&
-    (split.flags.has("--help") || split.flags.has("-h"));
+    hasCliHelpFlag(arguments_);
   if (!hasCliHelpFlag(arguments_) || mcpAddHelp) return options;
   const write =
     options.stdout ?? ((text: string) => process.stdout.write(text));

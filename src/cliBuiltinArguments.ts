@@ -18,8 +18,20 @@ export const OUTPUT_SWITCHES: ReadonlySet<string> = new Set([
 
 /** Whether the caller requested framework help before the `--` boundary. */
 export const hasCliHelpFlag = (arguments_: readonly string[]): boolean => {
-  const { flags } = splitIncurBuiltinArguments(arguments_);
-  return flags.has("--help") || flags.has("-h");
+  const { outputValues } = splitIncurBuiltinArguments(arguments_);
+  const valueIndices = new Set(outputValues.map(({ index }) => index));
+  let ended = false;
+  for (const [index, argument] of arguments_.entries()) {
+    // A separator consumed as a valued output argument is data, not the
+    // command's option boundary.
+    if (valueIndices.has(index)) continue;
+    if (argument === "--") {
+      ended = true;
+      continue;
+    }
+    if (!ended && (argument === "--help" || argument === "-h")) return true;
+  }
+  return false;
 };
 
 /** Valueless flags Incur removes from every position before command parsing. */
@@ -98,29 +110,18 @@ export const splitIncurBuiltinArguments = (
   const commandIndices: number[] = [];
   const flags = new Set<string>();
   const outputValues: { readonly flag: string; readonly index: number }[] = [];
-  let optionsEnded = false;
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]!;
     const next = arguments_[index + 1];
-    if (!optionsEnded && argument === "--") {
-      command.push(argument);
-      commandIndices.push(index);
-      optionsEnded = true;
-      continue;
-    }
     if (
-      (!optionsEnded &&
-        INCUR_BUILTIN_FLAGS.has(argument) &&
-        argument !== "--timings") ||
+      (INCUR_BUILTIN_FLAGS.has(argument) && argument !== "--timings") ||
       // A following value belongs to a command-local `--version` option.
-      (!optionsEnded &&
-        argument === "--version" &&
-        (next === undefined || next.startsWith("-")))
+      (argument === "--version" && (next === undefined || next.startsWith("-")))
     ) {
       flags.add(argument);
       continue;
     }
-    if (!optionsEnded && VALUED_OUTPUT_FLAGS.has(argument) && next) {
+    if (VALUED_OUTPUT_FLAGS.has(argument) && next) {
       outputValues.push({ flag: argument, index: index + 1 });
       index += 1;
       continue;

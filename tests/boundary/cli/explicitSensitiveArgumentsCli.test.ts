@@ -208,6 +208,33 @@ describe("CLI --sensitive-value output-value diagnostics", () => {
     },
   );
 
+  cliTest(
+    "redacts a declaration from the early output-value error after --",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: [
+          ...CAPTURE,
+          "har",
+          "--",
+          "--sensitive-value",
+          "--json",
+          LITERAL,
+          "--format",
+          LITERAL,
+        ],
+      });
+
+      expectExcluded(result);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_VALUE",
+          message: expect.stringContaining("[REDACTED]"),
+        },
+      });
+    },
+  );
+
   cliTest.for([
     {
       name: "flag-name and value",
