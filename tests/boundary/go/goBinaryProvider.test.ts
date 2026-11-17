@@ -3,9 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
-import {
-  AnalysisResourceConstraintError,
-} from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createGoBinaryFixture,
