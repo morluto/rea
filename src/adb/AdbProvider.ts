@@ -3192,6 +3192,7 @@ export class AdbProvider {
         ),
       );
     }
+    const commandResources = new ArtifactResourceScope();
     const collectedResult = await (async (): Promise<
       Result<AnalysisExecution, AnalysisError>
     > => {
@@ -3210,7 +3211,7 @@ export class AdbProvider {
         const collected = await runAdb(
           operation,
           { device: input.serial },
-          selection,
+          { ...selection, resources: commandResources },
           adbArguments(input.serial, ["bugreport", stagingDirectory]),
           {
             timeoutMs: BUGREPORT_TIMEOUT_MS,
@@ -3218,14 +3219,23 @@ export class AdbProvider {
           },
           signal,
         );
-        if (!collected.ok) return collected;
-        reportedPath = parseBugreportCopiedPath(collected.value.stdout);
+        const completedStdout = collected.ok
+          ? collected.value.stdout
+          : collected.error.capturedOutput?.exit_code === 0 &&
+              !collected.error.capturedOutput.truncated
+            ? collected.error.capturedOutput.stdout
+            : undefined;
+        if (completedStdout === undefined)
+          return collected as Result<never, AnalysisError>;
+        reportedPath = parseBugreportCopiedPath(completedStdout);
         if (reportedPath === null)
-          return err(
-            new AnalysisProtocolError(
-              "adb bugreport did not report an archive path; the build may use an unsupported format",
-            ),
-          );
+          return collected.ok
+            ? err(
+                new AnalysisProtocolError(
+                  "adb bugreport did not report an archive path; the build may use an unsupported format",
+                ),
+              )
+            : collected;
         const reportedParent = await stat(
           dirname(absoluteCallerPath(reportedPath)),
         );
@@ -3234,18 +3244,22 @@ export class AdbProvider {
           reportedParent.dev !== stagingIdentity.dev ||
           reportedParent.ino !== stagingIdentity.ino
         )
-          return err(
-            new AnalysisProtocolError(
-              `adb bugreport reported an archive outside its staging directory: ${reportedPath}`,
-            ),
-          );
+          return collected.ok
+            ? err(
+                new AnalysisProtocolError(
+                  `adb bugreport reported an archive outside its staging directory: ${reportedPath}`,
+                ),
+              )
+            : collected;
         const archive = await lstat(reportedPath);
         if (!archive.isFile() || archive.isSymbolicLink())
-          return err(
-            new AnalysisProtocolError(
-              `adb bugreport did not report a regular archive file: ${reportedPath}`,
-            ),
-          );
+          return collected.ok
+            ? err(
+                new AnalysisProtocolError(
+                  `adb bugreport did not report a regular archive file: ${reportedPath}`,
+                ),
+              )
+            : collected;
         retainedObservation = {
           provider_id: "adb",
           operation,
@@ -3260,18 +3274,30 @@ export class AdbProvider {
         try {
           publishedPath = await publishBugreport(reportedPath, directory.value);
         } catch (cause) {
-          return err(
-            new AnalysisOutputError(
-              operation,
-              `The reported bugreport archive could not be published: ${reportedPath}`,
-              { cause, partialObservation: retainedObservation },
-            ),
+          const publishError = new AnalysisOutputError(
+            operation,
+            `The reported bugreport archive could not be published: ${reportedPath}`,
+            { cause, partialObservation: retainedObservation },
           );
+          if (!collected.ok) {
+            collected.error.retainPartialObservation(retainedObservation);
+            return err(
+              collected.error.retainSecondaryFailure(publishError, {}),
+            );
+          }
+          return err(publishError);
         }
         retainedObservation = {
           ...retainedObservation,
           result: { ...retainedObservation.result, local_path: publishedPath },
         };
+        if (
+          !collected.ok &&
+          collected.error instanceof AnalysisCancelledError
+        ) {
+          collected.error.retainPartialObservation(retainedObservation);
+          return collected;
+        }
         const digest = await hashAdbFile(
           publishedPath,
           operation,
@@ -3291,6 +3317,10 @@ export class AdbProvider {
           operation,
           result: report,
         };
+        if (!collected.ok) {
+          collected.error.retainPartialObservation(retainedObservation);
+          return collected;
+        }
         return ok(
           createAnalysisExecution(report, provider, {
             limitations: [
@@ -3302,8 +3332,14 @@ export class AdbProvider {
         if (
           retainedObservation !== undefined &&
           cause instanceof AdbDigestFailure
-        )
-          return err(adbDigestError(cause, operation, retainedObservation));
+        ) {
+          const digestFailure = adbDigestError(
+            cause,
+            operation,
+            retainedObservation,
+          );
+          return err(digestFailure);
+        }
         if (cause instanceof AnalysisCancelledError) {
           if (retainedObservation !== undefined)
             cause.retainPartialObservation(retainedObservation);
@@ -3329,13 +3365,36 @@ export class AdbProvider {
         : failure;
     // A completed acquisition becomes caller evidence even if publication fails.
     // Its staging directory must not enter automatic cleanup or cleanup retries.
-    if (retainedObservation !== undefined && publishedPath === undefined)
+    if (retainedObservation !== undefined && publishedPath === undefined) {
+      if (commandResources.hasPending)
+        this.#resources.retain({
+          kind: "lease",
+          resource: `${stagingDirectory} (ADB bugreport command)`,
+          lease: AnalysisCleanupLease.forCloseOwner(
+            {
+              close: () => commandResources.retryCleanup(),
+              get cleanupResources() {
+                return commandResources.cleanupResources;
+              },
+            },
+            `${stagingDirectory} (ADB bugreport command)`,
+          ),
+        });
       return collectedResult.ok
         ? collectedResult
         : err(
             retainCancellation(collectedResult.error) ?? collectedResult.error,
           );
+    }
+    const removeStaging = async () => {
+      await commandResources.retryCleanup();
+      await removeOwnedOutputDirectory(stagingDirectory, stagingIdentity);
+    };
     try {
+      if (commandResources.hasPending)
+        throw new Error(
+          "ADB bugreport command cleanup remains unconfirmed; retaining staging directory",
+        );
       await removeOwnedOutputDirectory(stagingDirectory, stagingIdentity);
     } catch (cause) {
       const primary =
@@ -3354,12 +3413,11 @@ export class AdbProvider {
             operation,
             path: stagingDirectory,
             primary,
-            remove: () =>
-              removeOwnedOutputDirectory(stagingDirectory, stagingIdentity),
+            remove: removeStaging,
           },
           new ProviderCleanupError(
             ADB_PROVIDER_IDENTITY.id,
-            [stagingDirectory],
+            [...new Set([stagingDirectory, ...primary.cleanupResources])],
             { reason: errorMessage(cause) },
             { operation, cause },
           ),

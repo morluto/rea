@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   copyFile,
+  lstat,
   mkdtemp,
   open,
   readFile,
@@ -14,6 +15,8 @@ import { adbDouble } from "../../../support/adb/adbProcessDouble.js";
 
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { OwnedCommandFailure } from "../../../../src/process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 // Exercise real filesystem publication; the Android process reply is simulated.
@@ -391,4 +394,89 @@ test("reports caller cancellation when staging removal fails after the archive i
   expect(result.error.cleanupPrimary?.cause).toBe(reason);
   await f.provider.close();
   expect(projectAnalysisError(result.error).code).toBe("cancelled");
+});
+
+test("preserves a finished bugreport archive and retains its staging directory while command cleanup remains unconfirmed", async () => {
+  const f = await fixture();
+  let allowCommandStop = false;
+  let stopAttempts = 0;
+  let reportedPath = "";
+  const supervisor = {
+    stop: async () => {
+      stopAttempts += 1;
+      return allowCommandStop
+        ? { status: "stopped" as const }
+        : {
+            status: "incomplete" as const,
+            reason: "adb bugreport process group still running",
+          };
+    },
+  } as unknown as ProviderProcessSupervisor;
+
+  adbDouble.device.mockImplementationOnce(async (args) => {
+    const staging = args[3]!;
+    reportedPath = join(staging, "bugreport test.zip");
+    await writeFile(reportedPath, "bugreport-bytes");
+    const stdoutText = `Bug report copied to ${reportedPath}\n`;
+    throw new OwnedCommandFailure(
+      "process",
+      "Command cleanup failed.",
+      {
+        exitCode: 0,
+        signal: null,
+        stdout: {
+          text: stdoutText,
+          bytes: Buffer.byteLength(stdoutText),
+          observedBytes: Buffer.byteLength(stdoutText),
+        },
+        stderr: {
+          text: "",
+          bytes: 0,
+          observedBytes: 0,
+        },
+        diagnosticTruncated: false,
+      },
+      "adb bugreport process group still running",
+      undefined,
+      ["rea-adb-bugreport", "pid:7171"],
+      supervisor,
+    );
+  });
+
+  const result = await f.provider.execute(f.request);
+  if (result.ok) throw new Error("expected bugreport command cleanup failure");
+  const stagingDirectory = dirname(reportedPath);
+  const publishedPath = join(f.root, "bugreport test.zip");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(
+    expect.arrayContaining([stagingDirectory, "rea-adb-bugreport", "pid:7171"]),
+  );
+  expect(result.error.partialObservation).toMatchObject({
+    provider_id: "adb",
+    operation: f.request.operation,
+    result: {
+      serial: "device",
+      local_path: publishedPath,
+      adb_reported_path: reportedPath,
+      bytes: 15,
+      sha256: createHash("sha256").update("bugreport-bytes").digest("hex"),
+    },
+  });
+  expect(await readFile(publishedPath, "utf8")).toBe("bugreport-bytes");
+  await expect(lstat(stagingDirectory)).resolves.toBeDefined();
+  expect(stopAttempts).toBe(0);
+
+  const failedClose = await f.provider.close().catch((cause: unknown) => cause);
+  expect(failedClose).toMatchObject({ cleanupIncomplete: true });
+  expect(stopAttempts).toBe(1);
+  await expect(lstat(stagingDirectory)).resolves.toBeDefined();
+
+  allowCommandStop = true;
+  await f.provider.close();
+  expect(stopAttempts).toBe(2);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  await expect(lstat(stagingDirectory)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(await readFile(publishedPath, "utf8")).toBe("bugreport-bytes");
 });
