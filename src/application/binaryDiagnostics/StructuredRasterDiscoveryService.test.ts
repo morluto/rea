@@ -273,3 +273,38 @@ it("does not relabel an unrelated preview failure as cancellation", async () => 
     await service.close();
   }
 });
+
+it("shares the 256 source-span budget across all projected resource mappings", async () => {
+  const root = await createTestTempDirectory("rea-mapping-budget-");
+  const path = join(root, "bytes");
+  const bytes = structuredRasterFixture();
+  await writeFile(path, bytes);
+  const service = new StructuredRasterDiscoveryService();
+  try {
+    const result = await service.inspect({
+      path,
+      max_previews: 0,
+      segments: Array.from(bytes, (_, i) => ({
+        logicalOffset: 1000 + i,
+        fileOffset: i,
+        length: 1,
+      })),
+    });
+    if (!result.ok) throw result.error;
+    const report = structuredRasterCandidatesSchema.parse(
+      result.value.normalized_result,
+    );
+    let spans = 0;
+    const count = (value: unknown): void => {
+      if (value === null || typeof value !== "object") return;
+      if ("ranges" in value && Array.isArray(value.ranges))
+        spans += value.ranges.length;
+      for (const child of Object.values(value)) count(child);
+    };
+    count(report.tables);
+    expect(spans).toBe(256);
+    expect(report.mapping.sourceMappingsTruncated).toBe(true);
+  } finally {
+    await service.close();
+  }
+});

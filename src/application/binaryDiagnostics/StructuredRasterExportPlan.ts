@@ -1,3 +1,4 @@
+import { walkRasterLogicalSegments } from "../../domain/rasterLogicalSegments.js";
 import { selectRasterRegistries } from "./RasterRenderingSelection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { StructuredRasterExportInput } from "../../domain/native/structuredRasterExport.js";
@@ -24,31 +25,18 @@ export const invalid = (field: string, message: string) =>
   ]);
 /** Full segment-table references, never the bounded inspection projection. */
 export function reference(prepared: Prepared, range: StructuredRasterRange) {
-  const offset = range.offset + prepared.logical.logicalBase,
-    end = offset + range.length,
-    segments = prepared.logical.segments;
-  let first = 0,
-    hi = segments.length;
-  while (first < hi) {
-    const mid = Math.floor((first + hi) / 2),
-      s = segments[mid]!;
-    if (s.logicalOffset + s.length <= offset) first = mid + 1;
-    else hi = mid;
-  }
-  let cursor = offset,
-    count = 0;
-  for (let i = first; i < segments.length && cursor < end; i++) {
-    const s = segments[i]!;
-    if (s.logicalOffset > cursor) break;
-    cursor = Math.min(end, s.logicalOffset + s.length);
-    count++;
-  }
+  const offset = range.offset + prepared.logical.logicalBase;
+  const traversal = walkRasterLogicalSegments(
+    prepared.logical.segments,
+    offset,
+    range.length,
+  );
   return {
     offset,
     length: range.length,
-    first_segment: first,
-    segment_count: count,
-    complete: cursor === end,
+    first_segment: traversal.firstSegment,
+    segment_count: traversal.segmentCount,
+    complete: traversal.complete,
   };
 }
 export interface ExportOutcome {

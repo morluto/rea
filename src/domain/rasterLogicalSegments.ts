@@ -11,6 +11,46 @@ export interface RasterLogicalSegment {
   fileOffset: number;
   length: number;
 }
+/** Walk a range in the sorted, non-overlapping segment table admitted by materialization.
+ * Publication callers may bound visits; full export retains table indices without allocations.
+ */
+export function walkRasterLogicalSegments(
+  segments: readonly RasterLogicalSegment[],
+  offset: number,
+  length: number,
+  maxSegments = Infinity,
+  visit?: (
+    segment: RasterLogicalSegment,
+    logicalOffset: number,
+    length: number,
+  ) => void,
+) {
+  let firstSegment = 0,
+    hi = segments.length;
+  while (firstSegment < hi) {
+    const mid = Math.floor((firstSegment + hi) / 2),
+      segment = segments[mid]!;
+    if (segment.logicalOffset + segment.length <= offset)
+      firstSegment = mid + 1;
+    else hi = mid;
+  }
+  const end = offset + length;
+  let cursor = offset,
+    segmentCount = 0;
+  for (
+    let i = firstSegment;
+    i < segments.length && cursor < end && segmentCount < maxSegments;
+    i++
+  ) {
+    const segment = segments[i]!;
+    if (segment.logicalOffset > cursor) break;
+    const take = Math.min(end, segment.logicalOffset + segment.length) - cursor;
+    visit?.(segment, cursor, take);
+    cursor += take;
+    segmentCount++;
+  }
+  return { firstSegment, segmentCount, complete: cursor === end };
+}
 export interface RasterLogicalImage {
   bytes: Uint8Array;
   logicalBase: number;

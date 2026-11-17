@@ -188,3 +188,68 @@ it("distinguishes a truncated record header from malformed record lengths", () =
     }),
   );
 });
+
+it("walks exact segment intersections and retains full-table indices", async () => {
+  const { walkRasterLogicalSegments } =
+    await import("./rasterLogicalSegments.js");
+  const segments = [
+    { logicalOffset: 100, fileOffset: 20, length: 4 },
+    { logicalOffset: 104, fileOffset: 60, length: 4 },
+    { logicalOffset: 110, fileOffset: 80, length: 2 },
+  ];
+  const spans: number[][] = [];
+  expect(
+    walkRasterLogicalSegments(segments, 102, 6, Infinity, (s, offset, length) =>
+      spans.push([s.fileOffset + offset - s.logicalOffset, length]),
+    ),
+  ).toEqual({ firstSegment: 0, segmentCount: 2, complete: true });
+  expect(spans).toEqual([
+    [22, 2],
+    [60, 4],
+  ]);
+  expect(walkRasterLogicalSegments(segments, 104, 8)).toEqual({
+    firstSegment: 1,
+    segmentCount: 1,
+    complete: false,
+  });
+  expect(walkRasterLogicalSegments(segments, 108, 4)).toEqual({
+    firstSegment: 2,
+    segmentCount: 0,
+    complete: false,
+  });
+  expect(walkRasterLogicalSegments(segments, 112, 1)).toEqual({
+    firstSegment: 3,
+    segmentCount: 0,
+    complete: false,
+  });
+});
+
+it("separates bounded publication from a complete traversal beyond 256 spans", async () => {
+  const { walkRasterLogicalSegments } =
+    await import("./rasterLogicalSegments.js");
+  const segments = Array.from({ length: 300 }, (_, i) => ({
+    logicalOffset: 100 + i,
+    fileOffset: i * 2,
+    length: 1,
+  }));
+  expect(walkRasterLogicalSegments(segments, 100, 300, 256)).toEqual({
+    firstSegment: 0,
+    segmentCount: 256,
+    complete: false,
+  });
+  expect(walkRasterLogicalSegments(segments, 100, 256, 256)).toEqual({
+    firstSegment: 0,
+    segmentCount: 256,
+    complete: true,
+  });
+  expect(walkRasterLogicalSegments(segments, 100, 300)).toEqual({
+    firstSegment: 0,
+    segmentCount: 300,
+    complete: true,
+  });
+  expect(walkRasterLogicalSegments(segments, 100, 1, 0)).toEqual({
+    firstSegment: 0,
+    segmentCount: 0,
+    complete: false,
+  });
+});

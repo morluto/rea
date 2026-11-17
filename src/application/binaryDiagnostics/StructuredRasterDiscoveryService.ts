@@ -1,3 +1,4 @@
+import { walkRasterLogicalSegments } from "../../domain/rasterLogicalSegments.js";
 import { createRasterPreviews } from "./StructuredRasterPreviews.js";
 import { projectRasterFamily } from "./RasterFamilyProjection.js";
 import { prepareStructuredRasterAnalysis } from "./StructuredRasterAnalysis.js";
@@ -37,38 +38,23 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
             mappingBudget = 256,
             mappingTruncated = false;
           const sourceMapping = (offset: number, length: number) => {
-            const start = offset + logical.logicalBase,
-              end = start + length;
-            let cursor = start;
             const ranges: { offset: number; length: number }[] = [];
             if (mappingBudget === 0) {
               mappingTruncated = true;
               return { ranges, complete: false };
             }
-            let lo = 0,
-              hi = logical.segments.length;
-            while (lo < hi) {
-              const mid = Math.floor((lo + hi) / 2),
-                s = logical.segments[mid]!;
-              if (s.logicalOffset + s.length <= start) lo = mid + 1;
-              else hi = mid;
-            }
-            for (let i = lo; i < logical.segments.length; i++) {
-              const s = logical.segments[i]!;
-              if (s.logicalOffset + s.length <= cursor) continue;
-              if (s.logicalOffset >= end) break;
-              if (s.logicalOffset > cursor) break;
-              if (mappingBudget === 0) break;
-              const take = Math.min(s.logicalOffset + s.length, end) - cursor;
-              ranges.push({
-                offset: s.fileOffset + cursor - s.logicalOffset,
-                length: take,
-              });
-              mappingBudget--;
-              cursor += take;
-              if (cursor === end) break;
-            }
-            const complete = cursor === end;
+            const { complete, segmentCount } = walkRasterLogicalSegments(
+              logical.segments,
+              offset + logical.logicalBase,
+              length,
+              mappingBudget,
+              (segment, cursor, take) =>
+                ranges.push({
+                  offset: segment.fileOffset + cursor - segment.logicalOffset,
+                  length: take,
+                }),
+            );
+            mappingBudget -= segmentCount;
             if (!complete && mappingBudget === 0) mappingTruncated = true;
             return { ranges, complete };
           };

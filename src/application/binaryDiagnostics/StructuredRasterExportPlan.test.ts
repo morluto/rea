@@ -117,3 +117,19 @@ it("does not silently substitute generic interpretation when requested family fa
     planExport(fixture(), input({ resource_family: "record12-lut-registry" })),
   ).toThrow();
 });
+
+it("keeps complete export references beyond the inspection span budget", () => {
+  const prepared = fixture();
+  prepared.logical.segments = Array.from({ length: 300 }, (_, i) => ({
+    logicalOffset: 1000 + i,
+    fileOffset: i,
+    length: 1,
+  }));
+  expect(reference(prepared, { offset: 0, length: 300 })).toEqual({
+    offset: 1000,
+    length: 300,
+    first_segment: 0,
+    segment_count: 300,
+    complete: true,
+  });
+});
