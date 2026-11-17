@@ -22,6 +22,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
+- [CycloneDX dependencies](guides/native/cyclonedx-view.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 - [Acquired NTFS metadata and change journals](guides/native/ntfs-metadata.md)
 
@@ -172,6 +173,7 @@ the exact commit messages and references from the release they describe.
 - [iNES containers](ines-containers.md)
 - [Build RL environments with REA](agent-environments-quickstart.md)
 - [Agent environments from recorded captures](agent-environments.md)
+- [Android boot and vendor_boot images](android-boot-image.md)
 - [APK signature schemes](apk-signature.md)
 - [Android OTA update payloads](guides/firmware/android-ota-payload.md)
 - [Apple IPS crash reports](apple-ips.md)

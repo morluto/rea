@@ -29,6 +29,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "unityfs",
   "wxapkg",
   "uimage",
+  "android-boot-image",
   "android-ota-payload",
   "dmg",
   "pkg",

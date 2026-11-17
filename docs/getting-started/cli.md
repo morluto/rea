@@ -275,6 +275,19 @@ The shared CLI/MCP workflow reports compiler version, modules, replacements,
 build settings, original bytes and SHA-256. See [Go binaries](../guides/native/go-binaries.md)
 for supported containers and absent or malformed metadata.
 
+Project that Evidence, or Rust dependency Evidence, as CycloneDX. The command
+prints JSON on stdout:
+
+```bash
+rea inspect-go-binary /absolute/path/to/program --json > go-evidence.json
+cat > cyclonedx-view.json <<'JSON'
+{"source":{"kind":"evidence-file","path":"go-evidence.json"},"view":{"kind":"cyclonedx"}}
+JSON
+rea inspect-analysis-view cyclonedx-view.json --json | jq '.normalized_result.document' > sbom.cdx.json
+```
+
+See [CycloneDX dependencies](../guides/native/cyclonedx-view.md).
+
 Inspect a Godot PCK without running the game:
 
 ```sh
@@ -399,6 +412,17 @@ rea extract-artifact ./boot.itb --json
 
 See [U-Boot FIT images](../fit-images.md) for recognition, data sources, hashes
 and limits.
+
+Inspect and extract an Android boot or vendor_boot image:
+
+```sh
+rea inspect-artifact ./boot.img --detail summary --evidence_output boot.json --json
+rea extract-artifact ./vendor_boot.img --json
+```
+
+See [Android boot images](../android-boot-image.md) for header versions 0 through
+4, vendor ramdisk table entries, stored compression, and the unverified AVB
+footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
 Inspect local model declarations without loading weights:
 
