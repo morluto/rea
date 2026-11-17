@@ -241,6 +241,12 @@ describe("CLI advertised input schemas", () => {
     });
     expect(
       parserSchema(cli, "inspect-keyed-archive", "args")?.parse({ path: "x" }),
+    ).toEqual({ path: "x" });
+    expect(
+      parserSchema(cli, "inspect-keyed-archive", "args")?.parse({
+        path: "x",
+        archive: ".",
+      }),
     ).toEqual({ path: "x", archive: "." });
 
     const help = await serve(cli, ["inspect-keyed-archive", "--help"]);
@@ -248,7 +254,7 @@ describe("CLI advertised input schemas", () => {
       "Usage: rea inspect-keyed-archive <path> [archive] [options]",
     );
     expect(help.stdout).toContain(
-      "archive  Relative archive path when the target is a bundle",
+      "archive  Relative archive path when the target is a bundle (default: .)",
     );
   });
 
@@ -303,13 +309,14 @@ describe("firmware CLI advertised input schema", () => {
     expect(options({ offset: maxOffset + 1 })).toBe(false);
     expect(options({ length: maxOffset + 1 })).toBe(false);
 
-    expect(
-      parserSchema(cli, "extract-firmware", "options")?.parse({}),
-    ).toMatchObject({
+    const parser = parserSchema(cli, "extract-firmware", "options");
+    expect(parser?.parse({})).toEqual({});
+    const selected = {
       maxDepth: 3,
       maxOutputBytes: 256 * 1024 * 1024,
       maxOutputFiles: 10_000,
-    });
+    };
+    expect(parser?.parse(selected)).toEqual(selected);
   });
 });
 

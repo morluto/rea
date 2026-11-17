@@ -102,14 +102,22 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   const sources = {
     "src/domain/Value.test.ts": "",
     "tests/boundary/filesystem/docs.test.ts": 'read("docs/guide.md");',
+    "tests/boundary/filesystem/mermaid.test.ts":
+      'read("docs/architecture/architecture.mermaid");',
+    "tests/boundary/filesystem/licenses.test.ts":
+      'read("licenses/npm-dependencies.txt"); read("LICENSE");',
+    "tests/boundary/filesystem/issueTemplate.test.ts":
+      'read(".github/ISSUE_TEMPLATE/bug_report.yml");',
   };
-  // A declaration, guard baseline or schema summary adds no tests…
+  // A declaration, guard/layer baseline, blame-ignore list or schema summary adds no tests…
   expect(
     selectedFiles(
       plan(
         [
           "src/domain/Value.test.ts",
           "scripts/lib/helper.d.mts",
+          "scripts/lib/module-layers.baseline.json",
+          ".git-blame-ignore-revs",
           "scripts/verify/baselines/some-guard.json",
           "scripts/verify/advertised-schemas/tools/tool.json",
         ],
@@ -117,12 +125,67 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
       ),
     ),
   ).toEqual(["src/domain/Value.test.ts"]);
-  // …and prose selects the tests that read it by path.
+  // …and prose, non-code docs assets, and license inventories select the tests that read them by path.
   expect(selectedFiles(plan(["docs/guide.md"], sources))).toEqual([
     "tests/boundary/filesystem/docs.test.ts",
   ]);
+  expect(
+    selectedFiles(plan(["docs/architecture/architecture.mermaid"], sources)),
+  ).toEqual(["tests/boundary/filesystem/mermaid.test.ts"]);
+  expect(
+    selectedFiles(plan(["licenses/npm-dependencies.txt"], sources)),
+  ).toEqual(["tests/boundary/filesystem/licenses.test.ts"]);
+  expect(selectedFiles(plan(["LICENSE"], sources))).toEqual([
+    "tests/boundary/filesystem/licenses.test.ts",
+  ]);
+  expect(
+    selectedFiles(plan([".github/ISSUE_TEMPLATE/bug_report.yml"], sources)),
+  ).toEqual(["tests/boundary/filesystem/issueTemplate.test.ts"]);
+  // Authored code under docs/ stays untraced so it falls back to the full suite.
+  expect(plan(["docs/.vitepress/config.ts"], sources)).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: docs/.vitepress/config.ts",
+  });
   expect(plan(["scripts/verify/baselines/x.json"], sources)).toMatchObject({
     mode: "full",
+  });
+});
+
+it("selects tests under shared-boundary directories and declared fixture owners, failing closed on missing owners", () => {
+  const sources = {
+    "src/process/OwnedCommand.test.ts": "",
+    "tests/boundary/cli/cliParityGoldens.test.ts": "",
+    "tests/boundary/cli/cliContractSchemaParity.test.ts": "",
+  };
+  expect(
+    selectedFiles(plan(["src/process/OwnedCommand.test.ts"], sources)),
+  ).toEqual(["src/process/OwnedCommand.test.ts"]);
+  expect(plan(["src/process/OwnedCommand.ts"], sources)).toMatchObject({
+    mode: "full",
+    reason: "Shared boundary: src/process/OwnedCommand.ts",
+  });
+  expect(
+    selectedFiles(
+      plan(["tests/fixtures/cli-parity/error-unknown-command.txt"], sources),
+    ),
+  ).toEqual(["tests/boundary/cli/cliParityGoldens.test.ts"]);
+  expect(
+    selectedFiles(
+      plan(
+        ["tests/boundary/cli/cliContractSchemaParity.uncomparable.json"],
+        sources,
+      ),
+    ),
+  ).toEqual(["tests/boundary/cli/cliContractSchemaParity.test.ts"]);
+  // If an explicit fixture owner is missing or renamed, selection fails closed.
+  expect(
+    plan(["tests/fixtures/cli-parity/error-unknown-command.txt"], {
+      "src/process/OwnedCommand.test.ts": "",
+    }),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Missing test owner tests/boundary/cli/cliParityGoldens.test.ts for tests/fixtures/cli-parity/error-unknown-command.txt",
   });
 });
 
@@ -194,11 +257,94 @@ it("traces shared script modules to their tests and falls back for other consume
     "tests/boundary/filesystem/runtimeVerifier.test.ts",
     "tests/boundary/filesystem/startup.test.ts",
   ]);
+  // Static checker JSON/Stryker configs, hyphen-prefixed script names in
+  // package.json (such as verify-shared.mjs vs scripts/lib/shared.mjs), and
+  // path-string tables in scopes.mjs do not force a full-suite fallback.
+  expect(
+    selectedFiles(
+      plan(
+        [
+          "scripts/lib/shared.mjs",
+          "tests/support/analysis-efficiency/test_eval.py",
+        ],
+        {
+          ...sources,
+          "package.json":
+            '{"scripts":{"verify:shared":"node scripts/verify-shared.mjs"}}',
+          "tsconfig.scripts.json": '{"include":["scripts/lib/shared.mjs"]}',
+          "stryker.config.mjs": 'import "./scripts/lib/shared.mjs";',
+          "scripts/check-doc-facts.mjs": 'import "./lib/shared.mjs";',
+          "scripts/ci/scopes.mjs":
+            'export const S = ["scripts/lib/shared.mjs"];',
+        },
+      ),
+    ),
+  ).toEqual([
+    "tests/boundary/filesystem/shared.test.ts",
+    "tests/boundary/filesystem/verifier.test.ts",
+  ]);
+  expect(
+    selectedFiles(
+      plan(["tests/fixtures/card.json"], {
+        "tests/fixtures/card.json": '{"ok":true}',
+        "tests/boundary/mcp/card.test.ts":
+          'new URL("../../fixtures/card.json", import.meta.url);',
+        "tests/boundary/mcp/unrelated.test.ts": 'import "../../../src/a.js";',
+      }),
+    ),
+  ).toEqual(["tests/boundary/mcp/card.test.ts"]);
+  expect(
+    plan(["tests/fixtures/unreferenced.bin"], {
+      "tests/fixtures/unreferenced.bin": "raw",
+      "tests/boundary/mcp/unrelated.test.ts": 'import "../../../src/a.js";',
+    }),
+  ).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: tests/fixtures/unreferenced.bin",
+  });
+  expect(
+    plan(["scripts/lib/shared.mjs"], {
+      ...sources,
+      "scripts/ci/scopes.mjs": 'import "../lib/shared.mjs";',
+    }),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Script consumer is not traced: scripts/ci/scopes.mjs uses scripts/lib/shared.mjs",
+  });
   // Other scripts remain untraced inputs.
   expect(plan(["scripts/build.mjs"], sources)).toMatchObject({
     mode: "full",
     reason: "Input is not traced to tests: scripts/build.mjs",
   });
+});
+
+it("traces JavaScript fixture modules transitively through JS and TS helpers", () => {
+  const sources = {
+    "tests/fixtures/fakeHopperReplies.mjs":
+      "export const fakeHopperReply = () => ({});",
+    "tests/fixtures/fakeHopper.mjs":
+      'import { fakeHopperReply } from "./fakeHopperReplies.mjs"; export { fakeHopperReply };',
+    "tests/boundary/providers/hopper/hopperClient.fixture.ts":
+      'export const bridge = new URL("../../../fixtures/fakeHopper.mjs", import.meta.url);',
+    "tests/boundary/providers/hopper/fakeHopperReplyContracts.test.ts":
+      'import { fakeHopperReply } from "../../../fixtures/fakeHopperReplies.mjs"; void fakeHopperReply;',
+    "tests/boundary/providers/hopper/hopperSocket.test.ts":
+      'import { bridge } from "./hopperClient.fixture.js"; void bridge;',
+    "tests/acceptance/providers/hopperStartupRecovery.test.ts":
+      'const path = "tests/fixtures/fakeHopper.mjs"; void path;',
+    "src/unrelated.test.ts": "",
+  };
+  expect(plan(["tests/fixtures/fakeHopperReplies.mjs"], sources)).toMatchObject(
+    {
+      mode: "selected",
+      files: [
+        "tests/acceptance/providers/hopperStartupRecovery.test.ts",
+        "tests/boundary/providers/hopper/fakeHopperReplyContracts.test.ts",
+        "tests/boundary/providers/hopper/hopperSocket.test.ts",
+      ],
+    },
+  );
 });
 
 it("parses only well-formed plans and derives the selected shard count", () => {
@@ -212,9 +358,27 @@ it("parses only well-formed plans and derives the selected shard count", () => {
   expect(
     testShards("fast", parseTestSelection(JSON.stringify(selected))),
   ).toEqual(["1/2", "2/2"]);
+  const maxSelectedFiles = Object.fromEntries(
+    Array.from({ length: 400 }, (_, i) => [
+      `src/feature-${String(i)}.test.ts`,
+      "",
+    ]),
+  );
+  expect(plan(Object.keys(maxSelectedFiles), maxSelectedFiles)).toMatchObject({
+    mode: "selected",
+    shards: 8,
+  });
+  const overCapFiles = {
+    ...maxSelectedFiles,
+    "src/feature-400.test.ts": "",
+  };
+  expect(plan(Object.keys(overCapFiles), overCapFiles)).toMatchObject({
+    mode: "full",
+    reason: "401 affected test files exceed the 400-file selection cap",
+  });
   const full = { version: 3, mode: "full", reason: "Shared" };
   expect(testShards("fast", parseTestSelection(full))).toHaveLength(12);
-  expect(testShards("full", parseTestSelection(full))).toHaveLength(6);
+  expect(testShards("full", parseTestSelection(full))).toHaveLength(12);
   for (const value of [
     "",
     "null",
@@ -229,8 +393,8 @@ it("parses only well-formed plans and derives the selected shard count", () => {
     { ...selected, shards: 0 },
     {
       ...selected,
-      files: Array.from({ length: 5 }, (_, i) => `src/${i}.test.ts`),
-      shards: 5,
+      files: Array.from({ length: 9 }, (_, i) => `src/${i}.test.ts`),
+      shards: 9,
     },
     { ...full, shards: 1 },
   ])

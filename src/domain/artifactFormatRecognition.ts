@@ -1,4 +1,5 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
+import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -26,6 +27,7 @@ export type RecognizedArtifactFormat = Extract<
   | "unityfs"
   | "wxapkg"
   | "uimage"
+  | "android-boot-image"
   | "intel-hex"
   | "srec"
   | "uf2"
@@ -107,6 +109,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
     when("uimage", hasUImageMagic),
+    when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {
       const format = detectHexRecordEncoding(prefix);
       return format === undefined ? undefined : { state: "recognized", format };

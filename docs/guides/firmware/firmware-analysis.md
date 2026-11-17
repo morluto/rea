@@ -375,3 +375,16 @@ images, declared load and entry addresses, configurations and verified hashes,
 then `extract-artifact` / `extract_artifact` for one raw file per image.
 Decoding is portable and requires no external tool. See
 [U-Boot FIT images](../../fit-images.md).
+
+## Inspect Android boot and vendor_boot images
+
+`inspect-artifact` / `extract-artifact` recognize `ANDROID!` (header versions
+0 through 4) and `VNDRBOOT` (vendor_boot versions 3 and 4) by magic. The root
+records page size, component sizes, the command line, OS version and security
+patch level when the header has them, the board name, and the header digest.
+Children are the stored kernel, ramdisk, second stage, recovery DTBO, DTB,
+vendor ramdisk table entries, bootconfig, and v4 signature. gzip, lz4, and
+zstd are recorded from leading magic and left compressed. An AVB footer is
+reported with its sizes and is not verified. `ANDROID!` does not say whether
+the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
+to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
