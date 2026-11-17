@@ -16,10 +16,7 @@ import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { goBinaryUnknowns } from "./goBinaryView.js";
 import { rustBinaryUnknowns } from "./rustBinaryView.js";
-import {
-  CYCLONEDX_DOCUMENT_BYTE_LIMIT,
-  cycloneDxSerialNumber,
-} from "./cyclonedxView.js";
+import { CYCLONEDX_DOCUMENT_BYTE_LIMIT } from "./cyclonedxView.js";
 
 const SHA = "a".repeat(64);
 const VIEW = { kind: "cyclonedx" } as const;
@@ -186,14 +183,6 @@ const projectRust = (report: RustBinary) => {
   return result.value;
 };
 
-it("derives a stable version-8 serial number from the parent digest", () => {
-  const serial = cycloneDxSerialNumber(SHA);
-  expect(serial).toBe(cycloneDxSerialNumber(SHA));
-  expect(serial).toMatch(
-    /^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-  );
-});
-
 it("projects Go modules with Package URLs, replacements and main-module edges", () => {
   const report = goReport({
     path: "example.com/tool/cmd/tool",
@@ -216,10 +205,20 @@ it("projects Go modules with Package URLs, replacements and main-module edges", 
     unparsed_line_bytes_base64: [],
     complete: true,
   });
-  const view = projectGo(report);
-  const again = projectGo(report);
-  expect(JSON.stringify(view.document)).toBe(JSON.stringify(again.document));
-  expect(view.view_digest).toBe(again.view_digest);
+  const parent = {
+    ...parentFor("inspect_go_binary", report),
+    evidenceId:
+      "ev_0011223344556677ffeeddccbbaa9988bbccddeeff00112233445566778899aa",
+  };
+  const projected = projectAnalysisView(parent, VIEW);
+  if (!projected.ok) throw projected.error;
+  const view = projected.value;
+  if (view.kind !== "cyclonedx") throw new Error("Expected a CycloneDX view");
+  const again = projectAnalysisView(parent, VIEW);
+  expect(again).toEqual(projected);
+  expect(view.document.serialNumber).toBe(
+    "urn:uuid:00112233-4455-8677-bfee-ddccbbaa9988",
+  );
   expect(view.document).not.toHaveProperty("timestamp");
   expect(view.document.metadata.component).toMatchObject({
     type: "file",
@@ -281,6 +280,7 @@ it("projects Go modules with Package URLs, replacements and main-module edges", 
     expect.arrayContaining([
       { name: "rea:evidence_id", value: view.parent_evidence_id },
       { name: "rea:go:graph", value: "main-module-edges" },
+      { name: "rea:go:main", value: "pkg:golang/example.com/tool@%28devel%29" },
     ]),
   );
   expect(JSON.stringify(view.document)).not.toContain('"complete"');
@@ -443,60 +443,23 @@ it("does not report an embedded list for parse-complete GOPATH metadata", () => 
   );
 });
 
-it("links the binary to its decoded Go main module, even when its list is incomplete", () => {
-  const binaryRef = `sha256:${SHA}`;
-  const main = "pkg:golang/example.com/tool@v1.2.3";
-  const dep = "pkg:golang/example.com/dep@v1.0.0";
-  const moduleRecord = (
-    mainModule: GoModule | null,
-    dependencies: GoModule[],
-    complete: boolean,
-  ) => ({
-    path: "example.com/tool",
-    main: mainModule,
-    dependencies,
-    settings: [],
-    unparsed_lines: complete ? [] : ["dep\tbroken"],
-    unparsed_line_bytes_base64: [],
-    complete,
-  });
-
-  const complete = projectGo(
-    goReport(
-      moduleRecord(
-        goModule("example.com/tool", "v1.2.3"),
-        [goModule("example.com/dep", "v1.0.0")],
-        true,
-      ),
-    ),
+it("retains parsed Go dependencies without inventing a main module", () => {
+  const view = projectGo(
+    goReport({
+      path: "example.com/tool",
+      main: null,
+      dependencies: [goModule("example.com/dep", "v1.0.0")],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    }),
   );
-  expect(complete.document.dependencies).toEqual([
-    { ref: binaryRef, dependsOn: [main] },
-    { ref: main, dependsOn: [dep] },
+  expect(view.document.components.map(({ purl }) => purl)).toEqual([
+    "pkg:golang/example.com/dep@v1.0.0",
   ]);
-  expect(propertyValues(complete.document.properties, "rea:go:main")).toEqual([
-    main,
-  ]);
-
-  const incomplete = projectGo(
-    goReport(moduleRecord(goModule("example.com/tool", "v1.2.3"), [], false)),
-  );
-  expect(incomplete.document.dependencies).toEqual([
-    { ref: binaryRef, dependsOn: [main] },
-  ]);
-  expect(propertyValues(incomplete.document.properties, "rea:go:main")).toEqual(
-    [main],
-  );
-
-  const mainless = projectGo(
-    goReport(moduleRecord(null, [goModule("example.com/dep", "v1.0.0")], true)),
-  );
-  expect(
-    (mainless.document.dependencies ?? []).map((entry) => entry.ref),
-  ).not.toContain(binaryRef);
-  expect(propertyValues(mainless.document.properties, "rea:go:main")).toEqual(
-    [],
-  );
+  expect(view.document.dependencies).toBeUndefined();
+  expect(propertyValues(view.document.properties, "rea:go:main")).toEqual([]);
 });
 
 it("omits an unparsed Go dependency list instead of claiming it is empty", () => {
@@ -524,6 +487,10 @@ it("omits an unparsed Go dependency list instead of claiming it is empty", () =>
   expect(
     incomplete.document.components.map((component) => component.purl),
   ).toEqual(["pkg:golang/example.com/tool@v1.2.3"]);
+
+  expect(propertyValues(incomplete.document.properties, "rea:go:main")).toEqual(
+    ["pkg:golang/example.com/tool@v1.2.3"],
+  );
 
   const observedEmpty = projectGo(
     goReport({
