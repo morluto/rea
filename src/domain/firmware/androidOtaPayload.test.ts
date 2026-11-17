@@ -404,6 +404,17 @@ it("refuses operation data that overruns the payload blob", () => {
   });
 });
 
+it("refuses an explicit zero manifest block_size as malformed", () => {
+  const bytes = buildAndroidOtaPayload({
+    blockSize: 0,
+    partitions: [],
+  });
+  expect(parse(bytes)).toMatchObject({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+});
+
 it("refuses a truncated protobuf field in the manifest", () => {
   const writer = new BinaryWriter();
   writer.tag(13, WireType.LengthDelimited).bytes(Uint8Array.of(0x80));

@@ -826,7 +826,8 @@ const decodeManifest = (
   const walked = walk(bytes, (field, wire, reader) => {
     if (field === 3 && wire === WireType.Varint) {
       const size = unwrap(asSafeUint(reader.uint64(), "block_size"));
-      draft.blockSize = size === 0 ? ANDROID_OTA_DEFAULT_BLOCK_SIZE : size;
+      if (size === 0) fail(malformed("manifest block_size is zero"));
+      draft.blockSize = size;
       return;
     }
     if (field === 4 && wire === WireType.Varint) {
