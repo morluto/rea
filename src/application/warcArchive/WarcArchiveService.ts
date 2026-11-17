@@ -1,12 +1,12 @@
 import { isAbsolute } from "node:path";
-import { artifactFilePrimaryFacts } from "../../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import {
+  artifactFilePrimaryFacts,
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   projectStableArtifactFailure,
+  readStableArtifact,
   stableArtifactInputRecovery,
-} from "../../resources/StableArtifactFailure.js";
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
