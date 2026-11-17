@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import type { SetupResult } from "../application/SetupTypes.js";
 import { describeReadyCapabilities } from "./interactiveSetup.js";
-import { inspectJebRegistration } from "../application/jeb/JebRegistrationInspection.js";
+import { inspectJebRegistration } from "../jeb/JebDoctor.js";
 
 const resultWithProviders = (
   availableProviders: readonly string[],

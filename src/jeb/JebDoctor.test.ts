@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import { inspectJebRegistration } from "./JebRegistrationInspection.js";
-import { providerRegistrationEnvironment } from "../SetupRegistrationEnvironment.js";
-import { DEFAULT_JEB_MCP_ENDPOINT } from "../../config/jebMcpEndpoint.js";
+import { inspectJebRegistration } from "./JebDoctor.js";
+import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
+import { DEFAULT_JEB_MCP_ENDPOINT } from "../config/jebMcpEndpoint.js";
 
 it("keeps the JEB endpoint for setup without launching the engine", () => {
   const inspection = inspectJebRegistration({
@@ -106,3 +106,20 @@ it("preserves a known endpoint error alongside an unresolved timeout", () => {
     ],
   });
 });
+
+it.each([
+  { environment: {}, unresolved: ["REA_JEB_MCP_URL"], configured: null },
+  {
+    environment: { REA_JEB_MCP_TIMEOUT_MS: "900000" },
+    unresolved: ["REA_JEB_MCP_URL"],
+    configured: true,
+  },
+  { environment: {}, unresolved: ["REA_JEB_MCP_TIMEOUT_MS"], configured: true },
+])(
+  "preserves selection certainty independently of readiness: $unresolved $configured",
+  ({ environment, unresolved, configured }) => {
+    expect(
+      inspectJebRegistration(environment, new Set(unresolved)),
+    ).toMatchObject({ configured, available: null });
+  },
+);

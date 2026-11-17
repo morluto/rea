@@ -331,7 +331,12 @@ export const ENTRY_FILES = Object.freeze(
         "recovery/WakaruProviderIdentity.ts",
         "sourceMaps/SourceMapDecoder.ts",
       ],
-      jeb: ["JebMcpConnection.ts", "JebProvider.ts", "JebProviderIdentity.ts"],
+      jeb: [
+        "JebDoctor.ts",
+        "JebMcpConnection.ts",
+        "JebProvider.ts",
+        "JebProviderIdentity.ts",
+      ],
       kuna: ["KunaDoctor.ts", "KunaProvider.ts", "KunaProviderMetadata.ts"],
       model: ["ModelArtifactProvider.ts", "ModelArtifactProviderIdentity.ts"],
       native: [

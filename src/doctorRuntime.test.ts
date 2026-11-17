@@ -601,9 +601,13 @@ test("probes the selected client's registration environment instead of the termi
   }
 });
 
-it.each(["REA_JEB_MCP_URL", "REA_JEB_MCP_TIMEOUT_MS"])(
-  "does not substitute terminal JEB settings for unresolved %s",
-  async (setting) => {
+it.each([
+  { setting: "REA_JEB_MCP_URL", timeout: "900000", configured: true },
+  { setting: "REA_JEB_MCP_URL", timeout: undefined, configured: null },
+  { setting: "REA_JEB_MCP_TIMEOUT_MS", timeout: "900000", configured: true },
+])(
+  "preserves selected JEB facts for unresolved $setting with timeout $timeout",
+  async ({ setting, timeout, configured }) => {
     const home = await createTestTempDirectory("rea-qwen-jeb-setting-");
     await mkdir(join(home, ".qwen"), { recursive: true });
     await writeFile(
@@ -621,12 +625,12 @@ it.each(["REA_JEB_MCP_URL", "REA_JEB_MCP_TIMEOUT_MS"])(
     const host = createSystemDoctorHost({
       HOME: home,
       REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp",
-      REA_JEB_MCP_TIMEOUT_MS: "900000",
+      REA_JEB_MCP_TIMEOUT_MS: timeout,
     });
     try {
       const inspections = await host.providerInspections?.(["qwen_code"]);
       expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
-        configured: true,
+        configured,
         available: null,
         registrationEnvironment:
           setting === "REA_JEB_MCP_TIMEOUT_MS"

@@ -1,10 +1,10 @@
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../../ports/DoctorProviderInspection.js";
-import { parseJebMcpTimeoutMs } from "../../config/environment.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { parseJebMcpEndpoint } from "../../config/jebMcpEndpoint.js";
+} from "../ports/DoctorProviderInspection.js";
+import { parseJebMcpTimeoutMs } from "../config/environment.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { parseJebMcpEndpoint } from "../config/jebMcpEndpoint.js";
 
 /** Settings consumed by syntax-only registration inspection. */
 export const JEB_DOCTOR_SETTINGS = [
@@ -19,9 +19,11 @@ export const inspectJebRegistration = (
 ): DoctorProviderInspection => {
   const value = environment.REA_JEB_MCP_URL;
   const selected =
-    (value !== undefined && value.length > 0) ||
+    (!unresolvedSettings.has("REA_JEB_MCP_URL") &&
+      value !== undefined &&
+      value.length > 0) ||
     environment.REA_JEB_MCP_TIMEOUT_MS !== undefined ||
-    JEB_DOCTOR_SETTINGS.some((setting) => unresolvedSettings.has(setting));
+    unresolvedSettings.has("REA_JEB_MCP_TIMEOUT_MS");
   const parsed = unresolvedSettings.has("REA_JEB_MCP_URL")
     ? undefined
     : parseJebMcpEndpoint(value);
@@ -77,7 +79,11 @@ export const inspectJebRegistration = (
     id: "jeb",
     // Effective defaults are valid without making this optional provider a
     // mandatory full-audit check or suppressing first-run provider setup.
-    configured: selected,
+    configured: selected
+      ? true
+      : unresolvedSettings.has("REA_JEB_MCP_URL")
+        ? null
+        : false,
     // Valid registration is not proof that a compatible service is running.
     available:
       (parsed !== undefined && !parsed.ok) ||

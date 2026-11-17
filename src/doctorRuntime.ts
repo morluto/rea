@@ -50,7 +50,7 @@ import { settleConcurrent } from "./application/settleConcurrent.js";
 import {
   inspectJebRegistration,
   JEB_DOCTOR_SETTINGS,
-} from "./application/jeb/JebRegistrationInspection.js";
+} from "./jeb/JebDoctor.js";
 
 /**
  * A selected client's own environment, when its registration records one.
