@@ -18,6 +18,7 @@ import { parse as parseToml } from "smol-toml";
 
 import { manualRegistrationRemediation } from "../../../src/application/SupportedClients.js";
 import type { SetupResult } from "../../../src/application/SetupTypes.js";
+import { FakeSetupHost } from "../../../src/application/Setup.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
@@ -672,6 +673,40 @@ describe("interactive setup journey", () => {
   });
 });
 
+const completionResult = async (
+  providers: readonly string[],
+  client?: string,
+): Promise<SetupResult> => {
+  const host = new FakeSetupHost();
+  host.hopper = "/Applications/Hopper";
+  host.skill = "unchanged";
+  host.productRegistrations =
+    client === undefined
+      ? []
+      : [
+          {
+            client,
+            config_path: "/fixture/config",
+            command: ["rea", "mcp"],
+            command_identity: "owned",
+            state: "aligned",
+            remediation: null,
+          },
+        ];
+  return {
+    status: "ready",
+    plannedActions: [],
+    appliedActions: [],
+    clientStates: [],
+    clients: client === undefined ? {} : { [client]: { status: "configured" } },
+    doctor: {
+      ...(await host.doctor({
+        clients: client === undefined ? [] : [client],
+      })),
+      availableProviders: providers,
+    },
+  };
+};
 describe("interactive setup completion", () => {
   it.each([
     { npmCommand: "", userAgent: "", launcher: "rea" },
@@ -688,6 +723,7 @@ describe("interactive setup completion", () => {
   ])(
     "prints an available next command for $launcher invocation",
     async ({ npmCommand, userAgent, launcher }) => {
+      const result = await completionResult(["hopper", "ghidra"], "codex");
       const { stderr } = await execute(
         process.execPath,
         [
@@ -695,20 +731,7 @@ describe("interactive setup completion", () => {
           "--eval",
           [
             'import { renderInteractiveSetupResult } from "./dist/cli/interactiveSetup.js";',
-            "renderInteractiveSetupResult({",
-            '  status: "ready",',
-            "  plannedActions: [],",
-            "  appliedActions: [],",
-            '  clients: { codex: { status: "configured" } },',
-            "  doctor: {",
-            "    healthy: true,",
-            '    availableProviders: ["hopper", "ghidra"],',
-            '    hopperPath: "/Applications/Hopper",',
-            "    checks: [],",
-            '    providerInspections: [{ id: "ghidra", available: true }],',
-            '    identity: { skill: { state: "aligned" }, registrations: [{ client: "codex", state: "aligned" }] },',
-            "  },",
-            "});",
+            `renderInteractiveSetupResult(${JSON.stringify(result)});`,
           ].join("\n"),
         ],
         {
@@ -743,6 +766,13 @@ describe("interactive setup completion", () => {
   );
 
   it("prints IDA and JADX with their product spellings", async () => {
+    const result = await completionResult([
+      "hopper",
+      "ghidra",
+      "ida",
+      "jadx",
+      "kuna",
+    ]);
     const { stderr } = await execute(
       process.execPath,
       [
@@ -750,17 +780,7 @@ describe("interactive setup completion", () => {
         "--eval",
         [
           'import { renderInteractiveSetupResult } from "./dist/cli/interactiveSetup.js";',
-          "renderInteractiveSetupResult({",
-          '  status: "ready",',
-          "  plannedActions: [],",
-          "  appliedActions: [],",
-          "  clients: {},",
-          "  doctor: {",
-          "    healthy: true,",
-          '    availableProviders: ["hopper", "ghidra", "ida", "jadx", "kuna"],',
-          "    checks: [],",
-          "  },",
-          "}, {});",
+          `renderInteractiveSetupResult(${JSON.stringify(result)}, {});`,
         ].join("\n"),
       ],
       { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
