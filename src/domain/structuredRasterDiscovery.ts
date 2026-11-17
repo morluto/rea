@@ -1,3 +1,4 @@
+import { RasterCoverageIndex } from "./rasterCoverage.js";
 import {
   validateStructuredRasterGrammar,
   validateStructuredRasterRecordLimits,
@@ -165,42 +166,18 @@ export function discoverStructuredRasters(
   );
   const ranges = options.coverage ?? [{ offset: 0, length: bytes.length }];
   integer(ranges.length, "coverage count", 0, MAX_RASTER_LOGICAL_SEGMENTS);
-  const sorted = ranges
-    .map((r) => {
-      integer(r.offset, "coverage.offset", 0, bytes.length);
-      integer(r.length, "coverage.length", 1, bytes.length);
-      if (r.length > bytes.length - r.offset)
-        throw new RangeError("Coverage extends beyond materialized bytes");
-      return { ...r };
-    })
-    .sort((a, b) => a.offset - b.offset);
-  const coverage: StructuredRasterRange[] = [];
-  for (const range of sorted) {
-    const last = coverage.at(-1);
-    if (last && range.offset <= last.offset + last.length)
-      last.length =
-        Math.max(last.offset + last.length, range.offset + range.length) -
-        last.offset;
-    else coverage.push(range);
+  const preparedCoverage = RasterCoverageIndex.prepare(bytes.length, ranges);
+  if (!preparedCoverage.ok) {
+    const { field, index } = preparedCoverage.error;
+    const range = ranges[index]!;
+    if (field === "offset")
+      integer(range.offset, "coverage.offset", 0, bytes.length);
+    if (field === "length")
+      integer(range.length, "coverage.length", 1, bytes.length);
+    throw new RangeError("Coverage extends beyond materialized bytes");
   }
-  const covered = (offset: number, length: number): boolean => {
-    if (
-      offset < 0 ||
-      length <= 0 ||
-      offset > bytes.length ||
-      length > bytes.length - offset
-    )
-      return false;
-    let low = 0,
-      high = coverage.length;
-    while (low < high) {
-      const mid = Math.floor((low + high) / 2);
-      if (coverage[mid]!.offset <= offset) low = mid + 1;
-      else high = mid;
-    }
-    const r = coverage[low - 1];
-    return r !== undefined && offset + length <= r.offset + r.length;
-  };
+  const covered = (offset: number, length: number) =>
+    preparedCoverage.value.covers(offset, length);
   const result: StructuredRasterReport = {
     grammar,
     tables: [],

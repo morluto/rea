@@ -1,3 +1,4 @@
+import { RasterCoverageIndex } from "./rasterCoverage.js";
 import { BinaryReader } from "./binaryContainer.js";
 import { MAX_RASTER_LOGICAL_SEGMENTS } from "./rasterLogicalSegments.js";
 import {
@@ -73,48 +74,6 @@ type Link = {
   bindings: RasterRegistryBinding[];
 };
 
-function coveragePredicate(bytes: Uint8Array, input: StructuredRasterRange[]) {
-  const sorted = input
-    .map((r) => {
-      if (
-        !Number.isSafeInteger(r.offset) ||
-        !Number.isSafeInteger(r.length) ||
-        r.offset < 0 ||
-        r.length < 1 ||
-        r.length > bytes.length - r.offset
-      )
-        throw new RangeError("Invalid family coverage");
-      return { ...r };
-    })
-    .sort((a, b) => a.offset - b.offset);
-  const ranges: StructuredRasterRange[] = [];
-  for (const r of sorted) {
-    const last = ranges.at(-1);
-    if (last && r.offset <= last.offset + last.length)
-      last.length =
-        Math.max(last.offset + last.length, r.offset + r.length) - last.offset;
-    else ranges.push(r);
-  }
-  return (offset: number, length: number): boolean => {
-    if (
-      !Number.isSafeInteger(offset) ||
-      !Number.isSafeInteger(length) ||
-      offset < 0 ||
-      length < 1 ||
-      length > bytes.length - offset
-    )
-      return false;
-    let lo = 0,
-      hi = ranges.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (ranges[mid]!.offset <= offset) lo = mid + 1;
-      else hi = mid;
-    }
-    const r = ranges[lo - 1];
-    return r !== undefined && offset + length <= r.offset + r.length;
-  };
-}
 const layouts = new Map<
   number,
   {
@@ -400,7 +359,10 @@ export function discoverRasterRegistryFamily(
     maxWork > 50000000
   )
     throw new RangeError("Invalid family input or work budget");
-  const covered = coveragePredicate(bytes, coverage);
+  const preparedCoverage = RasterCoverageIndex.prepare(bytes.length, coverage);
+  if (!preparedCoverage.ok) throw new RangeError("Invalid family coverage");
+  const covered = (offset: number, length: number) =>
+    preparedCoverage.value.covers(offset, length);
   const result: RasterRegistryFamilyReport = {
     family: "record12-lut-registry",
     provenance: "profile-declared",

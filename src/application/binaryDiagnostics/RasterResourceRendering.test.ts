@@ -278,3 +278,20 @@ it("shares exact allocation preflight with the exporter", async () => {
     "limit-exceeded",
   );
 });
+
+it("preserves the prepared-coverage class admission and cancellation contract", async () => {
+  const { PreparedRasterRenderCoverage } =
+    await import("./RasterResourceRendering.js");
+  const result = PreparedRasterRenderCoverage.prepare(2, [
+    { offset: 0, length: 2 },
+  ]);
+  expect(result).toMatchObject({ status: "prepared" });
+  expect(
+    PreparedRasterRenderCoverage.prepare(16 * 1024 * 1024 + 1, []),
+  ).toMatchObject({ status: "limit-exceeded" });
+  const controller = new AbortController();
+  controller.abort(new Error("stop preparation"));
+  expect(() =>
+    PreparedRasterRenderCoverage.prepare(2, [], controller.signal),
+  ).toThrow("stop preparation");
+});

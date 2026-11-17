@@ -1,3 +1,4 @@
+import { RasterCoverageIndex } from "../../domain/rasterCoverage.js";
 import { setImmediate } from "node:timers/promises";
 import type { z } from "zod";
 import { BinaryReader } from "../../domain/binaryContainer.js";
@@ -83,12 +84,17 @@ const limited = (
   reason: `${name} exceeds its fixed ${maximum} ${unit} allowance.`,
   limit: { name, maximum, unit },
 });
-/** Immutable normalized coverage, reusable across a resource batch. */
+/** Renderer facade preserves its admission/cancellation contract; the domain
+ * index owns normalization and lookup, not presentation-specific failures.
+ */
 export class PreparedRasterRenderCoverage {
-  private constructor(
-    readonly bytesLength: number,
-    private readonly ranges: readonly RasterRenderRange[],
-  ) {}
+  private constructor(private readonly index: RasterCoverageIndex) {}
+  get bytesLength(): number {
+    return this.index.bytesLength;
+  }
+  covers(offset: number, length: number): boolean {
+    return this.index.covers(offset, length);
+  }
   static prepare(
     bytesLength: number,
     ranges: readonly RasterRenderRange[],
@@ -105,47 +111,13 @@ export class PreparedRasterRenderCoverage {
         MAX_RASTER_LOGICAL_SEGMENTS,
         "entries",
       );
-    const sorted: RasterRenderRange[] = [];
-    for (const r of ranges) {
-      if (
-        !integer(r.offset, 0, bytesLength) ||
-        !integer(r.length, 1, bytesLength) ||
-        r.length > bytesLength - r.offset
-      )
-        return unavailable("Coverage lies outside the logical source.");
-      sorted.push({ offset: r.offset, length: r.length });
-    }
-    sorted.sort((a, b) => a.offset - b.offset);
-    const merged: RasterRenderRange[] = [];
-    for (const r of sorted) {
-      const last = merged.at(-1);
-      if (last && r.offset <= last.offset + last.length)
-        last.length =
-          Math.max(last.offset + last.length, r.offset + r.length) -
-          last.offset;
-      else merged.push(r);
-    }
-    return {
-      status: "prepared",
-      coverage: new PreparedRasterRenderCoverage(bytesLength, merged),
-    };
-  }
-  covers(offset: number, length: number): boolean {
-    if (
-      !integer(offset, 0, this.bytesLength) ||
-      !integer(length, 1, this.bytesLength) ||
-      length > this.bytesLength - offset
-    )
-      return false;
-    let lo = 0,
-      hi = this.ranges.length;
-    while (lo < hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      if (this.ranges[mid]!.offset <= offset) lo = mid + 1;
-      else hi = mid;
-    }
-    const r = this.ranges[lo - 1];
-    return r !== undefined && offset + length <= r.offset + r.length;
+    const prepared = RasterCoverageIndex.prepare(bytesLength, ranges);
+    return prepared.ok
+      ? {
+          status: "prepared",
+          coverage: new PreparedRasterRenderCoverage(prepared.value),
+        }
+      : unavailable("Coverage lies outside the logical source.");
   }
 }
 export const prepareRasterRenderCoverage = PreparedRasterRenderCoverage.prepare;
