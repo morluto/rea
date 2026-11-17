@@ -327,7 +327,9 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
           ),
           affected_script_keys: [...input.endpointLiteralCandidates.scriptKeys],
           limit: input.endpointLiteralCandidates.record.limit,
-          remediation: `Raise ${input.endpointLiteralCandidates.record.limit.setting} to retain more literal path/URL candidates in a later analysis.`,
+          remediation: webBundleEndpointLiteralRecordMessage(
+            input.endpointLiteralCandidates.record,
+          ),
         },
       ]),
   ...(input.omittedScripts === undefined
