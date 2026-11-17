@@ -1,6 +1,5 @@
 import { isAbsolute } from "node:path";
 import {
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
 } from "../../resources/ArtifactFileOperation.js";
@@ -19,9 +18,10 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
+  carriedReason,
+  cancelledBy,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -91,9 +91,7 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(operation, carriedReason(cause.cancellation?.reason));
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(
         operation,
@@ -101,27 +99,35 @@ const readFailure = (
         cause.message,
         { cause },
       );
-    if (cause.reason === "limit")
-      return cause.boundary === undefined || cause.boundary === "file-size"
-        ? new AnalysisResourceConstraintError(
+    if (cause.reason === "limit") {
+      const boundary = cause.boundary ?? "file-size";
+      return boundary === "file-size"
+        ? fixedCeilingConstraint(
             operation,
-            cause.boundary ?? "file-size",
+            boundary,
             cause.message,
-            { max_file_bytes: input.max_file_bytes },
             {
-              cause,
-              retryable: false,
-              remediationAction:
+              name: `max_file_bytes (${String(input.max_file_bytes)} bytes)`,
+              kind: "input",
+              limit: input.max_file_bytes,
+              unit: "bytes",
+              narrowing:
                 "Select a package within max_file_bytes; entry paging does not change this file admission.",
             },
+            { cause },
           )
-        : new AnalysisResourceConstraintError(
+        : fixedCeilingConstraint(
             operation,
-            cause.boundary,
+            boundary,
             cause.message,
-            { failed_limit: cause.boundary },
-            { cause, retryable: false, remediationAction: ZIP_LIMIT_RECOVERY },
+            cause.fixedAllowance ?? {
+              name: `The ZIP ${boundary} allowance`,
+              kind: "parser",
+              narrowing: ZIP_LIMIT_RECOVERY,
+            },
+            { cause },
           );
+    }
     // "unavailable" is the reader's own refusal of a method or codec it cannot
     // decode; leaving it to the generic branch would report an I/O failure for
     // a file that was read fine.

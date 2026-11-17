@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import { boundedList } from "../boundedList.js";
 import { nugetPackageSchema } from "../nugetPackage/nugetPackage.js";
 import { err, ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -109,28 +110,22 @@ export const projectNugetPackageView = (
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     summary: {
       artifact: report.artifact,
-      nuspecs: report.nuspecs
-        .slice(0, VIEW_NUSPEC_LIMIT)
-        .map(
-          ({
-            dependency_groups: _groups,
-            description: _description,
-            ...rest
-          }) => rest,
-        ),
+      nuspecs: boundedList(report.nuspecs, VIEW_NUSPEC_LIMIT).items.map(
+        ({ dependency_groups: _groups, description: _description, ...rest }) =>
+          rest,
+      ),
       nuspec_count: report.nuspecs.length,
-      nuspecs_omitted: Math.max(0, report.nuspecs.length - VIEW_NUSPEC_LIMIT),
+      nuspecs_omitted: boundedList(report.nuspecs, VIEW_NUSPEC_LIMIT).omitted,
       asset_counts: assetCounts,
       asset_count: report.assets.length,
       assemblies: report.summary.assemblies,
-      diagnostics:
-        report.diagnostics.length > VIEW_DIAGNOSTIC_LIMIT
-          ? report.diagnostics.slice(0, VIEW_DIAGNOSTIC_LIMIT)
-          : report.diagnostics,
-      diagnostics_omitted: Math.max(
-        0,
-        report.diagnostics.length - VIEW_DIAGNOSTIC_LIMIT,
-      ),
+      diagnostics: [
+        ...boundedList(report.diagnostics, VIEW_DIAGNOSTIC_LIMIT).items,
+      ],
+      diagnostics_omitted: boundedList(
+        report.diagnostics,
+        VIEW_DIAGNOSTIC_LIMIT,
+      ).omitted,
       source_coverage: report.source_coverage,
     },
     coverage: completeWithinViewCoverage(1),
