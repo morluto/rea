@@ -213,6 +213,11 @@ export const documentationSections = [
         source: "guides/managed/managed-code-analysis.md",
         route: "/managed-code-analysis",
       },
+      {
+        text: "NuGet packages",
+        source: "guides/managed/nuget-nupkg.md",
+        route: "/nuget-nupkg",
+      },
     ],
   },
   {

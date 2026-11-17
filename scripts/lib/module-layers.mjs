@@ -81,6 +81,7 @@ export const UNIT_LAYERS = Object.freeze(
       "kuna",
       "model",
       "native",
+      "nuget",
       "objdump",
       "pcap",
       "python",
@@ -353,6 +354,7 @@ export const ENTRY_FILES = Object.freeze(
         "pwntools/PwntoolsRecordedCrashProvider.ts",
         "windows/WindowsShortcutProvider.ts",
       ],
+      nuget: ["NugetNupkgProvider.ts", "NugetNupkgProviderIdentity.ts"],
       objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
       pcap: [
         "PcapConfiguration.ts",
