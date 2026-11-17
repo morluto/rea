@@ -6,7 +6,6 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
-import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { evaluateTaskChecks } from "../../../src/domain/desktop/appTaskChecks.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
 import {
@@ -36,117 +35,114 @@ const expected = [
   false,
   false,
 ];
-const admitted = parseDesktopTask(
-  {
-    name: "keep-numbers",
-    prompt: "Keep the requested measurement and its allowed range.",
-    checks: [
-      {
-        id: "exact",
-        kind: "value_equals",
-        file,
-        pointer: pointer(0),
-        value: large,
-      },
-      {
-        id: "nested",
-        kind: "value_equals",
-        file,
-        pointer: "/tables/samples/rows/0",
-        value: [large, integer, 2.5, { integer: "9007199254740993" }],
-      },
-      {
-        id: "present",
-        kind: "row_present",
-        file,
-        table: "samples",
-        where: { real_value: large },
-      },
-      {
-        id: "absent",
-        kind: "row_absent",
-        file,
-        table: "samples",
-        where: { real_value: large },
-      },
-      {
-        id: "count",
-        kind: "row_count",
-        file,
-        table: "samples",
-        where: { real_value: large },
-        equals: 1,
-      },
-      {
-        id: "difference",
-        kind: "value_equals",
-        file,
-        pointer: pointer(1),
-        value: -2,
-        tolerance: 2 ** 53,
-      },
-      {
-        id: "tolerance",
-        kind: "value_equals",
-        file,
-        pointer: pointer(0),
-        value: 0,
-        tolerance: large,
-      },
-      {
-        id: "zero-tolerance",
-        kind: "value_equals",
-        file,
-        pointer: pointer(0),
-        value: large,
-        tolerance: 0,
-      },
-      {
-        id: "fraction",
-        kind: "value_equals",
-        file,
-        pointer: pointer(2),
-        value: 2.5,
-      },
-      {
-        id: "boolean",
-        kind: "value_equals",
-        file,
-        pointer: pointer(2),
-        value: true,
-      },
-      {
-        id: "string",
-        kind: "value_equals",
-        file,
-        pointer: pointer(2),
-        value: "2.5",
-      },
-      {
-        id: "tagged",
-        kind: "value_equals",
-        file,
-        pointer: pointer(3),
-        value: { integer: "9007199254740993" },
-      },
-      {
-        id: "distinct-tagged",
-        kind: "value_equals",
-        file,
-        pointer: pointer(3),
-        value: { integer: "9007199254740992" },
-      },
-      {
-        id: "distinct-number",
-        kind: "value_equals",
-        file,
-        pointer: pointer(0),
-        value: large + 128,
-      },
-    ],
-  },
-  isPortableBundleName,
-);
+const admitted = parseDesktopTask({
+  name: "keep-numbers",
+  prompt: "Keep the requested measurement and its allowed range.",
+  checks: [
+    {
+      id: "exact",
+      kind: "value_equals",
+      file,
+      pointer: pointer(0),
+      value: large,
+    },
+    {
+      id: "nested",
+      kind: "value_equals",
+      file,
+      pointer: "/tables/samples/rows/0",
+      value: [large, integer, 2.5, { integer: "9007199254740993" }],
+    },
+    {
+      id: "present",
+      kind: "row_present",
+      file,
+      table: "samples",
+      where: { real_value: large },
+    },
+    {
+      id: "absent",
+      kind: "row_absent",
+      file,
+      table: "samples",
+      where: { real_value: large },
+    },
+    {
+      id: "count",
+      kind: "row_count",
+      file,
+      table: "samples",
+      where: { real_value: large },
+      equals: 1,
+    },
+    {
+      id: "difference",
+      kind: "value_equals",
+      file,
+      pointer: pointer(1),
+      value: -2,
+      tolerance: 2 ** 53,
+    },
+    {
+      id: "tolerance",
+      kind: "value_equals",
+      file,
+      pointer: pointer(0),
+      value: 0,
+      tolerance: large,
+    },
+    {
+      id: "zero-tolerance",
+      kind: "value_equals",
+      file,
+      pointer: pointer(0),
+      value: large,
+      tolerance: 0,
+    },
+    {
+      id: "fraction",
+      kind: "value_equals",
+      file,
+      pointer: pointer(2),
+      value: 2.5,
+    },
+    {
+      id: "boolean",
+      kind: "value_equals",
+      file,
+      pointer: pointer(2),
+      value: true,
+    },
+    {
+      id: "string",
+      kind: "value_equals",
+      file,
+      pointer: pointer(2),
+      value: "2.5",
+    },
+    {
+      id: "tagged",
+      kind: "value_equals",
+      file,
+      pointer: pointer(3),
+      value: { integer: "9007199254740993" },
+    },
+    {
+      id: "distinct-tagged",
+      kind: "value_equals",
+      file,
+      pointer: pointer(3),
+      value: { integer: "9007199254740992" },
+    },
+    {
+      id: "distinct-number",
+      kind: "value_equals",
+      file,
+      pointer: pointer(0),
+      value: large + 128,
+    },
+  ],
+});
 if (!admitted.ok) throw new Error(admitted.error);
 const task = admitted.value;
 
