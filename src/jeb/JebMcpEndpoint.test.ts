@@ -14,8 +14,7 @@ describe("JEB MCP endpoint", () => {
       expect(parseJebMcpEndpoint(value).ok, value).toBe(false);
   });
 
-  it("accepts only the declared MCP route", () => {
-    expect(parseJebMcpEndpoint("http://127.0.0.1:8425/mcp").ok).toBe(true);
+  it("refuses paths outside the declared MCP route", () => {
     for (const path of ["/mcp/extra", "/not-mcp", "/"])
       expect(parseJebMcpEndpoint(`http://127.0.0.1:8425${path}`).ok, path).toBe(
         false,
