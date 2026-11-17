@@ -160,6 +160,14 @@ when its records account for every byte before the directory (a well-formed
 APK signing block is accounted for); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
+An extent must fit before the directory and agree with the local header's
+size or deferred-size mode, including local Zip64 sizes. A deferred extent
+requires a matching data descriptor. Conflicting or unreadable extent claims
+leave coverage unknown even for directory or
+encrypted entries whose content is not opened; the listing remains available.
+Local Zip64 extra-field walks share a budget derived from the member region's
+byte length. Repeated references to one physical header reuse its parsed size;
+overlapping metadata that exhausts this proof budget stays unknown.
 PyInstaller inventory also preserves distinct table rows that share a logical
 path, including decoded children beneath a colliding file/directory path.
 Inventory coverage describes observed archive facts; extraction still refuses
