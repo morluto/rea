@@ -334,7 +334,7 @@ export class KunaProjectReader {
         files,
         limitations: [
           reason,
-          "To try an independent decompile, call procedure_pseudo_code with analysis: independent_fresh, or use rea decompile --analysis independent_fresh. It may use different analysis context and does not replace this observation.",
+          "To try an independent decompile, call procedure_pseudo_code with analysis: independent_fresh. It may use different analysis context and does not replace this observation.",
         ],
       });
     }

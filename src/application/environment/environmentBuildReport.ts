@@ -11,7 +11,7 @@ import {
 import {
   decodeRetainedBase64,
   readRecordedResponseBody,
-  type RecordedResponseBody,
+  type RecordedResponseBodyRead,
 } from "../../domain/analysisView/recordedResponseBody.js";
 import { scenarioContentMediaType } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
@@ -223,14 +223,16 @@ const scannableBody = (
   return kind === undefined ? undefined : { kind, text };
 };
 
-/** Decoded body text as the scan reads it; binary bytes hold no JSON or form text. */
+/** Unproven body sources remain unscanned; binary bytes hold no JSON or form text. */
 const decodedBody = (
-  body: RecordedResponseBody,
+  body: RecordedResponseBodyRead,
   mediaType: unknown,
 ): ScannedBody | undefined =>
-  body.bodyEncoding === "base64"
-    ? undefined
-    : scannableBody(body.bodyText, mediaType, body.bodyCut === true);
+  body.sourceUnavailable === true
+    ? { kind: "skipped" }
+    : body.bodyEncoding === "base64"
+      ? undefined
+      : scannableBody(body.bodyText, mediaType, body.bodyCut === true);
 
 /** A count of matches and the first of their pointers. */
 interface ScanTally {
@@ -454,7 +456,7 @@ export const credentialScanWarnings = (capture: {
   if (scanned.skipped.count > 0)
     warnings.push({
       code: "credential-scan-incomplete",
-      message: `${String(scanned.skipped.count)} recorded bodies, header lists or query strings were not scanned: each is cut, over 4 MiB of text, or past the 524288 values the credential-name scan reads in all; evidence.json ships them, so review them before sharing.`,
+      message: `${String(scanned.skipped.count)} recorded bodies, header lists or query strings were not scanned: each is cut, over 4 MiB of text, past the 524288 values the credential-name scan reads in all, or a response body whose retained source is unavailable; evidence.json ships what was retained, so review it before sharing.`,
       pointers: scanned.skipped.pointers,
     });
   return warnings;

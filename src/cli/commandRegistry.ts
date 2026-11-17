@@ -1,5 +1,6 @@
 import type { z } from "zod";
 
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import type {
   ContractCliDescription,
   ContractCliDocumentDescription,
@@ -17,6 +18,11 @@ export interface CliCommandOperation {
    * delivery fields have no flag.
    */
   readonly flags: Readonly<Record<string, string>>;
+  /**
+   * The CLI selector option and value that chooses this operation when the
+   * command defaults to another contract, such as `"--kind procedures"`.
+   */
+  readonly selector?: string | undefined;
 }
 
 type Inputs<Schema extends z.ZodObject | undefined> = Schema extends z.ZodObject
@@ -132,12 +138,14 @@ export const contractDescriptionOperations = (
     readonly contract: { readonly name: string };
     readonly evidenceTargets?: ContractCliDescription["evidenceTargets"];
   },
+  options: { readonly selector?: string | undefined } = {},
 ): readonly CliCommandOperation[] => {
   const { sessionTarget, evidenceTargets } = description;
   return [
     {
       name: description.contract.name,
       flags: description.inputBinding?.flags ?? {},
+      ...(options.selector === undefined ? {} : { selector: options.selector }),
     },
     ...(sessionTarget?.opening === undefined
       ? []
@@ -164,4 +172,74 @@ export const distinctOperations = (
 ): readonly CliCommandOperation[] => {
   const seen = new Set<string>();
   return operations.filter(({ name }) => !seen.has(name) && seen.add(name));
+};
+
+/**
+ * Contract operations the command itself answers, excluding the session-target
+ * opener and any Evidence-target source operation it runs first.
+ */
+export const commandOwnOperations = (
+  entry: CliCommandEntry,
+): readonly CliCommandOperation[] => {
+  const { source, operations } = entry;
+  if (source.kind === "contract") {
+    const opening = source.description.sessionTarget?.opening;
+    const targetSource = source.description.evidenceTargets?.source;
+    return operations.filter(
+      ({ name }) => name !== opening && name !== targetSource,
+    );
+  }
+  if (source.kind === "routed") {
+    const own = new Set<string>(
+      source.descriptions.map((description) => description.contract.name),
+    );
+    return operations.filter(({ name }) => own.has(name));
+  }
+  if (source.kind === "document") {
+    const opening = source.description.sessionTarget?.opening;
+    return operations.filter(({ name }) => name !== opening);
+  }
+  return operations;
+};
+
+/**
+ * The CLI command spelling (`rea <command>`) that runs a contract operation,
+ * or undefined when no CLI command answers it. Prefers the canonical
+ * single-contract command, then a contract command whose own operations start
+ * with or include it, then any other registered command whose own operations
+ * include it.
+ */
+export const cliCommandForOperation = (
+  operation: string,
+  entries: readonly CliCommandEntry[],
+  cliName: string,
+  recordedCommands?: Readonly<Record<string, string>>,
+): string | undefined => {
+  const canonical = cliCommandFor(operation);
+  let contractPrimary: string | undefined;
+  let contractSecondary: string | undefined;
+  let otherMatch: string | undefined;
+  for (const entry of entries) {
+    const own = commandOwnOperations(entry);
+    const matched = own.find(({ name }) => name === operation);
+    if (matched === undefined) continue;
+    const command =
+      matched.selector === undefined
+        ? entry.name
+        : `${entry.name} ${matched.selector}`;
+    if (entry.name === canonical) return `${cliName} ${command}`;
+    if (entry.source.kind === "contract") {
+      if (own[0]?.name === operation) contractPrimary ??= command;
+      else contractSecondary ??= command;
+    } else {
+      otherMatch ??= command;
+    }
+  }
+  if (
+    recordedCommands !== undefined &&
+    Object.hasOwn(recordedCommands, canonical)
+  )
+    return `${cliName} ${canonical}`;
+  const selected = contractPrimary ?? contractSecondary ?? otherMatch;
+  return selected === undefined ? undefined : `${cliName} ${selected}`;
 };

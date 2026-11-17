@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import { scenarioCaptureFixture } from "../../../tests/fixtures/browserScenarioCapture.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
@@ -558,7 +559,7 @@ describe("scanCredentialNames coverage", () => {
             status: 200,
             content: {
               mimeType: "application/json",
-              text: "",
+              text: bytes.toString("base64"),
               encoding: "base64",
             },
           },
@@ -566,8 +567,11 @@ describe("scanCredentialNames coverage", () => {
         binary_fields: [
           {
             pointer: "/response/content/text",
+            representation: "har-base64-content",
             state: "retained",
             content_base64: bytes.toString("base64"),
+            bytes: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
           },
         ],
       }) as unknown as WebNetworkCaptureRecord;
