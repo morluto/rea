@@ -471,9 +471,12 @@ const observeAcquisitionCancel = (onCancel) => {
   };
   for (const signal of Object.keys(signalExitCodes))
     process.on(signal, onSignal);
+  // data + resume keep the pipe flowing so client EOF reaches end/close;
+  // paused stdin alone never delivers disconnect during acquisition.
   process.stdin.on("data", onData);
   process.stdin.on("end", onInputEnd);
   process.stdin.on("close", onInputEnd);
+  process.stdin.resume();
   if (process.stdin.readableEnded || process.stdin.destroyed)
     queueMicrotask(onInputEnd);
   return {

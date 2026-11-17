@@ -1042,16 +1042,82 @@ for (;;) {
   await waitForFile(startedPath);
   const waiter = start([version], launchEnv);
   await new Promise((resolve) => setTimeout(resolve, 150));
+  // Handshake bytes must survive acquisition handoff; EOF alone cancels.
+  waiter.child.stdin.write('{"jsonrpc":"2.0","id":"cancel-wait"}\n');
   waiter.child.stdin.end();
   if (waiter.child.pid !== undefined)
     await waitForProcessExit(waiter.child.pid, "cancelled waiter");
   const waiterResult = await waiter.closed;
   expect(waiterResult.code).toBe(0);
   expect(waiterResult.stdout).toBe("");
+  // Holder is still installing; stdin-close must not wait on that work.
+  expect(holder.child.exitCode).toBeNull();
   await writeFile(releasePath, "go", { mode: 0o600 });
   holder.child.stdin.end();
   const holderResult = await holder.closed;
   expect(holderResult.code).toBe(0);
+});
+
+it("replays buffered MCP stdin to the in-process runtime after acquisition", async () => {
+  const version = "6.8.0-published-stdin-handoff";
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  await rm(prefix, { recursive: true, force: true });
+  const workspace = await createTestTempDirectory(
+    "rea-published-stdin-handoff-",
+  );
+  const bin = join(workspace, "bin");
+  await mkdir(bin);
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const startedPath = join(workspace, "started");
+  const releasePath = join(workspace, "release");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+writeFileSync(startedPath, "go");
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(20);
+  }
+}
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(
+  entry,
+  \`process.stdin.pipe(process.stdout);
+process.stdin.on("end", () => { process.exitCode = 0; });
+\`,
+  { mode: 0o600 },
+);
+`,
+  );
+  const { child, closed } = start([version], {
+    ...process.env,
+    ...temp.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  await waitForFile(startedPath);
+  const handshake = '{"jsonrpc":"2.0","id":"handoff"}\n';
+  child.stdin.write(handshake);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await writeFile(releasePath, "go", { mode: 0o600 });
+  // Unshifted acquisition bytes should reach the runtime without waiting on EOF.
+  await awaitStdoutChunk(child, "stdin handoff runtime");
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe(handshake);
 });
 
 describe.skipIf(process.platform === "win32")("installer cancellation", () => {
