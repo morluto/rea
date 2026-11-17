@@ -828,3 +828,91 @@ it("detects external non-empty DW_LNCT_LLVM_source via line_strp, strp, and strx
     true,
   ]);
 });
+
+it("bounds repeated directory prefix and path join expansion across files, rows, and address matches", () => {
+  const longDir = `/${"a".repeat(63_999)}`; // 64,000 chars (< MAX_DWARF_STRING_BYTES)
+  // 1. 64 KiB directory referenced by 2,000 short files (unbounded: ~256 MB of dir + joined path text)
+  const manyFilesProg = lineProgram({
+    version: 5,
+    v5Directories: [{ form: 0x08, inline: longDir }],
+    v5Files: Array.from({ length: 2_000 }, (_, i) => ({
+      path: { form: 0x08, inline: `f${i}.c` },
+      dirIndex: 0,
+    })),
+    opcodes: Buffer.concat([
+      lneSetAddress(0x1000n, 8, true),
+      lnsSetFile(0),
+      lnsCopy(),
+      lnsAdvancePc(4),
+      lneEndSequence(),
+    ]),
+  });
+  const expandedRes = assertValidReportSchema(
+    manyFilesProg,
+    parseDwarfLinePrograms({
+      line: manyFilesProg,
+      lineStr: null,
+      str: null,
+      strOffsets: null,
+      lineFileOffset: 0,
+      little: true,
+      defaultAddressSize: 8,
+      maxPrograms: 16,
+      maxRows: 100,
+      unappliedLineRelocations: [],
+      unappliedDebugRelocations: [],
+    }),
+  );
+  const firstFile = expandedRes.programs[0]?.files[0];
+  const lastFile = expandedRes.programs[0]?.files[1_999];
+  expect(firstFile?.directory.state).toBe("present");
+  expect(firstFile?.path.value).toBe(`${longDir}/f0.c`);
+  expect(lastFile?.name).toEqual({ state: "present", value: "f1999.c" });
+  expect(lastFile?.directory).toEqual({ state: "unknown", value: null });
+  expect(lastFile?.path).toEqual({ state: "unknown", value: null });
+  expect(expandedRes.programs[0]?.issues.map((i) => i.code)).toContain(
+    "string_budget",
+  );
+  expect(expandedRes.coverage.status).toBe("partial");
+  expect(expandedRes.limitations).toContain(
+    DWARF_LINE_LIMITATIONS.stringExpansionTruncated,
+  );
+  expect(JSON.stringify(expandedRes).length).toBeLessThan(24 * 1024 * 1024);
+
+  // 2. Single 64 KiB file path referenced by 600 co-located rows + address matches
+  const rowBombProg = lineProgram({
+    version: 5,
+    v5Directories: [{ form: 0x08, inline: longDir }],
+    v5Files: [{ path: { form: 0x08, inline: "main.c" }, dirIndex: 0 }],
+    opcodes: Buffer.concat([
+      lneSetAddress(0x2000n, 8, true),
+      lnsSetFile(0),
+      Buffer.alloc(600, 0x01), // 600 x DW_LNS_copy
+      lnsAdvancePc(8),
+      lneEndSequence(),
+    ]),
+  });
+  const rowMatchRes = assertValidReportSchema(
+    rowBombProg,
+    parseDwarfLinePrograms({
+      line: rowBombProg,
+      lineStr: null,
+      str: null,
+      strOffsets: null,
+      lineFileOffset: 0,
+      little: true,
+      defaultAddressSize: 8,
+      addresses: ["0x2000", "0x2002"],
+      maxPrograms: 16,
+      maxRows: 600,
+      unappliedLineRelocations: [],
+      unappliedDebugRelocations: [],
+    }),
+  );
+  expect(rowMatchRes.coverage.status).toBe("partial");
+  expect(rowMatchRes.limitations).toContain(
+    DWARF_LINE_LIMITATIONS.stringExpansionTruncated,
+  );
+  expect(rowMatchRes.rows.length).toBeLessThan(600);
+  expect(JSON.stringify(rowMatchRes).length).toBeLessThan(24 * 1024 * 1024);
+});

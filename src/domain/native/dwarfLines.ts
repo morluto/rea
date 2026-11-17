@@ -41,6 +41,10 @@ export const MAX_DWARF_LINE_PROGRAM_STEPS = 2_097_152;
 export const MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES = 262_144;
 /** Maximum decoded string bytes retained across directory and file tables (16 MiB). */
 export const MAX_DWARF_LINE_STRING_TABLE_BYTES = 16 * 1024 * 1024;
+/** Maximum derived directory/file path and row-label characters retained across one call. */
+export const MAX_DWARF_LINE_EXPANDED_STRING_CHARS = 16 * 1024 * 1024;
+/** Maximum sequence summary entries retained across all programs in one call. */
+export const MAX_DWARF_LINE_SEQUENCES = 65_536;
 /** Maximum rows retained inside one sequence index for address attribution. */
 export const MAX_DWARF_LINE_SEQUENCE_ROWS = 262_144;
 /** Maximum address-match rows retained across all address queries in one call. */
@@ -98,6 +102,8 @@ export const DWARF_LINE_LIMITATIONS = {
     "Emitted line-matrix rows were omitted because max_rows was set to 0.",
   addressMatchesTruncated:
     "Address match entries were truncated at the 65,536-match output limit.",
+  stringExpansionTruncated:
+    "Derived directory/file path strings or row labels were truncated at the 16 MiB expansion budget.",
 } as const;
 
 const safeInt = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);

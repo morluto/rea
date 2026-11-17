@@ -78,8 +78,9 @@ order:
   with `complete` coverage while omitting inline row matrices.
 - Shared decode work is capped at `2,097,152` steps, aggregate header tables at
   `262,144` entries across programs (`65,536` per table), header string
-  retention at `16 MiB` (`64 KiB` per C-string), per-sequence index rows at
-  `262,144`, retained address matches at `65,536`, and program issues at `32`
+  retention at `16 MiB` (`64 KiB` per C-string), expanded file paths/labels at
+  `16 MiB` characters, sequence summaries at `65,536`, per-sequence index rows
+  at `262,144`, retained address matches at `65,536`, and program issues at `32`
   per program.
 - Set `detail: "summary"` to retain the complete Evidence in the session (or via
   CLI `--evidence_output`) and query `inspect_analysis_view` with

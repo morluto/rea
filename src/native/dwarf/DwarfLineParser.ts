@@ -12,12 +12,14 @@ import {
   type DwarfLineStringFact,
   DWARF_LINE_LIMITATIONS,
   MAX_DWARF_LINE_ADDRESS_MATCHES,
+  MAX_DWARF_LINE_EXPANDED_STRING_CHARS,
   MAX_DWARF_LINE_FORMAT_COLUMNS,
   MAX_DWARF_LINE_HEADER_ENTRIES,
   MAX_DWARF_LINE_PROGRAM_ISSUES,
   MAX_DWARF_LINE_PROGRAM_STEPS,
   MAX_DWARF_LINE_PROGRAMS_WALKED,
   MAX_DWARF_LINE_SEQUENCE_ROWS,
+  MAX_DWARF_LINE_SEQUENCES,
   MAX_DWARF_LINE_STANDARD_OPCODES,
   MAX_DWARF_LINE_STRING_TABLE_BYTES,
   MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES,
@@ -180,6 +182,10 @@ interface SharedBudget {
   stepBudgetHit: boolean;
   headerEntriesRemaining: number;
   headerEntryBudgetHit: boolean;
+  expandedCharsRemaining: number;
+  stringExpansionBudgetHit: boolean;
+  sequencesRemaining: number;
+  sequenceCountBudgetHit: boolean;
   addressMatchesRemaining: number;
   addressMatchBudgetHit: boolean;
   sequenceBudgetHit: boolean;
@@ -257,6 +263,19 @@ const consumeHeaderEntry = (
     return false;
   }
   budget.headerEntriesRemaining -= 1;
+  return true;
+};
+
+const tryConsumeExpandedChars = (
+  budget: SharedBudget,
+  chars: number,
+): boolean => {
+  if (chars <= 0) return true;
+  if (chars > budget.expandedCharsRemaining) {
+    budget.stringExpansionBudgetHit = true;
+    return false;
+  }
+  budget.expandedCharsRemaining -= chars;
   return true;
 };
 
@@ -592,25 +611,62 @@ const joinDirectoryAndFile = (directory: string, name: string): string => {
   return `${directory}${sep}${name}`;
 };
 
+const joinDirectoryAndFileLength = (
+  directory: string,
+  name: string,
+): number => {
+  if (directory.length === 0) return name.length;
+  const last = directory[directory.length - 1] ?? "";
+  return isPathSeparator(last)
+    ? directory.length + name.length
+    : directory.length + 1 + name.length;
+};
+
 const computeCombinedPath = (
   name: DwarfLineStringFact,
-  directoryIndex: number | null,
+  _directoryIndex: number | null,
   directory: DwarfLineStringFact,
-  zeroBased: boolean,
+  _zeroBased: boolean,
+  budget: SharedBudget,
+  issues: ProgramIssueCollector,
 ): DwarfLineStringFact => {
   if (name.state !== "present" || name.value === null) return name;
-  if (isAbsoluteSourcePath(name.value)) return name;
+  if (isAbsoluteSourcePath(name.value)) {
+    if (!tryConsumeExpandedChars(budget, name.value.length)) {
+      issues.push(
+        "string_budget",
+        `Expanded file path exceeded ${MAX_DWARF_LINE_EXPANDED_STRING_CHARS}-character budget`,
+      );
+      return UNKNOWN_STRING;
+    }
+    return name;
+  }
   if (directory.state === "present" && directory.value !== null) {
+    const joinedLength = joinDirectoryAndFileLength(
+      directory.value,
+      name.value,
+    );
+    if (!tryConsumeExpandedChars(budget, joinedLength)) {
+      issues.push(
+        "string_budget",
+        `Expanded file path exceeded ${MAX_DWARF_LINE_EXPANDED_STRING_CHARS}-character budget`,
+      );
+      return UNKNOWN_STRING;
+    }
     return {
       state: "present",
       value: joinDirectoryAndFile(directory.value, name.value),
     };
   }
   if (directory.state === "unresolved") return UNRESOLVED_STRING;
-  if (!zeroBased && (directoryIndex === null || directoryIndex === 0)) {
-    return name;
+  if (directory.state === "unknown") return UNKNOWN_STRING;
+  if (!tryConsumeExpandedChars(budget, name.value.length)) {
+    issues.push(
+      "string_budget",
+      `Expanded file path exceeded ${MAX_DWARF_LINE_EXPANDED_STRING_CHARS}-character budget`,
+    );
+    return UNKNOWN_STRING;
   }
-  if (directory.state === "absent") return name;
   return name;
 };
 
@@ -934,6 +990,7 @@ const buildFileEntry = (
   definedByOpcode: boolean,
   directories: readonly DwarfLineDirectory[],
   zeroBased: boolean,
+  budget: SharedBudget,
   issues: ProgramIssueCollector,
 ): DwarfLineFile => {
   let directory: DwarfLineStringFact = ABSENT_STRING;
@@ -962,7 +1019,25 @@ const buildFileEntry = (
       }
     }
   }
-  const path = computeCombinedPath(name, directoryIndex, directory, zeroBased);
+  if (
+    directory.state === "present" &&
+    directory.value !== null &&
+    !tryConsumeExpandedChars(budget, directory.value.length)
+  ) {
+    issues.push(
+      "string_budget",
+      `Repeated directory string exceeded ${MAX_DWARF_LINE_EXPANDED_STRING_CHARS}-character expansion budget`,
+    );
+    directory = UNKNOWN_STRING;
+  }
+  const path = computeCombinedPath(
+    name,
+    directoryIndex,
+    directory,
+    zeroBased,
+    budget,
+    issues,
+  );
   return {
     index,
     name,
@@ -1155,6 +1230,7 @@ const readV5Tables = (
         false,
         directories,
         true,
+        budget,
         issues,
       ),
     );
@@ -1245,6 +1321,7 @@ const readLegacyTables = (
         false,
         directories,
         false,
+        budget,
         issues,
       ),
     );
@@ -1711,7 +1788,12 @@ interface RunProgramResult {
   readonly addressesUnresolved: boolean;
   readonly sequences: readonly DwarfLineSequence[];
   readonly rowsOmitted: boolean;
-  readonly stopReason: "complete" | "max_rows" | "decode_budget" | "aborted";
+  readonly stopReason:
+    | "complete"
+    | "max_rows"
+    | "decode_budget"
+    | "string_budget"
+    | "aborted";
 }
 
 const runLineMachine = (
@@ -1746,6 +1828,7 @@ const runLineMachine = (
   let aborted = false;
   let rowLimitHit = false;
   let haltedByMaxRows = false;
+  let haltedByRowStringBudget = false;
   let seqStartAddr: bigint | null = null;
   let seqEndAddr: bigint | null = null;
   let seqRowCount = 0;
@@ -1760,14 +1843,19 @@ const runLineMachine = (
       seqStartAddr !== null ? formatDwarfLineAddress(seqStartAddr) : null;
     const endAddr =
       seqEndAddr !== null ? formatDwarfLineAddress(seqEndAddr) : null;
-    sequences.push({
-      sequence_index: seqIdx,
-      start_address: startAddr,
-      end_address: endAddr,
-      has_end_sequence: hasEndSequence,
-      row_start: totalRows - seqRowCount,
-      row_count: seqRowCount,
-    });
+    if (budget.sequencesRemaining > 0) {
+      budget.sequencesRemaining -= 1;
+      sequences.push({
+        sequence_index: seqIdx,
+        start_address: startAddr,
+        end_address: endAddr,
+        has_end_sequence: hasEndSequence,
+        row_start: totalRows - seqRowCount,
+        row_count: seqRowCount,
+      });
+    } else {
+      budget.sequenceCountBudgetHit = true;
+    }
     if (addressTargets !== null && !budget.addressMatchBudgetHit) {
       const seqIndex: DecodedSequenceIndex = {
         programIndex,
@@ -1794,7 +1882,7 @@ const runLineMachine = (
     currentMonotonic = true;
   };
 
-  const emitRow = (): "ok" | "max_rows" | "decode_budget" => {
+  const emitRow = (): "ok" | "max_rows" | "decode_budget" | "string_budget" => {
     if (
       retainRowsForProgram &&
       maxRows > 0 &&
@@ -1822,24 +1910,38 @@ const runLineMachine = (
     ) {
       const displayFile =
         fileEntry?.path.value ?? fileEntry?.name.value ?? null;
-      retainedRows += 1;
-      retainedRowsOut.push({
-        program_index: programIndex,
-        sequence_index: seqIndex,
-        address: formatDwarfLineAddress(regs.address),
-        op_index: regs.opIndex,
-        file_index: regs.file,
-        file: displayFile,
-        line: regs.line,
-        column: regs.column,
-        is_stmt: regs.isStmt,
-        basic_block: regs.basicBlock,
-        end_sequence: regs.endSequence,
-        prologue_end: regs.prologueEnd,
-        epilogue_begin: regs.epilogueBegin,
-        isa: regs.isa,
-        discriminator: regs.discriminator,
-      });
+      if (
+        displayFile !== null &&
+        !tryConsumeExpandedChars(budget, displayFile.length)
+      ) {
+        issues.push(
+          "string_budget",
+          `Retained row string expansion exceeded ${MAX_DWARF_LINE_EXPANDED_STRING_CHARS}-character budget`,
+        );
+        if (addressTargets === null) {
+          haltedByRowStringBudget = true;
+          return "string_budget";
+        }
+      } else {
+        retainedRows += 1;
+        retainedRowsOut.push({
+          program_index: programIndex,
+          sequence_index: seqIndex,
+          address: formatDwarfLineAddress(regs.address),
+          op_index: regs.opIndex,
+          file_index: regs.file,
+          file: displayFile,
+          line: regs.line,
+          column: regs.column,
+          is_stmt: regs.isStmt,
+          basic_block: regs.basicBlock,
+          end_sequence: regs.endSequence,
+          prologue_end: regs.prologueEnd,
+          epilogue_begin: regs.epilogueBegin,
+          isa: regs.isa,
+          discriminator: regs.discriminator,
+        });
+      }
     }
 
     if (addressTargets !== null) {
@@ -2037,6 +2139,7 @@ const runLineMachine = (
             true,
             header.directories,
             zeroBased,
+            budget,
             issues,
           ),
         );
@@ -2243,7 +2346,12 @@ const runLineMachine = (
     budget.headerEntryBudgetHit ||
     budget.sequenceBudgetHit;
   if (seqRowCount > 0) {
-    if (!haltedByMaxRows && !aborted && !budgetStopped) {
+    if (
+      !haltedByMaxRows &&
+      !haltedByRowStringBudget &&
+      !aborted &&
+      !budgetStopped
+    ) {
       issues.push(
         "end_sequence_missing",
         "Line-number program ended without DW_LNE_end_sequence",
@@ -2260,11 +2368,13 @@ const runLineMachine = (
     rowsOmitted: rowLimitHit,
     stopReason: budgetStopped
       ? "decode_budget"
-      : aborted
-        ? "aborted"
-        : haltedByMaxRows
-          ? "max_rows"
-          : "complete",
+      : haltedByRowStringBudget
+        ? "string_budget"
+        : aborted
+          ? "aborted"
+          : haltedByMaxRows
+            ? "max_rows"
+            : "complete",
   };
 };
 
@@ -2277,6 +2387,14 @@ const tryPushAddressMatch = (
   budget: SharedBudget,
 ): boolean => {
   if (budget.addressMatchesRemaining <= 0) {
+    budget.addressMatchBudgetHit = true;
+    return false;
+  }
+  const matchChars =
+    (r.fileName?.length ?? 0) +
+    (r.directory?.length ?? 0) +
+    (r.path?.length ?? 0);
+  if (!tryConsumeExpandedChars(budget, matchChars)) {
     budget.addressMatchBudgetHit = true;
     return false;
   }
@@ -2477,6 +2595,10 @@ export const parseDwarfLinePrograms = (
     stepBudgetHit: false,
     headerEntriesRemaining: MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES,
     headerEntryBudgetHit: false,
+    expandedCharsRemaining: MAX_DWARF_LINE_EXPANDED_STRING_CHARS,
+    stringExpansionBudgetHit: false,
+    sequencesRemaining: MAX_DWARF_LINE_SEQUENCES,
+    sequenceCountBudgetHit: false,
     addressMatchesRemaining: MAX_DWARF_LINE_ADDRESS_MATCHES,
     addressMatchBudgetHit: false,
     sequenceBudgetHit: false,
@@ -2653,6 +2775,9 @@ export const parseDwarfLinePrograms = (
           : budget.sequenceBudgetHit
             ? `Line sequence exceeded ${MAX_DWARF_LINE_SEQUENCE_ROWS} rows`
             : `Line-program decoding stopped at the ${MAX_DWARF_LINE_PROGRAM_STEPS}-step opcode budget`;
+      } else if (runResult.stopReason === "string_budget") {
+        partialReason ??= `Line-program string expansion exceeded ${MAX_DWARF_LINE_EXPANDED_STRING_CHARS}-character budget`;
+        walkIncomplete = true;
       } else if (runResult.stopReason === "aborted") {
         walkIncomplete = true;
         partialReason ??=
@@ -2701,6 +2826,7 @@ export const parseDwarfLinePrograms = (
 
     if (
       runResult.stopReason === "decode_budget" ||
+      runResult.stopReason === "string_budget" ||
       budget.stepBudgetHit ||
       budget.headerEntryBudgetHit ||
       budget.sequenceBudgetHit
@@ -2714,6 +2840,12 @@ export const parseDwarfLinePrograms = (
 
   if (maxRows > 0 && totalRows > maxRows && partialReason === null) {
     partialReason = `Retained line-row limit (${maxRows}) reached`;
+  }
+  if (strings.stringBudgetHit || budget.stringExpansionBudgetHit) {
+    partialReason ??= `Line-program string expansion exceeded ${MAX_DWARF_LINE_EXPANDED_STRING_CHARS}-character budget`;
+  }
+  if (budget.sequenceCountBudgetHit) {
+    partialReason ??= `Retained line-sequence limit (${MAX_DWARF_LINE_SEQUENCES}) reached`;
   }
   if (budget.addressMatchBudgetHit) {
     partialReason ??= `Retained address-match limit (${MAX_DWARF_LINE_ADDRESS_MATCHES}) reached`;
@@ -2736,6 +2868,9 @@ export const parseDwarfLinePrograms = (
   }
   if (maxRows === 0) {
     limitations.push(DWARF_LINE_LIMITATIONS.rowsOmittedByCaller);
+  }
+  if (strings.stringBudgetHit || budget.stringExpansionBudgetHit) {
+    limitations.push(DWARF_LINE_LIMITATIONS.stringExpansionTruncated);
   }
   if (budget.addressMatchBudgetHit) {
     limitations.push(DWARF_LINE_LIMITATIONS.addressMatchesTruncated);
