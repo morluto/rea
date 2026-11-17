@@ -781,6 +781,7 @@
 * **dmg:** stop hard-coding host speed in attachment recovery ([#10431](https://github.com/morluto/rea/issues/10431)) ([f1e250e](https://github.com/morluto/rea/commit/f1e250ee763cac53c120fbc917b128d595fc90a8))
 * **docs:** drop doc-content checks that review and docs:check already own ([#10980](https://github.com/morluto/rea/issues/10980)) ([97b017c](https://github.com/morluto/rea/commit/97b017c500eee07dfe4960649a296c86a05bbba2))
 * drop a frozen bridge sentence and a pcap deadline override ([982ea7f](https://github.com/morluto/rea/commit/982ea7fa9fd78c3f500146d8b69650561aebca79))
+* **elf:** verify debuglink checksums at the file boundary ([#11863](https://github.com/morluto/rea/issues/11863)) ([adaa04d](https://github.com/morluto/rea/commit/adaa04d9cef58eb23d665d211356b213bfc87e3b))
 * **environment:** bound create explanation by request-body reads instead of elapsed time ([#11657](https://github.com/morluto/rea/issues/11657)) ([9901e8d](https://github.com/morluto/rea/commit/9901e8dfcd7684d2bb5b025fe668f32b4c941297))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
 * **errors:** assert recovery kind and retryability instead of remediation prose ([#10791](https://github.com/morluto/rea/issues/10791)) ([8d7eaf9](https://github.com/morluto/rea/commit/8d7eaf9693dcee5f400c8818a9575ee6cac29db6)), closes [#10508](https://github.com/morluto/rea/issues/10508)
