@@ -1369,6 +1369,31 @@ const chargeReconstructionWork = (
   return ok(work);
 };
 
+const hasCompleteExtentCoverage = (
+  operations: readonly AndroidOtaInstallOperation[],
+  imageSize: number,
+  blockSize: number,
+): boolean => {
+  const blockCount = Math.ceil(imageSize / blockSize);
+  if (blockCount === 0) return true;
+  const spans: [number, number][] = [];
+  for (const operation of operations) {
+    for (const extent of operation.dstExtents) {
+      if (extent.numBlocks === 0) continue;
+      if (extent.startBlock === null) return false;
+      spans.push([extent.startBlock, extent.startBlock + extent.numBlocks]);
+    }
+  }
+  spans.sort((left, right) => left[0] - right[0]);
+  let coveredUntil = 0;
+  for (const [start, end] of spans) {
+    if (start > coveredUntil) return false;
+    if (end > coveredUntil) coveredUntil = end;
+    if (coveredUntil >= blockCount) return true;
+  }
+  return false;
+};
+
 /**
  * Rebuild a full-payload partition image. A declared-hash mismatch fails
  * unless `verifyDeclaredHash` is false, which leaves that decision to a caller
@@ -1450,6 +1475,12 @@ export const reconstructAndroidOtaPartition = (
       ),
     );
   }
+  if (!hasCompleteExtentCoverage(partition.operations, size, blockSize))
+    return err(
+      malformed(
+        `Android OTA partition ${partition.name} destination extents do not cover the full ${String(size)}-byte image`,
+      ),
+    );
   if (options.verifyDeclaredHash === false) return ok(image);
   const observed = sha256Hex(image);
   const declared = partition.newPartitionInfo.hashHex;

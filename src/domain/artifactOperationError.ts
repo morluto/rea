@@ -89,6 +89,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_elf_dependencies"
       | "inspect_kernel_build_config"
       | "inspect_erlang_beam"
+      | "inspect_nuget_nupkg"
       | "inspect_v8_code_cache"
       | "extract_artifact"
       | "decode_interface_builder"

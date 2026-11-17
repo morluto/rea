@@ -661,6 +661,41 @@ it("refuses destination extents outside the image and short operation data", () 
   ).toMatchObject({ ok: true });
 });
 
+it("refuses reconstruction when destination extents leave blocks unwritten", () => {
+  const blockSize = 4096;
+  const bytes = buildAndroidOtaPayload({
+    blockSize,
+    partitions: [
+      {
+        name: "boot",
+        newSize: blockSize * 2,
+        operations: [
+          {
+            type: 0,
+            data: Buffer.alloc(blockSize, 0x41),
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(bytes);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  const blob = bytes.subarray(parsed.value.header.blobOffset);
+  expect(
+    reconstructAndroidOtaPartition(
+      parsed.value.partitions[0]!,
+      blockSize,
+      (offset, length) => blob.subarray(offset, offset + length),
+      { verifyDeclaredHash: false },
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+});
+
 it("names duplicate partitions with a per-name suffix that skips taken names", () => {
   const parsed = parse(
     buildAndroidOtaPayload({
