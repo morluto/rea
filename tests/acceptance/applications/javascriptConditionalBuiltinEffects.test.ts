@@ -287,6 +287,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["clean", `fetch(${JSON.stringify(String.raw`http:\\host/x`)})`, true],
       ["relative", 'fetch("/api")', true],
       ["same-scheme", 'fetch("https:user@host/x")', true],
+      ["fetch-long-s", 'fetch("httpſ://api.example/x")', true],
+      ["socket-long-s", 'new WebSocket("wſ://api.example/x")', true],
+      ["fetch-uppercase", 'fetch("HTTPS://[")', false],
+      ["socket-uppercase", 'new WebSocket("WSS://[")', false],
     ] as const;
     for (const [name, source] of cases)
       await writeFile(join(root, `${name}.cjs`), `${source};\n`);

@@ -58,6 +58,28 @@ it("leaves an unparseable non-special scheme outside the refusal", () => {
 });
 
 it.each([
+  ["fetch", "httpſ://api.example/x"],
+  ["WebSocket", "wſ://api.example/x"],
+])(
+  "keeps a base-dependent %s URL with a non-ASCII scheme lookalike",
+  (method, url) => {
+    expect(new URL(url, "https://page.example/base").origin).toBe(
+      "https://page.example",
+    );
+    const call = method === "fetch" ? "fetch" : "new WebSocket";
+    expect(requestsFor(`${call}(${JSON.stringify(url)})`)).toEqual([method]);
+  },
+);
+
+it.each([
+  ["fetch", "HTTPS://["],
+  ["WebSocket", "WSS://["],
+])("still excludes a malformed uppercase %s authority", (method, url) => {
+  const call = method === "fetch" ? "fetch" : "new WebSocket";
+  expect(requestsFor(`${call}(${JSON.stringify(url)})`)).toEqual([]);
+});
+
+it.each([
   ["a URL with a user name", 'fetch("https://user@api.example.test/x")'],
   ["a URL with a password", 'fetch("https://:pw@api.example.test/x")'],
   [

@@ -34,7 +34,9 @@ const literalString = (node: t.Node | undefined): string | undefined => {
  */
 const explicitAuthorityUrl = (url: string): URL | null | undefined => {
   const text = htmlUrlText(url);
-  const special = /^(?:https?|wss?):[\x2F\x5C]{2}/iu.test(text);
+  // URL schemes are ASCII; Unicode case folding would also accept `ſ` as s.
+  const special =
+    /^(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?):[\x2F\x5C]{2}/u.test(text);
   if (!special && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(text))
     return undefined;
   if (!URL.canParse(text)) return special ? null : undefined;
