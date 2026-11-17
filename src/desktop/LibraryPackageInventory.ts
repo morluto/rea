@@ -382,7 +382,10 @@ export const inspectLibraryPackages = async (
             ),
           };
         } catch (cause) {
-          if (isRefusedRead(cause)) return undefined;
+          if (isRefusedRead(cause)) {
+            abortIfNeeded(signal);
+            return undefined;
+          }
           throw hostReadFailure(cause);
         }
       },
