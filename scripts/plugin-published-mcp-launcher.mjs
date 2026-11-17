@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import {
   accessSync,
+  chmodSync,
   closeSync,
   constants as fsConstants,
   fchmodSync,
@@ -10,6 +11,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -17,6 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -30,9 +33,10 @@ import { npmInvocation } from "./lib/npm-invocation.mjs";
 // signals or awaiting rea, orphaning session/provider resources.
 const PACKAGE = "rea-agents";
 const READY_MARKER = ".rea-plugin-ready";
+const CLEANUP_OWNER = ".rea-plugin-cleanup-owner";
 const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143 };
 // A lock or recovery directory with no readable owner record is only legitimate
-// for the instant between mkdir and the pid write; older than this it was
+// for the instant between mkdir and the lease bind; older than this it was
 // abandoned by a launcher that died in between.
 const ABANDONED_LOCK_GRACE_MS = 5_000;
 const [version, ...extra] = process.argv.slice(2);
@@ -54,6 +58,10 @@ const cacheRoot = join(
   tmpdir(),
   uid === undefined ? "rea-plugin-mcp" : `rea-plugin-mcp-${uid}`,
 );
+
+// Native bindings (for example Frida) are arch-specific. ARM64 and Rosetta x64
+// clients under the same user must not share one install prefix or lock.
+const installKey = `${version}-${process.arch}`;
 
 /**
  * Tighten an already-admitted owner directory without following a replacement
@@ -155,21 +163,6 @@ const isIncompleteCache = (cause) => {
   );
 };
 
-const processAlive = (pid) => {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (cause) {
-    return !(
-      cause !== null &&
-      typeof cause === "object" &&
-      "code" in cause &&
-      cause.code === "ESRCH"
-    );
-  }
-};
-
 const isPathExistsError = (cause) =>
   cause !== null &&
   typeof cause === "object" &&
@@ -184,43 +177,117 @@ const isOlderThanGrace = (path) => {
   }
 };
 
-const claimInstallLock = (lockPath) => {
-  mkdirSync(lockPath, { mode: 0o700 });
-  verifyOwnedCachePath(lockPath, "lock");
-  writeFileSync(join(lockPath, "pid"), `${String(process.pid)}\n`, {
-    mode: 0o600,
-  });
-};
+/** Keep listening servers reachable so GC cannot drop a live install lease. */
+const heldLockServers = new Set();
 
-const readLockHolder = (lockPath) => {
-  verifyOwnedCachePath(lockPath, "lock");
-  return Number.parseInt(readFileSync(join(lockPath, "pid"), "utf8"), 10);
+const leaseSocketPath = (lockPath) => {
+  if (process.platform === "win32") {
+    // Named pipes vanish with the last handle; encode a stable per-lock name.
+    const key = Buffer.from(lockPath).toString("base64url").slice(0, 80);
+    return `\\\\.\\pipe\\rea-plugin-mcp-lock-${key}`;
+  }
+  return join(lockPath, "lease.sock");
 };
 
 /**
- * Exclusive install lock; reclaim only when the recorded holder is gone.
+ * Live lease for the install lock. The OS ends the listening socket when this
+ * process exits, so a reused PID cannot keep the lock (OwnedLease pattern).
+ */
+const bindLockLease = (lockPath) => {
+  const socketPath = leaseSocketPath(lockPath);
+  if (process.platform !== "win32") {
+    try {
+      rmSync(socketPath, { force: true });
+    } catch {
+      // A missing socket is the common case for a fresh lock directory.
+    }
+  }
+  const server = createServer();
+  server.unref();
+  return new Promise((resolve, reject) => {
+    const onError = (cause) => {
+      server.off("error", onError);
+      reject(cause);
+    };
+    server.once("error", onError);
+    server.listen(socketPath, () => {
+      server.off("error", onError);
+      if (process.platform !== "win32") {
+        try {
+          // Owner-only socket matches OwnedLease's chmod boundary.
+          chmodSync(socketPath, 0o600);
+        } catch {
+          // Best-effort; directory mode already restricts the parent.
+        }
+      }
+      heldLockServers.add(server);
+      writeFileSync(join(lockPath, "pid"), `${String(process.pid)}\n`, {
+        mode: 0o600,
+      });
+      resolve(server);
+    });
+  });
+};
+
+const releaseLockLease = (server) => {
+  if (server === undefined) return;
+  heldLockServers.delete(server);
+  try {
+    server.close();
+  } catch {
+    // The lease may already have ended with the process.
+  }
+};
+
+/** True only while the recorded lock holder still serves its live lease. */
+const lockOwnerAlive = (lockPath) =>
+  new Promise((resolve) => {
+    const socket = createConnection(leaseSocketPath(lockPath));
+    const done = (alive) => {
+      socket.removeAllListeners();
+      try {
+        socket.destroy();
+      } catch {
+        // Already closed.
+      }
+      resolve(alive);
+    };
+    socket.setTimeout(100);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.once("timeout", () => done(false));
+  });
+
+const claimInstallLock = async (lockPath) => {
+  mkdirSync(lockPath, { mode: 0o700 });
+  verifyOwnedCachePath(lockPath, "lock");
+  return bindLockLease(lockPath);
+};
+
+/**
+ * Exclusive install lock; reclaim only when the live lease is gone.
  * Stale cleanup is serialized through a sibling recovery directory, matching
  * OwnedLease: never delete the lock pathname from an earlier PID read alone.
  */
-const tryAcquireInstallLock = (lockPath) => {
+const tryAcquireInstallLock = async (lockPath) => {
   try {
-    claimInstallLock(lockPath);
-    return true;
+    return { acquired: true, server: await claimInstallLock(lockPath) };
   } catch (cause) {
     if (!isPathExistsError(cause)) throw cause;
   }
 
-  let holder = NaN;
+  let ownerAlive = false;
   try {
-    holder = readLockHolder(lockPath);
+    verifyOwnedCachePath(lockPath, "lock");
+    ownerAlive = await lockOwnerAlive(lockPath);
   } catch (cause) {
     if (cause instanceof Error && cause.message.includes("executable cache"))
       throw cause;
-    // No owner record yet: a claimant may be mid-write. Only an old directory
+    // No owner lease yet: a claimant may be mid-bind. Only an old directory
     // is abandoned; otherwise keep waiting.
-    if (!isOlderThanGrace(lockPath)) return false;
+    if (!isOlderThanGrace(lockPath)) return { acquired: false };
   }
-  if (processAlive(holder)) return false;
+  if (ownerAlive) return { acquired: false };
 
   // Serialize stale cleanup through the replacement mkdir: otherwise two
   // recoverers can unlink the lock that one of them has just acquired.
@@ -238,32 +305,24 @@ const tryAcquireInstallLock = (lockPath) => {
         // Another launcher removed or replaced it first; retry on the next poll.
       }
     }
-    return false;
+    return { acquired: false };
   }
 
   try {
     try {
-      claimInstallLock(lockPath);
-      return true;
+      return { acquired: true, server: await claimInstallLock(lockPath) };
     } catch (cause) {
       if (!isPathExistsError(cause)) throw cause;
     }
 
-    let current = NaN;
-    try {
-      current = readLockHolder(lockPath);
-    } catch {
-      current = NaN;
-    }
-    if (processAlive(current)) return false;
+    if (await lockOwnerAlive(lockPath)) return { acquired: false };
 
     rmSync(lockPath, { recursive: true, force: true });
     try {
-      claimInstallLock(lockPath);
-      return true;
+      return { acquired: true, server: await claimInstallLock(lockPath) };
     } catch (cause) {
       if (!isPathExistsError(cause)) throw cause;
-      return false;
+      return { acquired: false };
     }
   } finally {
     try {
@@ -274,8 +333,65 @@ const tryAcquireInstallLock = (lockPath) => {
   }
 };
 
-const releaseInstallLock = (lockPath) => {
+const releaseInstallLock = (lockPath, server) => {
+  releaseLockLease(server);
   rmSync(lockPath, { recursive: true, force: true });
+};
+
+const cleanupOwnerPath = (staging) => join(staging, CLEANUP_OWNER);
+
+/**
+ * Remove a staging tree. On failure, retain an owner record so a later launch
+ * can retry cleanup instead of abandoning the residue under a new PID path.
+ */
+const removeStaging = (staging) => {
+  try {
+    rmSync(staging, { recursive: true, force: true });
+  } catch (cause) {
+    try {
+      mkdirSync(staging, { recursive: true, mode: 0o700 });
+      writeFileSync(
+        cleanupOwnerPath(staging),
+        `${String(process.pid)}\n${staging}\n`,
+        { mode: 0o600 },
+      );
+    } catch {
+      // Keep the original cleanup failure as the reported cause.
+    }
+    throw cause;
+  }
+};
+
+/** Retry cleanup for staging directories this install key previously retained. */
+const retryRetainedStagingCleanup = () => {
+  let entries;
+  try {
+    entries = readdirSync(cacheRoot, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const prefix = `${installKey}.staging-`;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
+    const staging = join(cacheRoot, entry.name);
+    try {
+      verifyOwnedCachePath(staging, "prefix");
+    } catch {
+      continue;
+    }
+    try {
+      accessSync(cleanupOwnerPath(staging));
+    } catch {
+      continue;
+    }
+    try {
+      removeStaging(staging);
+    } catch (cause) {
+      process.stderr.write(
+        `REA plugin retained staging cleanup ownership at ${staging}: ${cause instanceof Error ? cause.message : String(cause)}.\n`,
+      );
+    }
+  }
 };
 
 const publishInstalledPrefix = (staging, prefix) => {
@@ -309,27 +425,69 @@ const signalInstaller = (child, signal) => {
 };
 
 /**
- * Own the cold-start installer until it exits. Signal handlers stay attached
- * only for this acquisition stage; the in-process runtime registers its own.
+ * Observe signals and MCP stdin end/close during acquisition without consuming
+ * buffered protocol bytes, matching processShutdown's startup cancel surface.
  */
-const runOwnedInstaller = (invocation) => {
+const observeAcquisitionCancel = (onCancel) => {
   const signalExitCodes = SIGNAL_EXIT_CODES;
-  let child;
-  let forceTimer;
-  let shutdownSignal;
-  const onSignal = (signal) => {
-    if (shutdownSignal !== undefined) return;
-    shutdownSignal = signal;
-    if (child !== undefined) {
-      signalInstaller(child, signal);
-      forceTimer = setTimeout(() => {
-        if (child !== undefined) signalInstaller(child, "SIGKILL");
-      }, 1_000);
-      forceTimer.unref?.();
+  let cancelled;
+  const requestCancel = (signal) => {
+    if (cancelled !== undefined) return;
+    cancelled = { signal };
+    onCancel(cancelled);
+  };
+  const onSignal = (signal) => requestCancel(signal);
+  const onInputEnd = () => {
+    requestCancel(undefined);
+    try {
+      process.stdin.destroy();
+    } catch {
+      // Stdin may already have closed.
     }
   };
   for (const signal of Object.keys(signalExitCodes))
     process.on(signal, onSignal);
+  process.stdin.on("end", onInputEnd);
+  process.stdin.on("close", onInputEnd);
+  return {
+    get cancelled() {
+      return cancelled;
+    },
+    release() {
+      for (const signal of Object.keys(signalExitCodes))
+        process.off(signal, onSignal);
+      process.stdin.off("end", onInputEnd);
+      process.stdin.off("close", onInputEnd);
+      if (cancelled !== undefined) {
+        try {
+          process.stdin.destroy();
+        } catch {
+          // Stdin may already have closed.
+        }
+      }
+    },
+  };
+};
+
+/**
+ * Own the cold-start installer until it exits. Cancel handlers stay attached
+ * only for this acquisition stage; the in-process runtime registers its own.
+ */
+const runOwnedInstaller = (invocation) => {
+  let child;
+  let forceTimer;
+  /** @type {{ signal?: string } | undefined} */
+  let shutdown;
+  const cancel = observeAcquisitionCancel((requested) => {
+    shutdown = requested;
+    if (child === undefined) return;
+    const signal = requested.signal ?? "SIGTERM";
+    signalInstaller(child, signal);
+    forceTimer = setTimeout(() => {
+      if (child !== undefined) signalInstaller(child, "SIGKILL");
+    }, 1_000);
+    forceTimer.unref?.();
+  });
 
   return new Promise((resolve, reject) => {
     try {
@@ -345,28 +503,34 @@ const runOwnedInstaller = (invocation) => {
         detached: process.platform !== "win32",
       });
     } catch (cause) {
-      for (const signal of Object.keys(signalExitCodes))
-        process.off(signal, onSignal);
+      cancel.release();
       reject(cause);
       return;
     }
 
+    if (shutdown !== undefined) {
+      const signal = shutdown.signal ?? "SIGTERM";
+      signalInstaller(child, signal);
+      forceTimer = setTimeout(() => {
+        if (child !== undefined) signalInstaller(child, "SIGKILL");
+      }, 1_000);
+      forceTimer.unref?.();
+    }
+
     child.once("error", (cause) => {
       if (forceTimer !== undefined) clearTimeout(forceTimer);
-      for (const signal of Object.keys(signalExitCodes))
-        process.off(signal, onSignal);
+      cancel.release();
       reject(cause);
     });
     child.once("exit", (status, signal) => {
       if (forceTimer !== undefined) clearTimeout(forceTimer);
-      for (const signal of Object.keys(signalExitCodes))
-        process.off(signal, onSignal);
-      if (shutdownSignal !== undefined) {
+      cancel.release();
+      if (shutdown !== undefined) {
         // npm is gone; make sure nothing it started outlives staging cleanup.
         signalInstaller(child, "SIGKILL");
         resolve({
           cancelled: true,
-          signal: shutdownSignal,
+          signal: shutdown.signal,
           status,
           childSignal: signal,
         });
@@ -382,21 +546,15 @@ const runOwnedInstaller = (invocation) => {
 };
 
 const waitForReadyOrLock = async (prefix, lockPath) => {
-  const signalExitCodes = SIGNAL_EXIT_CODES;
-  let shutdownSignal;
   /** @type {(() => void) | undefined} */
   let wakeWait;
-  const onSignal = (signal) => {
-    if (shutdownSignal !== undefined) return;
-    shutdownSignal = signal;
+  const cancel = observeAcquisitionCancel(() => {
     wakeWait?.();
-  };
-  for (const signal of Object.keys(signalExitCodes))
-    process.on(signal, onSignal);
+  });
   try {
     for (;;) {
-      if (shutdownSignal !== undefined)
-        return { cancelled: true, signal: shutdownSignal };
+      if (cancel.cancelled !== undefined)
+        return { cancelled: true, signal: cancel.cancelled.signal };
       try {
         return { cancelled: false, entry: inspectReadyCache(prefix) };
       } catch (cause) {
@@ -407,8 +565,9 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
           throw cause;
         if (!isIncompleteCache(cause)) throw cause;
       }
-      if (tryAcquireInstallLock(lockPath))
-        return { cancelled: false, acquired: true };
+      const lock = await tryAcquireInstallLock(lockPath);
+      if (lock.acquired)
+        return { cancelled: false, acquired: true, server: lock.server };
       // Keep the timer referenced so a waiter cannot exit with an unsettled
       // top-level await while another installer still holds the lock.
       await new Promise((resolve) => {
@@ -421,21 +580,36 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
       wakeWait = undefined;
     }
   } finally {
-    for (const signal of Object.keys(signalExitCodes))
-      process.off(signal, onSignal);
+    if (cancel.cancelled !== undefined) {
+      try {
+        process.stdin.destroy();
+      } catch {
+        // Stdin may already have closed.
+      }
+    }
+    cancel.release();
   }
 };
+
+const cancelExitCode = (signal) =>
+  signal === undefined ? 0 : (SIGNAL_EXIT_CODES[signal] ?? 1);
 
 if (process.exitCode === 1) {
   // Argument validation already failed.
 } else {
-  const prefix = join(cacheRoot, version);
-  const lockPath = join(cacheRoot, `${version}.lock`);
-  const staging = join(cacheRoot, `${version}.staging-${String(process.pid)}`);
+  const prefix = join(cacheRoot, installKey);
+  const lockPath = join(cacheRoot, `${installKey}.lock`);
+  const staging = join(
+    cacheRoot,
+    `${installKey}.staging-${String(process.pid)}`,
+  );
   let entry;
+  /** @type {import("node:net").Server | undefined} */
+  let lockServer;
 
   try {
     ensurePrivateCacheRoot();
+    retryRetainedStagingCleanup();
   } catch (cause) {
     refuseUntrustedCache(cause);
   }
@@ -459,16 +633,22 @@ if (process.exitCode === 1) {
   }
 
   if (process.exitCode !== 1 && entry === undefined) {
-    let holdLock = tryAcquireInstallLock(lockPath);
+    let holdLock = false;
+    {
+      const lock = await tryAcquireInstallLock(lockPath);
+      holdLock = lock.acquired === true;
+      lockServer = lock.server;
+    }
     if (!holdLock) {
       try {
         const waited = await waitForReadyOrLock(prefix, lockPath);
         if (waited.cancelled) {
-          process.exitCode = SIGNAL_EXIT_CODES[waited.signal] ?? 1;
+          process.exitCode = cancelExitCode(waited.signal);
         } else if (waited.entry !== undefined) {
           entry = waited.entry;
         } else {
           holdLock = true;
+          lockServer = waited.server;
         }
       } catch (cause) {
         if (
@@ -505,14 +685,15 @@ if (process.exitCode === 1) {
         }
       }
       if (entry !== undefined || process.exitCode === 1) {
-        releaseInstallLock(lockPath);
+        releaseInstallLock(lockPath, lockServer);
+        lockServer = undefined;
         holdLock = false;
       }
     }
 
     if (process.exitCode !== 1 && entry === undefined && holdLock) {
       try {
-        rmSync(staging, { recursive: true, force: true });
+        removeStaging(staging);
         mkdirSync(staging, { recursive: true, mode: 0o700 });
         verifyOwnedCachePath(staging, "prefix");
 
@@ -541,7 +722,7 @@ if (process.exitCode === 1) {
         if (process.exitCode !== 1) {
           const install = await runOwnedInstaller(invocation);
           if (install.cancelled) {
-            process.exitCode = SIGNAL_EXIT_CODES[install.signal] ?? 1;
+            process.exitCode = cancelExitCode(install.signal);
           } else if (install.status !== 0) {
             process.stderr.write(
               `REA plugin failed to install ${PACKAGE}@${version}.\n`,
@@ -579,8 +760,16 @@ if (process.exitCode === 1) {
           process.exitCode = 1;
         }
       } finally {
-        rmSync(staging, { recursive: true, force: true });
-        releaseInstallLock(lockPath);
+        try {
+          removeStaging(staging);
+        } catch (cause) {
+          process.stderr.write(
+            `REA plugin retained staging cleanup ownership at ${staging}: ${cause instanceof Error ? cause.message : String(cause)}.\n`,
+          );
+        } finally {
+          releaseInstallLock(lockPath, lockServer);
+          lockServer = undefined;
+        }
       }
     }
   }
@@ -588,5 +777,7 @@ if (process.exitCode === 1) {
   if (process.exitCode !== 1 && entry !== undefined) {
     process.argv = [process.execPath, entry, "mcp"];
     await import(pathToFileURL(entry).href);
+  } else if (entry === undefined) {
+    process.exit(process.exitCode ?? 0);
   }
 }

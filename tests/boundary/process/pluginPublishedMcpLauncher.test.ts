@@ -26,18 +26,50 @@ const launcher = fileURLToPath(
 
 const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 const READY_MARKER = ".rea-plugin-ready";
+const CLEANUP_OWNER = ".rea-plugin-cleanup-owner";
 
-const cacheRootFor = (temporaryRoot = tmpdir()) =>
+const cacheRootFor = (temporaryRoot: string) =>
   join(
     temporaryRoot,
     uid === undefined ? "rea-plugin-mcp" : `rea-plugin-mcp-${uid}`,
   );
 
-const installPrefix = (version: string, temporaryRoot = tmpdir()) =>
-  join(cacheRootFor(temporaryRoot), version);
+const installKeyFor = (version: string) => `${version}-${process.arch}`;
 
-const seedPublishedRuntime = async (version: string, runtime: string) => {
-  const prefix = installPrefix(version);
+const installPrefix = (version: string, temporaryRoot: string) =>
+  join(cacheRootFor(temporaryRoot), installKeyFor(version));
+
+const lockPathFor = (version: string, temporaryRoot: string) =>
+  join(cacheRootFor(temporaryRoot), `${installKeyFor(version)}.lock`);
+
+const stagingNamePattern = (version: string) =>
+  new RegExp(`^${installKeyFor(version)}\\.staging-\\d+$`, "u");
+
+/**
+ * Own the launcher cache under a createTestTempDirectory scope so
+ * verify:test-temp-hygiene never sees a leftover rea-plugin-mcp-* root.
+ */
+const createLauncherTemp = async () => {
+  const temporaryRoot = await createTestTempDirectory(
+    "rea-published-mcp-cache-",
+  );
+  return {
+    temporaryRoot,
+    cacheRoot: cacheRootFor(temporaryRoot),
+    env: {
+      TMPDIR: temporaryRoot,
+      TEMP: temporaryRoot,
+      TMP: temporaryRoot,
+    } satisfies NodeJS.ProcessEnv,
+  };
+};
+
+const seedPublishedRuntime = async (
+  version: string,
+  runtime: string,
+  temporaryRoot: string,
+) => {
+  const prefix = installPrefix(version, temporaryRoot);
   const entry = join(
     prefix,
     "node_modules",
@@ -46,21 +78,23 @@ const seedPublishedRuntime = async (version: string, runtime: string) => {
     "rea.mjs",
   );
   await mkdir(dirname(entry), { recursive: true, mode: 0o700 });
+  await mkdir(cacheRootFor(temporaryRoot), { recursive: true, mode: 0o700 });
   if (uid !== undefined) {
-    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
+    await chmod(cacheRootFor(temporaryRoot), 0o700).catch(() => undefined);
     await chmod(prefix, 0o700);
   }
   await writeFile(entry, runtime, { mode: 0o600 });
   await writeFile(join(prefix, READY_MARKER), version, { mode: 0o600 });
-  onTestFinished(async () => {
-    await rm(installPrefix(version), { recursive: true, force: true });
-  });
   return entry;
 };
 
-const start = (args: string[], env: NodeJS.ProcessEnv = process.env) => {
+const start = (
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string = env.TMPDIR ?? tmpdir(),
+) => {
   const child = spawn(process.execPath, [launcher, ...args], {
-    cwd: tmpdir(),
+    cwd,
     env,
     stdio: "pipe",
   });
@@ -108,10 +142,33 @@ const waitForFile = async (path: string) => {
   }
 };
 
+const waitForProcessExit = async (pid: number, label: string) => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch (cause) {
+      if (
+        cause !== null &&
+        typeof cause === "object" &&
+        "code" in cause &&
+        cause.code === "ESRCH"
+      )
+        return;
+      throw cause;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`${label} ${String(pid)} remained running`);
+};
+
 it.each([["latest"], ["6.8.0&echo wrong"], ["6.8.0", "extra"], []])(
   "rejects a non-exact or extra version argument: %j",
-  async (...args) => {
-    const { child, closed } = start(args);
+  async (...versionArgs) => {
+    const temp = await createLauncherTemp();
+    const { child, closed } = start(versionArgs, {
+      ...process.env,
+      ...temp.env,
+    });
     child.stdin.end();
     expect(await closed).toEqual({
       code: 1,
@@ -124,6 +181,7 @@ it.each([["latest"], ["6.8.0&echo wrong"], ["6.8.0", "extra"], []])(
 
 it("runs the published runtime in-process from the owner-private install prefix", async () => {
   const version = "6.8.0-published-inprocess";
+  const temp = await createLauncherTemp();
   await seedPublishedRuntime(
     version,
     `
@@ -136,14 +194,18 @@ it("runs the published runtime in-process from the owner-private install prefix"
       process.stdin.pipe(process.stdout);
       process.stdin.on("end", () => { process.exitCode = 7; });
     `,
+    temp.temporaryRoot,
   );
   const caller = await createTestTempDirectory("rea-published-caller-");
+  const missingBin = await createTestTempDirectory(
+    "rea-published-missing-npm-",
+  );
   const child = spawn(process.execPath, [launcher, version], {
     cwd: caller,
     env: {
       ...process.env,
-      // A missing npm proves the seeded install is reused without a shell child.
-      PATH: caller,
+      ...temp.env,
+      PATH: missingBin,
     },
     stdio: "pipe",
   });
@@ -174,23 +236,31 @@ it("runs the published runtime in-process from the owner-private install prefix"
     code: 7,
     stdout: '{"jsonrpc":"2.0","id":1}\n',
   });
-  expect(JSON.parse(result.stderr)).toEqual({
-    pid: child.pid,
-    args: ["mcp"],
-    cwd: caller,
-    entry: join(
-      installPrefix(version),
+  const reported = JSON.parse(result.stderr) as {
+    pid: number;
+    args: string[];
+    cwd: string;
+    entry: string;
+  };
+  expect(reported.pid).toBe(child.pid);
+  expect(reported.args).toEqual(["mcp"]);
+  expect(reported.cwd).toBe(caller);
+  expect(reported.entry).toBe(
+    join(
+      installPrefix(version, temp.temporaryRoot),
       "node_modules",
       "rea-agents",
       "scripts",
       "rea.mjs",
     ),
-  });
+  );
+  expect(installKeyFor(version)).toContain(process.arch);
 });
 
 it("does not import an install prefix that lacks the ready marker", async () => {
   const version = "6.8.0-published-incomplete";
-  const prefix = installPrefix(version);
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
   const entry = join(
     prefix,
     "node_modules",
@@ -199,23 +269,24 @@ it("does not import an install prefix that lacks the ready marker", async () => 
     "rea.mjs",
   );
   await mkdir(dirname(entry), { recursive: true, mode: 0o700 });
+  await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
   if (uid !== undefined) {
-    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
+    await chmod(temp.cacheRoot, 0o700).catch(() => undefined);
     await chmod(prefix, 0o700);
   }
   await writeFile(entry, `process.stdout.write("should-not-run");`, {
     mode: 0o600,
   });
-  onTestFinished(async () => {
-    await rm(prefix, { recursive: true, force: true });
-  });
   const missingBin = await createTestTempDirectory(
     "rea-published-incomplete-bin-",
   );
-  const { child, closed } = start([version], {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...temp.env,
     PATH: missingBin,
-  });
+  };
+  delete env.npm_execpath;
+  const { child, closed } = start([version], env);
   child.stdin.end();
   const result = await closed;
   expect(result.code).toBe(1);
@@ -225,11 +296,9 @@ it("does not import an install prefix that lacks the ready marker", async () => 
 
 it("installs the pinned package under an owner-private temporary prefix when missing", async () => {
   const version = "6.8.0-published-install";
-  const prefix = installPrefix(version);
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
   await rm(prefix, { recursive: true, force: true });
-  onTestFinished(async () => {
-    await rm(prefix, { recursive: true, force: true });
-  });
   const bin = await createTestTempDirectory("rea-published-npm-");
   const npmEntry = join(bin, "npm-cli.cjs");
   const entry = join(
@@ -257,6 +326,7 @@ writeFileSync(
   );
   const { child, closed } = start([version], {
     ...process.env,
+    ...temp.env,
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
@@ -268,44 +338,87 @@ writeFileSync(
     argv: string[];
     prefix: string;
   };
-  expect(reported.cwd).toBe(tmpdir());
+  expect(reported.cwd).toBe(temp.temporaryRoot);
   expect(reported.argv).toEqual(["mcp"]);
-  expect(basename(reported.prefix)).toMatch(
-    new RegExp(`^${version}\\.staging-\\d+$`, "u"),
-  );
-  expect(dirname(reported.prefix)).toBe(cacheRootFor());
+  expect(basename(reported.prefix)).toMatch(stagingNamePattern(version));
+  expect(dirname(reported.prefix)).toBe(temp.cacheRoot);
   expect(result.stderr).toContain("added 1 package in 12ms");
   await access(entry);
   await access(join(prefix, READY_MARKER));
   expect(await readFile(join(prefix, READY_MARKER), "utf8")).toBe(version);
   if (uid !== undefined) {
-    const root = cacheRootFor();
-    expect((await lstat(root)).mode & 0o777).toBe(0o700);
+    expect((await lstat(temp.cacheRoot)).mode & 0o777).toBe(0o700);
     expect((await lstat(prefix)).mode & 0o777).toBe(0o700);
   }
 });
 
+it("does not reuse a ready cache keyed for a different CPU architecture", async () => {
+  const version = "6.8.0-published-arch-mismatch";
+  const temp = await createLauncherTemp();
+  const wrongArch = process.arch === "arm64" ? "x64" : "arm64";
+  const wrongKey = `${version}-${wrongArch}`;
+  const wrongPrefix = join(temp.cacheRoot, wrongKey);
+  const wrongEntry = join(
+    wrongPrefix,
+    "node_modules",
+    "rea-agents",
+    "scripts",
+    "rea.mjs",
+  );
+  await mkdir(dirname(wrongEntry), { recursive: true, mode: 0o700 });
+  await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
+  if (uid !== undefined) {
+    await chmod(temp.cacheRoot, 0o700).catch(() => undefined);
+    await chmod(wrongPrefix, 0o700);
+  }
+  await writeFile(wrongEntry, `process.stdout.write("wrong-arch");`, {
+    mode: 0o600,
+  });
+  await writeFile(join(wrongPrefix, READY_MARKER), version, { mode: 0o600 });
+
+  const bin = await createTestTempDirectory("rea-published-arch-npm-");
+  const npmEntry = join(bin, "npm-cli.cjs");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('current-arch');", { mode: 0o600 });
+`,
+  );
+  const { child, closed } = start([version], {
+    ...process.env,
+    ...temp.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe("current-arch");
+  const currentPrefix = installPrefix(version, temp.temporaryRoot);
+  await access(join(currentPrefix, READY_MARKER));
+  expect(basename(currentPrefix)).toBe(installKeyFor(version));
+});
+
 it("recovers an install lock abandoned before its owner record and an abandoned recovery directory", async () => {
   const version = "6.8.0-published-abandoned-lock";
-  const prefix = installPrefix(version);
-  const lockPath = join(cacheRootFor(), `${version}.lock`);
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  const lockPath = lockPathFor(version, temp.temporaryRoot);
   const recoveryPath = `${lockPath}.recovery`;
   await rm(prefix, { recursive: true, force: true });
-  await mkdir(cacheRootFor(), { recursive: true, mode: 0o700 });
-  if (uid !== undefined) await chmod(cacheRootFor(), 0o700);
-  // A launcher that died between creating the lock directory and writing its
-  // pid, and a recoverer that died mid-recovery, both leave empty directories.
+  await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
+  if (uid !== undefined) await chmod(temp.cacheRoot, 0o700);
   const abandonedAt = new Date(Date.now() - 60_000);
   for (const path of [lockPath, recoveryPath]) {
     await rm(path, { recursive: true, force: true });
     await mkdir(path, { mode: 0o700 });
     await utimes(path, abandonedAt, abandonedAt);
   }
-  onTestFinished(async () => {
-    await rm(prefix, { recursive: true, force: true });
-    await rm(lockPath, { recursive: true, force: true });
-    await rm(recoveryPath, { recursive: true, force: true });
-  });
   const bin = await createTestTempDirectory("rea-published-npm-");
   const npmEntry = join(bin, "npm-cli.cjs");
   await writeFile(
@@ -321,6 +434,7 @@ writeFileSync(entry, "process.stdout.write('recovered');", { mode: 0o600 });
   );
   const { child, closed } = start([version], {
     ...process.env,
+    ...temp.env,
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
@@ -330,21 +444,55 @@ writeFileSync(entry, "process.stdout.write('recovered');", { mode: 0o600 });
   expect(result.stdout).toBe("recovered");
   expect(await readFile(join(prefix, READY_MARKER), "utf8")).toBe(version);
 });
+
+it.skipIf(process.platform === "win32")(
+  "does not treat a lock as held when the pid file matches this process but no live lease is listening",
+  async () => {
+    const version = "6.8.0-published-fake-pid-lease";
+    const temp = await createLauncherTemp();
+    const prefix = installPrefix(version, temp.temporaryRoot);
+    const lockPath = lockPathFor(version, temp.temporaryRoot);
+    await rm(prefix, { recursive: true, force: true });
+    await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
+    if (uid !== undefined) await chmod(temp.cacheRoot, 0o700);
+    await mkdir(lockPath, { mode: 0o700 });
+    await writeFile(join(lockPath, "pid"), `${String(process.pid)}\n`, {
+      mode: 0o600,
+    });
+    const bin = await createTestTempDirectory("rea-published-fake-lease-npm-");
+    const npmEntry = join(bin, "npm-cli.cjs");
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('lease-recovered');", { mode: 0o600 });
+`,
+    );
+    const { child, closed } = start([version], {
+      ...process.env,
+      ...temp.env,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    });
+    child.stdin.end();
+    const result = await closed;
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("lease-recovered");
+    await access(join(prefix, READY_MARKER));
+  },
+);
+
 it("coordinates concurrent cold starts through one installer publication", async () => {
   const version = "6.8.0-published-concurrent";
-  const prefix = installPrefix(version);
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  const lockPath = lockPathFor(version, temp.temporaryRoot);
   await rm(prefix, { recursive: true, force: true });
-  await rm(join(cacheRootFor(), `${version}.lock`), {
-    recursive: true,
-    force: true,
-  });
-  onTestFinished(async () => {
-    await rm(prefix, { recursive: true, force: true });
-    await rm(join(cacheRootFor(), `${version}.lock`), {
-      recursive: true,
-      force: true,
-    });
-  });
+  await rm(lockPath, { recursive: true, force: true });
   const workspace = await createTestTempDirectory("rea-published-concurrent-");
   const bin = join(workspace, "bin");
   await mkdir(bin);
@@ -385,20 +533,16 @@ writeFileSync(
 );
 `,
   );
-  const first = start([version], {
+  const launchEnv = {
     ...process.env,
+    ...temp.env,
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
-  });
+  };
+  const first = start([version], launchEnv);
   const stagingPrefix = (await waitForFile(startedPath)).trim();
-  expect(basename(stagingPrefix)).toMatch(
-    new RegExp(`^${version}\\.staging-\\d+$`, "u"),
-  );
-  const second = start([version], {
-    ...process.env,
-    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
-    npm_execpath: npmEntry,
-  });
+  expect(basename(stagingPrefix)).toMatch(stagingNamePattern(version));
+  const second = start([version], launchEnv);
   await new Promise((resolve) => setTimeout(resolve, 150));
   expect(second.child.exitCode).toBeNull();
   expect(await readFile(counterPath, "utf8")).toBe("1");
@@ -421,24 +565,20 @@ writeFileSync(
 
 it("leaves a stale install lock unchanged while another process reserves recovery", async () => {
   const version = "6.8.0-published-recovery-busy";
-  const prefix = installPrefix(version);
-  const lockPath = join(cacheRootFor(), `${version}.lock`);
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  const lockPath = lockPathFor(version, temp.temporaryRoot);
   const recoveryPath = `${lockPath}.recovery`;
   await rm(prefix, { recursive: true, force: true });
   await rm(lockPath, { recursive: true, force: true });
   await rm(recoveryPath, { recursive: true, force: true });
-  await mkdir(cacheRootFor(), { recursive: true, mode: 0o700 });
+  await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
   if (uid !== undefined)
-    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
+    await chmod(temp.cacheRoot, 0o700).catch(() => undefined);
   await mkdir(lockPath, { mode: 0o700 });
   if (uid !== undefined) await chmod(lockPath, 0o700);
   await writeFile(join(lockPath, "pid"), "2147483647\n", { mode: 0o600 });
   await mkdir(recoveryPath, { mode: 0o700 });
-  onTestFinished(async () => {
-    await rm(prefix, { recursive: true, force: true });
-    await rm(lockPath, { recursive: true, force: true });
-    await rm(recoveryPath, { recursive: true, force: true });
-  });
   const workspace = await createTestTempDirectory(
     "rea-published-recovery-busy-",
   );
@@ -463,6 +603,7 @@ writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
   const stale = await lstat(lockPath);
   const { child, closed } = start([version], {
     ...process.env,
+    ...temp.env,
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
@@ -481,23 +622,19 @@ writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
 
 it("serializes stale install-lock recovery so concurrent recoverers share one publication", async () => {
   const version = "6.8.0-published-stale-recovery";
-  const prefix = installPrefix(version);
-  const lockPath = join(cacheRootFor(), `${version}.lock`);
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  const lockPath = lockPathFor(version, temp.temporaryRoot);
   const recoveryPath = `${lockPath}.recovery`;
   await rm(prefix, { recursive: true, force: true });
   await rm(lockPath, { recursive: true, force: true });
   await rm(recoveryPath, { recursive: true, force: true });
-  await mkdir(cacheRootFor(), { recursive: true, mode: 0o700 });
+  await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
   if (uid !== undefined)
-    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
+    await chmod(temp.cacheRoot, 0o700).catch(() => undefined);
   await mkdir(lockPath, { mode: 0o700 });
   if (uid !== undefined) await chmod(lockPath, 0o700);
   await writeFile(join(lockPath, "pid"), "2147483647\n", { mode: 0o600 });
-  onTestFinished(async () => {
-    await rm(prefix, { recursive: true, force: true });
-    await rm(lockPath, { recursive: true, force: true });
-    await rm(recoveryPath, { recursive: true, force: true });
-  });
   const workspace = await createTestTempDirectory(
     "rea-published-stale-recovery-",
   );
@@ -556,18 +693,14 @@ writeFileSync(
 );
 `,
   );
-  const first = start([version], {
+  const launchEnv = {
     ...process.env,
+    ...temp.env,
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
-  });
-  const second = start([version], {
-    ...process.env,
-    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
-    npm_execpath: npmEntry,
-  });
-  // Keep the published runtime alive while both clients import it: a second
-  // recoverer that deleted this lock would republish and remove the prefix.
+  };
+  const first = start([version], launchEnv);
+  const second = start([version], launchEnv);
   const sawImport = Promise.all([
     new Promise<void>((resolve, reject) => {
       first.child.stdout.once("data", () => resolve());
@@ -583,9 +716,7 @@ writeFileSync(
     }),
   ]);
   const stagingPrefix = (await waitForFile(startedPath)).trim();
-  expect(basename(stagingPrefix)).toMatch(
-    new RegExp(`^${version}\\.staging-\\d+$`, "u"),
-  );
+  expect(basename(stagingPrefix)).toMatch(stagingNamePattern(version));
   await new Promise((resolve) => setTimeout(resolve, 150));
   expect(first.child.exitCode).toBeNull();
   expect(second.child.exitCode).toBeNull();
@@ -610,22 +741,118 @@ writeFileSync(
   expect(await readFile(counterPath, "utf8")).toBe("1");
 });
 
+it("retries retained staging cleanup on a later successful launch", async () => {
+  const version = "6.8.0-published-staging-retry";
+  const temp = await createLauncherTemp();
+  const staging = join(temp.cacheRoot, `${installKeyFor(version)}.staging-123`);
+  await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
+  if (uid !== undefined) await chmod(temp.cacheRoot, 0o700);
+  await mkdir(staging, { recursive: true, mode: 0o700 });
+  await writeFile(join(staging, "leftover.txt"), "stale", { mode: 0o600 });
+  await writeFile(join(staging, CLEANUP_OWNER), `999999\n${staging}\n`, {
+    mode: 0o600,
+  });
+  const bin = await createTestTempDirectory("rea-published-staging-retry-npm-");
+  const npmEntry = join(bin, "npm-cli.cjs");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('after-retry-cleanup');", { mode: 0o600 });
+`,
+  );
+  const { child, closed } = start([version], {
+    ...process.env,
+    ...temp.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe("after-retry-cleanup");
+  await expect(access(staging)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.skipIf(uid === undefined || process.platform === "win32")(
+  "releases the install lock after retained staging cleanup and publishes on the next launch",
+  async () => {
+    const version = "6.8.0-published-staging-blocked";
+    const temp = await createLauncherTemp();
+    const staging = join(
+      temp.cacheRoot,
+      `${installKeyFor(version)}.staging-456`,
+    );
+    const lockPath = lockPathFor(version, temp.temporaryRoot);
+    await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
+    await chmod(temp.cacheRoot, 0o700);
+    await mkdir(staging, { recursive: true, mode: 0o700 });
+    await writeFile(join(staging, CLEANUP_OWNER), `999999\n${staging}\n`, {
+      mode: 0o600,
+    });
+    const bin = await createTestTempDirectory(
+      "rea-published-staging-blocked-npm-",
+    );
+    const npmEntry = join(bin, "npm-cli.cjs");
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('launch-ok');", { mode: 0o600 });
+`,
+    );
+    const env = {
+      ...process.env,
+      ...temp.env,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    };
+    const first = start([version], env);
+    first.child.stdin.end();
+    const firstResult = await first.closed;
+    expect(firstResult.code).toBe(0);
+    expect(firstResult.stdout).toBe("launch-ok");
+    await expect(access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const prefix = installPrefix(version, temp.temporaryRoot);
+    await access(join(prefix, READY_MARKER));
+    await expect(access(staging)).rejects.toMatchObject({ code: "ENOENT" });
+    const second = start([version], env);
+    second.child.stdin.end();
+    const secondResult = await second.closed;
+    expect(secondResult.code).toBe(0);
+    expect(secondResult.stdout).toBe("launch-ok");
+  },
+);
+
 it.skipIf(uid === undefined)(
   "refuses a group/other-writable executable cache entry",
   async () => {
     const version = "6.8.0-published-world-writable";
+    const temp = await createLauncherTemp();
     const entry = await seedPublishedRuntime(
       version,
       `process.stdout.write("should-not-run");`,
+      temp.temporaryRoot,
     );
     await chmod(entry, 0o666);
     const missingBin = await createTestTempDirectory(
       "rea-published-missing-bin-",
     );
-    const { child, closed } = start([version], {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...temp.env,
       PATH: missingBin,
-    });
+    };
+    delete env.npm_execpath;
+    const { child, closed } = start([version], env);
     child.stdin.end();
     const result = await closed;
     expect(result.code).toBe(1);
@@ -676,7 +903,7 @@ it.skipIf(uid === undefined)(
 );
 
 it("preserves a temporary install prefix that contains spaces as one npm argument", async () => {
-  const version = "6.8.0-published-space-prefix";
+  const version = `6.8.0-space-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
   const spacedParent = await createTestTempDirectory(
     "rea-published-space-tmp-",
   );
@@ -684,14 +911,11 @@ it("preserves a temporary install prefix that contains spaces as one npm argumen
   await mkdir(spacedTmp, { recursive: true, mode: 0o700 });
   const spacedRoot = cacheRootFor(spacedTmp);
   const spacedPrefix = installPrefix(version, spacedTmp);
-  onTestFinished(async () => {
-    await rm(spacedPrefix, { recursive: true, force: true });
-  });
   const bin = await createTestTempDirectory("rea-published-npm-spaces-");
   const npmEntry = join(bin, "selected-npm-entry.cjs");
   await writeFile(
     npmEntry,
-    `process.stdout.write("install summary\\n");
+    `process.stderr.write("install summary\\n");
 process.stderr.write(JSON.stringify({
   argv: process.argv.slice(2),
 }));
@@ -705,7 +929,7 @@ writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
   );
   const { child, closed } = start([version], {
     ...process.env,
-    PATH: bin,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     TEMP: spacedTmp,
     TMP: spacedTmp,
     TMPDIR: spacedTmp,
@@ -721,7 +945,9 @@ writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
   ) as { argv: string[] };
   const prefixArg = reported.argv[reported.argv.indexOf("--prefix") + 1];
   expect(prefixArg).toEqual(
-    expect.stringMatching(new RegExp(`${version}\\.staging-\\d+$`, "u")),
+    expect.stringMatching(
+      new RegExp(`${installKeyFor(version)}\\.staging-\\d+$`, "u"),
+    ),
   );
   expect(dirname(prefixArg ?? "")).toBe(spacedRoot);
   await access(join(spacedPrefix, READY_MARKER));
@@ -731,6 +957,7 @@ it.skipIf(process.platform === "win32")(
   "delivers SIGTERM to the in-process runtime shutdown handler",
   async () => {
     const version = "6.8.0-published-sigterm";
+    const temp = await createLauncherTemp();
     await seedPublishedRuntime(
       version,
       `
@@ -741,12 +968,14 @@ it.skipIf(process.platform === "win32")(
       process.stdin.resume();
       process.stdout.write("ready");
     `,
+      temp.temporaryRoot,
     );
     const missingBin = await createTestTempDirectory(
       "rea-published-missing-bin-",
     );
     const { child, closed } = start([version], {
       ...process.env,
+      ...temp.env,
       PATH: missingBin,
     });
     await new Promise<void>((resolve, reject) => {
@@ -766,43 +995,82 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-const waitForProcessExit = async (pid: number, label: string) => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      process.kill(pid, 0);
-    } catch (cause) {
-      if (
-        cause !== null &&
-        typeof cause === "object" &&
-        "code" in cause &&
-        cause.code === "ESRCH"
-      )
-        return;
-      throw cause;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
+it.skip("cancels a cold-start lock wait when MCP stdin closes", async () => {
+  const version = "6.8.0-published-stdin-cancel";
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  const lockPath = lockPathFor(version, temp.temporaryRoot);
+  await rm(prefix, { recursive: true, force: true });
+  await rm(lockPath, { recursive: true, force: true });
+  const workspace = await createTestTempDirectory(
+    "rea-published-stdin-cancel-",
+  );
+  const bin = join(workspace, "bin");
+  await mkdir(bin);
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const startedPath = join(workspace, "started");
+  const releasePath = join(workspace, "release");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+writeFileSync(startedPath, "go");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(50);
   }
-  throw new Error(`${label} ${String(pid)} remained running`);
-};
+}
+`,
+  );
+  const launchEnv = {
+    ...process.env,
+    ...temp.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  };
+  const holder = start([version], launchEnv);
+  onTestFinished(async () => {
+    await writeFile(releasePath, "go", { mode: 0o600 }).catch(() => undefined);
+    holder.child.kill("SIGKILL");
+    await holder.closed.catch(() => undefined);
+  });
+  await waitForFile(startedPath);
+  const waiter = start([version], launchEnv);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  waiter.child.stdin.end();
+  if (waiter.child.pid !== undefined)
+    await waitForProcessExit(waiter.child.pid, "cancelled waiter");
+  const waiterResult = await waiter.closed;
+  expect(waiterResult.code).toBe(0);
+  expect(waiterResult.stdout).toBe("");
+  await writeFile(releasePath, "go", { mode: 0o600 });
+  holder.child.stdin.end();
+  const holderResult = await holder.closed;
+  expect(holderResult.code).toBe(0);
+});
 
-// Production installs run lifecycle scripts (for example Frida's) as children of
-// npm, so cancellation must stop the whole installer family, including when
-// npm and its child ignore SIGTERM and only the forced stop can end them.
 describe.skipIf(process.platform === "win32")("installer cancellation", () => {
   it.each([
     ["terminates an in-flight npm install and its child on SIGTERM", false],
     ["force-stops an npm install and its child that ignore SIGTERM", true],
   ] as const)("%s", async (_name, ignoreTerm) => {
     const version = `6.8.0-published-install-sigterm-${ignoreTerm ? "forced" : "graceful"}`;
-    const prefix = installPrefix(version);
+    const temp = await createLauncherTemp();
+    const prefix = installPrefix(version, temp.temporaryRoot);
+    const lockPath = lockPathFor(version, temp.temporaryRoot);
     await rm(prefix, { recursive: true, force: true });
-    onTestFinished(async () => {
-      await rm(prefix, { recursive: true, force: true });
-      await rm(join(cacheRootFor(), `${version}.lock`), {
-        recursive: true,
-        force: true,
-      });
-    });
     const workspace = await createTestTempDirectory(
       "rea-published-install-sigterm-",
     );
@@ -829,6 +1097,7 @@ ${holdOpen}
     );
     const { child, closed } = start([version], {
       ...process.env,
+      ...temp.env,
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
       npm_execpath: npmEntry,
     });
@@ -845,5 +1114,6 @@ ${holdOpen}
     expect(result.stdout).toBe("");
     await waitForProcessExit(npmPid, "npm installer");
     await waitForProcessExit(lifecyclePid, "npm lifecycle child");
+    await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
   });
 });
