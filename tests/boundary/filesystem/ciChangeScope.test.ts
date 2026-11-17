@@ -1218,6 +1218,10 @@ it.each([
     "src/domain/windowsNativeArtifact.ts",
     { code: true, runtime: true, package: true },
   ],
+  [
+    ".github/actions/windows-cross-compiler/action.yml",
+    { code: true, runtime: true, package: true },
+  ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
   [
