@@ -1076,14 +1076,14 @@ const SERVICE_TOOL_BINDINGS = {
           ),
       },
       inspect_evtx_archive: {
-        admission: "sdk",
-        workflow: async (input, { signal }) => {
-          const inspected = await inspectEvtxArchiveEvidence(input, resources, {
-            signal,
-          });
-          return inspectionExecution(
-            inspected.ok ? ok(inspected.value.evidence) : inspected,
+        admission: "application",
+        summary: async (input, options) => {
+          const inspected = await inspectEvtxArchiveEvidence(
+            input,
+            resources,
+            options,
           );
+          return inspected.ok ? ok(inspected.value.evidence) : inspected;
         },
       },
       inspect_playwright_trace: {

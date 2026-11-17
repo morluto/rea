@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { evtxArchiveSchema } from "../evtxArchive/evtxArchive.js";
 import { err, ok } from "../result.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
@@ -11,9 +12,20 @@ import {
 } from "./analysisViewParent.js";
 import {
   assertOwnedView,
+  summaryViewSchema,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
+
+/** Records are not paged in this step, so summary is the only retained view. */
+export const evtxArchiveCompleteDeliveryShape = {
+  detail: z.literal("complete").optional().default("complete"),
+  view: z.never().exactOptional(),
+};
+export const evtxArchiveSummaryDeliveryShape = {
+  detail: z.literal("summary"),
+  view: summaryViewSchema.exactOptional(),
+};
 
 export const evtxArchiveSummarySchema = evtxArchiveSchema.pick({
   artifact: true,

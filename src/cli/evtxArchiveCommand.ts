@@ -11,7 +11,7 @@ import {
 } from "../domain/evtxArchive/evtxArchive.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
-  inspectWithService,
+  deliverWithService,
   registerContractCommand,
   type EvidenceInspectionService,
 } from "./contractCommand.js";
@@ -31,15 +31,13 @@ export const registerEvtxArchiveCommand = (
         "Inspect the records of a local Windows Event Log (.evtx) file offline",
       positionals: ["path"],
       callerPaths: ["path"],
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
       fields: {
         path: { description: "Local .evtx path" },
       },
     },
-    inspectWithService(
-      createEvtxArchiveService,
-      EVTX_ARCHIVE_PROVIDER.id,
-      "path",
-    ),
+    deliverWithService(createEvtxArchiveService, EVTX_ARCHIVE_PROVIDER.id),
   );
 
 /** One-shot log inspection that owns the file it opens. */
