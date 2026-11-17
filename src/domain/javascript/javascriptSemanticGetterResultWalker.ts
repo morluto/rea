@@ -1,6 +1,6 @@
 import * as t from "@babel/types";
 import {
-  javaScriptComputedDefinitionKey,
+  javaScriptDefinitionExpression,
   unwrapJavaScriptExpression,
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
@@ -78,11 +78,10 @@ const resultBranches = (node: t.Node): readonly t.Node[] | undefined => {
   return undefined;
 };
 
-/** Heritage and computed keys see the `this` around their definition. */
+/** Heritage, decorators and computed keys see the `this` around their definition. */
 const evaluatesInOuterThis = (owner: t.Node, child: t.Node): boolean =>
-  t.isClass(owner)
-    ? child === owner.superClass
-    : javaScriptComputedDefinitionKey(owner, child);
+  (t.isClass(owner) && child === owner.superClass) ||
+  javaScriptDefinitionExpression(owner, child);
 
 /** Each walk owns local aliases; getter-to-getter traversal belongs to the query worklist. */
 export class GetterResultWalker {

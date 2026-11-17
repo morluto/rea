@@ -15,7 +15,7 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { DesktopBuildSetupHost } from "./SetupDesktopBuild.js";
+import type { DesktopBuildSetupHost } from "../ports/DesktopBuildHost.js";
 import type {
   SetupFailureCode,
   SetupHopperInstallResult,
@@ -40,6 +40,12 @@ export type ClientConfigurationResult =
   | {
       readonly status: "failed";
       readonly reason: "registration_ownership";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "failed";
+      /** A read-only layer above the write target overrides REA's entry. */
+      readonly reason: "read_only_override";
       readonly detail: string;
     }
   | {

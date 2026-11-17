@@ -172,8 +172,17 @@ visible.
 `offset` and `limit` page the ordered list (default limit 64, maximum 4096).
 `coverage.examined_entries` counts every slot read, including omitted
 sentinels, and `total_entries` (the listed entries) is set when the inventory
-is complete. At most 65536 slots are examined; beyond that, or when relocation
-coverage is unknown, `status` and `coverage.status` are `incomplete`.
+is complete. At most 65536 slots are examined. Any gap makes `status`
+`incomplete`, and `coverage.status` says which kind it is:
+
+- `partial`: declared slots or names were examined but not reported. Examples
+  are the 65536-slot budget, an array that is compressed, not file-backed,
+  has no size tag or has trailing bytes, and a name over the 1024-byte budget.
+- `unknown`: whether the listed facts are complete cannot be determined.
+  Examples are unknown relocation, fixup, symbol or mapping coverage, a
+  duplicate dynamic tag and a `PT_DYNAMIC` without `DT_NULL`.
+
+When both kinds occur, `coverage.status` is `unknown`.
 
 ELF symbol names come from at most 65536 symbols across all `SHT_SYMTAB` and
 `SHT_DYNSYM` tables together, and section `REL` / `RELA` relocations from at
@@ -183,9 +192,14 @@ together; a repeated `LC_SYMTAB` over the same ranges is ignored with a
 limitation. Reaching any of these budgets makes the report `incomplete` with a
 limitation.
 
-A symbol name that cannot be read, because its string table is missing or its
-offset lies outside the table, is reported as no name and makes the report
-`incomplete` with a counted limitation. Name offset 0 is the empty name.
+A symbol name that cannot be read, because its string table is missing, its
+offset lies outside the table, or its terminator cannot be established, is
+reported as no name. It makes coverage `unknown` with a counted limitation.
+Name offset 0 is the empty name. When the name crosses the byte budget, a
+NUL at the end of the table establishes a terminator without a longer scan.
+A name withheld in this way makes coverage `partial` when a collected
+initializer needs it. A long name that does
+not label a collected initializer does not widen coverage.
 
 ELF sections marked `SHF_COMPRESSED` are not decoded as initializer slots,
 symbols, names or relocation records. Affected facts remain unresolved and

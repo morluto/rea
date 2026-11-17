@@ -1,10 +1,11 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { scheduler } from "node:timers/promises";
 import type { GpuObject } from "../domain/gpu/gpuCodeObjects.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+} from "../domain/binaryContainer.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   gpuCount,
   GPU_OBJECT_BYTES,
@@ -69,8 +70,9 @@ export const readClangBundleDirectory = async (
       );
     let name: string;
     try {
-      name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      name = decodeStrictUtf8(
         await source.read(position + 24, nameSize),
+        "preserve",
       );
     } catch (cause) {
       if (cause instanceof TypeError)

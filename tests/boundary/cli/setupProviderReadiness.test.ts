@@ -36,7 +36,8 @@ cliTest.skipIf(process.platform === "win32").for(["blocked", "ready"] as const)(
         providerInspections: expect.arrayContaining([
           expect.objectContaining({
             id: "kuna",
-            available: cache === "ready",
+            // Readiness is admission; the cache is a health check.
+            available: true,
             checks: expect.arrayContaining([
               expect.objectContaining({
                 name: "cache",

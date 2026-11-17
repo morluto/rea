@@ -7,7 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { major } from "semver";
 import { parseApktoolVersionOutput } from "../../../dist/apktool/ApktoolConfiguration.js";
 import { toolContract } from "../../../dist/contracts/toolContracts.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../dist/resources/index.js";
 import { withCommands } from "../command-scope.mjs";
 import { createIdentityRecorder } from "./identities.mjs";
 import { failureRecord } from "./failure-record.mjs";

@@ -4,9 +4,8 @@ import type {
   ServerCapabilities,
   Tool,
 } from "@modelcontextprotocol/server";
-import type { createCatalogIdentity } from "./catalogIdentity.js";
+import type { createCatalogIdentity } from "./contracts/catalog/catalogIdentity.js";
 import type { PromptArgumentContract } from "./contracts/promptContracts.js";
-import type { McpInputSchemaProfile } from "./config/mcpInputSchemaProfile.js";
 
 /** Build-owned discovery data; canonical validators remain the runtime authority. */
 export interface RecordedMcpCatalog {
@@ -25,6 +24,4 @@ export interface RecordedMcpCatalog {
 }
 
 /** Replaced after compilation by the recorder; source runs use eager composition. */
-export const RECORDED_MCP_CATALOG_SHA256:
-  | Readonly<Record<McpInputSchemaProfile, string>>
-  | undefined = undefined;
+export const RECORDED_MCP_CATALOG_SHA256: string | undefined = undefined;

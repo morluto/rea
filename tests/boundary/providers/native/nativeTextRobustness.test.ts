@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import { readPlistJson } from "../../../../src/native/parsers/plist.js";
-import { parseLipoOutputResult } from "../../../../src/native/parsers/lipo.js";
+import { parseLipoOutputResult } from "../../../../src/domain/apple/lipo.js";
 
 it.each([
   "line\nbreak",

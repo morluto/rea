@@ -18,7 +18,7 @@ import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import type { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 import type {
@@ -27,7 +27,7 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
@@ -144,6 +144,10 @@ export interface BinarySessionPort
     readonly refreshCandidates?: boolean;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession?():
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
   readAnalysisSnapshot(
     path: string,
@@ -158,11 +162,22 @@ export interface BinarySessionPort
     operation?: AnalysisOperation,
   ): AnalysisProfileCommitment | undefined;
   allowsSnapshotReplay(operation: AnalysisOperation): boolean;
-  /** Invalidate cached Evidence before an external command may mutate the target. */
-  invalidateSnapshotForExternalMutation(): void;
   recordWorkflowSnapshot(
     input: WorkflowSnapshotRecordInput,
   ): Result<null, EvidenceIntegrityError>;
   onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
   onAnalysisSnapshotChanged?(listener: () => void | Promise<void>): () => void;
+}
+
+/** Narrow session interface required for one-shot managed provider execution. */
+export interface ManagedBinarySessionPort extends Pick<
+  BinarySessionPort,
+  "open" | "execute" | "close"
+> {
+  executeForDirectObservation?(
+    operation: AnalysisOperation,
+    parameters?: Readonly<Record<string, JsonValue>>,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
 }

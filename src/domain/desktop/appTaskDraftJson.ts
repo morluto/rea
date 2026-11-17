@@ -31,6 +31,7 @@ const locatePointer = (view: JsonValue | null, pointer: string) =>
 const resolvePointer = (view: JsonValue | null, pointer: string) =>
   resolveView(view, pointer, "json");
 import { selectorOf, spellCondition } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -182,11 +183,6 @@ export const ownNamesUnreadOtherwise = (
   return kept;
 };
 
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** The array a member pointer sits in, when its parent is one in a view. The empty pointer is the view itself, as a file whose top level is an array. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {
   const list = pointer.replace(/\/[^/]+$/u, "");
@@ -292,6 +288,7 @@ export const jsonCounts = (
       return seed !== end && Math.max(seed ?? 0, end ?? 0) > 1;
     })
     .map((counted) => countOf(file, counted, ends.final))
+    // generation-cap: suggested count checks
     .slice(0, MAX_COUNTS);
   // Edits stop at the first guard, and each list is read once, however many records they touch.
   const guards: Suggestion[] = [];
@@ -493,6 +490,7 @@ export const recordGuards = (
           ? []
           : [`${record.list}/${escapeJsonPointerToken(key)}`];
       })
+      // generation-cap: siblings read while looking for a guard
       .slice(0, MAX_SIBLINGS_READ);
     let found = 0;
     for (const member of siblings) {
@@ -509,6 +507,7 @@ export const recordGuards = (
       found += 1;
     }
   }
+  // generation-cap: suggested guards
   return guards.slice(0, MAX_GUARDS);
 };
 
@@ -552,6 +551,7 @@ export const positionalNotes = (
           code: "by_position",
           file,
           message: `${String(pointers.length)} suggested check(s) of ~/${file} reach their value only by position, as nothing names the record they read: another save may order its array otherwise, so check the record by a value another way, such as a count.`,
+          // sample-cap: example pointers; the note states the full count and the file's change lists every pointer
           pointers: pointers.slice(0, MAX_LISTED),
         },
       ];

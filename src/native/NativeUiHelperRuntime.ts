@@ -1,5 +1,8 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { SWIFTC_INTERRUPT } from "../process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { malformedInput } from "../domain/parseFailure.js";
 import { DEFAULT_NATIVE_UI_DEADLINE_MS } from "../domain/native/nativeDeadlines.js";
 import type { NativeUiHelper } from "./NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "./NativeUiOutputBudget.js";
@@ -26,7 +30,10 @@ export const createNativeUiHelperRuntime = (
   environment: Readonly<NodeJS.ProcessEnv>,
   deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
 ): NativeUiHelperRuntime => {
-  const selectedEnvironment = snapshotEnvironment(environment);
+  const selectedEnvironment = snapshotEnvironment(
+    environment,
+    HOST_PLATFORM.platform,
+  );
   const deadlineSignal = AbortSignal.timeout(deadlineMs);
   const operations = new ArtifactResourceScope();
   // Both helper stages share the selected deadline. A shorter fixed exec
@@ -104,11 +111,10 @@ export const createNativeUiHelperRuntime = (
       );
       const parsed = safeParseJson(output.stdout);
       if (!parsed.ok)
-        throw new Error(
+        throw malformedInput(
+          "native-ui-helper-output",
           `Native helper returned invalid JSON: ${parsed.error}`,
-          {
-            cause: parsed.cause,
-          },
+          { cause: parsed.cause },
         );
       return parsed.value;
     });

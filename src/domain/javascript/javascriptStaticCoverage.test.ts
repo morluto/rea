@@ -30,7 +30,7 @@ it("separates dynamic semantic uncertainty from completed syntax and examination
 it("distinguishes recovered syntax from unparseable source without inventing an error total", () => {
   const recovered = analyzeJavaScriptStaticSource("let value; let value;");
   expect(recovered.parse_status).toBe("partial");
-  expect(recovered.analysis_coverage?.syntax).toEqual({
+  expect(recovered.analysis_coverage.syntax).toEqual({
     status: "recovered",
     error_count: recovered.parse_error_count,
   });
@@ -43,25 +43,38 @@ it("distinguishes recovered syntax from unparseable source without inventing an 
   });
 });
 
+it("does not report complete parsing when the unknown-finding count is itself unknown", () => {
+  const complete = analyzeJavaScriptStaticSource(
+    "export const value = 1;",
+  ).analysis_coverage;
+  expect(javaScriptStaticParseStatus(complete)).toBe("complete");
+  expect(
+    javaScriptStaticParseStatus({
+      ...complete,
+      semantics: { ...complete.semantics, unknown_findings: null },
+    }),
+  ).toBe("partial");
+});
+
 it("keeps framework applicability unknown without positive Electron evidence", () => {
   const ordinary = analyzeJavaScriptStaticSource("export const value = 1;");
   expect(ordinary.parse_status).toBe("complete");
-  expect(ordinary.analysis_coverage?.applicability.electron).toBe("unknown");
+  expect(ordinary.analysis_coverage.applicability.electron).toBe("unknown");
   const electron = analyzeCommonJsStaticFixture(
     "const {ipcMain}=require('electron');",
   );
-  expect(electron.analysis_coverage?.applicability.electron).toBe("observed");
+  expect(electron.analysis_coverage.applicability.electron).toBe("observed");
 });
 
 it("reports compiler-dependent module side effects independently of complete syntax", () => {
   const result = analyzeJavaScriptStaticSource(
     "import { type Config } from './config';",
   );
-  expect(result.analysis_coverage?.syntax).toEqual({
+  expect(result.analysis_coverage.syntax).toEqual({
     status: "complete",
     error_count: 0,
   });
-  expect(result.analysis_coverage?.semantics.uncertainty).toContain(
+  expect(result.analysis_coverage.semantics.uncertainty).toContain(
     "type-only-module-side-effect",
   );
 });
@@ -81,7 +94,7 @@ it("retains typed examination limits alongside successfully parsed source", () =
 it("preserves the legacy summary responsibility without relabeling independent limitations", () => {
   const base = analyzeJavaScriptStaticSource(
     "export const value = 1;",
-  ).analysis_coverage!;
+  ).analysis_coverage;
   expect(
     javaScriptStaticParseStatus({
       ...base,

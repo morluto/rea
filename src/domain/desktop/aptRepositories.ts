@@ -1,4 +1,5 @@
 import type { AptRepository } from "./desktopCapture.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 /**
  * One `deb` line, or one deb822 stanza, of an apt sources file. A stanza's
@@ -366,7 +367,7 @@ export const aptListFileName = (uri: string): string => {
     quoted +=
       QUOTED.has(character) || code <= 0x20 || code >= 0x7f
         ? [...Buffer.from(character, "utf8")]
-            .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+            .map((byte) => `%${byteToHex(byte)}`)
             .join("")
         : character;
   }

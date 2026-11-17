@@ -4,18 +4,19 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 assert.equal(process.platform, "darwin", "requires macOS");
 assert.equal(
@@ -34,15 +35,31 @@ const { StdioClientTransport } = await import(
 const { parseConfig } = await import(
   pathToFileURL(join(root, "dist/config/parseConfig.js"))
 );
+const { selectedHopperLauncherPath } = await import(
+  pathToFileURL(join(root, "dist/hopperPaths/HopperLauncherDiscovery.js")).href
+);
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-await access(config.value.hopperLauncherPath, constants.X_OK);
+await access(
+  selectedHopperLauncherPath(
+    config.value.hopperLauncherPath,
+    process.platform,
+    process.env,
+  ),
+  constants.X_OK,
+);
 const run = promisify(execFile);
 const clang = (await run("xcrun", ["--find", "clang"])).stdout.trim();
 const sdk = (
   await run("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
 ).stdout.trim();
-const directory = await mkdtemp(join("/tmp", "rea-hopper-callers-verifier-"));
+// A plain root under /tmp, where this verifier has always built its fixtures.
+const workspace = await VerifierFixture.open({
+  prefix: "rea-hopper-callers-verifier-",
+  parent: "/tmp",
+  private: false,
+});
+const directory = workspace.path;
 const fixture = join(directory, "tail-call");
 const large = join(directory, "long-scan");
 const source = fileURLToPath(
@@ -95,7 +112,35 @@ const matchingRef = (ref, site, from, to) =>
   ref.source_procedure?.address === from &&
   ref.target_procedure?.address === to &&
   ref.call?.classification === "direct";
-await withVerifierCleanup(async () => {
+// The root is removed only after these cleanups confirm.
+workspace.releaseAfter(async () => {
+  try {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const leaked = [
+          ...(
+            await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+          ).paths,
+        ].filter((path) => !sessionsBefore.has(path));
+        assert.deepEqual(
+          leaked,
+          [],
+          `Hopper resources remain: ${leaked.join(", ")}`,
+        );
+      },
+    ]);
+  } catch (cause) {
+    throw new Error(`Hopper cleanup failed; fixture retained at ${directory}`, {
+      cause,
+    });
+  } finally {
+    if (stderr) process.stderr.write(stderr);
+  }
+});
+await withVerifierFixture(workspace, async () => {
   await run(clang, [
     "-isysroot",
     sdk,
@@ -288,36 +333,4 @@ await withVerifierCleanup(async () => {
       sha256: beforeLarge,
     }),
   );
-}, [
-  async () => {
-    try {
-      await closeVerifierResources([
-        () => client.close(),
-        () => transport.close(),
-        async () => {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          const leaked = [
-            ...(
-              await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
-            ).paths,
-          ].filter((path) => !sessionsBefore.has(path));
-          assert.deepEqual(
-            leaked,
-            [],
-            `Hopper resources remain: ${leaked.join(", ")}`,
-          );
-        },
-      ]);
-    } catch (cause) {
-      throw new Error(
-        `Hopper cleanup failed; fixture retained at ${directory}`,
-        {
-          cause,
-        },
-      );
-    } finally {
-      if (stderr) process.stderr.write(stderr);
-    }
-    await rm(directory, { recursive: true, force: true });
-  },
-]);
+});

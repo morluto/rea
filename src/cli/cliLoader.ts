@@ -1,7 +1,4 @@
-import {
-  cliCompletionShell,
-  splitIncurBuiltinArguments,
-} from "../cliBuiltinArguments.js";
+import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
 import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "../recordedCliCommandRegistrations.js";
 import {
   CLI_COMMAND_REGISTRATIONS,
@@ -23,26 +20,30 @@ const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
   Object.hasOwn(CLI_COMMAND_REGISTRATIONS, id);
 
 /**
- * The registrar that defines the command these arguments run, or undefined
- * when the complete CLI must answer. Help, schemas, `--llms`, completions,
- * Incur builtins, unknown names ("did you mean"), and a missing or unusable
+ * The registrars the command these arguments run needs, or undefined when the
+ * complete CLI must answer, as it does for shell completion, which has no
+ * global arguments. A standalone version or retired per-command MCP query
+ * needs no registrar. Help, schemas, `--llms`, completions, other
+ * CLI builtins, unknown names ("did you mean"), and a missing or unusable
  * recording all describe or search every command.
  */
-export const selectCliRegistration = (
-  arguments_: readonly string[],
-  environment: Readonly<NodeJS.ProcessEnv>,
+const selectCliRegistrations = (
+  global: CliGlobalArguments | undefined,
   recorded: Readonly<Record<string, string>> | undefined,
-): CliCommandRegistrationId | undefined => {
-  if (recorded === undefined || cliCompletionShell(environment) !== undefined)
-    return undefined;
-  const { command, flags } = splitIncurBuiltinArguments(arguments_);
+): readonly CliCommandRegistrationId[] | undefined => {
+  if (global === undefined) return undefined;
+  const { command, flags } = global;
+  if (flags.has("--mcp") && command.length > 0) return [];
+  if (command.length === 0 && flags.size === 1 && flags.has("--version"))
+    return [];
+  if (recorded === undefined) return undefined;
   for (const flag of flags)
     if (!COMMAND_OUTPUT_FLAGS.has(flag) && !flag.startsWith("--timings="))
       return undefined;
   const name = command[0];
   if (name === undefined || !Object.hasOwn(recorded, name)) return undefined;
   const id = recorded[name]!;
-  return isRegistrationId(id) ? id : undefined;
+  return isRegistrationId(id) ? [id] : undefined;
 };
 
 /** The command runtime one invocation loaded, before its CLI is built. */
@@ -54,32 +55,31 @@ export interface CliRuntime {
 
 /**
  * Load the command runtime for one invocation. A recorded top-level command
- * loads only its registrar's module graph; anything else loads the complete
- * CLI.
+ * loads only its registrar's module graph. A standalone version or retired
+ * mode query loads none; anything else loads the complete CLI.
  */
 export const loadCliRuntime = async (
-  arguments_: readonly string[],
+  global: CliGlobalArguments | undefined,
   environment: NodeJS.ProcessEnv,
 ): Promise<CliRuntime> => {
-  const id = selectCliRegistration(
-    arguments_,
-    environment,
+  const ids = selectCliRegistrations(
+    global,
     RECORDED_CLI_COMMAND_REGISTRATIONS,
   );
-  if (id === undefined) {
+  if (ids === undefined) {
     const { createCli, closeCliResources } = await import("../cli.js");
     return {
       createCli: (resultOutput) => createCli(environment, resultOutput),
       closeCliResources,
     };
   }
-  const registration = CLI_COMMAND_REGISTRATIONS[id];
-  const [module, { createCliShell }, { closeCliResources }, analysis] =
+  const selected = ids.map((id) => CLI_COMMAND_REGISTRATIONS[id]);
+  const [modules, { createCliShell }, { closeCliResources }, analysis] =
     await Promise.all([
-      registration.load(),
+      Promise.all(selected.map((registration) => registration.load())),
       import("./cliShell.js"),
       import("./cliResources.js"),
-      registration.analysis
+      selected.some((registration) => registration.analysis)
         ? import("../composition/directAnalysis.js")
         : undefined,
     ]);
@@ -88,7 +88,10 @@ export const loadCliRuntime = async (
       createCliShell({
         selectedEnvironment: environment,
         resultOutput,
-        registrations: [{ registration, module }],
+        registrations: selected.map((registration, index) => ({
+          registration,
+          module: modules[index],
+        })),
         ...(analysis === undefined
           ? {}
           : { createAnalysis: analysis.createDirectAnalysis }),

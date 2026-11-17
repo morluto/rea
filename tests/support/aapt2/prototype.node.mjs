@@ -16,7 +16,7 @@ import { withCommands } from "../command-scope.mjs";
 import { createIdentityRecorder } from "./identities.mjs";
 import { failureRecord } from "./failure-record.mjs";
 import { DarwinProcessOwnershipInspectionError } from "../../../dist/process/DarwinProcessRunTokenReader.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../dist/resources/index.js";
 import {
   RegularFileCancelled,
   RegularFileCleanupFailure,

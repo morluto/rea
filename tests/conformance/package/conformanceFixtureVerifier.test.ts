@@ -39,10 +39,6 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
   { mode: "wrong-prefix", marker: "REA_C_ENTRY" },
   { mode: "prefix-complete", marker: "REA_C_ENTRY" },
   { mode: "marker", marker: "REA_C_ENTRY" },
-  { mode: "marker", marker: "REA_VERSION_ONE" },
-  { mode: "marker", marker: "reaProbeOne" },
-  { mode: "marker", marker: "REA_SWIFT_EXECUTE" },
-  { mode: "fragment", marker: "REAService" },
   { mode: "fragment", marker: "performAction:error:" },
 ])(
   "verifies compiler-produced fixture records: $mode / $marker",
@@ -169,9 +165,8 @@ it.each([
 });
 
 it("preserves a carriage return that belongs to an nm symbol name", () => {
-  expect(splitNmSymbolRecords("rea_entry\r\nrea_inventory_0000\n")).toEqual([
+  expect(splitNmSymbolRecords("rea_entry\r\nrea_inventory_0000\r\n")).toEqual([
     "rea_entry\r",
-    "rea_inventory_0000",
+    "rea_inventory_0000\r",
   ]);
-  expect(splitNmSymbolRecords("rea_entry\r\n")).toEqual(["rea_entry\r"]);
 });

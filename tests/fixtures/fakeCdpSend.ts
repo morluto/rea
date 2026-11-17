@@ -1,5 +1,8 @@
 import type { CdpConnection } from "../../src/browser/CdpConnection.js";
-import { admitCdpReply } from "../../src/browser/protocol/CdpCommands.js";
+import {
+  admitCdpReply,
+  type CdpCommand,
+} from "../../src/browser/protocol/CdpCommands.js";
 
 type RawCdpReply = (
   method: string,
@@ -15,7 +18,7 @@ type RawCdpReply = (
  */
 export const fakeCdpSend = (reply: RawCdpReply): CdpConnection["send"] =>
   (async (
-    method: string,
+    method: CdpCommand,
     params?: Readonly<Record<string, unknown>>,
     sessionId?: string,
     signal?: AbortSignal,

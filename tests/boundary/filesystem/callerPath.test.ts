@@ -84,3 +84,18 @@ it("keeps unselected Windows share paths lexical", () => {
     }),
   ).toBe("C:\\CaseSensitive\\Different.js");
 });
+
+it("refuses POSIX resolution from a Windows working directory instead of recursing", () => {
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\work");
+  try {
+    // A POSIX PATH search on a Windows host reached this with a relative entry.
+    expect(() => absoluteCallerPath("bin/uv", { platform: "linux" })).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      absoluteCallerPath("bin/uv", { cwd: "relative", platform: "linux" }),
+    ).toThrow(TypeError);
+  } finally {
+    cwd.mockRestore();
+  }
+});
