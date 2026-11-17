@@ -24,6 +24,8 @@ const requestSchema = z.strictObject({
   encoding: z.enum(["raw", "hex"]),
   producer_limits: evmProducerLimitsSchema,
 });
+/** Maximum UTF-8 byte size of the REA-authored worker request JSON file. */
+const MAX_EVM_WORKER_REQUEST_BYTES = 64 * 1024;
 class UnsupportedContainer extends Error {}
 
 const main = async (): Promise<void> => {
@@ -31,7 +33,9 @@ const main = async (): Promise<void> => {
   if (requestPath === undefined)
     throw new EvmAdmissionError("request_path_missing");
   const requestJson = parseJsonWithDuplicatePolicy(
-    (await readStableArtifact(requestPath, 64 * 1024)).bytes.toString("utf8"),
+    (
+      await readStableArtifact(requestPath, MAX_EVM_WORKER_REQUEST_BYTES)
+    ).bytes.toString("utf8"),
     "reject",
   );
   if (!requestJson.ok && requestJson.cause !== undefined)
