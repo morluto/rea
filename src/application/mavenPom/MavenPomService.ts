@@ -1,17 +1,15 @@
 import { constants } from "node:buffer";
 import { isAbsolute } from "node:path";
 import type { Element } from "@xmldom/xmldom";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { readStableArtifact } from "../../resources/readStableArtifact.js";
-import {
   projectStableArtifactFailure,
+  readStableArtifact,
   stableArtifactInputRecovery,
-} from "../../resources/StableArtifactFailure.js";
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
