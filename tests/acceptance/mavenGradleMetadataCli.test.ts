@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../src/contracts/java/mavenGradleMetadataToolContracts.js";
+import { toolContract } from "../../src/contracts/toolContracts.js";
+import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
+import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import {
   gradleModuleFixture,
   mavenPomFixture,
@@ -15,6 +18,91 @@ const outputSchema = contractNamed(
   MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
   "inspect_maven_gradle_metadata",
 ).outputSchema;
+
+cliTest(
+  "preserves metadata caller selections and transport URL provenance through CLI, MCP and retained records",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-metadata-provenance-");
+    const { call } = await connectLocalToolsMcp();
+    const url = "HTTPS://user:password@Example.invalid/a/../b?token=visible";
+    for (const [file, source] of [
+      [
+        "pom.xml",
+        mavenPomFixture.replace(
+          "<revision>",
+          `<download.url>${url}</download.url><revision>`,
+        ),
+      ],
+      [
+        "demo.module",
+        JSON.stringify({
+          formatVersion: "1.1",
+          component: { group: "g", module: "m", version: "1" },
+          variants: [
+            {
+              name: "api",
+              "available-at": {
+                url,
+                group: "g",
+                module: "other",
+                version: "1",
+              },
+            },
+          ],
+        }),
+      ],
+    ] as const) {
+      const path = join(root, file);
+      await writeFile(path, source);
+      for (const maximum of [undefined, 1048576, 65536]) {
+        const input = {
+          path,
+          ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
+        };
+        const output = await cli.run({
+          arguments: [
+            "inspect-maven-gradle-metadata",
+            `./${file}`,
+            "--json",
+            ...(maximum === undefined
+              ? []
+              : ["--max-file-bytes", String(maximum)]),
+          ],
+          cwd: root,
+        });
+        expect(output.exitCode, output.stderr).toBe(0);
+        const cliEvidence = outputSchema.parse(output.json);
+        expect(cliEvidence.caller_input_path).toBe(`./${file}`);
+        expect(cliEvidence.parameters).toEqual(input);
+        const response = await call("inspect_maven_gradle_metadata", input);
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        const evidence = outputSchema.parse(response.structuredContent);
+        expect(evidence.parameters).toEqual(input);
+        expect(evidence.normalized_result).toEqual(
+          cliEvidence.normalized_result,
+        );
+        expect(JSON.stringify(evidence)).not.toContain("user:password");
+        expect(JSON.stringify(evidence)).toContain(
+          "HTTPS://Example.invalid/a/../b?token=visible",
+        );
+        const retained = await call("get_evidence_bundle", {
+          detail: "complete",
+        });
+        expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+        const bundle = parseEvidenceBundle(
+          toolContract("get_evidence_bundle").outputSchema.parse(
+            retained.structuredContent,
+          ).result,
+        );
+        expect(
+          bundle.records.find(
+            (record) => record.evidence_id === evidence.evidence_id,
+          ),
+        ).toEqual(evidence);
+      }
+    }
+  },
+);
 
 cliTest(
   "reports Maven coordinates and a BOM import through the public CLI",

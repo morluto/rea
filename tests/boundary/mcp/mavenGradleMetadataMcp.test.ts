@@ -31,6 +31,34 @@ const connect = async (mcp: TestMcp) => {
 };
 
 mcpTest(
+  "retains omitted, explicit default and selected metadata budgets through registered MCP admission",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const root = await createTestTempDirectory("rea-maven-admission-");
+    const path = join(root, "pom.xml");
+    await writeFile(path, mavenPomFixture);
+    try {
+      for (const maximum of [undefined, 1048576, 65536]) {
+        const input = {
+          path,
+          ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
+        };
+        const response = await client.callTool({
+          name: "inspect_maven_gradle_metadata",
+          arguments: input,
+        });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expect(
+          completeEvidenceSchema.parse(response.structuredContent).parameters,
+        ).toEqual(input);
+      }
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
   "advertises inspect_maven_gradle_metadata and reports a real POM",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);

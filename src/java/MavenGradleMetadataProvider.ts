@@ -25,7 +25,10 @@ import {
   type InspectMavenGradleMetadataInput,
 } from "../domain/java/mavenGradleMetadata.js";
 import { err, ok } from "../domain/result.js";
-import { MAVEN_GRADLE_METADATA_FORMAT } from "./MavenGradleMetadata.errors.js";
+import {
+  MAVEN_GRADLE_METADATA_FORMAT,
+  type MavenGradleReportAllowance,
+} from "./MavenGradleMetadata.errors.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "./MavenGradleMetadataProviderIdentity.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
@@ -89,6 +92,22 @@ const inputBudgetRemediation = (
     ? `The file exceeds the ${String(MAX_INSPECT_MAVEN_GRADLE_METADATA_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes, up to ${String(MAX_INSPECT_MAVEN_GRADLE_METADATA_FILE_BYTES)}, or select a smaller artifact; this is the caller-selected input read budget.`;
 
+/** The subject a fixed-allowance remediation names for each report allowance. */
+const REPORT_ALLOWANCE_SUBJECTS: Readonly<
+  Record<MavenGradleReportAllowance, (limit: number) => string>
+> = {
+  dependency_rows: (limit) =>
+    `The ${String(limit)}-row allowance for dependency and constraint rows`,
+  variants: (limit) =>
+    `The ${String(limit)}-variant allowance for Gradle module variants`,
+  exclusions: (limit) =>
+    `The ${String(limit)}-exclusion allowance for dependency exclusions`,
+  xml_nodes: (limit) =>
+    `The ${String(limit)}-node allowance for a Maven POM document tree`,
+  repeated_variant_name_chars: (limit) =>
+    `The ${String(limit)}-character allowance for variant names repeated across Gradle dependency rows`,
+};
+
 const mavenGradleMetadataFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectMavenGradleMetadataInput,
@@ -99,20 +118,20 @@ const mavenGradleMetadataFailurePrimary = (
     return parseLimitConstraint(OPERATION, "memory", cause, {
       path: input.path,
       ...fixedAllowanceOptions(
-        name === "dependency_rows"
-          ? "Maven/Gradle dependency and constraint rows"
-          : name === "xml_nodes"
-            ? "Maven POM document tree nodes"
-            : "Variant names repeated across Gradle dependency rows",
+        Object.entries(REPORT_ALLOWANCE_SUBJECTS).find(
+          ([key]) => key === name,
+        )?.[1](maximum) ?? name,
         name === "xml_nodes" ? "parser" : "report",
         {
           limit: maximum,
           unit:
-            name === "dependency_rows"
-              ? "rows"
-              : name === "xml_nodes"
-                ? "nodes"
-                : "UTF-16 code units",
+            name === "repeated_variant_name_chars"
+              ? "UTF-16 code units"
+              : name === "dependency_rows"
+                ? "rows"
+                : name === "xml_nodes"
+                  ? "nodes"
+                  : name,
         },
       ),
     });

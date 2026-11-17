@@ -1467,7 +1467,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "advertises inspect_maven_gradle_metadata and reports a real POM",
       ),
     ),
-    typedFailures("tests/boundary/filesystem/mavenGradleMetadata.test.ts"),
+    covered(
+      test(
+        "src/application/java/MavenGradleMetadataService.test.ts",
+        "retains completed Evidence and selected parameters on late cancellation",
+      ),
+    ),
   ),
   "rea-native-exports": inProcess(
     covered(

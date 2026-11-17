@@ -28,6 +28,9 @@ or `variants` array is `gradle-module`.
 ## Observations
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
+Its parameters retain caller-selected controls. An omitted `max_file_bytes`
+uses the default for execution and stays out of the parameters; an explicitly
+selected default remains recorded.
 
 `coordinates` holds `group_id`, `artifact_id`, `version`, and `packaging` as
 spelled. Missing project coordinates stay `null`. A `${property}` spelling is
@@ -79,7 +82,13 @@ unsupported. External entities are not resolved.
 A POM is counted as a stream before its document tree is built, and one with
 more than 1,048,576 XML nodes (elements, attributes, text, CDATA, comments and
 processing instructions) is refused as a resource limit, as is a report above
-65,536 dependency and constraint rows.
+65,536 dependency and constraint rows, 4,096 Gradle variants, or 65,536
+dependency exclusions summed over every row. Each collection is counted before
+its report records are built.
+Variant names repeated across dependency and constraint rows are also limited
+to 4,194,304 UTF-16 code units. These fixed parser and report allowances are
+separate from the selected file-read budget; raising `max_file_bytes` does not
+raise them.
 
 POM profiles, when present, stay unread and unactivated. Declared repositories
 stay unread and are not contacted. Packaging is not defaulted to `jar` when

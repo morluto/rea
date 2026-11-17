@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisOutputError,
+  AnalysisCancelledError,
+} from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 import type { MavenGradleMetadata } from "../../domain/java/mavenGradleMetadata.js";
@@ -31,6 +34,32 @@ const serviceFor = (report: MavenGradleMetadata) =>
 
 const inspect = (report: MavenGradleMetadata, path = report.artifact.path) =>
   serviceFor(report).inspect({ path });
+
+it("retains completed Evidence and selected parameters on late cancellation", async () => {
+  const report = reportFor();
+  const controller = new AbortController();
+  const reason = { source: "metadata completion" };
+  const provider = serviceFor(report).provider;
+  const service = new MavenGradleMetadataService({
+    ...provider,
+    inspect: async () => {
+      controller.abort(reason);
+      return ok(report);
+    },
+  });
+  const result = await service.inspect(
+    { path: report.artifact.path },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.partialObservation).toMatchObject({
+    operation: "inspect_maven_gradle_metadata",
+    parameters: { path: report.artifact.path },
+    normalized_result: report,
+  });
+});
 
 it("rejects complete coverage claiming the wrong examined byte count", async () => {
   const report = reportFor();

@@ -267,6 +267,11 @@ export const countXmlNodes = (source: string, limit: number): number => {
   };
   try {
     checkXmlSyntax(source, "allow", (syntax) => {
+      // Only the syntax owner's explicit error signal may defer diagnosis to
+      // parseXmlDocument. An unrelated counting failure cannot admit a DOM.
+      syntax.on("error", (cause) => {
+        throw notWellFormed(cause);
+      });
       syntax.on("opentagstart", count);
       syntax.on("attribute", count);
       syntax.on("text", count);
@@ -274,8 +279,10 @@ export const countXmlNodes = (source: string, limit: number): number => {
       syntax.on("comment", count);
       syntax.on("processinginstruction", count);
     });
-  } catch {
-    // The limit, or a syntax error parseXmlDocument reports.
+  } catch (cause: unknown) {
+    if (!(cause instanceof StopXmlNodeCount) && !isXmlFailure(cause))
+      throw cause;
+    // A known count stop, or syntax failure parseXmlDocument reports.
   }
   return nodes;
 };

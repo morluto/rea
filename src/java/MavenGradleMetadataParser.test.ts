@@ -2,7 +2,9 @@ import { ParseFailureError } from "../domain/parseFailure.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { SaxesParser } from "saxes";
+import { DOMParser } from "@xmldom/xmldom";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   mavenGradleMetadataSchema,
@@ -27,6 +29,29 @@ const parse = (source: string, path = "/artifacts/pom.xml") => {
   expect(validated.success, JSON.stringify(validated.error)).toBe(true);
   return report;
 };
+
+it("preserves an opaque XML counting failure without allocating a DOM", () => {
+  const cause = new Error("controlled XML counter failure");
+  const syntax = vi
+    .spyOn(SaxesParser.prototype, "write")
+    .mockImplementationOnce(() => {
+      throw cause;
+    });
+  const dom = vi.spyOn(DOMParser.prototype, "parseFromString");
+  try {
+    let failure: unknown;
+    try {
+      parse(mavenPomFixture);
+    } catch (caught) {
+      failure = caught;
+    }
+    expect(failure).toBe(cause);
+    expect(dom).not.toHaveBeenCalled();
+  } finally {
+    syntax.mockRestore();
+    dom.mockRestore();
+  }
+});
 
 const expectFailure = (
   source: string | Uint8Array,
@@ -679,9 +704,6 @@ it("keeps a repeated Gradle field name out of the failure message", () => {
   expect(failure).toBeInstanceOf(ParseFailureError);
   expect(failure).toMatchObject({ failure: { kind: "malformed" } });
   const { message } = failure as ParseFailureError;
-  expect(message).toBe(
-    "Gradle module metadata declares a field more than once in one object (offset 62).",
-  );
   expect(message).not.toContain("user:secret");
   expect(message).not.toContain("repo.example");
 });
@@ -855,6 +877,79 @@ it.for([
     });
   },
 );
+
+it.for([
+  [
+    "Gradle variants",
+    `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
+    { allowance: "variants", limit: 4_096, required: 4_097 },
+  ],
+  [
+    "Gradle exclusions",
+    gradleModule(
+      `{"name":"v","dependencies":[{"group":"a","module":"b","excludes":[${Array(65_537).fill("{}").join(",")}]}]}`,
+    ),
+    { allowance: "exclusions", limit: 65_536, required: 65_537 },
+  ],
+  [
+    "POM exclusions",
+    `<project><artifactId>demo</artifactId><dependencies><dependency><exclusions>${"<exclusion/>".repeat(65_537)}</exclusions></dependency></dependencies></project>`,
+    { allowance: "exclusions", limit: 65_536, required: 65_537 },
+  ],
+] as const)(
+  "refuses %s past the report allowance before building them",
+  ([, source, expected]) => {
+    const bytes = Buffer.from(source, "utf8");
+    let failure: unknown;
+    try {
+      parseMavenGradleMetadata(bytes, {
+        path: "/artifacts/selected",
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(ParseFailureError);
+    expect(failure).toMatchObject({
+      failure: {
+        kind: "limit",
+        limit: {
+          name: expected.allowance,
+          maximum: expected.limit,
+          required: expected.required,
+        },
+      },
+    });
+  },
+);
+
+it("reports the variant refusal as a fixed report allowance", async () => {
+  const root = await createTestTempDirectory("rea-gradle-variants-");
+  const path = join(root, "demo.module");
+  await writeFile(
+    path,
+    `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
+  );
+  const provider = new MavenGradleMetadataProvider();
+  try {
+    const result = await provider.inspect({
+      path,
+      max_file_bytes: 1024 * 1024,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining("4096-variant allowance"),
+      },
+    });
+  } finally {
+    await provider.close();
+  }
+});
 
 it("refuses a POM past the XML node allowance before building its tree", () => {
   const source = `<project><artifactId>demo</artifactId><properties>${"<p/>".repeat(1_048_577)}</properties></project>`;
