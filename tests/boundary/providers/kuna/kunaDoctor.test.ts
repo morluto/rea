@@ -151,22 +151,16 @@ it("reports a cache root REA cannot use without creating anything", async () => 
 
 // Root can create a directory under a read-only parent, so the failure this case reports never happens.
 test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-  "reports a cache root REA cannot create under its nearest existing parent",
+  "reports a cache root REA cannot create under its nearest read-only parent",
   async () => {
     const root = await createTestTempDirectory("rea-kuna-doctor-create-");
     const kuna = await writeFakeKuna(root);
     const readOnly = join(root, "read-only");
     await mkdir(readOnly, { mode: 0o500 });
-    const occupied = join(root, "occupied");
-    await writeFile(occupied, "not a directory");
 
     const underReadOnly = await inspectKunaProvider({
       REA_KUNA_COMMAND: kuna,
       REA_KUNA_CACHE_DIR: join(readOnly, "nested", "cache"),
-    });
-    const underFile = await inspectKunaProvider({
-      REA_KUNA_COMMAND: kuna,
-      REA_KUNA_CACHE_DIR: join(occupied, "cache"),
     });
 
     expect(
@@ -176,16 +170,28 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       ok: false,
       detail: expect.stringContaining(`${readOnly} is not writable`),
     });
-    expect(underFile.checks.find(({ name }) => name === "cache")).toMatchObject(
-      {
-        name: "cache",
-        ok: false,
-        // stat reports ENOTDIR for a path beneath a regular file.
-        detail: expect.stringContaining("not a directory"),
-      },
-    );
   },
 );
+
+// A path beneath a regular file fails for every user, root included.
+it("reports a cache root beneath a regular file as not a directory", async () => {
+  const root = await createTestTempDirectory("rea-kuna-doctor-create-");
+  const kuna = await writeFakeKuna(root);
+  const occupied = join(root, "occupied");
+  await writeFile(occupied, "not a directory");
+
+  const underFile = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(occupied, "cache"),
+  });
+
+  expect(underFile.checks.find(({ name }) => name === "cache")).toMatchObject({
+    name: "cache",
+    ok: false,
+    // stat reports ENOTDIR for a path beneath a regular file.
+    detail: expect.stringContaining("not a directory"),
+  });
+});
 
 it("reports a dangling cache link as unusable and accepts a resolving link", async () => {
   const root = await createTestTempDirectory("rea-kuna-doctor-link-");
