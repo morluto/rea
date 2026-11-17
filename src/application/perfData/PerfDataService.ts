@@ -1,22 +1,21 @@
 import { isAbsolute } from "node:path";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../resources/readStableArtifact.js";
-import {
   projectStableArtifactFailure,
+  readStableArtifact,
   stableArtifactInputRecovery,
-} from "../../resources/StableArtifactFailure.js";
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -66,9 +65,10 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(
         operation,
@@ -77,17 +77,12 @@ const readFailure = (
         { cause },
       );
     if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
+      return fixedCeilingConstraint(
         operation,
         cause.boundary ?? "file-size",
         cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            "Select a recording within max_file_bytes; reply paging does not change this file admission.",
-        },
+        { name: "The perf.data file admission allowance", kind: "input" },
+        { cause },
       );
     if (cause.reason === "path" || cause.reason === "format")
       return inputFailure(cause.message, cause);

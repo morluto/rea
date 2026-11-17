@@ -1,11 +1,16 @@
-import { createHash } from "node:crypto";
+import { BinaryReader } from "../binaryContainer.js";
 import { ok, type Result } from "../result.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 import {
+  PERF_DATA_OPERATION,
   PERF_DATA_MAX_DIAGNOSTICS,
   type PerfData,
   type PerfDataArtifact,
   type PerfEvent,
 } from "./perfData.js";
+
+/** The native format BinaryReader names in any failure it raises. */
+const PERF_DATA_READER_FORMAT = "perf-data";
 
 /**
  * `struct perf_file_header` (tools/perf/util/header.h):
@@ -77,7 +82,7 @@ interface DecodeState {
 }
 
 const digest = (prefix: string, ...parts: (string | number)[]) =>
-  `${prefix}_${createHash("sha256").update(parts.join("\u0000")).digest("hex")}`;
+  `${prefix}_${sha256Hex(parts.join("\u0000"))}`;
 
 const withinFile = (fileBytes: number, offset: number, size: number): boolean =>
   offset + size <= fileBytes;
@@ -124,26 +129,30 @@ interface Reader {
   u32(bytes: Buffer, offset: number): number;
 }
 
-const readerFor = (little: boolean): Reader => ({
-  little,
-  u64(bytes, offset) {
-    if (offset + 8 > bytes.length) return null;
-    const value = little
-      ? bytes.readBigUInt64LE(offset)
-      : bytes.readBigUInt64BE(offset);
-    return value > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(value);
-  },
-  u64Bits(bytes, offset) {
-    if (offset + 8 > bytes.length) return null;
-    return little
-      ? bytes.readBigUInt64LE(offset)
-      : bytes.readBigUInt64BE(offset);
-  },
-  u32(bytes, offset) {
-    if (offset + 4 > bytes.length) return 0;
-    return little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
-  },
-});
+const readerFor = (little: boolean, bytes: Buffer): Reader => {
+  // One reader for the recording; every field below shares its bounds check.
+  const reader = new BinaryReader(bytes, little, PERF_DATA_READER_FORMAT);
+  // The facts below sit at fixed offsets and the walk already decides which
+  // extents are in the file, so a field past the end stays an unknown fact
+  // rather than the range failure BinaryReader raises for a decode it owns.
+  const wordAt = (offset: number): bigint | null =>
+    offset + 8 > bytes.length ? null : reader.word(offset, 64);
+  return {
+    little,
+    u64(_bytes, offset) {
+      const value = wordAt(offset);
+      return value === null || value > BigInt(Number.MAX_SAFE_INTEGER)
+        ? null
+        : Number(value);
+    },
+    u64Bits(_bytes, offset) {
+      return wordAt(offset);
+    },
+    u32(_bytes, offset) {
+      return offset + 4 > bytes.length ? 0 : reader.u32(offset);
+    },
+  };
+};
 
 /**
  * `perf_event_attr` stores `freq` and its siblings in a C bitfield. A
@@ -522,7 +531,7 @@ export const parsePerfData = (
     );
     return ok(noHeaderRecording(artifact, state.diagnostics));
   }
-  const read = readerFor(little);
+  const read = readerFor(little, bytes);
   const order = little ? "little-endian" : "big-endian";
   const headerBytes = read.u64(bytes, HEADER_SIZE_FIELD);
   // A present-but-unrepresentable size is not a truncation: every byte the

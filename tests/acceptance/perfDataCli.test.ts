@@ -36,7 +36,7 @@ cliTest(
     const evidence = completePerfEvidenceSchema.parse(result.json);
     expect(evidence).toMatchObject({
       confidence: "observed",
-      subject: { local_path: path, format: "file" },
+      subject: { identity: { kind: "file" }, local_path: path },
     });
     expect(evidence.normalized_result).toMatchObject({
       format: "perf-data",

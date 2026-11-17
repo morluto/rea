@@ -116,6 +116,7 @@ import { traceApplicationFeatureEvidence } from "../application/javascript/JavaS
 import { traceJavaScriptSemanticsEvidence } from "../application/javascript/JavaScriptSemanticTraceService.js";
 import { compareStaticAndObservedEndpointsEvidence } from "../application/javascript/StaticObservedEndpointComparisonService.js";
 import { inspectNtfsJournalEvidence } from "../application/ntfs/NtfsJournalService.js";
+import { inspectPerfDataEvidence } from "../application/perfData/PerfDataService.js";
 import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
 import { exportEnvironmentBundleTool } from "../application/environment/environmentBundleTool.js";
 import { PlaywrightTraceService } from "../application/playwrightTrace/PlaywrightTraceService.js";
@@ -1072,6 +1073,14 @@ const SERVICE_TOOL_BINDINGS = {
         workflow: async (input, { signal }) =>
           inspectionExecution(
             await inspectNtfsJournalEvidence(input, resources, signal),
+          ),
+      },
+      inspect_perf_data: {
+        admission: "sdk",
+        view: requestedView,
+        workflow: async (input, { signal }) =>
+          inspectionExecution(
+            await inspectPerfDataEvidence(input, resources, { signal }),
           ),
       },
       inspect_playwright_trace: {
