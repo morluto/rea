@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
@@ -42,7 +43,7 @@ it("names the service's per-call control by field over MCP and by flag on the CL
   expect(mcp.details?.limit).not.toHaveProperty("cli_flag");
   expect(JSON.stringify(mcp)).not.toContain("--");
 
-  const cli = Cli.create("rea-control-flag", { version: "1", sync: false });
+  const cli = createCommandCli();
   registerContractCommand(
     cli as unknown as CliInstance,
     silentLogger,
@@ -54,7 +55,7 @@ it("names the service's per-call control by field over MCP and by flag on the CL
     },
     async () => deadlineFailure(),
   );
-  const command = Cli.toCommands.get(cli)?.get("inspect-control-fixture");
+  const command = cliCommand(cli, "inspect-control-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
     (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);

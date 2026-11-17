@@ -25,6 +25,7 @@ import {
   selectCliAnalysisSelector,
   type CliSelectorKind,
 } from "./analysisSelector.js";
+import { optionFlagName } from "./optionFields.js";
 
 /**
  * Framework-neutral CLI description of a tool contract. This module owns
@@ -382,6 +383,8 @@ export interface ContractCliSessionTarget {
   /** The positional key, taken before every other positional. */
   readonly key: string;
   readonly schema: z.ZodType;
+  /** The contract that opens the target, when the command takes its fields. */
+  readonly opening: string | undefined;
   /** Options that supply fields of the opening contract. */
   readonly options: readonly ContractCliOpeningOption[];
   /**
@@ -699,7 +702,9 @@ export interface ContractCliDescription {
    * Contract fields the CLI spells differently, so input issues reported
    * after argv parsing can name the CLI key, and the flag of each contract
    * field (or `field.member`) the command takes as an option, so a failure
-   * that names a per-call control can name the flag that sets it.
+   * that names a per-call control can name the flag that sets it. Each field
+   * of a field group maps to the group's option, and a positional selector
+   * to its named option.
    */
   readonly inputBinding: {
     readonly operation: string;
@@ -778,13 +783,6 @@ const describedThroughWrappers = (value: z.ZodType): string | undefined => {
     current = current.unwrap() as z.ZodType;
   return current.description;
 };
-
-/**
- * Accept only field forms argv can carry, so a new contract field cannot
- * reach the CLI with an unreviewed spelling.
- */
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 /**
  * JSON text for a structured contract field. Argv carries text; the decoded
@@ -1113,22 +1111,14 @@ const branchOnlyField = (
 /**
  * An option that must stay omitted when the caller omits it, because the
  * input branch or route the caller selects applies its own default on
- * admission. Help and `--schema` still state the default, in the
- * description and as JSON Schema `default`.
+ * admission. Help and `--schema` still state the default through the
+ * schema metadata.
  */
 export const withoutDefault = (schema: z.ZodType): z.ZodType => {
   if (!(schema instanceof z.ZodDefault)) return schema;
   const value: unknown = schema.parse(undefined);
   const omittable = (schema.removeDefault() as z.ZodType).optional();
-  const shown = typeof value === "string" ? value : JSON.stringify(value);
-  return omittable.meta({
-    ...schema.meta(),
-    description:
-      schema.description === undefined
-        ? `Default: ${shown}`
-        : `${schema.description} (default: ${shown})`,
-    default: value,
-  });
+  return omittable.meta({ ...schema.meta(), default: value });
 };
 
 /**
@@ -1488,6 +1478,7 @@ const describeSessionTarget = (
   return {
     key: SESSION_TARGET_KEY,
     schema: localPathStringSchema.describe(target.description),
+    opening: target.open?.contract.name,
     options,
     admitOpening: (operation, values) =>
       admit(operation, values, values[SESSION_TARGET_KEY] as string),
@@ -1530,7 +1521,7 @@ const describeEvidenceTargets = (
     targets: described,
     options,
     sourceFlags: Object.fromEntries(
-      options.map(({ field, key }) => [field, `--${kebabCase(key)}`]),
+      options.map(({ field, key }) => [field, `--${optionFlagName(key)}`]),
     ),
     admitSource: (operation, values) => {
       let admitted: Result<
@@ -1919,7 +1910,7 @@ export const describeContractCommand = <
         viewDelivery?.viewSelectsSummary === true
           ? analysisEvidenceDeliveryOptions.detail.unwrap().optional()
           : analysisEvidenceDeliveryOptions.detail;
-    else if (jsonText) schema = jsonTextField(declared, kebabCase(key));
+    else if (jsonText) schema = jsonTextField(declared, optionFlagName(key));
     else if (callerPath) {
       const admitted =
         core(declared) instanceof z.ZodArray
@@ -1942,12 +1933,15 @@ export const describeContractCommand = <
       schema = schema.default(projected.default as never);
       if (described !== undefined) schema = schema.describe(described);
     }
-    const description =
+    const described =
       projected?.description ??
       schema.description ??
       describedThroughWrappers(declared);
-    if (description !== undefined && description !== schema.description)
-      schema = schema.describe(description);
+    if (described !== undefined && described !== schema.description)
+      schema = schema.describe(described);
+    if (!delivery && projected?.default === undefined)
+      schema = withoutDefault(schema);
+    const description = schema.description ?? described;
     const value = core(declared);
     const selector = selectorOptions[field];
     let selectorOption: ContractCliSelectorOption | undefined;
@@ -2351,7 +2345,19 @@ export const describeContractCommand = <
             };
             return [{ path: [flag], message, issue }];
           });
-          const result = contractChecks.safeParse(toContractInput(options));
+          // Checks observe execution defaults, while the command retains the
+          // caller's raw selections. Resolve only omitted fields: supplied
+          // options have already passed argv admission, and JSON text is not
+          // decoded until the command runs.
+          const checkInput = toContractInput(options);
+          if (checks.length > 0)
+            for (const [field, declared] of Object.entries(shape)) {
+              if (Object.hasOwn(checkInput, field)) continue;
+              const omitted = declared.safeParse(undefined);
+              if (omitted.success && omitted.data !== undefined)
+                checkInput[field] = omitted.data;
+            }
+          const result = contractChecks.safeParse(checkInput);
           return result.success
             ? conflicts
             : [
@@ -2435,15 +2441,33 @@ export const describeContractCommand = <
         ].flatMap(({ field, key }) => (key === field ? [] : [[field, key]])),
       ),
       flags: Object.fromEntries(
-        parameters.flatMap(({ field, key, member, positional, delivery }) =>
-          positional || delivery
-            ? []
-            : [
-                [
-                  member === undefined ? field : [field, ...member].join("."),
-                  `--${kebabCase(key)}`,
-                ],
-              ],
+        parameters.flatMap(
+          ({
+            field,
+            key,
+            member,
+            positional,
+            delivery,
+            group,
+            selectorOption,
+          }) => {
+            if (delivery) return [];
+            // A positional selector is also set by its named option.
+            if (positional)
+              return selectorOption === undefined
+                ? []
+                : [[field, `--${optionFlagName(selectorOption.key)}`] as const];
+            const flag = `--${optionFlagName(key)}`;
+            // A field group's option supplies each of its contract fields.
+            if (group !== undefined)
+              return group.map((grouped) => [grouped, flag] as const);
+            return [
+              [
+                member === undefined ? field : [field, ...member].join("."),
+                flag,
+              ] as const,
+            ];
+          },
         ),
       ),
     },

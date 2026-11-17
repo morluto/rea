@@ -47,9 +47,12 @@ import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,
 } from "../../domain/desktop/desktopCapture.js";
-import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
 import * as desktopSession from "../../desktop/DesktopApplicationSession.js";
-import { DesktopSessionCleanupError } from "../../ports/DesktopApplicationSession.js";
+import { createDesktopCaptureProvider } from "../../desktop/DesktopCaptureProvider.js";
+import {
+  DesktopSessionCleanupError,
+  type SessionRequest,
+} from "../../ports/DesktopApplicationSession.js";
 import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
@@ -167,6 +170,7 @@ const host = (
   platform,
   environment,
   callerDirectory: environment.HOME ?? "/",
+  desktop: createDesktopCaptureProvider(),
   nextRequest,
   report: async () => {},
 });

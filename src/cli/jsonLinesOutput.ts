@@ -1,6 +1,5 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
-import type { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -22,6 +21,7 @@ import {
 } from "./jsonOutput.js";
 import { retainCliPublicationOnError } from "./cliEvidencePublication.js";
 import type { CliResultControls } from "./cliResultControls.js";
+import type { OutputFilterPath } from "./outputFilter.js";
 
 interface CliJsonLinesInput {
   readonly source: unknown;
@@ -34,7 +34,7 @@ interface CliJsonLinesInput {
   readonly fullOutput: boolean;
   readonly tokenCount: boolean;
   readonly filterOutput: string | undefined;
-  readonly filterPaths: ReturnType<typeof Filter.parse> | undefined;
+  readonly filterPaths: readonly OutputFilterPath[] | undefined;
 }
 
 /** Render one already classified result, sharing a plan for output and counting. */

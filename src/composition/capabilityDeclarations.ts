@@ -32,6 +32,7 @@ import {
   BYTE_ENTROPY_PROVIDER,
   CANONICALIZE_PROVIDER,
   DEVICETREE_PROVIDER,
+  ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
   ELF_UNWIND_RANGES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
@@ -260,6 +261,11 @@ export const CAPABILITY_DECLARATIONS = {
         "inspect_electron_page",
         "list_electron_targets",
       ]),
+    ],
+  },
+  elfDependencies: {
+    providers: [
+      providerBinding(ELF_DEPENDENCIES_PROVIDER, ["inspect_elf_dependencies"]),
     ],
   },
   elfNotes: {
