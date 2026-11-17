@@ -515,8 +515,8 @@ it("commits no session facts when cancelled after the trace completes", async ()
     JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   );
   if (!traceExecution.ok) throw traceExecution.error;
+  const before = session.exportEvidenceBundle();
   for (const view of [undefined, { kind: "summary" } as const]) {
-    const before = session.exportEvidenceBundle();
     const cancelled = new AbortController();
     cancelled.abort(new Error("client cancelled"));
     // Cancellation can only arrive between completion and commit through this
@@ -532,16 +532,10 @@ it("commits no session facts when cancelled after the trace completes", async ()
       view,
       cancelled.signal,
     );
+    // Same contract as compare_source_to_bundle: a cancelled request leaves the session unchanged.
     expect(parseMcpToolError(delivered)).toMatchObject({
       error: { code: "cancelled" },
     });
-    if (view === undefined) {
-      // Without a view the completed trace is the request's own observation, so
-      // cancelling only the delivery step must not hide it.
-      expect(session.exportEvidenceBundle()).not.toEqual(before);
-    } else {
-      // A cancelled view still leaves the session unchanged.
-      expect(session.exportEvidenceBundle()).toEqual(before);
-    }
+    expect(session.exportEvidenceBundle()).toEqual(before);
   }
 });
