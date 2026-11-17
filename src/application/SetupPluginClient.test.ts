@@ -175,7 +175,13 @@ it.each(["inventory", "install", "readback"] as const)(
           : {}),
       };
     };
-    const client = new SetupPluginClient("claude", {}, resources, HOST_PLATFORM.platform, launch);
+    const client = new SetupPluginClient(
+      "claude",
+      {},
+      resources,
+      HOST_PLATFORM.platform,
+      launch,
+    );
     const failure =
       stage === "inventory"
         ? await client.inspect()

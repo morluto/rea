@@ -78,7 +78,7 @@ for (const [id, command] of [
       const rejected = await processes.run(
         process.execPath,
         [script, "plugin", "list", "--xml"],
-        { cwd: home, env: environment, timeoutMs: 10_000 },
+        { cwd: home, env: environment },
       );
       expect(rejected.exitCode).not.toBe(0);
       expect(rejected.stderr).toContain("Unmodeled");

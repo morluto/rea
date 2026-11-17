@@ -1,5 +1,5 @@
 import { lstat, mkdir, realpath, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ArtifactResourceScope } from "../resources/index.js";
@@ -11,6 +11,10 @@ import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import type { PluginInspection } from "./SetupPluginClient.js";
 import { throwIfSetupCancelled } from "./SetupCancellation.js";
 import { MCP_BOOTSTRAP_FILES } from "../../scripts/lib/cli-runtime-files.mjs";
+import {
+  CURSOR_PLUGIN_MANIFEST,
+  CURSOR_PLUGIN_MCP,
+} from "../../scripts/lib/cursor-plugin-bundle.mjs";
 import {
   SetupPluginCommands,
   pluginCommandFailure,
@@ -136,7 +140,6 @@ export class CursorLocalPlugin extends SetupPluginCommands {
         version: metadata.version,
         logo: `./${packagePath}/${icon.slice(2)}`,
         skills: `./${packagePath}/skills`,
-        mcpServers: "./.cursor-plugin/mcp.json",
       },
       server: {
         mcpServers: {
@@ -176,10 +179,9 @@ export class CursorLocalPlugin extends SetupPluginCommands {
         );
       const expected = await this.configuration(target);
       if (
-        (await this.read(target, ".cursor-plugin/plugin.json")) !==
+        (await this.read(target, CURSOR_PLUGIN_MANIFEST)) !==
           json(expected.manifest) ||
-        (await this.read(target, ".cursor-plugin/mcp.json")) !==
-          json(expected.server)
+        (await this.read(target, CURSOR_PLUGIN_MCP)) !== json(expected.server)
       )
         throw new Error(
           "The local plugin configuration was edited or is incomplete.",
@@ -247,16 +249,20 @@ export class CursorLocalPlugin extends SetupPluginCommands {
       }
       const configuration = await this.configuration(staged);
       throwIfSetupCancelled(signal);
-      await mkdir(join(staged, ".cursor-plugin"));
+      await mkdir(join(staged, dirname(CURSOR_PLUGIN_MANIFEST)), {
+        recursive: true,
+      });
       await writeFile(
-        join(staged, ".cursor-plugin", "plugin.json"),
+        join(staged, ...CURSOR_PLUGIN_MANIFEST.split("/")),
         json(configuration.manifest),
         { flag: "wx" },
       );
       await writeFile(
-        join(staged, ".cursor-plugin", "mcp.json"),
+        join(staged, CURSOR_PLUGIN_MCP),
         json(configuration.server),
-        { flag: "wx" },
+        {
+          flag: "wx",
+        },
       );
       await writeFile(join(staged, ".rea-local-plugin.json"), json(receipt), {
         flag: "wx",

@@ -153,8 +153,7 @@ export const windowsPathCandidates = (
     const normalized = extension.toLowerCase();
     return (
       WINDOWS_IMAGE_EXTENSIONS.has(normalized) ||
-      (search.allowBatch === true &&
-        WINDOWS_BATCH_EXTENSIONS.has(normalized))
+      (search.allowBatch === true && WINDOWS_BATCH_EXTENSIONS.has(normalized))
     );
   };
   const spelled = (command: string): string[] => {

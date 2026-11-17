@@ -7,8 +7,9 @@ import { ensureGeneratedFile } from "./generated-file.mjs";
 // publication (name, release version, repository, skill, and icon). The
 // Marketplace checkout has no dist/, so the server is the pinned npm command
 // instead of the bundled launcher.
-const CURSOR_PLUGIN_MANIFEST = ".cursor-plugin/plugin.json";
-const CURSOR_PLUGIN_MCP = "mcp.json";
+/** Cursor plugin layout owned by this module: manifest under `.cursor-plugin/`, MCP at the plugin root. */
+export const CURSOR_PLUGIN_MANIFEST = ".cursor-plugin/plugin.json";
+export const CURSOR_PLUGIN_MCP = "mcp.json";
 const AUTHORED_SKILL_DIRECTORY = ".agents/skills/reverse-engineer-anything";
 const CURSOR_PLUGIN_SKILLS = ".cursor-plugin/skills";
 const CURSOR_PLUGIN_SKILL = "reverse-engineer-anything";

@@ -5,10 +5,7 @@ import {
   type ArtifactResourceOwner,
   AnalysisCleanupLease,
 } from "../resources/index.js";
-import {
-  CallerAbort,
-  OwnerCancellation,
-} from "../domain/analysisErrorCore.js";
+import { CallerAbort, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import {
   ProviderProcessSupervisor,

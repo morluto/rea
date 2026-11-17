@@ -1,7 +1,4 @@
-import {
-  cancelledBy,
-  carriedReason,
-} from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   isWindowsBatchFile,

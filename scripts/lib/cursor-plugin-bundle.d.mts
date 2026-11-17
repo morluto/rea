@@ -1,3 +1,7 @@
+/** Cursor plugin layout: manifest under `.cursor-plugin/`, MCP at the plugin root. */
+export const CURSOR_PLUGIN_MANIFEST: ".cursor-plugin/plugin.json";
+export const CURSOR_PLUGIN_MCP: "mcp.json";
+
 export interface CursorPluginBundleIssue {
   readonly field: string;
 }

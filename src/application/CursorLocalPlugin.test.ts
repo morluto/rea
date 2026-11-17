@@ -265,9 +265,8 @@ it("installs the pinned Cursor local plugin and leaves its runtime stable on rer
     homepage: "https://rea.tools/",
     skills: "./node_modules/rea-agents/skills",
   });
-  const server = JSON.parse(
-    await readFile(join(f.target, ".cursor-plugin", "mcp.json"), "utf8"),
-  );
+  expect(manifest).not.toHaveProperty("mcpServers");
+  const server = JSON.parse(await readFile(join(f.target, "mcp.json"), "utf8"));
   expect(server.mcpServers.rea.args).toEqual([
     "${CURSOR_PLUGIN_ROOT}/node_modules/rea-agents/scripts/plugin-mcp-launcher.mjs",
     PRODUCT_IDENTITY.packageVersion,
@@ -377,7 +376,7 @@ it.each(["foreign", "changed-during-download", "edited"] as const)(
     let preserved: string;
     if (mode === "edited") {
       expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
-      preserved = join(f.target, ".cursor-plugin", "mcp.json");
+      preserved = join(f.target, "mcp.json");
       await writeFile(preserved, "edited");
     } else if (mode === "foreign") {
       await mkdir(f.target, { recursive: true });
