@@ -756,6 +756,15 @@ export class JavaScriptAnalysisWorker {
       UV_THREADPOOL_SIZE: "1",
     };
     delete environment.NODE_OPTIONS;
+    // The portable verifier proves its offline boundary with a preload that
+    // rejects Node socket connections. An ambient NODE_OPTIONS must stay
+    // stripped so it cannot reprogram the worker, but the verifier's own guard
+    // is honored through this dedicated variable.
+    const verificationPreload =
+      process.env.REA_JAVASCRIPT_WORKER_VERIFICATION_PRELOAD;
+    if (verificationPreload !== undefined && verificationPreload !== "") {
+      environment.NODE_OPTIONS = `--require ${JSON.stringify(verificationPreload)}`;
+    }
     await this.#runtime.start(
       {
         command: process.execPath,

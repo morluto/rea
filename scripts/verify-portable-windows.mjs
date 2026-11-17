@@ -41,19 +41,24 @@ const node = join(directory, "runtime/node.exe");
 const entry = join(directory, "app/scripts/rea.mjs");
 let complete = false;
 let nodeSocketConnectionsDenied = false;
+let workerPreloadVerified = false;
 try {
   const sample = join(workspace, "sample %REA_PORTABLE_PROBE% & !NAME! 中文");
   await mkdir(sample);
   const source = 'export function greet(name) { return "Hello " + name; }\n';
   await writeFile(join(sample, "app.js"), source, "utf8");
   const guard = join(workspace, "network-guard.cjs");
+  const marker = join(workspace, "network-guard-loads.txt");
   await writeFile(
     guard,
-    'require("node:net").Socket.prototype.connect = function () { throw new Error("Portable verification forbids Node network connections"); };\n',
+    'require("node:fs").appendFileSync(process.env.REA_VERIFICATION_MARKER, `${process.pid}\\n`);\n' +
+      'require("node:net").Socket.prototype.connect = function () { throw new Error("Portable verification forbids Node network connections"); };\n',
     "utf8",
   );
   // This removes package managers and host Node from PATH. The preload rejects
-  // Node socket connections; it is not an OS firewall for external executables.
+  // Node socket connections in direct children; the JavaScript analysis worker
+  // strips an ambient NODE_OPTIONS by design, so it receives the same guard
+  // through its explicit verification variable instead.
   const environment = {
     SystemRoot: process.env.SystemRoot,
     WINDIR: process.env.WINDIR,
@@ -66,6 +71,8 @@ try {
     TEMP: workspace,
     TMP: workspace,
     NODE_OPTIONS: `--require "${guard.replaceAll("\\", "/")}"`,
+    REA_JAVASCRIPT_WORKER_VERIFICATION_PRELOAD: guard,
+    REA_VERIFICATION_MARKER: marker,
     npm_command: "exec",
     REA_PORTABLE_PROBE: "expanded-probe",
     NO_COLOR: "1",
@@ -88,6 +95,14 @@ try {
     },
   );
   nodeSocketConnectionsDenied = true;
+  const guardLoadsAfterControl = (await readFile(marker, "utf8"))
+    .trim()
+    .split("\n").length;
+  assert.equal(
+    guardLoadsAfterControl,
+    1,
+    "The network guard must load in exactly the direct control child",
+  );
   // Invoke the full script path through inbox Windows PowerShell (including 5.1).
   // The artifact is local test output; bypass policy only in this child process.
   const powershellExecutable =
@@ -203,11 +218,25 @@ try {
   assert.equal(repeated.status, "ready");
   assert.deepEqual(repeated.plannedActions, []);
   assert.deepEqual(repeated.appliedActions, []);
+  // Measure the analysis alone: earlier CLI commands also load the guard
+  // through NODE_OPTIONS. The analysis starts the CLI's Node process and the
+  // JavaScript worker, so two loads prove the worker received the guard
+  // through its verification variable while an ambient NODE_OPTIONS stays
+  // stripped.
+  await writeFile(marker, "", "utf8");
   const cli = JSON.parse(
     (await launcher(["analyze-javascript-application", sample, "--json"]))
       .stdout,
   );
   assert.equal(cli.operation, "analyze_javascript_application");
+  const guardLoadsAfterAnalysis = (await readFile(marker, "utf8"))
+    .trim()
+    .split("\n").length;
+  assert.ok(
+    guardLoadsAfterAnalysis >= 2,
+    `The JavaScript analysis worker must load the verification guard (${String(guardLoadsAfterAnalysis)} load(s))`,
+  );
+  workerPreloadVerified = true;
   const sessionHarness = join(workspace, "powershell-session.ps1");
   await writeFile(
     sessionHarness,
@@ -375,6 +404,7 @@ console.log(
     nodeSocketConnections: nodeSocketConnectionsDenied
       ? "denied"
       : "unverified",
+    javascriptWorkerPreload: workerPreloadVerified ? "loaded" : "missing",
     externalProviders: "not exercised",
   }),
 );
