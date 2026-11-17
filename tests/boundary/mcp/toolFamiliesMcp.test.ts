@@ -2,12 +2,11 @@ import type { Client } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../../../src/contracts/toolContracts.js";
+import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
-import { registerSessionStatusTool } from "../../../src/server/registerSessionStatusTool.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import type { SessionStatusToolOptions } from "../../../src/server/sessionStatusTool.js";
+import { silentLogger } from "../../../src/logger.js";
 import { binaryTargetSummary } from "../../../src/application/binary/BinaryTargetSummary.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
@@ -20,6 +19,14 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
+/** Bind `binary_session` the way production composition does. */
+const registerSessionStatus = (options: SessionStatusToolOptions): void =>
+  registerServiceTools(
+    options.server,
+    { sessionStatus: options },
+    { logger: silentLogger },
+  );
+
 const scopedServer = (
   advertisedToolFamilies: ReadonlySet<string> | undefined,
 ): EvidenceMcpServer =>
@@ -29,7 +36,7 @@ const scopedServer = (
     undefined,
     new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     undefined,
-    "full",
+    undefined,
     undefined,
     advertisedToolFamilies,
   );
@@ -200,10 +207,9 @@ it.each([
         diagnostics: {},
       } as const;
     };
-    registerSessionStatusTool({
+    registerSessionStatus({
       server,
       session: sessionWithDirectOperations(),
-      contract: toolContract("binary_session"),
       startedAt: new Date().toISOString(),
       availabilityPolicy: () => ({ processCaptureEnabled: false }),
       androidAnalysisAvailability: probe("android"),
@@ -242,10 +248,9 @@ it.each([
     const adbRelease = new Promise<void>((resolve) => {
       release = resolve;
     });
-    registerSessionStatusTool({
+    registerSessionStatus({
       server,
       session: sessionWithDirectOperations(),
-      contract: toolContract("binary_session"),
       startedAt: new Date().toISOString(),
       availabilityPolicy: () => ({ processCaptureEnabled: false }),
       androidAnalysisAvailability: async () => {
@@ -329,10 +334,9 @@ describe("MCP tool family availability", () => {
     // `session` advertises `get_navigation_context`, while `direct` owns the
     // operations its default mode composes.
     const server = scopedServer(new Set(["session"]));
-    registerSessionStatusTool({
+    registerSessionStatus({
       server,
       session: sessionWithDirectOperations(),
-      contract: toolContract("binary_session"),
       startedAt: new Date().toISOString(),
       availabilityPolicy: () => ({ processCaptureEnabled: false }),
       androidAnalysisAvailability: async () => ({

@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const exec = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -14,16 +15,7 @@ const authored =
 
 async function fixture(eol = "\n") {
   const root = await createTestTempDirectory("rea-generated-skill-");
-  for (const path of [
-    "scripts/generate-skill-metadata.mjs",
-    "scripts/lib/generated-file.mjs",
-    "scripts/lib/verifier-source-loader.mjs",
-    "src/domain/skillManifest.ts",
-    "src/domain/result.ts",
-  ]) {
-    await mkdir(dirname(join(root, path)), { recursive: true });
-    await copyFile(join(repositoryRoot, path), join(root, path));
-  }
+  await copyScriptsWithImports(["scripts/generate-skill-metadata.mjs"], root);
   await mkdir(join(root, "node_modules"));
   await cp(
     join(repositoryRoot, "node_modules/yaml"),
@@ -33,7 +25,7 @@ async function fixture(eol = "\n") {
   const sourceRoot = join(root, ".agents/skills/reverse-engineer-anything");
   const outputRoot = join(root, "skills/reverse-engineer-anything");
   await mkdir(join(sourceRoot, "references"), { recursive: true });
-  await mkdir(join(root, "dist"));
+  await mkdir(join(root, "dist/contracts/catalog"), { recursive: true });
   await writeFile(join(root, "package.json"), '{"type":"module"}\n');
   await writeFile(
     join(root, "dist/identity.js"),
@@ -46,8 +38,8 @@ async function fixture(eol = "\n") {
   );
   const identity = async (count: number, digest: string) =>
     writeFile(
-      join(root, "dist/catalogIdentity.js"),
-      `export const FULL_CATALOG_IDENTITY = ${JSON.stringify({ counts: { mcp_tools: count }, digests: { combined_sha256: digest } })};\n`,
+      join(root, "dist/contracts/catalog/catalogIdentity.js"),
+      `export const DEFAULT_CATALOG_IDENTITY = ${JSON.stringify({ counts: { mcp_tools: count }, digests: { combined_sha256: digest } })};\n`,
     );
   await identity(139, "a".repeat(64));
   const generate = (...args: string[]) =>

@@ -3,16 +3,17 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { zip64Tail } from "../fixtures/apkSignature/zip64Tail.js";
+import { zipWith } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
 
 const inspectBoth = async (cli: TestCli, path: string) => {
-  const output = await cli.sharedCliRun!({
+  const output = await cli.run({
     arguments: [
       "inspect-apk-signature",
       path,
@@ -29,7 +30,7 @@ const inspectBoth = async (cli: TestCli, path: string) => {
   return { output, response };
 };
 
-const expectUnsignedZip64 = async (
+const expectUnsignedArchive = async (
   cli: TestCli,
   path: string,
   bytes: Uint8Array,
@@ -43,7 +44,7 @@ const expectUnsignedZip64 = async (
     const evidence = parseEvidence(value);
     expect(evidence.subject).toMatchObject({
       local_path: path,
-      digest: { sha256 },
+      identity: { sha256 },
     });
     expect(
       apkSignatureResultSchema.parse(evidence.normalized_result),
@@ -72,6 +73,8 @@ const expectRefusal = async (
   expect(output.exitCode, output.stderr).toBe(1);
   const cliError = analysisErrorProjectionSchema.parse(output.json);
   expect(cliError).toMatchObject(expected);
+  expect(output.json).not.toHaveProperty("normalized_result");
+  expect(response).not.toHaveProperty("structuredContent.normalized_result");
   const mcpError = parseMcpToolError(response).error;
   expect(mcpError).toMatchObject(expected);
   expect(mcpError.message).toBe(cliError.message);
@@ -85,7 +88,7 @@ cliTest(
     const path = join(root, "selected.apk");
     const fixture = await zip64Tail();
     const { recordOffset, locatorOffset, eocdOffset } = fixture;
-    await expectUnsignedZip64(cli, path, fixture.bytes);
+    await expectUnsignedArchive(cli, path, fixture.bytes);
     const cases = [
       {
         at: locatorOffset,
@@ -153,7 +156,53 @@ cliTest(
       });
     }
     // Restore the exact original bytes at the same caller-selected path.
-    await expectUnsignedZip64(cli, path, fixture.bytes);
+    await expectUnsignedArchive(cli, path, fixture.bytes);
+  },
+);
+
+cliTest(
+  "refuses classic disk declarations before returning signing Evidence through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-classic-disks-");
+    const path = join(root, "selected.apk");
+    const original = await zipWith(
+      [
+        { name: "classes.dex", data: "inert", stored: true },
+        { name: "AndroidManifest.xml", data: "<manifest/>", stored: true },
+      ],
+      { dataDescriptor: false },
+    );
+    await expectUnsignedArchive(cli, path, original);
+    const eocd = original.length - 22;
+    for (const at of [4, 6]) {
+      const bytes = Uint8Array.from(original);
+      new DataView(bytes.buffer).setUint16(eocd + at, 1, true);
+      // Only disk declarations change; these are not genuine split APK sets.
+      await expectRefusal(cli, path, bytes, {
+        code: "unsupported_target",
+        category: "unsupported_target",
+        message: expect.stringContaining("multi-disk ZIP"),
+        details: { path },
+      });
+    }
+    for (const entriesOnDisk of [0, 3]) {
+      const bytes = Uint8Array.from(original);
+      new DataView(bytes.buffer).setUint16(eocd + 8, entriesOnDisk, true);
+      await expectRefusal(cli, path, bytes, {
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(`byte ${String(eocd + 8)}`),
+            },
+          ],
+        },
+      });
+    }
+    await expectUnsignedArchive(cli, path, original);
   },
 );
 

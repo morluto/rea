@@ -1,0 +1,8 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin extra
+exit: 1
+--- stdout
+code: UNKNOWN
+message: "Unexpected positional arguments: \"extra\". Use 'rea inspect-byte-entropy --help' for the declared argument shape."
+<end>
+--- stderr
+<end>

@@ -4,11 +4,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import {
   preserveCurrentRecoveryBackup,
   type RecoveryBackupPreservationFailure,
+  type RecoveryBackupPreservationOptions,
 } from "./SetupRecoveryBackup.js";
 import { err, ok, type Result } from "../domain/result.js";
-
-const errorDetail = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const isMissing = (cause: unknown): boolean =>
   typeof cause === "object" &&
@@ -27,7 +26,7 @@ const restrictExistingBackup = (
     return err({
       kind: "unreadable",
       path: backupPath,
-      detail: `The existing client configuration backup could not be checked: ${errorDetail(cause)}`,
+      detail: `The existing client configuration backup could not be checked: ${errorMessage(cause)}`,
     });
   }
   if (!existing.isFile())
@@ -42,7 +41,7 @@ const restrictExistingBackup = (
     return err({
       kind: "unreadable",
       path: backupPath,
-      detail: `The existing client configuration backup permissions could not be secured: ${errorDetail(cause)}`,
+      detail: `The existing client configuration backup permissions could not be secured: ${errorMessage(cause)}`,
     });
   }
   return ok(undefined);
@@ -58,21 +57,40 @@ const copyPrivateBackup = async (
   });
 };
 
-export const writeClientRegistrationBackup = async (
-  settingsPath: string,
-  settingsText: string,
+/**
+ * Preserve a configuration's original bytes in an owner-only (0600) backup,
+ * restricting any backup already selected for them, so a private profile's
+ * contents never sit in a more permissive copy beside the requested path.
+ */
+export const preservePrivateRecoveryBackup = async (
+  firstBackupPath: string,
+  source: string,
+  original: string,
+  resources?: RecoveryBackupPreservationOptions["resources"],
 ): Promise<Result<string, RecoveryBackupPreservationFailure>> => {
-  const firstBackupPath = `${settingsPath}.rea.backup`;
   const firstRestricted = restrictExistingBackup(firstBackupPath);
   if (!firstRestricted.ok) return firstRestricted;
   const preserved = await preserveCurrentRecoveryBackup(
     firstBackupPath,
-    settingsPath,
-    settingsText,
-    { copy: copyPrivateBackup },
+    source,
+    original,
+    {
+      copy: copyPrivateBackup,
+      ...(resources === undefined ? {} : { resources }),
+    },
   );
   if (!preserved.ok) return preserved;
   const selectedRestricted = restrictExistingBackup(preserved.value);
   if (!selectedRestricted.ok) return selectedRestricted;
   return ok(preserved.value);
 };
+
+export const writeClientRegistrationBackup = (
+  settingsPath: string,
+  settingsText: string,
+): Promise<Result<string, RecoveryBackupPreservationFailure>> =>
+  preservePrivateRecoveryBackup(
+    `${settingsPath}.rea.backup`,
+    settingsPath,
+    settingsText,
+  );

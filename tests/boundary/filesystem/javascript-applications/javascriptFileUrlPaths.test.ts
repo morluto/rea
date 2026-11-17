@@ -9,7 +9,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { parseJavaScriptSource } from "../../../../src/domain/javascript/javascriptSourceParser.js";
 import { staticPath } from "../../../../src/domain/javascript/javascriptStaticAnalysisHelpers.js";
-import { analyzeParsedJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../fixtures/javascriptStaticAnalysis.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
 
 const urlCases = [

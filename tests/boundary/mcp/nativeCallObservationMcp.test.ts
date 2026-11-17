@@ -18,6 +18,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** A thin little-endian arm64 MH_EXECUTE header with no load commands. */
 const machoHeader = (): Buffer => {
@@ -89,6 +90,7 @@ const tracer: NativeCallTracer & { calls: number } = {
             stderr_complete: true,
           },
           other_stops: [],
+          unattributed_breakpoint_stops: 0,
         },
         stdout: { text: "", bytes: 0, truncated: false, complete: true },
         stderr: { text: "", bytes: 0, truncated: false, complete: true },
@@ -112,7 +114,10 @@ it("routes observe_native_calls through MCP with schema-checked input and output
     ),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-calls-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "native-calls-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -309,10 +314,13 @@ it.each([
       ),
     );
     const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "native-calls-partial-mcp-test",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "native-calls-partial-mcp-test",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

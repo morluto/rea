@@ -13,17 +13,14 @@ import {
 } from "../../../tests/fixtures/environmentStateLaterReads.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const names = (body: JsonValue | undefined): JsonValue[] => {
   if (typeof body !== "object" || body === null || Array.isArray(body))
     throw new Error("Expected an object body");
   const list = body["list"];
   if (!Array.isArray(list)) throw new Error("Expected a list");
-  return list.map((item) =>
-    typeof item === "object" && item !== null && !Array.isArray(item)
-      ? (item["name"] ?? null)
-      : null,
-  );
+  return list.map((item) => (isRecord(item) ? (item["name"] ?? null) : null));
 };
 
 describe("served writes modelled on later reads", () => {

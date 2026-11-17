@@ -17,12 +17,11 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDoctorHost } from "./FirmwareDoctor.js";
 import * as commandPath from "../process/ArtifactCommandPath.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import {
-  runDoctor,
-  type DoctorProviderInspection,
-} from "../application/Doctor.js";
+import { runDoctor } from "../application/Doctor.js";
+import type { DoctorProviderInspection } from "../ports/DoctorProviderInspection.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
 import { FirmwareDoctor } from "./FirmwareDoctor.js";
+import { createSystemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 
 const HEADER =
   "The following executables found installed, which are needed by unblob:";
@@ -408,7 +407,13 @@ linuxIt(
   "reports missing ps before launching any selected provider",
   async () => {
     const { environment, root } = await fixture();
-    const doctor = new FirmwareDoctor({ ...environment, PATH: root });
+    const doctor = new FirmwareDoctor({ ...environment, PATH: root }, "linux", {
+      prepareOwnership: async (environment, signal) => {
+        await createSystemProcessOwnershipHost("linux", environment, {
+          linuxPsLocations: [],
+        }).prepare?.(signal);
+      },
+    });
     const inspections = await doctor.inspect();
     for (const inspection of inspections) {
       expect(inspection.available).toBe(false);
@@ -1117,7 +1122,14 @@ linuxIt(
     const doctor = new FirmwareDoctor(
       { ...environment, PATH: root, REA_PROCESS_TABLE_MAX_BYTES: "65536" },
       "linux",
-      { runCommand: run },
+      {
+        runCommand: run,
+        prepareOwnership: async (environment, signal) => {
+          await createSystemProcessOwnershipHost("linux", environment, {
+            linuxPsLocations: [ps],
+          }).prepare?.(signal);
+        },
+      },
     );
     const inspections = await doctor.inspect();
     expect(inspections).toHaveLength(2);

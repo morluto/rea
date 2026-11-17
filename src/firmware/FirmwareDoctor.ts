@@ -1,20 +1,22 @@
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import {
   PROCESS_TABLE_MAX_BYTES_SETTING,
   processTableMaxBytesConstraint,
+  parseProcessTableMaxBytes,
 } from "../config/processTableOutputBudget.js";
 import { randomUUID } from "node:crypto";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -29,7 +31,11 @@ import {
   createSystemProcessOwnershipHost,
   LinuxOwnedProcessPrerequisiteError,
 } from "../process/ProcessOwnershipObservation.js";
-import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { prlimitArgumentVector } from "../process/LinuxResourceLimits.js";
 import {
   firmwareLimiterPath,
@@ -101,7 +107,7 @@ export class FirmwareDoctor {
 
   constructor(
     readonly environment: Readonly<NodeJS.ProcessEnv>,
-    readonly platform: NodeJS.Platform = process.platform,
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     readonly host: FirmwareDoctorHost = {},
     readonly signal?: AbortSignal,
   ) {}
@@ -120,7 +126,7 @@ export class FirmwareDoctor {
     } catch (cause: unknown) {
       const failure =
         cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-          ? new AnalysisCancelledError("doctor", { cause: cause.cause })
+          ? cancelledBy("doctor", carriedReason(cause.cause))
           : cause;
       const retained =
         failure instanceof AnalysisCancelledError
@@ -262,10 +268,21 @@ export class FirmwareDoctor {
 
   #throwIfCancelled(): void {
     if (this.signal?.aborted)
-      throw new AnalysisCancelledError("doctor", { cause: this.signal.reason });
+      throw cancelledBy("doctor", carriedReason(this.signal.reason));
   }
 
   async #inspectPs(): Promise<DoctorProviderCheck> {
+    const budget = parseProcessTableMaxBytes(
+      this.environment[PROCESS_TABLE_MAX_BYTES_SETTING],
+    );
+    if (!budget.ok)
+      return diagnostic(
+        "ps",
+        false,
+        budget.error.message,
+        "config_drift",
+        `${processTableMaxBytesConstraint} Set it in REA's launch environment and restart REA.`,
+      );
     try {
       const timeout = AbortSignal.timeout(PROBE_LIMITS.timeoutMs);
       const signal =
@@ -288,14 +305,6 @@ export class FirmwareDoctor {
       );
     } catch (cause: unknown) {
       this.#throwIfCancelled();
-      if (cause instanceof ConfigurationError)
-        return diagnostic(
-          "ps",
-          false,
-          cause.message,
-          "config_drift",
-          `${processTableMaxBytesConstraint} Set it in REA's launch environment and restart REA.`,
-        );
       if (
         cause instanceof LinuxOwnedProcessPrerequisiteError &&
         cause.outputLimitBytes !== undefined
@@ -316,9 +325,9 @@ export class FirmwareDoctor {
       return diagnostic(
         "ps",
         false,
-        failureMessage(cause),
+        errorMessage(cause),
         "missing_dependency",
-        "Install procps/procps-ng or provide a procps-compatible ps on REA's PATH, then rerun doctor.",
+        "Install procps/procps-ng at a standard system location, or provide a procps-compatible ps on REA's PATH when no system ps is available, then rerun doctor.",
       );
     }
   }
@@ -495,13 +504,17 @@ export class FirmwareDoctor {
           },
         },
       );
+      const output = capturedProviderOutput(result);
       return ok({
-        stdout: result.stdout.text,
-        stderr: result.stderr.text,
-        exitCode: result.exitCode ?? null,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        exitCode: output.exit_code ?? null,
       });
     } catch (cause: unknown) {
-      const failure = probeFailure(cause);
+      const failure = classifyProviderFailure(
+        cause,
+        firmwareDoctorFailureDialect,
+      );
       if (failure instanceof AnalysisCancelledError) throw failure;
       // Keep the first command failure through later admission/finalization
       // cancellation, while ordinary failures still allow peer diagnostics.
@@ -515,14 +528,12 @@ export class FirmwareDoctor {
       )
         throw analysisErrorWithCancellation(
           progress.primaryFailure,
-          new AnalysisCancelledError("doctor", {
-            cause: cause.cancellation.reason,
-          }),
+          cancelledBy("doctor", carriedReason(cause.cancellation.reason)),
         );
       const output =
         cause instanceof OwnedCommandFailure ? cause.snapshot : null;
       return err(
-        `${failureMessage(cause)}${output === null ? "" : `; stdout: ${output.stdout.text}; stderr: ${output.stderr.text}`}`,
+        `${errorMessage(cause)}${output === null ? "" : `; stdout: ${output.stdout.text}; stderr: ${output.stderr.text}`}`,
       );
     }
   }
@@ -567,50 +578,49 @@ const limitedArguments = (
   ...args,
 ];
 
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
-/** Translate the command owner's recorded outcome before considering later cancellation. */
-const probeFailure = (cause: unknown): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  const owned = cause instanceof OwnedCommandFailure ? cause : undefined;
-  const options = {
-    cause,
-    ...(owned?.snapshot == null
-      ? {}
-      : { capturedOutput: artifactCommandOutput(owned.snapshot) }),
-    diagnostics: {
-      firmware_probe: {
-        reason: owned?.reason ?? "process",
-        message: failureMessage(cause),
+/** Probe settings and firmware diagnostics; shared owners classify physical outcomes. */
+const firmwareDoctorFailureDialect: ProviderFailureDialect = {
+  providerId: "firmware",
+  operation: "doctor",
+  command: (outcome) => ({
+    operation: "doctor",
+    capturedOutput: capturedProviderOutput,
+    details: {
+      diagnostics: {
+        firmware_probe: {
+          reason:
+            outcome.cause instanceof OwnedCommandFailure
+              ? outcome.cause.reason
+              : outcome.kind,
+          message: outcome.message,
+        },
       },
     },
-  };
-  if (owned?.reason === "cancelled")
-    return new AnalysisCancelledError("doctor", {
-      ...options,
-      cause:
-        owned.cancellation === undefined ? cause : owned.cancellation.reason,
-    });
-  if (owned?.reason === "timeout")
-    return new AnalysisTimeoutError("doctor", PROBE_LIMITS.timeoutMs, options);
-  if (owned?.reason === "output-limit")
-    return new AnalysisResourceConstraintError(
-      "doctor",
-      "memory",
-      owned.message,
-      { diagnostic_bytes: PROBE_LIMITS.diagnosticBytes },
-      {
-        ...options,
+    timeout: { ms: PROBE_LIMITS.timeoutMs },
+    outputLimit: {
+      limits: { diagnostic_bytes: PROBE_LIMITS.diagnosticBytes },
+      recovery: {
         retryable: false,
         remediationAction:
           "The firmware diagnostic output allowance is fixed at 65536 bytes. Reduce the tool's diagnostic output before retrying; changing its timeout does not raise this limit.",
       },
-    );
-  return new ProviderAdapterError("firmware", "doctor", {
-    ...options,
-    userMessage: failureMessage(cause),
-  });
+    },
+    dialect: (outcome, details) =>
+      new ProviderAdapterError("firmware", "doctor", {
+        ...details,
+        userMessage: outcome.message,
+      }),
+  }),
+  unclassified: (cause, details) =>
+    new ProviderAdapterError("firmware", "doctor", {
+      ...details,
+      cause,
+      userMessage: errorMessage(cause),
+      diagnostics: {
+        ...details.diagnostics,
+        firmware_probe: { reason: "process", message: errorMessage(cause) },
+      },
+    }),
 };
 
 /** Parse only the upstream 26.6 dependency format; unfamiliar output remains unknown. */

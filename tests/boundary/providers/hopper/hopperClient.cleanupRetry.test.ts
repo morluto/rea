@@ -5,8 +5,10 @@ import { Socket } from "node:net";
 
 import { expect, it, onTestFinished } from "vitest";
 
+import { AnalysisCleanupRelease } from "../../../../src/domain/analysisCleanupRelease.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { HopperStartError } from "../../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../../src/hopper/HopperErrors.js";
+import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import type {
   BridgeLaunch,
@@ -24,6 +26,7 @@ import {
 import { silentLogger } from "../../../../src/logger.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
+import { ArtifactResourceScope } from "../../../../src/resources/index.js";
 
 class RetryCleanupLauncher implements BridgeLauncher {
   readonly sessions: BridgeSession[] = [];
@@ -102,7 +105,8 @@ const createClient = (options: HopperClientOptions) => {
 
 const failedStartup = async (launcher: RetryCleanupLauncher) => {
   const client = createClient({ launcher });
-  await expect(client.start()).resolves.toMatchObject({
+  const started = await client.start();
+  expect(started).toMatchObject({
     ok: false,
     error: {
       _tag: "ProviderAdapterError",
@@ -112,14 +116,15 @@ const failedStartup = async (launcher: RetryCleanupLauncher) => {
   });
   const session = launcher.sessions[0];
   const child = launcher.processes[0];
-  if (session === undefined || child === undefined)
+  if (session === undefined || child === undefined || started.ok)
     throw new Error("Fixture launch was not observed");
-  return { client, session, child };
+  return { client, session, child, startupFailure: started.error };
 };
 
 it("retains failed startup cleanup until an owned process and its backing image are closed", async () => {
   const launcher = new RetryCleanupLauncher();
-  const { client, session, child } = await failedStartup(launcher);
+  const { client, session, child, startupFailure } =
+    await failedStartup(launcher);
   const closed = await client.close();
   expect(closed).toMatchObject({
     ok: false,
@@ -150,6 +155,9 @@ it("retains failed startup cleanup until an owned process and its backing image 
   const second = client.close();
   await expect(first).resolves.toEqual({ ok: true, value: null });
   await expect(second).resolves.toEqual({ ok: true, value: null });
+  // The successful retry confirms the cleanup the earlier failures reported.
+  expect(closed.error.cleanupIncomplete).toBe(false);
+  expect(startupFailure.cleanupIncomplete).toBe(false);
   expectStoppedFixture(child);
   await expect(access(session.directory)).rejects.toMatchObject({
     code: "ENOENT",
@@ -184,6 +192,7 @@ it.each([false, true])(
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: undefined,
     };
     const socket = new Socket();
@@ -350,6 +359,110 @@ it("retries a failed lease release after document, process, and runtime cleanup 
   expect(fixture.processes).toHaveLength(1);
 });
 
+it("reports a launcher aggregate released by its own owner while session cleanup still fails", async () => {
+  const fixture = new RetryCleanupLauncher();
+  fixture.allowCleanup = true;
+  // The launcher's aggregate follows its child failure, whose release the
+  // launcher confirms on its own retry.
+  const imageRelease = new AnalysisCleanupRelease();
+  const imageFailure = imageRelease.bind(
+    new ProviderCleanupError("hopper", ["hopper-prepared-image"], {
+      reason: "fixture image cleanup denial",
+    }),
+  );
+  const launcherFailure = new ProviderCleanupError(
+    "hopper",
+    ["hopper-prepared-image"],
+    { reason: "fixture launcher cleanup denial" },
+  ).bindCleanupDependencies([imageFailure]);
+  let launcherReleases = false;
+  const launcher: BridgeLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      return ok({
+        ...launched.value,
+        releaseLease: async () => {
+          throw new Error("fixture lease release denial");
+        },
+      });
+    },
+    cleanup: async () => {
+      if (!launcherReleases) return err(launcherFailure);
+      imageRelease.confirm();
+      return ok(null);
+    },
+  };
+  const client = createClient({ launcher });
+  await expect(client.start()).resolves.toMatchObject({ ok: false });
+  const first = await client.close();
+  expect(first).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  expect(launcherFailure.cleanupIncomplete).toBe(true);
+
+  launcherReleases = true;
+  const second = await client.close();
+  expect(second).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true, cleanupResources: ["hopper-lease"] },
+  });
+  // The launcher released its resources; only the session's lease remains.
+  expect(launcherFailure.cleanupIncomplete).toBe(false);
+  if (!first.ok) expect(first.error.cleanupResources).toEqual(["hopper-lease"]);
+});
+
+it("releases a session part on its own retry while the launcher part still fails", async () => {
+  const fixture = new RetryCleanupLauncher();
+  fixture.allowCleanup = true;
+  let leaseReleases = false;
+  let launcherReleases = false;
+  const launcher: BridgeLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      return ok({
+        ...launched.value,
+        releaseLease: async () => {
+          if (!leaseReleases) throw new Error("fixture lease release denial");
+        },
+      });
+    },
+    // An ownerless failure: only this client's retry can confirm it.
+    cleanup: async () =>
+      launcherReleases
+        ? ok(null)
+        : err(
+            new ProviderCleanupError("hopper", ["hopper-launcher"], {
+              reason: "fixture launcher cleanup denial",
+            }),
+          ),
+  };
+  const client = createClient({ launcher });
+  await expect(client.start()).resolves.toMatchObject({ ok: false });
+  const first = await client.close();
+  if (first.ok) throw new Error("expected both close parts to fail");
+  expect([...first.error.cleanupResources].sort()).toEqual([
+    "hopper-launcher",
+    "hopper-lease",
+  ]);
+
+  leaseReleases = true;
+  const second = await client.close();
+  expect(second).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true, cleanupResources: ["hopper-launcher"] },
+  });
+  // The session part succeeded: the first failure reports only the launcher.
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toEqual(["hopper-launcher"]);
+
+  launcherReleases = true;
+  await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+  expect(first.error.cleanupIncomplete).toBe(false);
+});
+
 it("preserves confirmed document shutdown while retrying owned process cleanup", async () => {
   const launcher = new RetryCleanupLauncher();
   const runtimeRoot = await PrivateRuntimeRoot.create();
@@ -369,6 +482,7 @@ it("preserves confirmed document shutdown while retrying owned process cleanup",
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: undefined,
     } satisfies HopperOwnedResources,
     activeRequest: null,
@@ -434,6 +548,7 @@ it.each([
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: undefined,
     };
     const result = await cleanupHopperSession({

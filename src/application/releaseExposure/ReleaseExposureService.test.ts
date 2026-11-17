@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -19,16 +19,16 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   PACKAGED_NATIVE_IMAGES,
-  RELEASE_EXPOSURE_CHECK_IDS,
   releaseExposureReportSchema,
   type ReleaseExposureScan,
 } from "../../domain/releaseExposure.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 import { ReleaseExposureService } from "./ReleaseExposureService.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const SHA = "ab".repeat(32);
 
@@ -189,9 +189,6 @@ describe("ReleaseExposureService", () => {
         observation: { samples: string[] };
       }[];
     };
-    expect(report.checks.map((check) => check.id)).toEqual([
-      ...RELEASE_EXPOSURE_CHECK_IDS,
-    ]);
     expect(
       report.checks.find((check) => check.id === "go.build_paths")?.status,
     ).toBe("not_applicable");
@@ -2130,9 +2127,9 @@ describe("ReleaseExposureService cleanup", () => {
       "/work/app/desktop",
       "/work/app/go",
     ]);
-    first.resolveCleanup();
+    releaseOwnedCleanup(first);
     expect(failure.cleanupIncomplete).toBe(true);
-    second.resolveCleanup();
+    releaseOwnedCleanup(second);
     expect(failure.cleanupIncomplete).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { ok } from "../domain/result.js";
 import { startFirmwareDeadline } from "./FirmwareDeadline.js";

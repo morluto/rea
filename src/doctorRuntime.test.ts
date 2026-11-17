@@ -11,7 +11,7 @@ import {
   selectedProviderSettings,
   settingAffectsProbe,
 } from "./doctorRuntime.js";
-import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
+import { DOCTOR_PROVIDER_IDS } from "./domain/doctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../tests/fixtures/android/jadxJar.js";
@@ -24,7 +24,7 @@ import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
-import { AnalysisCleanupLease } from "./artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "./resources/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import * as configurationFiles from "./application/ClientConfigurationFiles.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
@@ -318,7 +318,6 @@ test.each([true, false])(
       () => selected.mockRestore(),
     ]);
   },
-  5_000,
 );
 
 test("joins display finalization before preserving a late cancellation", async () => {
@@ -445,7 +444,9 @@ it("exposes jadx through the doctor provider selector", () => {
 });
 
 it("keeps firmware diagnostics out of setup's engine selection", async () => {
-  const host = createSystemDoctorHost({}, undefined, { firmware: false });
+  const host = createSystemDoctorHost({}, undefined, undefined, {
+    firmware: false,
+  });
   try {
     const inspections = await host.providerInspections?.([]);
     expect(inspections?.map(({ id }) => id)).toEqual([
@@ -486,31 +487,48 @@ it("omits REA_JADX_MCP_JAR from the provider registration environment when it is
   expect(environment).not.toHaveProperty("REA_JADX_MCP_JAR");
 });
 
-it("shares one parsed IDA registration between timeout-budget and doctor projections", async () => {
-  const root = await createTestTempDirectory("rea-ida-registration-fact-");
-  const registration = join(root, "registration.json");
-  await writeFile(
-    registration,
-    JSON.stringify({ command: "fixture", timeoutMs: 3210 }),
-  );
-  const host = createSystemDoctorHost({ REA_IDA_MCP_CONFIG: registration });
-  try {
-    expect(
-      await host.resolveProviderRequestBudget?.("ida", {
-        REA_IDA_MCP_CONFIG: registration,
+it.each(["budget-first", "readiness-first"] as const)(
+  "shares one parsed IDA registration between timeout-budget and doctor projections (%s)",
+  async (order) => {
+    const root = await createTestTempDirectory("rea-ida-registration-fact-");
+    const registration = join(root, "registration.json");
+    await writeFile(
+      registration,
+      JSON.stringify({
+        command: "fixture",
+        protocol: "native",
+        timeoutMs: 3210,
       }),
-    ).toEqual(ok(3210));
-    await writeFile(registration, "not JSON anymore");
-    const inspections = await host.providerInspections?.([]);
-    expect(inspections?.find(({ id }) => id === "ida")).toMatchObject({
-      configured: true,
-      available: true,
-      checks: [{ name: "registration", ok: true }],
-    });
-  } finally {
-    await host.close?.();
-  }
-});
+    );
+    const host = createSystemDoctorHost({ REA_IDA_MCP_CONFIG: registration });
+    const checkBudget = async () => {
+      expect(
+        await host.resolveProviderRequestBudget?.("ida", {
+          REA_IDA_MCP_CONFIG: registration,
+        }),
+      ).toEqual(ok(3210));
+    };
+    const checkReadiness = async () => {
+      const inspections = await host.providerInspections?.([]);
+      expect(inspections?.find(({ id }) => id === "ida")).toMatchObject({
+        configured: true,
+        available: true,
+        checks: [{ name: "registration", ok: true }],
+      });
+    };
+    try {
+      const [first, second] =
+        order === "budget-first"
+          ? ([checkBudget, checkReadiness] as const)
+          : ([checkReadiness, checkBudget] as const);
+      await first();
+      await writeFile(registration, "not JSON anymore");
+      await second();
+    } finally {
+      await host.close?.();
+    }
+  },
+);
 
 it("carries a validated REA_KUNA_COMMAND into the provider registration environment", async () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("kuna");
@@ -819,7 +837,7 @@ test("keeps selected-client admission cancellation typed with its original reaso
       cause: reason,
       diagnostics: {
         provider_inspections: [],
-        provider_inspection_groups: { completed: 0, total: 5 },
+        provider_inspection_groups: { completed: 0, total: 2 },
       },
     });
     expect(read).not.toHaveBeenCalled();
@@ -868,6 +886,13 @@ test("decides whether an unresolved setting is one the probe actually reads", ()
     settingAffectsProbe("jadx", "PATH", { JAVA_HOME: "/opt/java" }, "linux"),
   ).toBe(false);
   expect(settingAffectsProbe("jadx", "PATH", {}, "linux")).toBe(true);
+  // Only Windows refuses an existing Ghidra project.
+  expect(
+    settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "darwin"),
+  ).toBe(false);
+  expect(
+    settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "win32"),
+  ).toBe(true);
   expect(
     settingAffectsProbe(
       "jadx",

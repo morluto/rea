@@ -226,6 +226,7 @@ test("names the host and tool requirement of an unconfigured engine", async () =
     "binwalk",
     "inspect_firmware_regions",
     new FirmwareFileAccess(),
+    "linux",
   ).catch((cause: unknown) => cause);
 
   expect(refusal).toMatchObject({
@@ -256,10 +257,13 @@ it("rejects a directory configured as the firmware engine executable", async () 
       "binwalk",
       "inspect_firmware_regions",
       new FirmwareFileAccess(),
+      "linux",
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
-    reason: expect.stringContaining(command),
+    reason: expect.stringContaining(
+      `REA_BINWALK_COMMAND is not a readable executable regular file: ${command}`,
+    ),
   });
 });
 
@@ -278,6 +282,7 @@ it("classifies an unusable firmware engine as an unavailable capability", async 
       "binwalk",
       "inspect_firmware_regions",
       new FirmwareFileAccess(),
+      "linux",
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
@@ -300,10 +305,13 @@ it("rejects a directory configured as the resource limiter executable", async ()
       "binwalk",
       "inspect_firmware_regions",
       new FirmwareFileAccess(),
+      "linux",
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
-    reason: expect.stringContaining(limiter),
+    reason: expect.stringContaining(
+      `REA_FIRMWARE_PRLIMIT_COMMAND (util-linux prlimit) is not a readable executable regular file: ${limiter}`,
+    ),
   });
 });
 
@@ -325,6 +333,7 @@ it("preserves selected executable aliases while fingerprinting their resolved by
       "binwalk",
       "inspect_firmware_regions",
       files,
+      "linux",
     );
     expect(resolved).toMatchObject({
       command: {

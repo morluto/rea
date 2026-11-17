@@ -1,4 +1,4 @@
-import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisViewRequest.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 

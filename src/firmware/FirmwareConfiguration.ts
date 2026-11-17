@@ -1,3 +1,4 @@
+import { errorMessage } from "../kernel/errorMessage.js";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
@@ -7,7 +8,7 @@ import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
 /** Match the execution adapter's default without requiring an environment override. */
 export const firmwareLimiterPath = (
@@ -38,8 +39,6 @@ export const inspectFirmwareExecutable = async (
     return ok(selected);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    return err(
-      `${variable} is unavailable at ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
+    return err(`${variable} is unavailable at ${path}: ${errorMessage(cause)}`);
   }
 };

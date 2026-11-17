@@ -1,10 +1,12 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
 import { packetCaptureSchema } from "../../../src/domain/captures/packetCapture.js";
@@ -12,14 +14,17 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
-import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
-const fixture = async (mode = "ok", failCleanup = false) => {
+const fixture = async (
+  mode = "ok",
+  failCleanup = false,
+  settings: Readonly<Record<string, string>> = {},
+) => {
   const directory = await createTestTempDirectory("rea-capture-test-");
   const path = join(directory, "recorded bytes.pcap");
   await writeFile(path, "recording bytes");
@@ -42,6 +47,8 @@ else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync('capture', 0o
 else if (${JSON.stringify(mode)} === 'overflow') process.stdout.write('x'.repeat((process.argv.includes('-G') ? 33 : 5) * 1024 * 1024));
 else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval(() => {}, 1000); }
 else if (${JSON.stringify(mode)} === 'invalid-json') console.log('not json');
+else if (${JSON.stringify(mode)} === 'unordered') console.log(JSON.stringify([2, 1].map((frame) => ({_source:{layers:{"frame.number":[String(frame)]}}}))));
+else if (${JSON.stringify(mode)} === 'large') console.log(JSON.stringify(Array.from({length:2000},(_,i)=>({_source:{layers:{"frame.number":[String(i+1)],"ip.addr":["192.0.2.1"]}}}))));
 else if (${JSON.stringify(mode)} === 'many') console.log(JSON.stringify(Array.from({length:90},(_,i)=>({_source:{layers:{"frame.number":[String(i+1)],"ip.addr":["192.0.2.1"]}}}))));
 else if (${JSON.stringify(mode)} === 'alias-canonical') { if (!process.argv.includes('bootp.type')) throw Error('alias selector missing'); console.log(JSON.stringify([{_source:{layers:{"frame.number":["1"],"dhcp.type":["1"]}}}])); }
 else if (process.argv.includes('-G')) { console.log(${JSON.stringify(mode)} === 'unicode-search' ? 'P\\tΟΣ\\tgreek.proto\\nF\\tΟΣ field\\tgreek.field\\tFT_STRING\\tgreek.proto\\tBASE_NONE\\t0x0\\tGreek description' : 'P\\tUniversal Serial Bus\\tusb\\nF\\tVendor ID\\tusb.idVendor\\tFT_UINT16\\tusb\\tBASE_HEX\\t0x0\\t\\nF\\tOther Vendor\\tusb.idVendor\\tFT_UINT32\\tusb\\tBASE_HEX\\t0x0\\tSecond registration\\nP\\tInternet Protocol\\tip\\nF\\tAddress\\tip.addr\\tFT_IPv4\\tip\\t\\t0x0\\tSource or destination'); console.error('glossary warning'); }
@@ -56,6 +63,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
+  let mayStopDecoder = mode !== "process-cleanup";
   const acquired = createDeferred<void>();
   const release = createDeferred<void>();
   const provider = new TsharkCaptureProvider(
@@ -65,11 +73,12 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
         ? { PATH: directory, REA_TSHARK_COMMAND: undefined }
         : { REA_TSHARK_COMMAND: configuredCommand }),
       REA_TSHARK_PRLIMIT_COMMAND: configuredCommand,
+      ...settings,
     },
     async (input) => {
       calls++;
       if (mode === "launch-failure" && !input.arguments.includes("--version"))
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+        throw spawnFailure("E2BIG", input.command);
       if (mode === "file-limit" && !input.arguments.includes("--version")) {
         const stdout = { text: "", bytes: 0, observedBytes: 0 };
         const stderr = {
@@ -92,6 +101,15 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
       });
       if (mode === "wait" && !input.arguments.includes("--version"))
         spawned.process.stdout?.once("data", () => controller.abort());
+      if (mode === "process-cleanup" && !input.arguments.includes("--version"))
+        return {
+          ...spawned,
+          // The decoder exits by itself; only the cleanup proof is withheld.
+          cleanup: async () =>
+            mayStopDecoder
+              ? { cleaned: true, signaled: false }
+              : { cleaned: false, reason: "decoder owner remains unverified" },
+        };
       return spawned;
     },
     async () => {
@@ -133,6 +151,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   onTestFinished(async () => {
     release.resolve();
     mayClean = true;
+    mayStopDecoder = true;
     await provider.close();
   });
   const service = new PacketCaptureService(provider);
@@ -146,6 +165,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     release: () => release.resolve(),
     allowCleanup: () => {
       mayClean = true;
+      mayStopDecoder = true;
     },
   };
 };
@@ -216,7 +236,7 @@ it("recovers the same capture with CLI producer budgets and retains a tighter in
   expect(analysisErrorRemediationAction(refused.error)).toContain(
     "producer_limits.input_bytes",
   );
-  const cli = Cli.create("capture-producer-budget", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -328,7 +348,7 @@ it("refuses producer frames outside the selected input read scope before paging"
 
 it("returns canonical alias output through the public packet-capture CLI", async () => {
   const f = await fixture("alias-canonical");
-  const cli = Cli.create("capture-alias-test", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -441,6 +461,72 @@ it.each([
   },
 );
 
+it.each([
+  ["invalid-json", "not json\n", "TShark emitted malformed JSON."],
+  [
+    "unordered",
+    '[{"_source":{"layers":{"frame.number":["2"]}}},{"_source":{"layers":{"frame.number":["1"]}}}]\n',
+    "TShark returned unordered frames.",
+  ],
+])(
+  "keeps the producer output of a refused %s packet reply",
+  async (mode, stdout, reason) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspect({
+      path: f.path,
+      fields: ["ip.addr"],
+    });
+    if (result.ok) throw new Error("Expected a refused packet reply");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "inspect_packet_capture",
+      reason,
+    });
+    expect(result.error.capturedOutput?.stdout).toBe(stdout);
+  },
+);
+
+it("refuses a packet reply over the selected JSON expansion budget with the typed setting refusal", async () => {
+  const f = await fixture("large", false, {
+    REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES: String(1024 * 1024),
+  });
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  if (result.ok) throw new Error("Expected an expansion refusal");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error).toMatchObject({
+    operation: "inspect_packet_capture",
+    resource: "memory",
+    limit: {
+      setting: "capture.packet_json_expansion_bytes",
+      effective_value: 1024 * 1024,
+      source: "setting",
+    },
+  });
+  expect(result.error.capturedOutput?.stdout.length).toBeGreaterThan(0);
+  expect(analysisErrorRemediationAction(result.error)).toContain(
+    "capture.packet_json_expansion_bytes",
+  );
+  const admitted = await fixture("large");
+  expect(
+    await admitted.service.inspect({
+      path: admitted.path,
+      fields: ["ip.addr"],
+    }),
+  ).toMatchObject({ ok: true });
+});
+
+it("refuses a malformed JSON expansion setting before reading the capture", async () => {
+  const f = await fixture("ok", false, {
+    REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES: "1.5",
+  });
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  if (result.ok) throw new Error("Expected a configuration refusal");
+  expect(result.error).toMatchObject({
+    _tag: "ConfigurationError",
+    settings: [{ setting: "REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES" }],
+  });
+});
+
 it.each(["capture", "fields"] as const)(
   "does not attribute the version probe's output to a %s command that fails to launch",
   async (operation) => {
@@ -451,7 +537,13 @@ it.each(["capture", "fields"] as const)(
         : await f.service.inspectFields({ kind: "fields" });
     if (result.ok) throw new Error("Expected launch failure");
     expect(f.calls()).toBe(2);
-    expect(result.error.message).toContain("spawn E2BIG");
+    // A launch failure is not tool output: the shared owner reports the
+    // oversized argument list as a resource constraint.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "transport",
+      reportedLimits: { spawn_error: "E2BIG" },
+    });
     expect(result.error.capturedOutput).toBeUndefined();
   },
 );
@@ -472,6 +564,27 @@ it("retains a completed observation and cleanup ownership for retry", async () =
   expect(
     (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
   ).toEqual([]);
+});
+
+it("releases a retained decoder process cleanup before the next inspection completes", async () => {
+  const f = await fixture("process-cleanup");
+  const input = { path: f.path, fields: ["ip.addr"] };
+  const first = await f.service.inspect(input);
+  if (first.ok) throw new Error("Expected retained process cleanup");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toContainEqual(
+    expect.stringMatching(/^process-group:\d+$/),
+  );
+  const launches = f.calls();
+  const blocked = await f.service.inspect(input);
+  if (blocked.ok) throw new Error("Expected the retained owner to block");
+  expect(blocked.error.cleanupIncomplete).toBe(true);
+  expect(f.calls()).toBe(launches);
+  f.allowCleanup();
+  const retried = await f.service.inspect(input);
+  expect(retried.ok).toBe(true);
+  expect(first.error.cleanupIncomplete).toBe(false);
+  expect(f.calls()).toBeGreaterThan(launches);
 });
 
 it("rejects cancelled and invalid requests before any provider work", async () => {
@@ -931,7 +1044,7 @@ it("retains completed discovery on late cancellation and cleanup failure", async
 
 it("preserves discovery resource ownership through CLI shutdown retries", async () => {
   const f = await fixture("cleanup", true);
-  const cli = Cli.create("discovery-cleanup", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   try {

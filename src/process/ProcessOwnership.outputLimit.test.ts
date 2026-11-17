@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { execFileOutputFailure } from "./ExecFileOutput.js";
+import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
 import {
   createSystemProcessOwnershipHost,
   LinuxOwnedProcessPrerequisiteError,
@@ -23,9 +23,22 @@ const processTableHost = async (
   const command = join(root, "ps");
   await writeFile(command, `#!${process.execPath}\n${program}\n`);
   await chmod(command, 0o755);
-  return createSystemProcessOwnershipHost(platform, {
-    ...environment,
-    PATH: root,
+  return createSystemProcessOwnershipHost(platform, environment, {
+    // Model a fixed Linux system location instead of replacing the caller's
+    // PATH: production intentionally prefers system ps over PATH entries.
+    linuxPsLocations: [command],
+    // Darwin selects /bin/ps unconditionally. Preserve that selection while
+    // executing a real fixture subprocess through the same bounded capture.
+    ...(platform === "darwin"
+      ? {
+          execFileOutput: async (
+            ...args: Parameters<typeof execFileOutput>
+          ) => {
+            expect(args[0]).toBe("/bin/ps");
+            return await execFileOutput(command, args[1], args[2]);
+          },
+        }
+      : {}),
   });
 };
 

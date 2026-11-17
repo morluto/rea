@@ -1,4 +1,3 @@
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
@@ -8,14 +7,12 @@ import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
 import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
+import {
+  phaseArrival,
+  phaseGate,
+  type PhaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 
-const barrier = () => {
-  let release!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-};
 const input = z.strictObject({ n: z.number().int().nonnegative().default(3) });
 const output = z.strictObject({ n: z.number().int() });
 const parameters = {
@@ -71,7 +68,8 @@ afterEach(async () => {
 
 const fixture = async (
   options: {
-    readonly hold?: ReturnType<typeof barrier>;
+    /** Holds deferred runtime loading after its cleanup is owned. */
+    readonly startup?: PhaseGate;
     readonly analysisSettings?: AnalysisSettings;
     readonly execute?: () => Promise<void>;
     readonly failClose?: () => boolean;
@@ -81,16 +79,27 @@ const fixture = async (
     readonly maximumInputElements?: number;
     readonly evidenceReferenceAlternative?: boolean;
     readonly progressive?: boolean;
+    readonly unionOutput?: boolean;
+    readonly mode?: "legacy" | "auto";
   } = {},
 ) => {
-  const started = barrier();
   const calls = vi.fn<(n: number, context: ServerContext) => void>();
   const closed = vi.fn();
   let loads = 0;
+  const canonicalOutput = options.unionOutput
+    ? z.union([output, z.strictObject({ message: z.string() })])
+    : output;
+  const recorded = {
+    ...catalog,
+    tools: catalog.tools.map((tool) => ({
+      ...tool,
+      outputSchema: z.toJSONSchema(canonicalOutput),
+    })),
+  };
   const server = new DeferredEvidenceMcpServer(
     options.evidenceReferenceAlternative
-      ? { ...catalog, evidenceReferenceAlternatives: ["fixture"] }
-      : catalog,
+      ? { ...recorded, evidenceReferenceAlternatives: ["fixture"] }
+      : recorded,
     new ToolResultDelivery(1024 * 1024),
     async (target) => {
       loads++;
@@ -99,14 +108,13 @@ const fixture = async (
         if (options.failClose?.()) throw new Error("cleanup denied");
         await target.closePartialRuntime();
       });
-      started.release();
-      await options.hold?.promise;
+      await options.startup?.hold();
       if (options.failLoad) throw new Error("PRIVATE startup cause");
       target.analysisSettings = options.analysisSettings;
       target.materialize(() => {
         target.registerTool(
           "fixture",
-          { inputSchema: input, outputSchema: output },
+          { inputSchema: input, outputSchema: canonicalOutput },
           async (args, context) => {
             calls(args.n, context);
             await options.execute?.();
@@ -144,9 +152,14 @@ const fixture = async (
         );
       });
     },
-    options.maximumInputElements,
+    { maximumInputElements: options.maximumInputElements },
   );
-  const client = new Client({ name: "deferred-fixture-client", version: "1" });
+  const client = new Client(
+    { name: "deferred-fixture-client", version: "1" },
+    options.mode === undefined
+      ? undefined
+      : { versionNegotiation: { mode: options.mode } },
+  );
   if (options.progressive) server.enableProgressiveCatalog();
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -160,7 +173,6 @@ const fixture = async (
     server,
     client,
     serverTransport,
-    started,
     calls,
     closed,
     loads: () => loads,
@@ -255,10 +267,13 @@ it("uses recorded Evidence-reference guidance without loading the deferred runti
 });
 
 it("discovers without initialization, then shares one canonical runtime and preserves request metadata", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
+  const startup = phaseGate();
+  const f = await fixture({ startup });
   const before = await f.client.listTools();
-  expect(before.tools).toEqual(catalog.tools);
+  // Listings omit the recorded output schemas (the default `off` profile).
+  expect(before.tools).toEqual(
+    catalog.tools.map(({ outputSchema: _output, ...tool }) => tool),
+  );
   expect((await f.client.listPrompts()).prompts).toEqual(
     catalog.prompts.map(({ parameters: _parameters, ...prompt }) => prompt),
   );
@@ -272,10 +287,10 @@ it("discovers without initialization, then shares one canonical runtime and pres
   });
   const pending: Promise<unknown>[] = [a];
   try {
-    await awaitAcknowledgement(f.started.promise, a, "deferred initialization");
+    await startup.reached(a, "deferred initialization");
     const b = f.client.callTool({ name: "fixture", arguments: { n: 7 } });
     pending.push(b);
-    hold.release();
+    startup.release();
     expect((await a).structuredContent).toEqual({ n: 3 });
     expect((await b).structuredContent).toEqual({ n: 7 });
     expect(f.loads()).toBe(1);
@@ -289,7 +304,7 @@ it("discovers without initialization, then shares one canonical runtime and pres
     expect(invalid.isError).toBe(true);
     expect(f.calls).toHaveBeenCalledTimes(2);
   } finally {
-    hold.release();
+    startup.release();
     await Promise.allSettled(pending);
   }
 });
@@ -299,6 +314,43 @@ it("preserves output validation after deferred registration", async () => {
   const result = await f.client.callTool({ name: "fixture", arguments: {} });
   expect(result.isError).toBe(true);
 });
+
+it.each(["legacy", "auto"] as const)(
+  "canonically validates deferred object-union outputs over %s",
+  async (mode) => {
+    const valid = await fixture({ unionOutput: true, mode });
+    const before = await valid.client.listTools();
+    expect(
+      before.tools.find(({ name }) => name === "fixture")?.outputSchema,
+    ).toBeUndefined();
+    expect(valid.loads()).toBe(0);
+    const success = await valid.client.callTool({
+      name: "fixture",
+      arguments: { n: 7 },
+    });
+    expect(success.isError).not.toBe(true);
+    expect(success.structuredContent).toEqual({ n: 7 });
+    expect(valid.calls).toHaveBeenCalledOnce();
+    expect(await valid.client.listTools()).toEqual(before);
+
+    const invalid = await fixture({
+      unionOutput: true,
+      invalidOutput: true,
+      mode,
+    });
+    const rejected = await invalid.client.callTool({
+      name: "fixture",
+      arguments: {},
+    });
+    // The handler actually returned malformed data. A server-side validation
+    // error must arrive, rather than success or only a client-validator throw.
+    expect(invalid.calls).toHaveBeenCalledOnce();
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent).toBeUndefined();
+    expect(invalid.loads()).toBe(1);
+    expect(await invalid.client.listTools()).toEqual(before);
+  },
+);
 
 it("initializes through prompt retrieval or completion without an internal client", async () => {
   const f = await fixture();
@@ -332,14 +384,14 @@ it("retrieves a prompt as the first operation", async () => {
 });
 
 it("does not execute a tool cancelled while canonical loading is pending", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
-  const cancelled = barrier();
+  const startup = phaseGate();
+  const f = await fixture({ startup });
+  const cancelled = phaseArrival();
   const previous = f.serverTransport.onmessage;
   f.serverTransport.onmessage = (message, extra) => {
     previous?.(message, extra);
     if ("method" in message && message.method === "notifications/cancelled")
-      cancelled.release();
+      cancelled.arrive();
   };
   const controller = new AbortController();
   const pending = f.client.callTool(
@@ -348,18 +400,13 @@ it("does not execute a tool cancelled while canonical loading is pending", async
   );
   const rejected = expect(pending).rejects.toBeDefined();
   try {
-    await awaitAcknowledgement(
-      f.started.promise,
-      pending,
-      "cancelled caller initialization",
-    );
+    await startup.reached(pending, "cancelled caller initialization");
     controller.abort();
-    await awaitAcknowledgement(
-      cancelled.promise,
+    await cancelled.reached(
       f.server.ensureRuntime(),
       "cancellation notification",
     );
-    hold.release();
+    startup.release();
     await rejected;
     await f.server.ensureRuntime();
     expect(f.calls).not.toHaveBeenCalled();
@@ -368,7 +415,7 @@ it("does not execute a tool cancelled while canonical loading is pending", async
     ).not.toBe(true);
   } finally {
     controller.abort();
-    hold.release();
+    startup.release();
     await Promise.allSettled([pending, rejected, f.server.ensureRuntime()]);
     if (previous === undefined) delete f.serverTransport.onmessage;
     else f.serverTransport.onmessage = previous;
@@ -376,10 +423,10 @@ it("does not execute a tool cancelled while canonical loading is pending", async
 });
 
 it("keeps an independent caller alive when its peer cancels during shared loading", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
-  const secondRequest = barrier();
-  const cancelled = barrier();
+  const startup = phaseGate();
+  const f = await fixture({ startup });
+  const secondRequest = phaseArrival();
+  const cancelled = phaseArrival();
   let toolCalls = 0;
   const previous = f.serverTransport.onmessage;
   f.serverTransport.onmessage = (message, extra) => {
@@ -389,9 +436,9 @@ it("keeps an independent caller alive when its peer cancels during shared loadin
       message.method === "tools/call" &&
       ++toolCalls === 2
     )
-      secondRequest.release();
+      secondRequest.arrive();
     if ("method" in message && message.method === "notifications/cancelled")
-      cancelled.release();
+      cancelled.arrive();
   };
   const controller = new AbortController();
   const a = f.client
@@ -399,28 +446,23 @@ it("keeps an independent caller alive when its peer cancels during shared loadin
     .catch(() => undefined);
   const pending: Promise<unknown>[] = [a];
   try {
-    await awaitAcknowledgement(f.started.promise, a, "shared initialization");
+    await startup.reached(a, "shared initialization");
     const b = f.client.callTool({ name: "fixture", arguments: { n: 8 } });
     pending.push(b);
-    await awaitAcknowledgement(
-      secondRequest.promise,
-      b,
-      "independent caller admission",
-    );
+    await secondRequest.reached(b, "independent caller admission");
     controller.abort();
-    await awaitAcknowledgement(
-      cancelled.promise,
+    await cancelled.reached(
       f.server.ensureRuntime(),
       "peer cancellation notification",
     );
-    hold.release();
+    startup.release();
     await a;
     expect((await b).structuredContent).toEqual({ n: 8 });
     expect(f.calls).toHaveBeenCalledTimes(1);
     expect(f.loads()).toBe(1);
   } finally {
     controller.abort();
-    hold.release();
+    startup.release();
     await Promise.allSettled([...pending, f.server.ensureRuntime()]);
     if (previous === undefined) delete f.serverTransport.onmessage;
     else f.serverTransport.onmessage = previous;
@@ -428,27 +470,23 @@ it("keeps an independent caller alive when its peer cancels during shared loadin
 });
 
 it("joins late initialization during close and prevents target execution", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
+  const startup = phaseGate();
+  const f = await fixture({ startup });
   const pending = f.client
     .callTool({ name: "fixture", arguments: {} })
     .catch(() => undefined);
   let closing: Promise<void> | undefined;
   try {
-    await awaitAcknowledgement(
-      f.started.promise,
-      pending,
-      "initialization before close",
-    );
+    await startup.reached(pending, "initialization before close");
     closing = f.server.close();
-    hold.release();
+    startup.release();
     await closing;
     await pending;
     expect(f.calls).not.toHaveBeenCalled();
     expect(f.closed).toHaveBeenCalledTimes(1);
     await expect(f.server.ensureRuntime()).rejects.toThrow("closed");
   } finally {
-    hold.release();
+    startup.release();
     await Promise.allSettled([pending, closing]);
   }
 });
@@ -496,24 +534,18 @@ it("never executes a partially registered handler after initialization fails", a
 
 it("keeps one accepted settings snapshot through a deferred handler while the next call sees updates", async () => {
   const settings = new AnalysisSettings({});
-  const entered = barrier();
-  const held = barrier();
+  const handler = phaseGate();
   const seen: Array<number | undefined> = [];
   const f = await fixture({
     analysisSettings: settings,
     execute: async () => {
-      entered.release();
-      await held.promise;
+      await handler.hold();
       seen.push(settings.read().overrides["asar.max_header_bytes"]);
     },
   });
   const pending = f.client.callTool({ name: "fixture", arguments: {} });
   try {
-    await awaitAcknowledgement(
-      entered.promise,
-      pending,
-      "settings snapshot handler entry",
-    );
+    await handler.reached(pending, "settings snapshot handler entry");
     expect(
       settings.update({
         changes: [
@@ -522,7 +554,7 @@ it("keeps one accepted settings snapshot through a deferred handler while the ne
       }).ok,
     ).toBe(true);
   } finally {
-    held.release();
+    handler.release();
     await Promise.allSettled([pending]);
   }
   expect((await pending).isError).not.toBe(true);

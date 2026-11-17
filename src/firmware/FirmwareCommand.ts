@@ -1,9 +1,12 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import {
   processInspectionCancellationError,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   FIRMWARE_TOOL_REQUIREMENTS,
   type FirmwareEngineName,
@@ -13,7 +16,9 @@ import { isAbsolute } from "node:path";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -23,7 +28,7 @@ import type {
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
-  firmwareFailure,
+  firmwareFailureDialect,
   firmwareLimitRecovery,
   firmwarePhaseInterruption,
   firmwareProcessLimitRecovery,
@@ -47,24 +52,12 @@ import {
   FirmwareFileAccess,
   inventoryFirmwareOutput,
 } from "./FirmwareFiles.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Injectable owned launcher for production protocol and lifecycle tests. */
 export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
-
-/** Captured tool output for one finished firmware command, including byte coverage. */
-const capturedFirmwareOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-  truncated: snapshot.diagnosticTruncated === true,
-});
 
 /** Refuse an unmet host or tool requirement, which another target cannot satisfy. */
 export const firmwareToolUnavailable = (
@@ -86,12 +79,14 @@ export const resolveFirmwareCommand = async (
   engine: FirmwareEngineName,
   operation: string,
   files: FirmwareFileAccess,
+  /** The host the engine runs on; firmware engines are admitted on Linux only. */
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ) => {
   const variable = FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment;
   const configured = environment[variable];
   if (
-    !firmwareHostSupported(process.platform) ||
+    !firmwareHostSupported(platform) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
@@ -124,7 +119,7 @@ export const resolveFirmwareCommand = async (
     throw firmwareToolUnavailable(
       engine,
       operation,
-      `${variable} could not be fingerprinted: ${command.value.invocationPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `${variable} could not be fingerprinted: ${command.value.invocationPath}: ${errorMessage(cause)}`,
     );
   }
   return {
@@ -189,6 +184,11 @@ export const runFirmwareCommand = async (context: {
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
+  const dialect = firmwareFailureDialect({
+    engine,
+    operation,
+    phase: { signal, deadline: context.deadline },
+  });
   const fileSizeBytes = firmwareFileSizeLimit(
     context.fileSizeCeiling,
     context.outputBudget?.bytes,
@@ -234,10 +234,18 @@ export const runFirmwareCommand = async (context: {
     },
   }).catch((cause: unknown) => {
     const cancellation = processInspectionCancellationError(cause, operation);
+    // The phase deadline reports its own expiry; any other inspection
+    // cancellation keeps its ownership-inspection origin.
+    const interruption =
+      cancellation === undefined
+        ? undefined
+        : firmwarePhaseInterruption(operation, signal, context.deadline);
     const primary =
       cancellation === undefined
-        ? firmwareFailure(cause, context)
-        : firmwareFailure(cancellation, context);
+        ? classifyProviderFailure(cause, dialect)
+        : interruption instanceof AnalysisTimeoutError
+          ? interruption
+          : cancellation;
     throw retainProcessInspectionCleanup(
       cause,
       primary,
@@ -257,20 +265,14 @@ export const runFirmwareCommand = async (context: {
         snapshot.signal,
         fileSizeBytes,
         fileSizeAdjustable,
-        capturedFirmwareOutput(snapshot),
+        capturedProviderOutput(snapshot),
       );
       if (signalLimit !== undefined) return signalLimit;
       return new ProviderAdapterError(engine, operation, {
         diagnostics: {
           reason:
             "Tool failed; inspect exit status and stderr for format, dependency, sandbox or resource-limit failures",
-          exit_code: snapshot.exitCode ?? null,
-          signal: snapshot.signal ?? null,
-          stdout: snapshot.stdout.text,
-          stderr: snapshot.stderr.text,
-          stdout_bytes: snapshot.stdout.bytes,
-          stderr_bytes: snapshot.stderr.bytes,
-          truncated: snapshot.diagnosticTruncated === true,
+          ...capturedProviderOutput(snapshot),
         },
         remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
       });
@@ -312,11 +314,7 @@ export const runFirmwareCommand = async (context: {
         operation,
         `Tool diagnostics exceeded the ${FIRMWARE_LIMITS.diagnosticBytes}-byte capture budget`,
         {
-          capturedOutput: {
-            stdout: snapshot.stdout.text,
-            stderr: snapshot.stderr.text,
-            truncated: true,
-          },
+          capturedOutput: capturedProviderOutput(snapshot),
           userMessage: `Firmware diagnostics exceeded the ${String(FIRMWARE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
           remediationAction: firmwareLimitRecovery(
             `The firmware diagnostic capture allowance is ${String(FIRMWARE_LIMITS.diagnosticBytes)} bytes`,
@@ -337,12 +335,13 @@ export const runFirmwareCommand = async (context: {
           fileSizeBytes,
           operation,
           signal,
+          context.deadline,
         );
     }
     checkDiagnostics();
     checkInterruption();
   } catch (cause: unknown) {
-    failure ??= firmwareFailure(cause, context);
+    failure ??= classifyProviderFailure(cause, dialect);
   }
   const stopped = await supervisor.stop();
   // Cleanup is an awaited part of this phase. Preserve a prior observed failure,
@@ -370,7 +369,7 @@ export const runFirmwareCommand = async (context: {
       {
         operation,
         cleanupPrimary: failure,
-        capturedOutput: capturedFirmwareOutput(snapshot),
+        capturedOutput: capturedProviderOutput(snapshot),
       },
     );
   }
@@ -385,6 +384,20 @@ export const runFirmwareCommand = async (context: {
     resource_limiter: context.limiter,
   };
 };
+
+/** The captured output of a completed firmware command, from the shared owner. */
+export const firmwareExecutionOutput = (
+  execution: Pick<
+    Awaited<ReturnType<typeof runFirmwareCommand>>,
+    "stdout" | "stderr" | "exit_code" | "signal"
+  >,
+) =>
+  capturedProviderOutput({
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exit_code,
+    signal: execution.signal,
+  });
 
 /**
  * Consume the report a completed command was asked to write. A successful exit
@@ -410,24 +423,27 @@ export const readFirmwareCommandReport = async (context: {
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) {
       const { engine, operation, execution, deadline } = context;
-      const failure = firmwareFailure(cause, { engine, operation, deadline });
+      const signal = context.signal ?? deadline?.signal;
+      const failure = classifyProviderFailure(
+        cause,
+        firmwareFailureDialect({
+          engine,
+          operation,
+          phase:
+            deadline === undefined || signal === undefined
+              ? undefined
+              : { signal, deadline },
+        }),
+      );
       if (cause.partialObservation !== undefined)
         failure.retainPartialObservation(cause.partialObservation);
-      throw failure.retainCapturedOutput({
-        stdout: execution.stdout.text,
-        stderr: execution.stderr.text,
-        stdout_bytes: execution.stdout.bytes,
-        stderr_bytes: execution.stderr.bytes,
-        exit_code: execution.exit_code ?? null,
-        signal: execution.signal,
-        truncated: false,
-      });
+      throw failure.retainCapturedOutput(firmwareExecutionOutput(execution));
     }
     const { engine, operation, execution } = context;
     const reportFailure =
       cause instanceof AnalysisOutputError
         ? cause.reason
-        : `Report could not be read: ${cause instanceof Error ? cause.message : String(cause)}`;
+        : `Report could not be read: ${errorMessage(cause)}`;
     const diagnostics = {
       ...(cause instanceof AnalysisOutputError ? cause.diagnostics : {}),
       report_path: context.path,
@@ -435,12 +451,7 @@ export const readFirmwareCommandReport = async (context: {
       command: execution.command,
       args: execution.args,
       resource_limiter: execution.resource_limiter,
-      exit_code: execution.exit_code ?? null,
-      signal: execution.signal,
-      stdout: execution.stdout.text,
-      stderr: execution.stderr.text,
-      stdout_bytes: execution.stdout.bytes,
-      stderr_bytes: execution.stderr.bytes,
+      ...firmwareExecutionOutput(execution),
     };
     if (execution.exit_code === 1)
       throw new ProviderAdapterError(engine, operation, {

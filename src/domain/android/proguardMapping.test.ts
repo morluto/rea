@@ -1100,3 +1100,14 @@ it("does not charge repeated identical residual metadata as new retained strings
     }),
   ).toMatchObject({ status: "mapped" });
 });
+
+it("reports duplicate metadata members even when a repeated id overwrites its string value", () => {
+  const metadata = parse(
+    [
+      '# {"id":"com.android.tools.r8.mapping","id":null}',
+      "com.example.Meta -> a.m:",
+      "    int count -> a",
+    ].join("\n"),
+  );
+  expect(metadata.malformed).toEqual([{ line: 1, reason: "metadata" }]);
+});

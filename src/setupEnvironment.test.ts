@@ -93,6 +93,7 @@ it("plans setup and uninstall against selected home and client overrides", async
       environment.HOME,
       undefined,
       environment,
+      doctor.platform,
     ).clients();
     expect(clients.find(({ name }) => name === "codex")?.configPath).toBe(
       join(environment.CODEX_HOME, "config.toml"),
@@ -141,8 +142,11 @@ it("includes the macOS Hopper installer diagnostic in setup remediation", async 
     if (result.status !== "failed") throw new Error("expected setup failure");
     expect(result.remediation).not.toContain("\u001b");
   } finally {
-    await host.close?.();
-    install.mockRestore();
+    try {
+      await host.close?.();
+    } finally {
+      install.mockRestore();
+    }
   }
 });
 
@@ -195,7 +199,7 @@ it.each([
       REA_PROCESS_TABLE_MAX_BYTES: "16777216",
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
       REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
@@ -240,7 +244,7 @@ it.each([
           REA_PROCESS_TABLE_MAX_BYTES: "16777216",
           REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
           REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
-          REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
           REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
           REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
           REA_REGEX_MATCHING_DEADLINE_MS: "10000",

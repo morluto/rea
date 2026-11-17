@@ -78,7 +78,7 @@ cliTest(
     const evidence = completeBeamEvidenceSchema.parse(result.json);
     expect(evidence).toMatchObject({
       confidence: "observed",
-      subject: { local_path: path, format: "file" },
+      subject: { local_path: path, identity: { format: "file" } },
     });
     expect(evidence.normalized_result).toMatchObject({
       atom_encoding: "utf8",
