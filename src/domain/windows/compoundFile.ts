@@ -293,7 +293,11 @@ export const parseCompoundFile = (
     return err(failure("file does not begin with the compound file signature"));
 
   const limitations: string[] = [];
-  const header = new BinaryReader(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), true, "compound-file");
+  const header = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "compound-file",
+  );
   const byteOrder = header.u16(HEADER.byteOrder);
   if (byteOrder !== CFB_BYTE_ORDER_MARK)
     return err(
@@ -579,7 +583,11 @@ export const parseCompoundFile = (
   });
 
   const directory = new BinaryReader(
-    Buffer.from(directoryBytes.buffer, directoryBytes.byteOffset, directoryBytes.byteLength),
+    Buffer.from(
+      directoryBytes.buffer,
+      directoryBytes.byteOffset,
+      directoryBytes.byteLength,
+    ),
     true,
     "compound-file",
   );
@@ -911,7 +919,11 @@ const readEntry = (
 ): RawEntry => {
   const base = index * DIRECTORY_ENTRY_BYTES;
   const entry = directoryBytes.subarray(base, base + DIRECTORY_ENTRY_BYTES);
-  const view = new BinaryReader(Buffer.from(entry.buffer, entry.byteOffset, entry.byteLength), true, "compound-file");
+  const view = new BinaryReader(
+    Buffer.from(entry.buffer, entry.byteOffset, entry.byteLength),
+    true,
+    "compound-file",
+  );
   const { name, problem } = nameOf(entry, view);
   const rawType = directory.bytes[base + ENTRY.objectType]!;
   const type = entryTypeOf(rawType);
