@@ -890,6 +890,7 @@
 * **verify:** copy the test-temp-hygiene verifier with its import closure ([#11434](https://github.com/morluto/rea/issues/11434)) ([3bbc137](https://github.com/morluto/rea/commit/3bbc13772cdb2a21de4ca50cf161a817c3c08fc1))
 * **verify:** resolve the copied verifier's relative helpers from the repository verifier ([#11274](https://github.com/morluto/rea/issues/11274)) ([38cd72e](https://github.com/morluto/rea/commit/38cd72ee8a8baa140ce0a48b542a9e5b545cad2c))
 * **verify:** resolve the published-package verifier's fixture module in its npm-selection harness ([#11260](https://github.com/morluto/rea/issues/11260)) ([f60d842](https://github.com/morluto/rea/commit/f60d842718cd6352ddbe3fd8ee2d5f5b85d09bf7))
+* **wabt:** consolidate framing and representation checks ([#11890](https://github.com/morluto/rea/issues/11890)) ([ebb606a](https://github.com/morluto/rea/commit/ebb606a139b3eaddf8f80f6ef45a6d559e440002))
 * **wabt:** consolidate provider failure and output checks ([#11885](https://github.com/morluto/rea/issues/11885)) ([8cad335](https://github.com/morluto/rea/commit/8cad335fe168bc40ca2d01a698a69714f1e0dd7c))
 * **website:** keep link and asset contracts at their boundaries ([#11889](https://github.com/morluto/rea/issues/11889)) ([c728ab9](https://github.com/morluto/rea/commit/c728ab984bb499792f14056ca2972bf063539cb1))
 * **web:** use valid script_key format in bundle capacity test ([34803c4](https://github.com/morluto/rea/commit/34803c45ae20917f2e97278a56ec616991a8a327)), closes [#10445](https://github.com/morluto/rea/issues/10445)
