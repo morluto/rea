@@ -981,9 +981,11 @@ export class GhidraClient {
     );
     if (!startupTimeout.ok)
       return err(
-        this.#failure("admission", startupTimeout.error.message, {
-          cause: startupTimeout.error,
-        }),
+        this.#failure(
+          "admission",
+          startupTimeout.error.message,
+          startupTimeout.error,
+        ),
       );
     const deadline = new ProviderStartupDeadline(startupTimeout.value, signal, {
       finalizeMs: OUTPUT_DRAIN_MS,
