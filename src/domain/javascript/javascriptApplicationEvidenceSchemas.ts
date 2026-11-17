@@ -270,10 +270,20 @@ export const applicationGraphEvidenceContextSchema =
   applicationGraphEvidenceBaseSchema.omit({ location: true });
 
 type EvidenceValue = z.infer<typeof applicationGraphEvidenceBaseSchema>;
+type EvidenceContextValue = z.infer<
+  typeof applicationGraphEvidenceContextSchema
+>;
+type EvidenceIssueSink = {
+  addIssue(issue: {
+    readonly code: "custom";
+    readonly path?: PropertyKey[];
+    readonly message: string;
+  }): void;
+};
 
 const checkAuthorityState = (
-  evidence: EvidenceValue,
-  context: z.RefinementCtx,
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
   if (
     evidence.authority === "static-relationship-inference" &&
@@ -314,8 +324,8 @@ const checkAuthorityState = (
 };
 
 const checkStateConfidence = (
-  evidence: EvidenceValue,
-  context: z.RefinementCtx,
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
   if (
     ["unknown", "unavailable"].includes(evidence.state) &&
@@ -349,16 +359,10 @@ const checkStateConfidence = (
     });
 };
 
-const checkTraceability = (
-  evidence: EvidenceValue,
-  context: z.RefinementCtx,
+const checkContextTraceability = (
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
-  if (evidence.state === "observed" && !evidence.location.available)
-    context.addIssue({
-      code: "custom",
-      path: ["location"],
-      message: "Observed facts require an actionable location",
-    });
   if (evidence.state === "inferred" && evidence.limitations.length === 0)
     context.addIssue({
       code: "custom",
@@ -376,9 +380,30 @@ const checkTraceability = (
     });
 };
 
-const checkArtifactBacking = (
+/** Whether a validated evidence context permits the fact's source location. */
+export const isCompatibleApplicationGraphEvidenceLocation = (
+  evidence: Pick<EvidenceContextValue, "state">,
+  location: z.infer<typeof applicationGraphEvidenceLocationSchema>,
+): boolean => evidence.state !== "observed" || location.available;
+
+const checkTraceability = (
   evidence: EvidenceValue,
-  context: z.RefinementCtx,
+  context: EvidenceIssueSink,
+): void => {
+  if (
+    !isCompatibleApplicationGraphEvidenceLocation(evidence, evidence.location)
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["location"],
+      message: "Observed facts require an actionable location",
+    });
+  checkContextTraceability(evidence, context);
+};
+
+const checkArtifactBacking = (
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
   const artifactBacked = [
     "artifact-bytes",
@@ -397,6 +422,23 @@ const checkArtifactBacking = (
       path: ["artifact"],
       message: "Artifact-backed facts require a content digest",
     });
+};
+
+/** Whether shared non-location provenance satisfies all context-level invariants. */
+export const isValidApplicationGraphEvidenceContext = (
+  evidence: EvidenceContextValue,
+): boolean => {
+  let valid = true;
+  const sink: EvidenceIssueSink = {
+    addIssue: () => {
+      valid = false;
+    },
+  };
+  checkAuthorityState(evidence, sink);
+  checkStateConfidence(evidence, sink);
+  checkContextTraceability(evidence, sink);
+  checkArtifactBacking(evidence, sink);
+  return valid;
 };
 
 /** Provenance, authority, uncertainty, and bounds for one graph fact. */

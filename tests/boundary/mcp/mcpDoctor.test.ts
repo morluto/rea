@@ -495,14 +495,10 @@ describe("production MCP doctor output", () => {
       TMPDIR: directories.temp,
     };
 
-    const json = await captureProductionCli(
-      ["mcp", "doctor", "--json"],
-      environment,
-    );
-    const jsonl = await captureProductionCli(
-      ["mcp", "doctor", "--format", "jsonl"],
-      environment,
-    );
+    const [json, jsonl] = await Promise.all([
+      captureProductionCli(["mcp", "doctor", "--json"], environment),
+      captureProductionCli(["mcp", "doctor", "--format", "jsonl"], environment),
+    ]);
 
     expect([json.exitCode, jsonl.exitCode]).toEqual([1, 1]);
     const parseable = [json.stdout, jsonl.stdout].map((output) => {

@@ -4,14 +4,71 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { expect, it as test } from "vitest";
+import { afterAll, beforeAll, expect, it as test } from "vitest";
 
 import { KUNA_VERIFIED_VERSION } from "../../../../src/kuna/KunaRelease.js";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../../support/workspace/workspaceFixture.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+let compileCacheWorkspace = "";
+let compileCache = "";
+let retainCompileCache = false;
+
+beforeAll(async () => {
+  if (process.platform === "win32") return;
+  compileCacheWorkspace = (
+    await createTestWorkspace("rea-kuna-verifier-compile-")
+  ).root;
+  compileCache = join(compileCacheWorkspace, "node-compile");
+});
+
+afterAll(async () => {
+  if (compileCacheWorkspace !== "" && !retainCompileCache) {
+    await removeTestWorkspace(compileCacheWorkspace);
+  }
+});
+
+const compileCacheEnv = (): Record<string, string> =>
+  compileCache === "" || process.env.NODE_V8_COVERAGE !== undefined
+    ? {}
+    : { NODE_COMPILE_CACHE: compileCache };
+
+const spawnVerifierSync = (
+  args: readonly string[],
+  options: Parameters<typeof spawnSync>[2] & { readonly encoding: "utf8" },
+) => {
+  const result = spawnSync(process.execPath, args, options);
+  if (result.error !== undefined || result.signal !== null) {
+    retainCompileCache = true;
+    return result;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as {
+      verifier_run?: {
+        process_lineage?: { status?: string; descendants?: unknown[] };
+      };
+    };
+    const lineage = parsed.verifier_run?.process_lineage;
+    if (
+      lineage !== undefined &&
+      (lineage.status !== "verified" ||
+        !Array.isArray(lineage.descendants) ||
+        lineage.descendants.length > 0)
+    ) {
+      retainCompileCache = true;
+    }
+  } catch {
+    retainCompileCache = true;
+  }
+  return result;
+};
 
 const createCallerMatrix = async (root: string) => {
   const targets = join(root, "targets");
@@ -79,8 +136,7 @@ it("accepts requested functions distributed across caller targets", async () => 
   );
   const { targets } = await createCallerMatrix(root);
   const kuna = await writeFakeKuna(root);
-  const result = spawnSync(
-    process.execPath,
+  const result = spawnVerifierSync(
     [
       "scripts/verify-real-kuna.mjs",
       "--targets",
@@ -94,6 +150,7 @@ it("accepts requested functions distributed across caller targets", async () => 
       // also covers startup, symbol selection and owned cleanup/reporting.
       timeout: 30_000,
       env: {
+        ...compileCacheEnv(),
         PATH: process.env.PATH,
         HOME: root,
         REA_KUNA_COMMAND: kuna,
@@ -262,8 +319,7 @@ it.each([
         mode: 0o755,
       },
     );
-    const result = spawnSync(
-      process.execPath,
+    const result = spawnVerifierSync(
       [
         "scripts/verify-real-kuna.mjs",
         "--targets",
@@ -276,6 +332,7 @@ it.each([
         encoding: "utf8",
         timeout: 10_000,
         env: {
+          ...compileCacheEnv(),
           PATH: process.env.PATH,
           HOME: root,
           REA_KUNA_COMMAND: kuna,
@@ -319,8 +376,7 @@ it("retains examined caller targets when a later symbol inspection fails", async
     { mode: 0o755 },
   );
   const reportPath = join(root, "report.json");
-  const result = spawnSync(
-    process.execPath,
+  const result = spawnVerifierSync(
     [
       "scripts/verify-real-kuna.mjs",
       "--targets",
@@ -334,6 +390,7 @@ it("retains examined caller targets when a later symbol inspection fails", async
       encoding: "utf8",
       timeout: 10_000,
       env: {
+        ...compileCacheEnv(),
         PATH: process.env.PATH,
         HOME: root,
         REA_KUNA_COMMAND: kuna,
@@ -490,8 +547,7 @@ await exited;
 `,
     );
     const reportPath = join(root, "report.json");
-    const result = spawnSync(
-      process.execPath,
+    const result = spawnVerifierSync(
       [
         "scripts/verify-real-kuna.mjs",
         "--entrypoint",
@@ -503,6 +559,7 @@ await exited;
         encoding: "utf8",
         timeout: 25_000,
         env: {
+          ...compileCacheEnv(),
           PATH: process.env.PATH,
           HOME: root,
           REA_KUNA_COMMAND: kuna,
