@@ -39,10 +39,7 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
 import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
-import {
-  reportOperationEnd,
-  reportOperationStart,
-} from "./operationProgress.js";
+import { createOperationProgress } from "./operationProgress.js";
 import {
   deliverApplicationExecution,
   type ApplicationExecutionRecords,
@@ -533,6 +530,12 @@ export type AnalysisWorkflow = (
   request: ApplicationWorkflowRequest,
 ) => Promise<Result<AnalysisWorkflowOutcome, AnalysisError>>;
 
+/** Delivery controls and the owner of this complete workflow's terminal progress. */
+export interface AnalysisWorkflowOptions {
+  readonly detail?: "delivery" | undefined;
+  readonly completionProgress?: "workflow" | undefined;
+}
+
 /**
  * Run a provider-backed workflow on the analysis that admission grants for
  * the call, reporting its start and terminal disposition, and deliver its
@@ -548,16 +551,17 @@ export const createAnalysisToolHandler =
     logger: Logger,
     retention: AnalysisViewRetention,
     withAdmittedAnalysis: WithAdmittedAnalysis,
-    selectsDetail: boolean,
+    options: AnalysisWorkflowOptions,
   ) =>
   (contract: ToolContract) =>
   async (
     rawInput: unknown,
     context: ServerContext,
   ): Promise<CallToolResult> => {
-    const { detail, input } = selectsDetail
-      ? deliveryDetail(rawInput)
-      : { detail: undefined, input: rawInput };
+    const { detail, input } =
+      options.detail === "delivery"
+        ? deliveryDetail(rawInput)
+        : { detail: undefined, input: rawInput };
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(contract.name, retention);
       if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
@@ -567,8 +571,12 @@ export const createAnalysisToolHandler =
       contract.name,
       signal,
       async (analysis) => {
-        const progress = mcpProgressReporter(context);
-        await reportOperationStart(progress, contract.name);
+        const progress = createOperationProgress(
+          mcpProgressReporter(context),
+          contract.name,
+          options.completionProgress,
+        );
+        await progress.start();
         const analyzed = await logToolExecution(logger, contract.name, () =>
           analyze(input, analysis, { signal, progress }),
         );
@@ -597,12 +605,7 @@ export const createAnalysisToolHandler =
                   contract,
                   analyzed.value.recorded,
                 );
-        await reportOperationEnd(
-          progress,
-          contract.name,
-          response.isError !== true,
-        );
-        return response;
+        return progress.complete(response);
       },
     );
     return admitted.ok

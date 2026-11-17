@@ -1780,6 +1780,9 @@ describe("Ghidra procedure lookup projection", () => {
           code: "invalid_request",
           message,
           details: {
+            related_operations: code.startsWith("file_offset_")
+              ? ["inspect_native_load_image"]
+              : ["list_procedures", "search_procedures"],
             issues: [
               {
                 path: ["procedure"],
@@ -1792,6 +1795,7 @@ describe("Ghidra procedure lookup projection", () => {
         expect(projected).not.toHaveProperty("recovery");
         expect(projected.remediation.action).toContain(remedy);
         expect(projected.remediation.action).toContain(qualification);
+        expect(projected.remediation.action).not.toContain("(CLI:");
         expect(projected.remediation.action).not.toContain(
           "REA_GHIDRA_PROJECT_PATH",
         );
@@ -1913,6 +1917,7 @@ describe("Ghidra file-offset outcome projection", () => {
         retryable: false,
         details: {
           operation: "address_to_file_offset",
+          related_operations: ["inspect_native_load_image"],
           issues: [
             {
               path: ["address"],
@@ -1930,6 +1935,7 @@ describe("Ghidra file-offset outcome projection", () => {
       expect(projected.remediation.action).toContain(
         "inspect_native_load_image",
       );
+      expect(projected.remediation.action).not.toContain("(CLI:");
       expect(projected.remediation.action).not.toContain("schema");
       expect(projected.remediation.action).not.toContain("tools/list");
       await client.close();
@@ -2106,10 +2112,14 @@ describe("Ghidra decompiler failure projection", () => {
         code: "execution_failure",
         retryable: false,
         message: `${message}. Only the decompiler failed for this procedure. ${GHIDRA_SESSION_RETAINED}`,
-        details: { diagnostics: { remote_code: code } },
+        details: {
+          related_operations: ["analyze_function"],
+          diagnostics: { remote_code: code },
+        },
       });
       expect(projected.message).not.toContain("rea doctor");
       expect(projected.remediation.action).toContain("analyze_function");
+      expect(projected.remediation.action).not.toContain("rea function");
       expect(projected.remediation.action).toContain(
         "facet_availability.pseudocode",
       );
