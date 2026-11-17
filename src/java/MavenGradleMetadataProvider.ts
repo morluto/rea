@@ -103,7 +103,9 @@ const mavenGradleMetadataFailurePrimary = (
         ...fixedAllowanceOptions(
           cause.allowance === "dependency_rows"
             ? `The ${String(cause.limit)}-row allowance for dependency and constraint rows`
-            : `The ${String(cause.limit)}-character allowance for variant names repeated across Gradle dependency rows`,
+            : cause.allowance === "xml_nodes"
+              ? `The ${String(cause.limit)}-node allowance for a Maven POM document tree`
+              : `The ${String(cause.limit)}-character allowance for variant names repeated across Gradle dependency rows`,
           "report",
         ),
       },

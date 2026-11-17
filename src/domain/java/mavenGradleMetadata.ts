@@ -27,6 +27,16 @@ export const MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS =
  */
 export const MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS = 65_536;
 
+/**
+ * Fixed allowance for XML nodes (elements, attributes, text, CDATA, comments
+ * and processing instructions) in one Maven POM, counted as a stream before
+ * the document tree is built. Each node costs hundreds of bytes of tree, so a
+ * 16 MiB POM of tiny elements could otherwise allocate gigabytes; the
+ * allowance still admits a POM at the dependency-row allowance with a dozen
+ * nodes per row.
+ */
+export const MAVEN_GRADLE_METADATA_XML_NODES = 1_048_576;
+
 /** Detected metadata document; classification is from content, not the suffix. */
 export const MAVEN_GRADLE_METADATA_FORMATS = [
   "maven-pom",

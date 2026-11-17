@@ -245,6 +245,38 @@ export const xmlAttributeQuoteRanges = (
   }
 };
 
+/** Thrown inside the stream to stop counting once the limit is passed. */
+class XmlNodeLimitReached extends Error {}
+
+/**
+ * How many nodes the DOM projection of `source` would hold (elements,
+ * attributes, text, CDATA, comments and processing instructions), read as a
+ * stream without building a document. Counting stops at `limit + 1`, so a
+ * caller can refuse an oversized document before `parseXmlDocument`
+ * allocates its tree. Ill-formed XML returns the nodes read before the
+ * error; `parseXmlDocument` reports the failure itself.
+ */
+export const countXmlNodes = (source: string, limit: number): number => {
+  let nodes = 0;
+  const count = () => {
+    nodes += 1;
+    if (nodes > limit) throw new XmlNodeLimitReached();
+  };
+  try {
+    checkXmlSyntax(source, "allow", (syntax) => {
+      syntax.on("opentagstart", count);
+      syntax.on("attribute", count);
+      syntax.on("text", count);
+      syntax.on("cdata", count);
+      syntax.on("comment", count);
+      syntax.on("processinginstruction", count);
+    });
+  } catch {
+    // The limit, or a syntax error parseXmlDocument reports.
+  }
+  return nodes;
+};
+
 /** One boundary owns strict XML syntax, under a DOCTYPE policy, and the source-located DOM projection. */
 export const parseXmlDocument = (
   source: string,

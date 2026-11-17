@@ -4,10 +4,15 @@ import { isRecord } from "../kernel/isRecord.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
-import { parseXmlDocument, opensLikeXml } from "../domain/xmlDocument.js";
+import {
+  countXmlNodes,
+  parseXmlDocument,
+  opensLikeXml,
+} from "../domain/xmlDocument.js";
 import {
   MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
   MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
+  MAVEN_GRADLE_METADATA_XML_NODES,
   mavenPropertyReferences,
   requestedVersionKind,
   type MavenGradleDependency,
@@ -338,6 +343,14 @@ const parsePom = (
   artifact: { path: string; sha256: string; bytes: number },
 ): MavenGradleMetadata => {
   const limitations: string[] = [...BASE_LIMITATIONS];
+  // Count nodes as a stream first, so the tree is never built past its allowance.
+  const nodes = countXmlNodes(xml, MAVEN_GRADLE_METADATA_XML_NODES);
+  if (nodes > MAVEN_GRADLE_METADATA_XML_NODES)
+    throw new MavenGradleMetadataReportFailure(
+      "xml_nodes",
+      MAVEN_GRADLE_METADATA_XML_NODES,
+      nodes,
+    );
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
     lineEndings: "preserve",

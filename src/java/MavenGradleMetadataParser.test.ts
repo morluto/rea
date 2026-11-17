@@ -855,3 +855,24 @@ it.for([
     });
   },
 );
+
+it("refuses a POM past the XML node allowance before building its tree", () => {
+  const source = `<project><artifactId>demo</artifactId><properties>${"<p/>".repeat(1_048_577)}</properties></project>`;
+  const bytes = Buffer.from(source, "utf8");
+  let failure: unknown;
+  try {
+    parseMavenGradleMetadata(bytes, {
+      path: "/artifacts/selected",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(MavenGradleMetadataReportFailure);
+  expect(failure).toMatchObject({
+    allowance: "xml_nodes",
+    limit: 1_048_576,
+    required: 1_048_577,
+  });
+});
