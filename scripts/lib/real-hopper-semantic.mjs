@@ -343,14 +343,17 @@ const analyzeFixtureProcedure = async (
     "cfg",
   ])
     assert.deepEqual(dossier.facet_availability[facet], { available: true });
+  // A complete dossier inline exceeds the default MCP input element allowance,
+  // so compare the retained session record by reference on both sides.
+  const retained = {
+    kind: "retained-evidence",
+    evidence_id: reply.structuredContent.evidence_id,
+  };
   const comparison = normalizedResult(
     await client.callTool(
       {
         name: "compare_functions",
-        arguments: {
-          left: reply.structuredContent,
-          right: reply.structuredContent,
-        },
+        arguments: { left: retained, right: retained },
       },
       options,
     ),
