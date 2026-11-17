@@ -107,11 +107,14 @@ export {
 export {
   assertStableArtifactState,
   completedStableArtifact,
+  completedStableArtifactStream,
   readStableArtifact,
+  streamStableArtifact,
 } from "./readStableArtifact.js";
 export type {
   StableArtifactFileSystem,
   StableArtifactSnapshot,
+  StableArtifactStream,
 } from "./readStableArtifact.js";
 export {
   ArtifactPathRegistry,

@@ -18,17 +18,30 @@ export type ElfSectionNameTableResult =
       readonly maximumBytes: number;
     };
 
-/** Decode the ELF section-name table once for consumers that need its names. */
-export const decodeElfSectionNameTable = (
+export type ElfSectionNameTableHeader =
+  | { readonly state: "uncompressed" }
+  | {
+      readonly state: "compressed";
+      readonly compressionType:
+        | typeof ELFCOMPRESS_ZLIB
+        | typeof ELFCOMPRESS_ZSTD;
+      readonly declaredSize: bigint;
+      readonly headerBytes: number;
+    }
+  | { readonly state: "unsupported"; readonly compressionType: number }
+  | { readonly state: "malformed"; readonly message: string };
+
+/**
+ * Read the section-name table's compression header without decoding it, so a
+ * caller can apply its own expansion budget to exactly what the decoder admits.
+ */
+export const readElfSectionNameTableHeader = (
   bytes: Buffer,
   flags: bigint,
   bits: 32 | 64,
   little: boolean,
-  maximumDecodedBytes: number,
-): ElfSectionNameTableResult => {
-  if ((flags & SHF_COMPRESSED) === 0n)
-    return { state: "available", bytes, compressed: false };
-
+): ElfSectionNameTableHeader => {
+  if ((flags & SHF_COMPRESSED) === 0n) return { state: "uncompressed" };
   const headerBytes = bits === 64 ? 24 : 12;
   if (bytes.length < headerBytes)
     return {
@@ -43,13 +56,28 @@ export const decodeElfSectionNameTable = (
     compressionType !== ELFCOMPRESS_ZSTD
   )
     return { state: "unsupported", compressionType };
-
   const declaredSize =
     bits === 64
       ? little
         ? bytes.readBigUInt64LE(8)
         : bytes.readBigUInt64BE(8)
       : BigInt(little ? bytes.readUInt32LE(4) : bytes.readUInt32BE(4));
+  return { state: "compressed", compressionType, declaredSize, headerBytes };
+};
+
+/** Decode the ELF section-name table once for consumers that need its names. */
+export const decodeElfSectionNameTable = (
+  bytes: Buffer,
+  flags: bigint,
+  bits: 32 | 64,
+  little: boolean,
+  maximumDecodedBytes: number,
+): ElfSectionNameTableResult => {
+  const header = readElfSectionNameTableHeader(bytes, flags, bits, little);
+  if (header.state === "uncompressed")
+    return { state: "available", bytes, compressed: false };
+  if (header.state !== "compressed") return header;
+  const { compressionType, declaredSize, headerBytes } = header;
   if (declaredSize > BigInt(maximumDecodedBytes))
     return {
       state: "limit",

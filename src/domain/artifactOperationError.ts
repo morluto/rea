@@ -78,6 +78,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_pe_certificates"
       | "inspect_elf_notes"
       | "canonicalize_artifact"
+      | "inspect_elf_debug_link"
       | "inspect_elf_unwind_ranges"
       | "inspect_devicetree"
       | "inspect_ntfs_journal"

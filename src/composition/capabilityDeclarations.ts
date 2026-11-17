@@ -32,6 +32,7 @@ import {
   BYTE_ENTROPY_PROVIDER,
   CANONICALIZE_PROVIDER,
   DEVICETREE_PROVIDER,
+  ELF_DEBUG_LINK_PROVIDER,
   ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
   ELF_UNWIND_RANGES_PROVIDER,
@@ -274,6 +275,11 @@ export const CAPABILITY_DECLARATIONS = {
   canonicalizeArtifact: {
     providers: [
       providerBinding(CANONICALIZE_PROVIDER, ["canonicalize_artifact"]),
+    ],
+  },
+  elfDebugLink: {
+    providers: [
+      providerBinding(ELF_DEBUG_LINK_PROVIDER, ["inspect_elf_debug_link"]),
     ],
   },
   nativeInitializers: {
