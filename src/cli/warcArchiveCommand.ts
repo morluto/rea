@@ -11,7 +11,7 @@ import {
 } from "../domain/warcArchive/warcArchive.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
-  inspectWithService,
+  deliverWithService,
   registerContractCommand,
   type EvidenceInspectionService,
 } from "./contractCommand.js";
@@ -31,9 +31,17 @@ export const registerWarcArchiveCommand = (
         "Inspect the records of a local WARC or WARC.gz archive offline",
       positionals: ["path"],
       callerPaths: ["path"],
+      // The contract fixes the archive `format` to a literal, and argv has no
+      // projection for one, so the command leaves it to the contract's value.
+      omit: {
+        format:
+          "The contract fixes the archive format; the file extension selects it",
+      },
       fields: { path: { description: "Local WARC or WARC.gz path" } },
+      // The command publishes the complete record inventory or a summary.
+      evidenceDelivery: true,
     },
-    inspectWithService(createWarcArchiveService, WARC_ARCHIVE_PROVIDER.id, "path"),
+    deliverWithService(createWarcArchiveService, WARC_ARCHIVE_PROVIDER.id),
   );
 
 /** One-shot archive inspection that owns the file it opens. */
