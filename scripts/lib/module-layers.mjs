@@ -121,17 +121,7 @@ export const UNIT_LAYERS = Object.freeze(
  * a deliberate decision, not a baseline debt: it is not counted, and any other
  * import between the same units still is. Keep the list short and say why.
  */
-export const LAYER_EXCEPTIONS = Object.freeze([
-  Object.freeze({
-    file: "src/domain/localPath.ts",
-    target: "src/platform/HostPlatform.ts",
-    // `absoluteLocalPathStringSchema` states which paths are absolute on the
-    // host running REA; that is a fact about the host's path rules, and
-    // HostPlatform is its only reader (maintainer decision, W8).
-    reason:
-      "the absolute local path schema follows the running host's path rules",
-  }),
-]);
+export const LAYER_EXCEPTIONS = Object.freeze([]);
 
 const sourcePath = (path) => path.replace(/\.js$/u, ".ts");
 /** Whether one resolved import is a declared layer exception. */
