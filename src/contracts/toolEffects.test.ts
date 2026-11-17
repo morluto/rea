@@ -56,7 +56,6 @@ describe("tool effects", () => {
       mutatesTarget: false,
     });
   });
-
   it("derives destructiveHint from each destructive effect alone", () => {
     // Keep annotation algebra independent of any operation's audited effects.
     const base: ToolEffects = {
