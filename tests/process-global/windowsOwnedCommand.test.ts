@@ -13,6 +13,7 @@ import {
 } from "../../scripts/lib/windows-owned-command.mjs";
 import { requireWindowsNativeAuthority } from "../../src/windows/WindowsNativeLoader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 
 const require = createRequire(import.meta.url);
 
@@ -228,7 +229,7 @@ it.runIf(process.platform === "win32")(
           settled = true;
         },
       );
-      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 15_000 });
+      await waitFor(() => expect(settled).toBe(true));
       await expect(lifecycle.finished).resolves.toMatchObject({
         code: expect.any(Number),
       });
@@ -316,9 +317,7 @@ it.runIf(process.platform === "win32")(
       await expect(readFile(readyPath, "utf8")).resolves.toBe("ready");
       const before = await readOptional(activityPath);
       await expect
-        .poll(async () => (await readFile(activityPath, "utf8")).length, {
-          timeout: 5_000,
-        })
+        .poll(async () => (await readFile(activityPath, "utf8")).length)
         .toBeGreaterThan(before?.length ?? 0);
       expect(
         hasClosed,
@@ -382,7 +381,7 @@ it("retries thrown and false cleanup results, then preserves the first error", a
 
     child.emit("error", undefined);
     expect(child.attempts).toBe(1);
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(diagnostics).toEqual([
         {
           type: "cleanup-failed",
@@ -394,7 +393,7 @@ it("retries thrown and false cleanup results, then preserves the first error", a
 
     child.emit("error", new Error("secondary native error"));
     expect(child.attempts).toBe(2);
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(diagnostics).toEqual([
         {
           type: "cleanup-failed",

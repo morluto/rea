@@ -1,4 +1,4 @@
-export interface BinaryPlistObjectTableLayout {
+interface BinaryPlistObjectTableLayout {
   readonly offsetWidth: number;
   readonly objectCount: number;
   readonly tableOffset: number;

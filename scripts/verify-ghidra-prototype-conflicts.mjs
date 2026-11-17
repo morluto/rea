@@ -3,16 +3,7 @@
 // producer's frame/cleanup checks. The temporary project is isolated outside
 // the checkout so failed verification cannot affect an analyst's database.
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import {
-  copyFile,
-  mkdtemp,
-  mkdir,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
@@ -20,6 +11,8 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
+import { verifierFailureReasons } from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { createVerifierRun } from "./lib/verifier-run.mjs";
 
 const install = process.env.GHIDRA_INSTALL_DIR;
@@ -27,12 +20,15 @@ if (!install) throw new Error("Set GHIDRA_INSTALL_DIR to Ghidra 12.1.4");
 const root = resolve(import.meta.dirname, "..");
 const run = createVerifierRun();
 
-const scratch = await mkdtemp(
-  join(
-    existsSync("/tmp/opencode") ? "/tmp/opencode" : tmpdir(),
-    "rea-prototype-conflicts-",
-  ),
-);
+// The fixture owns the workspace root: Ghidra's headless launcher writes the
+// project beneath it, so it is a plain temporary root, and it is removed only
+// after the owned process confirms cleanup — otherwise it is retained and
+// named for diagnosis.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-prototype-conflicts-",
+  private: false,
+});
+const scratch = fixture.path;
 const controller = new AbortController();
 let interruptHandler;
 const interrupted = new Promise((resolve) => {
@@ -46,6 +42,20 @@ const handleSigterm = () => interruptHandler("SIGTERM");
 process.on("SIGINT", handleSigint);
 process.on("SIGTERM", handleSigterm);
 let supervisor;
+let cleanupStep = "owned process cleanup";
+fixture.releaseAfter(async () => {
+  if (supervisor !== undefined) {
+    const stopped = await supervisor.stop();
+    assert.equal(
+      stopped.status,
+      "verified-cleanup",
+      `Ghidra process cleanup could not be verified: ${
+        "reason" in stopped ? stopped.reason : String(stopped.status)
+      }`,
+    );
+  }
+  cleanupStep = "temporary workspace deletion";
+});
 let primaryError;
 try {
   const project = join(scratch, "project");
@@ -133,49 +143,36 @@ try {
   // Preserve the probe failure before cleanup runs; a cleanup interruption
   // must not replace the earlier diagnostics and captured Ghidra output.
   primaryError = error;
-} finally {
-  let cleanupError;
-  let cleanupStep = "owned process cleanup";
-  try {
-    if (supervisor !== undefined) {
-      const stopped = await supervisor.stop();
-      assert.equal(
-        stopped.status,
-        "verified-cleanup",
-        `Ghidra process cleanup could not be verified: ${
-          "reason" in stopped ? stopped.reason : String(stopped.status)
-        }`,
-      );
-    }
-    cleanupStep = "temporary workspace deletion";
-    await rm(scratch, { recursive: true, force: true });
-  } catch (error) {
-    cleanupError = error;
-  } finally {
-    // Keep cleanup handlers installed until workspace deletion has finished,
-    // so an interrupt cannot terminate the verifier before its owner resumes.
-    process.off("SIGINT", handleSigint);
-    process.off("SIGTERM", handleSigterm);
-  }
-  if (cleanupError !== undefined) {
-    // Retain cleanup diagnostics and possible evidence instead of replacing
-    // the cleanup failure with an interruption or deleting an unsafe tree.
-    const message =
-      cleanupError instanceof Error
-        ? cleanupError.message
-        : String(cleanupError);
-    console.error(`Ghidra verifier failed during ${cleanupStep}: ${message}`);
-    if (cleanupStep !== "temporary workspace deletion")
-      console.error(
-        `Retained failed Ghidra verification project at ${scratch}`,
-      );
-    // Preserve the probe's earlier failure when one exists.
-    throw primaryError ?? cleanupError;
-  }
-  if (primaryError !== undefined) throw primaryError;
-  if (controller.signal.aborted)
-    throw new Error(
-      "Ghidra prototype conflict probe interrupted by SIGINT/SIGTERM",
-    );
 }
+let cleanupError;
+try {
+  // Release removes the root only after the registered owner cleanup has
+  // confirmed; a failure retains the root and carries it as a cleanup lease.
+  await fixture.release();
+} catch (error) {
+  cleanupError = error;
+} finally {
+  // Keep cleanup handlers installed until release has finished, so an
+  // interrupt cannot terminate the verifier before its owner resumes.
+  process.off("SIGINT", handleSigint);
+  process.off("SIGTERM", handleSigterm);
+}
+if (cleanupError !== undefined) {
+  // Retain cleanup diagnostics and possible evidence instead of replacing
+  // the cleanup failure with an interruption or deleting an unsafe tree.
+  console.error(
+    `Ghidra verifier failed during ${cleanupStep}: ${verifierFailureReasons(
+      cleanupError,
+    ).join("; ")}`,
+  );
+  if (cleanupStep !== "temporary workspace deletion")
+    console.error(`Retained failed Ghidra verification project at ${scratch}`);
+  // Preserve the probe's earlier failure when one exists.
+  throw primaryError ?? cleanupError;
+}
+if (primaryError !== undefined) throw primaryError;
+if (controller.signal.aborted)
+  throw new Error(
+    "Ghidra prototype conflict probe interrupted by SIGINT/SIGTERM",
+  );
 console.log("REA_PROTOTYPE_CONFLICT_OK");

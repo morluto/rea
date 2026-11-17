@@ -10,7 +10,7 @@ import {
   type NativeCommandCapture,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { createTestBinarySession } from "../../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
@@ -275,8 +275,9 @@ it("does not call a target UUID-less when binary contains LC_UUID", async () => 
     ok: false,
     error: {
       _tag: "AnalysisOutputError",
-      reason:
-        "dyld_info reported a missing LC_UUID despite an observed LC_UUID load command",
+      reason: expect.stringMatching(
+        /dyld_info.*missing LC_UUID.*observed LC_UUID/i,
+      ),
       capturedOutput: {
         stdout: dyldDiagnosticOutput(target.path, missingUuidDiagnostic),
         exit_code: 1,

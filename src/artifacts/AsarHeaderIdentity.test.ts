@@ -7,6 +7,32 @@ import { expect, it } from "vitest";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 
+it.each(["close", "cancel"] as const)(
+  "does not complete an ASAR inventory after %s while paused",
+  async (interruption) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-asar-paused-"));
+    const path = join(root, "app.asar");
+    await writeFile(
+      path,
+      asarHeaderBytes('{"files":{"x":{"size":0,"offset":"0"}}}'),
+    );
+    const reader = new AsarArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 it("rejects malformed UTF-8 instead of inventing a replacement-character member identity", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-asar-identity-"));
   const path = join(root, "app.asar");

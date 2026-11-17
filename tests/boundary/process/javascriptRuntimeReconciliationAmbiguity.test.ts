@@ -154,8 +154,9 @@ it("rejects runtime source bytes whose Evidence omits source-capture approval", 
             "include_script_sources",
           ],
           reason: "invalid_value",
-          message:
-            "Runtime Evidence contains source without source-capture selection",
+          message: expect.stringMatching(
+            /source.*without source-capture selection/i,
+          ),
         },
       ],
     },
@@ -216,4 +217,4 @@ it("runs the local verifier from operator-provided paths without emitting source
     summary: { runtime_scripts: 1 },
   });
   expect(stdout).not.toContain(SOURCE.trim());
-}, 10_000);
+});

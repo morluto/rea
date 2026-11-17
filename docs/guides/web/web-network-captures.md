@@ -357,7 +357,11 @@ entire property and its sidecars; a `scope: "property-name"` redaction points
 to its actual parent. No substitute property name or child pointer is invented.
 Omitted subtrees are still validated, including canonical HAR base64. Explicitly sensitive artifact
 paths are empty in Evidence and omitted from locations, while the original
-SHA-256 and size remain available unless the digest itself is explicitly excluded. Failure messages, diagnostics and cleanup
+SHA-256 and size remain available unless the digest itself is explicitly excluded.
+CLI [caller-selected paths](../../reference/mcp-contracts.md#caller-selected-paths)
+are excluded independently: a sensitive capture spelling can be omitted while a
+safe `descriptor_set_path` remains, and a safe relative spelling can remain even
+when its resolved parent path is sensitive. Failure messages, diagnostics and cleanup
 resources follow the same explicit declarations without changing error types;
 sensitive issue pointers identify a real ancestor instead of a fabricated
 coordinate. Header/cookie authentication values and known
@@ -1110,44 +1114,21 @@ for the hint per reason.
 
 ## Resource and lifecycle boundaries
 
-Complete evidence has a 32 MiB input, 96 MiB decoder reply and 64-level nesting
-budget. Those budgets have no runtime override. `capture_timeout_ms` does not
-raise them. Exceeding a budget returns no partial success.
-Oversized selected captures return an input error identifying `capture_path`
-and the byte budget; owned reply/output failures remain output or provider errors.
-An explicit complete-reply refusal names the 100663296-byte allowance and its
-lack of a runtime override. Record selection, paging, delivery mode and worker
-memory do not increase that allowance; a smaller producer export is a narrower
-observation, and the refusal leaves no completed capture Evidence to retrieve.
-Cancellation during reply-file finalization retains validated completed capture
-facts as partial observations. Malformed or unvalidated replies are not promoted.
-HAR, SAZ and qlog run in an owned Node old-generation heap with one V8 worker.
-`REA_CAPTURE_DECODER_OLD_GENERATION_MIB` is a decimal integer of mebibytes from
-8 to 16384. Unset uses 192, the previous constant. Invalid values fail
-configuration and name the setting; they do not fall back to 192. The setting
-seeds the launch value. In MCP, set `capture.decoder_old_generation_mib`
-through `update_analysis_settings` for decoders belonging to newly accepted
-operations, without restarting REA. Changing the launch environment still
-requires a new process. A memory failure names the effective mebibytes, known
-source, default, floor, and maximum. The decoder
-passes that value as `--max-old-space-size` and removes inherited
-`NODE_OPTIONS`, so additional host memory and `NODE_OPTIONS` do not raise the
-heap. The 8 MiB semi-space stays fixed; a smaller old generation aborts Node
-during startup instead of enforcing a limit. Mitmproxy decoding applies
-Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
-both commands use `capture_timeout_ms` (default 30000) and independently supervised
-process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
-and stderr; the collector drops overflow as it arrives, reports the limit
-failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.
-SAZ and qlog refuse decoding when neither a Node heap limit nor a Windows Job Object bound can be enforced. Existing HAR availability is preserved.
-When REA runs on Bun, the HAR/SAZ/qlog decoder runs on Bun, which ignores these V8 heap
-flags; its limitations and resource failures then omit the V8 heap sizes. On
-Windows, the decoder's owned Job Object instead limits its committed memory to
-the effective `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` value plus a 512 MiB
-reserve for Bun itself. The default 192 MiB setting therefore yields 704 MiB.
-The limitations state that limit, and reaching it returns `resource_constraint`
-with `process_memory_limit_bytes`, whatever exit status Bun reports. Other Bun
-hosts enforce no decoder heap limit, so raising the setting does not bound them.
+Complete evidence defaults to a 32 MiB input, 96 MiB decoder reply and
+64-level nesting allowance. Set `max_input_bytes`, `max_reply_bytes` or
+`max_nesting_depth` on the next `inspect_web_network_capture` call to change
+that operation's policy; CLI equivalents are `--max-input-bytes`,
+`--max-reply-bytes` and `--max-nesting-depth`. No REA restart is required.
+Byte allowances are positive safe integers; nesting is bounded by REA's
+advertised maximum of 996 levels, derived by reserving four enclosing
+reply/Evidence levels within the 1,000-level JSON representation. Input admission also covers expanded SAZ
+members and protobuf descriptor/body reads. Reply admission covers the complete
+child reply and protobuf interpretation work. These choices do not raise the
+separately owned worker heap, CPU limits or client deadline/receive buffer.
+Record selection takes place after complete decoding, so it cannot bypass
+whole-capture admission. A refusal names the exhausted control; increase that
+control and retry the same unchanged capture after cleanup. No completed capture
+Evidence exists for a refused decode.
 
 Observed decoder memory exhaustion returns `resource_constraint`, with the
 selected capture, applicable limits and retained process diagnostics. Raising

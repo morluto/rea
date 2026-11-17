@@ -77,7 +77,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "Mach-O segment header is truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },

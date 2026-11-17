@@ -97,7 +97,6 @@ cliTest.for([
 
 cliTest(
   "Apple CLI and MCP read a flattened framework's Resources/Info.plist",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apple-flat-framework-");
     const app = join(root, "Fixture.app");

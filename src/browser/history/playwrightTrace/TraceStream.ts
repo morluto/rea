@@ -1,9 +1,11 @@
+import { decodeStrictUtf8 } from "../../../domain/strictUtf8.js";
+import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
 import { LosslessNumber, isSafeNumber } from "lossless-json";
 import type {
   ArtifactEntry,
   ArtifactReader,
-} from "../../../artifacts/ArtifactReader.js";
+} from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -16,7 +18,7 @@ import {
   type TraceEvent,
 } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { captureObject } from "../CaptureRedaction.js";
-import { CaptureFormatError } from "../CaptureFormatError.js";
+import { CAPTURE_LIMITS, CaptureFormatError } from "../CaptureFormatError.js";
 import { parseCaptureJson } from "../CaptureJson.js";
 import { TraceInventory, traceIdentity } from "./TraceInventory.js";
 import { traceLines, type TraceLineBudget } from "./TraceLines.js";
@@ -36,15 +38,14 @@ const readRecord = (bytes: Buffer): unknown => {
       "memory",
       "Insufficient heap headroom for trace record expansion.",
       { input_bytes: bytes.length, required_headroom_bytes: required },
+      { measuredExhaustion: true },
     );
   let value: string;
   try {
-    value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    value = decodeStrictUtf8(bytes, "preserve");
   } catch (cause) {
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "Trace line is not valid UTF-8.",
       "",
       cause,
@@ -141,14 +142,31 @@ class TraceStreamRead {
       raw = readRecord(line.bytes);
     } catch (cause) {
       if (!(cause instanceof CaptureFormatError)) throw cause;
-      if (cause.reason === "input-limit")
+      const { limit } = cause;
+      if (limit !== undefined) {
+        // The parser names the allowance it exhausted: node count or depth.
+        const { name, maximum } = limit;
+        const nesting = name === "nesting-depth";
         throw new AnalysisResourceConstraintError(
           PLAYWRIGHT_TRACE_OPERATION,
           "memory",
           cause.message,
-          { parser_nodes: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256 },
-          { cause },
+          { [nesting ? "nesting_levels" : "parser_nodes"]: maximum },
+          {
+            cause,
+            ...fixedAllowanceOptions(
+              nesting
+                ? "The Playwright trace record nesting allowance"
+                : "The Playwright trace record parser allowance",
+              "parser",
+              {
+                limit: maximum,
+                unit: CAPTURE_LIMITS[name].unit,
+              },
+            ),
+          },
         );
+      }
       this.diagnostic(line.line, "malformed-record", cause.message);
       this.#headerSeen = true;
       return;

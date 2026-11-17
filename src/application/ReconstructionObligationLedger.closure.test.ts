@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { processCaptureSchema } from "../domain/process/processCapture.js";
+import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCapture.fixture.js";
 
 import {
   build,
@@ -167,6 +169,54 @@ describe("reconstruction obligation ledger Evidence provenance", () => {
 });
 
 describe("reconstruction obligation ledger case closure", () => {
+  it("does not turn a timeout with unknown exit code into negative or cancellation cases", () => {
+    const capture = processEvidence(
+      processCaptureSchema.parse(FINALIZED_PROCESS_CAPTURE_EXAMPLE),
+    );
+    const ledger = build(request([capture]));
+    expect(
+      ledger.obligations[0]?.observed_cases.map(({ kind }) => kind),
+    ).toEqual(["teardown"]);
+    expect(ledger.obligations[0]?.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "missing-original-case",
+          detail: expect.stringContaining("negative"),
+        }),
+        expect.objectContaining({
+          code: "missing-original-case",
+          detail: expect.stringContaining("cancellation"),
+        }),
+      ]),
+    );
+  });
+
+  it("distinguishes signal termination from a known nonzero exit", () => {
+    const signaled = processEvidence({
+      exit: { code: null, signal: 15, reason: "exited" },
+    });
+    const nonzero = processEvidence({
+      exit: { code: 2, signal: null, reason: "exited" },
+    });
+    const ambiguous = processEvidence({
+      exit: { code: 2, signal: 15, reason: "exited" },
+    });
+    expect(
+      build(request([signaled])).obligations[0]?.observed_cases.map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(["teardown"]);
+    expect(
+      build(request([nonzero])).obligations[0]?.observed_cases.map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(["negative", "teardown"]);
+    expect(
+      build(request([ambiguous])).obligations[0]?.observed_cases.map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(["teardown"]);
+  });
   it("keeps unobserved original cases open", () => {
     const capture = processEvidence();
     const proof = proofEvidence("packaged-original-gap");
@@ -304,8 +354,10 @@ describe("reconstruction obligation manifest references", () => {
       expect(result.status).toBe("unknown");
       expect(result.coverage.status).toBe("partial");
       expect(result.evidence_links).toContain(absent);
-      expect(result.limitations).toContain(
-        "The ledger retains 1 Evidence reference(s) absent from the input bundle; closure cannot be claimed.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 Evidence reference.*absent from the input bundle.*closure cannot be claimed/iu,
+        ),
       );
     }
     const contradiction = build({

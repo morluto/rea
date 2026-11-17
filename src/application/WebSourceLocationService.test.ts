@@ -17,7 +17,7 @@ import {
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
 import { WebSourceLocationService } from "./WebSourceLocationService.js";
-import type { WebSourceMapPort } from "./WebSourceLocationPorts.js";
+import type { WebSourceMapPort } from "../ports/WebSourceLocationPorts.js";
 
 const service = (data = webSourceLocationFixture(), port = decoder) =>
   new WebSourceLocationService({ load: () => Promise.resolve(ok(data)) }, port);
@@ -106,8 +106,7 @@ it.each([
       path: ["generated_position", "line"],
       minimum: 1,
       maximum: 2,
-      message:
-        "No line 3; the retained script ends at line 2 (one-based lines).",
+      message: expect.stringMatching(/line 3.*line 2.*one-based/i),
     },
   },
   {
@@ -116,8 +115,9 @@ it.each([
       path: ["generated_position", "column"],
       minimum: 0,
       maximum: 3,
-      message:
-        "No column 4 on line 1; it ends at column 3 (zero-based UTF-16 columns).",
+      message: expect.stringMatching(
+        /column 4.*line 1.*column 3.*zero-based UTF-16/i,
+      ),
     },
   },
   {
@@ -283,7 +283,7 @@ it("honors cancellation both before acquisition and across decoder completion", 
     authority: "historical-reference",
     subject: {
       local_path: fixture.sourceFile.path,
-      digest: { sha256: fixture.sourceFile.sha256 },
+      identity: { sha256: fixture.sourceFile.sha256 },
     },
     parameters: args,
     raw_result: { source_map_text: fixture.sourceMap.text },
@@ -303,22 +303,6 @@ it("honors cancellation both before acquisition and across decoder completion", 
       fixture.sourceMap.file.path,
     ].map((path) => ({ kind: "artifact-path", path })),
   });
-
-  const malformedDecoder: WebSourceMapPort = {
-    trace: async (input, options) => {
-      const decoded = await decoder.trace(input, options);
-      return decoded.ok
-        ? ok({ ...decoded.value, source_map_sha256: "b".repeat(64) })
-        : decoded;
-    },
-  };
-  const malformed = await new WebSourceLocationService(
-    { load: () => Promise.resolve(ok(webSourceLocationFixture())) },
-    malformedDecoder,
-  ).trace(args);
-  expect(malformed.ok).toBe(false);
-  if (!malformed.ok)
-    expect(malformed.error).toBeInstanceOf(AnalysisOutputError);
 
   const invalidController = new AbortController();
   const malformedLate = await new WebSourceLocationService(

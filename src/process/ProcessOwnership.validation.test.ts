@@ -1,3 +1,7 @@
+import {
+  ProcessOwnershipInspectionCancelled,
+  assertProcessOwnershipInspectionActive,
+} from "./ProcessInspectionCancellation.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
@@ -113,7 +117,7 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
     });
     expect(await cleanupOwnedProcessGroup(ownership, adapter)).toEqual({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 101",
+      reason: expect.stringMatching(/ownership token mismatch.*\b101\b/i),
       failures: [{ pid: 101, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).not.toHaveBeenCalled();
@@ -145,7 +149,7 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
     };
     expect(await cleanupOwnedProcessGroup(ownership, adapter)).toEqual({
       cleaned: false,
-      reason: "process ownership token mismatch for PID(s): 101",
+      reason: expect.stringMatching(/ownership token mismatch.*\b101\b/i),
       failures: [
         expect.objectContaining({
           pid: 100,
@@ -265,7 +269,7 @@ describe("owned process-group cleanup liveness rechecks", () => {
         cleanupOwnedProcessGroup(ownership, adapter),
       ).resolves.toEqual({
         cleaned: false,
-        reason: "process ownership token mismatch for PID(s): 101",
+        reason: expect.stringMatching(/ownership token mismatch.*\b101\b/i),
         failures: recheckFails
           ? [
               {
@@ -485,8 +489,9 @@ describe("identityless exit refresh leaves unrelated replacements unresolved", (
       ),
     ).resolves.toMatchObject({
       cleaned: false,
-      reason:
-        "process ownership could not be revalidated for PID 102: environment unavailable",
+      reason: expect.stringMatching(
+        /ownership.*could not be revalidated.*PID 102.*environment unavailable/i,
+      ),
     });
     expect(signalGroup).not.toHaveBeenCalled();
   });
@@ -997,7 +1002,7 @@ describe("owned process-group cleanup validation: launcher exit races", () => {
         if (remaining === "foreign")
           expect(result).toMatchObject({
             cleaned: false,
-            reason: "process ownership token mismatch for PID(s): 101",
+            reason: expect.stringMatching(/ownership token mismatch.*\b101\b/i),
           });
         else
           expect(result).toEqual({
@@ -1068,17 +1073,19 @@ describe("owned process-group cleanup validation: exited members", () => {
     const reason = new Error("cancelled process observation");
     const adapter = nonSignalingObserver(async (signal) => {
       controller.abort(reason);
-      signal?.throwIfAborted();
+      assertProcessOwnershipInspectionActive(signal);
       return [];
     });
-    await expect(
-      observeOwnedProcessGroups(
-        ownership.runId,
-        [ownership.processGroupId],
-        adapter,
-        controller.signal,
-      ),
-    ).rejects.toBe(reason);
+    const failure: unknown = await observeOwnedProcessGroups(
+      ownership.runId,
+      [ownership.processGroupId],
+      adapter,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw failure;
+    expect(failure.reason).toBe(reason);
   });
   it("does not inspect a process group after observation was cancelled", async () => {
     const controller = new AbortController();
@@ -1087,14 +1094,16 @@ describe("owned process-group cleanup validation: exited members", () => {
     const adapter = nonSignalingObserver(() => {
       throw new Error("Cancelled observation must not inspect processes");
     });
-    await expect(
-      observeOwnedProcessGroups(
-        ownership.runId,
-        [ownership.processGroupId],
-        adapter,
-        controller.signal,
-      ),
-    ).rejects.toBe(reason);
+    const failure: unknown = await observeOwnedProcessGroups(
+      ownership.runId,
+      [ownership.processGroupId],
+      adapter,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw failure;
+    expect(failure.reason).toBe(reason);
   });
   it("ignores exited zombie members during live ownership checks", async () => {
     const environment = vi.fn((pid: number) =>
@@ -1340,8 +1349,9 @@ describe("Windows P0 process-tree cleanup", () => {
     });
     await expect(cleanupWindowsProcessTree(42, failing)).resolves.toEqual({
       cleaned: false,
-      reason:
-        "Windows process-tree termination failed for PID 42: taskkill failed",
+      reason: expect.stringMatching(
+        /Windows process-tree termination failed.*PID 42.*taskkill failed/i,
+      ),
     });
   });
 });

@@ -9,6 +9,10 @@ import type { NextAppSourceContext } from "../../domain/javascript/javascriptRou
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 
+/** Identify a package directory within its owning container. */
+const packageDirectoryKey = (container: string, directory: string): string =>
+  compositeKey([container, directory]);
+
 /** Package declarations and inventoried directories own source-router applicability. */
 export const createJavaScriptNextAppContext = (
   fileSet: Pick<
@@ -25,7 +29,7 @@ export const createJavaScriptNextAppContext = (
     fileSet.files
       .filter(({ kind }) => kind === "package-json")
       .map((file) => [
-        compositeKey([file.container_sha256, posix.dirname(file.path)]),
+        packageDirectoryKey(file.container_sha256, posix.dirname(file.path)),
         file,
       ]),
   );
@@ -33,7 +37,7 @@ export const createJavaScriptNextAppContext = (
     fileSet.unavailable_relevant_files
       .filter(({ kind }) => kind === "package-json")
       .map((file) => [
-        compositeKey([file.container_sha256, posix.dirname(file.path)]),
+        packageDirectoryKey(file.container_sha256, posix.dirname(file.path)),
         file,
       ]),
   );
@@ -44,7 +48,7 @@ export const createJavaScriptNextAppContext = (
       ;
       directory = posix.dirname(directory)
     ) {
-      const key = compositeKey([file.container_sha256, directory]);
+      const key = packageDirectoryKey(file.container_sha256, directory);
       const unavailable = unavailablePackages.get(key);
       if (unavailable !== undefined)
         return {

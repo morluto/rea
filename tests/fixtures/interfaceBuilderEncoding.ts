@@ -1,10 +1,10 @@
-import { execFile } from "node:child_process";
+import { createVerifierCommands } from "../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { analyzeInterfaceBuilderBundle } from "../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
@@ -56,11 +56,21 @@ let nativeEncodingFixtures: Promise<NativeEncodingFixtures> | undefined;
 const produceNativeEncodingFixtures =
   async (): Promise<NativeEncodingFixtures> => {
     const directory = await createTestTempDirectory("rea-ib-native-encodings-");
-    await promisify(execFile)("/usr/bin/xcrun", [
-      "swift",
-      "tests/conformance/native/interface-builder-encoding.swift",
-      directory,
-    ]);
+    const commands = await createVerifierCommands();
+    onTestFinished(() => commands.close());
+    await withVerifierCleanup(
+      () =>
+        commands.exec(
+          "/usr/bin/xcrun",
+          [
+            "swift",
+            "tests/conformance/native/interface-builder-encoding.swift",
+            directory,
+          ],
+          { timeout: 90_000 },
+        ),
+      [() => commands.close()],
+    );
     const oracle = oracleSchema.parse(
       JSON.parse(await readFile(join(directory, "oracle.json"), "utf8")),
     );

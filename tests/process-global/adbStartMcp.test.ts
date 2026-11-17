@@ -1,22 +1,25 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { adbDouble } from "../support/adb/adbProcessDouble.js";
 
 import { AdbProvider } from "../../src/adb/AdbProvider.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
-import {
-  execFileBytes,
-  execFileOutput,
-} from "../../src/process/ExecFileOutput.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
-vi.mock("../../src/process/ExecFileOutput.js", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("../../src/process/ExecFileOutput.js")
-  >()),
-  execFileOutput: vi.fn(),
-  execFileBytes: vi.fn(),
+vi.mock("../../src/adb/AdbProcess.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/adb/AdbProcess.js")>()),
+  runAdbProcess: (await import("../support/adb/adbProcessDouble.js"))
+    .runAdbProcessDouble,
+}));
+// A running adb server makes `adb start-server` a successful no-op.
+vi.mock("../../src/adb/AdbServer.js", () => ({
+  startAdbServer: async () => ({
+    ok: true,
+    value: { daemonStarted: false },
+  }),
 }));
 
 it.each(["start_adb_app", "start_adb_activity"] as const)(
@@ -28,14 +31,12 @@ it.each(["start_adb_app", "start_adb_activity"] as const)(
     let stderr = "";
     const version =
       "Android Debug Bridge version 1.0.41\nVersion 34.0.5-stub\n";
-    vi.mocked(execFileOutput).mockResolvedValue({
+    adbDouble.version.mockResolvedValue({
       stdout: version,
       stderr: "",
-      stdoutBytes: Buffer.byteLength(version),
-      stderrBytes: 0,
     });
     const calls: string[][] = [];
-    vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
+    adbDouble.device.mockImplementation(async (args) => {
       calls.push([...args]);
       return args.includes("resolve-activity")
         ? {
@@ -60,7 +61,10 @@ it.each(["start_adb_app", "start_adb_activity"] as const)(
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-start-boundary", version: "0.0.0" });
+    const client = new Client(
+      { name: "adb-start-boundary", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
     const input =

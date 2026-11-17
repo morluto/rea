@@ -1,24 +1,30 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
-import { mkdir, type FileHandle } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import type { FileHandle } from "node:fs/promises";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import {
   AnalysisInputError,
   AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
 } from "../../domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { EnvironmentBundlePublication } from "../../domain/environmentBundleExport.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  streamChunkToBuffer,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
-import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
-import { withRegularFile } from "../RegularFileRead.js";
+import { withRegularFile } from "../../process/RegularFileRead.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   type EnvironmentBundlePlan,
@@ -27,6 +33,8 @@ import type {
   EnvironmentExportInput,
   WrittenBundleFile,
 } from "./environmentExport.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /**
  * A host failure on one file the bundle writer was reading or writing.
@@ -88,7 +96,7 @@ const writeBytes = async (
   const written = await writingBundleFile(directory, relative, () =>
     tree.write(relative, Readable.from([bytes]), {
       bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256: sha256Hex(bytes),
     }),
   );
   return { path: written.relativePath, bytes: written.bytesWritten };
@@ -100,6 +108,21 @@ export interface BundleTarball {
   readonly handle: FileHandle;
   readonly size: number;
 }
+
+/** Report a changed selected tarball with any already-published bundle. */
+export const changedArtifact = (
+  cause: RegularFileChangedError,
+  publication?: EnvironmentBundlePublication,
+): AnalysisArtifactChangedError =>
+  new AnalysisArtifactChangedError(
+    ENVIRONMENT_EXPORT_OPERATION,
+    cause.path,
+    cause.message,
+    {
+      cause,
+      ...(publication === undefined ? {} : { partialObservation: publication }),
+    },
+  );
 
 /** Read and hash the admitted instance, checking its complete length without retaining its contents. */
 export const bundleTarballDigest = async (
@@ -150,12 +173,15 @@ const writeBundleFiles = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    if (input.exclusiveDestination !== true)
-      await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
     try {
-      tree = await SafeOutputTree.create(input.directory, process.platform, {
-        acceptExistingEmpty: input.exclusiveDestination !== true,
-      });
+      tree = await SafeOutputTree.create(
+        input.directory,
+        HOST_PLATFORM.platform,
+        {
+          acceptExistingEmpty: input.exclusiveDestination !== true,
+          createParents: input.exclusiveDestination !== true,
+        },
+      );
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;
@@ -203,7 +229,17 @@ const writeBundleFiles = async (
       lease: { release: () => owner.closeHandles() },
     });
     if (closed.kind === "failed")
-      throw resources.cleanupFailure(outcome, [closed]);
+      throw resources.cleanupFailure(
+        outcome,
+        [closed],
+        owner.published && written !== undefined
+          ? {
+              kind: "environment-bundle-publication",
+              directory: input.directory,
+              files: written,
+            }
+          : undefined,
+      );
   }
   if (outcome.kind === "failed") {
     if (owner?.published === true && written !== undefined) return written;
@@ -279,12 +315,43 @@ export const withBundleTarball = async <Value>(
 };
 
 /** Retain one tarball instance across planning output writes and final stability verification. */
-export const writeEnvironmentBundle = (
+export const writeEnvironmentBundle = async (
   input: EnvironmentExportInput,
   plan: EnvironmentBundlePlan,
-): Promise<readonly WrittenBundleFile[]> =>
-  plan.packageSource.kind === "tarball"
-    ? withBundleTarball(plan.packageSource.path, (tarball) =>
-        writeBundleFiles(input, plan, tarball),
-      )
-    : writeBundleFiles(input, plan);
+): Promise<readonly WrittenBundleFile[]> => {
+  if (plan.packageSource.kind !== "tarball")
+    return writeBundleFiles(input, plan);
+  let published: readonly WrittenBundleFile[] | undefined;
+  try {
+    return await withBundleTarball(plan.packageSource.path, async (tarball) => {
+      published = await writeBundleFiles(input, plan, tarball);
+      return published;
+    });
+  } catch (cause: unknown) {
+    if (published !== undefined) {
+      const publication: EnvironmentBundlePublication = {
+        kind: "environment-bundle-publication",
+        directory: input.directory,
+        files: published,
+      };
+      if (cause instanceof ArtifactReaderFailure)
+        cause.retainPartialObservation(publication);
+      if (cause instanceof RegularFileChangedError)
+        throw changedArtifact(cause, publication);
+      if (cause instanceof AnalysisError) {
+        cause.retainPartialObservation(publication);
+        throw cause;
+      }
+      if (!(cause instanceof ArtifactReaderFailure)) {
+        const primary = isHostSystemFailure(cause)
+          ? new BundleFileHostFailure(plan.packageSource.path, "reading", cause)
+          : cause;
+        throw new ArtifactReaderFailure("io", errorMessage(primary), {
+          cause: primary,
+          partialObservation: publication,
+        });
+      }
+    }
+    throw cause;
+  }
+};

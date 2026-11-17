@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { graphqlContractSchema } from "../../domain/apiContract/graphqlContract.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";

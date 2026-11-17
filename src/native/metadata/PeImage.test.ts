@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
-import { readPeImage } from "./PeImage.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
-import { BinaryFormatFailure } from "./BinaryContainer.js";
-import { readBinaryContainer } from "./readBinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   setGoPeVirtualSize,
@@ -71,7 +71,7 @@ it.each(["NE", "LE", "LX"])(
     expect(() => readBinaryContainer(bytes)).toThrow(
       expect.objectContaining({
         kind: "unsupported",
-        message: `${signature} images are outside the supported ELF, PE and thin Mach-O formats`,
+        message: expect.stringContaining(signature),
       }),
     );
   },

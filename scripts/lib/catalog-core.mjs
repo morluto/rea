@@ -34,9 +34,9 @@ export const assertSameNames = (label, actual, expected) => {
 
 const SOURCE_PATHS = {
   packageMetadata: "dist/generatedPackageMetadata.js",
-  catalogIdentity: "dist/catalogIdentity.js",
-  cliCommandNames: "dist/cliCommandNames.js",
+  catalogIdentity: "dist/contracts/catalog/catalogIdentity.js",
   cli: "dist/cli.js",
+  cliRegistry: "dist/cli/commandRegistry.js",
   toolContracts: "dist/contracts/toolContracts.js",
   toolFamilies: "dist/contracts/toolFamilies.js",
   capabilityDeclarations: "dist/composition/capabilityDeclarations.js",

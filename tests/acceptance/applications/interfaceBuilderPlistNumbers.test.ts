@@ -9,11 +9,7 @@ import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interf
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const unknownMixedInteger = {
   $plist_type: "unknown",
@@ -39,7 +35,7 @@ const inspectArchive = (cli: TestCli, app: string, fresh: boolean) => {
     arguments: ["decode-interface-builder", app, "--json"],
     environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
   };
-  return fresh ? cli.run(invocation) : runFileCli(cli, invocation);
+  return cli.run({ ...invocation, freshProcess: fresh });
 };
 
 cliTest.for(scenarios)(

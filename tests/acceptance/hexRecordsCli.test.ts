@@ -9,6 +9,7 @@ import {
   SREC_S19,
 } from "../../src/domain/firmware/hexRecords.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { artifactFormatDescriptor } from "../../src/artifacts/artifactFormats.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
   artifactExtractionResultSchema,
@@ -96,9 +97,14 @@ cliTest.for(cases)(
     ).toEqual(Object.keys(regions));
     if (encoding === "intel-hex") {
       expect(graph.coverage.scope).toBe("container-entries");
-      expect(graph.limitations).toContain(
-        "Intel HEX/S-record inventory decodes data records into address-contiguous regions. It does not establish CPU, byte order, memory map, or that a declared start address is executable; gaps are unwritten, not zero.",
+      const limitation = artifactFormatDescriptor(encoding)?.readerLimitation;
+      if (limitation === undefined)
+        throw new Error("Missing format limitation");
+      expect(graph.limitations).toContain(limitation);
+      expect(limitation).toMatch(
+        /not establish.*CPU.*byte order.*memory map.*start address.*executable/iu,
       );
+      expect(limitation).toMatch(/gaps.*unwritten.*not zero/iu);
       expect(
         graph.occurrences.find((row) => row.logical_path === "."),
       ).toMatchObject({
@@ -177,8 +183,8 @@ cliTest("rejects a malformed record through the CLI", async ({ cli }) => {
     code: "artifact_operation_failed",
     details: { operation: "inspect_artifact", reason: "format" },
   });
-  expect(result.stdout + result.stderr).toContain(
-    "Intel HEX is malformed: line 4: record type 00 checksum 0xc4 does not match computed 0xc3",
+  expect(result.stdout + result.stderr).toMatch(
+    /line 4.*record type 00.*checksum 0xc4.*computed 0xc3/iu,
   );
 });
 

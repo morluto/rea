@@ -22,10 +22,11 @@ import {
   artifactManifestId,
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
-import type { Evidence } from "./evidence.js";
+import { evidenceFileTarget, type Evidence } from "./evidence.js";
 import { z } from "zod";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidence, safeParseEvidence } from "./evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "./evidenceFormat.js";
 import {
   artifactInspectionResultSchema,
   type ArtifactInspectionResult,
@@ -33,6 +34,7 @@ import {
 
 /** Complete or partially assembled inventory used by comparison workflows. */
 export interface InventorySet {
+  readonly effectiveLimits?: ArtifactInventoryResult["effective_limits"];
   readonly manifest: ArtifactInventoryResult["manifest"];
   readonly nodes: readonly ArtifactNode[];
   readonly occurrences: readonly ArtifactOccurrence[];
@@ -141,7 +143,7 @@ export const parseArtifactInventoryEvidence = (
 
 const parseInspectionEvidencePayload = (
   input: unknown,
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
 ): readonly ArtifactInventoryResult[] => {
   try {
     return parseInspectionInventoryPayload(input, subject).pages;
@@ -154,7 +156,7 @@ const parseInspectionEvidencePayload = (
 /** Parse and authenticate an already-owned inspection payload and its pages. */
 export const parseArtifactInspectionInventoryResult = (
   input: unknown,
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
 ): ParsedArtifactInspectionInventory => {
   const parsed = parseInspectionInventoryPayload(input, subject);
   return {
@@ -167,7 +169,7 @@ export const parseArtifactInspectionInventoryResult = (
 /** Shared owner boundary for full Evidence and already-authenticated parents. */
 const parseInspectionInventoryPayload = (
   input: unknown,
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
 ): {
   readonly inspection: ArtifactInspectionResult;
   readonly pages: readonly ArtifactInventoryResult[];
@@ -192,7 +194,9 @@ const parseInspectionInventoryPayload = (
     const sourceEvidence =
       immutableJsonSnapshotMember(sealedStep, "evidence") ?? step.evidence;
     const parsedEvidence = safeParseEvidence(sourceEvidence);
-    if (!parsedEvidence.ok)
+    if (!parsedEvidence.ok) {
+      if (isUnsupportedEvidenceFormat(parsedEvidence.error))
+        throw parsedEvidence.error;
       throw Object.assign(
         new z.ZodError(
           parsedEvidence.error.issues.map((issue) => ({
@@ -202,6 +206,7 @@ const parseInspectionInventoryPayload = (
         ),
         { cause: parsedEvidence.error },
       );
+    }
     const evidence = canBorrowParsedJsonSnapshot(
       sourceEvidence,
       parsedEvidence.value,
@@ -233,7 +238,7 @@ const parseInspectionInventoryPayload = (
 
 /** Ensure the inspection declaration and carrier identify its inventory. */
 const validateInspectionSubject = (
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
   inspection: ArtifactInspectionResult,
   manifest: ArtifactInventoryResult["manifest"],
 ): void => {
@@ -255,14 +260,14 @@ const validateInspectionSubject = (
 /** Validate one already authenticated parent payload with the same graph proofs. */
 export const parseArtifactInventoryResult = (
   input: unknown,
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
 ): InventorySet =>
   assembleInventoryResults([parseInventoryPage(input, subject)]);
 
 /** Parse one already authenticated inventory result into its validated facts. */
 const parseInventoryPage = (
   input: unknown,
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
 ): ArtifactInventoryResult => {
   const parsed = artifactInventoryResultSchema.parse(input);
   const inventory = canBorrowParsedJsonSnapshot(input, parsed)
@@ -292,16 +297,20 @@ const parseInventoryEvidencePage = (
 };
 
 const subjectMatchesInventoryRoot = (
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
   manifest: ArtifactInventoryResult["manifest"],
-): boolean =>
-  subject !== null &&
-  subject.digest.sha256 === manifest.root_sha256 &&
-  subject.format === manifest.root_format;
+): boolean => {
+  const target = evidenceFileTarget({ subject });
+  return (
+    target !== undefined &&
+    target.sha256 === manifest.root_sha256 &&
+    target.format === manifest.root_format
+  );
+};
 
 /** Both inventory carriers require the same authenticated root identity. */
 export const validateArtifactInventorySubject = (
-  subject: Evidence["subject"],
+  subject: Evidence["subject"] | undefined,
   manifest: ArtifactInventoryResult["manifest"],
 ): void => {
   if (!subjectMatchesInventoryRoot(subject, manifest))
@@ -383,6 +392,13 @@ const assembleInventoryResults = (
   const occurrences = new Map<string, ArtifactOccurrence>();
   const edges = new Map<string, ArtifactInventoryResult["edges"][number]>();
   for (const page of pages) {
+    if (
+      canonicalJson(page.effective_limits ?? null, "Artifact reader policy") !==
+      canonicalJson(first.effective_limits ?? null, "Artifact reader policy")
+    )
+      throw new ArtifactInventoryCompositionError(
+        "Artifact inventory pages do not share one accepted reader policy",
+      );
     if (canonicalJson(page.manifest, "Artifact inventory") !== manifestJson)
       throw new ArtifactInventoryCompositionError(
         "Artifact inventory pages do not share one manifest",
@@ -477,6 +493,9 @@ const orderedInventory = (
   ].sort(compareUnicodeCodePoints);
   return {
     manifest: first.manifest,
+    ...(first.effective_limits === undefined
+      ? {}
+      : { effectiveLimits: first.effective_limits }),
     nodes,
     occurrences,
     edges,

@@ -1,3 +1,5 @@
+import { fileSubjectTarget } from "../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -52,16 +54,8 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
   semanticGraph.graph_id = SEMANTIC_GRAPH_ID;
 
   const subject = sourceEvidence.subject;
-  if (subject === null) throw new Error("CLI Evidence must include a subject");
   const malformedEvidence = createEvidence(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-      ...(subject.architecture === null
-        ? {}
-        : { architecture: subject.architecture }),
-    },
+    fileSubjectTarget(subject),
     sourceEvidence.provider,
     {
       predicateType: sourceEvidence.predicate_type,
@@ -411,10 +405,17 @@ const assertSuccessfulTraceParity = async (
   const advertised = tools.find(
     ({ name }) => name === "trace_javascript_semantics",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Semantic trace SDK output schema is missing");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const ajv = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  });
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(outputSchema, mcpResponse.structuredContent)).toBe(true);
   const mcpEvidence = toolContract(

@@ -1,11 +1,9 @@
 import { expect, it, vi } from "vitest";
 
-import {
-  analyzeJavaScriptSemantics,
-  indexJavaScriptBindingsSteps,
-} from "./javascriptSemanticAnalysis.js";
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { SemanticDependencyProofs } from "./javascriptSemanticDependencies.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import { JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS } from "./javascriptSemanticPrecision.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import {
   clearSemanticValueCaches,
@@ -62,7 +60,8 @@ it("reuses dependency-aware read snapshots across a reconvergent value chain", (
 
 it("preserves the remaining depth budget when reusing a read snapshot", () => {
   const depth = 12;
-  const nesting = SEMANTIC_EXPRESSION_DEPTH_LIMIT - depth;
+  const nesting =
+    JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.expression_depth - depth;
   const source = `let a0=1;${Array.from({ length: depth }, (_, index) => `let a${index + 1}=a${index}+a${index};`).join("")}
 const root={shallow:a${depth},deep:${"[".repeat(nesting)}a${depth}${"]".repeat(nesting)},after:a${depth}};
 ${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
@@ -95,7 +94,7 @@ ${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
 });
 
 it("bounds reconvergent read work when the expression depth budget is exhausted", () => {
-  const depth = SEMANTIC_EXPRESSION_DEPTH_LIMIT;
+  const depth = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.expression_depth;
   const source = `let a0=1;${Array.from({ length: depth }, (_, index) => `let a${index + 1}=a${index}+a${index};`).join("")}
 const saved=a${depth};${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
   const parsed = parseJavaScriptSource(source, "snapshot-limit.js");

@@ -90,6 +90,8 @@ it("accepts requested functions distributed across caller targets", async () => 
     ],
     {
       encoding: "utf8",
+      // The verifier's version probe alone permits 10s; this outer deadline
+      // also covers startup, symbol selection and owned cleanup/reporting.
       timeout: 30_000,
       env: {
         PATH: process.env.PATH,
@@ -168,7 +170,6 @@ test.skipIf(
     ]);
     expect(await hashes()).toEqual(before);
   },
-  120_000,
 );
 
 it("accepts empty caller inventories but requires source-owned fixture literals", async () => {

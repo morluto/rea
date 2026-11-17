@@ -28,8 +28,11 @@ but report unknown directory coverage; no decryption is attempted. The reused
 0x200 encryption/padding flag is interpreted by producer revision. Ambiguous
 revisions retain unknown layout coverage. Unread block counts and data offsets
 are null, never invented zeroes. A declared
-size that exceeds the input file, node paths outside the block stream, and
-counts that cannot fit their table are malformed-input errors.
+size that exceeds the input file or excludes its header, directory or data
+blocks is a malformed-input error, as are node paths outside the block stream
+and counts that cannot fit their table. Directory and data ranges use the
+declared bundle extent; appended carrier bytes do not replace an end-positioned
+directory or become bundle members.
 
 ## Resource bounds
 
@@ -39,7 +42,7 @@ path projections share a conservative 64 MiB admission budget, reserved before
 allocation. Each LZ4 decode allows at most 64 MiB of output and its bounded
 encoded representation; plain blocks stream without this allocation. A reader
 admits four active member streams. The shared archive plaintext-work ceiling
-is the larger of 256 MiB and 500 times carrier size: declared stream bytes,
+is the larger of 256 MiB and 500 times declared bundle size: declared stream bytes,
 readable logical occurrences (including aliases), and cumulative block-decode
 attempts are each charged against that ceiling. Empty-output blocks retain
 their source count and offsets but are removed from member read plans. A separate
@@ -82,7 +85,6 @@ also match the independent oracle. `xinzexi_2_n_tex` (2017.4.37f1) uses LZMA
 data: its member names and sizes are retained with unavailable hashes and
 unknown coverage. UnityPy-produced repacks additionally verify format 7/8,
 padded and unpadded front tables, end tables, and unsupported LZMA directories.
-These repacks are library-produced tests, not Unity engine executions. The PR
-records producer parameters, source digests and measured task costs; synthetic
+These repacks are library-produced tests, not Unity engine executions. Synthetic
 fixtures alone do not establish real Unity version coverage. SerializedFile objects, textures and runtime
 behavior are outside this container reader's verification scope.
