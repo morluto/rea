@@ -2,6 +2,7 @@ import type { StructuredRasterExportService } from "../application/binaryDiagnos
 import type { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
 import type { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
 import { appendStructuredRasterThumbnails } from "./indexThumbnailDelivery.js";
+import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
@@ -877,6 +878,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  dwarfUnits: ((service) => ({
+    inspect_dwarf_units: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DwarfUnitsService>,
   elfDependencies: ((service) => ({
     inspect_elf_dependencies: {
       admission: "application",

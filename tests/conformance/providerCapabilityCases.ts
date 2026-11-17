@@ -54,6 +54,12 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
     cases: ["tests/boundary/cli/desktopApplicationCli.test.ts"],
   },
   devicetree: { cases: ["tests/acceptance/devicetreeCli.test.ts"] },
+  dwarfUnits: {
+    cases: [
+      "tests/acceptance/dwarfUnitsCli.test.ts",
+      "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+    ],
+  },
   electronActiveObservation: {
     cases: ["tests/acceptance/applications/electronBlankPathCli.test.ts"],
   },

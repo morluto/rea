@@ -32,6 +32,7 @@ import {
   BYTE_ENTROPY_PROVIDER,
   REA_WORKFLOW_PROVIDER,
   DEVICETREE_PROVIDER,
+  DWARF_UNITS_PROVIDER,
   ELF_DEBUG_LINK_PROVIDER,
   ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
@@ -246,6 +247,9 @@ export const CAPABILITY_DECLARATIONS = {
   desktopBuildComputers: { providers: [] },
   devicetree: {
     providers: [providerBinding(DEVICETREE_PROVIDER, ["inspect_devicetree"])],
+  },
+  dwarfUnits: {
+    providers: [providerBinding(DWARF_UNITS_PROVIDER, ["inspect_dwarf_units"])],
   },
   electronActiveObservation: {
     providers: [
