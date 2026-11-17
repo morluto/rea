@@ -1,14 +1,14 @@
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { createInterface } from "node:readline";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
@@ -20,8 +20,12 @@ import {
   type CliCommandSession,
 } from "../../support/cli/cliCommandSession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+import { waitForExit } from "../../support/process/processFixture.js";
 
-const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
 const comparisonEnvelope = z.object({
   normalized_result: javaScriptExportShapeComparisonResultSchema,
@@ -30,6 +34,17 @@ const applicationEnvelope = z.object({
   normalized_result: javascriptApplicationAnalysisResultSchema,
 });
 let cliSession: CliCommandSession | undefined;
+let compileCacheRoot = "";
+let compileCacheWorkspace = "";
+let runtimeWorker:
+  | {
+      readonly child: ChildProcessWithoutNullStreams;
+      readonly run: (
+        entries: readonly (readonly [path: string, exportName: string])[],
+      ) => Promise<unknown[]>;
+      readonly close: () => Promise<void>;
+    }
+  | undefined;
 
 // Source semantics use one real stdio MCP session. CLI parity uses the shared
 // file-scoped session, including its worker rotation and cleanup policy.
@@ -40,6 +55,13 @@ let mcpConnection:
       readonly ready: Promise<void>;
     }
   | undefined;
+
+beforeAll(async () => {
+  const workspace = await createTestWorkspace("rea-exported-bindings-cache-");
+  compileCacheWorkspace = workspace.root;
+  compileCacheRoot = workspace.path("compile-cache");
+  await mkdir(compileCacheRoot, { recursive: true });
+});
 
 afterAll(async () => {
   if (mcpConnection !== undefined) {
@@ -58,6 +80,13 @@ afterAll(async () => {
     },
     async () => {
       await cliSession?.close();
+    },
+    async () => {
+      await runtimeWorker?.close();
+    },
+    async () => {
+      if (compileCacheWorkspace !== "")
+        await removeTestWorkspace(compileCacheWorkspace);
     },
   ]);
 });
@@ -1224,9 +1253,13 @@ const runCli = async (args: readonly string[]): Promise<unknown> => {
     requestTimeoutMs: 20_000,
   });
   const environment = Object.fromEntries(
-    Object.entries({ ...process.env, REA_LOG_LEVEL: "silent" }).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
+    Object.entries({
+      ...process.env,
+      REA_LOG_LEVEL: "silent",
+      ...(compileCacheRoot === "" || process.env.NODE_V8_COVERAGE !== undefined
+        ? {}
+        : { NODE_COMPILE_CACHE: compileCacheRoot }),
+    }).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
   const result = await cliSession.run({
     arguments: args,
@@ -1252,10 +1285,10 @@ const analyzeVersions = async (
     writeFile(leftPath, source(1)),
     writeFile(rightPath, source(2)),
   ]);
-  const [left, right] = await Promise.all([
-    analyzeThroughMcp(leftRoot),
-    analyzeThroughMcp(rightRoot),
-  ]);
+  // Reuse the MCP session's single parked JavaScript worker instead of racing
+  // two concurrent analyses that force a cold ephemeral worker per fixture.
+  const left = await analyzeThroughMcp(leftRoot);
+  const right = await analyzeThroughMcp(rightRoot);
   return {
     root,
     leftPath,
@@ -1327,6 +1360,10 @@ const getMcpClient = async (): Promise<Client> => {
         PATH: process.env.PATH ?? "",
         REA_LOG_LEVEL: "silent",
         ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+        ...(compileCacheRoot === "" ||
+        process.env.NODE_V8_COVERAGE !== undefined
+          ? {}
+          : { NODE_COMPILE_CACHE: compileCacheRoot }),
       },
       stderr: "pipe",
     });
@@ -1348,28 +1385,119 @@ const getMcpClient = async (): Promise<Client> => {
   return mcpConnection.client;
 };
 
-const runtimeExports = async (
-  entries: readonly (readonly [path: string, exportName: string])[],
-): Promise<unknown[]> => {
-  const { stdout } = await execute(process.execPath, [
-    "--input-type=module",
-    "-e",
-    `import { pathToFileURL } from 'node:url';
-     const results = [];
-     for (const [path, exportName] of JSON.parse(process.argv[1])) {
-       const module = await import(pathToFileURL(path).href);
-       const value = module[exportName];
-       results.push({ value: typeof value === 'function' ? value() : value });
-     }
-     console.log(JSON.stringify(results));`,
-    JSON.stringify(entries),
-  ]);
-  return z
-    .array(z.object({ value: z.unknown().optional() }))
-    .length(entries.length)
-    .parse(JSON.parse(stdout))
-    .map(({ value }) => value);
+const ensureRuntimeWorker = () => {
+  if (runtimeWorker !== undefined) return runtimeWorker;
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { createInterface } from 'node:readline';
+       import { pathToFileURL } from 'node:url';
+       const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+       for await (const line of rl) {
+         if (line.trim() === '') continue;
+         const { id, entries } = JSON.parse(line);
+         try {
+           const results = [];
+           for (const [path, exportName] of entries) {
+             const module = await import(pathToFileURL(path).href);
+             const value = module[exportName];
+             results.push({ value: typeof value === 'function' ? value() : value });
+           }
+           process.stdout.write(JSON.stringify({ id, ok: true, results }) + '\\n');
+         } catch (error) {
+           process.stdout.write(JSON.stringify({ id, ok: false, error: error instanceof Error ? error.stack ?? error.message : String(error) }) + '\\n');
+         }
+       }`,
+    ],
+    {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  let nextId = 1;
+  const pending = new Map<
+    number,
+    { resolve: (value: unknown[]) => void; reject: (error: unknown) => void }
+  >();
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  lines.on("line", (line) => {
+    const parsed = z
+      .object({
+        id: z.number(),
+        ok: z.boolean(),
+        results: z
+          .array(z.object({ value: z.unknown().optional() }))
+          .optional(),
+        error: z.string().optional(),
+      })
+      .parse(JSON.parse(line));
+    const handler = pending.get(parsed.id);
+    if (handler === undefined) return;
+    pending.delete(parsed.id);
+    if (!parsed.ok) {
+      handler.reject(new Error(parsed.error ?? "runtime worker failed"));
+      return;
+    }
+    handler.resolve((parsed.results ?? []).map(({ value }) => value));
+  });
+  const failAll = (cause: unknown) => {
+    for (const handler of pending.values()) handler.reject(cause);
+    pending.clear();
+  };
+  child.on("error", failAll);
+  child.on("exit", (code, signal) => {
+    failAll(
+      new Error(
+        `runtime worker exited (${String(code ?? signal ?? "unknown")})`,
+      ),
+    );
+  });
+  let queue: Promise<unknown> = Promise.resolve();
+  runtimeWorker = {
+    child,
+    run(entries) {
+      const invoke = () =>
+        new Promise<unknown[]>((resolveRun, rejectRun) => {
+          const id = nextId++;
+          pending.set(id, {
+            resolve: (values) => {
+              expect(values).toHaveLength(entries.length);
+              resolveRun(values);
+            },
+            reject: rejectRun,
+          });
+          child.stdin.write(`${JSON.stringify({ id, entries })}\n`, (error) => {
+            if (error) {
+              pending.delete(id);
+              rejectRun(error);
+            }
+          });
+        });
+      const result = queue.then(invoke);
+      queue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
+    },
+    async close() {
+      lines.close();
+      if (!child.stdin.writableEnded) child.stdin.end();
+      if (await waitForExit(child, 1_000)) return;
+      child.kill("SIGTERM");
+      if (await waitForExit(child, 1_000)) return;
+      child.kill("SIGKILL");
+      await waitForExit(child, 1_000);
+    },
+  };
+  return runtimeWorker;
 };
+
+const runtimeExports = (
+  entries: readonly (readonly [path: string, exportName: string])[],
+): Promise<unknown[]> => ensureRuntimeWorker().run(entries);
 
 const runtimeExport = async (
   path: string,
