@@ -8,23 +8,29 @@ Tracking issue: [#11351](https://github.com/morluto/rea/issues/11351).
 
 ## Why the layout has to be stated
 
-glibc's `struct utmp` is not one structure. `ut_session` and `ut_tv` are 32-bit
-where the ABI keeps 64-bit and 32-bit processes on the same accounting files, and
-`long`-typed where it does not — `bits/utmp.h` selects between them with
-`__WORDSIZE_TIME64_COMPAT32`.
+The record has no single layout across libc and ABI.
 
-Read from glibc's own headers:
+glibc selects the tail shape with `__WORDSIZE_TIME64_COMPAT32` in `bits/utmp.h`:
+`ut_session` is `int32_t` with a 32-bit `ut_tv`, or `long` with a 64-bit one. Read
+from glibc's own headers, `sysdeps/x86/bits/wordsize.h` defines that macro as `1`
+and `sysdeps/aarch64/bits/wordsize.h` as `0`.
 
-| Header                            | Macro                          | Record    |
-| --------------------------------- | ------------------------------ | --------- |
-| `sysdeps/x86/bits/wordsize.h`     | `__WORDSIZE_TIME64_COMPAT32 1` | 384 bytes |
-| `sysdeps/aarch64/bits/wordsize.h` | `__WORDSIZE_TIME64_COMPAT32 0` | 400 bytes |
+musl (`include/utmpx.h`) is a third shape: `ut_session` is always `int`, followed
+(or, on a big-endian host, preceded) by `__ut_pad2`, and `ut_addr_v6` is
+`unsigned` rather than glibc's `int32_t`.
 
-Both layouts share the record head and diverge in the tail, so decoding the tail
-under the wrong layout silently produces plausible timestamps and session ids.
-Record length narrows the layout, but never names the byte order, and the least
-common multiple (9600) narrows nothing at all. Selection is therefore explicit:
-an ambiguous file is reported and refused rather than decoded under a guess.
+The consequences that make guessing unsafe:
+
+- The same 400-byte length is glibc with 64-bit time (session 8 bytes) or musl
+  with 32-bit time plus padding (session 4 bytes) — different offsets for the
+  timestamp.
+- Reading musl bytes as the glibc layout folds the padding into the session id's
+  high half.
+- Record length narrows the layout but never names the byte order, and a length
+  that is a multiple of every layout (9600) narrows nothing.
+
+Selection is therefore explicit, and an ambiguous file is refused rather than
+decoded under a guess.
 
 ## Layouts
 
@@ -42,16 +48,18 @@ Shared head, from `bits/utmp.h` with `UT_LINESIZE` 32, `UT_NAMESIZE` 32 and
 | `ut_exit.e_termination` | 332    | 2 (signed) |
 | `ut_exit.e_exit`        | 334    | 2 (signed) |
 
-Diverging tail:
+Published profiles:
 
-| Field                  | `__WORDSIZE_TIME64_COMPAT32` | otherwise             |
-| ---------------------- | ---------------------------- | --------------------- |
-| `ut_session`           | 336, 4 (signed)              | 336, 8 (signed)       |
-| `ut_tv.tv_sec`         | 340, 4 (unsigned)            | 344, 8 (unsigned)     |
-| `ut_tv.tv_usec`        | 344, 4 (signed)              | 352, 8 (signed)       |
-| `ut_addr_v6[4]`        | 348, 16                      | 360, 16               |
-| `__glibc_reserved[20]` | 364                          | 376                   |
-| record size            | 384                          | 400 (396 padded to 8) |
+| Profile           | Record | `ut_session`        | `ut_tv`         | `ut_addr_v6`  |
+| ----------------- | ------ | ------------------- | --------------- | ------------- |
+| `glibc-time32`    | 384    | 336, 4              | 340, 4 + 344, 4 | 348, signed   |
+| `glibc-time64`    | 400    | 336, 8              | 344, 8 + 352, 8 | 360, signed   |
+| `glibc-time64-be` | 400    | 336, 8              | 344, 8 + 352, 8 | 360, signed   |
+| `musl-time64`     | 400    | 336, 4 (pad at 340) | 344, 8 + 352, 8 | 360, unsigned |
+| `musl-time64-be`  | 400    | 340, 4 (pad at 336) | 344, 8 + 352, 8 | 360, unsigned |
+
+`glibc-time32` covers glibc where the macro is set — x86, both word sizes — and
+any ABI that keeps 32-bit session and time fields.
 
 ## Records and diagnostics
 
@@ -60,8 +68,6 @@ one exists, the decoded fixed-width strings, exit status, session id, timestamp
 and the four `ut_addr_v6` words. A fixed-width field that carries no terminator,
 or whose bytes are not well-formed UTF-8, still decodes as far as it can and is
 named in `undecodedFields`.
-
-Reported issues:
 
 | Issue                      | Cause                                                               |
 | -------------------------- | ------------------------------------------------------------------- |

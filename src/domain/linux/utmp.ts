@@ -58,11 +58,25 @@ const UTMP_TYPE_NAMES = new Map<number, string>(
 );
 
 export interface UtmpFormatProfile {
-  readonly name: "linux-x86-64" | "linux-aarch64" | "linux-aarch64-be";
+  readonly name:
+    | "glibc-time32"
+    | "glibc-time64"
+    | "glibc-time64-be"
+    | "musl-time64"
+    | "musl-time64-be";
   readonly recordBytes: number;
   readonly byteOrder: "little" | "big";
   readonly sessionBytes: 4 | 8;
+  /**
+   * Padding that keeps the following `timeval` aligned when `ut_session` is
+   * narrower than it. musl names it `__ut_pad2` and, on a big-endian host, puts
+   * it *before* the session id so the pair stays in the host's own order.
+   */
+  readonly sessionPadBytes: 0 | 4;
+  readonly sessionPadBefore: boolean;
   readonly timeBytes: 4 | 8;
+  /** glibc declares `ut_addr_v6` as `int32_t`, musl as `unsigned`. */
+  readonly addressSigned: boolean;
 }
 
 /**
@@ -74,25 +88,54 @@ export interface UtmpFormatProfile {
  */
 export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
   {
-    name: "linux-x86-64",
+    name: "glibc-time32",
     recordBytes: 384,
     byteOrder: "little",
     sessionBytes: 4,
+    sessionPadBytes: 0,
+    sessionPadBefore: false,
     timeBytes: 4,
+    addressSigned: true,
   },
   {
-    name: "linux-aarch64",
+    name: "glibc-time64",
     recordBytes: 400,
     byteOrder: "little",
     sessionBytes: 8,
+    sessionPadBytes: 0,
+    sessionPadBefore: false,
     timeBytes: 8,
+    addressSigned: true,
   },
   {
-    name: "linux-aarch64-be",
+    name: "glibc-time64-be",
     recordBytes: 400,
     byteOrder: "big",
     sessionBytes: 8,
+    sessionPadBytes: 0,
+    sessionPadBefore: false,
     timeBytes: 8,
+    addressSigned: true,
+  },
+  {
+    name: "musl-time64",
+    recordBytes: 400,
+    byteOrder: "little",
+    sessionBytes: 4,
+    sessionPadBytes: 4,
+    sessionPadBefore: false,
+    timeBytes: 8,
+    addressSigned: false,
+  },
+  {
+    name: "musl-time64-be",
+    recordBytes: 400,
+    byteOrder: "big",
+    sessionBytes: 4,
+    sessionPadBytes: 4,
+    sessionPadBefore: true,
+    timeBytes: 8,
+    addressSigned: false,
   },
 ];
 
@@ -185,10 +228,16 @@ interface FieldLayout {
 
 /** Where the tail fields sit once `ut_session` and `ut_tv` take their ABI width. */
 export const utmpFieldLayout = (profile: UtmpFormatProfile): FieldLayout => {
-  const secondsOffset = SESSION_OFFSET + profile.sessionBytes;
+  const sessionOffset =
+    SESSION_OFFSET + (profile.sessionPadBefore ? profile.sessionPadBytes : 0);
+  const afterSession =
+    sessionOffset +
+    profile.sessionBytes +
+    (profile.sessionPadBefore ? 0 : profile.sessionPadBytes);
+  const secondsOffset = afterSession;
   const microsecondsOffset = secondsOffset + profile.timeBytes;
   return {
-    sessionOffset: SESSION_OFFSET,
+    sessionOffset,
     secondsOffset,
     microsecondsOffset,
     addressOffset: microsecondsOffset + profile.timeBytes,
@@ -310,9 +359,10 @@ export const parseUtmpFile = (
         ),
         profile.timeBytes === 4 ? 32 : 64,
       ),
-      addressV6: Array.from({ length: ADDRESS_V6_FIELDS }, (_, slot) =>
-        signed(reader.u32(base + layout.addressOffset + slot * 4), 32),
-      ),
+      addressV6: Array.from({ length: ADDRESS_V6_FIELDS }, (_, slot) => {
+        const word = reader.u32(base + layout.addressOffset + slot * 4);
+        return profile.addressSigned ? signed(word, 32) : word;
+      }),
       undecodedFields: fields
         .filter(([, decoded]) => !decoded.decoded)
         .map(([field]) => field),

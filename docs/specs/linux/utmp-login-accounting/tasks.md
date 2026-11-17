@@ -2,10 +2,12 @@
 
 ## Slice 1 — layout selection and record decoding
 
-- [x] Publish the supported profiles from glibc headers, with the header and
-      macro each one comes from.
+- [x] Publish the supported glibc and musl profiles, with the header each one
+      comes from.
 - [x] Share the record head between layouts and derive the tail offsets from the
-      profile's session and time widths.
+      profile's session width, padding side and time width.
+- [x] Keep musl's session padding and unsigned address separate from glibc's
+      wider session id, so the two 400-byte families are distinguishable.
 - [x] Select a profile explicitly, and report `ambiguous_format` instead of
       guessing when the length matches more than one.
 - [x] Decode fixed-width strings through `strictUtf8` and name any field without a

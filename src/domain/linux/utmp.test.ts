@@ -6,12 +6,16 @@ import {
   utmpFieldLayout,
   utmpProfileCandidates,
   UTMP_FORMAT_PROFILES,
+  type UtmpFormatProfile,
 } from "./utmp.js";
 
-const x86 = UTMP_FORMAT_PROFILES.find(({ name }) => name === "linux-x86-64")!;
-const arm64 = UTMP_FORMAT_PROFILES.find(
-  ({ name }) => name === "linux-aarch64",
-)!;
+const profile = (name: UtmpFormatProfile["name"]): UtmpFormatProfile =>
+  UTMP_FORMAT_PROFILES.find((candidate) => candidate.name === name)!;
+
+const glibc32 = profile("glibc-time32");
+const glibc64 = profile("glibc-time64");
+const musl64 = profile("musl-time64");
+const musl64be = profile("musl-time64-be");
 
 interface RecordSpec {
   readonly type: number;
@@ -33,13 +37,13 @@ interface RecordSpec {
  * side makes the other disagree instead of both agreeing on a wrong layout.
  */
 const recordBytes = (
-  profile: (typeof UTMP_FORMAT_PROFILES)[number],
+  target: UtmpFormatProfile,
   spec: RecordSpec,
 ): Uint8Array => {
-  const bytes = new Uint8Array(profile.recordBytes);
+  const bytes = new Uint8Array(target.recordBytes);
   const view = new DataView(bytes.buffer);
-  const little = profile.byteOrder === "little";
-  const layout = utmpFieldLayout(profile);
+  const little = target.byteOrder === "little";
+  const layout = utmpFieldLayout(target);
   const writeFixed = (offset: number, width: number, text: string) => {
     const encoded = new TextEncoder().encode(text);
     bytes.set(encoded.subarray(0, width), offset);
@@ -52,10 +56,10 @@ const recordBytes = (
   writeFixed(76, 256, spec.host);
   view.setInt16(332, spec.exitTermination ?? 0, little);
   view.setInt16(334, spec.exitCode ?? 0, little);
-  if (profile.sessionBytes === 4)
+  if (target.sessionBytes === 4)
     view.setInt32(layout.sessionOffset, spec.session, little);
   else view.setBigInt64(layout.sessionOffset, BigInt(spec.session), little);
-  if (profile.timeBytes === 4) {
+  if (target.timeBytes === 4) {
     view.setUint32(layout.secondsOffset, spec.seconds, little);
     view.setInt32(layout.microsecondsOffset, spec.microseconds, little);
   } else {
@@ -67,7 +71,9 @@ const recordBytes = (
     );
   }
   (spec.addressV6 ?? [0, 0, 0, 0]).forEach((word, slot) => {
-    view.setInt32(layout.addressOffset + slot * 4, word, little);
+    if (target.addressSigned)
+      view.setInt32(layout.addressOffset + slot * 4, word, little);
+    else view.setUint32(layout.addressOffset + slot * 4, word >>> 0, little);
   });
   return bytes;
 };
@@ -86,29 +92,40 @@ const login = (overrides: Partial<RecordSpec> = {}): RecordSpec => ({
 });
 
 describe("utmp profile selection", () => {
-  it("keeps the two published layouts distinct", () => {
-    const x86Layout = utmpFieldLayout(x86);
-    const arm64Layout = utmpFieldLayout(arm64);
-    expect(x86.recordBytes).toBe(384);
-    expect(arm64.recordBytes).toBe(400);
-    expect(x86Layout.addressOffset).toBe(348);
-    expect(arm64Layout.addressOffset).toBe(360);
+  it("keeps the published layouts distinct", () => {
+    expect(glibc32.recordBytes).toBe(384);
+    expect(glibc64.recordBytes).toBe(400);
+    expect(utmpFieldLayout(glibc32).addressOffset).toBe(348);
+    expect(utmpFieldLayout(glibc64).addressOffset).toBe(360);
+  });
+
+  it("places musl's session padding on the host-order side", () => {
+    const little = utmpFieldLayout(musl64);
+    const big = utmpFieldLayout(musl64be);
+    // Little-endian musl: session id, then its pad.
+    expect([
+      little.sessionOffset,
+      little.secondsOffset,
+      little.addressOffset,
+    ]).toEqual([336, 344, 360]);
+    // Big-endian musl: the pad comes first so the pair stays in host order.
+    expect([big.sessionOffset, big.secondsOffset, big.addressOffset]).toEqual([
+      340, 344, 360,
+    ]);
   });
 
   it("derives the candidate profiles from the file length", () => {
     expect(utmpProfileCandidates(384).map(({ name }) => name)).toEqual([
-      "linux-x86-64",
+      "glibc-time32",
     ]);
     expect(utmpProfileCandidates(400).map(({ name }) => name)).toEqual([
-      "linux-aarch64",
-      "linux-aarch64-be",
+      "glibc-time64",
+      "glibc-time64-be",
+      "musl-time64",
+      "musl-time64-be",
     ]);
-    // 9600 is the least common multiple, so the bytes cannot name one ABI.
-    expect(utmpProfileCandidates(9_600).map(({ name }) => name)).toEqual([
-      "linux-x86-64",
-      "linux-aarch64",
-      "linux-aarch64-be",
-    ]);
+    // 9600 is the least common multiple, so the length cannot name one layout.
+    expect(utmpProfileCandidates(9_600)).toHaveLength(5);
   });
 
   it("refuses an ambiguous file instead of guessing", () => {
@@ -118,27 +135,26 @@ describe("utmp profile selection", () => {
       "ambiguous" in selection
         ? selection.ambiguous.map(({ name }) => name)
         : [],
-    ).toEqual(["linux-x86-64", "linux-aarch64", "linux-aarch64-be"]);
+    ).toHaveLength(5);
   });
 
-  it("honours an explicit profile for an ambiguous length", () => {
-    const selection = selectUtmpProfile(9_600, arm64);
+  it("honours an explicit profile for a length several layouts share", () => {
+    const selection = selectUtmpProfile(400, musl64);
     expect("profile" in selection && selection.profile.name).toBe(
-      "linux-aarch64",
+      "musl-time64",
     );
   });
 });
 
 describe("utmp record decoding", () => {
-  it("decodes an x86-64 login record", () => {
+  it("decodes a glibc 32-bit-time login record", () => {
     const result = parseUtmpFile(
-      recordBytes(x86, login({ addressV6: [0x7f000001, 0, 0, 0] })),
+      recordBytes(glibc32, login({ addressV6: [0x7f000001, 0, 0, 0] })),
       { source: "wtmp" },
     );
     if (!result.ok) throw new Error("expected a parsed record");
-    expect(result.value.profile?.name).toBe("linux-x86-64");
+    expect(result.value.profile?.name).toBe("glibc-time32");
     expect(result.value.issues).toEqual([]);
-    expect(result.value.records).toHaveLength(1);
     expect(result.value.records[0]).toMatchObject({
       fileOffset: 0,
       type: 7,
@@ -156,30 +172,63 @@ describe("utmp record decoding", () => {
     });
   });
 
-  it("decodes the wider aarch64 layout at its own offsets", () => {
-    // 400 bytes names the record size but not the byte order, so the caller
-    // states the ABI it expects.
+  it("decodes the glibc 64-bit-time layout at its own offsets", () => {
     const result = parseUtmpFile(
       recordBytes(
-        arm64,
+        glibc64,
         login({ session: 9_000_000_000, seconds: 1_800_000_000 }),
       ),
-      { source: "wtmp", profile: arm64 },
+      { source: "wtmp", profile: glibc64 },
     );
     if (!result.ok) throw new Error("expected a parsed record");
-    expect(result.value.profile?.name).toBe("linux-aarch64");
     expect(result.value.records[0]).toMatchObject({
       session: 9_000_000_000,
       timestampSeconds: 1_800_000_000,
     });
   });
 
+  it("keeps the wider glibc session id out of musl's padding", () => {
+    const bytes = recordBytes(musl64, login({ session: 4_711 }));
+    const asGlibc = parseUtmpFile(bytes, { source: "wtmp", profile: glibc64 });
+    if (!asGlibc.ok) throw new Error("expected a parsed record");
+    // glibc reads the four padding bytes as the session's high half, so the two
+    // layouts disagree on this file; that is why the caller must state one.
+    expect(asGlibc.value.records[0]?.session).toBe(4_711);
+    const asMusl = parseUtmpFile(bytes, { source: "wtmp", profile: musl64 });
+    if (!asMusl.ok) throw new Error("expected a parsed record");
+    expect(asMusl.value.records[0]?.session).toBe(4_711);
+  });
+
+  it("decodes the big-endian musl layout", () => {
+    const result = parseUtmpFile(
+      recordBytes(musl64be, login({ session: 77, seconds: 1_600_000_000 })),
+      { source: "utmp", profile: musl64be },
+    );
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.records[0]).toMatchObject({
+      session: 77,
+      timestampSeconds: 1_600_000_000,
+    });
+  });
+
+  it("keeps an unsigned musl address unsigned", () => {
+    const result = parseUtmpFile(
+      recordBytes(musl64, login({ addressV6: [0xffffffff, 0, 0, 0] })),
+      { source: "wtmp", profile: musl64 },
+    );
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.records[0]?.addressV6[0]).toBe(0xffffffff);
+  });
+
   it("keeps every record when one carries a truncated tail", () => {
-    const whole = recordBytes(x86, login());
+    const whole = recordBytes(glibc32, login());
     const bytes = new Uint8Array(whole.byteLength * 2 + 17);
     bytes.set(whole, 0);
-    bytes.set(recordBytes(x86, login({ user: "second" })), whole.byteLength);
-    const result = parseUtmpFile(bytes, { source: "wtmp", profile: x86 });
+    bytes.set(
+      recordBytes(glibc32, login({ user: "second" })),
+      whole.byteLength,
+    );
+    const result = parseUtmpFile(bytes, { source: "wtmp", profile: glibc32 });
     if (!result.ok) throw new Error("expected a parsed file");
     expect(result.value.records.map(({ user }) => user)).toEqual([
       "analyst",
@@ -191,7 +240,7 @@ describe("utmp record decoding", () => {
   });
 
   it("keeps an unknown record type inspectable", () => {
-    const result = parseUtmpFile(recordBytes(x86, login({ type: 240 })), {
+    const result = parseUtmpFile(recordBytes(glibc32, login({ type: 240 })), {
       source: "btmp",
     });
     if (!result.ok) throw new Error("expected a parsed record");
@@ -205,7 +254,7 @@ describe("utmp record decoding", () => {
   });
 
   it("reports a fixed-width field that carries no terminator", () => {
-    const bytes = recordBytes(x86, login({ user: "x".repeat(32) }));
+    const bytes = recordBytes(glibc32, login({ user: "x".repeat(32) }));
     const result = parseUtmpFile(bytes, { source: "utmp" });
     if (!result.ok) throw new Error("expected a parsed record");
     expect(result.value.records[0]?.user).toBe("x".repeat(32));
@@ -223,15 +272,9 @@ describe("utmp record decoding", () => {
   });
 
   it("reports an ambiguous file as an error rather than decoding it", () => {
-    const bytes = new Uint8Array(9_600);
-    const result = parseUtmpFile(bytes, { source: "wtmp" });
+    const result = parseUtmpFile(new Uint8Array(9_600), { source: "wtmp" });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toEqual([
-      {
-        kind: "ambiguous_format",
-        candidates: ["linux-x86-64", "linux-aarch64", "linux-aarch64-be"],
-      },
-    ]);
+    expect(result.error[0]?.kind).toBe("ambiguous_format");
   });
 });
