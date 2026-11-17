@@ -173,15 +173,15 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining(
-          "Ghidra installation-properties read allowance of 1048576 bytes (this release has no runtime override)",
-        ),
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "input",
+          limit: MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
+          unit: "bytes",
+        },
       },
     });
-    expect(projectAnalysisError(failure).remediation.action).toContain(
-      "Increasing an evidence-reply file-size allowance does not admit this input",
-    );
     expect(reads).toBe(0);
   } finally {
     await resources.close();

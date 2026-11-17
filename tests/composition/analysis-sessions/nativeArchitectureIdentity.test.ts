@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
@@ -107,7 +108,7 @@ it.each(cases)(
         analysisProfile: profile,
         limitations: [],
         locations: [],
-        subject: target,
+        subject: evidence.subject,
       },
     });
     const snapshot = {
@@ -120,13 +121,13 @@ it.each(cases)(
     const restored = parseAnalysisSnapshot(
       JSON.parse(serializeAnalysisSnapshot(snapshot)),
     );
-    expect(restored.target.architecture).toBe(architecture);
-    expect(restored.evidence_bundle.records[0]?.subject?.architecture).toBe(
-      architecture,
-    );
-    expect(restored.entries[0]?.execution.subject?.architecture).toBe(
-      architecture,
-    );
+    expect(restored.target.identity.architecture).toBe(architecture);
+    expect(
+      fileIdentity(restored.evidence_bundle.records[0]?.subject).architecture,
+    ).toBe(architecture);
+    expect(
+      fileIdentity(restored.entries[0]?.execution.subject).architecture,
+    ).toBe(architecture);
     expect(
       sessionOutputSchemas.open_binary.parse({ result: target }).result
         .architecture,
@@ -134,7 +135,10 @@ it.each(cases)(
     expect(() =>
       parseEvidence({
         ...evidence,
-        subject: { ...evidence.subject, architecture: "x86" },
+        subject: {
+          ...evidence.subject,
+          identity: { ...evidence.subject.identity, architecture: "x86" },
+        },
       }),
     ).toThrow("semantic identifier");
     const changed = createAnalysisProfile(provider, changedFacts);

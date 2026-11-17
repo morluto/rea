@@ -58,8 +58,7 @@ export const resolveElectronOptionObject = (
   const candidate = optionObjectCandidate(input, index);
   if (candidate === undefined) return undefined;
   for (const reference of candidate.references) {
-    if (index.referenceMayHaveChangedAt(site, reference, propertyPath))
-      return undefined;
+    if (index.mayObserve(site, reference, propertyPath)) return undefined;
   }
   return candidate.object;
 };

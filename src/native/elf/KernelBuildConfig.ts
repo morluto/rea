@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
@@ -12,6 +14,7 @@ import {
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 type Report = KernelBuildConfig;
 type Entry = KernelBuildConfigEntry;
@@ -234,7 +237,7 @@ const inflateGzipMember = async (
   return { kind: "member", output, end: trailer + 8 };
 };
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = strictUtf8Decoder("strip-signature");
 /** C0 controls other than tab, LF and CR, plus DEL. */
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
@@ -766,7 +769,6 @@ const reportFromSearch = async (
                 ...blobRanges(found, search.space),
               }
             : acceptedConfig(found, input, search.space);
-  const complete = found === "absent" || config.status === "present";
   const banner = await findBanner(search.bytes, search.space, signal);
   return {
     artifact,
@@ -776,7 +778,14 @@ const reportFromSearch = async (
     banner,
     config,
     coverage: {
-      status: complete ? "complete" : "incomplete",
+      status:
+        found === "absent" || config.status === "present"
+          ? "complete"
+          : // A member cut by the searched bytes, or candidates the budget
+            // left uninflated, is a known gap; a malformed config is unreadable.
+            found === "truncated" || found === "exhausted"
+            ? "partial"
+            : "unknown",
       examined_bytes: search.bytes.length,
       examined_entries: config.option_count,
     },
@@ -854,7 +863,12 @@ const closedReport = (
       : null,
   banner: absentBanner("unknown"),
   config: emptyConfig(input, status, reason),
-  coverage: { status, examined_bytes: 0, examined_entries: 0 },
+  // Nothing was searched, so whether a config exists cannot be determined.
+  coverage: {
+    status: status === "incomplete" ? "unknown" : status,
+    examined_bytes: 0,
+    examined_entries: 0,
+  },
   limitations: [...baseLimitations(), limitation],
 });
 

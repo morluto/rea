@@ -1,9 +1,9 @@
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import type { EnhancedResult } from "../EnhancedToolTypes.js";
 import type { enhancedInputSchemas } from "../../contracts/enhancedInputs.js";
 import { interfaceBuilderAnalysisSchema } from "../../domain/apple/interfaceBuilderGraph.js";
@@ -63,11 +63,11 @@ export const traceNativeUiAction = async (
         : uiExecution.error;
     if (secondary.cleanupIncomplete)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary,
           secondary,
           "trace_native_ui_action",
-        ).bindCleanupDependencies([primary, secondary]),
+        ),
       );
     if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
     return err(primary);
@@ -117,25 +117,27 @@ export const traceNativeUiAction = async (
     const archiveDecode = decoded.data.graph.coverage.find(
       (facet) => facet.facet === "archive_decode",
     );
-    const documentsFound = decoded.data.documents.length > 0;
-    coverage.push({
-      facet: "interface_builder_archives",
-      status:
-        archiveDecode?.status === "partial" ||
-        archiveDecode?.status === "complete" ||
-        archiveDecode?.status === "unsupported"
-          ? archiveDecode.status
-          : documentsFound
-            ? "complete"
-            : "unsupported",
-      reason:
-        archiveDecode?.reason ??
-        (documentsFound
-          ? null
-          : "no_compiled_interface_builder_archives_found"),
-      examined: archiveDecode?.examined ?? decoded.data.documents.length,
-      omitted: archiveDecode?.omitted ?? 0,
-    });
+    coverage.push(
+      archiveDecode !== undefined
+        ? { ...archiveDecode, facet: "interface_builder_archives" }
+        : decoded.data.documents.length > 0
+          ? // Documents were found but their decode coverage was not
+            // reported: how many archives decoded is unknown, not complete.
+            {
+              facet: "interface_builder_archives",
+              status: "unknown",
+              reason: "archive_decode_coverage_not_reported",
+              examined: decoded.data.documents.length,
+              omitted: null,
+            }
+          : {
+              facet: "interface_builder_archives",
+              status: "unsupported",
+              reason: "no_compiled_interface_builder_archives_found",
+              examined: 0,
+              omitted: 0,
+            },
+    );
     sourceGraphTruncated = graph.truncated;
     const bounded = boundUiGraph(graph, input.max_nodes, input.max_edges);
     graph = bounded.graph;

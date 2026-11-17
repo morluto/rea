@@ -15,7 +15,7 @@ import {
   fitFixture,
   type FitFixtureImage,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
-import { dtString } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+import { dtString } from "../../../src/domain/firmware/devicetree.fixture.js";
 
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
 const image = (name: string, content: string): FitFixtureImage => ({
@@ -80,7 +80,6 @@ cliTest(
     await writeFile(rightPath, rightBytes);
     const { call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "session,artifact,application",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
     });
     const left = await inspect(call, leftPath),
       right = await inspect(call, rightPath);

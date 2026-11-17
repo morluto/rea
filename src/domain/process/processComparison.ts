@@ -101,6 +101,7 @@ export const processCaptureComparisonSchema = z
         code: "custom",
         message: "Process comparison status contradicts its dimensions",
         path: ["status"],
+        params: { constraint: "status-matches-dimensions" },
       });
   });
 export type ProcessCaptureComparison = z.infer<
@@ -468,6 +469,7 @@ const explicitlyTimedSources = (
     specification.events.flatMap((event) =>
       includesCaptureLocalTiming(
         event.exact,
+        // optional-fact-default: a trace specification option, not an observation.
         new Set(event.ignore_fields ?? []),
       )
         ? [event.source]

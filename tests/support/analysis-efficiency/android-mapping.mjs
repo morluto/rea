@@ -1,4 +1,5 @@
 /** Public MCP mapping investigation with a source inventory and raw DEX oracle. */
+import { selectedOutputContracts } from "./selected-output-contracts.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -56,6 +57,8 @@ const { StdioClientTransport } = await import(
 const { Ajv2020 } = await import(
   pathToFileURL(require.resolve("ajv/dist/2020.js"))
 );
+const outputContracts = await selectedOutputContracts(repo);
+const { withCanonicalOutputSchema } = outputContracts;
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [join(repo, "scripts/rea.mjs"), "mcp"],
@@ -71,6 +74,8 @@ const transport = new StdioClientTransport({
     REA_LOG_LEVEL: "silent",
     REA_MCP_TOOL_FAMILIES: values.proof ? "android,session" : "android",
     REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+    // The run validates each result against the selected revision's output contract.
+    ...outputContracts.environment,
   },
   stderr: "pipe",
   maxBufferSize: 16 * 1024 * 1024,
@@ -97,10 +102,10 @@ try {
   ]) {
     const definitions = catalog.tools.filter((tool) => tool.name === name);
     assert.equal(definitions.length, 1);
-    assert.ok(definitions[0].outputSchema);
+    const definition = withCanonicalOutputSchema(definitions[0]);
     contracts.set(name, {
-      definition: definitions[0],
-      validate: ajv.compile(definitions[0].outputSchema),
+      definition,
+      validate: ajv.compile(definition.outputSchema),
     });
   }
   const parents = [];
@@ -127,7 +132,7 @@ try {
     );
     const evidence = result.structuredContent;
     if (name === "export_evidence_bundle") return evidence;
-    assert.equal(evidence.subject.digest.sha256, targetSha);
+    assert.equal(evidence.subject.identity.sha256, targetSha);
     const projection = evidence.normalized_result;
     const normalized =
       values.detail === "summary" ? projection.summary : projection;
@@ -295,7 +300,7 @@ try {
         );
         assert.ok(parent, "Complete source Evidence must remain exportable");
         assert.equal(parent.operation, expected.name);
-        assert.equal(parent.subject.digest.sha256, targetSha);
+        assert.equal(parent.subject.identity.sha256, targetSha);
         assert.equal(
           parent.parameters.mapping_path,
           expected.args.mapping_path,

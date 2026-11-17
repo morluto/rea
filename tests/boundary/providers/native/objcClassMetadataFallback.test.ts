@@ -7,15 +7,12 @@ import { describe, expect, it } from "vitest";
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "../../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+} from "../../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
-import {
-  UnsupportedMachoMetadataFormatError,
-  parseMachoLayout,
-} from "../../../../src/native/AppleMachoSelection.js";
+import { layoutFor } from "../../../../src/native/AppleMachoSelection.fixture.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { BinaryFormatFailure } from "../../../../src/native/metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../../../src/domain/binaryContainer.js";
 import { NativeFixtureRunner } from "../../../fixtures/nativeCommands.js";
 import { ok } from "../../../../src/domain/result.js";
 
@@ -117,11 +114,15 @@ describe("native Objective-C class metadata capability fallback", () => {
     bytes.writeUInt32LE(2, 12);
     let failure: unknown;
     try {
-      parseMachoLayout(bytes, "x86");
+      layoutFor(bytes, "x86");
     } catch (cause: unknown) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(UnsupportedMachoMetadataFormatError);
+    expect(failure).toBeInstanceOf(BinaryFormatFailure);
+    expect(failure).toMatchObject({
+      kind: "unsupported",
+      undecodedContent: true,
+    });
   });
 
   it("keeps truncated 32-bit and 64-bit headers as errors", async () => {
@@ -159,23 +160,25 @@ describe("native Objective-C class metadata capability fallback", () => {
     bytes.writeUInt32BE(2, 12);
     let failure: unknown;
     try {
-      parseMachoLayout(bytes, "powerpc");
+      layoutFor(bytes, "powerpc");
     } catch (cause: unknown) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(UnsupportedMachoMetadataFormatError);
+    expect(failure).toBeInstanceOf(BinaryFormatFailure);
+    expect(failure).toMatchObject({
+      kind: "unsupported",
+      undecodedContent: true,
+    });
 
     bytes.writeUInt32BE(0x01000007, 4);
     let mismatchedCpuFailure: unknown;
     try {
-      parseMachoLayout(bytes, "powerpc");
+      layoutFor(bytes, "powerpc");
     } catch (cause: unknown) {
       mismatchedCpuFailure = cause;
     }
     expect(mismatchedCpuFailure).toBeInstanceOf(BinaryFormatFailure);
     expect(mismatchedCpuFailure).toMatchObject({ kind: "unsupported" });
-    expect(mismatchedCpuFailure).not.toBeInstanceOf(
-      UnsupportedMachoMetadataFormatError,
-    );
+    expect(mismatchedCpuFailure).toMatchObject({ undecodedContent: false });
   });
 });

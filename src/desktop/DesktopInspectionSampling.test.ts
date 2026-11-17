@@ -41,10 +41,8 @@ import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,
 } from "../process/ProcessInspectionCancellation.js";
-import {
-  DesktopSessionCleanupError,
-  runDesktopSession,
-} from "./DesktopApplicationSession.js";
+import { runDesktopSession } from "./DesktopApplicationSession.js";
+import { DesktopSessionCleanupError } from "../ports/DesktopApplicationSession.js";
 import { X11WindowObserver } from "./X11WindowObserver.js";
 import * as linuxSampling from "../process/capture/LinuxProcessSampling.js";
 import { SamplingReadBatchFailure } from "../process/capture/ProcessSamplingObservation.js";

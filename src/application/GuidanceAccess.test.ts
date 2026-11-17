@@ -1,9 +1,9 @@
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { MANAGED_SKILL_FILES } from "./SetupSkill.js";
 import { searchGuidanceOutputSchema } from "../contracts/guidanceContracts.js";
-import { RetainedRegularFileCleanupFailure } from "./RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../process/RegularFileRead.js";
 import {
   readGuidanceSectionWithReader,
   searchGuidanceWithReader,

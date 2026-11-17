@@ -19,6 +19,16 @@ const transportSystemCode = (error: unknown): string | undefined => {
   return typeof error.code === "string" ? error.code : undefined;
 };
 
+/**
+ * System codes that mean the peer has gone. A pipe reports EPIPE, a socket
+ * ECONNRESET, and macOS can report ENOTCONN for a closed socket-pair stdio.
+ */
+const CONNECTION_LOST_CODES: ReadonlySet<string> = new Set([
+  "EPIPE",
+  "ECONNRESET",
+  "ENOTCONN",
+]);
+
 /** SDK error callbacks also report recoverable validation and protocol errors. */
 export const reportMcpTransportError = (
   error: unknown,
@@ -29,7 +39,7 @@ export const reportMcpTransportError = (
   const diagnostic =
     error instanceof z.ZodError
       ? { kind: "validation_error", message: MCP_VALIDATION_FAILED }
-      : code === "EPIPE" || code === "ECONNRESET"
+      : code !== undefined && CONNECTION_LOST_CODES.has(code)
         ? { kind: "connection_lost", message: MCP_CONNECTION_LOST }
         : { kind: "unknown", message: MCP_TRANSPORT_ERROR };
   // Do not echo raw frames or exception text, which can contain caller data.

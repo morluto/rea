@@ -331,7 +331,7 @@ describe("tRPC binding identity and bundled syntax", () => {
     ]);
   });
 
-  it("preserves procedure paths beyond the former nesting cutoff", () => {
+  it("preserves a procedure path of 64 segments", () => {
     const path = Array.from({ length: 64 }, (_, i) => `router${i}`).join(".");
     expect(rpcEndpoints(`root.${path}.useQuery();`)).toEqual([
       { kind: "network", value: path, mechanism: "trpc:procedure:useQuery" },

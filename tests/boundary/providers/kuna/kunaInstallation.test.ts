@@ -295,7 +295,6 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
 it("stops a version probe that ignores SIGTERM instead of waiting on it", async () => {
   const root = await createTestTempDirectory("rea-kuna-probe-term-");
   const kuna = await writeFakeKuna(root, { version: { ignoreTerm: true } });
-  const started = Date.now();
 
   const result = await inspectKunaInstallation(
     { REA_KUNA_COMMAND: kuna },
@@ -310,11 +309,12 @@ it("stops a version probe that ignores SIGTERM instead of waiting on it", async 
       diagnostics: {
         probe_failure_reason: "timeout",
         deadline_ms: 4_000,
+        signal: "SIGKILL",
       },
     },
   });
-  // The owned process-group stop is bounded and must not wait on inherited output forever.
-  expect(Date.now() - started).toBeLessThan(10_000);
+  // The stop escalated past the ignored SIGTERM; waiting on the probe instead
+  // would hang until the test deadline names it.
   const pid = (await fakeKunaCalls(kuna))[0]?.pid ?? 0;
   expect(() => process.kill(pid, 0)).toThrow();
 });

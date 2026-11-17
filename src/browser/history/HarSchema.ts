@@ -102,7 +102,7 @@ export const createHarValidator = (): ((
       // AJV messages name the violated constraint, such as the missing
       // property, without restating any captured value.
       throw new CaptureFormatError(
-        "format",
+        "malformed",
         error === undefined
           ? "HAR schema validation failed: unknown constraint."
           : `HAR schema validation failed: ${error.keyword} (${error.message ?? "no detail"}).`,

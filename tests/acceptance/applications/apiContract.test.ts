@@ -228,16 +228,17 @@ cliTest(
     );
     await writeFile(path, bytes);
     const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "application,session",
     });
     const schemas = await advertisedMcpToolSchemas(
       client,
       "inspect_api_contract",
     );
-    expect(schemas.ajv.validate(schemas.inputSchema, { path })).toBe(true);
+    expect(schemas.ajv.validate(schemas.canonicalInputSchema, { path })).toBe(
+      true,
+    );
     expect(
-      schemas.ajv.validate(schemas.inputSchema, {
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
         path,
         view: {
           kind: "api-contract",

@@ -107,7 +107,7 @@ cliTest.for([
       details: {
         issues: [
           {
-            path: ["capture_path", "/log/entries/0/request/url"],
+            path: ["capturePath", "/log/entries/0/request/url"],
             reason: "invalid_format",
           },
         ],
