@@ -69,7 +69,10 @@ import {
   isAborted,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -669,6 +672,7 @@ interface PendingOutputDirectoryCleanup {
   readonly path: string;
   readonly primary: AnalysisError;
   readonly remove: () => Promise<void>;
+  readonly resources?: () => readonly string[];
   readonly lease: AnalysisCleanupLease;
 }
 
@@ -1120,19 +1124,36 @@ export class AdbProvider {
     owner: Omit<PendingOutputDirectoryCleanup, "lease">,
     cleanup: ProviderCleanupError,
   ): AnalysisError {
-    const lease = new AnalysisCleanupLease(async () => {
-      await owner.remove();
-      if (owner.primary.cleanupIncomplete)
-        throw new Error(
-          "ADB output directory primary cleanup remains incomplete",
-        );
-    });
+    const liveResources = () => [
+      ...new Set([
+        owner.path,
+        ...(owner.resources?.() ?? []),
+        ...(owner.primary.cleanupIncomplete
+          ? owner.primary.cleanupResources
+          : []),
+      ]),
+    ];
+    const lease = new AnalysisCleanupLease(
+      async () => {
+        await owner.remove();
+        if (owner.primary.cleanupIncomplete)
+          throw new Error(
+            "ADB output directory primary cleanup remains incomplete",
+          );
+      },
+      {
+        get cleanupResources() {
+          return liveResources();
+        },
+      },
+    );
     const error = analysisErrorWithCleanupFailure(
       owner.primary,
       cleanup,
       owner.operation,
     );
     lease.bindCleanupError(error);
+    error.bindCleanupResourceOwner(lease);
     this.#pendingOutputDirectoryCleanup.add({ ...owner, lease });
     return error;
   }
@@ -1157,7 +1178,7 @@ export class AdbProvider {
       } catch (cause: unknown) {
         const cleanup = new ProviderCleanupError(
           ADB_PROVIDER_IDENTITY.id,
-          [owner.path],
+          owner.lease.cleanupResources ?? [owner.path],
           {
             reason: errorMessage(cause),
           },
@@ -1169,6 +1190,7 @@ export class AdbProvider {
           owner.operation,
         );
         owner.lease.bindCleanupError(error);
+        error.bindCleanupResourceOwner(owner.lease);
         failures.push(error);
       }
     }
@@ -3197,6 +3219,7 @@ export class AdbProvider {
       Result<AnalysisExecution, AnalysisError>
     > => {
       let reportedPath: string | null = null;
+      let commandFailure: AnalysisError | undefined;
       try {
         const created = await lstat(stagingDirectory);
         if (!created.isDirectory() || created.isSymbolicLink())
@@ -3219,6 +3242,7 @@ export class AdbProvider {
           },
           signal,
         );
+        if (!collected.ok) commandFailure = collected.error;
         const completedStdout = collected.ok
           ? collected.value.stdout
           : collected.error.capturedOutput?.exit_code === 0 &&
@@ -3329,29 +3353,39 @@ export class AdbProvider {
           }),
         );
       } catch (cause) {
-        if (
-          retainedObservation !== undefined &&
-          cause instanceof AdbDigestFailure
-        ) {
-          const digestFailure = adbDigestError(
-            cause,
-            operation,
-            retainedObservation,
-          );
-          return err(digestFailure);
-        }
-        if (cause instanceof AnalysisCancelledError) {
+        const readbackFailure =
+          retainedObservation !== undefined && cause instanceof AdbDigestFailure
+            ? adbDigestError(cause, operation, retainedObservation)
+            : cause instanceof AnalysisCancelledError
+              ? (() => {
+                  if (retainedObservation !== undefined)
+                    cause.retainPartialObservation(retainedObservation);
+                  return cause;
+                })()
+              : new AnalysisOutputError(
+                  operation,
+                  `The reported bugreport archive could not be read back: ${reportedPath ?? stagingDirectory}`,
+                  { cause, partialObservation: retainedObservation },
+                );
+        if (readbackFailure.partialObservation !== undefined)
+          retainedObservation =
+            readbackFailure.partialObservation as AdbAcquiredFilePartialObservation;
+        if (commandFailure !== undefined) {
           if (retainedObservation !== undefined)
-            cause.retainPartialObservation(retainedObservation);
-          return err(cause);
+            commandFailure.retainPartialObservation(retainedObservation);
+          return err(
+            readbackFailure.cleanupIncomplete
+              ? analysisErrorWithCleanupDependencies(
+                  commandFailure,
+                  readbackFailure,
+                  operation,
+                )
+              : readbackFailure instanceof AnalysisCancelledError
+                ? analysisErrorWithCancellation(commandFailure, readbackFailure)
+                : commandFailure.retainSecondaryFailure(readbackFailure, {}),
+          );
         }
-        return err(
-          new AnalysisOutputError(
-            operation,
-            `The reported bugreport archive could not be read back: ${reportedPath ?? stagingDirectory}`,
-            { cause, partialObservation: retainedObservation },
-          ),
-        );
+        return err(readbackFailure);
       }
     })();
     const retainCancellation = (failure: AnalysisError | undefined) =>
@@ -3414,10 +3448,17 @@ export class AdbProvider {
             path: stagingDirectory,
             primary,
             remove: removeStaging,
+            resources: () => commandResources.cleanupResources,
           },
           new ProviderCleanupError(
             ADB_PROVIDER_IDENTITY.id,
-            [...new Set([stagingDirectory, ...primary.cleanupResources])],
+            [
+              ...new Set([
+                stagingDirectory,
+                ...commandResources.cleanupResources,
+                ...(primary.cleanupIncomplete ? primary.cleanupResources : []),
+              ]),
+            ],
             { reason: errorMessage(cause) },
             { operation, cause },
           ),

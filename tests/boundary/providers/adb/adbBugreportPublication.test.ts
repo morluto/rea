@@ -471,7 +471,22 @@ test("preserves a finished bugreport archive and retains its staging directory w
   expect(stopAttempts).toBe(1);
   await expect(lstat(stagingDirectory)).resolves.toBeDefined();
 
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
   allowCommandStop = true;
+  vi.mocked(rm).mockImplementationOnce(async (path, options) => {
+    if (String(path) === stagingDirectory)
+      throw new Error("controlled staging removal failure after command stop");
+    return actualFs.rm(path, options);
+  });
+  const secondClose = await f.provider.close().catch((cause: unknown) => cause);
+  expect(secondClose).toMatchObject({ cleanupIncomplete: true });
+  expect(stopAttempts).toBe(2);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual([stagingDirectory]);
+
   await f.provider.close();
   expect(stopAttempts).toBe(2);
   expect(result.error.cleanupIncomplete).toBe(false);
@@ -479,4 +494,76 @@ test("preserves a finished bugreport archive and retains its staging directory w
     code: "ENOENT",
   });
   expect(await readFile(publishedPath, "utf8")).toBe("bugreport-bytes");
+});
+
+test("preserves command cleanup failure when archive digest readback also fails", async () => {
+  const f = await fixture();
+  let allowCommandStop = false;
+  let reportedPath = "";
+  const supervisor = {
+    stop: async () =>
+      allowCommandStop
+        ? { status: "stopped" as const }
+        : {
+            status: "incomplete" as const,
+            reason: "adb bugreport process group still running",
+          },
+  } as unknown as ProviderProcessSupervisor;
+
+  adbDouble.device.mockImplementationOnce(async (args) => {
+    const staging = args[3]!;
+    reportedPath = join(staging, "bugreport test.zip");
+    await writeFile(reportedPath, "bugreport-bytes");
+    const stdoutText = `Bug report copied to ${reportedPath}\n`;
+    throw new OwnedCommandFailure(
+      "process",
+      "Command cleanup failed.",
+      {
+        exitCode: 0,
+        signal: null,
+        stdout: {
+          text: stdoutText,
+          bytes: Buffer.byteLength(stdoutText),
+          observedBytes: Buffer.byteLength(stdoutText),
+        },
+        stderr: {
+          text: "",
+          bytes: 0,
+          observedBytes: 0,
+        },
+        diagnosticTruncated: false,
+      },
+      "adb bugreport process group still running",
+      undefined,
+      ["rea-adb-bugreport", "pid:7272"],
+      supervisor,
+    );
+  });
+  vi.mocked(open).mockRejectedValueOnce(
+    new Error("controlled digest readback failure"),
+  );
+
+  const result = await f.provider.execute(f.request);
+  if (result.ok)
+    throw new Error("expected bugreport command and readback failure");
+  const stagingDirectory = dirname(reportedPath);
+  const publishedPath = join(f.root, "bugreport test.zip");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(
+    expect.arrayContaining([stagingDirectory, "rea-adb-bugreport", "pid:7272"]),
+  );
+  expect(result.error.partialObservation).toMatchObject({
+    provider_id: "adb",
+    operation: f.request.operation,
+    result: {
+      serial: "device",
+      local_path: publishedPath,
+      adb_reported_path: reportedPath,
+      digest_status: "unknown",
+    },
+  });
+
+  allowCommandStop = true;
+  await f.provider.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
 });
