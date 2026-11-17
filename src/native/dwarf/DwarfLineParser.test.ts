@@ -1005,3 +1005,94 @@ it("assigns distinct sequence_index values after reaching MAX_DWARF_LINE_SEQUENC
     MAX_DWARF_LINE_SEQUENCES + 1,
   );
 });
+
+it("emits exact-only null span_end for descending rows and descending end_sequence", () => {
+  const descendingRowProg = lineProgram({
+    version: 5,
+    v5Directories: [{ form: 0x08, inline: "/src" }],
+    v5Files: [{ path: { form: 0x08, inline: "desc.c" }, dirIndex: 0 }],
+    opcodes: Buffer.concat([
+      lneSetAddress(0x2000n, 8, true),
+      lnsSetFile(0),
+      lnsCopy(),
+      lneSetAddress(0x1000n, 8, true),
+      lnsAdvanceLine(1),
+      lnsCopy(),
+      lnsAdvancePc(0x10),
+      lneEndSequence(),
+    ]),
+  });
+  const res1 = assertValidReportSchema(
+    descendingRowProg,
+    parseDwarfLinePrograms({
+      line: descendingRowProg,
+      lineStr: null,
+      str: null,
+      strOffsets: null,
+      lineFileOffset: 0,
+      little: true,
+      defaultAddressSize: 8,
+      addresses: ["0x2000", "0x2001", "0x1004"],
+      maxPrograms: 16,
+      maxRows: 100,
+      unappliedLineRelocations: [],
+      unappliedDebugRelocations: [],
+    }),
+  );
+  expect(res1.address_matches[0]?.status).toBe("resolved");
+  expect(res1.address_matches[0]?.matches[0]).toMatchObject({
+    exact: true,
+    span_start: "0x2000",
+    span_end: null,
+    line: 1,
+  });
+  expect(res1.address_matches[1]?.status).toBe("not_found");
+  expect(res1.address_matches[2]?.status).toBe("resolved");
+  expect(res1.address_matches[2]?.matches[0]).toMatchObject({
+    exact: false,
+    span_start: "0x1000",
+    span_end: "0x1010",
+    line: 2,
+  });
+
+  const descendingEndProg = lineProgram({
+    version: 5,
+    v5Directories: [{ form: 0x08, inline: "/src" }],
+    v5Files: [{ path: { form: 0x08, inline: "desc_end.c" }, dirIndex: 0 }],
+    opcodes: Buffer.concat([
+      lneSetAddress(0x1000n, 8, true),
+      lnsSetFile(0),
+      lnsCopy(),
+      lneSetAddress(0x2000n, 8, true),
+      lnsAdvanceLine(2),
+      lnsCopy(),
+      lneSetAddress(0x1800n, 8, true),
+      lneEndSequence(),
+    ]),
+  });
+  const res2 = assertValidReportSchema(
+    descendingEndProg,
+    parseDwarfLinePrograms({
+      line: descendingEndProg,
+      lineStr: null,
+      str: null,
+      strOffsets: null,
+      lineFileOffset: 0,
+      little: true,
+      defaultAddressSize: 8,
+      addresses: ["0x2000", "0x2001"],
+      maxPrograms: 16,
+      maxRows: 100,
+      unappliedLineRelocations: [],
+      unappliedDebugRelocations: [],
+    }),
+  );
+  expect(res2.address_matches[0]?.status).toBe("resolved");
+  expect(res2.address_matches[0]?.matches[0]).toMatchObject({
+    exact: true,
+    span_start: "0x2000",
+    span_end: null,
+    line: 3,
+  });
+  expect(res2.address_matches[1]?.status).toBe("not_found");
+});

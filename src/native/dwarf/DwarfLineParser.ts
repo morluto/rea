@@ -2520,24 +2520,21 @@ const matchSequenceLinear = (
     let j = i + 1;
     while (j < limit && rows[j]?.address === startAddr) j += 1;
     const nextRow = rows[j];
-    const matched =
+    const candidateEnd =
       nextRow !== undefined
-        ? nextRow.address > startAddr
-          ? query >= startAddr && query < nextRow.address
-          : query === startAddr
-        : seq.hasEndSequence &&
-            seq.endAddress !== null &&
-            seq.endAddress > startAddr
-          ? query >= startAddr && query < seq.endAddress
-          : query === startAddr;
+        ? nextRow.address
+        : seq.hasEndSequence
+          ? seq.endAddress
+          : null;
+    const hasForwardSpan = candidateEnd !== null && candidateEnd > startAddr;
+    const matched = hasForwardSpan
+      ? query >= startAddr && query < candidateEnd
+      : query === startAddr;
     if (matched) {
       const spanStart = formatDwarfLineAddress(startAddr);
-      const spanEnd =
-        nextRow !== undefined
-          ? formatDwarfLineAddress(nextRow.address)
-          : seq.hasEndSequence && seq.endAddress !== null
-            ? formatDwarfLineAddress(seq.endAddress)
-            : null;
+      const spanEnd = hasForwardSpan
+        ? formatDwarfLineAddress(candidateEnd)
+        : null;
       const exact = query === startAddr;
       for (let k = i; k < j; k += 1) {
         const r = rows[k];
