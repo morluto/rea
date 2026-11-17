@@ -433,7 +433,8 @@ jobs:
       needs.changes.outputs.agentenv == 'true' ||
       needs.changes.outputs.packet_capture == 'true' ||
       needs.changes.outputs.signal_recording == 'true' ||
-      needs.changes.outputs.go_binary == 'true'
+      needs.changes.outputs.go_binary == 'true' ||
+      needs.changes.outputs.ghidra_bridge == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -936,6 +937,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
       - name: Verify static CLI/MCP journeys and synthetic report conformance
         env:
           REA_READINESS_REPORT_PATH: readiness-report.json
@@ -1280,9 +1283,14 @@ jobs:
     uses: ./.github/workflows/nativeaot-fixtures.yml
 
   ghidra_bridge:
-    needs: [changes, static]
+    needs: [changes, static, build]
     if: needs.changes.outputs.ghidra_bridge == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/ghidra-bridge-sources.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   android_metadata:
     needs: [changes, static]
