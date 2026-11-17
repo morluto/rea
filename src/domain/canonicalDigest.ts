@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /**
  * Streaming SHA-256 over canonical JSON. Hashing owner (avoids assembling
@@ -16,7 +17,7 @@ export const digestCanonicalValue = (
     const encoded = JSON.stringify(value);
     if (encoded === undefined)
       throw new TypeError(`${context} could not canonicalize data`);
-    return createHash("sha256").update(encoded).digest("hex");
+    return sha256Hex(encoded);
   }
   const hash = createHash("sha256");
   // Batch small emitted parts to cut hash.update crossings. A large part is
