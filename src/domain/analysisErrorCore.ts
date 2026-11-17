@@ -160,6 +160,34 @@ export const fixedCeilingConstraint = (
     fixedAllowance: ceiling,
   });
 
+/**
+ * Refuse work at an admission whose slots the producer measured as occupied.
+ * Unlike a fixed ceiling, occupied capacity keeps its wait-and-retry recovery:
+ * the same request may be admitted once the occupant settles, so the refusal
+ * declares measured exhaustion instead of a deterministic allowance.
+ */
+export const occupiedCapacityConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  reportedLimits: Readonly<Record<string, JsonValue>> | null,
+  options?: AnalysisErrorOptions & {
+    readonly remediationAction?: string;
+    readonly retryable?: boolean;
+    readonly requestSent?: boolean;
+  },
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    reason,
+    reportedLimits,
+    {
+      ...options,
+      measuredExhaustion: true,
+    },
+  );
+
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,
