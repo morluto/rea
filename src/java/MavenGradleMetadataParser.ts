@@ -323,15 +323,15 @@ const parsePom = (
   const properties =
     propertiesElement === undefined
       ? []
-      : childElements(propertiesElement).flatMap((property) => {
-          const name = nonempty(property.localName);
-          if (name === null) return [];
+      : childElements(propertiesElement).map((property) => {
           // A property may hold a repository URL; its userinfo never leaves the parser.
           const {
             url: value,
             url_credentials_redacted: value_credentials_redacted,
           } = redactRecordedTransportUrl(elementText(property));
-          return [{ name, value, value_credentials_redacted }];
+          // Maven property keys are the written qualified names, not XML
+          // expanded names: different prefixes remain different keys.
+          return { name: property.tagName, value, value_credentials_redacted };
         });
   const dependencyManagementElement = soleNamed(root, "dependencyManagement");
   const managedContainer = dependencyManagementElement

@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../src/contracts/java/mavenGradleMetadataToolContracts.js";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "../../src/contracts/sessionToolContracts.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import {
   gradleModuleFixture,
   mavenPomFixture,
+  qualifiedMavenPropertiesFixture,
 } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -18,6 +19,70 @@ const outputSchema = contractNamed(
   MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
   "inspect_maven_gradle_metadata",
 ).outputSchema;
+const bundleOutputSchema = contractNamed(
+  SESSION_TOOL_CONTRACTS,
+  "get_evidence_bundle",
+).outputSchema;
+
+cliTest(
+  "preserves qualified POM property keys beside their references through CLI, MCP and retained Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-maven-property-keys-");
+    const path = join(root, "pom.xml");
+    const bytes = Buffer.from(qualifiedMavenPropertiesFixture);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    const cliEvidence = outputSchema.parse(result.json);
+    const report = cliEvidence.normalized_result;
+    expect(report.properties).toEqual([
+      { name: "revision", value: "0", value_credentials_redacted: false },
+      { name: "a:revision", value: "11", value_credentials_redacted: false },
+      { name: "b:revision", value: "22", value_credentials_redacted: false },
+    ]);
+    expect(report.coordinates.version).toBe("${a:revision}");
+    expect(report.dependencies[0]?.version).toBe("${b:revision}");
+    expect(report.unresolved).toEqual([
+      {
+        kind: "property",
+        reference: "${a:revision}",
+        field: "version",
+        owner: "project",
+        index: null,
+      },
+      {
+        kind: "property",
+        reference: "${b:revision}",
+        field: "version",
+        owner: "dependency",
+        index: 0,
+      },
+    ]);
+    expect(report.artifact).toEqual({
+      path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_maven_gradle_metadata", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = outputSchema.parse(response.structuredContent);
+    expect(evidence.normalized_result).toEqual(report);
+    const retained = await call("get_evidence_bundle", { detail: "complete" });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    const bundle = parseEvidenceBundle(
+      bundleOutputSchema.parse(retained.structuredContent).result,
+    );
+    expect(
+      bundle.records.find(
+        (record) => record.evidence_id === evidence.evidence_id,
+      ),
+    ).toEqual(evidence);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "reports a missing child artifact independently of parent group and version through CLI and MCP",
@@ -65,9 +130,7 @@ cliTest(
     const retained = await call("get_evidence_bundle", { detail: "complete" });
     expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
     const bundle = parseEvidenceBundle(
-      toolContract("get_evidence_bundle").outputSchema.parse(
-        retained.structuredContent,
-      ).result,
+      bundleOutputSchema.parse(retained.structuredContent).result,
     );
     expect(
       bundle.records.find(
@@ -148,9 +211,7 @@ cliTest(
         });
         expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
         const bundle = parseEvidenceBundle(
-          toolContract("get_evidence_bundle").outputSchema.parse(
-            retained.structuredContent,
-          ).result,
+          bundleOutputSchema.parse(retained.structuredContent).result,
         );
         expect(
           bundle.records.find(
