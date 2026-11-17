@@ -14,6 +14,7 @@ import {
 } from "../../../src/domain/desktop/appTaskReaders.js";
 import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { observePosixProcess } from "../../support/process/observePosixProcess.js";
 
 const execute = promisify(execFile);
 const NOTE = "Documents/today.txt";
@@ -421,7 +422,8 @@ it("stops the reader, the processes it started and its folder when the export is
   const reader = await pid();
   controller.abort(new Error("cancelled"));
   await expect(read).rejects.toThrow();
-  expect(() => process.kill(reader, 0)).toThrow();
+  // An orphaned reader that waits for PID 1 to reap it has still stopped.
+  expect((await observePosixProcess(reader)).kind).not.toBe("running");
   const folder = (await readFile(join(out, "cwd"), "utf8")).trim();
   await expect(access(folder)).rejects.toThrow();
 });

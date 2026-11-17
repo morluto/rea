@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { ProcessCleanupResult } from "../../../../src/process/ProcessOwnership.js";
+import { observePosixProcessGroup } from "../../../support/process/observePosixProcess.js";
 import type {
   OwnedProviderProcessSpawnOptions,
   SpawnedOwnedProviderProcess,
@@ -27,11 +28,11 @@ export const ownedGroupCleanup = async (
   }
   const deadline = Date.now() + 1_000;
   while (Date.now() < deadline) {
-    try {
-      process.kill(-pid, 0);
-    } catch {
+    // A killed member that waits to be reaped (a zombie) has exited; signal 0
+    // to the group would still count it, so observe the members instead.
+    const members = await observePosixProcessGroup(pid);
+    if (members.every(({ kind }) => kind === "zombie"))
       return { cleaned: true, signaled };
-    }
     await delay(10);
   }
   return {
