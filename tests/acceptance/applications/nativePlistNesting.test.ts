@@ -98,7 +98,10 @@ describe.skipIf(process.platform !== "darwin")(
               retryable: false,
               details: {
                 resource: "memory",
-                reported_limits: { maximum_nesting_depth: 997 },
+                reported_limits: {
+                  boundary: "plist-nesting-depth",
+                  maximum: 997,
+                },
               },
               remediation: {
                 action: expect.stringMatching(/\S/u),

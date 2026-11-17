@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import {
@@ -53,13 +54,9 @@ export const jadxHeapExhausted = (text: string): boolean =>
 export const parseJadxFailure = (
   text: string,
 ): z.infer<typeof bridgeFailureSchema> | undefined => {
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  const parsed = bridgeFailureSchema.safeParse(candidate);
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) return undefined;
+  const parsed = bridgeFailureSchema.safeParse(decoded.value);
   return parsed.success ? parsed.data : undefined;
 };
 /** Values observed inside the exact JVM producing the analysis. */
@@ -219,8 +216,21 @@ export const parseJadxJson = (
   text: string,
   operation: AndroidOperation,
 ): z.infer<typeof jsonValueSchema> => {
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw new AnalysisOutputError(
+        operation,
+        `JADX returned JSON with duplicate member ${JSON.stringify(decoded.duplicate.name)}`,
+      );
+    throw new AnalysisOutputError(
+      operation,
+      "JADX returned malformed JSON text",
+      { cause: decoded.cause },
+    );
+  }
   try {
-    return jsonValueSchema.parse(JSON.parse(text));
+    return jsonValueSchema.parse(decoded.value);
   } catch (cause) {
     throw new AnalysisOutputError(
       operation,

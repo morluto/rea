@@ -35,6 +35,7 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   type AnalysisWorkflow,
   type AnalysisWorkflowOutcome,
+  type AnalysisWorkflowOptions,
   type ApplicationWorkflowRequest,
   createAnalysisToolHandler,
   createApplicationToolHandler,
@@ -346,6 +347,7 @@ type ApplicationBinding<Input = unknown> =
  */
 type AnalysisBinding<Input> = {
   readonly admission: "sdk";
+  readonly completionProgress?: AnalysisWorkflowOptions["completionProgress"];
   readonly run?: never;
   readonly summary?: never;
   readonly value?: never;
@@ -527,10 +529,9 @@ export const registerContractTools = (
       | ValueBinding
       | ApplicationBinding
       | DerivedBinding
-      | {
+      | ({
           readonly admission: "sdk";
           readonly analyze: AnalysisWorkflow;
-          readonly detail?: "delivery";
           readonly value?: never;
           readonly workflow?: never;
           readonly derive?: never;
@@ -539,7 +540,7 @@ export const registerContractTools = (
           readonly mutation?: never;
           readonly query?: never;
           readonly provider?: never;
-        }
+        } & AnalysisWorkflowOptions)
       | ExternalMutationBinding<unknown>
       | QueryBinding<unknown>
       | ProviderBinding<ProviderOperation>
@@ -597,7 +598,10 @@ export const registerContractTools = (
                   logger,
                   retention,
                   requiredAdmission(withAdmittedAnalysis, contract.name),
-                  binding.detail === "delivery",
+                  {
+                    detail: binding.detail,
+                    completionProgress: binding.completionProgress,
+                  },
                 )(contract)
               : binding.query !== undefined
                 ? createValueToolHandler(
