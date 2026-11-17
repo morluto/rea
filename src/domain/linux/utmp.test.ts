@@ -200,16 +200,35 @@ describe("utmp record decoding", () => {
     });
   });
 
-  it("keeps the wider glibc session id out of musl's padding", () => {
+  it("shows the two 400-byte families disagreeing on the session field", () => {
+    // A musl record whose padding is not zero. glibc reads bytes 336..344 as one
+    // 64-bit session id, so the padding becomes its high half.
     const bytes = recordBytes(musl64, login({ session: 4_711 }));
+    new DataView(bytes.buffer).setUint32(340, 1, true);
     const asGlibc = parseUtmpFile(bytes, { source: "wtmp", profile: glibc64 });
     if (!asGlibc.ok) throw new Error("expected a parsed record");
-    // glibc reads the four padding bytes as the session's high half, so the two
-    // layouts disagree on this file; that is why the caller must state one.
-    expect(asGlibc.value.records[0]?.session).toBe(4_711);
+    expect(asGlibc.value.records[0]?.session).toBe(1 * 2 ** 32 + 4_711);
     const asMusl = parseUtmpFile(bytes, { source: "wtmp", profile: musl64 });
     if (!asMusl.ok) throw new Error("expected a parsed record");
     expect(asMusl.value.records[0]?.session).toBe(4_711);
+  });
+
+  it("pins musl's session offset without asking the layout helper", () => {
+    const bytes = new Uint8Array(400);
+    const view = new DataView(bytes.buffer);
+    view.setInt16(0, 7, true);
+    view.setUint32(336, 77, true); // ut_session, padding follows at 340
+    view.setBigInt64(344, 1_700_000_000n, true); // tv_sec
+    view.setBigInt64(352, 250n, true); // tv_usec
+    view.setUint32(360, 0xffffffff, true); // ut_addr_v6[0], unsigned
+    const result = parseUtmpFile(bytes, { source: "wtmp", profile: musl64 });
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.records[0]).toMatchObject({
+      session: 77,
+      timestampSeconds: 1_700_000_000,
+      timestampMicroseconds: 250,
+    });
+    expect(result.value.records[0]?.addressV6[0]).toBe(0xffffffff);
   });
 
   it("decodes the big-endian musl layout", () => {

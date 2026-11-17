@@ -25,11 +25,14 @@ musl (`include/utmpx.h`) is a third shape: `ut_session` is always `int`, followe
 
 The consequences that make guessing unsafe:
 
-- The same 400-byte length is glibc with 64-bit time (session 8 bytes) or musl
-  with 32-bit time plus padding (session 4 bytes) — different offsets for the
-  timestamp.
-- Reading musl bytes as the glibc layout folds the padding into the session id's
-  high half.
+- The same 400-byte length is glibc (session 8 bytes wide) or musl (session 4
+  bytes wide plus 4 bytes of padding). Both put 64-bit seconds at 344 and
+  microseconds at 352, so the timestamps agree; the session field does not.
+- Reading musl bytes as the glibc layout folds that padding into the session id's
+  high half, so one file yields two different session ids depending on the
+  profile stated.
+- On a big-endian host musl puts the padding before the session id, which moves
+  the session four bytes later than on a little-endian host.
 - Record length narrows the layout but never names the byte order, and a length
   that is a multiple of every layout (9600) narrows nothing.
 
