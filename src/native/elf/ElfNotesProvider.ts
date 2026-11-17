@@ -1,4 +1,8 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -97,23 +101,13 @@ const elfNotesFailurePrimary = (
 ) => {
   const { cause, origin } = facts;
   const sectionNameBudget = elfNoteSectionNameBudget(cause);
-  if (sectionNameBudget !== undefined)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "memory",
-      sectionNameBudget.detail,
-      {
-        max_file_bytes: sectionNameBudget.selected,
-        minimum_required_bytes: sectionNameBudget.required.toString(),
-      },
-      {
-        cause,
-        retryable: false,
-        remediationAction: sectionNameBudgetRemediation(
-          sectionNameBudget.required,
-        ),
-      },
-    );
+  if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      retryable: false,
+      remediationAction: sectionNameBudgetRemediation(
+        sectionNameBudget.required,
+      ),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(

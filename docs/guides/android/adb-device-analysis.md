@@ -7,9 +7,11 @@ manages them and never installs platform tools. Every operation composes a
 fixed adb argument vector — caller values occupy positional arguments only
 and are quoted when adb forwards them to the device shell.
 
-The adb client may start its local server on first device query; that is adb
-client behavior, recorded in the tool result when observed.
-`inspect_adb_client` probes only the binary and never contacts the server.
+Before a device operation, REA runs `adb start-server`, which starts the local
+adb server only when none is running. The server is a shared service that
+other tools on the host use: REA may start it but never stops it, and a device
+command's cleanup does not reach it. `inspect_adb_client` probes only the
+binary and never contacts the server.
 
 ## Supply tools
 
@@ -273,7 +275,10 @@ and during shutdown.
   cleanup before later work and during shutdown. Cleanup refuses a replacement
   directory. Terminal shutdown stops admission and drains active operations.
 - The provider holds no long-lived processes; every invocation is one
-  bounded adb run. The adb server belongs to the caller.
+  bounded adb run in its own process group. Cancellation or a deadline asks
+  adb to stop with SIGTERM, then cleanup stops what remains of that run,
+  including descendants it left behind. The adb server belongs to the host:
+  REA may start it with `adb start-server` and never stops it.
 
 ## Related capability and follow-up lanes
 

@@ -27,6 +27,9 @@ const ajv = new Ajv2020({
   strict: false,
   allErrors: false,
   validateFormats: false,
+  addUsedSchema: false,
+  inlineRefs: false,
+  code: { optimize: false },
 });
 
 type Root = Readonly<Record<string, unknown>>;

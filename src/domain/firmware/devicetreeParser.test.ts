@@ -4,7 +4,11 @@ import {
   devicetreeSchema,
   inspectDevicetreeInputSchema,
 } from "./devicetree.js";
-import { DevicetreeLimitFailure, parseDevicetree } from "./devicetreeParser.js";
+import {
+  DEVICETREE_DECODED_BYTES,
+  devicetreeLimitFailure,
+  parseDevicetree,
+} from "./devicetreeParser.js";
 import {
   cells,
   devicetreeFixture,
@@ -305,7 +309,7 @@ it.each(["compatible", "status"])(
       properties: { [name]: Buffer.alloc(6 * 1024 * 1024) },
     });
     expect(() => parse(bytes, { max_file_bytes: 16777216 })).toThrow(
-      new DevicetreeLimitFailure("decoded_bytes"),
+      devicetreeLimitFailure("decoded_bytes", DEVICETREE_DECODED_BYTES),
     );
   },
 );
@@ -323,7 +327,7 @@ it("accounts for string values serialized again in the summary", () => {
     parse(devicetreeFixture({ ...child, name: "" }), {
       max_file_bytes: 16777216,
     }),
-  ).toThrow(new DevicetreeLimitFailure("decoded_bytes"));
+  ).toThrow(devicetreeLimitFailure("decoded_bytes", DEVICETREE_DECODED_BYTES));
 });
 it("retains undecodable alias identities and labels the summary derived", () => {
   const report = parse(

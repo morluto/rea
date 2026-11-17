@@ -161,7 +161,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
     const logPath = workspace.path("commands.jsonl");
     const binary = await workspace.write(
       "adb",
-      `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);appendFileSync(${JSON.stringify(logPath)},JSON.stringify(args)+'\\n');\nif(args[0]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(args[0]==='devices'&&args[1]==='-l')process.stdout.write(${JSON.stringify(lines.join("\n") + "\n")});\nelse if(args[0]==='-s'&&args[1]==='exact'&&args[2]==='shell'&&args[3]==='getprop')process.stdout.write('[ro.build.version.sdk]: [34]\\n');\nelse throw Error('No other command authorized');\n`,
+      `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);appendFileSync(${JSON.stringify(logPath)},JSON.stringify(args)+'\\n');\nif(args[0]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(args[0]==='start-server');\nelse if(args[0]==='devices'&&args[1]==='-l')process.stdout.write(${JSON.stringify(lines.join("\n") + "\n")});\nelse if(args[0]==='-s'&&args[1]==='exact'&&args[2]==='shell'&&args[3]==='getprop')process.stdout.write('[ro.build.version.sdk]: [34]\\n');\nelse throw Error('No other command authorized');\n`,
     );
     await chmod(binary, 0o755);
     const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
