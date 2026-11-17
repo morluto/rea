@@ -1,9 +1,7 @@
 import { expect, it } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { NugetAsset, NugetPackage } from "../nugetPackage/nugetPackage.js";
-import {
-  projectAnalysisView,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
 
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
