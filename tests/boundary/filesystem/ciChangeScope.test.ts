@@ -524,7 +524,7 @@ it("selects the tests a pull request affects and runs everything when it cannot 
       reason: "401 affected test files exceed the 400-file selection cap",
     },
   });
-  const capped = await change(directory, many.slice(0, 81), "// edited\n");
+  const capped = await change(directory, many.slice(0, 101), "// edited\n");
   expect(await classify(directory, wide, capped)).toMatchObject({
     testSelection: { mode: "selected" },
     testShards: ["1/3", "2/3", "3/3"],
