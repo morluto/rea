@@ -580,3 +580,101 @@ it("refuses files above the fixed ceiling and more regions than retained", () =>
     data_bytes: 280_000,
   });
 });
+
+it("bounds numbering descriptions while retaining every group and payload", () => {
+  const families = Array.from({ length: 9 }, (_, index) => 0x1009 - index);
+  const decoded = image(
+    uf2File([
+      ...families.flatMap((familyId, index) =>
+        [0, 8, 4].map((offset, ordinal) =>
+          uf2Block({
+            address: 0x0800_0000 + offset,
+            payload: [index + ordinal + 1, 0xa5, 0x5a, 0xff],
+            blockNo: ordinal === 2 ? 1 : 0,
+            numBlocks: 3,
+            familyId,
+          }),
+        ),
+      ),
+      uf2Block({
+        address: 0x1000,
+        payload: [0xde, 0xad, 0xbe, 0xef],
+        blockNo: 0,
+        numBlocks: 1,
+        familyId: 0x2000,
+      }),
+    ]),
+    37,
+  );
+  expect(decoded.metadata).toMatchObject({
+    block_count: 28,
+    flash_block_count: 28,
+    family_count: 10,
+    numbering_group_count: 10,
+    missing_block_count: 9,
+    ambiguous_numbering_group_count: 9,
+    repeated_block_count: 9,
+    out_of_order_block_count: 9,
+    region_count: 10,
+    data_bytes: 112,
+    duplicate_bytes: 0,
+  });
+  expect(decoded.complete).toBe(false);
+  expect(decoded.limitations).toEqual([
+    "UF2 numbering declares 9 block(s) that are absent: " +
+      "family 0x00001009 with 3 numbered blocks has 2 of them; " +
+      "family 0x00001008 with 3 numbered blocks has 2 of them; " +
+      "family 0x00001007 with 3 numbered blocks has 2 of them; " +
+      "family 0x00001006 with 3 numbered blocks has 2 of them; and 5 more.",
+    "UF2 numbering cannot show that every copy of a block sequence is complete: " +
+      "family 0x00001009 with 3 numbered blocks has some numbers at 1 address(es) and others at 2; " +
+      "family 0x00001008 with 3 numbered blocks has some numbers at 1 address(es) and others at 2; " +
+      "family 0x00001007 with 3 numbered blocks has some numbers at 1 address(es) and others at 2; " +
+      "family 0x00001006 with 3 numbered blocks has some numbers at 1 address(es) and others at 2; and 5 more.",
+  ]);
+  expect(regionFacts(decoded)).toEqual([
+    ...families.toReversed().map((familyId) => {
+      const fileIndex = families.indexOf(familyId) * 3;
+      return {
+        familyId,
+        familyName: null,
+        start: 0x0800_0000,
+        end: 0x0800_000b,
+        length: 12,
+        blockCount: 3,
+        firstFileBlock: fileIndex,
+        lastFileBlock: fileIndex + 2,
+      };
+    }),
+    {
+      familyId: 0x2000,
+      familyName: null,
+      start: 0x1000,
+      end: 0x1003,
+      length: 4,
+      blockCount: 1,
+      firstFileBlock: 27,
+      lastFileBlock: 27,
+    },
+  ]);
+  expect(decoded.regions.map((region) => [...region.bytes])).toEqual([
+    ...families.toReversed().map((familyId) => {
+      const index = families.indexOf(familyId);
+      return [
+        index + 1,
+        0xa5,
+        0x5a,
+        0xff,
+        index + 3,
+        0xa5,
+        0x5a,
+        0xff,
+        index + 2,
+        0xa5,
+        0x5a,
+        0xff,
+      ];
+    }),
+    [0xde, 0xad, 0xbe, 0xef],
+  ]);
+});
