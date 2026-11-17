@@ -58,6 +58,10 @@ import {
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
 import {
+  inspectDwarfUnitsInputSchema,
+  dwarfUnitsSchema,
+} from "../../domain/native/dwarfUnits.js";
+import {
   inspectElfDebugLinkInputSchema,
   elfDebugLinkSchema,
 } from "../../domain/native/elfDebugLink.js";
@@ -194,6 +198,23 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     examples: [
       {
         title: "Inspect ELF GNU build-id and ABI-tag notes",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_dwarf_units",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_dwarf_units", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect DWARF 2 through 5 compile-unit headers and the unit DIE in one explicit local ELF, Mach-O, or PE image without executing the image or opening a disassembler. Reads .debug_info, .debug_abbrev, .debug_str, .debug_line_str, and .debug_str_offsets, including compressed ELF sections. Returns name, comp_dir, producer, language, and dwo_name with file offsets, paged by offset and limit. A unit that cannot be framed, or a declared .debug_info that was not read, gives partial coverage. Absent .debug_info applies to this file only and does not establish that a separate debug file is absent. Child DIEs, types, line tables, and location expressions are not read. A .dSYM bundle is not opened; pass the DWARF file inside it. Universal Mach-O requires architecture.",
+    inputSchema: inspectDwarfUnitsInputSchema,
+    outputSchema: evidenceResultOf(dwarfUnitsSchema),
+    examples: [
+      {
+        title: "Inspect DWARF compile units",
         input: { path: "/artifacts/program" },
       },
     ],
