@@ -287,6 +287,23 @@ it.each([
   );
 });
 
+it("reports a duplicate .dep-v0 section ahead of the section bound that follows it", () => {
+  const bytes = createRustWasmModule({
+    sections: [
+      wasmCustomSection(".dep-v0", rustDependencyPayload()),
+      createWasmSectionFlood(65_537).subarray(WASM_MODULE_HEADER.length),
+    ],
+  });
+  expect(() => readRustBinaryImage(bytes)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "malformed",
+        format: "rust-auditable",
+      }),
+    }),
+  );
+});
+
 it("bounds the synchronous WebAssembly section walk", () => {
   expect(
     readRustBinaryImage(createWasmSectionFlood(65_536)).auditable_metadata,

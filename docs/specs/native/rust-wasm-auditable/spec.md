@@ -31,7 +31,8 @@ implementation already had; no earlier plan is reconstructed.
    report's `section_name` is `.dep-v0`; the report schema binds each
    container to its section name. `file_offset` and `section_bytes` locate the
    payload after the section name, in the original file. A second `.dep-v0`
-   section is malformed.
+   section is malformed; the walk ends there, so a later failure such as the
+   section bound does not replace it.
 4. A missing `.dep-v0` section is null metadata with a limitation. It is not
    evidence that the module has no dependencies.
 5. `format` and `architecture` are `wasm` and `byte_order` is `little`.

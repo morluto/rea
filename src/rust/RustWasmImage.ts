@@ -31,7 +31,10 @@ export interface WasmSectionRange {
 
 /** Section ranges that Rust metadata lookups read from one core module. */
 export interface RustWasmSections {
-  /** `.dep-v0` custom-section payloads; two already establish a duplicate. */
+  /**
+   * `.dep-v0` custom-section payloads. Two establish a duplicate, and the walk
+   * ends there, so later sections are not examined.
+   */
   readonly dependency_sections: readonly WasmSectionRange[];
   /** The module's data section, where rustc stores constant path strings. */
   readonly data_section: WasmSectionRange | null;
@@ -88,12 +91,15 @@ export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
       );
     if (id === CUSTOM_SECTION) {
       const custom = customSection(bytes, size.end, end);
-      // A second match establishes the duplicate; more would only grow memory.
-      if (custom.name.equals(DEPENDENCY_SECTION) && dependencies.length < 2)
+      if (custom.name.equals(DEPENDENCY_SECTION)) {
         dependencies.push({
           offset: custom.payload,
           size: end - custom.payload,
         });
+        // A second match establishes the duplicate. Walking on could only
+        // replace that failure with a later one, such as the section bound.
+        if (dependencies.length === 2) break;
+      }
     } else if (id === DATA_SECTION) {
       if (data !== null)
         throw malformedInput(
