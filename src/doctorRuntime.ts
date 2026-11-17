@@ -28,6 +28,10 @@ import {
   inspectKunaProvider,
   kunaSettingAffectsProbe,
 } from "./kuna/KunaDoctor.js";
+import {
+  RADARE2_DOCTOR_SETTINGS,
+  inspectRadare2Provider,
+} from "./radare2/Radare2Doctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
@@ -236,6 +240,7 @@ const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
   ida: IDA_DOCTOR_SETTINGS,
   jadx: JADX_DOCTOR_SETTINGS,
   kuna: KUNA_DOCTOR_SETTINGS,
+  radare2: RADARE2_DOCTOR_SETTINGS,
 };
 
 /**
@@ -646,6 +651,12 @@ export const createSystemDoctorHost = (
         inspectionEnvironment,
         platform,
       );
+      const radare2Unresolved = unresolvedProvider(
+        "radare2",
+        unresolved,
+        inspectionEnvironment,
+        platform,
+      );
       const inspections = await settleConcurrent([
         ghidraUnresolved !== undefined
           ? Promise.resolve(ghidraUnresolved)
@@ -693,6 +704,11 @@ export const createSystemDoctorHost = (
                 signal: inspectionSignal,
               }),
             ),
+        radare2Unresolved !== undefined
+          ? Promise.resolve(radare2Unresolved)
+          : inspectRadare2Provider(inspectionEnvironment, {
+              signal: inspectionSignal,
+            }),
       ]);
       return inspections.map((inspection) =>
         providerSettingOrigins(
