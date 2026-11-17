@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DEFAULT_CATALOG_IDENTITY } from "../dist/contracts/catalog/catalogIdentity.js";
 
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
+import { runSettledConcurrent } from "./lib/verify-package-core.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
 import { pluginPackageMetadata } from "./lib/plugin-package.mjs";
 
@@ -13,23 +14,15 @@ const { parseSkillManifestMetadata } = await importVerifierSource(
   import.meta.url,
 );
 
-const mapConcurrent = async (items, concurrency, worker) => {
-  let index = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      while (index < items.length) {
-        const current = index++;
-        await worker(items[current]);
-      }
-    }),
-  );
-};
-
 /** Create a tarball and assert production packaging constraints. */
 export async function verifyPackagePack({ root, workspace, commands }) {
   const packDirectory = join(workspace, "pack");
   const stagingDirectory = join(workspace, "plugin-package");
-  await Promise.all([mkdir(packDirectory), mkdir(stagingDirectory)]);
+  await runSettledConcurrent(
+    [packDirectory, stagingDirectory],
+    2,
+    (directory) => mkdir(directory),
+  );
   const [{ files }] = JSON.parse(
     (await commands.execNpm(["pack", "--dry-run", "--json"], { cwd: root }))
       .stdout,
@@ -47,12 +40,12 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       throw new Error(`npm selected a path outside the package: ${path}`);
     return { source, destination: join(stagingDirectory, contained) };
   });
-  await Promise.all(
-    [...new Set(copyPlan.map(({ destination }) => dirname(destination)))].map(
-      (directory) => mkdir(directory, { recursive: true }),
-    ),
+  await runSettledConcurrent(
+    [...new Set(copyPlan.map(({ destination }) => dirname(destination)))],
+    32,
+    (directory) => mkdir(directory, { recursive: true }),
   );
-  await mapConcurrent(copyPlan, 32, ({ source, destination }) =>
+  await runSettledConcurrent(copyPlan, 32, ({ source, destination }) =>
     copyFile(source, destination),
   );
   const { packageJson, shrinkwrap } = pluginPackageMetadata(

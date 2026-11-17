@@ -1,4 +1,4 @@
-import { afterAll } from "vitest";
+import { afterAll, expect } from "vitest";
 import { withArtifactResourceScope } from "../fixtures/artifactInventory.js";
 import {
   analyzeJavaScriptApplication as analyzeOwned,
@@ -16,32 +16,95 @@ import {
 } from "../../src/resources/index.js";
 import type { ArtifactInventorySnapshot } from "../../src/domain/artifactInventorySnapshot.js";
 
-let fileScope: ArtifactResourceScope | undefined;
-let fileCleanupRegistered = false;
-let fileQueue: Promise<void> = Promise.resolve();
+interface FileJavaScriptScopeState {
+  active: ArtifactResourceScope | undefined;
+  readonly retained: Set<ArtifactResourceScope>;
+  queue: Promise<void>;
+  teardownRegistered: boolean;
+}
 
-const ensureFileScope = (): ArtifactResourceScope => {
-  if (!fileCleanupRegistered) {
-    fileCleanupRegistered = true;
-    afterAll(async () => {
-      const scope = fileScope;
-      fileScope = undefined;
-      await scope?.close();
+const fileStates = new Map<string, FileJavaScriptScopeState>();
+
+const closeScope = async (
+  state: FileJavaScriptScopeState,
+  scope: ArtifactResourceScope,
+): Promise<void> => {
+  await scope.close();
+  state.retained.delete(scope);
+};
+
+const closeRetainedScopes = async (
+  state: FileJavaScriptScopeState,
+): Promise<void> => {
+  const results = await Promise.allSettled(
+    [...state.retained].map((scope) => closeScope(state, scope)),
+  );
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "JavaScript test scope cleanup failed");
+};
+
+/**
+ * Resolve per-file state by current Vitest `testPath`, re-registering `afterAll`
+ * for each test file even in `isolate: false` projects (`mcp-boundary`,
+ * `cli-boundary`) that share module state across files.
+ */
+const ensureFileState = (
+  testPath = expect.getState().testPath ?? "__default__",
+  registerTeardown: (fn: () => Promise<void>) => void = afterAll,
+): FileJavaScriptScopeState => {
+  let state = fileStates.get(testPath);
+  if (state === undefined) {
+    state = {
+      active: undefined,
+      retained: new Set(),
+      queue: Promise.resolve(),
+      teardownRegistered: false,
+    };
+    fileStates.set(testPath, state);
+  }
+  if (!state.teardownRegistered) {
+    state.teardownRegistered = true;
+    const ownedState = state;
+    registerTeardown(async () => {
+      ownedState.teardownRegistered = false;
+      ownedState.active = undefined;
+      await closeRetainedScopes(ownedState);
+      if (ownedState.retained.size === 0 && !ownedState.teardownRegistered)
+        fileStates.delete(testPath);
     });
   }
-  fileScope ??= new ArtifactResourceScope();
-  return fileScope;
+  return state;
 };
 
 /**
  * Reuse one parked JavaScript worker per test file for uncancelled analyses,
- * matching production CLI/MCP session reuse while isolating cleanup failures.
+ * matching production CLI/MCP session reuse while keeping any scope whose
+ * cleanup failed in `state.retained` until a retry succeeds.
  */
-const withReusableJavaScriptScope = <T>(
+export const withReusableJavaScriptScopeForTest = <T>(
   operation: (scope: ArtifactResourceScope) => Promise<T>,
+  hooks?: {
+    readonly testPath?: string;
+    readonly registerTeardown?: (fn: () => Promise<void>) => void;
+    readonly createScope?: () => ArtifactResourceScope;
+  },
 ): Promise<T> => {
+  const state = ensureFileState(hooks?.testPath, hooks?.registerTeardown);
   const run = async (): Promise<T> => {
-    const scope = ensureFileScope();
+    if (state.active === undefined && state.retained.size > 0) {
+      // Finish any previously failed cleanup before starting a replacement worker.
+      await closeRetainedScopes(state);
+    }
+    let scope = state.active;
+    if (scope === undefined) {
+      scope = hooks?.createScope?.() ?? new ArtifactResourceScope();
+      state.retained.add(scope);
+      state.active = scope;
+    }
     let outcome:
       | { readonly kind: "completed"; readonly value: T }
       | { readonly kind: "failed"; readonly cause: unknown };
@@ -51,9 +114,9 @@ const withReusableJavaScriptScope = <T>(
       outcome = { kind: "failed", cause };
     }
     if (outcome.kind === "failed" || scope.hasPending) {
-      if (fileScope === scope) fileScope = undefined;
+      if (state.active === scope) state.active = undefined;
       try {
-        await scope.close();
+        await closeScope(state, scope);
       } catch (cleanupCause: unknown) {
         if (outcome.kind === "failed")
           throw ArtifactReaderFailure.withCleanup(
@@ -69,8 +132,8 @@ const withReusableJavaScriptScope = <T>(
     if (outcome.kind === "failed") throw outcome.cause;
     return outcome.value;
   };
-  const scheduled = fileQueue.then(run);
-  fileQueue = scheduled.then(
+  const scheduled = state.queue.then(run);
+  state.queue = scheduled.then(
     () => undefined,
     () => undefined,
   );
@@ -100,7 +163,7 @@ export const analyzeJavaScriptApplication = (
           ...options,
         }),
       )
-    : withReusableJavaScriptScope((scope) =>
+    : withReusableJavaScriptScopeForTest((scope) =>
         analyzeOwned(input, scope, {
           sourceAnalysis: javascriptSourceAnalysis,
           ...options,
@@ -123,7 +186,7 @@ export const reconstructJavaScriptArtifact = (
           progress,
         ),
       )
-    : withReusableJavaScriptScope((scope) =>
+    : withReusableJavaScriptScopeForTest((scope) =>
         reconstructOwned(
           analyzeJavaScriptApplicationInputSchema.parse(rawInput),
           scope,

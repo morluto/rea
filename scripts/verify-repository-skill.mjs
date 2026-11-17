@@ -1,7 +1,10 @@
 import { cp, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 
-import { pathExists } from "./lib/verify-package-core.mjs";
+import {
+  pathExists,
+  runSettledConcurrent,
+} from "./lib/verify-package-core.mjs";
 
 /** Install the separately locked Skills CLI so verification resolves no registry metadata. */
 const lockedSkillsCli = async (commands, root, workspace) => {
@@ -21,18 +24,6 @@ const lockedSkillsCli = async (commands, root, workspace) => {
     version: manifest.version,
     entry: join(installed, manifest.bin.skills),
   };
-};
-
-const mapConcurrent = async (items, concurrency, worker) => {
-  let index = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      while (index < items.length) {
-        const current = index++;
-        await worker(items[current]);
-      }
-    }),
-  );
 };
 
 /** Exercise Skills' default root discovery without ignored build outputs. */
@@ -63,14 +54,12 @@ export async function verifyRepositorySkill({ root, workspace, commands }) {
     directories.add(dirname(destination));
     filesToCopy.push({ source: join(root, path), destination });
   }
-  await Promise.all([
-    mkdir(consumer, { recursive: true }),
-    mkdir(home, { recursive: true }),
-    ...[...directories].map((directory) =>
-      mkdir(directory, { recursive: true }),
-    ),
-  ]);
-  await mapConcurrent(filesToCopy, 32, ({ source, destination }) =>
+  await runSettledConcurrent(
+    [consumer, home, ...directories],
+    32,
+    (directory) => mkdir(directory, { recursive: true }),
+  );
+  await runSettledConcurrent(filesToCopy, 32, ({ source, destination }) =>
     cp(source, destination, { verbatimSymlinks: true }),
   );
   if (await pathExists(join(snapshot, "skills")))
