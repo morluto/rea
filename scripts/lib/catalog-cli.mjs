@@ -16,7 +16,8 @@ export const createCliInventory = (entries) => {
     primary: entries
       .map(({ name }) => name)
       .sort((left, right) => left.localeCompare(right)),
-    aliases: [],
+    aliases:
+      /** @type {readonly { readonly name: string; readonly target: string }[]} */ ([]),
   };
 };
 
