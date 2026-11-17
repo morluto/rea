@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
   WARC_ARCHIVE_MAX_DECODED_BYTES,
   WARC_ARCHIVE_MAX_FILE_BYTES,
@@ -7,7 +7,7 @@ import {
 } from "./warcArchive.js";
 
 export const inspectWarcArchiveInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to one local WARC or WARC.gz file",
   ),
   format: z.literal("warc").default("warc"),
