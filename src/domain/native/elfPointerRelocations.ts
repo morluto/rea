@@ -134,7 +134,15 @@ const DT_SYMTAB = 6n,
   DT_HASH = 4n,
   DT_GNU_HASH = 0x6ffffef5n;
 const PACKED_TAGS = [0x6000000fn, 0x60000010n, 0x60000011n, 0x60000012n];
-const ANDROID_RELR_TAGS = [0x6fffe000n, 0x6fffe001n, 0x6fffe003n];
+// Android's pre-standard RELR uses the same address/bitmap encoding. Resolve
+// its dynamic-tag aliases here so every consumer shares validation, duplicate
+// detection and relocation provenance with standard RELR.
+const RELR_TAG_ALIASES = new Map([
+  [0x6fffe000n, DT_RELR],
+  [0x6fffe001n, DT_RELRSZ],
+  [0x6fffe003n, DT_RELRENT],
+]);
+const RELR_TAGS = new Set([DT_RELR, DT_RELRSZ, DT_RELRENT]);
 const UNIQUE_TAGS = new Set([
   DT_RELA,
   DT_RELASZ,
@@ -142,14 +150,11 @@ const UNIQUE_TAGS = new Set([
   DT_REL,
   DT_RELSZ,
   DT_RELENT,
-  DT_RELR,
-  DT_RELRSZ,
-  DT_RELRENT,
+  ...RELR_TAGS,
   DT_JMPREL,
   DT_PLTRELSZ,
   DT_PLTREL,
   ...PACKED_TAGS,
-  ...ANDROID_RELR_TAGS,
 ]);
 // Ambiguous symbol declarations leave symbolic writes unknown without
 // rejecting independently decoded relative relocations.
@@ -317,6 +322,7 @@ function* dynamicTags(
     malformed("PT_DYNAMIC is truncated or outside the file");
   const tags = new Map<bigint, bigint>();
   const redeclared = new Set<bigint>();
+  let relrFamily: "standard" | "android" | undefined;
   const start = Number(declaration.offset),
     end = start + Number(declaration.size);
   for (let at = start; at < end; at += width) {
@@ -327,7 +333,14 @@ function* dynamicTags(
       input.little,
     );
     if (!parsed.ok) return malformed(parsed.error.message);
-    const { tag, value } = parsed.value;
+    const { value } = parsed.value;
+    const tag = RELR_TAG_ALIASES.get(parsed.value.tag) ?? parsed.value.tag;
+    if (RELR_TAGS.has(tag)) {
+      const family = tag === parsed.value.tag ? "standard" : "android";
+      if (relrFamily !== undefined && relrFamily !== family)
+        malformed("mixed standard and Android RELR dynamic tags");
+      relrFamily = family;
+    }
     if (tag === 0n) {
       for (const symbolTag of redeclared) tags.delete(symbolTag);
       return { values: tags, ambiguous: redeclared };
@@ -576,8 +589,6 @@ export function* readElfRelocationWritesSteps(
     unsupported(
       "Android packed APS2 relocation write locations and addends are not decoded",
     );
-  if (ANDROID_RELR_TAGS.some((tag) => tags.has(tag)))
-    unsupported("Android-specific RELR dynamic tags are not decoded");
 
   function* standardTable(
     address: bigint,

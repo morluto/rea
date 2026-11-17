@@ -96,18 +96,22 @@ it.each(["name", "descriptor"] as const)(
 );
 
 it.each([
-  [64, 183, "rela"],
-  [64, 62, "rela"],
-  [32, 40, "rel"],
-  [32, 3, "rel"],
-  [64, 183, "relr"],
-  [64, 62, "relr"],
-  [32, 40, "relr"],
-  [32, 3, "relr"],
+  [64, 183, "rela", "standard"],
+  [64, 62, "rela", "standard"],
+  [32, 40, "rel", "standard"],
+  [32, 3, "rel", "standard"],
+  [64, 183, "relr", "standard"],
+  [64, 62, "relr", "standard"],
+  [32, 40, "relr", "standard"],
+  [32, 3, "relr", "standard"],
+  [64, 183, "relr", "android"],
+  [64, 62, "relr", "android"],
+  [32, 40, "relr", "android"],
+  [32, 3, "relr", "android"],
 ] as const)(
-  "decodes %s-bit machine %s %s static tables with complete slot provenance",
-  async (bits, machine, encoding) => {
-    const fixture = jniElfFixture({ bits, machine, encoding });
+  "decodes %s-bit machine %s %s static tables (%s tags) with complete slot provenance",
+  async (bits, machine, encoding, relrTags) => {
+    const fixture = jniElfFixture({ bits, machine, encoding, relrTags });
     const original = Buffer.from(fixture.bytes);
     const result = await inspectAndroidJniLibrary(fixture.bytes);
     if (!result.ok) throw new Error(result.error.message);
@@ -236,17 +240,20 @@ it("keeps exports and explicit unknown table coverage for Android packed relocat
   expect(result.value.unknowns.join("\n")).toContain("APS2");
 });
 
-it("rejects a leading RELR bitmap rather than interpreting it as an address", async () => {
-  const { bytes } = jniElfFixture({ encoding: "relr" });
-  bytes.writeBigUInt64LE(7n, 0x800);
-  expect(await inspectAndroidJniLibrary(bytes)).toMatchObject({
-    ok: false,
-    error: {
-      kind: "malformed",
-      message: "RELR bitmap has no preceding address",
-    },
-  });
-});
+it.each(["standard", "android"] as const)(
+  "rejects a leading RELR bitmap with %s tags rather than interpreting it as an address",
+  async (relrTags) => {
+    const { bytes } = jniElfFixture({ encoding: "relr", relrTags });
+    bytes.writeBigUInt64LE(7n, 0x800);
+    expect(await inspectAndroidJniLibrary(bytes)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "malformed",
+        message: "RELR bitmap has no preceding address",
+      },
+    });
+  },
+);
 
 it("preserves later candidates after malformed Modified UTF-8 and a malformed JNI descriptor", async () => {
   const { bytes } = jniElfFixture();
