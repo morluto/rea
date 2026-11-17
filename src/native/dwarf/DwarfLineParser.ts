@@ -11,13 +11,16 @@ import {
   type DwarfLineSequence,
   type DwarfLineStringFact,
   DWARF_LINE_LIMITATIONS,
+  MAX_DWARF_LINE_ADDRESS_MATCHES,
   MAX_DWARF_LINE_FORMAT_COLUMNS,
   MAX_DWARF_LINE_HEADER_ENTRIES,
   MAX_DWARF_LINE_PROGRAM_ISSUES,
   MAX_DWARF_LINE_PROGRAM_STEPS,
   MAX_DWARF_LINE_PROGRAMS_WALKED,
+  MAX_DWARF_LINE_SEQUENCE_ROWS,
   MAX_DWARF_LINE_STANDARD_OPCODES,
   MAX_DWARF_LINE_STRING_TABLE_BYTES,
+  MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES,
   formatDwarfLineAddress,
 } from "../../domain/native/dwarfLines.js";
 import { MAX_DWARF_STRING_BYTES } from "../../domain/native/dwarfUnits.js";
@@ -166,9 +169,20 @@ interface DecodedSequenceIndex {
   readonly endAddress: bigint | null;
 }
 
+interface AddressMatchTarget {
+  readonly queryAddress: string;
+  readonly target: bigint;
+  readonly matches: DwarfLineAddressMatch["matches"][number][];
+}
+
 interface SharedBudget {
   stepsRemaining: number;
   stepBudgetHit: boolean;
+  headerEntriesRemaining: number;
+  headerEntryBudgetHit: boolean;
+  addressMatchesRemaining: number;
+  addressMatchBudgetHit: boolean;
+  sequenceBudgetHit: boolean;
 }
 
 interface ProgramIssueCollector {
@@ -220,6 +234,29 @@ const consumeStep = (budget: SharedBudget): boolean => {
     return false;
   }
   budget.stepsRemaining -= 1;
+  return true;
+};
+
+const consumeHeaderEntry = (
+  budget: SharedBudget,
+  issues: ProgramIssueCollector,
+): boolean => {
+  if (!consumeStep(budget)) {
+    issues.push(
+      "decode_budget",
+      `Stopped after ${MAX_DWARF_LINE_PROGRAM_STEPS} line-program decoding steps`,
+    );
+    return false;
+  }
+  if (budget.headerEntriesRemaining <= 0) {
+    budget.headerEntryBudgetHit = true;
+    issues.push(
+      "header_entry_budget",
+      `Aggregate directory and file entries exceeded ${MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES} entry cap`,
+    );
+    return false;
+  }
+  budget.headerEntriesRemaining -= 1;
   return true;
 };
 
@@ -348,6 +385,11 @@ const readCStringSlice = (
   return { ok: true, end: start + relNul, truncatedToLimit: false };
 };
 
+interface DecodedStringResult {
+  readonly fact: DwarfLineStringFact;
+  readonly nonEmpty: boolean;
+}
+
 const decodeBoundedUtf8 = (
   bytes: Buffer,
   start: number,
@@ -355,12 +397,13 @@ const decodeBoundedUtf8 = (
   state: StringTableState,
   issues: ProgramIssueCollector,
   retain: boolean,
-): DwarfLineStringFact => {
+): DecodedStringResult => {
   const byteLength = end - start;
-  const utf8BudgetBytes = byteLength * 2;
+  const nonEmpty = byteLength > 0;
   if (!retain) {
-    return { state: "present", value: "" };
+    return { fact: { state: "present", value: "" }, nonEmpty };
   }
+  const utf8BudgetBytes = byteLength * 2;
   if (
     state.usedStringBytes + utf8BudgetBytes >
     MAX_DWARF_LINE_STRING_TABLE_BYTES
@@ -370,12 +413,15 @@ const decodeBoundedUtf8 = (
       "string_budget",
       "Line-program string table exceeded 16 MiB budget",
     );
-    return UNKNOWN_STRING;
+    return { fact: UNKNOWN_STRING, nonEmpty };
   }
   state.usedStringBytes += utf8BudgetBytes;
   return {
-    state: "present",
-    value: bytes.subarray(start, end).toString("utf8"),
+    fact: {
+      state: "present",
+      value: bytes.subarray(start, end).toString("utf8"),
+    },
+    nonEmpty,
   };
 };
 
@@ -402,10 +448,10 @@ const readInlineStringFact = (
   }
   const end = scanned.end;
   cursor.skip(end - start + 1);
-  if (state.stringBudgetHit) {
+  if (retain && state.stringBudgetHit) {
     return { ok: true, fact: UNKNOWN_STRING, nonEmpty: end > start };
   }
-  const fact = decodeBoundedUtf8(
+  const res = decodeBoundedUtf8(
     sectionBytes,
     start,
     end,
@@ -413,7 +459,7 @@ const readInlineStringFact = (
     issues,
     retain,
   );
-  return { ok: true, fact, nonEmpty: end > start };
+  return { ok: true, fact: res.fact, nonEmpty: res.nonEmpty };
 };
 
 const readExternalStringAtOffset = (
@@ -424,20 +470,20 @@ const readExternalStringAtOffset = (
   state: StringTableState,
   issues: ProgramIssueCollector,
   retain: boolean,
-): DwarfLineStringFact => {
+): DecodedStringResult => {
   if (relocated) {
     issues.push(
       "unapplied_relocation",
       `Unapplied ET_REL relocations leave ${tableName} references unresolved`,
     );
-    return UNRESOLVED_STRING;
+    return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
   if (table === null) {
     issues.push(
       "string_unresolved",
       `Missing ${tableName} section for external string reference`,
     );
-    return UNRESOLVED_STRING;
+    return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
   const offset = toSafeInt(offsetBig);
   if (offset === null || offset >= table.length) {
@@ -445,20 +491,25 @@ const readExternalStringAtOffset = (
       "string_unresolved",
       `${tableName} offset is outside section bounds`,
     );
-    return UNRESOLVED_STRING;
+    return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
   const scanEnd = Math.min(table.length, offset + MAX_DWARF_STRING_BYTES + 1);
   const relNul = table.subarray(offset, scanEnd).indexOf(0);
   if (relNul < 0) {
+    if (!retain && scanEnd - offset > MAX_DWARF_STRING_BYTES) {
+      return { fact: { state: "present", value: "" }, nonEmpty: true };
+    }
     issues.push(
-      relNul < 0 && scanEnd - offset > MAX_DWARF_STRING_BYTES
+      scanEnd - offset > MAX_DWARF_STRING_BYTES
         ? "string_budget"
         : "string_unresolved",
       `Unterminated string in ${tableName}`,
     );
-    return UNKNOWN_STRING;
+    return { fact: UNKNOWN_STRING, nonEmpty: false };
   }
-  if (state.stringBudgetHit) return UNKNOWN_STRING;
+  if (retain && state.stringBudgetHit) {
+    return { fact: UNKNOWN_STRING, nonEmpty: relNul > 0 };
+  }
   return decodeBoundedUtf8(
     table,
     offset,
@@ -474,13 +525,13 @@ const resolveStrxIndex = (
   state: StringTableState,
   issues: ProgramIssueCollector,
   retain: boolean,
-): DwarfLineStringFact => {
+): DecodedStringResult => {
   if (state.lineRelocated) {
     issues.push(
       "unapplied_relocation",
       "Unapplied ET_REL relocations leave DW_FORM_strx references unresolved",
     );
-    return UNRESOLVED_STRING;
+    return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
   const table = state.strOffsetsTable;
   if (table.state !== "ready") {
@@ -500,7 +551,7 @@ const resolveStrxIndex = (
         "Cannot determine DW_AT_str_offsets_base across multiple .debug_str_offsets tables",
       );
     }
-    return UNRESOLVED_STRING;
+    return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
   const index = toSafeInt(indexBig);
   const { entrySize, entries } = table;
@@ -509,14 +560,14 @@ const resolveStrxIndex = (
       "string_unresolved",
       "DW_FORM_strx index is outside .debug_str_offsets table",
     );
-    return UNRESOLVED_STRING;
+    return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
   const slot = new DwarfCursor(
     entries.subarray(index * entrySize, (index + 1) * entrySize),
     state.little,
   );
   const strOffset = readOffsetBySize(slot, entrySize);
-  if (strOffset === null) return UNRESOLVED_STRING;
+  if (strOffset === null) return { fact: UNRESOLVED_STRING, nonEmpty: false };
   return readExternalStringAtOffset(
     state.str,
     ".debug_str",
@@ -684,7 +735,7 @@ const decodeDwarf5Form = (
       return null;
     }
     const isLineStr = form === DW_FORM_LINE_STRP;
-    const fact = readExternalStringAtOffset(
+    const res = readExternalStringAtOffset(
       isLineStr ? strings.lineStr : strings.str,
       isLineStr ? ".debug_line_str" : ".debug_str",
       strOffset,
@@ -695,9 +746,8 @@ const decodeDwarf5Form = (
     );
     return {
       kind: "string",
-      fact,
-      nonEmpty:
-        fact.state === "present" ? (fact.value?.length ?? 0) > 0 : false,
+      fact: res.fact,
+      nonEmpty: res.nonEmpty,
     };
   }
   if (
@@ -724,12 +774,11 @@ const decodeDwarf5Form = (
       issues.push("truncated_header", "Truncated DW_FORM_strx index");
       return null;
     }
-    const fact = resolveStrxIndex(idx, strings, issues, retainString);
+    const res = resolveStrxIndex(idx, strings, issues, retainString);
     return {
       kind: "string",
-      fact,
-      nonEmpty:
-        fact.state === "present" ? (fact.value?.length ?? 0) > 0 : false,
+      fact: res.fact,
+      nonEmpty: res.nonEmpty,
     };
   }
   if (form === DW_FORM_DATA16) {
@@ -824,6 +873,7 @@ interface FormatPair {
 
 const readV5FormatDescriptor = (
   cursor: DwarfCursor,
+  budget: SharedBudget,
   issues: ProgramIssueCollector,
   label: string,
 ): readonly FormatPair[] | null => {
@@ -841,6 +891,13 @@ const readV5FormatDescriptor = (
   }
   const pairs: FormatPair[] = [];
   for (let i = 0; i < columnCount; i += 1) {
+    if (!consumeStep(budget)) {
+      issues.push(
+        "decode_budget",
+        `Stopped after ${MAX_DWARF_LINE_PROGRAM_STEPS} line-program decoding steps`,
+      );
+      return null;
+    }
     const ct = readUleb(cursor);
     const form = readUleb(cursor);
     if (ct === null || form === null) {
@@ -926,11 +983,17 @@ const readV5Tables = (
   offsetSize: 4 | 8,
   addressSize: number,
   strings: StringTableState,
+  budget: SharedBudget,
   issues: ProgramIssueCollector,
   directories: DwarfLineDirectory[],
   files: DwarfLineFile[],
 ): boolean => {
-  const dirFormats = readV5FormatDescriptor(cursor, issues, "directory");
+  const dirFormats = readV5FormatDescriptor(
+    cursor,
+    budget,
+    issues,
+    "directory",
+  );
   if (dirFormats === null) return false;
   const dirCountRaw = readUleb(cursor);
   if (dirCountRaw === null) {
@@ -946,8 +1009,16 @@ const readV5Tables = (
     return false;
   }
   for (let i = 0; i < dirCount; i += 1) {
+    if (!consumeHeaderEntry(budget, issues)) return false;
     let dirPath: DwarfLineStringFact = ABSENT_STRING;
     for (const col of dirFormats) {
+      if (!consumeStep(budget)) {
+        issues.push(
+          "decode_budget",
+          `Stopped after ${MAX_DWARF_LINE_PROGRAM_STEPS} line-program decoding steps`,
+        );
+        return false;
+      }
       const decoded = decodeDwarf5Form(
         col.form,
         cursor,
@@ -974,7 +1045,7 @@ const readV5Tables = (
     directories.push({ index: i, path: dirPath });
   }
 
-  const fileFormats = readV5FormatDescriptor(cursor, issues, "file");
+  const fileFormats = readV5FormatDescriptor(cursor, budget, issues, "file");
   if (fileFormats === null) return false;
   const fileCountRaw = readUleb(cursor);
   if (fileCountRaw === null) {
@@ -990,6 +1061,7 @@ const readV5Tables = (
     return false;
   }
   for (let i = 0; i < fileCount; i += 1) {
+    if (!consumeHeaderEntry(budget, issues)) return false;
     let name: DwarfLineStringFact = ABSENT_STRING;
     let directoryIndex: number | null = null;
     let mtime: DwarfLineNumberFact = ABSENT_NUMBER;
@@ -998,6 +1070,13 @@ const readV5Tables = (
     let sourcePresent = false;
 
     for (const col of fileFormats) {
+      if (!consumeStep(budget)) {
+        issues.push(
+          "decode_budget",
+          `Stopped after ${MAX_DWARF_LINE_PROGRAM_STEPS} line-program decoding steps`,
+        );
+        return false;
+      }
       const decoded = decodeDwarf5Form(
         col.form,
         cursor,
@@ -1087,6 +1166,7 @@ const readLegacyTables = (
   cursor: DwarfCursor,
   headerBytes: Buffer,
   strings: StringTableState,
+  budget: SharedBudget,
   issues: ProgramIssueCollector,
   directories: DwarfLineDirectory[],
   files: DwarfLineFile[],
@@ -1103,6 +1183,7 @@ const readLegacyTables = (
       );
       return false;
     }
+    if (!consumeHeaderEntry(budget, issues)) return false;
     const res = readInlineStringFact(
       cursor,
       headerBytes,
@@ -1126,6 +1207,7 @@ const readLegacyTables = (
       );
       return false;
     }
+    if (!consumeHeaderEntry(budget, issues)) return false;
     const nameRes = readInlineStringFact(
       cursor,
       headerBytes,
@@ -1195,6 +1277,7 @@ const parseProgramHeader = (
   little: boolean,
   defaultAddressSize: 4 | 8,
   strings: StringTableState,
+  budget: SharedBudget,
   issues: ProgramIssueCollector,
 ): ProgramHeader => {
   const directories: DwarfLineDirectory[] = [];
@@ -1493,11 +1576,20 @@ const parseProgramHeader = (
           offsetSize,
           effAddressSize,
           strings,
+          budget,
           issues,
           directories,
           files,
         )
-      : readLegacyTables(hdr, hdrBytes, strings, issues, directories, files);
+      : readLegacyTables(
+          hdr,
+          hdrBytes,
+          strings,
+          budget,
+          issues,
+          directories,
+          files,
+        );
 
   return {
     ok: tablesOk,
@@ -1618,6 +1710,7 @@ interface RunProgramResult {
   readonly retainedRows: number;
   readonly addressesUnresolved: boolean;
   readonly sequences: readonly DwarfLineSequence[];
+  readonly rowsOmitted: boolean;
   readonly stopReason: "complete" | "max_rows" | "decode_budget" | "aborted";
 }
 
@@ -1632,7 +1725,8 @@ const runLineMachine = (
   budget: SharedBudget,
   retainedRowsOut: DwarfLineRow[],
   maxRows: number,
-  collectAddressSequences: DecodedSequenceIndex[] | null,
+  retainRowsForProgram: boolean,
+  addressTargets: readonly AddressMatchTarget[] | null,
 ): RunProgramResult => {
   const zeroBased = header.version === 5;
   const cursor = new DwarfCursor(programBytes, little);
@@ -1651,94 +1745,88 @@ const runLineMachine = (
   let addressesUnresolved = false;
   let aborted = false;
   let rowLimitHit = false;
+  let haltedByMaxRows = false;
+  let seqStartAddr: bigint | null = null;
+  let seqEndAddr: bigint | null = null;
+  let seqRowCount = 0;
   let currentSequenceRows: SequenceRowRecord[] = [];
   let currentMonotonic = true;
   const sequences: DwarfLineSequence[] = [];
 
   const finalizeSequence = (hasEndSequence: boolean): void => {
-    if (currentSequenceRows.length === 0) return;
+    if (seqRowCount === 0) return;
     const seqIdx = sequences.length;
-    const first = currentSequenceRows[0];
-    const last = currentSequenceRows[currentSequenceRows.length - 1];
-    const startAddr = first ? formatDwarfLineAddress(first.address) : null;
-    const endAddr = last ? formatDwarfLineAddress(last.address) : null;
+    const startAddr =
+      seqStartAddr !== null ? formatDwarfLineAddress(seqStartAddr) : null;
+    const endAddr =
+      seqEndAddr !== null ? formatDwarfLineAddress(seqEndAddr) : null;
     sequences.push({
       sequence_index: seqIdx,
       start_address: startAddr,
       end_address: endAddr,
       has_end_sequence: hasEndSequence,
-      row_start: totalRows - currentSequenceRows.length,
-      row_count: currentSequenceRows.length,
+      row_start: totalRows - seqRowCount,
+      row_count: seqRowCount,
     });
-    if (collectAddressSequences !== null) {
-      collectAddressSequences.push({
+    if (addressTargets !== null && !budget.addressMatchBudgetHit) {
+      const seqIndex: DecodedSequenceIndex = {
         programIndex,
         programOffset,
         sequenceIndex: seqIdx,
         hasEndSequence,
         monotonic: currentMonotonic,
         rows: currentSequenceRows,
-        endAddress: last?.address ?? null,
-      });
+        endAddress: seqEndAddr,
+      };
+      for (const entry of addressTargets) {
+        if (budget.addressMatchBudgetHit) break;
+        if (currentMonotonic) {
+          matchSequenceMonotonic(seqIndex, entry.target, entry.matches, budget);
+        } else {
+          matchSequenceLinear(seqIndex, entry.target, entry.matches, budget);
+        }
+      }
     }
+    seqStartAddr = null;
+    seqEndAddr = null;
+    seqRowCount = 0;
     currentSequenceRows = [];
     currentMonotonic = true;
   };
 
-  const emitRow = (): "ok" | "max_rows" => {
+  const emitRow = (): "ok" | "max_rows" | "decode_budget" => {
     if (
+      retainRowsForProgram &&
       maxRows > 0 &&
-      retainedRowsOut.length >= maxRows &&
-      collectAddressSequences === null
+      retainedRowsOut.length >= maxRows
     ) {
       rowLimitHit = true;
-      return "max_rows";
-    }
-    if (maxRows > 0 && retainedRowsOut.length >= maxRows) {
-      rowLimitHit = true;
-    }
-
-    const fileEntry = lookupFileEntry(header.files, regs.file, zeroBased);
-    const displayFile = fileEntry?.path.value ?? fileEntry?.name.value ?? null;
-    const seqIndex = sequences.length;
-    const addrStr = formatDwarfLineAddress(regs.address);
-
-    if (currentSequenceRows.length > 0) {
-      const prev = currentSequenceRows[currentSequenceRows.length - 1];
-      if (prev && regs.address < prev.address) {
-        currentMonotonic = false;
+      if (addressTargets === null) {
+        haltedByMaxRows = true;
+        return "max_rows";
       }
     }
 
-    const rowRecord: SequenceRowRecord = {
-      programIndex,
-      programOffset,
-      sequenceIndex: seqIndex,
-      address: regs.address,
-      opIndex: regs.opIndex,
-      fileIndex: regs.file,
-      fileName: fileEntry?.name.value ?? null,
-      directory: fileEntry?.directory.value ?? null,
-      path: fileEntry?.path.value ?? null,
-      md5Hex: fileEntry?.md5_hex ?? null,
-      line: regs.line,
-      column: regs.column,
-      isStmt: regs.isStmt,
-      basicBlock: regs.basicBlock,
-      endSequence: regs.endSequence,
-      prologueEnd: regs.prologueEnd,
-      epilogueBegin: regs.epilogueBegin,
-      isa: regs.isa,
-      discriminator: regs.discriminator,
-    };
+    const needRowDetails =
+      addressTargets !== null ||
+      (retainRowsForProgram && maxRows > 0 && retainedRowsOut.length < maxRows);
+    const fileEntry = needRowDetails
+      ? lookupFileEntry(header.files, regs.file, zeroBased)
+      : undefined;
+    const seqIndex = sequences.length;
 
-    totalRows += 1;
-    if (maxRows > 0 && retainedRowsOut.length < maxRows) {
+    if (
+      retainRowsForProgram &&
+      maxRows > 0 &&
+      retainedRowsOut.length < maxRows
+    ) {
+      const displayFile =
+        fileEntry?.path.value ?? fileEntry?.name.value ?? null;
       retainedRows += 1;
       retainedRowsOut.push({
         program_index: programIndex,
         sequence_index: seqIndex,
-        address: addrStr,
+        address: formatDwarfLineAddress(regs.address),
         op_index: regs.opIndex,
         file_index: regs.file,
         file: displayFile,
@@ -1754,12 +1842,45 @@ const runLineMachine = (
       });
     }
 
-    if (collectAddressSequences !== null || !rowLimitHit) {
-      currentSequenceRows.push(rowRecord);
-    } else if (currentSequenceRows.length < 2) {
-      // Keep minimal start/end sequence tracking clean if needed.
-      currentSequenceRows.push(rowRecord);
+    if (addressTargets !== null) {
+      if (currentSequenceRows.length >= MAX_DWARF_LINE_SEQUENCE_ROWS) {
+        budget.sequenceBudgetHit = true;
+        issues.push(
+          "decode_budget",
+          `Line sequence exceeded ${MAX_DWARF_LINE_SEQUENCE_ROWS} rows`,
+        );
+        return "decode_budget";
+      }
+      if (seqEndAddr !== null && regs.address < seqEndAddr) {
+        currentMonotonic = false;
+      }
+      currentSequenceRows.push({
+        programIndex,
+        programOffset,
+        sequenceIndex: seqIndex,
+        address: regs.address,
+        opIndex: regs.opIndex,
+        fileIndex: regs.file,
+        fileName: fileEntry?.name.value ?? null,
+        directory: fileEntry?.directory.value ?? null,
+        path: fileEntry?.path.value ?? null,
+        md5Hex: fileEntry?.md5_hex ?? null,
+        line: regs.line,
+        column: regs.column,
+        isStmt: regs.isStmt,
+        basicBlock: regs.basicBlock,
+        endSequence: regs.endSequence,
+        prologueEnd: regs.prologueEnd,
+        epilogueBegin: regs.epilogueBegin,
+        isa: regs.isa,
+        discriminator: regs.discriminator,
+      });
     }
+
+    totalRows += 1;
+    if (seqStartAddr === null) seqStartAddr = regs.address;
+    seqEndAddr = regs.address;
+    seqRowCount += 1;
     return "ok";
   };
 
@@ -1769,7 +1890,7 @@ const runLineMachine = (
         "decode_budget",
         `Stopped after ${MAX_DWARF_LINE_PROGRAM_STEPS} line-program opcode steps`,
       );
-      if (currentSequenceRows.length > 0) {
+      if (seqRowCount > 0) {
         finalizeSequence(false);
       }
       return {
@@ -1777,6 +1898,7 @@ const runLineMachine = (
         retainedRows,
         addressesUnresolved,
         sequences,
+        rowsOmitted: rowLimitHit,
         stopReason: "decode_budget",
       };
     }
@@ -1820,7 +1942,7 @@ const runLineMachine = (
       }
       if (extOpcode === DW_LNE_END_SEQUENCE) {
         regs.endSequence = true;
-        if (emitRow() === "max_rows") {
+        if (emitRow() !== "ok") {
           break;
         }
         finalizeSequence(true);
@@ -1868,6 +1990,9 @@ const runLineMachine = (
             `File entries exceed ${MAX_DWARF_LINE_HEADER_ENTRIES} cap`,
           );
           aborted = true;
+          break;
+        }
+        if (!consumeHeaderEntry(budget, issues)) {
           break;
         }
         const nameRes = readInlineStringFact(
@@ -1941,7 +2066,7 @@ const runLineMachine = (
 
     if (opcode < opcodeBase) {
       if (opcode === DW_LNS_COPY) {
-        if (emitRow() === "max_rows") break;
+        if (emitRow() !== "ok") break;
         regs.discriminator = 0;
         regs.basicBlock = false;
         regs.prologueEnd = false;
@@ -2106,15 +2231,19 @@ const runLineMachine = (
       break;
     }
     regs.line += lineDelta;
-    if (emitRow() === "max_rows") break;
+    if (emitRow() !== "ok") break;
     regs.basicBlock = false;
     regs.prologueEnd = false;
     regs.epilogueBegin = false;
     regs.discriminator = 0;
   }
 
-  if (currentSequenceRows.length > 0) {
-    if (!rowLimitHit) {
+  const budgetStopped =
+    budget.stepBudgetHit ||
+    budget.headerEntryBudgetHit ||
+    budget.sequenceBudgetHit;
+  if (seqRowCount > 0) {
+    if (!haltedByMaxRows && !aborted && !budgetStopped) {
       issues.push(
         "end_sequence_missing",
         "Line-number program ended without DW_LNE_end_sequence",
@@ -2128,14 +2257,61 @@ const runLineMachine = (
     retainedRows,
     addressesUnresolved,
     sequences,
-    stopReason: rowLimitHit ? "max_rows" : aborted ? "aborted" : "complete",
+    rowsOmitted: rowLimitHit,
+    stopReason: budgetStopped
+      ? "decode_budget"
+      : aborted
+        ? "aborted"
+        : haltedByMaxRows
+          ? "max_rows"
+          : "complete",
   };
+};
+
+const tryPushAddressMatch = (
+  r: SequenceRowRecord,
+  spanStart: string,
+  spanEnd: string | null,
+  exact: boolean,
+  out: DwarfLineAddressMatch["matches"][number][],
+  budget: SharedBudget,
+): boolean => {
+  if (budget.addressMatchesRemaining <= 0) {
+    budget.addressMatchBudgetHit = true;
+    return false;
+  }
+  budget.addressMatchesRemaining -= 1;
+  out.push({
+    program_index: r.programIndex,
+    program_offset: r.programOffset,
+    sequence_index: r.sequenceIndex,
+    span_start: spanStart,
+    span_end: spanEnd,
+    exact,
+    address: formatDwarfLineAddress(r.address),
+    op_index: r.opIndex,
+    file_index: r.fileIndex,
+    file: r.fileName,
+    directory: r.directory,
+    path: r.path,
+    md5_hex: r.md5Hex,
+    line: r.line,
+    column: r.column,
+    is_stmt: r.isStmt,
+    basic_block: r.basicBlock,
+    prologue_end: r.prologueEnd,
+    epilogue_begin: r.epilogueBegin,
+    isa: r.isa,
+    discriminator: r.discriminator,
+  });
+  return true;
 };
 
 const matchSequenceMonotonic = (
   seq: DecodedSequenceIndex,
   query: bigint,
   out: DwarfLineAddressMatch["matches"][number][],
+  budget: SharedBudget,
 ): void => {
   const rows = seq.rows;
   if (rows.length === 0) return;
@@ -2199,29 +2375,9 @@ const matchSequenceMonotonic = (
   for (let i = groupStart; i < groupEnd; i += 1) {
     const r = rows[i];
     if (!r) continue;
-    out.push({
-      program_index: r.programIndex,
-      program_offset: r.programOffset,
-      sequence_index: r.sequenceIndex,
-      span_start: spanStart,
-      span_end: spanEnd,
-      exact,
-      address: formatDwarfLineAddress(r.address),
-      op_index: r.opIndex,
-      file_index: r.fileIndex,
-      file: r.fileName,
-      directory: r.directory,
-      path: r.path,
-      md5_hex: r.md5Hex,
-      line: r.line,
-      column: r.column,
-      is_stmt: r.isStmt,
-      basic_block: r.basicBlock,
-      prologue_end: r.prologueEnd,
-      epilogue_begin: r.epilogueBegin,
-      isa: r.isa,
-      discriminator: r.discriminator,
-    });
+    if (!tryPushAddressMatch(r, spanStart, spanEnd, exact, out, budget)) {
+      return;
+    }
   }
 };
 
@@ -2229,6 +2385,7 @@ const matchSequenceLinear = (
   seq: DecodedSequenceIndex,
   query: bigint,
   out: DwarfLineAddressMatch["matches"][number][],
+  budget: SharedBudget,
 ): void => {
   const rows = seq.rows;
   const limit = seq.hasEndSequence ? rows.length - 1 : rows.length;
@@ -2261,29 +2418,9 @@ const matchSequenceLinear = (
       for (let k = i; k < j; k += 1) {
         const r = rows[k];
         if (!r) continue;
-        out.push({
-          program_index: r.programIndex,
-          program_offset: r.programOffset,
-          sequence_index: r.sequenceIndex,
-          span_start: spanStart,
-          span_end: spanEnd,
-          exact,
-          address: formatDwarfLineAddress(r.address),
-          op_index: r.opIndex,
-          file_index: r.fileIndex,
-          file: r.fileName,
-          directory: r.directory,
-          path: r.path,
-          md5_hex: r.md5Hex,
-          line: r.line,
-          column: r.column,
-          is_stmt: r.isStmt,
-          basic_block: r.basicBlock,
-          prologue_end: r.prologueEnd,
-          epilogue_begin: r.epilogueBegin,
-          isa: r.isa,
-          discriminator: r.discriminator,
-        });
+        if (!tryPushAddressMatch(r, spanStart, spanEnd, exact, out, budget)) {
+          return;
+        }
       }
     }
     i = j;
@@ -2291,53 +2428,34 @@ const matchSequenceLinear = (
 };
 
 const resolveAddresses = (
-  requested: readonly string[] | undefined,
-  sequences: readonly DecodedSequenceIndex[],
+  targets: readonly AddressMatchTarget[] | null,
   unappliedRelocations: boolean,
   walkIncomplete: boolean,
+  addressMatchBudgetHit: boolean,
 ): readonly DwarfLineAddressMatch[] => {
-  if (requested === undefined || requested.length === 0) return [];
-  const results: DwarfLineAddressMatch[] = [];
-  for (const raw of requested) {
-    const target = BigInt(raw);
-    const queryAddress = formatDwarfLineAddress(target);
+  if (targets === null || targets.length === 0) return [];
+  return targets.map((entry) => {
     if (unappliedRelocations) {
-      results.push({
-        query_address: queryAddress,
+      return {
+        query_address: entry.queryAddress,
         status: "unapplied_relocation",
         matches: [],
-      });
-      continue;
+      };
     }
-    const matches: DwarfLineAddressMatch["matches"][number][] = [];
-    for (const seq of sequences) {
-      if (seq.monotonic) {
-        matchSequenceMonotonic(seq, target, matches);
-      } else {
-        matchSequenceLinear(seq, target, matches);
-      }
-    }
-    if (matches.length > 0) {
-      results.push({
-        query_address: queryAddress,
+    if (entry.matches.length > 0) {
+      return {
+        query_address: entry.queryAddress,
         status: "resolved",
-        matches,
-      });
-    } else if (walkIncomplete) {
-      results.push({
-        query_address: queryAddress,
-        status: "incomplete",
-        matches: [],
-      });
-    } else {
-      results.push({
-        query_address: queryAddress,
-        status: "not_found",
-        matches: [],
-      });
+        matches: entry.matches,
+      };
     }
-  }
-  return results;
+    return {
+      query_address: entry.queryAddress,
+      status:
+        walkIncomplete || addressMatchBudgetHit ? "incomplete" : "not_found",
+      matches: [],
+    };
+  });
 };
 
 /** Decode DWARF 2–5 `.debug_line` programs and resolve virtual addresses offline. */
@@ -2357,9 +2475,23 @@ export const parseDwarfLinePrograms = (
   const budget: SharedBudget = {
     stepsRemaining: MAX_DWARF_LINE_PROGRAM_STEPS,
     stepBudgetHit: false,
+    headerEntriesRemaining: MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES,
+    headerEntryBudgetHit: false,
+    addressMatchesRemaining: MAX_DWARF_LINE_ADDRESS_MATCHES,
+    addressMatchBudgetHit: false,
+    sequenceBudgetHit: false,
   };
-  const collectAddressSequences =
-    input.addresses !== undefined ? ([] as DecodedSequenceIndex[]) : null;
+  const addressTargets =
+    input.addresses !== undefined && input.addresses.length > 0
+      ? input.addresses.map((raw) => {
+          const target = BigInt(raw);
+          return {
+            queryAddress: formatDwarfLineAddress(target),
+            target,
+            matches: [],
+          };
+        })
+      : null;
 
   const programs: DwarfLineProgram[] = [];
   const rows: DwarfLineRow[] = [];
@@ -2374,20 +2506,22 @@ export const parseDwarfLinePrograms = (
     if (programOffset !== undefined && totalPrograms > 0) break;
 
     if (!consumeStep(budget)) {
-      partialReason = `Line-program decoding stopped at the ${MAX_DWARF_LINE_PROGRAM_STEPS}-step opcode budget`;
+      partialReason ??= `Line-program decoding stopped at the ${MAX_DWARF_LINE_PROGRAM_STEPS}-step opcode budget`;
       walkIncomplete = true;
       break;
     }
 
     if (totalPrograms >= MAX_DWARF_LINE_PROGRAMS_WALKED) {
-      partialReason = `Walked maximum of ${MAX_DWARF_LINE_PROGRAMS_WALKED} line-number programs`;
+      partialReason ??= `Walked maximum of ${MAX_DWARF_LINE_PROGRAMS_WALKED} line-number programs`;
       walkIncomplete = true;
       break;
     }
 
-    if (programs.length >= maxPrograms && collectAddressSequences === null) {
-      partialReason = `Retained line-program limit (${maxPrograms}) reached`;
-      walkIncomplete = true;
+    if (
+      programs.length >= maxPrograms &&
+      (addressTargets === null || budget.addressMatchBudgetHit)
+    ) {
+      partialReason ??= `Retained line-program limit (${maxPrograms}) reached`;
       break;
     }
 
@@ -2415,7 +2549,7 @@ export const parseDwarfLinePrograms = (
           { offset: cursorOffset },
         );
       }
-      partialReason =
+      partialReason ??=
         initial.reason === "truncated"
           ? "Trailing .debug_line initial length is truncated"
           : "Trailing .debug_line initial length is invalid";
@@ -2433,7 +2567,7 @@ export const parseDwarfLinePrograms = (
           },
         );
       }
-      partialReason = "Encountered zero-length trailing .debug_line entry";
+      partialReason ??= "Encountered zero-length trailing .debug_line entry";
       walkIncomplete = true;
       break;
     }
@@ -2465,21 +2599,34 @@ export const parseDwarfLinePrograms = (
       input.little,
       input.defaultAddressSize,
       strings,
+      budget,
       issues,
     );
 
     if (!header.ok) {
       walkIncomplete = true;
-      partialReason ??=
-        "Line-number program header could not be completely decoded";
+      if (budget.headerEntryBudgetHit) {
+        partialReason ??= `Aggregate directory and file entries exceeded ${MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES} entry cap`;
+      } else if (budget.stepBudgetHit) {
+        partialReason ??= `Line-program decoding stopped at the ${MAX_DWARF_LINE_PROGRAM_STEPS}-step opcode budget`;
+      } else {
+        partialReason ??=
+          "Line-number program header could not be completely decoded";
+      }
     }
 
+    const retainRowsForProgram = programs.length < maxPrograms;
     let runResult: RunProgramResult = {
       totalRows: 0,
       retainedRows: 0,
       addressesUnresolved: strings.lineRelocated,
       sequences: [],
-      stopReason: header.ok ? "complete" : "aborted",
+      rowsOmitted: false,
+      stopReason: header.ok
+        ? "complete"
+        : budget.stepBudgetHit || budget.headerEntryBudgetHit
+          ? "decode_budget"
+          : "aborted",
     };
 
     if (header.ok) {
@@ -2494,26 +2641,31 @@ export const parseDwarfLinePrograms = (
         budget,
         rows,
         maxRows,
-        collectAddressSequences,
+        retainRowsForProgram,
+        addressTargets,
       );
       totalRows += runResult.totalRows;
       if (runResult.addressesUnresolved) anyAddressesUnresolved = true;
       if (runResult.stopReason === "decode_budget") {
         walkIncomplete = true;
-        partialReason ??= `Line-program decoding stopped at the ${MAX_DWARF_LINE_PROGRAM_STEPS}-step opcode budget`;
+        partialReason ??= budget.headerEntryBudgetHit
+          ? `Aggregate directory and file entries exceeded ${MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES} entry cap`
+          : budget.sequenceBudgetHit
+            ? `Line sequence exceeded ${MAX_DWARF_LINE_SEQUENCE_ROWS} rows`
+            : `Line-program decoding stopped at the ${MAX_DWARF_LINE_PROGRAM_STEPS}-step opcode budget`;
       } else if (runResult.stopReason === "aborted") {
         walkIncomplete = true;
         partialReason ??=
           "Line-number program execution stopped due to malformed or truncated opcodes";
       } else if (runResult.stopReason === "max_rows") {
         partialReason ??= `Retained line-row limit (${maxRows}) reached`;
-        if (collectAddressSequences === null) {
-          walkIncomplete = true;
-        }
+        walkIncomplete = true;
+      } else if (runResult.rowsOmitted) {
+        partialReason ??= `Retained line-row limit (${maxRows}) reached`;
       }
     }
 
-    if (programs.length < maxPrograms) {
+    if (retainRowsForProgram) {
       programs.push({
         index: programIndex,
         offset: cursorOffset,
@@ -2541,22 +2693,21 @@ export const parseDwarfLinePrograms = (
         addresses_unresolved: runResult.addressesUnresolved,
         issues: issues.list,
       });
-    } else if (partialReason === null) {
-      partialReason = `Retained line-program limit (${maxPrograms}) reached`;
-      walkIncomplete = true;
+    } else {
+      partialReason ??= `Retained line-program limit (${maxPrograms}) reached`;
     }
 
     cursorOffset = boundedEnd;
 
-    if (runResult.stopReason === "decode_budget") break;
     if (
-      runResult.stopReason === "max_rows" &&
-      collectAddressSequences === null
+      runResult.stopReason === "decode_budget" ||
+      budget.stepBudgetHit ||
+      budget.headerEntryBudgetHit ||
+      budget.sequenceBudgetHit
     ) {
-      // Only stop early on row limit when addresses lookup didn't need remaining programs.
-      if (cursorOffset < line.length && programOffset === undefined) {
-        walkIncomplete = true;
-      }
+      break;
+    }
+    if (runResult.stopReason === "max_rows") {
       break;
     }
   }
@@ -2564,12 +2715,15 @@ export const parseDwarfLinePrograms = (
   if (maxRows > 0 && totalRows > maxRows && partialReason === null) {
     partialReason = `Retained line-row limit (${maxRows}) reached`;
   }
+  if (budget.addressMatchBudgetHit) {
+    partialReason ??= `Retained address-match limit (${MAX_DWARF_LINE_ADDRESS_MATCHES}) reached`;
+  }
 
   const addressMatches = resolveAddresses(
-    input.addresses,
-    collectAddressSequences ?? [],
+    addressTargets,
     anyAddressesUnresolved,
     walkIncomplete,
+    budget.addressMatchBudgetHit,
   );
 
   const limitations: string[] = [
@@ -2582,6 +2736,9 @@ export const parseDwarfLinePrograms = (
   }
   if (maxRows === 0) {
     limitations.push(DWARF_LINE_LIMITATIONS.rowsOmittedByCaller);
+  }
+  if (budget.addressMatchBudgetHit) {
+    limitations.push(DWARF_LINE_LIMITATIONS.addressMatchesTruncated);
   }
 
   return {

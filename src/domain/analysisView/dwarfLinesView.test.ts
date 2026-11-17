@@ -234,6 +234,7 @@ describe("dwarfLinesView", () => {
       kind: "dwarf-lines",
       collection: "address_matches",
       status: "resolved",
+      query_address: "0x0000000000001004",
       offset: 0,
       limit: 10,
     });
@@ -241,6 +242,27 @@ describe("dwarfLinesView", () => {
     expect(matches.value).toMatchObject({
       items: [{ source_index: 0, query_address: "0x1004", status: "resolved" }],
     });
+
+    const upperMatches = projectAnalysisView(parent, {
+      kind: "dwarf-lines",
+      collection: "address_matches",
+      query_address: "0X001004",
+      offset: 0,
+      limit: 10,
+    });
+    if (!upperMatches.ok) throw upperMatches.error;
+    expect(upperMatches.value).toMatchObject({
+      items: [{ source_index: 0, query_address: "0x1004", status: "resolved" }],
+    });
+
+    const invalidQuery = projectAnalysisView(parent, {
+      kind: "dwarf-lines",
+      collection: "address_matches",
+      query_address: "not-hex",
+      offset: 0,
+      limit: 10,
+    });
+    expect(invalidQuery.ok).toBe(false);
 
     const issues = projectAnalysisView(parent, {
       kind: "dwarf-lines",

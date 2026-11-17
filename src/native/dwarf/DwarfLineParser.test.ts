@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import {
   dwarfLinesSchema,
   DWARF_LINE_LIMITATIONS,
+  MAX_DWARF_LINE_ADDRESS_MATCHES,
+  MAX_INSPECT_DWARF_LINE_ADDRESSES,
 } from "../../domain/native/dwarfLines.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import { parseDwarfLinePrograms } from "./DwarfLineParser.js";
@@ -506,7 +508,7 @@ it("handles max_rows: 0 completeness, exact max_rows, max_programs partiality, a
   expect(exactRows.coverage.status).toBe("complete");
   expect(exactRows.rows).toHaveLength(5);
 
-  // max_programs: 1 stops partial and marks missed lookup incomplete
+  // max_programs: 1 stops retaining headers & rows after p0, yet still walks p1 for addresses
   const cappedProgs = parseDwarfLinePrograms({
     line: twoProgs,
     lineStr: null,
@@ -515,15 +517,18 @@ it("handles max_rows: 0 completeness, exact max_rows, max_programs partiality, a
     lineFileOffset: 0,
     little: true,
     defaultAddressSize: 8,
-    addresses: ["0x9999"],
+    addresses: ["0x3004", "0x9999"],
     maxPrograms: 1,
     maxRows: 100,
     unappliedLineRelocations: [],
     unappliedDebugRelocations: [],
   });
-  expect(cappedProgs.coverage.status).toBe("partial");
-  expect(cappedProgs.programs).toHaveLength(1);
-  expect(cappedProgs.address_matches[0]?.status).toBe("incomplete");
+  const validatedCapped = assertValidReportSchema(twoProgs, cappedProgs);
+  expect(validatedCapped.coverage.status).toBe("partial");
+  expect(validatedCapped.programs).toHaveLength(1);
+  expect(validatedCapped.rows.every((r) => r.program_index === 0)).toBe(true);
+  expect(validatedCapped.address_matches[0]?.status).toBe("resolved");
+  expect(validatedCapped.address_matches[1]?.status).toBe("not_found");
 });
 
 it("reports missing end_sequence (exact-only match), unsupported versions, and throws typed failures", () => {
@@ -599,4 +604,227 @@ it("reports missing end_sequence (exact-only match), unsupported versions, and t
       unappliedDebugRelocations: [],
     }),
   ).toThrowError(ParseFailureError);
+});
+
+it("bounds aggregate co-located DW_LNS_copy address matches to 65,536 entries", () => {
+  const copyOps = Buffer.alloc(2_200, 0x01); // 2,200 x DW_LNS_copy
+  const colocatedProg = lineProgram({
+    version: 5,
+    opcodes: Buffer.concat([
+      lneSetAddress(0x1000n, 8, true),
+      lnsSetFile(0),
+      copyOps,
+      lnsAdvancePc(64),
+      lneEndSequence(),
+    ]),
+  });
+  const sixtyFourAddrs = Array.from(
+    { length: MAX_INSPECT_DWARF_LINE_ADDRESSES },
+    (_, idx) => `0x${(0x1000 + idx).toString(16)}`,
+  );
+  const cappedMatches = parseDwarfLinePrograms({
+    line: colocatedProg,
+    lineStr: null,
+    str: null,
+    strOffsets: null,
+    lineFileOffset: 0,
+    little: true,
+    defaultAddressSize: 8,
+    addresses: sixtyFourAddrs,
+    maxPrograms: 16,
+    maxRows: 0,
+    unappliedLineRelocations: [],
+    unappliedDebugRelocations: [],
+  });
+  const totalMatchObjects = cappedMatches.address_matches.reduce(
+    (sum, entry) => sum + entry.matches.length,
+    0,
+  );
+  expect(totalMatchObjects).toBe(MAX_DWARF_LINE_ADDRESS_MATCHES);
+  expect(cappedMatches.coverage.status).toBe("partial");
+  expect(cappedMatches.limitations).toContain(
+    DWARF_LINE_LIMITATIONS.addressMatchesTruncated,
+  );
+  expect(cappedMatches.address_matches.at(-1)?.status).toBe("incomplete");
+});
+
+it("charges zero-column DWARF 5 header entries against the aggregate work and allocation budget", () => {
+  const headerPayload = Buffer.concat([
+    Buffer.from([
+      1, // min_instruction_length
+      1, // max_ops_per_instruction
+      1, // default_is_stmt
+      0xfb, // line_base (-5)
+      14, // line_range
+      13, // opcode_base
+      0,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0, // directory_entry_format_count = 0
+    ]),
+    uleb(65_536), // directories_count = 65536
+    Buffer.from([0]), // file_name_entry_format_count = 0
+    uleb(65_536), // file_names_count = 65536
+  ]);
+  const hdrLen = Buffer.alloc(4);
+  hdrLen.writeUInt32LE(headerPayload.length, 0);
+  const body = Buffer.concat([
+    Buffer.from([5, 0, 8, 0]), // v5, address_size=8, seg=0
+    hdrLen,
+    headerPayload,
+  ]);
+  const unitLen = Buffer.alloc(4);
+  unitLen.writeUInt32LE(body.length, 0);
+  const v5ZeroColProg = Buffer.concat([unitLen, body]);
+
+  const zeroColRes = parseDwarfLinePrograms({
+    line: Buffer.concat(Array.from({ length: 6 }, () => v5ZeroColProg)),
+    lineStr: null,
+    str: null,
+    strOffsets: null,
+    lineFileOffset: 0,
+    little: true,
+    defaultAddressSize: 8,
+    addresses: ["0x9999"],
+    maxPrograms: 16,
+    maxRows: 100,
+    unappliedLineRelocations: [],
+    unappliedDebugRelocations: [],
+  });
+  expect(zeroColRes.total_programs).toBeLessThanOrEqual(5);
+  expect(zeroColRes.coverage.status).toBe("partial");
+  expect(zeroColRes.address_matches[0]?.status).toBe("incomplete");
+  expect(
+    zeroColRes.programs.some((p) =>
+      p.issues.some((i) => i.code === "header_entry_budget"),
+    ),
+  ).toBe(true);
+});
+
+it("keeps aborted opcode decode incomplete even when max_rows was reached during address queries", () => {
+  const truncatedAfterRows = lineProgram({
+    version: 5,
+    opcodes: Buffer.concat([
+      lneSetAddress(0x1000n, 8, true),
+      lnsSetFile(0),
+      lnsCopy(),
+      lnsAdvancePc(4),
+      lnsCopy(),
+      Buffer.from([0x00, 0x09, 0x02, 0x11]), // truncated DW_LNE_set_address (declares len 9, only 2 bytes)
+    ]),
+  });
+  const abortAfterRows = parseDwarfLinePrograms({
+    line: truncatedAfterRows,
+    lineStr: null,
+    str: null,
+    strOffsets: null,
+    lineFileOffset: 0,
+    little: true,
+    defaultAddressSize: 8,
+    addresses: ["0x9999"],
+    maxPrograms: 16,
+    maxRows: 1,
+    unappliedLineRelocations: [],
+    unappliedDebugRelocations: [],
+  });
+  expect(abortAfterRows.coverage.status).toBe("partial");
+  expect(abortAfterRows.address_matches[0]?.status).toBe("incomplete");
+});
+
+it("detects external non-empty DW_LNCT_LLVM_source via line_strp, strp, and strx1 without retaining text", () => {
+  const lineStrTbl = buildStringTable([
+    "main.c",
+    "empty.c",
+    "int f(void) { return 1; }",
+    "",
+  ]);
+  const strTbl = buildStringTable([
+    "int g(void) { return 2; }",
+    "int h(void) { return 3; }",
+  ]);
+  const strOffsTbl = buildStrOffsetsTable([strTbl.offsets[1]!]);
+  const u32 = (value: number): Buffer => {
+    const buf = Buffer.alloc(4);
+    buf.writeUInt32LE(value, 0);
+    return buf;
+  };
+  const llvmCols = Buffer.concat([
+    Buffer.from([1]), // 1 dir format col
+    uleb(1),
+    uleb(0x08), // DW_LNCT_path, inline
+    uleb(1), // 1 dir
+    Buffer.from("/src\0", "utf8"),
+    Buffer.from([3]), // 3 file cols: path(indirect), dir_index(udata), LLVM_source(indirect)
+    uleb(1),
+    uleb(0x16),
+    uleb(2),
+    uleb(0x0f),
+    uleb(0x2001),
+    uleb(0x16),
+    uleb(4), // 4 files
+    // File 0: path line_strp(main.c), LLVM_source line_strp(non-empty)
+    uleb(0x1f),
+    u32(lineStrTbl.offsets[0]!),
+    Buffer.from([0]),
+    uleb(0x1f),
+    u32(lineStrTbl.offsets[2]!),
+    // File 1: path line_strp(empty.c), LLVM_source line_strp("") -> source_present: false
+    uleb(0x1f),
+    u32(lineStrTbl.offsets[1]!),
+    Buffer.from([0]),
+    uleb(0x1f),
+    u32(lineStrTbl.offsets[3]!),
+    // File 2: path inline(s.c), LLVM_source strp(non-empty)
+    uleb(0x08),
+    Buffer.from("s.c\0", "utf8"),
+    Buffer.from([0]),
+    uleb(0x0e),
+    u32(strTbl.offsets[0]!),
+    // File 3: path inline(x.c), LLVM_source strx1(0 non-empty)
+    uleb(0x08),
+    Buffer.from("x.c\0", "utf8"),
+    Buffer.from([0]),
+    uleb(0x25),
+    Buffer.from([0]),
+  ]);
+  const llvmHeaderPrefix = Buffer.from([
+    1, 1, 1, 0xfb, 14, 13, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1,
+  ]);
+  const llvmProgBody = (() => {
+    const fullHdr = Buffer.concat([llvmHeaderPrefix, llvmCols]);
+    const hdrLen = Buffer.alloc(4);
+    hdrLen.writeUInt32LE(fullHdr.length, 0);
+    const body = Buffer.concat([Buffer.from([5, 0, 8, 0]), hdrLen, fullHdr]);
+    const unitLen = Buffer.alloc(4);
+    unitLen.writeUInt32LE(body.length, 0);
+    return Buffer.concat([unitLen, body]);
+  })();
+  const llvmParsed = parseDwarfLinePrograms({
+    line: llvmProgBody,
+    lineStr: lineStrTbl.table,
+    str: strTbl.table,
+    strOffsets: strOffsTbl,
+    lineFileOffset: 0,
+    little: true,
+    defaultAddressSize: 8,
+    maxPrograms: 16,
+    maxRows: 100,
+    unappliedLineRelocations: [],
+    unappliedDebugRelocations: [],
+  });
+  expect(llvmParsed.programs[0]?.files.map((f) => f.source_present)).toEqual([
+    true,
+    false,
+    true,
+    true,
+  ]);
 });

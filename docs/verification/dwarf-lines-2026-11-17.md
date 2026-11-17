@@ -16,7 +16,8 @@ optimization (`-O2`), and ELF `.debug_line` compression (`zlib` and `zstd`).
 Each binary was inspected with `DwarfLinesService.inspect`, querying virtual
 addresses obtained from `nm -n` (`alpha` and `alpha + 4`), and compared against
 `readelf` for program offsets, payload lengths, DWARF versions, compression
-formats, and every decoded source row for `alpha.c`, `beta.c`, and `helper.h`.
+formats, every `(file, line, address)` tuple and duplicate count across `alpha.c`,
+`beta.c`, and `include/helper.h`, and queried `file:line` resolution targets.
 
 | Variant                    | Programs | Rows | `.debug_line` compression | Sample `alpha` resolution                                      |
 | -------------------------- | -------- | ---- | ------------------------- | -------------------------------------------------------------- |

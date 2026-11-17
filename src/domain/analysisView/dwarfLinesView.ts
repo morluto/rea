@@ -6,6 +6,8 @@ import {
   dwarfLineRowSchema,
   dwarfLinesReportSchema,
   dwarfLinesSchema,
+  formatDwarfLineAddress,
+  inputAddressHexSchema,
   type DwarfLinesReport,
 } from "../native/dwarfLines.js";
 import { err, ok } from "../result.js";
@@ -115,7 +117,7 @@ export const dwarfLinesViewRequestSchema = z.discriminatedUnion("collection", [
     ...page,
     collection: z.literal("address_matches"),
     status: dwarfLineAddressMatchSchema.shape.status.optional(),
-    query_address: z.string().optional(),
+    query_address: inputAddressHexSchema.optional(),
     indices: z.array(z.int().nonnegative()).optional(),
   }),
   z.strictObject({
@@ -380,7 +382,21 @@ export const projectDwarfLinesView = (
   }
 
   if (view.collection === "address_matches") {
-    const normalizedQuery = view.query_address?.toLowerCase();
+    let normalizedQuery: string | undefined;
+    if (view.query_address !== undefined) {
+      if (!inputAddressHexSchema.safeParse(view.query_address).success) {
+        return err(
+          analysisViewInputError([
+            {
+              path: ["view", "query_address"],
+              reason: "invalid_format",
+              message: `Invalid DWARF query_address filter ${view.query_address}`,
+            },
+          ]),
+        );
+      }
+      normalizedQuery = formatDwarfLineAddress(BigInt(view.query_address));
+    }
     const selected = selectViewRows(
       address_matches,
       view,

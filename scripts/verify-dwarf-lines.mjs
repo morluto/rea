@@ -348,29 +348,45 @@ const main = async () => {
             `${variant.id}: user CU did not match expected DWARF v${variant.expect.version}/${variant.expect.offsetSize}`,
           );
         }
-        const reaUserRows = report.rows.filter(
-          (r) =>
-            !r.end_sequence &&
-            (r.file?.endsWith("alpha.c") ||
-              r.file?.endsWith("beta.c") ||
-              r.file?.endsWith("helper.h")),
-        );
+        const fileBasename = (filePath) => {
+          const idx = Math.max(
+            filePath.lastIndexOf("/"),
+            filePath.lastIndexOf("\\"),
+          );
+          return idx >= 0 ? filePath.slice(idx + 1) : filePath;
+        };
+        const isUserFile = (filePath) => {
+          const base = fileBasename(filePath);
+          return base === "alpha.c" || base === "beta.c" || base === "helper.h";
+        };
+        const addTupleCount = (counts, file, line, address) => {
+          const key = `${fileBasename(file)}|${line}|${address}`;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        };
+        const decCounts = new Map();
         for (const dec of decRows) {
-          if (
-            !dec.file.endsWith("alpha.c") &&
-            !dec.file.endsWith("beta.c") &&
-            !dec.file.endsWith("helper.h")
-          ) {
+          if (!isUserFile(dec.file)) continue;
+          addTupleCount(decCounts, dec.file, dec.line, dec.address);
+        }
+        const reaCounts = new Map();
+        for (const r of report.rows) {
+          if (r.end_sequence || r.file === null || !isUserFile(r.file)) {
             continue;
           }
-          const match = reaUserRows.some(
-            (r) => r.address === dec.address && r.line === dec.line,
-          );
-          if (!match) {
+          addTupleCount(reaCounts, r.file, r.line, r.address);
+        }
+        for (const [key, expectedCount] of decCounts) {
+          const actualCount = reaCounts.get(key) ?? 0;
+          if (actualCount !== expectedCount) {
             throw new Error(
-              `${variant.id}: readelf row ${dec.file}:${dec.line}@${dec.address} not found in REA rows`,
+              `${variant.id}: tuple ${key} count mismatch (readelf=${expectedCount}, rea=${actualCount})`,
             );
           }
+        }
+        if (reaCounts.size !== decCounts.size) {
+          throw new Error(
+            `${variant.id}: user row key set size mismatch (readelf=${decCounts.size}, rea=${reaCounts.size})`,
+          );
         }
         if (queryAddrs !== undefined) {
           for (const entry of report.address_matches) {
@@ -378,6 +394,38 @@ const main = async () => {
               throw new Error(
                 `${variant.id}: failed to resolve ${entry.query_address}`,
               );
+            }
+            const targetBig = BigInt(entry.query_address);
+            let bestAddr = null;
+            for (const dec of decRows) {
+              const decAddr = BigInt(dec.address);
+              if (
+                decAddr <= targetBig &&
+                (bestAddr === null || decAddr > bestAddr)
+              ) {
+                bestAddr = decAddr;
+              }
+            }
+            if (bestAddr === null) {
+              throw new Error(
+                `${variant.id}: readelf has no row <= ${entry.query_address}`,
+              );
+            }
+            const expectedRows = decRows.filter(
+              (dec) => BigInt(dec.address) === bestAddr && isUserFile(dec.file),
+            );
+            for (const exp of expectedRows) {
+              const found = entry.matches.some(
+                (m) =>
+                  m.file !== null &&
+                  fileBasename(m.file) === fileBasename(exp.file) &&
+                  m.line === exp.line,
+              );
+              if (!found) {
+                throw new Error(
+                  `${variant.id}: address ${entry.query_address} missing expected match ${fileBasename(exp.file)}:${exp.line}`,
+                );
+              }
             }
           }
         }

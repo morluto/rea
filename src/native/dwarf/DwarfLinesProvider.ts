@@ -36,9 +36,11 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
+  completedStableArtifactObservation,
   imageFileSizeRemediation,
   projectArtifactCloseFailure,
   projectStableArtifactFailure,
@@ -72,9 +74,12 @@ export class DwarfLinesProvider implements DwarfLinesPort {
 
   async inspect(input: InspectDwarfLinesInput, options?: ExecutionOptions) {
     let readCompleted = false;
+    // Kept outside the read so a later decode/validation/cancellation failure
+    // retains the verified file identity established by readStableArtifact.
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -96,157 +101,167 @@ export class DwarfLinesProvider implements DwarfLinesPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(
-        classifyProviderFailure(cause, {
-          providerId: DWARF_LINES_PROVIDER.id,
-          operation: OPERATION,
-          file: {
-            path: input.path,
-            description: "image",
-            retainCompletedIdentity: true,
-            fileSize: (readerCause, details) =>
-              parseLimitConstraint(
-                OPERATION,
-                "file-size",
-                decodeLimit(
-                  "dwarf",
-                  readerCause.message,
-                  { name: "max_file_bytes", maximum: input.max_file_bytes },
-                  { cause: readerCause },
-                ),
-                {
-                  ...details,
-                  path: input.path,
-                  retryable: false,
-                  remediationAction: imageFileSizeRemediation(
-                    input.max_file_bytes,
-                    MAX_INSPECT_DWARF_LINES_FILE_BYTES,
-                  ),
-                },
+      const failure = classifyProviderFailure(cause, {
+        providerId: DWARF_LINES_PROVIDER.id,
+        operation: OPERATION,
+        file: {
+          path: input.path,
+          description: "image",
+          retainCompletedIdentity: true,
+          fileSize: (readerCause, details) =>
+            parseLimitConstraint(
+              OPERATION,
+              "file-size",
+              decodeLimit(
+                "dwarf",
+                readerCause.message,
+                { name: "max_file_bytes", maximum: input.max_file_bytes },
+                { cause: readerCause },
               ),
-          },
-          readCleanup: (read, primary) => {
-            const createCleanupError = () => {
-              const cleanup = new ProviderCleanupError(
-                DWARF_LINES_PROVIDER.id,
-                read.cleanup.resources,
-                { reason: read.cleanup.reason },
-                { operation: OPERATION, cause: read },
-              );
-              bindArtifactFileCleanup(read, cleanup);
-              return cleanup;
-            };
-            if (primary === undefined) {
-              const cleanup = createCleanupError();
-              if (read.partialObservation !== undefined) {
-                cleanup.retainPartialObservation(read.partialObservation);
-              }
-              return cleanup;
-            }
-            let leafPrimary = primary;
-            while (leafPrimary.cleanupPrimary !== undefined) {
-              leafPrimary = leafPrimary.cleanupPrimary;
-            }
-            if (primary === leafPrimary) {
-              return projectStableArtifactFailure(
-                read,
-                leafPrimary,
-                input.path,
-                DWARF_LINES_PROVIDER.id,
-                OPERATION,
-              );
-            }
-            const combinedCleanup = analysisErrorWithCleanupDependencies(
-              primary,
-              createCleanupError(),
-              OPERATION,
-            );
-            const failure = analysisErrorWithCleanupDependencies(
-              leafPrimary,
-              combinedCleanup,
-              OPERATION,
-            );
-            if (primary.partialObservation !== undefined) {
-              failure.retainPartialObservation(primary.partialObservation);
-            }
-            if (read.partialObservation !== undefined) {
-              failure.retainPartialObservation(read.partialObservation);
-            }
-            return failure;
-          },
-          recognise: (rawCause, details) => {
-            const primary = artifactFilePrimaryFacts(rawCause).cause;
-            if (primary instanceof AnalysisError) return primary;
-            if (primary instanceof DwarfSectionAllowanceFailure) {
-              return parseLimitConstraint(OPERATION, "capacity", primary, {
-                ...details,
-                path: input.path,
-                ...fixedAllowanceOptions(
-                  DWARF_DECOMPRESSED_SECTION_ALLOWANCE,
-                  "parser",
-                  {
-                    limit: MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
-                    unit: "bytes",
-                  },
-                ),
-              });
-            }
-            if (primary instanceof BinaryResourceFailure) {
-              return parseLimitConstraint(OPERATION, "capacity", primary, {
-                ...details,
-                path: input.path,
-                ...fixedAllowanceOptions(
-                  DWARF_DECOMPRESSED_SECTION_ALLOWANCE,
-                  "parser",
-                  binaryResourceCeiling(primary),
-                ),
-              });
-            }
-            const field =
-              primary instanceof ParseFailureError &&
-              primary.failure.field === "program_offset"
-                ? "program_offset"
-                : "path";
-            return parseFailureAnalysisError(
-              OPERATION,
-              input.path,
-              primary,
-              field,
-            );
-          },
-          unclassified: (rawCause, details) => {
-            const { cause: primary, origin } =
-              artifactFilePrimaryFacts(rawCause);
-            if (
-              !readCompleted ||
-              (origin === "owned-or-classified" &&
-                primary instanceof ArtifactReaderFailure)
-            ) {
-              return primary instanceof ArtifactReaderFailure
-                ? translateArtifactFailure(OPERATION, primary)
-                : new ArtifactOperationError(
-                    OPERATION,
-                    "io",
-                    undefined,
-                    undefined,
-                    { ...details, cause: primary },
-                  );
-            }
-            return new ProviderAdapterError(
-              DWARF_LINES_PROVIDER.id,
-              OPERATION,
               {
                 ...details,
-                cause: primary,
-                diagnostics: {
-                  path: input.path,
-                  reason: errorMessage(primary),
-                },
+                path: input.path,
+                retryable: false,
+                remediationAction: imageFileSizeRemediation(
+                  input.max_file_bytes,
+                  MAX_INSPECT_DWARF_LINES_FILE_BYTES,
+                ),
               },
+            ),
+        },
+        readCleanup: (read, primary) => {
+          const createCleanupError = () => {
+            const cleanup = new ProviderCleanupError(
+              DWARF_LINES_PROVIDER.id,
+              read.cleanup.resources,
+              { reason: read.cleanup.reason },
+              { operation: OPERATION, cause: read },
             );
-          },
-        }),
+            bindArtifactFileCleanup(read, cleanup);
+            return cleanup;
+          };
+          if (primary === undefined) {
+            const cleanup = createCleanupError();
+            if (read.partialObservation !== undefined) {
+              cleanup.retainPartialObservation(read.partialObservation);
+            }
+            return cleanup;
+          }
+          let leafPrimary = primary;
+          while (leafPrimary.cleanupPrimary !== undefined) {
+            leafPrimary = leafPrimary.cleanupPrimary;
+          }
+          if (primary === leafPrimary) {
+            return projectStableArtifactFailure(
+              read,
+              leafPrimary,
+              input.path,
+              DWARF_LINES_PROVIDER.id,
+              OPERATION,
+              snapshot,
+            );
+          }
+          const combinedCleanup = analysisErrorWithCleanupDependencies(
+            primary,
+            createCleanupError(),
+            OPERATION,
+          );
+          const failure = analysisErrorWithCleanupDependencies(
+            leafPrimary,
+            combinedCleanup,
+            OPERATION,
+          );
+          if (primary.partialObservation !== undefined) {
+            failure.retainPartialObservation(primary.partialObservation);
+          }
+          if (read.partialObservation !== undefined) {
+            failure.retainPartialObservation(read.partialObservation);
+          }
+          return failure;
+        },
+        recognise: (rawCause, details) => {
+          const primary = artifactFilePrimaryFacts(rawCause).cause;
+          if (primary instanceof AnalysisError) return primary;
+          if (primary instanceof DwarfSectionAllowanceFailure) {
+            return parseLimitConstraint(OPERATION, "capacity", primary, {
+              ...details,
+              path: input.path,
+              ...fixedAllowanceOptions(
+                DWARF_DECOMPRESSED_SECTION_ALLOWANCE,
+                "parser",
+                {
+                  limit: MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
+                  unit: "bytes",
+                },
+              ),
+            });
+          }
+          if (primary instanceof BinaryResourceFailure) {
+            return parseLimitConstraint(OPERATION, "capacity", primary, {
+              ...details,
+              path: input.path,
+              ...fixedAllowanceOptions(
+                DWARF_DECOMPRESSED_SECTION_ALLOWANCE,
+                "parser",
+                binaryResourceCeiling(primary),
+              ),
+            });
+          }
+          const field =
+            primary instanceof ParseFailureError &&
+            primary.failure.field === "program_offset"
+              ? "program_offset"
+              : "path";
+          return parseFailureAnalysisError(
+            OPERATION,
+            input.path,
+            primary,
+            field,
+          );
+        },
+        unclassified: (rawCause, details) => {
+          const { cause: primary, origin } = artifactFilePrimaryFacts(rawCause);
+          if (
+            !readCompleted ||
+            (origin === "owned-or-classified" &&
+              primary instanceof ArtifactReaderFailure)
+          ) {
+            return primary instanceof ArtifactReaderFailure
+              ? translateArtifactFailure(OPERATION, primary)
+              : new ArtifactOperationError(
+                  OPERATION,
+                  "io",
+                  undefined,
+                  undefined,
+                  { ...details, cause: primary },
+                );
+          }
+          return new ProviderAdapterError(DWARF_LINES_PROVIDER.id, OPERATION, {
+            ...details,
+            cause: primary,
+            diagnostics: {
+              path: input.path,
+              reason: errorMessage(primary),
+            },
+          });
+        },
+      });
+      const observation = completedStableArtifactObservation(
+        cause,
+        input.path,
+        snapshot,
       );
+      if (observation !== undefined) {
+        failure.retainPartialObservation(observation);
+        for (
+          let primary = failure.cleanupPrimary;
+          primary !== undefined;
+          primary = primary.cleanupPrimary
+        ) {
+          primary.retainPartialObservation(observation);
+        }
+      }
+      return err(failure);
     }
   }
 }

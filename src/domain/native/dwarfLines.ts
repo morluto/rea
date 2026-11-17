@@ -37,8 +37,14 @@ export const DEFAULT_INSPECT_DWARF_LINE_ROWS = 4_096;
 export const MAX_INSPECT_DWARF_LINE_ROWS = 65_536;
 /** Aggregate state-machine opcode & header decoding steps per call. */
 export const MAX_DWARF_LINE_PROGRAM_STEPS = 2_097_152;
+/** Aggregate directory and file table entries admitted across all programs per call. */
+export const MAX_DWARF_LINE_TOTAL_HEADER_ENTRIES = 262_144;
 /** Maximum decoded string bytes retained across directory and file tables (16 MiB). */
 export const MAX_DWARF_LINE_STRING_TABLE_BYTES = 16 * 1024 * 1024;
+/** Maximum rows retained inside one sequence index for address attribution. */
+export const MAX_DWARF_LINE_SEQUENCE_ROWS = 262_144;
+/** Maximum address-match rows retained across all address queries in one call. */
+export const MAX_DWARF_LINE_ADDRESS_MATCHES = 65_536;
 /** Maximum issues retained on one line-number program. */
 export const MAX_DWARF_LINE_PROGRAM_ISSUES = 32;
 /** Maximum header directory or file entries per line-number program. */
@@ -90,11 +96,15 @@ export const DWARF_LINE_LIMITATIONS = {
     "Program offsets are within decompressed .debug_line and file_offset is null.",
   rowsOmittedByCaller:
     "Emitted line-matrix rows were omitted because max_rows was set to 0.",
+  addressMatchesTruncated:
+    "Address match entries were truncated at the 65,536-match output limit.",
 } as const;
 
 const safeInt = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const hexAddressSchema = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
-const inputAddressHexSchema = z.string().regex(/^0[xX][0-9a-fA-F]{1,16}$/);
+export const inputAddressHexSchema = z
+  .string()
+  .regex(/^0[xX][0-9a-fA-F]{1,16}$/);
 const md5HexSchema = z.string().regex(/^[0-9a-f]{32}$/);
 
 const attributeState = <Value extends z.ZodType>(value: Value) =>

@@ -10,7 +10,7 @@ tools, and optionally attributes virtual addresses (`addresses`) back to
 ```bash
 rea inspect-dwarf-lines /absolute/path/to/program --json
 rea inspect-dwarf-lines /absolute/path/to/program --addresses 0x401130 --json
-rea inspect-dwarf-lines /absolute/path/to/program --program_offset 0 --max_rows 0 --json
+rea inspect-dwarf-lines /absolute/path/to/program --program-offset 0 --max-rows 0 --json
 ```
 
 ```json
@@ -23,9 +23,9 @@ rea inspect-dwarf-lines /absolute/path/to/program --program_offset 0 --max_rows 
 }
 ```
 
-The [feature specification](../specs/native/dwarf-lines/spec.md),
-[plan](../specs/native/dwarf-lines/plan.md), and
-[tasks](../specs/native/dwarf-lines/tasks.md) record the requirements and
+The [feature specification](../../specs/native/dwarf-lines/spec.md),
+[plan](../../specs/native/dwarf-lines/plan.md), and
+[tasks](../../specs/native/dwarf-lines/tasks.md) record the requirements and
 design boundaries.
 
 ## Decoding rules
@@ -64,21 +64,23 @@ order:
   DWARF 5 string references remain `unresolved`, `addresses_unresolved` is
   `true`, and `addresses` queries never treat `0x0` placeholders as resolved
   addresses.
-- `incomplete`: Line-program coverage stopped early (for example `max_programs`,
-  the decode step budget, or a truncated/unreadable section) before proving the
-  address absent.
+- `incomplete`: Line-program coverage stopped early (for example at the
+  decode step/header-entry/match budget, the 100,000-program walk cap, or a
+  truncated/unreadable section) before proving the address absent.
 
 ## Delivery, paging, and budgets
 
 - `max_file_bytes` defaults to `64 MiB` (maximum `512 MiB`).
-- `max_programs` defaults to `256` (maximum `16,384`; internal walk cap
-  `100,000`).
+- `max_programs` defaults to `256` (maximum `16,384`; `addresses` lookups
+  continue scanning up to `100,000` programs past `max_programs`).
 - `max_rows` defaults to `4,096` (maximum `65,536`). Pass `max_rows: 0` to keep
   program headers, directory/file tables, sequences, and `addresses` lookups
   with `complete` coverage while omitting inline row matrices.
-- Shared state-machine opcode steps are capped at `2,097,152`, header string
-  retention at `16 MiB` (`64 KiB` per C-string), header entries at `65,536` per
-  table, and program issues at `32` per program.
+- Shared decode work is capped at `2,097,152` steps, aggregate header tables at
+  `262,144` entries across programs (`65,536` per table), header string
+  retention at `16 MiB` (`64 KiB` per C-string), per-sequence index rows at
+  `262,144`, retained address matches at `65,536`, and program issues at `32`
+  per program.
 - Set `detail: "summary"` to retain the complete Evidence in the session (or via
   CLI `--evidence_output`) and query `inspect_analysis_view` with
   `kind: "dwarf-lines"` across collections `"programs"`, `"directories"`,

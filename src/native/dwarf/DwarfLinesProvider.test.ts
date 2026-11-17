@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -279,6 +280,33 @@ it("handles absent/SHT_NOBITS sections, decompression bombs, file budgets, symli
     expect(abortedRes.ok).toBe(false);
     if (!abortedRes.ok) {
       expect(abortedRes.error).toBeInstanceOf(AnalysisCancelledError);
+    }
+
+    const badOffsetElfBytes = elfDebugLineImage({
+      line: lineProgram({ version: 5 }),
+    });
+    const badOffsetPath = await makeTempFile(
+      "bad-offset.elf",
+      badOffsetElfBytes,
+    );
+    const expectedSha = createHash("sha256")
+      .update(badOffsetElfBytes)
+      .digest("hex");
+    const badOffsetRes = await provider.inspect(
+      inspectDwarfLinesInputSchema.parse({
+        path: badOffsetPath,
+        program_offset: 999999,
+      }),
+    );
+    expect(badOffsetRes.ok).toBe(false);
+    if (!badOffsetRes.ok) {
+      expect(badOffsetRes.error).toBeInstanceOf(AnalysisInputError);
+      expect(badOffsetRes.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path: badOffsetPath,
+        sha256: expectedSha,
+        bytes: badOffsetElfBytes.length,
+      });
     }
   } finally {
     await provider.close();
