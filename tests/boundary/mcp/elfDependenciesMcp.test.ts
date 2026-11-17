@@ -1,13 +1,19 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+
+const dependenciesContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_elf_dependencies",
+);
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
@@ -37,18 +43,18 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract(
-        "inspect_elf_dependencies",
-      ).outputSchema.parse(response.structuredContent);
+      const evidence = dependenciesContract.outputSchema.parse(
+        response.structuredContent,
+      );
       expect(evidence.parameters).toEqual({ path });
       const selected = await client.callTool({
         name: "inspect_elf_dependencies",
         arguments: { path, max_needed: 1024 },
       });
       expect(selected.isError).not.toBe(true);
-      const explicitlySelected = toolContract(
-        "inspect_elf_dependencies",
-      ).outputSchema.parse(selected.structuredContent);
+      const explicitlySelected = dependenciesContract.outputSchema.parse(
+        selected.structuredContent,
+      );
       expect(explicitlySelected.parameters).toEqual({
         path,
         max_needed: 1024,
@@ -109,9 +115,9 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract(
-        "inspect_elf_dependencies",
-      ).outputSchema.parse(response.structuredContent);
+      const evidence = dependenciesContract.outputSchema.parse(
+        response.structuredContent,
+      );
       expect(evidence.normalized_result).toMatchObject({
         coverage: { status: "complete" },
         needed: [

@@ -1,11 +1,19 @@
 import { expect, it } from "vitest";
-import { parseElfDependencies } from "./ElfDependencyParser.js";
+import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
 import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
 import type { AnalysisViewParent } from "../../domain/analysisView/analysisViewParent.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
+
+const parseElfDependencies = (
+  ...arguments_: Parameters<typeof readElfDependenciesSteps>
+) => {
+  const steps = readElfDependenciesSteps(...arguments_);
+  for (let next = steps.next(); ; next = steps.next())
+    if (next.done) return next.value;
+};
 
 const artifact = {
   path: "/artifacts/program",

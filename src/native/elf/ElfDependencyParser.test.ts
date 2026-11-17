@@ -3,10 +3,19 @@ import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   inspectElfDependenciesInputSchema,
   elfDependenciesSchema,
+  MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
 } from "../../domain/native/elfDependencies.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { elfDependencyFixture, elfHash } from "./ElfDependencies.fixture.js";
-import { parseElfDependencies } from "./ElfDependencyParser.js";
+import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
+
+const parseElfDependencies = (
+  ...arguments_: Parameters<typeof readElfDependenciesSteps>
+) => {
+  const steps = readElfDependenciesSteps(...arguments_);
+  for (let next = steps.next(); ; next = steps.next())
+    if (next.done) return next.value;
+};
 
 const artifactPath = "/artifacts/program";
 
@@ -1116,4 +1125,59 @@ it("uses the dynamic declaration when two section headers share a dynamic type",
     }),
   );
   expect(report.imports.length).toBeGreaterThan(0);
+});
+
+it("surfaces GNU hash checkpoints to the scheduling owner", () => {
+  const bytes = elfDependencyFixture({
+    stripped: true,
+    omitHash: true,
+    gnuHash: true,
+  });
+  const steps = readElfDependenciesSteps(
+    bytes,
+    {
+      path: artifactPath,
+      sha256: "ab".repeat(32),
+      bytes: bytes.length,
+    },
+    inspectElfDependenciesInputSchema.parse({ path: artifactPath }),
+  );
+  expect(steps.next()).toEqual({ done: false, value: undefined });
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  expect(next.value.imports).toHaveLength(5);
+});
+
+it("reports the fixed GNU hash allowance before traversing an over-limit table", () => {
+  const bytes = elfDependencyFixture({
+    omitHash: true,
+    gnuHash: true,
+    sectionSizes: { ".dynsym": 1 },
+  });
+  // The fixture's PT_LOAD uses identity-mapped virtual addresses.
+  const dynamic = sectionOffset(bytes, 64, 6);
+  let hash: number | undefined;
+  for (let offset = dynamic; offset + 16 <= bytes.length; offset += 16) {
+    const tag = bytes.readBigUInt64LE(offset);
+    if (tag === 0x6ffffef5n) {
+      hash = Number(bytes.readBigUInt64LE(offset + 8));
+      break;
+    }
+    if (tag === 0n) break;
+  }
+  if (hash === undefined)
+    throw new Error("Fixture has no GNU hash declaration");
+  bytes.writeUInt32LE(MAX_INSPECT_ELF_DEPENDENCY_IMPORTS + 1, hash + 4);
+  expect(() => parse(bytes)).toThrowError(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: {
+          name: "gnu_hash_entries",
+          maximum: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+          required: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS + 1,
+        },
+      }),
+    }),
+  );
 });

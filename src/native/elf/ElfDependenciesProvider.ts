@@ -1,3 +1,4 @@
+import { setImmediate as immediate } from "node:timers/promises";
 import {
   isParseLimit,
   parseFailureAnalysisError,
@@ -16,6 +17,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
+  assertArtifactReadActive,
   imageFileSizeRemediation,
 } from "../../resources/index.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -33,7 +35,7 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { parseElfDependencies } from "./ElfDependencyParser.js";
+import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
 
 const OPERATION = "inspect_elf_dependencies";
 
@@ -75,7 +77,7 @@ export class ElfDependenciesProvider {
         // Only a parser failure inherits this read's identity; finalization
         // failures keep their own completion record.
         completed = snapshot;
-        const report = parseElfDependencies(
+        const steps = readElfDependenciesSteps(
           snapshot.bytes,
           {
             path: input.path,
@@ -84,8 +86,16 @@ export class ElfDependenciesProvider {
           },
           input,
         );
+        assertArtifactReadActive(options?.signal);
+        let next = steps.next();
+        while (!next.done) {
+          await immediate();
+          assertArtifactReadActive(options?.signal);
+          next = steps.next();
+        }
+        assertArtifactReadActive(options?.signal);
         completed = undefined;
-        return ok(report);
+        return ok(next.value);
       });
     } catch (cause) {
       return err(elfDependenciesFailure(cause, input, completed));
@@ -129,9 +139,10 @@ const elfDependenciesFailurePrimary = (
     const text =
       limit.name === "scanned_text_bytes" ||
       limit.name === "retained_text_bytes";
+    const work = limit.name === "gnu_hash_entries";
     return parseLimitConstraint(
       OPERATION,
-      text ? "memory" : "capacity",
+      text ? "memory" : work ? "cpu" : "capacity",
       cause,
       {
         path: input.path,
@@ -139,7 +150,7 @@ const elfDependenciesFailurePrimary = (
           text
             ? "The ELF dependency text budget fixed by the admitted image length"
             : `The ELF dependency ${limit.name} allowance`,
-          text ? "parser" : "count",
+          text ? "parser" : work ? "work" : "count",
           { limit: limit.maximum, unit: text ? "bytes" : "entries" },
         ),
       },

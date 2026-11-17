@@ -1,10 +1,16 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { elfDependencyFixture } from "../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const dependenciesContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_elf_dependencies",
+);
 
 cliTest(
   "reports needed libraries, RUNPATH tokens, and versioned imports through the public CLI",
@@ -16,9 +22,7 @@ cliTest(
       arguments: ["inspect-elf-dependencies", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract(
-      "inspect_elf_dependencies",
-    ).outputSchema.parse(result.json);
+    const evidence = dependenciesContract.outputSchema.parse(result.json);
     expect(evidence.parameters).toEqual({ path });
     const selected = await cli.run({
       arguments: [
@@ -30,9 +34,9 @@ cliTest(
       ],
     });
     expect(selected.exitCode, selected.stderr).toBe(0);
-    const explicitlySelected = toolContract(
-      "inspect_elf_dependencies",
-    ).outputSchema.parse(selected.json);
+    const explicitlySelected = dependenciesContract.outputSchema.parse(
+      selected.json,
+    );
     expect(explicitlySelected.parameters).toEqual({ path, max_needed: 1024 });
     expect(explicitlySelected.evidence_id).not.toBe(evidence.evidence_id);
     expect(evidence.normalized_result).toMatchObject({
@@ -72,9 +76,7 @@ cliTest(
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract(
-      "inspect_elf_dependencies",
-    ).outputSchema.parse(result.json);
+    const evidence = dependenciesContract.outputSchema.parse(result.json);
     expect(evidence.normalized_result).toMatchObject({
       dynamic: { status: "absent" },
       needed: [],

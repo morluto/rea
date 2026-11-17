@@ -76,6 +76,9 @@ The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 dynamic symbols are examined by default (65536 / 65536 / 262144 maximum).
 Omitted budgets use these defaults during analysis and stay omitted in
 Evidence parameters. Explicitly selecting a default value records that choice.
+GNU hash decoding has a fixed allowance of 262144 bucket, bloom, or symbol
+entries per table component; it yields between bounded steps so cancellation
+can stop the walk. This work allowance has no runtime override.
 Exceeding a named budget fails with no partial success. Decoded dynamic
 strings share one scan and retained-text budget fixed by the admitted image
 length, so names repeated by many rows cannot expand past the input size; this

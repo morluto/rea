@@ -15,7 +15,6 @@ import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
-  type ElfGnuHashCountWalk,
   type ElfHashWordReader,
 } from "../../domain/elfHashSymbolCount.js";
 import { err, ok } from "../../domain/result.js";
@@ -482,11 +481,6 @@ const hashWords =
       : err("extends past its mapped bytes");
   };
 
-const drainGnuHashCount = (walk: ElfGnuHashCountWalk): number | null => {
-  for (let step = walk.next(); ; step = walk.next())
-    if (step.done === true) return step.value.ok ? step.value.value : null;
-};
-
 const sysvSymbolCountAt = (
   reader: BinaryReader,
   header: number,
@@ -538,31 +532,28 @@ const sysvSymbolCount = (
 // With every bucket empty the table hashes nothing, and its first-symbol
 // index does not bound the unhashed imports: GNU ld writes 1 there for any
 // image with no hashable exports. The shared reader returns null for that.
-const gnuSymbolCountAt = (
-  reader: BinaryReader,
-  header: number,
-  limit: number,
+const gnuSymbolCount = function* (
+  read: ElfHashWordReader,
   bits: 32 | 64,
-): number | null =>
-  drainGnuHashCount(
-    readElfGnuHashSymbolCount(
-      hashWords(reader, header, limit),
-      bits === 64 ? 8 : 4,
-    ),
+): Generator<void, number | null, void> {
+  const result = yield* readElfGnuHashSymbolCount(
+    read,
+    bits === 64 ? 8 : 4,
+    MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
   );
-
-const gnuSymbolCount = (
-  reader: BinaryReader,
-  mappings: readonly FileMapping[],
-  address: bigint,
-  bits: 32 | 64,
-): number | null =>
-  drainGnuHashCount(
-    readElfGnuHashSymbolCount(
-      mappedHashWords(reader, mappings, address),
-      bits === 64 ? 8 : 4,
-    ),
-  );
+  if (result.ok) return result.value;
+  if (result.error.kind === "budget")
+    throw decodeLimit(
+      "elf-dependencies",
+      `${result.error.label} exceeds the fixed ELF dependency decoding allowance.`,
+      {
+        name: "gnu_hash_entries",
+        maximum: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+        required: result.error.count,
+      },
+    );
+  return null;
+};
 
 const locateVersionTable = (
   mappings: readonly FileMapping[],
@@ -625,11 +616,11 @@ const emptyInventory = (
 });
 
 /** Decode PT_DYNAMIC, GNU versions, and undefined .dynsym imports from one ELF image. */
-export const parseElfDependencies = (
+export const readElfDependenciesSteps = function* (
   bytes: Buffer,
   artifact: Artifact,
   input: InspectElfDependenciesInput,
-): ElfDependencies => {
+): Generator<void, ElfDependencies, void> {
   const fixed = readElfFixedHeader(bytes);
   if (!fixed.ok) return fail(fixed.error);
   const header = fixed.value;
@@ -952,7 +943,7 @@ export const parseElfDependencies = (
       location: hex(dynsymSection.offset),
       message: ".dynsym sh_entsize does not match the ELF class symbol size",
     });
-  const symbolCount = locateSymbolCount(
+  const symbolCount = yield* locateSymbolCount(
     reader,
     mappings,
     dynsymSection,
@@ -1165,7 +1156,7 @@ const readSections = (
   return found;
 };
 
-const locateSymbolCount = (
+const locateSymbolCount = function* (
   reader: BinaryReader,
   mappings: readonly FileMapping[],
   dynsym: SectionFacts | undefined,
@@ -1175,7 +1166,7 @@ const locateSymbolCount = (
   bits: 32 | 64,
   entrySize: number,
   issues: ElfDependencyIssue[],
-): number | null => {
+): Generator<void, number | null, void> {
   // A section running past the file end says nothing about its symbol count.
   if (
     dynsym !== undefined &&
@@ -1199,17 +1190,13 @@ const locateSymbolCount = (
         ? sysvSymbolCount(reader, mappings, tags.get(DT_HASH)!)
         : null;
   if (sysv !== null) return sysv;
-  const gnu =
+  const gnuWords =
     gnuHash !== undefined && gnuHash.size >= 16
-      ? gnuSymbolCountAt(
-          reader,
-          gnuHash.offset,
-          gnuHash.offset + gnuHash.size,
-          bits,
-        )
+      ? hashWords(reader, gnuHash.offset, gnuHash.offset + gnuHash.size)
       : tags.has(DT_GNU_HASH)
-        ? gnuSymbolCount(reader, mappings, tags.get(DT_GNU_HASH)!, bits)
+        ? mappedHashWords(reader, mappings, tags.get(DT_GNU_HASH)!)
         : null;
+  const gnu = gnuWords === null ? null : yield* gnuSymbolCount(gnuWords, bits);
   if (gnu !== null) return gnu;
   issues.push({
     code: "table_unavailable",
