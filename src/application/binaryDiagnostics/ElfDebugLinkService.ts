@@ -56,9 +56,8 @@ export class ElfDebugLinkService {
     const parameters = callerAnalysisParameters(rawInput)(input.value);
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) {
-      const partial = elfDebugLinkSchema.safeParse(
-        result.error.partialObservation,
-      );
+      const source = result.error.partialObservation;
+      const partial = elfDebugLinkSchema.safeParse(source);
       if (partial.success) {
         const partialInput =
           partial.data.verification === null &&
@@ -70,12 +69,21 @@ export class ElfDebugLinkService {
         if (
           partial.data.artifact.path === input.value.path &&
           validReport(partial.data, partialInput)
-        )
-          result.error.partialObservation = createElfDebugLinkEvidence(
+        ) {
+          const evidence = createElfDebugLinkEvidence(
             partial.data,
             this.provider.identity,
             parameters,
           );
+          // Cleanup completion can reveal any primary that shares this exact report.
+          for (
+            let owner: AnalysisError | undefined = result.error;
+            owner !== undefined;
+            owner = owner.cleanupPrimary
+          )
+            if (owner.partialObservation === source)
+              owner.partialObservation = evidence;
+        }
       }
       return result;
     }

@@ -1,3 +1,6 @@
+import { resolvedAnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { expect, it } from "vitest";
 import { ElfDebugLinkService } from "./ElfDebugLinkService.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
@@ -342,4 +345,43 @@ it("retains the selected candidate when cancellation leaves only the completed i
     parameters,
     normalized_result: partial,
   });
+});
+
+it("keeps caller Evidence after retained cleanup releases and reveals the primary failure", async () => {
+  const parameters = {
+    path: report.artifact.path,
+    candidate_path: "/artifacts/prog.debug",
+  };
+  const partial = {
+    ...report,
+    limitations: [
+      ...report.limitations,
+      ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+    ],
+  };
+  const primary = new AnalysisCancelledError("inspect_elf_debug_link", {
+    partialObservation: partial,
+  });
+  const completion = { cleanupReleased: false };
+  const failure = analysisErrorWithCleanupFailure(
+    primary,
+    new ProviderCleanupError(identity.id, [parameters.candidate_path], {
+      reason: "close failed",
+    }),
+    "inspect_elf_debug_link",
+  ).bindCleanupReleaseClaim(completion);
+  const service = new ElfDebugLinkService({
+    identity,
+    inspect: () => Promise.resolve(err(failure)),
+  });
+  const result = await service.inspect(parameters);
+  if (result.ok) throw new Error("Expected retained cleanup failure");
+  const before = parseEvidence(result.error.partialObservation);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  completion.cleanupReleased = true;
+  const resolved = resolvedAnalysisError(result.error);
+  expect(resolved).toBe(primary);
+  const after = parseEvidence(resolved.partialObservation);
+  expect(after).toEqual(before);
+  expect(after.parameters).toEqual(parameters);
 });
