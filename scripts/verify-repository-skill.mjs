@@ -23,6 +23,18 @@ const lockedSkillsCli = async (commands, root, workspace) => {
   };
 };
 
+const mapConcurrent = async (items, concurrency, worker) => {
+  let index = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (index < items.length) {
+        const current = index++;
+        await worker(items[current]);
+      }
+    }),
+  );
+};
+
 /** Exercise Skills' default root discovery without ignored build outputs. */
 export async function verifyRepositorySkill({ root, workspace, commands }) {
   const snapshot = join(workspace, "repository");
@@ -37,22 +49,32 @@ export async function verifyRepositorySkill({ root, workspace, commands }) {
   ).stdout
     .split("\0")
     .filter(Boolean);
+  const directories = new Set();
+  const filesToCopy = [];
   for (const entry of tracked) {
     const mode = entry.slice(0, 6);
     const path = entry.slice(7);
     const destination = join(snapshot, path);
     // A GitHub clone without submodule initialization has only these directories.
     if (mode === "160000") {
-      await mkdir(destination, { recursive: true });
+      directories.add(destination);
       continue;
     }
-    await mkdir(dirname(destination), { recursive: true });
-    await cp(join(root, path), destination, { verbatimSymlinks: true });
+    directories.add(dirname(destination));
+    filesToCopy.push({ source: join(root, path), destination });
   }
+  await Promise.all([
+    mkdir(consumer, { recursive: true }),
+    mkdir(home, { recursive: true }),
+    ...[...directories].map((directory) =>
+      mkdir(directory, { recursive: true }),
+    ),
+  ]);
+  await mapConcurrent(filesToCopy, 32, ({ source, destination }) =>
+    cp(source, destination, { verbatimSymlinks: true }),
+  );
   if (await pathExists(join(snapshot, "skills")))
     throw new Error("repository skill check must run without generated skills");
-  await mkdir(consumer, { recursive: true });
-  await mkdir(home, { recursive: true });
   const { version: skillsVersion, entry } = await lockedSkillsCli(
     commands,
     root,
