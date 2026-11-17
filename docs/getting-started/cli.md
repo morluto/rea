@@ -374,6 +374,16 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
+
+```sh
+rea inspect-artifact ./payload.bin --detail summary --evidence_output payload.json --json
+rea extract-artifact ./payload.bin --json
+```
+
+See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
+facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
@@ -402,6 +412,17 @@ rea extract-artifact ./boot.itb --json
 
 See [U-Boot FIT images](../fit-images.md) for recognition, data sources, hashes
 and limits.
+
+Inspect and extract an Android boot or vendor_boot image:
+
+```sh
+rea inspect-artifact ./boot.img --detail summary --evidence_output boot.json --json
+rea extract-artifact ./vendor_boot.img --json
+```
+
+See [Android boot images](../android-boot-image.md) for header versions 0 through
+4, vendor ramdisk table entries, stored compression, and the unverified AVB
+footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
 Inspect local model declarations without loading weights:
 
@@ -618,6 +639,30 @@ rea inspect-erlang-beam /absolute/path/to/app.beam --json
 The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](../erlang-beam.md).
+
+Inspect a Maven POM or Gradle module-metadata file without running Maven or
+Gradle, resolving a tree, or contacting a repository:
+
+```bash
+rea inspect-maven-gradle-metadata /absolute/path/to/pom.xml --json
+rea inspect-maven-gradle-metadata /absolute/path/to/demo-1.2.3.module --json
+```
+
+The workflow reports coordinates as spelled, dependency and
+dependencyManagement rows, BOM or platform notes, Gradle variants, and
+unresolved property or parent references. See
+[Maven POM and Gradle module metadata](../maven-gradle-metadata.md).
+
+Inspect a NuGet `.nupkg` without restoring the package or contacting a feed:
+
+```bash
+rea inspect-nuget-nupkg /absolute/path/to/Demo.Package.1.2.3.nupkg --json
+```
+
+The workflow reports package identity, license and repository fields as present,
+dependency groups with version ranges, and a ZIP contents inventory with
+path-derived folder roles. Missing or malformed `.nuspec` members still return
+the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and

@@ -245,6 +245,48 @@ export const xmlAttributeQuoteRanges = (
   }
 };
 
+/**
+ * Stops the stream once counting has passed the limit. It never leaves
+ * countXmlNodes, which returns the count instead of reporting a failure.
+ */
+class StopXmlNodeCount extends Error {}
+
+/**
+ * How many nodes the DOM projection of `source` would hold (elements,
+ * attributes, text, CDATA, comments and processing instructions), read as a
+ * stream without building a document. Counting stops at `limit + 1`, so a
+ * caller can refuse an oversized document before `parseXmlDocument`
+ * allocates its tree. Ill-formed XML returns the nodes read before the
+ * error; `parseXmlDocument` reports the failure itself.
+ */
+export const countXmlNodes = (source: string, limit: number): number => {
+  let nodes = 0;
+  const count = () => {
+    nodes += 1;
+    if (nodes > limit) throw new StopXmlNodeCount();
+  };
+  try {
+    checkXmlSyntax(source, "allow", (syntax) => {
+      // Only the syntax owner's explicit error signal may defer diagnosis to
+      // parseXmlDocument. An unrelated counting failure cannot admit a DOM.
+      syntax.on("error", (cause) => {
+        throw notWellFormed(cause);
+      });
+      syntax.on("opentagstart", count);
+      syntax.on("attribute", count);
+      syntax.on("text", count);
+      syntax.on("cdata", count);
+      syntax.on("comment", count);
+      syntax.on("processinginstruction", count);
+    });
+  } catch (cause: unknown) {
+    if (!(cause instanceof StopXmlNodeCount) && !isXmlFailure(cause))
+      throw cause;
+    // A known count stop, or syntax failure parseXmlDocument reports.
+  }
+  return nodes;
+};
+
 /** One boundary owns strict XML syntax, under a DOCTYPE policy, and the source-located DOM projection. */
 export const parseXmlDocument = (
   source: string,

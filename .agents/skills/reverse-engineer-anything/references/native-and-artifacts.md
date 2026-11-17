@@ -139,6 +139,18 @@ kind `cyclonedx` for one CycloneDX 1.6 document. Build-kind packages are
 `scope: excluded`. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)
 and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
 
+## Maven POM and Gradle module metadata
+
+Use `inspect_maven_gradle_metadata` for an explicit local Maven `pom.xml` or
+Gradle `.module` file when the question concerns declared coordinates,
+dependency scopes and exclusions, BOM or platform constraints, or unresolved
+property and parent references. No `open_binary`, Maven, Gradle, or repository
+access is required. The CLI equivalent is `inspect-maven-gradle-metadata PATH`.
+Preserve artifact SHA-256, versions as spelled, and `unresolved` entries.
+Interpolation and inheritance are not performed. A missing version is not a
+resolved BOM selection. See
+[Maven POM and Gradle module metadata](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
+
 ## PE Authenticode certificate tables
 
 Use `inspect_pe_certificates` for an explicit local PE32/PE32+ image when the
@@ -370,6 +382,19 @@ pages from `parent_evidence_id` or the complete Evidence bundle. Same-name
 exports retain every arity and original atom index. CLI summary delivery requires
 `--evidence_output`. Null table counts remain distinct from decoded empty tables. See
 [Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+
+## NuGet packages
+
+Use `inspect_nuget_nupkg` for an explicit local `.nupkg` when the question
+concerns package identity, license, repository, dependency groups, or the ZIP
+contents inventory. No `open_binary`, restore, feed access, or target execution
+is required. The CLI equivalent is `inspect-nuget-nupkg PATH`. Preserve artifact
+SHA-256, `.nuspec` fields as present, dependency version ranges as spelled, and
+path-derived member roles (`lib`, `ref`, `runtimes`, and the other NuGet folder
+conventions). Missing, ambiguous, or malformed `.nuspec` members succeed with
+inventory and limitations. Encrypted members are listed and not extracted.
+Roles are folder conventions, not restore-time asset selection. See
+[NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
 ## SQLite snapshots
 
@@ -909,6 +934,22 @@ IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.
 Multi-file components retain their aligned physical ranges; the full payload
 is also materialized. Unknown name text retains its original 32 bytes. See
 [U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
+
+Android boot, init_boot, recovery, and vendor_boot images use the same
+inspection and extraction workflows. `ANDROID!` versions 0-4 and `VNDRBOOT`
+versions 3-4 expose header facts and stored component bytes. The header does
+not record whether an `ANDROID!` image is boot, init_boot, or recovery.
+Command lines and names are target-derived. gzip, lz4, and zstd payloads stay
+stored. The v4 signature and any AVB footer are reported with sizes and are
+not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
+[Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
+
+Android A/B OTA `payload.bin` files (CrAU v2) use the same
+inspection/extraction workflows. Prefer a retained summary for header,
+partition table, dynamic groups and signature counts. Signatures are not
+verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
+operations stay inventoried with unavailable content. See
+[Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
 
 ## ESP images
 

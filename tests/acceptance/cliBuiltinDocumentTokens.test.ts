@@ -13,18 +13,14 @@ workspaceCliTest(
         arguments_.join(" ") === "--llms-full --token-limit 1";
       const result = await cli.run({
         ...invocation,
-        freshProcess: !(
-          !freshTokenCount &&
-          !freshTokenLimit &&
-          (arguments_.includes("--token-count") ||
-            arguments_.includes("--token-limit"))
-        ),
+        freshProcess: freshTokenCount || freshTokenLimit,
       });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stderr).toBe("");
       return result.stdout;
     };
 
+    let llmsFullDocument = "";
     for (const args of [
       ["--llms"],
       ["--llms-full"],
@@ -33,12 +29,14 @@ workspaceCliTest(
       ["inspect-devicetree", "--schema", "--format", "json"],
     ]) {
       const document = await run(...args);
+      if (args.length === 1 && args[0] === "--llms-full")
+        llmsFullDocument = document;
       expect(await run(...args, "--token-count")).toBe(
         `${estimateTokenCount(document)}\n`,
       );
     }
 
-    const document = await run("--llms-full");
+    const document = llmsFullDocument;
     const page = await run("--llms-full", "--token-limit", "1");
     expect(page.length).toBeLessThan(document.length);
     expect(page).toMatch(/\[truncated: showing tokens 0–1 of \d+\]\n$/);
