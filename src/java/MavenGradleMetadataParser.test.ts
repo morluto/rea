@@ -12,7 +12,6 @@ import {
   gradleModuleFixture,
   mavenPomFixture,
 } from "./MavenGradleMetadata.fixture.js";
-import { MavenGradleMetadataReportFailure } from "./MavenGradleMetadata.errors.js";
 import { MavenGradleMetadataProvider } from "./MavenGradleMetadataProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
@@ -727,7 +726,7 @@ it("refuses Gradle metadata whose rows would repeat variant names past the repor
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
     }),
-  ).toThrow(MavenGradleMetadataReportFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("reports the repeated variant-name refusal as a fixed report allowance", async () => {
@@ -847,11 +846,12 @@ it.for([
     } catch (cause) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(MavenGradleMetadataReportFailure);
+    expect(failure).toBeInstanceOf(ParseFailureError);
     expect(failure).toMatchObject({
-      allowance: "dependency_rows",
-      limit: 65_536,
-      required: 65_537,
+      failure: {
+        kind: "limit",
+        limit: { name: "dependency_rows", maximum: 65_536, required: 65_537 },
+      },
     });
   },
 );
@@ -869,10 +869,11 @@ it("refuses a POM past the XML node allowance before building its tree", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(MavenGradleMetadataReportFailure);
+  expect(failure).toBeInstanceOf(ParseFailureError);
   expect(failure).toMatchObject({
-    allowance: "xml_nodes",
-    limit: 1_048_576,
-    required: 1_048_577,
+    failure: {
+      kind: "limit",
+      limit: { name: "xml_nodes", maximum: 1_048_576, required: 1_048_577 },
+    },
   });
 });

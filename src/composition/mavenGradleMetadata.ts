@@ -1,4 +1,4 @@
-import type { MavenGradleMetadataPort } from "../application/java/MavenGradleMetadataPort.js";
+import type { MavenGradleMetadataPort } from "../ports/java/MavenGradleMetadataPort.js";
 import { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 import { MavenGradleMetadataProvider } from "../java/MavenGradleMetadataProvider.js";
 

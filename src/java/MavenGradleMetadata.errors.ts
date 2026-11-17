@@ -1,3 +1,4 @@
+import { decodeLimit } from "../domain/parseFailure.js";
 /** The ParseFailure format of a Maven POM or Gradle module metadata file. */
 export const MAVEN_GRADLE_METADATA_FORMAT = "maven-gradle-metadata";
 
@@ -26,13 +27,13 @@ const REPORT_REFUSALS: Readonly<
  * row (with its unresolved-coordinate records) and each repeated variant name
  * expands a few input bytes into a much larger report.
  */
-export class MavenGradleMetadataReportFailure extends Error {
-  constructor(
-    readonly allowance: MavenGradleReportAllowance,
-    readonly limit: number,
-    readonly required: number,
-  ) {
-    super(REPORT_REFUSALS[allowance](required, limit));
-    this.name = "MavenGradleMetadataReportFailure";
-  }
-}
+export const metadataReportLimit = (
+  allowance: MavenGradleReportAllowance,
+  maximum: number,
+  required: number,
+) =>
+  decodeLimit(
+    MAVEN_GRADLE_METADATA_FORMAT,
+    REPORT_REFUSALS[allowance](required, maximum),
+    { name: allowance, maximum, required },
+  );

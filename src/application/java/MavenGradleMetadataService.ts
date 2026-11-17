@@ -1,5 +1,5 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import type { MavenGradleMetadataPort } from "./MavenGradleMetadataPort.js";
+import type { MavenGradleMetadataPort } from "../../ports/java/MavenGradleMetadataPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -10,7 +10,10 @@ import {
 } from "../../domain/java/mavenGradleMetadata.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_maven_gradle_metadata";
 
@@ -26,6 +29,7 @@ export class MavenGradleMetadataService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
+    const selectedParameters = callerAnalysisParameters(rawInput);
     const input = parseAnalysisInput(
       OPERATION,
       rawInput,
@@ -58,7 +62,7 @@ export class MavenGradleMetadataService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: callerParameters(rawInput, input.value),
+          parameters: selectedParameters(input.value),
           result: value,
           confidence: "observed",
           limitations: value.limitations,
@@ -76,20 +80,6 @@ export class MavenGradleMetadataService {
     );
   }
 }
-
-/**
- * The request as the caller sent it: the schema's default read budget is
- * applied for the provider call but stays out of Evidence when omitted.
- */
-const callerParameters = (
-  rawInput: unknown,
-  input: { path: string; max_file_bytes: number },
-): { path: string; max_file_bytes?: number } =>
-  typeof rawInput === "object" &&
-  rawInput !== null &&
-  (rawInput as { max_file_bytes?: unknown }).max_file_bytes !== undefined
-    ? { path: input.path, max_file_bytes: input.max_file_bytes }
-    : { path: input.path };
 
 const validReport = (
   report: MavenGradleMetadata,

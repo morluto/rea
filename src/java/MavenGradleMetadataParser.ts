@@ -1,5 +1,6 @@
+import { Budget } from "../domain/budget.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { isRecord } from "../kernel/isRecord.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
@@ -19,10 +20,10 @@ import {
   type MavenGradleMetadata,
   type MavenGradleUnresolved,
 } from "../domain/java/mavenGradleMetadata.js";
-import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
+import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   MAVEN_GRADLE_METADATA_FORMAT,
-  MavenGradleMetadataReportFailure,
+  metadataReportLimit,
 } from "./MavenGradleMetadata.errors.js";
 
 const BASE_LIMITATIONS = [
@@ -78,7 +79,7 @@ const isMavenProjectRoot = (root: Node | null): root is Element => {
 /** Refuse a report whose rows would outgrow the fixed row allowance. */
 const admitDependencyRows = (rows: number): void => {
   if (rows > MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS)
-    throw new MavenGradleMetadataReportFailure(
+    throw metadataReportLimit(
       "dependency_rows",
       MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
       rows,
@@ -117,22 +118,6 @@ const boolOf = (value: string | null): boolean | null => {
   if (folded === "true") return true;
   if (folded === "false") return false;
   return null;
-};
-
-/** Remove URL userinfo; an unlocatable credential span withholds the whole URL. */
-const redactTransportCredentials = (
-  value: string | null,
-): { url: string | null; url_credentials_redacted: boolean } => {
-  if (value === null) return { url: null, url_credentials_redacted: false };
-  const { credentials } = parseRecordedTransportUrl(value);
-  if (credentials === null)
-    return { url: value, url_credentials_redacted: false };
-  if (credentials === "ambiguous")
-    return { url: null, url_credentials_redacted: true };
-  return {
-    url: `${value.slice(0, credentials.start)}${value.slice(credentials.end)}`,
-    url_credentials_redacted: true,
-  };
 };
 
 const pushUnresolved = (
@@ -346,7 +331,7 @@ const parsePom = (
   // Count nodes as a stream first, so the tree is never built past its allowance.
   const nodes = countXmlNodes(xml, MAVEN_GRADLE_METADATA_XML_NODES);
   if (nodes > MAVEN_GRADLE_METADATA_XML_NODES)
-    throw new MavenGradleMetadataReportFailure(
+    throw metadataReportLimit(
       "xml_nodes",
       MAVEN_GRADLE_METADATA_XML_NODES,
       nodes,
@@ -417,7 +402,7 @@ const parsePom = (
           const {
             url: value,
             url_credentials_redacted: value_credentials_redacted,
-          } = redactTransportCredentials(elementText(property));
+          } = redactRecordedTransportUrl(elementText(property));
           return [{ name, value, value_credentials_redacted }];
         });
   const dependencyManagementElement = soleNamed(root, "dependencyManagement");
@@ -527,27 +512,21 @@ const parseGradle = (
   source: string,
   artifact: { path: string; sha256: string; bytes: number },
 ): MavenGradleMetadata => {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source) as unknown;
-  } catch {
-    // The engine's message quotes source text, which may hold URL credentials.
+  const json = parseJsonWithDuplicatePolicy(source, "reject");
+  if (!json.ok) {
+    if (json.duplicate !== undefined)
+      throw malformedInput(
+        MAVEN_GRADLE_METADATA_FORMAT,
+        `Gradle module metadata declares a field more than once in one object (offset ${String(json.duplicate.offset)}).`,
+      );
+    // Engine diagnostics can quote credential-bearing source; keep the public reason generic.
     throw malformedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
       "Gradle module metadata is not well-formed JSON.",
+      { cause: json.cause },
     );
   }
-  // JSON.parse keeps the last of a repeated field, which could hide a
-  // declaration (for example a second empty `dependencies`) while coverage
-  // still read as complete. Refuse the ambiguous document instead. Report
-  // only the offset: the member name is source text and may hold URL
-  // credentials.
-  const duplicate = findDuplicateJsonMember(source);
-  if (duplicate !== undefined)
-    throw malformedInput(
-      MAVEN_GRADLE_METADATA_FORMAT,
-      `Gradle module metadata declares a field more than once in one object (offset ${String(duplicate.offset)}).`,
-    );
+  const parsed = json.value;
   if (!isRecord(parsed))
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
@@ -596,7 +575,9 @@ const parseGradle = (
   const gradleVariants: NonNullable<MavenGradleMetadata["gradle"]>["variants"] =
     [];
   let nextIndex = 0;
-  let repeatedVariantNameChars = 0;
+  const repeatedVariantNames = new Budget(
+    MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
+  );
   for (const variant of variants) {
     const name = textOf(variant.name);
     const attributes = isRecord(variant.attributes) ? variant.attributes : {};
@@ -621,17 +602,15 @@ const parseGradle = (
     );
     // Every row repeats its variant's name; admit that expansion before
     // building rows, so a long name times many rows cannot outgrow the input.
-    repeatedVariantNameChars +=
+    const repeated =
       (name?.length ?? 0) * (variantDependencies.length + constraints.length);
-    if (
-      repeatedVariantNameChars >
-      MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS
-    )
-      throw new MavenGradleMetadataReportFailure(
+    repeatedVariantNames.charge(repeated, () =>
+      metadataReportLimit(
         "repeated_variant_name_chars",
-        MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
-        repeatedVariantNameChars,
-      );
+        repeatedVariantNames.maximum,
+        repeatedVariantNames.used + repeated,
+      ),
+    );
     for (const dependency of variantDependencies)
       dependencies.push(
         parseGradleDependency(
@@ -665,7 +644,7 @@ const parseGradle = (
               group_id: textOf(available.group),
               artifact_id: textOf(available.module),
               version: textOf(available.version),
-              ...redactTransportCredentials(textOf(available.url)),
+              ...redactRecordedTransportUrl(textOf(available.url)),
             },
       dependency_count: variantDependencies.length,
       constraint_count: constraints.length,
