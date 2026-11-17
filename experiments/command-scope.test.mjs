@@ -27,6 +27,66 @@ test("unwraps a Windows executable selection before invoking the command owner",
   assert.equal(result.stdout, "selected");
 });
 
+for (const command of ["apksigner", "C:\\Android SDK\\apksigner.bat"]) {
+  test(`wraps Windows SDK batch command ${command} through the owned cmd.exe launch`, async () => {
+    let selected;
+    await withCommands(
+      (run) =>
+        run(command, ["sign", "C:\\fixture output\\aligned.apk"], {
+          environment: {
+            PATH: "C:\\Android SDK",
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            SystemRoot: "D:\\Windows",
+          },
+        }),
+      {
+        platform: "win32",
+        windowsExecutableLookup: {
+          isFile: (path) =>
+            path.toLowerCase() === "c:\\android sdk\\apksigner.bat",
+        },
+        prepareOwnership: async () => {},
+        runCommand: async (input) => {
+          selected = input;
+          return { stdout: { text: "" }, stderr: { text: "" }, exitCode: 0 };
+        },
+      },
+    );
+    assert.equal(selected.command, "D:\\Windows\\System32\\cmd.exe");
+    assert.equal(selected.windowsVerbatimArguments, true);
+    assert.deepEqual(selected.arguments.slice(0, -1), [
+      "/d",
+      "/e:on",
+      "/v:off",
+      "/s",
+      "/c",
+    ]);
+    assert.equal(
+      selected.arguments.at(-1).toLowerCase(),
+      '""c:\\android sdk\\apksigner.bat" "sign" "c:\\fixture output\\aligned.apk""',
+    );
+  });
+}
+
+test("rejects unsafe batch tokens before preparation or launch", async () => {
+  let preparations = 0;
+  let launches = 0;
+  await assert.rejects(
+    withCommands((run) => run("C:\\sdk\\apksigner.bat", ["a&b.apk"]), {
+      platform: "win32",
+      prepareOwnership: async () => {
+        preparations++;
+      },
+      runCommand: async () => {
+        launches++;
+      },
+    }),
+    (error) => error.reason === "metacharacter",
+  );
+  assert.equal(preparations, 0);
+  assert.equal(launches, 0);
+});
+
 for (const [environment, kind] of [
   [{ PATH: "", PATHEXT: ".EXE" }, "not_found"],
   [{ PATH: "", PATHEXT: ".EXE;C:\\bad" }, "invalid_extension"],

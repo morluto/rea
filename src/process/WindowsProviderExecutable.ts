@@ -11,6 +11,8 @@ export interface WindowsExecutableLookup {
   readonly cwd?: string;
   /** Test seam for Windows paths when running on a non-Windows host. */
   readonly isFile?: (path: string) => boolean;
+  /** The caller must wrap selected batch paths with windowsBatchCommand. */
+  readonly allowBatch?: boolean;
 }
 
 const isRegularFile = (path: string): boolean => {
@@ -44,7 +46,10 @@ export const resolveWindowsProviderExecutable = (
   )
     return ok(win32.resolve(cwd, executable));
 
-  const candidates = windowsPathCandidates(executable, environment, { cwd });
+  const candidates = windowsPathCandidates(executable, environment, {
+    cwd,
+    allowBatch: lookup.allowBatch === true,
+  });
   if (!candidates.ok) return candidates;
   for (const { path } of candidates.value)
     if ((lookup.isFile ?? isRegularFile)(path)) return ok(path);

@@ -91,6 +91,24 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toEqual(err({ kind: "invalid_extension", extension: "C:\\bad" }));
   });
 
+  it("finds SDK batch launchers only when the caller opts into batch wrapping", () => {
+    const environment = {
+      PATH: "C:\\Android SDK\\build-tools",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+    };
+    const expected = "C:\\Android SDK\\build-tools\\apksigner.BAT";
+    const lookup = windowsLookup("C:\\work", [expected]);
+    expect(
+      resolveWindowsProviderExecutable("apksigner", environment, lookup),
+    ).toEqual(err({ kind: "not_found" }));
+    expect(
+      resolveWindowsProviderExecutable("apksigner", environment, {
+        ...lookup,
+        allowBatch: true,
+      }),
+    ).toEqual(ok(expected));
+  });
+
   it("passes an absolute selected command through provider composition", () => {
     const commands = createReverseEngineeringCommandPort(
       { REA_OBJDUMP_COMMAND: "C:\\tools\\objdump.exe" },

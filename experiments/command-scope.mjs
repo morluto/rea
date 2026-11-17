@@ -8,6 +8,10 @@ import { resolveWindowsProviderExecutable } from "../dist/process/WindowsProvide
 import { snapshotEnvironment } from "../dist/process/snapshotEnvironment.js";
 import { retainOwnedCommandCleanup } from "../dist/providers/OwnedCommandCleanup.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
+import {
+  isWindowsBatchFile,
+  windowsBatchCommand,
+} from "../dist/process/WindowsBatchCommand.js";
 
 /** Settle every retained command before dependent resources can be reconciled. */
 export async function settleCommandOwners(
@@ -54,6 +58,7 @@ export async function withCommands(
     runCommand = runOwnedCommand,
     prepareOwnership = prepareProcessOwnershipInspection,
     platform = HOST_PLATFORM.platform,
+    windowsExecutableLookup = {},
   } = {},
 ) {
   const controller = new AbortController();
@@ -83,9 +88,13 @@ export async function withCommands(
       platform,
     );
     let selectedCommand = command;
+    let selectedArguments = args;
+    let windowsVerbatimArguments = false;
     if (platform === "win32") {
       const selected = resolveWindowsProviderExecutable(command, environment, {
+        ...windowsExecutableLookup,
         cwd: options.cwd,
+        allowBatch: true,
       });
       if (!selected.ok)
         throw new Error(
@@ -93,6 +102,16 @@ export async function withCommands(
           { cause: selected.error },
         );
       selectedCommand = selected.value;
+      if (isWindowsBatchFile(selectedCommand)) {
+        const invocation = windowsBatchCommand({
+          environment,
+          batchPath: selectedCommand,
+          arguments: args,
+        });
+        selectedCommand = invocation.command;
+        selectedArguments = invocation.arguments;
+        windowsVerbatimArguments = true;
+      }
     }
     try {
       await prepareOwnership(controller.signal);
@@ -110,7 +129,8 @@ export async function withCommands(
     const result = await runCommand(
       {
         command: selectedCommand,
-        arguments: args,
+        arguments: selectedArguments,
+        windowsVerbatimArguments,
         runId: randomUUID(),
         expectedCommand: null,
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
