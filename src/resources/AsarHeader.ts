@@ -1,7 +1,7 @@
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -445,22 +445,14 @@ export const readAsarHeader = async (
       { cause },
     );
   }
-  const header = JSON.parse(json) as unknown;
-  rejectDuplicateAsarHeaderMembers(json);
-  return header;
-};
-
-/**
- * `JSON.parse` keeps only the last of repeated member names, so a second
- * declaration of a path would hide the first from the listing while coverage
- * still read as complete. Treat a repeated name as a malformed index, like the
- * unsafe path components the listing already refuses.
- */
-const rejectDuplicateAsarHeaderMembers = (json: string): void => {
-  const duplicate = findDuplicateJsonMember(json);
-  if (duplicate !== undefined)
-    throw new ArtifactReaderFailure(
-      "format",
-      `ASAR JSON header declares member ${JSON.stringify(duplicate.name)} more than once in one object (offset ${String(duplicate.offset)})`,
-    );
+  const parsed = parseJsonWithDuplicatePolicy(json, "reject");
+  if (!parsed.ok) {
+    if (parsed.duplicate !== undefined)
+      throw new ArtifactReaderFailure(
+        "format",
+        `ASAR JSON header declares member ${JSON.stringify(parsed.duplicate.name)} more than once in one object (offset ${String(parsed.duplicate.offset)})`,
+      );
+    throw parsed.cause;
+  }
+  return parsed.value;
 };

@@ -544,9 +544,14 @@ relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
 
-Pull-request scans are cancelled when superseded. Active scans on `main` finish
-so frequent pushes cannot prevent a complete baseline from being uploaded.
-Cancelled runs skip the SARIF artifact upload when no report was produced.
+Pull-request scans are cancelled when superseded, skip pure test/prose diffs via
+`paths-ignore`, and select only the CodeQL languages (`javascript-typescript`,
+`python`, `actions`) whose production inputs changed (failing closed to all
+three languages on shared CodeQL configuration or unclassified paths). Active
+scans on `main`, weekly schedules, and manual dispatches always analyze all
+three languages so frequent pushes cannot prevent a complete baseline from being
+uploaded. Cancelled runs skip the SARIF artifact upload when no report was
+produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
@@ -1168,7 +1173,7 @@ or qualify the release revision for mutation coverage.
 
 Fast CI starts the source-only projects after classification, independently of
 build and static checks, and runs twelve built-dependent shards after the build.
-Those thirteen test jobs still select every portable test. Full qualification keeps six
+Those thirteen test jobs still select every portable test. Full qualification keeps twelve
 complete Vitest shards with coverage. Neither tier retries tests. Canonical
 project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled
@@ -1249,11 +1254,13 @@ separate and grows when more shard jobs compete for runners. The npm download
 cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
 Hosted CI jobs use four workers; other hosts stay at two
-because they are shared with other checks. Full qualification keeps six covered
+because they are shared with other checks. Full qualification keeps twelve covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs
-hourly or on manual dispatch. It uploads `ci-job-timings-batch` with raw API pages and
+every six hours or on manual dispatch, and snapshots pull-request CI health across
+the preceding twelve hours using full ISO 8601 timestamps within a ten-page
+(1,000-run) API budget. It uploads `ci-job-timings-batch` with raw API pages and
 a normalized point-in-time report for each collected workflow attempt, plus a
 batch manifest describing examined coverage, failures, and limits. Overlapping
 lookback windows may collect an attempt again; identify records by run ID and
@@ -1283,9 +1290,18 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
-the same workflow's Turbo cache for portable compiled JavaScript, skills, and
-catalogs. The key parser retains the validated `test:prepare` task identities in
+POSIX native package jobs, documentation checks, Go binary verification, and the
+Apple artifact lane reuse the same workflow's portable Turbo cache
+(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+(`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
+than Linux's accelerated `tsrs` checker, so they restore and publish a separate
+Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to
+two generations by `cache-retention.mjs`). `windows-native-build` caches
+cross-compiled MinGW outputs keyed by source/fixture hashes, runner
+`ImageOS`/`ImageVersion`, and UTC date (bounding lifetime to 24 hours so
+upstream toolchain updates refresh daily) while running
+`npm run verify:windows-native:artifact` unconditionally on every cache hit. The
+key parser retains the validated `test:prepare` task identities in
 `.cache/ci-build-plan.json`; staging reads this plan without starting another
 Turbo run that could evict cache entries. The producer stages matching archives,
 metadata, and available manifests into `.cache/ci-build-cache/`.
@@ -1355,24 +1371,32 @@ revision and selects:
   fake provider process;
 - tests whose text names a changed path.
 
-Verifier scripts (`scripts/verify-*.mjs`, `scripts/verify/**/*.mjs`) are traced
-like source modules. Changed Markdown outside `src/` and `tests/` selects only
-the tests that name it. Declarations, guard baselines
-(`scripts/verify/baselines/*.json`) and advertised-schema summaries select no
-tests, because the static and build jobs check them.
+Verifier scripts (`scripts/verify-*.mjs`, `scripts/verify/**/*.mjs`) and shared
+script libraries (`scripts/lib/*`, when no untraced consumer imports or names
+them) are traced like source modules. Changed Markdown, non-code `docs/` assets,
+issue templates, `LICENSE`, and `licenses/` inventories outside `src/` and
+`tests/` select only the tests that name them. Declarations, guard and layer
+baselines (`scripts/verify/baselines/*.json`,
+`scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
+analysis-efficiency test scripts, and advertised-schema summaries select no
+portable Vitest tests unless named by path, because static, Python, and build
+jobs check them. Non-module CLI parity fixtures with a single known test suite
+are bound in `EXPLICIT_FIXTURE_OWNERS` and fail closed if their owner is missing.
 
 The PR falls back to the complete fast suite when it cannot decide:
 
-- a shared boundary (`src/process/`, `src/filesystem/`, `src/contracts/tool*`,
-  `src/server/createServer*`, `src/cli.ts`, `scripts/ci/`) changed;
+- a shared production boundary (`src/process/`, `src/filesystem/`,
+  `src/contracts/tool*`, `src/server/createServer*`, `src/cli.ts`,
+  `scripts/ci/`) changed;
 - any other changed input is not traced, such as workflows, package metadata,
-  build and test-runner scripts, `scripts/lib/`, fixtures or data;
+  build and test-runner scripts, untraced `scripts/lib/` consumers, or unmapped
+  fixtures and data;
 - no test is selected;
-- more than 150 test files are selected;
+- more than 400 test files are selected;
 - a selected file has no single owning test project.
 
-A selection runs as one `Test shard (k/n)` job per group of up to 40 files, at
-most four jobs, using exact file identity (`scripts/ci/test-group.mjs selected`).
+A selection runs as one `Test shard (k/n)` job per group of up to 50 files, at
+most eight jobs, using exact file identity (`scripts/ci/test-group.mjs selected`).
 The separate `Source tests` job does not run, because the groups include the
 selected source tests. The `Classify changes` summary gives the mode and its
 reason.

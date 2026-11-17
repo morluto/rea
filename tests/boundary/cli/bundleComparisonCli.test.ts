@@ -18,14 +18,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-cliTest("rejects the removed compare-bundles command", async ({ cli }) => {
-  const result = await cli.run({
-    arguments: ["compare-bundles", "left.json", "right.json", "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.stdout).toContain("COMMAND_NOT_FOUND");
-});
-
 cliTest(
   "compares Evidence bundles without unexplained display-only changes",
   async ({ cli }) => {

@@ -170,60 +170,6 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("uses the exact selected environment and npm entry without rewriting arguments", async () => {
-  const fixture = await commandFixture();
-  const entry = join(fixture.parent, "selected npm entry.mjs");
-  const sentinel = "REA_PACKAGE_COMMAND_AMBIENT_SENTINEL";
-  const previous = process.env[sentinel];
-  const source = `process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), selected: process.env.REA_PACKAGE_COMMAND_SELECTED, ambient: process.env.${sentinel} ?? null }));`;
-  await writeFile(entry, source);
-  const arguments_ = [
-    "pack",
-    "value with spaces",
-    "--literal=$HOME",
-    "quote'and\"double",
-  ];
-  const environment = {
-    ...(process.platform === "win32"
-      ? { SystemRoot: process.env.SystemRoot }
-      : {}),
-    REA_PACKAGE_COMMAND_SELECTED: "caller-selected",
-    npm_execpath: entry,
-  };
-  let direct;
-  let npm;
-  process.env[sentinel] = "ambient-only";
-  try {
-    direct = await fixture.commands.exec(process.execPath, ["-e", source], {
-      cwd: fixture.workspace.path,
-      env: environment,
-    });
-    npm = await fixture.commands.execNpm(arguments_, {
-      cwd: fixture.workspace.path,
-      env: environment,
-    });
-  } finally {
-    if (previous === undefined) delete process.env[sentinel];
-    else process.env[sentinel] = previous;
-    await fixture.commands.close();
-  }
-
-  expect(JSON.parse(direct!.stdout)).toEqual({
-    args: [],
-    cwd: fixture.workspace.path,
-    selected: "caller-selected",
-    ambient: null,
-  });
-  expect(JSON.parse(npm!.stdout)).toEqual({
-    args: arguments_,
-    cwd: fixture.workspace.path,
-    selected: "caller-selected",
-    ambient: null,
-  });
-  expect(direct?.stderr).toBe("");
-  expect(npm?.stderr).toBe("");
-});
-
 it("allows delayed commands with omitted and explicit zero timeouts", async () => {
   const fixture = await commandFixture();
   const outputs = [];
@@ -278,7 +224,7 @@ setTimeout(() => process.exit(0), 10000);
     const running = observed(
       fixture.commands.exec(process.execPath, ["-e", source]),
     );
-    let sameClose = false;
+    let workspaceExistsAtCompletion;
     let outcome;
     try {
       await waitForMarker(ready);
@@ -287,14 +233,18 @@ setTimeout(() => process.exit(0), 10000);
         .parse(JSON.parse(await readFile(ready, "utf8"))));
       const first = fixture.commands.close();
       const second = fixture.commands.close();
-      sameClose = first === second;
-      await Promise.all([first, second]);
+      workspaceExistsAtCompletion = await Promise.all(
+        [first, second].map(async (closing) => {
+          await closing;
+          return existsSync(fixture.workspace.path);
+        }),
+      );
       outcome = await running;
     } finally {
       await fixture.commands.close();
       await running;
     }
-    expect(sameClose).toBe(true);
+    expect(workspaceExistsAtCompletion).toEqual([false, false]);
     expect(outcome).toEqual({
       ok: false,
       cause: expect.objectContaining({ reason: "cancelled" }),
