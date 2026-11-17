@@ -7,11 +7,11 @@ import { createGhApiRequest } from "./github-api.mjs";
 const OUTPUT_DIRECTORY = join(".cache", "ci-pr-health");
 const PAGE_SIZE = 100;
 const MAX_PULL_REQUEST_PAGES = 3;
-const MAX_WORKFLOW_RUN_PAGES = 5;
+const MAX_WORKFLOW_RUN_PAGES = 10;
 const MAX_PULL_REQUEST_DETAILS = 40;
 const MAX_API_REQUESTS =
   MAX_PULL_REQUEST_PAGES + MAX_WORKFLOW_RUN_PAGES + MAX_PULL_REQUEST_DETAILS;
-const LOOKBACK_DAYS = 14;
+const LOOKBACK_DAYS = 1;
 const MAX_LOOKBACK_DAYS = 30;
 const MAX_TOTAL_TIME_MS = 60_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/iu;

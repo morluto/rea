@@ -354,7 +354,7 @@ it.each([false, true])(
       now: observedAt,
       apiRequest,
     });
-    expect(report.scan.workflowRunPages).toBe(5);
+    expect(report.scan.workflowRunPages).toBe(10);
     expect(report.scan.workflowRunInventoryComplete).toBe(false);
     const firstPull = report.pullRequests[0];
     if (firstPull === undefined) throw new Error("fixture PR was not scanned");
