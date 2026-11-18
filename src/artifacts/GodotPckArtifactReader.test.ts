@@ -18,10 +18,11 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 
-import type {
-  ArtifactEntry,
-  ArtifactReaderTraversal,
-  ArtifactTraversalOptions,
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
 } from "../resources/ArtifactReader.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
@@ -412,7 +413,7 @@ describe("GodotPckArtifactReader member streams", () => {
   );
 
   it("types cancellation during a member read instead of crashing", async () => {
-    const data = "x".repeat(4 * 1024 * 1024);
+    const data = "x".repeat(256 * 1024);
     await withReader(
       buildGodotPck(3, [{ path: "big.bin", data }]),
       async (reader) => {
@@ -421,26 +422,39 @@ describe("GodotPckArtifactReader member streams", () => {
         const controller = new AbortController();
         const stream = await reader.open(entry, controller.signal);
         const chunks = stream[Symbol.asyncIterator]();
-        await chunks.next();
-        controller.abort();
-        await expect(chunks.next()).rejects.toMatchObject({
-          reason: "cancelled",
-        });
+        const prefix = await chunks.next();
+        if (prefix.done || !Buffer.isBuffer(prefix.value))
+          throw new Error("Expected member data before cancellation");
+        expect(prefix.value.byteLength).toBeLessThan(data.length);
+        const reason = new Error("stopped after reading a member prefix");
+        controller.abort(reason);
+        const failure = await chunks.next().catch((cause: unknown) => cause);
+        if (!(failure instanceof ArtifactReaderFailure))
+          throw new Error("Expected a typed member cancellation", {
+            cause: failure,
+          });
+        expect(failure.reason).toBe("cancelled");
+        expect(failure.cause).toBe(reason);
       },
     );
   });
 
   it("keeps the reader usable after a consumer abandons a member", async () => {
-    const data = "x".repeat(4 * 1024 * 1024);
+    const data = "x".repeat(256 * 1024);
     await withReader(
       buildGodotPck(3, [{ path: "big.bin", data }]),
       async (reader) => {
         const [entry] = await list(reader);
         if (entry === undefined) throw new Error("expected one entry");
         const abandoned = await reader.open(entry);
-        await abandoned[Symbol.asyncIterator]().next();
+        const prefix = await abandoned[Symbol.asyncIterator]().next();
+        if (prefix.done || !Buffer.isBuffer(prefix.value))
+          throw new Error("Expected member data before abandonment");
+        expect(prefix.value.byteLength).toBeLessThan(data.length);
+        const closed = once(abandoned, "close");
         abandoned.destroy();
-        expect((await text(await reader.open(entry))).length).toBe(data.length);
+        await closed;
+        expect(await text(await reader.open(entry))).toBe(data);
       },
     );
   });
