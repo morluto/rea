@@ -8,7 +8,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
-import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../../tests/support/lifecycleHarness.js";
 
 const closeFailureControl = vi.hoisted(() => ({
   failure: null as Error | null,
@@ -79,11 +82,21 @@ const renamedDocument = () => {
 const dataPlane = (
   intake: Partial<StateIntake> = {},
   stopped?: AbortSignal,
+  queued?: (method: string) => void,
 ) => {
   const store = new EnvironmentStateStore(state);
+  const methods = stateDataPlane(
+    store,
+    { ...DEFAULT_STATE_INTAKE, ...intake },
+    stopped,
+  );
   const route = environmentRoutes(
     environmentCard("grafana-example", [], "state"),
-    stateDataPlane(store, { ...DEFAULT_STATE_INTAKE, ...intake }, stopped),
+    (...args) => {
+      const reply = methods(...args);
+      queued?.(args[0]);
+      return reply;
+    },
   ).find((entry) => entry.path === ENVIRONMENT_RPC_PATH);
   if (route === undefined) throw new Error("No data-plane route");
   const postRaw = (body: unknown, signal?: AbortSignal) =>
@@ -269,7 +282,6 @@ describe("state data plane", () => {
 });
 
 it("preserves arbitrary own data keys in inline and encoded file parts", async () => {
-  const plane = dataPlane();
   const initial = renamedDocument();
   const original = initial.rea_state.entities[0]!;
   const members = JSON.parse(
@@ -291,6 +303,7 @@ it("preserves arbitrary own data keys in inline and encoded file parts", async (
       },
     },
   ]) {
+    const plane = dataPlane();
     await expect(plane.add(part)).resolves.toMatchObject({ result: {} });
     const retained = plane.store.entity(
       entity.type,
@@ -413,46 +426,6 @@ describe("state data plane intake", () => {
     ).resolves.toMatchObject({ result: {} });
     expect(loginOf(plane.store)).toBe("renamed");
   });
-
-  it("runs batches in order and runs notifications without replying", async () => {
-    const plane = dataPlane();
-    const batch = await plane.post([
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "data/add",
-        params: { parts: [{ kind: "data", data: renamedDocument() }] },
-      },
-      { jsonrpc: "2.0", id: 2, method: "data/get" },
-    ]);
-    expect(batch.json).toMatchObject([
-      { id: 1, result: {} },
-      {
-        id: 2,
-        result: {
-          parts: [
-            {
-              kind: "data",
-              data: {
-                rea_state: {
-                  entities: expect.arrayContaining([
-                    expect.objectContaining({
-                      type: "/api/users",
-                      id: "2",
-                      fields: expect.objectContaining({ login: "renamed" }),
-                    }),
-                  ]),
-                },
-              },
-            },
-          ],
-        },
-      },
-    ]);
-    const notified = await plane.post({ jsonrpc: "2.0", method: "data/reset" });
-    expect(notified.status).toBe(202);
-    expect(loginOf(plane.store)).toBe("probe");
-  });
 });
 
 describe("state data plane file closes", () => {
@@ -514,46 +487,31 @@ describe("state data plane timing and order", () => {
     });
   });
 
-  it("applies data-plane calls from separate requests in arrival order", async () => {
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const plane = dataPlane({
-      fetchState: async () => {
-        await gate;
-        return new Response(JSON.stringify(renamedDocument()));
+  it("queues a whole batch before a later request and applies a reset notification without replying", async () => {
+    const download = phaseGate<void, Response>();
+    const resetQueued = phaseArrival();
+    const plane = dataPlane(
+      { fetchState: () => download.hold() },
+      undefined,
+      (method) => {
+        if (method === "data/reset") resetQueued.arrive();
       },
-    });
-    const slowAdd = plane.add({
-      kind: "file",
-      file: { uri: "https://state.example.test/state.json" },
-    });
-    const reset = plane.call("data/reset");
-    release();
-    await expect(slowAdd).resolves.toMatchObject({ result: {} });
-    await expect(reset).resolves.toMatchObject({ result: {} });
-    // The reset arrived after the add, so it wins even though the add finished loading later.
-    expect(loginOf(plane.store)).toBe("probe");
-  });
-
-  it("queues every message of a batch at arrival, so a later request's reset never lands between them", async () => {
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const held = heldFetcher(async () => {
-      await gate;
-      return new Response(JSON.stringify(renamedDocument()));
-    });
-    const plane = dataPlane({ fetchState: held.fetchState });
+    );
     const batch = plane.post([
       addByUri(1),
       { jsonrpc: "2.0", id: 2, method: "data/get" },
     ]);
-    await held.fetching(batch, "state fetch admission");
-    const reset = plane.call("data/reset");
-    release();
+    let reset: Promise<Response> | undefined;
+    try {
+      await download.reached(batch, "state fetch admission");
+      reset = Promise.resolve(
+        plane.postRaw({ jsonrpc: "2.0", method: "data/reset" }),
+      );
+      await resetQueued.reached(reset, "reset queue admission");
+    } finally {
+      download.release(new Response(JSON.stringify(renamedDocument())));
+      await Promise.allSettled([batch, reset]);
+    }
     const replies = (await batch).json;
     expect(replies).toMatchObject([
       { id: 1, result: {} },
@@ -580,7 +538,9 @@ describe("state data plane timing and order", () => {
       },
     ]);
     // The get arrived with the add, before the reset, so it reports the loaded state.
-    await expect(reset).resolves.toMatchObject({ result: {} });
+    const notification = await reset;
+    expect(notification.status).toBe(202);
+    expect(await notification.text()).toBe("");
     expect(loginOf(plane.store)).toBe("probe");
   });
 });
