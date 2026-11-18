@@ -1555,6 +1555,10 @@ describe("Ghidra client projection", () => {
         rawResult: null,
       },
     });
+    if (!result.ok) throw result.error;
+    expect(result.value.limitations).not.toContainEqual(
+      expect.stringContaining("The bridge is verified against"),
+    );
     expect(startCount).toBe(1);
   });
 });
@@ -4561,7 +4565,9 @@ describe("compatible Ghidra builds", () => {
       diagnostics: { provider_version: "12.1.2", java_version: "27" },
     });
     expect(health.ok && health.value.provider.version).toBe("12.1.2");
-    const unverified = expect.stringContaining("12.1.2");
+    const unverified = expect.stringMatching(
+      /\b12\.1\.2\b.*\bverified\b.*\b12\.1\.4\b/u,
+    );
     expect(health.ok && health.value.limitations).toEqual(
       expect.arrayContaining([unverified]),
     );

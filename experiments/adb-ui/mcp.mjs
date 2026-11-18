@@ -6,7 +6,7 @@ import { createServer } from "../../dist/server/createServer.js";
 import { createAdbDeviceAnalysisProvider } from "../../dist/composition/adb.js";
 import { AdbDeviceAnalysisService } from "../../dist/application/adb/AdbDeviceAnalysisService.js";
 import { PROPOSED_ADB_UI_ACTION_CONTRACT } from "../../dist/contracts/adb/adbUiToolContracts.js";
-import { createContractToolHandler } from "../../dist/server/contractToolHandler.js";
+import { createEvidenceToolHandler } from "../../dist/server/contractToolHandler.js";
 import { toolRegistrationOptions } from "../../dist/server/toolRegistrationOptions.js";
 import { createLogger } from "../../dist/logger.js";
 
@@ -36,12 +36,14 @@ process.exitCode = await run({
       adbDeviceAnalysis: provider,
     });
     const contract = PROPOSED_ADB_UI_ACTION_CONTRACT;
+    const service = new AdbDeviceAnalysisService(provider);
     server.registerTool(
       contract.name,
       toolRegistrationOptions(contract),
-      createContractToolHandler(
+      createEvidenceToolHandler(
         server,
-        new AdbDeviceAnalysisService(provider),
+        (input, executionOptions) =>
+          service.execute(contract.name, input, executionOptions),
         options?.logger ?? createLogger("mcp", "silent"),
         recordEvidence,
       )(contract),

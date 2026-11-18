@@ -4,6 +4,7 @@ import { runOwnedCommand } from "../../../src/process/OwnedCommand.js";
 import { runningTestDeadline } from "../../support/runningTestDeadline.js";
 
 it.each([
+  "experiments/command-scope.test.mjs",
   "experiments/command-scope.node.mjs",
   "experiments/adb-ui/fixture.test.mjs",
   "experiments/adb-ui/lease.test.mjs",

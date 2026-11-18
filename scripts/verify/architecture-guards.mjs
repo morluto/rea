@@ -948,7 +948,7 @@ checkCounted(
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
-// `firstKeyed`/`lastKeyed` with the format's precedence rule); an
+// `firstKeyed` with the format's precedence rule); an
 // address-containment test that selects nothing uses `some`. GuidanceAccess
 // looks up a guidance document's heading section by its locator identity,
 // not a parsed binary section table.

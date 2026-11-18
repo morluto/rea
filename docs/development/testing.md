@@ -613,8 +613,8 @@ affected consumer.
 Every provider capability that `src/composition/capabilityDeclarations.ts`
 binds to a provider needs an entry in
 `tests/conformance/providerCapabilityCases.ts`. The entry is either a
-CLI, MCP or acceptance test that names one of the capability's operations, or an
-exemption that states why no such case exists.
+CLI, MCP or acceptance test that exercises one of the capability's operations,
+or an exemption that states why no such case exists.
 `tests/conformance/providerCapabilityConformance.test.ts` iterates the
 declarations, so a new capability fails the suite until it has one.
 

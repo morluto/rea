@@ -38,7 +38,6 @@ import { err, ok, type Result } from "../result.js";
 export const ANDROID_OTA_MAGIC = "CrAU";
 export const ANDROID_OTA_MAGIC_BYTES = Buffer.from(ANDROID_OTA_MAGIC, "latin1");
 export const ANDROID_OTA_MAJOR_VERSION = 2n;
-export const ANDROID_OTA_HEADER_V1_BYTES = 20;
 export const ANDROID_OTA_HEADER_V2_BYTES = 24;
 export const ANDROID_OTA_MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 export const ANDROID_OTA_MAX_PARTITIONS = 4096;
@@ -167,9 +166,7 @@ const capacity = (
     { name: `Android OTA payload ${name}`, maximum },
   );
 
-export const androidOtaUnsupportedVersion = (
-  version: bigint | number | string,
-): string =>
+const androidOtaUnsupportedVersion = (version: bigint): string =>
   `Android OTA payload major version ${String(version)} is unsupported; this reader supports version 2 only`;
 
 const u32be = (bytes: Uint8Array, at: number): number =>

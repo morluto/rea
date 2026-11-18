@@ -3,7 +3,7 @@ import { AdbDeviceAnalysisService } from "../../src/application/adb/AdbDeviceAna
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { PROPOSED_ADB_UI_ACTION_CONTRACT } from "../../src/contracts/adb/adbUiToolContracts.js";
 import { createLogger } from "../../src/logger.js";
-import { createContractToolHandler } from "../../src/server/contractToolHandler.js";
+import { createEvidenceToolHandler } from "../../src/server/contractToolHandler.js";
 import type { EvidenceMcpServer } from "../../src/server/EvidenceMcpServer.js";
 import { toolRegistrationOptions } from "../../src/server/toolRegistrationOptions.js";
 
@@ -14,12 +14,13 @@ export const registerAdbUiExperiment = (
   session: BinarySession,
 ): void => {
   const contract = PROPOSED_ADB_UI_ACTION_CONTRACT;
+  const service = new AdbDeviceAnalysisService(provider);
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    createContractToolHandler(
+    createEvidenceToolHandler(
       server,
-      new AdbDeviceAnalysisService(provider),
+      (input, options) => service.execute(contract.name, input, options),
       createLogger("mcp", "silent"),
       (evidence) => session.recordEvidence(evidence),
     )(contract),
