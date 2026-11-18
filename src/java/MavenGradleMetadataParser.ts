@@ -641,8 +641,7 @@ export const parseMavenGradleMetadata = (
     );
   let source: string;
   try {
-    // ignoreBOM: true kept a leading U+FEFF; "preserve" is that same policy.
-    source = decodeStrictUtf8(bytes, "preserve");
+    source = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     throw malformedInput(
       MAVEN_GRADLE_METADATA_FORMAT,

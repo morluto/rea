@@ -1007,3 +1007,34 @@ it("refuses a POM past the XML node allowance before building its tree", () => {
     },
   });
 });
+
+it.each([
+  ["gradle-module", gradleModuleFixture, "/artifacts/demo.module"],
+  ["maven-pom", mavenPomFixture, "/artifacts/pom.xml"],
+] as const)(
+  "reads %s with a UTF-8 signature and retains the input identity",
+  (format, source, path) => {
+    const signed = "\ufeff" + source;
+    const report = parse(signed, path);
+    const original = parse(source, path);
+    expect(report).toEqual({
+      ...original,
+      artifact: {
+        path,
+        bytes: Buffer.byteLength(signed),
+        sha256: createHash("sha256").update(signed, "utf8").digest("hex"),
+      },
+      coverage: {
+        ...original.coverage,
+        examined_bytes: Buffer.byteLength(signed),
+      },
+    });
+    expect(report.format).toBe(format);
+  },
+);
+
+it("still rejects duplicate fields after a Gradle UTF-8 signature", () => {
+  expect(() =>
+    parse('\ufeff{"formatVersion":"1.1","formatVersion":"1.1"}'),
+  ).toThrow(/declares a field more than once/u);
+});
