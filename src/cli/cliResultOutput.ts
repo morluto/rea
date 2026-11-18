@@ -13,6 +13,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { sliceTextByTokenWindow } from "./tokenWindow.js";
 import {
@@ -119,7 +120,8 @@ export const createCliResultOutput = (
     if (
       completed === undefined ||
       handled ||
-      !(cause instanceof RangeError) ||
+      hostRangeErrorKind(cause) !== "host-capacity" ||
+      !(cause instanceof Error) ||
       cause.message !== "Invalid string length"
     )
       return false;

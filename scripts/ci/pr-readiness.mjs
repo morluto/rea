@@ -8,6 +8,7 @@ const EXEMPT_AUTHOR_IDS = new Set([
   208281322, // kaoru0822-kitauji
   161784452, // N0zoM1z0
   342580529, // gensokyo-dev
+  25068, // vincentkoc
 ]);
 
 const OPEN_HEADS_QUERY = `query ReadinessOpenHeads($owner: String!, $name: String!, $after: String) {

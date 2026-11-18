@@ -81,12 +81,10 @@ import {
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import {
-  analysisErrorWithCleanupFailure,
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
 } from "../../domain/analysisErrorCleanup.js";
-import { ConfigurationError } from "../../domain/configurationErrors.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -617,11 +615,11 @@ export class BinarySession
         this.#clearRuntimeAvailability();
         if (isAborted(options.signal))
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               cancelledBy("open_binary", options.signal),
               closed.error,
               "open_binary",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
         return closed;
       }
@@ -657,27 +655,11 @@ export class BinarySession
       profile = route.profile;
     }
     const runId = randomUUID();
-    let client: ReturnType<typeof route.createClient>;
-    try {
-      client = route.createClient(target, {
-        runId,
-      });
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(
-        previous === undefined
-          ? cause
-          : await this.#restoreAfterFailedOpen(previous, cause),
-      );
-    }
+    const client = route.createClient(target, {
+      runId,
+    });
     const run: SessionRun = { client, route, runId };
-    let started: Awaited<ReturnType<typeof client.execute>>;
-    try {
-      started = await client.execute("health", {}, options);
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(await this.#failedOpen(run, previous, cause));
-    }
+    const started = await client.execute("health", {}, options);
     if (!started.ok) {
       return err(await this.#failedOpen(run, previous, started.error));
     }
@@ -1506,13 +1488,7 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    let dispatched: Awaited<ReturnType<typeof active.client.execute>>;
-    try {
-      dispatched = await active.client.execute(name, arguments_, options);
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+    const dispatched = await active.client.execute(name, arguments_, options);
     const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),

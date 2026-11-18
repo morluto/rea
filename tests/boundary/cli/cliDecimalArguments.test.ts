@@ -22,7 +22,9 @@ const numericBranches = (schema: unknown): boolean => {
   return false;
 };
 
-const bounds = (schema: unknown): Array<{ min: number; max: number }> => {
+const bounds = (
+  schema: unknown,
+): Array<{ min: number; max: number; candidate: number }> => {
   if (!isRecord(schema)) return [];
   const nested = ["anyOf", "oneOf", "allOf"].flatMap((key) =>
     Array.isArray(schema[key]) ? schema[key].flatMap(bounds) : [],
@@ -47,7 +49,7 @@ const bounds = (schema: unknown): Array<{ min: number; max: number }> => {
       ? schema.default
       : min;
   return Number.isSafeInteger(preferred) && preferred >= min && preferred <= max
-    ? [...nested, { min: preferred, max }]
+    ? [...nested, { min, max, candidate: preferred }]
     : nested;
 };
 
@@ -147,14 +149,26 @@ describe("decimal integer CLI admission", () => {
               // Decimal tokens are the only numeric spelling.
             }
           }
+          const range = bounds(item)[0];
           const candidate =
-            bounds(item)[0]?.min ??
+            range?.candidate ??
             (probed === undefined ? undefined : Number(probed));
           if (candidate === undefined) {
             failures.push(`${label}: no in-range decimal candidate`);
             continue;
           }
           const decimal = String(candidate);
+          if (range !== undefined) {
+            for (const value of [range.min - 1, range.max + 1]) {
+              if (value < 0) continue;
+              for (const token of [String(value), `000${value}`]) {
+                if (validate(token))
+                  failures.push(
+                    `${label}: advertised schema accepts out-of-range ${token}`,
+                  );
+              }
+            }
+          }
           try {
             expect(read(decimal)).toBe(candidate);
           } catch (error) {
@@ -163,7 +177,7 @@ describe("decimal integer CLI admission", () => {
             );
             continue;
           }
-          const admitsLeadingZeros = JSON.stringify(item).includes("^[0-9]+$");
+          const admitsLeadingZeros = validate(`0${decimal}`);
           try {
             const parsed = read(`0${decimal}`);
             if (parsed !== candidate)
@@ -211,36 +225,36 @@ describe("decimal integer CLI advertisement", () => {
     return JSON.parse(stdout) as unknown;
   };
 
-  it("publishes the token grammar in --schema for arguments and options", async () => {
+  it("publishes the token range in --schema for arguments and options", async () => {
+    const validateToken = (schema: unknown, token: string): boolean =>
+      new Ajv2020({ strict: false }).compile(
+        schema as Parameters<Ajv2020["compile"]>[0],
+      )(token) === true;
     const location = await schemaOf("trace-web-source-location");
-    expect(location).toMatchObject({
-      args: {
-        properties: {
-          line: {
-            description: "One-based generated line",
-            anyOf: [
-              { type: "integer", minimum: 1 },
-              { type: "string", pattern: "^[0-9]+$" },
-            ],
-          },
-        },
-      },
+    const line = (location as { args: { properties: { line: unknown } } }).args
+      .properties.line;
+    expect(line).toMatchObject({
+      description: "One-based generated line",
+      anyOf: [{ type: "integer", minimum: 1 }, { type: "string" }],
     });
-    expect(await schemaOf("inspect-web-network-capture")).toMatchObject({
-      options: {
-        properties: {
-          record: {
-            type: "array",
-            items: {
-              anyOf: [
-                { type: "integer", minimum: 0 },
-                { type: "string", pattern: "^[0-9]+$" },
-              ],
-            },
-          },
-        },
-      },
+    for (const token of ["1", "0001"])
+      expect(validateToken(line, token), token).toBe(true);
+    for (const token of ["0", "0000"])
+      expect(validateToken(line, token), token).toBe(false);
+
+    const capture = await schemaOf("inspect-web-network-capture");
+    const record = (
+      capture as {
+        options: { properties: { record: { items: unknown } } };
+      }
+    ).options.properties.record.items;
+    expect(record).toMatchObject({
+      anyOf: [{ type: "integer", minimum: 0 }, { type: "string" }],
     });
+    for (const token of ["0", "03"])
+      expect(validateToken(record, token), token).toBe(true);
+    expect(validateToken(record, "-1")).toBe(false);
+
     expect(await schemaOf("environment-serve")).toMatchObject({
       options: {
         properties: {

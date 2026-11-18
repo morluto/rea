@@ -26,6 +26,7 @@ import {
   providerRetryAction,
   type ProviderOperationHealth,
 } from "../domain/providerOperationHealth.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
@@ -973,11 +974,22 @@ export class GhidraClient {
     this.#activeOutputCheckpoint = undefined;
     this.#outputDrainPromise = undefined;
     this.#outputDrainIncomplete = false;
-    const deadline = new ProviderStartupDeadline(
-      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
-      signal,
-      { finalizeMs: OUTPUT_DRAIN_MS },
+    const startupTimeout = readRuntimeSetting(
+      () =>
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs,
     );
+    if (!startupTimeout.ok)
+      return err(
+        this.#failure(
+          "admission",
+          startupTimeout.error.message,
+          startupTimeout.error,
+        ),
+      );
+    const deadline = new ProviderStartupDeadline(startupTimeout.value, signal, {
+      finalizeMs: OUTPUT_DRAIN_MS,
+    });
     try {
       const result = await this.#startWithin(deadline);
       return result.ok && deadline.signal.aborted

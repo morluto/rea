@@ -227,7 +227,14 @@ Each newly analyzed JavaScript file retains `analysis_coverage` in its graph
 observation. `syntax` distinguishes complete parsing, recovered syntax errors,
 failed parsing and unexamined source. `semantics` records the number of observed
 unknown findings and typed uncertainty, including returned-reference widening
-and unavailable type-only compiler options. `examination` reports static semantic
+and unavailable type-only compiler options. `conditional-loader` records a
+BOM/hashbang source recovered with an uncertain package mode or loader
+invocation. Its overall `parse_status` stays partial without inventing a syntax
+error. `commonjs-wrapper-redeclaration` records a top-level lexical declaration
+that redeclares a CommonJS wrapper parameter. Node cannot evaluate that module,
+and the recovered syntax stays complete because the diagnostic does not drop
+statements. Dependency and worker Evidence retains the loader limitation.
+`examination` reports static semantic
 resource limits and Electron wrapper expansion limits independently. A completed
 pass does not establish complete runtime semantics. Route examination and result
 capacity remain in the separate route inventory.
@@ -353,6 +360,20 @@ execute them.
 
 JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
 code unit, matching the original bytes identified by the artifact digest.
+A BOM before a hashbang is accepted for TypeScript and JSX compiler inputs,
+explicit ES modules, and JavaScript in an observed module package.
+For this prefix, suffix-only source names, including `.cjs` and case variants such as `.MJS`,
+retain a conditional interpretation: direct entrypoint and module import can
+select different loaders. A known CommonJS package can load these files
+through an ES module import using CommonJS grammar.
+An unknown package scope or a package without a `type` field retains a
+conditional interpretation for ordinary `.js` and suffix-only JavaScript files. Application analysis and
+reference import can recover either script or ES module syntax without
+establishing the runtime loader.
+Source indexes and later-line columns still refer to the original text.
+CommonJS sources with this prefix retain a conditional interpretation through
+ES module import. Direct execution and require can reject the same source.
+A plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
 angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
@@ -367,6 +388,21 @@ utility-process runtime paths retain the runtime filename selected by the caller
 
 Application `.js` and `.ts` sources use the nearest readable, same-container
 `package.json` type; explicit module/CommonJS suffixes keep their own meaning.
+The parser applies this context to grammar as well as dependency identity.
+CommonJS JavaScript retains wrapper-only `return` and `new.target` syntax and
+sloppy-mode diagnostics; a detected script in an untyped `.js` package follows
+the same rule. Module sources retain their module-only errors, including an
+illegal top-level `return`, through analysis and reference import. TypeScript's
+syntax phase does not inherit JavaScript wrapper-only permissions. Recovered
+imports remain available with partial parse status when syntax errors exist.
+For untyped `.js` packages, Node's syntax detection also includes top-level
+lexical declarations of its wrapper parameters (`require`, `module`, `exports`,
+`__filename`, `__dirname`). These select module context; `var`, function
+declarations and bindings confined to a block do not. In a proven CommonJS
+JavaScript script, conflicting lexical declarations retain a syntax diagnostic
+instead of establishing clean wrapper syntax.
+Reference import identifies these parser-owned wrapper diagnostics as
+`rea-node-loader`; Babel's syntax diagnostics retain their `babel` source.
 An unavailable nearer manifest leaves the package type unknown. When a module
 package contains `.js` sources, a preliminary pass through the bounded worker
 collects BrowserWindow preload declarations. Exact same-container `.js`

@@ -612,8 +612,8 @@ export class PwntoolsDecoder<
             phase,
             failure_kind: reply.reason,
             reason: reply.message,
-            stdout: execution.stdout.text,
-            stderr: execution.stderr.text,
+            stdout: capturedOutput.stdout,
+            stderr: capturedOutput.stderr,
             captured_output: { ...capturedOutput },
           },
         });

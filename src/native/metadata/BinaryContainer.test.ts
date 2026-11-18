@@ -36,6 +36,94 @@ it("preserves representable offsets for invalid file ranges", () => {
   );
 });
 
+it("decodes numeric fields at nonzero buffer offsets and preserves malformed and truncated range failures", () => {
+  const backing = Buffer.from([
+    0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xfe,
+  ]);
+  const window = backing.subarray(1, 9);
+  const little = new BinaryReader(window, true, "zip");
+  const big = new BinaryReader(window, false, "zip");
+
+  expect(little.u16(2)).toBe(0x0403);
+  expect(big.u16(2)).toBe(0x0304);
+  expect(little.u32(2)).toBe(0x06050403);
+  expect(big.u32(2)).toBe(0x03040506);
+  expect(little.word(2, 32)).toBe(0x06050403n);
+  expect(big.word(2, 32)).toBe(0x03040506n);
+  expect(little.word(0, 64)).toBe(0x0807060504030201n);
+  expect(big.word(0, 64)).toBe(0x0102030405060708n);
+
+  const captureFailure = (read: () => unknown): BinaryFormatFailure => {
+    try {
+      read();
+      throw new Error("Expected BinaryFormatFailure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BinaryFormatFailure);
+      return error as BinaryFormatFailure;
+    }
+  };
+
+  const malformed = captureFailure(() => little.u32(9));
+  expect(malformed.kind).toBe("malformed");
+  expect(malformed.message).toBe(
+    "32-bit field range is truncated or outside the file",
+  );
+  expect(malformed.failure).toEqual({
+    kind: "malformed",
+    format: "zip",
+    detail: "32-bit field range is truncated or outside the file",
+    field: "32-bit field",
+    offset: 9,
+  });
+
+  expect(captureFailure(() => little.u16(-1)).failure).toEqual({
+    kind: "malformed",
+    format: "zip",
+    detail: "16-bit field range is truncated or outside the file",
+    field: "16-bit field",
+    offset: -1,
+  });
+  expect(captureFailure(() => little.u16(Number.NaN)).failure).toEqual({
+    kind: "malformed",
+    format: "zip",
+    detail: "16-bit field range is truncated or outside the file",
+    field: "16-bit field",
+  });
+  expect(captureFailure(() => little.range(0, -1, "span")).kind).toBe(
+    "malformed",
+  );
+  expect(captureFailure(() => little.range(0, 1.5, "span")).kind).toBe(
+    "malformed",
+  );
+
+  const truncated = captureFailure(() => little.u32(6));
+  expect(truncated.kind).toBe("truncated");
+  expect(truncated.message).toBe(
+    "32-bit field range is truncated or outside the file",
+  );
+  expect(truncated.failure).toEqual({
+    kind: "truncated",
+    format: "zip",
+    detail: "32-bit field range is truncated or outside the file",
+    field: "32-bit field",
+    offset: 6,
+  });
+  expect(captureFailure(() => little.u16(7)).failure).toEqual({
+    kind: "truncated",
+    format: "zip",
+    detail: "16-bit field range is truncated or outside the file",
+    field: "16-bit field",
+    offset: 7,
+  });
+  expect(captureFailure(() => little.word(1, 64)).failure).toEqual({
+    kind: "truncated",
+    format: "zip",
+    detail: "64-bit field range is truncated or outside the file",
+    field: "64-bit field",
+    offset: 1,
+  });
+});
+
 it("distinguishes a mapped string read allowance from malformed bytes", () => {
   const bytes = Buffer.from("long-name\0");
   const index = createFileMappingIndex([

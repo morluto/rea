@@ -84,6 +84,14 @@ const addressWidth = (architecture: BinaryArchitecture): bigint =>
       ? 0xffffffffn
       : 0xffffffffffffffffn;
 
+/**
+ * An odd 32-bit ARM address is how a Thumb function pointer is spelled, but
+ * the raw ARM lane decodes ARM state only. Name that without assuming the
+ * caller's mode or adjusting the entry.
+ */
+const armThumbEntryNote =
+  "; an odd address can be a Thumb function pointer with bit 0 set, but raw-binary arm decodes ARM state only, so a Thumb entry is unsupported and the entry was not adjusted";
+
 /** Validate architecture, entry, and that the mapped image fits the CPU width. */
 export const admitRawBinary = (input: {
   readonly architecture: unknown;
@@ -114,7 +122,11 @@ export const admitRawBinary = (input: {
     entry.value.value % 4n !== 0n
   )
     return err({
-      reason: `raw-binary ${architecture.data} entry_point ${entry.value.canonical} must be 4-byte aligned`,
+      reason: `raw-binary ${architecture.data} entry_point ${entry.value.canonical} must be 4-byte aligned${
+        architecture.data === "arm" && entry.value.value % 2n === 1n
+          ? armThumbEntryNote
+          : ""
+      }`,
       constraint: "load_selection_rejected",
     });
   // 68000-family instruction words are fetched from even addresses.

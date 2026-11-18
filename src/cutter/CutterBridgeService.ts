@@ -193,6 +193,7 @@ export class CutterBridgeService {
             identity_status: output.identityStatus,
           },
           rawResult: normalizedOutput,
+          authority: "external-service",
           limitations: [
             "Cutter exposes no verified stable identity for the active unsaved document or tab.",
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
