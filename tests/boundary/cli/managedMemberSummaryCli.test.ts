@@ -542,15 +542,17 @@ cliTest(
   },
 );
 
-cliTest.for(
-  (process.platform === "win32"
-    ? (["event"] as const)
-    : (["event", "os"] as const)
-  ).flatMap((delivery) => [
-    { signal: "SIGINT" as const, status: 130, delivery },
-    { signal: "SIGTERM" as const, status: 143, delivery },
-  ]),
-)(
+// Exercise both exit statuses and both delivery paths where OS signals exist.
+const managedCancellation = [
+  { signal: "SIGINT", status: 130, delivery: "event" },
+  {
+    signal: "SIGTERM",
+    status: 143,
+    delivery: process.platform === "win32" ? "event" : "os",
+  },
+] as const;
+
+cliTest.for(managedCancellation)(
   "keeps a committed receipt when $signal ($delivery) is queued during final cleanup",
   async ({ signal, status, delivery }, { cli }) => {
     const root = await createTestTempDirectory("rea-managed-queued-signal-");
@@ -603,28 +605,16 @@ cliTest.for(
       kind: "summary",
       parent_evidence_id: parent.evidence_id,
     });
-    expect(JSON.parse(await readFile(marker, "utf8"))).toMatchObject({
-      signal,
-      listeners: expect.any(Number),
-    });
-    expect(
-      JSON.parse(await readFile(marker, "utf8")).listeners,
-    ).toBeGreaterThan(0);
+    const proof = JSON.parse(await readFile(marker, "utf8"));
+    expect(proof).toMatchObject({ phase: "cleanup", signal, delivery });
+    expect(proof.listeners).toBeGreaterThan(0);
     expect(
       (await readdir(root)).some((name) => name.startsWith(".rea-write-")),
     ).toBe(false);
   },
 );
 
-cliTest.for(
-  (process.platform === "win32"
-    ? (["event"] as const)
-    : (["event", "os"] as const)
-  ).flatMap((delivery) => [
-    { signal: "SIGINT" as const, status: 130, delivery },
-    { signal: "SIGTERM" as const, status: 143, delivery },
-  ]),
-)(
+cliTest.for(managedCancellation)(
   "retains complete default Evidence when $signal ($delivery) is queued during sealing",
   async ({ signal, status, delivery }, { cli }) => {
     const root = await createTestTempDirectory("rea-managed-complete-signal-");

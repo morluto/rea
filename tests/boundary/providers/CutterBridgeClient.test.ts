@@ -16,14 +16,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
-import { packagedCutterPluginPath } from "../../../src/cutter/CutterBridgeSource.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 
 const listen = async (
   server: ReturnType<typeof createServer>,
@@ -91,9 +91,12 @@ const expectDiscoveredSession = (
   });
 };
 
-const createClient = (environment: NodeJS.ProcessEnv): CutterBridgeClient => {
-  if (process.platform !== "win32") return new CutterBridgeClient(environment);
-  return new CutterBridgeClient(environment, {
+const createClient = (
+  environment: NodeJS.ProcessEnv,
+  BridgeClient = CutterBridgeClient,
+): CutterBridgeClient => {
+  if (process.platform !== "win32") return new BridgeClient(environment);
+  return new BridgeClient(environment, {
     windowsPrivateReader: {
       verifyDirectory: () => true,
       readDescriptor: (root, name, maxBytes) => {
@@ -320,16 +323,18 @@ describe("CutterBridgeClient: plugin source identity", () => {
     directory = undefined;
   });
 
+  const packagedPlugin = resolve("bridge/cutter/rea_bridge.py");
   const packagedDigest = createHash("sha256")
-    .update(readFileSync("bridge/cutter/rea_bridge.py"))
+    .update(readFileSync(packagedPlugin))
     .digest("hex");
 
   it.each([
     ["packaged", packagedDigest],
     ["modified", "0".repeat(64)],
     ["unknown", undefined],
+    ["unknown", null],
   ] as const)(
-    "reports a %s plugin source in discovery",
+    "reports a %s plugin source in discovery (digest: %s)",
     async (source, digest) => {
       directory = await mkdtemp(join(tmpdir(), "rea-cutter-source-"));
       const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
@@ -351,11 +356,63 @@ describe("CutterBridgeClient: plugin source identity", () => {
       expect(result.sessions).toMatchObject([{ bridge_source: source }]);
       const recovery = result.sessions[0]?.bridge_source_recovery;
       if (source === "packaged") expect(recovery).toBeUndefined();
-      else
-        expect(recovery).toContain(`${packagedCutterPluginPath()} into Cutter`);
+      else expect(recovery).toContain(`${packagedPlugin} into Cutter`);
       if (source === "unknown") expect(recovery).toContain("source is unknown");
     },
   );
+
+  it("surfaces a missing packaged plugin instead of hiding the live session", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-cutter-missing-plugin-"));
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    const token = "synthetic-cutter-bridge-token-for-test";
+    const status = createStatusHarness(token, "/tmp/sample.bin", 4);
+    server = status.server;
+    const port = await listen(server);
+    await writeDescriptor(directory, sessionId, port, token, {
+      bridgeSourceSha256: packagedDigest,
+    });
+    const missing = Object.assign(new Error("fixture plugin missing"), {
+      code: "ENOENT",
+    });
+    vi.resetModules();
+    vi.doMock("node:fs", async () => {
+      const real = await vi.importActual<typeof import("node:fs")>("node:fs");
+      return {
+        ...real,
+        readFileSync: (...args: Parameters<typeof real.readFileSync>) => {
+          if (args[0] === packagedPlugin) throw missing;
+          return real.readFileSync(...args);
+        },
+      };
+    });
+    try {
+      const { CutterBridgeClient: MissingPluginClient } =
+        await import("../../../src/cutter/CutterBridgeClient.js");
+      const client = createClient(
+        { REA_CUTTER_BRIDGE_DIR: directory },
+        MissingPluginClient,
+      );
+      try {
+        await expect(client.listSessions()).rejects.toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+          operation: "list_cutter_sessions",
+          cause: missing,
+          remediationAction: expect.stringContaining("Reinstall REA"),
+        });
+        expect(status.requestText()).toBe("");
+
+        await writeDescriptor(directory, sessionId, port, token);
+        await expect(client.listSessions()).resolves.toMatchObject({
+          sessions: [{ session_id: sessionId, bridge_source: "unknown" }],
+        });
+      } finally {
+        await client.close();
+      }
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+    }
+  });
 
   it("refuses a command to a modified plugin before sending it", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-cutter-source-"));
@@ -644,10 +701,15 @@ describe("CutterBridgeClient: scenario group 2", () => {
         ).toBe(0o600);
       }
     }
+    // Each skipped candidate stays counted beside the found session.
     const result = await client.listSessions();
     expect(result).toMatchObject({
       discovery_status: "sessions_found",
       sessions: [{ session_id: sessionId }],
+      limitations: cutterDiscoveryLimitations("sessions_found", {
+        unreadable: 3,
+        unanswered: 0,
+      }),
     });
     expect(connections).toBe(1);
   });
@@ -664,11 +726,17 @@ describe("CutterBridgeClient: scenario group 2", () => {
       port,
       "synthetic-cutter-bridge-token-for-test",
     );
+    // A published session whose status probe fails is a no-live discovery
+    // that counts the unanswered session.
     await expect(
       createClient({ REA_CUTTER_BRIDGE_DIR: directory }).listSessions(),
     ).resolves.toMatchObject({
       discovery_status: "no_live_bridge_found",
       sessions: [],
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found", {
+        unreadable: 0,
+        unanswered: 1,
+      }),
     });
   });
 });
@@ -1537,6 +1605,7 @@ describe("CutterBridgeClient: scenario group 9", () => {
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found" as const,
       bridge_directory_security: "private_verified" as const,
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     };
     const service = new CutterBridgeService({
       listSessions: async () => discovery,
@@ -1624,6 +1693,7 @@ describe("CutterBridgeClient: scenario group 9", () => {
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => ({
         requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",

@@ -34,7 +34,9 @@ import { onTestFinished } from "vitest";
 
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import { awaitAcknowledgement } from "./lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 
 /** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
 export const FAKE_FRAME_PNG =
@@ -658,7 +660,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 import types
 
 STATE = os.environ["FAKE_STATE"]
@@ -705,7 +706,9 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     os.system("echo a build writing to stdout")
     print("agentenv writing to stdout")
     on_progress("deploying the computer")
-    time.sleep(float(os.environ.get("FAKE_DEPLOY_SECONDS", "0")))
+    if os.environ.get("FAKE_HOLD_DEPLOY"):
+        _note("deploying.jsonl", {"pid": os.getpid()})
+        signal.pause()
     signal.signal(signal.SIGTERM, previous)
     chatter = int(os.environ.get("FAKE_CHATTER_BYTES", "0"))
     for line in range(chatter // 80):
@@ -731,6 +734,31 @@ export interface FakeAgentEnvRunner {
   /** Lines one JSON-lines note file holds. */
   notes(name: string): Promise<unknown[]>;
 }
+
+/** Observe the exact helper waiting at the cancellable deployment phase. */
+export const awaitFakeDeployWait = async (
+  runner: FakeAgentEnvRunner,
+  operation: Promise<unknown>,
+): Promise<{ pid: number }[]> => {
+  let observing = true;
+  const acknowledgement = waitFor(async () => {
+    if (!observing) return [];
+    return z
+      .tuple([z.object({ pid: z.int().positive() })])
+      .parse(await runner.notes("deploying.jsonl"));
+  });
+  try {
+    await awaitAcknowledgement(
+      acknowledgement,
+      operation,
+      "fake deployment wait",
+    );
+    return await acknowledgement;
+  } finally {
+    observing = false;
+    await Promise.allSettled([acknowledgement]);
+  }
+};
 
 /**
  * JSONL notes from the fake build computer. A trailing fragment without a

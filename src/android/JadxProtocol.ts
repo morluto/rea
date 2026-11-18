@@ -162,27 +162,38 @@ export const jadxXrefsSchema = z.object({
   count,
   resolve_line: z.literal(false),
   items: z.array(
-    z.object({
-      kind: z.string(),
-      name: z.string(),
-      full_name: z.string(),
-      containing_class: z.string(),
-      top_class: z.string(),
-      def_pos: z.int(),
-      source_selector: androidMethodSelectorSchema.optional(),
-      direct_invokes_exhaustive: z.boolean().optional(),
-      direct_invokes: z
-        .array(
-          z.object({
-            dex_entry: z.string().min(1),
-            source_raw_method_id: z.string().min(1),
-            dex_code_unit_offset: count,
-            dex_method_index: count,
-            opcode: z.string().regex(/^INVOKE_/u),
-          }),
-        )
-        .optional(),
-    }),
+    z
+      .object({
+        kind: z.string(),
+        name: z.string(),
+        full_name: z.string(),
+        containing_class: z.string(),
+        top_class: z.string(),
+        def_pos: z.int(),
+        source_selector: androidMethodSelectorSchema.optional(),
+        direct_invokes_exhaustive: z.boolean().optional(),
+        direct_invokes: z
+          .array(
+            z.object({
+              dex_entry: z.string().min(1),
+              source_raw_method_id: z.string().min(1),
+              dex_code_unit_offset: count,
+              dex_method_index: count,
+              opcode: z.string().regex(/^INVOKE_/u),
+            }),
+          )
+          .optional(),
+      })
+      // The bridge emits or removes the site list and its coverage together.
+      .refine(
+        (item) =>
+          item.direct_invokes_exhaustive === undefined ||
+          item.direct_invokes !== undefined,
+        {
+          message: "Invoke coverage requires a direct invoke site list",
+          path: ["direct_invokes_exhaustive"],
+        },
+      ),
   ),
 });
 const toolResponse = z

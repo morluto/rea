@@ -1,3 +1,4 @@
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import {
   ArtifactReaderFailure,
@@ -170,8 +171,10 @@ export const parseDenoSection = async (
     return readExact(offset, bytes);
   };
   const u8 = async (): Promise<number> => (await pull(1))[0] ?? 0;
-  const u32 = async (): Promise<number> => (await pull(4)).readUInt32LE(0);
-  const u64 = async (): Promise<bigint> => (await pull(8)).readBigUInt64LE(0);
+  const u32 = async (): Promise<number> =>
+    new BinaryReader(await pull(4), true, "deno").u32(0);
+  const u64 = async (): Promise<bigint> =>
+    new BinaryReader(await pull(8), true, "deno").word(0, 64);
   const readBounded = async (
     claimed: bigint,
     max: number,
