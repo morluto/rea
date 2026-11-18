@@ -90,16 +90,19 @@ export type RequestedVersionKind = (typeof REQUESTED_VERSION_KINDS)[number];
 
 // Gradle VersionRangeSelector recognizes finite, half-open, and single-value
 // range spellings. Brackets within an otherwise literal version do not suffice.
-const GRADLE_RANGE_BOUND = String.raw`[^\s,\[\]()]+`;
+// Java Pattern's default whitespace class is ASCII, including inside bounds.
+const GRADLE_RANGE_WHITESPACE = String.raw` \t\n\x0b\f\r`;
+const GRADLE_RANGE_SPACE = `[${GRADLE_RANGE_WHITESPACE}]*`;
+const GRADLE_RANGE_BOUND = String.raw`[^${GRADLE_RANGE_WHITESPACE},\[\]()]+`;
 const GRADLE_RANGE_OPEN = String.raw`[\[\](]`;
 const GRADLE_RANGE_CLOSE = String.raw`[\[\])]`;
-const GRADLE_RANGE_SEPARATOR = String.raw`\s*,\s*`;
+const GRADLE_RANGE_SEPARATOR = `${GRADLE_RANGE_SPACE},${GRADLE_RANGE_SPACE}`;
 const GRADLE_RANGE = new RegExp(
   `^(?:${[
-    String.raw`${GRADLE_RANGE_OPEN}\s*${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SEPARATOR}${GRADLE_RANGE_BOUND}\s*${GRADLE_RANGE_CLOSE}`,
-    String.raw`\(${GRADLE_RANGE_SEPARATOR}${GRADLE_RANGE_BOUND}\s*${GRADLE_RANGE_CLOSE}`,
-    String.raw`${GRADLE_RANGE_OPEN}\s*${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SEPARATOR}\)`,
-    String.raw`\[\s*${GRADLE_RANGE_BOUND}\]`,
+    `${GRADLE_RANGE_OPEN}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SEPARATOR}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_CLOSE}`,
+    String.raw`\(${GRADLE_RANGE_SEPARATOR}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_CLOSE}`,
+    String.raw`${GRADLE_RANGE_OPEN}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SEPARATOR}\)`,
+    String.raw`\[${GRADLE_RANGE_SPACE}${GRADLE_RANGE_BOUND}\]`,
   ].join("|")})$`,
   "u",
 );
