@@ -17,6 +17,7 @@ import {
   AnalysisResourceConstraintError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import type { ProviderOutcome } from "../process/ProviderOutcome.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
@@ -177,7 +178,7 @@ const allocationRefused = (cause: unknown): boolean => {
         "ERR_MEMORY_ALLOCATION_FAILED",
         "ERR_BUFFER_TOO_LARGE",
       ].includes(String(physical.code))) ||
-      (physical instanceof RangeError &&
+      (hostRangeErrorKind(physical) === "host-capacity" &&
         physical.message === "Array buffer allocation failed"))
   );
 };

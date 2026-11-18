@@ -28,6 +28,20 @@ export const ellipsisExcerpt = (text: string, maximum: number): ExcerptText =>
     : excerptText(`${text.slice(0, excerptEnd(text, maximum))}…`);
 
 /**
+ * Cut `text` to at most `maximum` UTF-16 code units without splitting a
+ * surrogate pair, format the retained prefix, and append "…" when anything was
+ * dropped.
+ */
+export const formattedEllipsisExcerpt = (
+  text: string,
+  maximum: number,
+  format: (prefix: string) => string = (prefix) => prefix,
+): ExcerptText =>
+  text.length <= maximum
+    ? excerptText(format(text))
+    : excerptText(`${format(text.slice(0, excerptEnd(text, maximum)))}…`);
+
+/**
  * `text` quoted as a JSON string for a diagnostic. Text longer than `maximum`
  * UTF-16 code units is cut as by {@link ellipsisExcerpt} and keeps its full
  * length: `"abc"… (300 UTF-16 code units)`.

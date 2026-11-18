@@ -11,9 +11,15 @@ processTest(
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-npm-invocation-");
     const npmEntry = join(root, "selected npm entry.mjs");
+    const arguments_ = [
+      "pack",
+      "value with spaces",
+      "--literal=$HOME",
+      "quote'and\"double",
+    ];
     await writeFile(
       npmEntry,
-      `process.stdout.write(JSON.stringify({ arguments: process.argv.slice(2), cwd: process.cwd(), marker: process.env.REA_NPM_TEST_MARKER }));\n`,
+      `process.stdout.write(JSON.stringify({ arguments: process.argv.slice(2), cwd: process.cwd(), marker: process.env.REA_NPM_TEST_MARKER, ambient: process.env.REA_NPM_TEST_AMBIENT ?? null }));\n`,
     );
     const helper = pathToFileURL(
       resolve("scripts/lib/verify-package-commands.mjs"),
@@ -27,10 +33,15 @@ processTest(
       const commands = await createPackageVerifierCommands({
         workspace: { path: ${JSON.stringify(root)}, close: async () => {} },
       });
+      process.env.REA_NPM_TEST_AMBIENT = "ambient-only";
       const result = await withVerifierCleanup(
-        () => commands.execNpm(["pack", "value with spaces"], {
+        () => commands.execNpm(${JSON.stringify(arguments_)}, {
           cwd: ${JSON.stringify(root)},
-          env: { ...process.env, npm_execpath: ${JSON.stringify(npmEntry)}, REA_NPM_TEST_MARKER: "caller-selected" },
+          env: {
+            ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
+            npm_execpath: ${JSON.stringify(npmEntry)},
+            REA_NPM_TEST_MARKER: "caller-selected",
+          },
         }),
         [() => commands.close()],
       );
@@ -44,9 +55,10 @@ processTest(
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.signal, result.stderr).toBeNull();
     expect(JSON.parse(result.stdout)).toEqual({
-      arguments: ["pack", "value with spaces"],
+      arguments: arguments_,
       cwd: root,
       marker: "caller-selected",
+      ambient: null,
     });
   },
 );

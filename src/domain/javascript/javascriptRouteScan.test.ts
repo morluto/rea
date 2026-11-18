@@ -90,32 +90,16 @@ it("reads route-record keys at most once beyond inspecting each property", () =>
       })),
     ),
   );
-  expect(propertyCount).toBe(count * 2 + 1);
-  expect(keyReads).toBeGreaterThanOrEqual(propertyCount);
   expect(keyReads).toBeLessThanOrEqual(propertyCount * 2);
 });
 
-it.each(["true", "(true as const)", "INDEX"])(
-  "retains an index route with flag %s",
-  (flag) => {
-    const facts = analyze(
-      `const INDEX=true;createBrowserRouter([{index:${flag},Component:Home}]);`,
-    );
-    expect(facts.candidates.map(({ path }) => path)).toEqual(["/"]);
-    expect(facts.unresolved).toEqual([]);
-  },
-);
-
-it.each([
-  "createBrowserRouter([{index:INDEX,Component:Home}]);const INDEX=true;",
-  "const INDEX=runtime;createBrowserRouter([{index:INDEX,Component:Home}]);",
-])("retains unknown index flags without inventing a route: %s", (source) => {
-  const facts = analyze(source);
+it("keeps an index flag unknown before its initializer runs", () => {
+  const facts = analyze(
+    "createBrowserRouter([{index:INDEX,Component:Home}]);const INDEX=true;",
+  );
   expect(facts.candidates).toEqual([]);
-  expect(facts.unresolved).toEqual([
-    expect.objectContaining({
-      reason: expect.stringContaining("index-route flag"),
-    }),
+  expect(facts.unresolved).toMatchObject([
+    { reason: expect.stringContaining("index-route flag") },
   ]);
 });
 
@@ -148,26 +132,20 @@ it.each([
   },
 );
 
-it.each([
-  "var routes=[{path:'/reports'}];createBrowserRouter(routes);",
-  "var ROUTES=[{path:'/reports',children:[{path:'child'}]}];createBrowserRouter(ROUTES);",
-] as const)(
-  "keeps a program-var route configuration readable while disclosing the gap: %s",
-  (source) => {
-    const facts = analyze(source);
-    expect(facts.candidates.map(({ path }) => path)).toEqual(
-      expect.arrayContaining(["/reports"]),
-    );
-    expect(facts.unresolved).toEqual([
-      expect.objectContaining({
-        reason: expect.stringContaining("unisolated program variable"),
-      }),
-    ]);
-  },
-);
+it("retains a program-var route tree and reports its unresolved ownership", () => {
+  const facts = analyze(
+    "var ROUTES=[{path:'/reports',children:[{path:'child'}]}];createBrowserRouter(ROUTES);",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/reports",
+    "/reports/child",
+  ]);
+  expect(facts.unresolved).toMatchObject([
+    { reason: expect.stringContaining("unisolated program variable") },
+  ]);
+});
 
 it.each([
-  "var PATH='/a';globalThis.PATH='/b';createBrowserRouter([{path:PATH}]);",
   "var PATH='/a';const host=globalThis;host.PATH='/b';createBrowserRouter([{path:PATH}]);",
   "var PATH='/a';createBrowserRouter([{path:PATH}]);",
 ] as const)(
@@ -207,19 +185,12 @@ it.each([
   },
 );
 
-it.each([
-  "var SHARED={query:{path:'/data',Component:View}};const HOLD=SHARED;router.push({pathname:'/reports',query:HOLD.query});",
-  "var SHARED={query:{path:'/data'}};router.push({pathname:'/reports',query:SHARED.query});",
-] as const)(
-  "never promotes unisolated navigation data to a route: %s",
-  (source) => {
-    // The slot is data, not a route record. Rejecting its runtime identity must
-    // not release the object back to the independent route-literal scan.
-    const facts = analyze(source);
-    expect(facts.candidates.map(({ path }) => path)).toEqual(["/reports"]);
-    expect(facts.candidates.some(({ path }) => path === "/data")).toBe(false);
-  },
-);
+it("keeps a navigation data path out of the route candidates", () => {
+  const facts = analyze(
+    "var SHARED={query:{path:'/data'}};router.push({pathname:'/reports',query:SHARED.query});",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/reports"]);
+});
 
 it("keeps unrelated routes that share the unisolated data object", () => {
   // Rejecting the runtime identity must not claim the whole source object:

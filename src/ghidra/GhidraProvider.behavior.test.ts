@@ -20,6 +20,7 @@ import {
   ghidraFunctionSeedRecovery,
   ghidraNotInProcedureLimitation,
   limitationsFor,
+  type GhidraSessionSource,
 } from "./GhidraProviderCapabilities.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
@@ -1554,6 +1555,10 @@ describe("Ghidra client projection", () => {
         rawResult: null,
       },
     });
+    if (!result.ok) throw result.error;
+    expect(result.value.limitations).not.toContainEqual(
+      expect.stringContaining("The bridge is verified against"),
+    );
     expect(startCount).toBe(1);
   });
 });
@@ -1780,6 +1785,9 @@ describe("Ghidra procedure lookup projection", () => {
           code: "invalid_request",
           message,
           details: {
+            related_operations: code.startsWith("file_offset_")
+              ? ["inspect_native_load_image"]
+              : ["list_procedures", "search_procedures"],
             issues: [
               {
                 path: ["procedure"],
@@ -1792,6 +1800,7 @@ describe("Ghidra procedure lookup projection", () => {
         expect(projected).not.toHaveProperty("recovery");
         expect(projected.remediation.action).toContain(remedy);
         expect(projected.remediation.action).toContain(qualification);
+        expect(projected.remediation.action).not.toContain("(CLI:");
         expect(projected.remediation.action).not.toContain(
           "REA_GHIDRA_PROJECT_PATH",
         );
@@ -1913,6 +1922,7 @@ describe("Ghidra file-offset outcome projection", () => {
         retryable: false,
         details: {
           operation: "address_to_file_offset",
+          related_operations: ["inspect_native_load_image"],
           issues: [
             {
               path: ["address"],
@@ -1930,6 +1940,7 @@ describe("Ghidra file-offset outcome projection", () => {
       expect(projected.remediation.action).toContain(
         "inspect_native_load_image",
       );
+      expect(projected.remediation.action).not.toContain("(CLI:");
       expect(projected.remediation.action).not.toContain("schema");
       expect(projected.remediation.action).not.toContain("tools/list");
       await client.close();
@@ -2106,10 +2117,14 @@ describe("Ghidra decompiler failure projection", () => {
         code: "execution_failure",
         retryable: false,
         message: `${message}. Only the decompiler failed for this procedure. ${GHIDRA_SESSION_RETAINED}`,
-        details: { diagnostics: { remote_code: code } },
+        details: {
+          related_operations: ["analyze_function"],
+          diagnostics: { remote_code: code },
+        },
       });
       expect(projected.message).not.toContain("rea doctor");
       expect(projected.remediation.action).toContain("analyze_function");
+      expect(projected.remediation.action).not.toContain("rea function");
       expect(projected.remediation.action).toContain(
         "facet_availability.pseudocode",
       );
@@ -2226,13 +2241,20 @@ it("preserves a bridge request limit when reattributing a Ghidra session failure
 describe("Ghidra decompile deadline for a finished invocation", () => {
   const decompileDeadline = async (
     seconds: number,
-    existingProject: boolean,
+    source: GhidraSessionSource,
     cancelled = false,
   ) => {
     const environment: Record<string, string> = {
       REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: String(seconds),
     };
-    if (existingProject) {
+    if (source === "owned-checkpoint") {
+      const root = await mkdtemp(join(tmpdir(), "rea-deadline-checkpoint-"));
+      onTestFinished(async () => {
+        await rm(root, { recursive: true, force: true });
+      });
+      environment.REA_GHIDRA_CHECKPOINT_DIR = root;
+    }
+    if (source === "existing-project") {
       const root = await mkdtemp(join(tmpdir(), "rea-deadline-project-"));
       onTestFinished(async () => {
         await rm(root, { recursive: true, force: true });
@@ -2278,20 +2300,18 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
   };
 
   it.each([
-    { seconds: 5, existingProject: false },
-    { seconds: 2_147_483, existingProject: false },
-    { seconds: 5, existingProject: true },
-  ])(
-    "delivers each lifetime's recovery for a $seconds-second deadline (existing project: $existingProject)",
-    async ({ seconds, existingProject }) => {
+    { seconds: 5, source: "fresh-import" },
+    { seconds: 2_147_483, source: "fresh-import" },
+    { seconds: 5, source: "existing-project" },
+    { seconds: 5, source: "owned-checkpoint" },
+  ] as const)(
+    "delivers each lifetime's recovery for a $seconds-second deadline ($source)",
+    async ({ seconds, source }) => {
       const { message, continuing, invocation } = await decompileDeadline(
         seconds,
-        existingProject,
+        source,
       );
-      const recovery = ghidraDecompileTimeoutRecovery(
-        seconds,
-        existingProject ? "existing-project" : "fresh-import",
-      );
+      const recovery = ghidraDecompileTimeoutRecovery(seconds, source);
       for (const projected of [continuing, invocation])
         expect(projected).toMatchObject({
           code: "provider_timeout",
@@ -2306,10 +2326,20 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
       expect(continuing.remediation.action).toBe(
         recovery.continuingRemediationAction,
       );
-      // Only a saved project's rerun reopens it instead of importing again.
       expect(
         invocation.remediation.action.includes("REA_GHIDRA_PROJECT_PATH"),
-      ).toBe(existingProject);
+      ).toBe(source === "existing-project");
+      if (source === "owned-checkpoint") {
+        expect(invocation.remediation.action).toMatch(
+          /restores.*REA_GHIDRA_CHECKPOINT_DIR/u,
+        );
+        expect(invocation.remediation.action).toMatch(
+          /if initial analysis never completed/u,
+        );
+        expect(continuing.remediation.action).toContain(
+          "update_analysis_settings",
+        );
+      }
       expect(invocation.message.startsWith(message)).toBe(true);
       expect(continuing.message).toBe(
         `${invocation.message} ${GHIDRA_SESSION_RETAINED}`,
@@ -2343,7 +2373,7 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
     async (existingProject) => {
       const { continuing, invocation } = await decompileDeadline(
         5,
-        existingProject,
+        existingProject ? "existing-project" : "fresh-import",
         true,
       );
       // Cancellation closed the session, so no caller is told it remains.
@@ -4535,7 +4565,9 @@ describe("compatible Ghidra builds", () => {
       diagnostics: { provider_version: "12.1.2", java_version: "27" },
     });
     expect(health.ok && health.value.provider.version).toBe("12.1.2");
-    const unverified = expect.stringContaining("12.1.2");
+    const unverified = expect.stringMatching(
+      /\b12\.1\.2\b.*\bverified\b.*\b12\.1\.4\b/u,
+    );
     expect(health.ok && health.value.limitations).toEqual(
       expect.arrayContaining([unverified]),
     );
@@ -4909,6 +4941,32 @@ describe("Ghidra startup deadline for a finished invocation", () => {
       },
     });
   });
+});
+
+it("identifies checkpoint recovery for a timed-out startup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-startup-checkpoint-"));
+  onTestFinished(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  for (const lifetime of ["invocation", "continuing"] as const) {
+    const projected = await ghidraTimedOut(
+      "start",
+      "Ghidra startup deadline elapsed",
+      { REA_GHIDRA_CHECKPOINT_DIR: root },
+      lifetime,
+    );
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      details: { timeout_ms: 250 },
+    });
+    expect(projected.message).toMatch(/checkpoint restore.*initial analysis/u);
+    expect(projected.remediation.action).toContain(
+      "Keep REA_GHIDRA_CHECKPOINT_DIR",
+    );
+    expect(projected.remediation.action).toMatch(
+      /first checkpoint must complete once/u,
+    );
+  }
 });
 
 const startFailure = async (

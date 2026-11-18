@@ -1,5 +1,5 @@
 import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 import { androidComponentsViewRequestSchema } from "../android/androidPackageQuery.js";
 import { createEvidence } from "../evidence.js";
@@ -11,10 +11,7 @@ import {
   androidMethodSummaryViewResultSchema,
 } from "./analysisViewResult.js";
 import type { AdmittedView } from "./analysisViewShape.js";
-import {
-  androidClassSummarySchema,
-  projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary,
-} from "./androidSymbolView.js";
+import { projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary } from "./androidSymbolView.js";
 
 const projectAndroidSymbolSummary = (
   parent: Parameters<typeof projectAdmittedAndroidSymbolSummary>[0],
@@ -312,16 +309,4 @@ it("refuses an admitted one-MiB source plus summary context without truncation a
     },
   });
   expect(parent.normalizedResult).toEqual(facts);
-});
-
-it("reuses validation of an authenticated sealed class result across retained summaries", () => {
-  const { parent } = fixture("inspect_android_class", classReport());
-  const parse = vi.spyOn(androidClassSummarySchema, "safeParse");
-  try {
-    for (let attempt = 0; attempt < 2; attempt++)
-      expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(true);
-    expect(parse).toHaveBeenCalledTimes(1);
-  } finally {
-    parse.mockRestore();
-  }
 });

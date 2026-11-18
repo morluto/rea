@@ -199,10 +199,11 @@ workspaceCliTest(
     ] as const) {
       const result = await cli.run({
         arguments: ["mcp", "doctor", "--json", flag],
+        environment: { REA_MCP_DOCTOR_DEADLINE_MS: "0" },
       });
-      expect(result.exitCode, result.stdout).toBe(0);
+      expect(result.exitCode, result.stdout).toBe(1);
       expect(JSON.parse(result.stdout)).toMatchObject({
-        healthy: true,
+        healthy: false,
         adapter: "production-stdio",
       });
       if (enabled)
