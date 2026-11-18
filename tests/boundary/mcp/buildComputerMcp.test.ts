@@ -690,28 +690,32 @@ it("reports progress for a queued action while another computer can act independ
     callOk(client, "act_on_build_computer", { computer_id: id, action });
   const order: string[] = [];
   const reset = act(first, "reset").then(() => order.push("reset"));
-  await awaitAcknowledgement(
-    waitFor(() => expect(app.methods).toEqual(["data/reset"])),
-    reset,
-    "app reset",
-  );
-  const progress = createDeferred<void>();
-  const queued = client
-    .callTool(
-      {
-        name: "act_on_build_computer",
-        arguments: { computer_id: first, action: "screenshot" },
-      },
-      { onprogress: () => progress.resolve() },
-    )
-    .then((result) => {
-      order.push("queued screenshot");
-      return result;
-    });
-  const independent = act(second, "screenshot").then(() =>
-    order.push("independent screenshot"),
-  );
+  const launched: Promise<unknown>[] = [reset];
+  let queued: ReturnType<Client["callTool"]>;
   try {
+    await awaitAcknowledgement(
+      waitFor(() => expect(app.methods).toEqual(["data/reset"])),
+      reset,
+      "app reset",
+    );
+    const progress = createDeferred<void>();
+    queued = client
+      .callTool(
+        {
+          name: "act_on_build_computer",
+          arguments: { computer_id: first, action: "screenshot" },
+        },
+        { onprogress: () => progress.resolve() },
+      )
+      .then((result) => {
+        order.push("queued screenshot");
+        return result;
+      });
+    launched.push(queued);
+    const independent = act(second, "screenshot").then(() =>
+      order.push("independent screenshot"),
+    );
+    launched.push(independent);
     await awaitAcknowledgement(
       Promise.all([progress.promise, independent]),
       Promise.race([reset, queued]),
@@ -720,7 +724,7 @@ it("reports progress for a queued action while another computer can act independ
     expect(computer.calls.slice(initialCalls)).toEqual([]);
   } finally {
     app.unready = 0;
-    await Promise.allSettled([reset, queued, independent]);
+    await Promise.allSettled(launched);
   }
   expect((await queued).isError).not.toBe(true);
   await reset;
