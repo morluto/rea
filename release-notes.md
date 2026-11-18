@@ -254,6 +254,7 @@
 * **hopper:** name the unconfirmed shutdown step in retained cleanup ([#10594](https://github.com/morluto/rea/issues/10594)) ([e939cd0](https://github.com/morluto/rea/commit/e939cd04feae51ed4670f3068c8a32e0038ef8e2))
 * **hopper:** type the Apple Events authorization denial ([fd97d09](https://github.com/morluto/rea/commit/fd97d0926c6ecd6a97075d587fb8669fac3b29cd))
 * **hopper:** validate every bridge reply against one contract table ([#10662](https://github.com/morluto/rea/issues/10662)) ([f88d896](https://github.com/morluto/rea/commit/f88d8964f9e781c9aa0c08eaf5405879174083e9))
+* **ida:** drain stderr after a broken startup pipe ([#11914](https://github.com/morluto/rea/issues/11914)) ([8d3c9f8](https://github.com/morluto/rea/commit/8d3c9f8d31d6bfd6793eaed1a65b456a6bf2a8aa))
 * **il2cpp:** read ELF hash-table words through BinaryReader ([#11083](https://github.com/morluto/rea/issues/11083)) ([12a0f4a](https://github.com/morluto/rea/commit/12a0f4a94f1fac557f539c2921cc7a8775a37e81))
 * **il2cpp:** report the exceeded native-link maximum in the public refusal ([#10741](https://github.com/morluto/rea/issues/10741)) ([a090fa7](https://github.com/morluto/rea/commit/a090fa70983839e223cdd1e2949ecbd06d5bfa98))
 * **il2cpp:** resolve ELF ABS64 and GLOB_DAT image definitions ([#11075](https://github.com/morluto/rea/issues/11075)) ([29dd58c](https://github.com/morluto/rea/commit/29dd58c96de309965e83f11495acd9372849872a)), closes [#10478](https://github.com/morluto/rea/issues/10478) [#10495](https://github.com/morluto/rea/issues/10495)
