@@ -114,7 +114,7 @@ contents still participate in the default comparison.
 
 A located divergence names the compared fields that differed, so a report does
 not have to be diffed by hand: `first_divergence.fields` lists sorted leaf names
-such as `files[0].path`, `pid`, or `process_samples[0].pid`, with array
+such as `files[0].path`, `pid`, or `finalization.signals[0].delivery`, with array
 positions as bracketed indices, `$` for a whole observation, and at most eight
 names for a wide difference. The names describe only the projection the
 comparison actually judged, so capture-local timing is never named unless a

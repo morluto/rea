@@ -290,6 +290,154 @@ it("does not report timing ignored by one terminal trace source", () => {
   });
 });
 
+it("names compared lifecycle timing and retains ignored settlement timing as evidence", () => {
+  const base = parseProcessCapture(FINALIZED_PROCESS_CAPTURE_EXAMPLE);
+  const finalization = base.exit.finalization;
+  if (finalization === undefined || finalization.elapsed_ms === null)
+    throw new Error("Finalization fixture must retain its deadline outcome");
+  const elapsedMs = finalization.elapsed_ms;
+  const capture = (offset: number) => ({
+    ...base,
+    exit: {
+      ...base.exit,
+      finalization: {
+        ...finalization,
+        elapsed_ms: elapsedMs + offset,
+      },
+    },
+    settlement: {
+      ...base.settlement,
+      elapsed_ms: base.settlement.elapsed_ms + offset,
+    },
+    event_journal: [
+      {
+        capture_order: 0,
+        collection: "filesystem_checkpoints" as const,
+        index: 0,
+      },
+      { capture_order: 1, collection: "lifecycle" as const, index: 0 },
+      { capture_order: 2, collection: "lifecycle" as const, index: 1 },
+      {
+        capture_order: 3,
+        collection: "filesystem_checkpoints" as const,
+        index: 1,
+      },
+    ],
+  });
+  const left = capture(0);
+  const right = capture(10);
+  const { elapsed_ms: _ignoredElapsedMs, ...settlementExact } = left.settlement;
+
+  expect(
+    compareFullyObserved(left, right, {
+      traceSpecification: {
+        events: [
+          {
+            id: "exit",
+            source: "lifecycle",
+            exact: jsonValueSchema.parse({ event: "exit", ...left.exit }),
+            ignore_fields: ["elapsed_ms"],
+            cardinality: { kind: "required" },
+          },
+          {
+            id: "settlement",
+            source: "lifecycle",
+            exact: jsonValueSchema.parse({
+              event: "settlement",
+              ...settlementExact,
+            }),
+            ignore_fields: ["elapsed_ms"],
+            cardinality: { kind: "required" },
+          },
+        ],
+        language: {
+          kind: "finite_traces",
+          variants: [{ id: "lifecycle", trace: ["exit", "settlement"] }],
+        },
+      },
+    }),
+  ).toMatchObject({
+    trace: { verdict: "different" },
+    exit: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "exit",
+      fields: ["finalization.elapsed_ms"],
+      left: { settlement: left.settlement },
+      right: { settlement: right.settlement },
+    },
+  });
+});
+
+it("reports compared dispatch timing when the trace ignores the interaction schedule", () => {
+  const base = emptyCapture();
+  const interaction = {
+    sequence: 0,
+    type: "input" as const,
+    data: "request",
+    outcome: "dispatched" as const,
+  };
+  const capture = (scheduledMs: number, dispatchedMs: number) => ({
+    ...base,
+    interaction_events: [
+      {
+        ...interaction,
+        scheduled_at_ms: scheduledMs,
+        dispatched_at_ms: dispatchedMs,
+      },
+    ],
+    event_journal: (
+      [
+        { collection: "filesystem_checkpoints", index: 0 },
+        { collection: "interaction_events", index: 0 },
+        { collection: "lifecycle", index: 0 },
+        { collection: "lifecycle", index: 1 },
+        { collection: "filesystem_checkpoints", index: 1 },
+      ] as const
+    ).map(({ collection, index }, capture_order) => ({
+      collection,
+      index,
+      capture_order,
+    })),
+  });
+  const left = capture(5, 10);
+  const right = capture(8, 20);
+  expect(compareFullyObserved(left, right).first_divergence).toMatchObject({
+    status: "found",
+    dimension: "interaction",
+    fields: ["scheduled_at_ms"],
+  });
+  expect(
+    compareFullyObserved(left, right, {
+      traceSpecification: {
+        events: [
+          {
+            id: "request",
+            source: "interaction",
+            exact: { ...interaction, dispatched_at_ms: 10 },
+            ignore_fields: ["scheduled_at_ms"],
+            cardinality: { kind: "required" },
+          },
+        ],
+        language: {
+          kind: "finite_traces",
+          variants: [{ id: "interaction", trace: ["request"] }],
+        },
+      },
+    }),
+  ).toMatchObject({
+    trace: { verdict: "different" },
+    interaction: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "interaction",
+      fields: ["dispatched_at_ms"],
+      left: { scheduled_at_ms: 5 },
+      right: { scheduled_at_ms: 8 },
+    },
+  });
+});
+
 it("does not turn unresolved filesystem effects into equality or a definite change", () => {
   const capture = emptyCapture();
   const file = {
