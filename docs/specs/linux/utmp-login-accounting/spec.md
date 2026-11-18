@@ -33,8 +33,10 @@ The consequences that make guessing unsafe:
   profile stated.
 - On a big-endian host musl puts the padding before the session id, which moves
   the session four bytes later than on a little-endian host.
-- Record length narrows the layout but never names the byte order, and a length
-  that is a multiple of every layout (9600) narrows nothing.
+- Record length names no layout at all. A truncated tail lets a larger record
+  explain any shorter length, so an exact-divisibility filter would advertise the
+  smaller layout for bytes a larger one wrote — 384 bytes is one x86 record and
+  also an aarch64 record missing its last 16 bytes.
 
 Record sizes are arithmetic on those fields: the head, the tail and
 `__glibc_reserved[20]`, padded to the 8-byte alignment `struct timeval` forces.
@@ -44,7 +46,7 @@ cannot advertise a length its fields do not fill.
 Selection is therefore explicit. `parseUtmpFile` requires a profile: because a
 truncated tail lets a larger record explain any shorter length, the length never
 proves the ABI on its own, so an omitted profile is reported as `ambiguous_format`
-with the candidate names instead of being resolved from the length.
+listing every profile instead of being resolved from the length.
 
 ## Layouts
 

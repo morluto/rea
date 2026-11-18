@@ -199,35 +199,6 @@ export interface UtmpParseResult {
  * the bytes already loaded into an unbounded object graph. */
 export const UTMP_RECORD_LIMIT = 10_000;
 
-export type UtmpSelection =
-  | { readonly profile: UtmpFormatProfile }
-  | { readonly ambiguous: readonly UtmpFormatProfile[] };
-
-/**
- * The profiles a file of this length could hold.
- *
- * A length that is an exact multiple of more than one candidate is ambiguous: the
- * bytes cannot say which ABI wrote them, and the fields then decode differently.
- */
-export const utmpProfileCandidates = (
-  fileBytes: number,
-): readonly UtmpFormatProfile[] =>
-  fileBytes === 0
-    ? UTMP_FORMAT_PROFILES
-    : UTMP_FORMAT_PROFILES.filter(
-        (profile) => fileBytes % profile.recordBytes === 0,
-      );
-
-export const selectUtmpProfile = (
-  fileBytes: number,
-  requested?: UtmpFormatProfile,
-): UtmpSelection => {
-  if (requested !== undefined) return { profile: requested };
-  const candidates = utmpProfileCandidates(fileBytes);
-  if (candidates.length === 1) return { profile: candidates[0]! };
-  return { ambiguous: candidates };
-};
-
 interface FieldLayout {
   readonly sessionOffset: number;
   readonly secondsOffset: number;
@@ -396,14 +367,12 @@ export const parseUtmpFile = (
     });
 
   // A truncated tail lets a larger record explain any shorter length, so the
-  // length never proves the ABI on its own. The caller states the profile; the
-  // candidates are reported only to help it choose.
+  // length never proves the ABI on its own. Every profile stays a candidate —
+  // narrowing by divisibility would advertise an ABI the bytes do not establish.
   if (options.profile === undefined) {
     issues.push({
       kind: "ambiguous_format",
-      candidates: utmpProfileCandidates(input.byteLength).map(
-        (candidate) => candidate.name,
-      ),
+      candidates: UTMP_FORMAT_PROFILES.map((candidate) => candidate.name),
     });
     return { ok: false, error: issues };
   }

@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseUtmpFile,
-  selectUtmpProfile,
   utmpFieldLayout,
-  utmpProfileCandidates,
   UTMP_FORMAT_PROFILES,
   type UtmpFormatProfile,
 } from "./utmp.js";
@@ -127,35 +125,24 @@ describe("utmp profile selection", () => {
     }
   });
 
-  it("derives the candidate profiles from the file length", () => {
-    expect(utmpProfileCandidates(384).map(({ name }) => name)).toEqual([
-      "glibc-time32",
-    ]);
-    expect(utmpProfileCandidates(400).map(({ name }) => name)).toEqual([
-      "glibc-time64",
-      "glibc-time64-be",
-      "musl-time64",
-      "musl-time64-be",
-    ]);
-    // 9600 is the least common multiple, so the length cannot name one layout.
-    expect(utmpProfileCandidates(9_600)).toHaveLength(5);
-  });
-
-  it("refuses an ambiguous file instead of guessing", () => {
-    const selection = selectUtmpProfile(9_600);
-    expect("ambiguous" in selection).toBe(true);
-    expect(
-      "ambiguous" in selection
-        ? selection.ambiguous.map(({ name }) => name)
-        : [],
-    ).toHaveLength(5);
-  });
-
-  it("honours an explicit profile for a length several layouts share", () => {
-    const selection = selectUtmpProfile(400, musl64);
-    expect("profile" in selection && selection.profile.name).toBe(
-      "musl-time64",
-    );
+  it("keeps a truncated layout among the candidates at every record size", () => {
+    // Dropping 16 bytes leaves a file that an exact-divisibility filter would
+    // attribute to a smaller record, hiding the layout that actually wrote it.
+    for (const candidate of UTMP_FORMAT_PROFILES) {
+      const truncated = recordBytes(candidate, login()).subarray(
+        0,
+        candidate.recordBytes - 16,
+      );
+      const result = parseUtmpFile(truncated, { source: "wtmp" });
+      expect(result.ok, candidate.name).toBe(false);
+      if (result.ok) continue;
+      expect(result.error).toEqual([
+        {
+          kind: "ambiguous_format",
+          candidates: UTMP_FORMAT_PROFILES.map(({ name }) => name),
+        },
+      ]);
+    }
   });
 });
 
@@ -376,7 +363,7 @@ describe("utmp field widths and byte order", () => {
     expect(result.error).toEqual([
       {
         kind: "ambiguous_format",
-        candidates: utmpProfileCandidates(384).map(({ name }) => name),
+        candidates: UTMP_FORMAT_PROFILES.map(({ name }) => name),
       },
     ]);
   });
