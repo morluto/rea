@@ -40,7 +40,7 @@ export function* zipEndOfCentralDirectoryCandidates(
     offset >= earliest;
     offset--
   ) {
-    if (reader.u32(offset) !== 0x06054b50) continue;
+    if (bytes[offset] !== 0x50 || reader.u32(offset) !== 0x06054b50) continue;
     const commentLength = reader.u16(offset + 20);
     if (offset + ZIP_EOCD_BYTES + commentLength !== bytes.byteLength) continue;
     yield {

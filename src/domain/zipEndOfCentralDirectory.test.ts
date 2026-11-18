@@ -84,4 +84,11 @@ it("does not promote short records or non-ending EOCD-like bytes to candidates",
       bytes.subarray(0, CLASSIC_END_RECORD_BYTES),
     ),
   ]).toEqual([]);
+  bytes[0] = 0x50;
+  bytes[1] = 0;
+  expect([
+    ...zipEndOfCentralDirectoryCandidates(
+      bytes.subarray(0, CLASSIC_END_RECORD_BYTES),
+    ),
+  ]).toEqual([]);
 });
