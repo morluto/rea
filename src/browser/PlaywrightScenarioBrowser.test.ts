@@ -50,7 +50,7 @@ it("locks one attached browser across loopback spellings of one endpoint", () =>
   );
 });
 
-it("passes the selected environment to the $platform browser launch boundary", async () => {
+it("passes the selected environment to the actual browser launch boundary", async () => {
   vi.stubEnv("LANG", "ambient-language");
   const selected = {
     LANG: "selected-language",
