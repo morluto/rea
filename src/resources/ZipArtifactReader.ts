@@ -442,6 +442,11 @@ export const zipListingCoverage = (
       : [
           `${String(account.unlocatedHeaders)} ZIP central directory record(s) point at no local file header; the bytes they claim were not accounted for.`,
         ]),
+    ...(account.unverifiedExtents === 0
+      ? []
+      : [
+          `${String(account.unverifiedExtents)} ZIP central directory record(s) have payload extents that conflict with or cannot be established from their local headers or required data descriptors; those claims were not used to establish complete coverage.`,
+        ]),
   ];
   return {
     status: limitations.length === 0 ? "complete" : "unknown",
