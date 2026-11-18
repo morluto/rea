@@ -217,6 +217,7 @@ export interface AndroidOtaInstallOperation {
   readonly typeName: string;
   readonly dataOffset: number;
   readonly dataLength: number;
+  readonly dataHashHex: string | null;
   readonly srcExtents: readonly AndroidOtaExtent[];
   readonly dstExtents: readonly AndroidOtaExtent[];
 }
@@ -428,6 +429,7 @@ interface OperationDraft {
   typeCode: number;
   dataOffset: number;
   dataLength: number;
+  dataHashHex: string | null;
   srcExtents: ExtentDraft[];
   dstExtents: ExtentDraft[];
 }
@@ -537,6 +539,7 @@ const decodeOperation = (
     typeCode: 0,
     dataOffset: 0,
     dataLength: 0,
+    dataHashHex: null,
     srcExtents: [],
     dstExtents: [],
   };
@@ -567,6 +570,13 @@ const decodeOperation = (
       (field === 4 ? operation.srcExtents : operation.dstExtents).push(
         unwrap(decodeExtent(reader.bytes())),
       );
+      return;
+    }
+    if (field === 8 && wire === WireType.LengthDelimited) {
+      const digest = reader.bytes();
+      if (digest.length !== 0 && digest.length !== 32)
+        fail(malformed("operation data_sha256_hash must be 32 bytes or empty"));
+      operation.dataHashHex = digest.length === 0 ? null : hex(digest);
       return;
     }
     reader.skip(wire);
@@ -1058,6 +1068,7 @@ export const parseAndroidOtaPayload = (
           typeName: INSTALL_OPERATION_NAMES[operation.typeCode] ?? "unknown",
           dataOffset: operation.dataOffset,
           dataLength: operation.dataLength,
+          dataHashHex: operation.dataHashHex,
           srcExtents: operation.srcExtents.map((extent) => ({
             startBlock: extent.startBlock,
             numBlocks: extent.numBlocks,
@@ -1393,9 +1404,9 @@ const hasCompleteExtentCoverage = (
 };
 
 /**
- * Rebuild a full-payload partition image. A declared-hash mismatch fails
- * unless `verifyDeclaredHash` is false, which leaves that decision to a caller
- * that applies its own integrity policy to the returned bytes.
+ * Rebuild a full-payload partition image after checking declared blob hashes.
+ * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
+ * which leaves that decision to a caller applying its own integrity policy.
  */
 export const reconstructAndroidOtaPartition = (
   partition: AndroidOtaPartition,
@@ -1409,8 +1420,10 @@ export const reconstructAndroidOtaPartition = (
   const budget = chargeReconstructionWork(partition.operations, blockSize);
   if (!budget.ok) return budget;
   const image = Buffer.alloc(size);
+  // The reader shares one byte array for repeated references to the same blob.
+  const blobHashes = new WeakMap<Uint8Array, string>();
   try {
-    for (const operation of partition.operations) {
+    for (const [index, operation] of partition.operations.entries()) {
       if (operation.typeCode === 6) {
         const written = writeExtents(
           image,
@@ -1432,6 +1445,17 @@ export const reconstructAndroidOtaPartition = (
             `operation data for ${partition.name} is truncated: expected ${String(operation.dataLength)} bytes`,
           ),
         );
+      if (operation.dataHashHex !== null) {
+        const observed = blobHashes.get(raw) ?? sha256Hex(raw);
+        blobHashes.set(raw, observed);
+        if (operation.dataHashHex !== observed)
+          return err({
+            _tag: "AndroidOtaPayloadIntegrityFailure",
+            message: `Android OTA partition ${partition.name} operation ${String(index)} data hash mismatch`,
+            declaredHashHex: operation.dataHashHex,
+            observedHashHex: observed,
+          });
+      }
       let payload: Uint8Array = raw;
       if (operation.typeCode === 14) {
         const dstBytes = destinationExtentBytes(

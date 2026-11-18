@@ -230,7 +230,10 @@ unknown findings and typed uncertainty, including returned-reference widening
 and unavailable type-only compiler options. `conditional-loader` records a
 BOM/hashbang source recovered with an uncertain package mode or loader
 invocation. Its overall `parse_status` stays partial without inventing a syntax
-error. Dependency and worker Evidence retains the loader limitation.
+error. `commonjs-wrapper-redeclaration` records a top-level lexical declaration
+that redeclares a CommonJS wrapper parameter. Node cannot evaluate that module,
+and the recovered syntax stays complete because the diagnostic does not drop
+statements. Dependency and worker Evidence retains the loader limitation.
 `examination` reports static semantic
 resource limits and Electron wrapper expansion limits independently. A completed
 pass does not establish complete runtime semantics. Route examination and result

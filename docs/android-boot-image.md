@@ -68,12 +68,13 @@ stays a file; extract it and run `inspect-devicetree` on the extracted file.
 
 ## AVB footer
 
-When bytes follow the page-aligned image, the last 64 bytes are compared with
-the `AVBf` footer. A matching footer records its version, original image size,
-and vbmeta offset and size. The footer and vbmeta are not children and are not
-verified. A shorter tail, or a tail that does not start with `AVBf`, is
-reported as undecoded trailing bytes. A vbmeta range that overlaps the header,
-a component, or the footer is malformed.
+The reader checks the final 64 bytes for an `AVBf` footer when those bytes
+begin at or after the end of the last declared image component, even if they
+start before the page-rounded image end. A matching footer records its version,
+original image size, and vbmeta offset and size. The footer and vbmeta remain
+unverified metadata. If no footer is recognized, the reader reports undecoded
+trailing bytes beyond the page-rounded image end. A vbmeta range that overlaps
+the header, a component, or the footer is malformed.
 
 ## Bounded work
 
