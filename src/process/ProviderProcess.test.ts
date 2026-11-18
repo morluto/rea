@@ -147,3 +147,22 @@ it.runIf(process.platform === "linux")(
     }
   },
 );
+
+posixIt(
+  "preserves caller-owned cleanup when no inspection host is selected",
+  async () => {
+    const launched = await spawnOwnedProviderProcess({
+      command: process.execPath,
+      arguments: ["-e", "process.exit(0)"],
+      runId: "default-caller-owned-cleanup",
+    });
+    if (
+      launched.process.exitCode === null &&
+      launched.process.signalCode === null
+    )
+      await new Promise<void>((resolve) =>
+        launched.process.once("exit", () => resolve()),
+      );
+    expect(launched.cleanup).toBeUndefined();
+  },
+);

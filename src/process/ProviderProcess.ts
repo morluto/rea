@@ -426,7 +426,10 @@ export const spawnOwnedProviderProcess = async (
   return {
     process: child,
     ownership,
-    cleanup: () => cleanupOwnedProcessGroup(ownership, ownershipHost),
+    // Preserve the default launch contract: callers may own direct-child cleanup.
+    ...(options.ownershipHost === undefined
+      ? {}
+      : { cleanup: () => cleanupOwnedProcessGroup(ownership, ownershipHost) }),
     requestStop: (signal) => signalUnreapedGroup(child, pid, signal),
   };
 };
