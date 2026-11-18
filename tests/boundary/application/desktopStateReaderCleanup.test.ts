@@ -134,8 +134,8 @@ it("keeps both SQLite and export-worker cleanup failures when both closes fail, 
   // The composite reads completion from both parts: it stays incomplete
   // until each part's owner confirms release, then completes.
   const composite = failures.closed;
-  expect(composite).toBeInstanceOf(AnalysisError);
-  if (!(composite instanceof AnalysisError)) return;
+  if (!(composite instanceof AnalysisError))
+    throw new Error("Expected the close composite to be an AnalysisError");
   expect(composite.cleanupIncomplete).toBe(true);
   released.sqlite = true;
   expect(composite.cleanupIncomplete).toBe(true);
