@@ -501,7 +501,7 @@ describe("state data plane timing and order", () => {
       addByUri(1),
       { jsonrpc: "2.0", id: 2, method: "data/get" },
     ]);
-    let reset: Promise<Response>;
+    let reset: Promise<Response> | undefined;
     try {
       await download.reached(batch, "state fetch admission");
       reset = Promise.resolve(
@@ -510,6 +510,7 @@ describe("state data plane timing and order", () => {
       await resetQueued.reached(reset, "reset queue admission");
     } finally {
       download.release(new Response(JSON.stringify(renamedDocument())));
+      await Promise.allSettled([batch, reset]);
     }
     const replies = (await batch).json;
     expect(replies).toMatchObject([
