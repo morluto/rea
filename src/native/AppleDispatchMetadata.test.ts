@@ -2852,6 +2852,11 @@ describe("Objective-C category class properties", () => {
       (bytes: Buffer) => bytes.writeBigUInt64LE(base + 0x2000n, 296),
       "0x100002004",
     ],
+    [
+      "image info is too short to hold its flags",
+      (bytes: Buffer) => bytes.writeBigUInt64LE(4n, 304),
+      "0x100000c00",
+    ],
   ])("retains a category whose %s", (_, damage, field) => {
     const bytes = categoryImage(0x40, 0);
     damage(bytes);

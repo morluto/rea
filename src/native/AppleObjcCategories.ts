@@ -42,29 +42,45 @@ const unnamedClassReference = (
 /** `objc_image_info` flag: this image's `category_t` records end in `_classProperties`. */
 const HAS_CATEGORY_CLASS_PROPERTIES = 1 << 6;
 
+/** Size of `objc_image_info`: a version word, then the flags word. */
+const IMAGE_INFO_SIZE = 8;
+
 /**
  * Why a category's `_classProperties` list is unaccounted for, or null when
  * the record has none. Images built before the field existed end at
  * `instanceProperties`, so the bytes after it are a field only when an image
  * info declares them; same-named image infos are read together. A field that
  * cannot be read is reported at its address so the category keeps the facts
- * already decoded.
+ * already decoded. An image info too short to hold its flags leaves the
+ * field's presence unknown, which is reported rather than read as absent.
  */
 const categoryClassPropertyIssue = (
   read: Pick<ObjcDispatchReaders, "u32" | "pointer">,
-  imageInfoFlags: readonly bigint[],
+  imageInfos: readonly Section[],
   category: bigint,
   name: string,
 ): DecodeIssue | null => {
   let field = category + 48n;
   try {
     let declared = false;
-    for (const flags of imageInfoFlags) {
-      field = flags;
-      if ((read.u32(flags) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0)
-        declared = true;
+    let truncated: Section | undefined;
+    for (const imageInfo of imageInfos) {
+      if (imageInfo.size < IMAGE_INFO_SIZE) truncated ??= imageInfo;
+      else {
+        field = imageInfo.address + 4n;
+        if ((read.u32(field) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0)
+          declared = true;
+      }
     }
-    if (!declared) return null;
+    if (!declared)
+      return truncated === undefined
+        ? null
+        : issue(
+            "objc_properties_categories",
+            "category_class_properties_unreadable",
+            `Category ${name} class property list: image info holds ${truncated.size} of the ${IMAGE_INFO_SIZE} bytes that carry its flags`,
+            `0x${truncated.address.toString(16)}`,
+          );
     field = category + 48n;
     return read.pointer(field) === 0n
       ? null
@@ -115,9 +131,9 @@ export const decodeObjcCategories = (input: {
 }): number => {
   const { read, result } = input;
   let examined = 0;
-  const imageInfoFlags = input.sections
-    .filter(({ name, size }) => name === "__objc_imageinfo" && size >= 8)
-    .map(({ address }) => address + 4n);
+  const imageInfos = input.sections.filter(
+    ({ name }) => name === "__objc_imageinfo",
+  );
   for (const section of input.sections.filter(
     ({ name }) => name === "__objc_catlist",
   )) {
@@ -203,7 +219,7 @@ export const decodeObjcCategories = (input: {
         });
         const classProperties = categoryClassPropertyIssue(
           read,
-          imageInfoFlags,
+          imageInfos,
           category,
           name,
         );
