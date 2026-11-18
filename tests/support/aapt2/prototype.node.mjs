@@ -12,7 +12,11 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { withCommands } from "../command-scope.mjs";
+import {
+  withCommands,
+  ExperimentCommandCleanupFailure,
+} from "../command-scope.mjs";
+import { OwnedCommandFailure } from "../../../dist/process/OwnedCommand.js";
 import { createIdentityRecorder } from "./identities.mjs";
 import { failureRecord } from "./failure-record.mjs";
 import { DarwinProcessOwnershipInspectionError } from "../../../dist/process/DarwinProcessRunTokenReader.js";
@@ -88,6 +92,67 @@ for (const kind of ["cancelled", "cleanup-completed", "cleanup-failed"])
   });
 
 const script = fileURLToPath(new URL("./verify.mjs", import.meta.url));
+for (const diagnostics of [true, false]) {
+  test(`cleanup reports exclude inherited environment and live owners (diagnostics: ${diagnostics})`, () => {
+    const retainedValue = "UNRELATED_AMBIENT_VALUE=must-not-be-persisted";
+    const inspectionFailure = new RegularFileCleanupFailure({
+      path: "/proc/123/environ",
+      owner: {
+        close: async () => {},
+        identity: "live-owner-must-not-be-persisted",
+      },
+      outcome: { kind: "completed", value: retainedValue },
+      cleanupCause: new Error("descriptor close failed"),
+    });
+    const failure = new ExperimentCommandCleanupFailure({
+      status: "incomplete",
+      reason: "inspection cleanup remains",
+      inspectionCleanup: {
+        causes: [inspectionFailure],
+        failures: [
+          { failure: inspectionFailure, cause: new Error("retry failed") },
+        ],
+      },
+    });
+    const record = failureRecord(failure, { diagnostics });
+    assert.equal(record.cleanup_result.status, "incomplete");
+    assert.equal(
+      record.cleanup_result.inspection_failures[0].failure.name,
+      "RegularFileCleanupFailure",
+    );
+    assert.equal(
+      record.cleanup_result.inspection_failures[0].cause.message,
+      "retry failed",
+    );
+    assert.match(JSON.stringify(record), /descriptor close failed/u);
+    assert.doesNotMatch(
+      JSON.stringify(record),
+      /UNRELATED_AMBIENT_VALUE|must-not-be-persisted/u,
+    );
+    assert.equal(inspectionFailure.outcome.value, retainedValue);
+  });
+  test(`command reports retain physical failure and later cancellation (diagnostics: ${diagnostics})`, () => {
+    const failure = new OwnedCommandFailure(
+      "process",
+      "child failed",
+      null,
+      null,
+      {
+        cause: new Error("physical process error"),
+        cancellation: {
+          reason: new Error("operator cancelled during cleanup"),
+        },
+      },
+    );
+    const record = failureRecord(failure, { diagnostics });
+    assert.equal(record.reason, "process");
+    assert.equal(record.cause.message, "physical process error");
+    assert.equal(
+      record.cancellation.reason.message,
+      "operator cancelled during cleanup",
+    );
+  });
+}
 for (const nested of [false, true])
   test(`retains native compiler diagnostics only in the complete receipt (nested: ${nested})`, () => {
     const compilerOutcome = {

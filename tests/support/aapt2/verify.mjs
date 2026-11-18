@@ -105,6 +105,7 @@ await withCommands(async (run, signal) => {
         : null;
     const apktoolVersion = parseApktoolVersionOutput(
       (await command(apktool, ["--version"])).stdout,
+      process.platform,
     );
     receipt.apktool_identity = apktoolVersion;
     receipt.apktool_version = apktoolVersion.version;

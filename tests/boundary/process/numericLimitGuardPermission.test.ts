@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, rename, symlink } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, rename, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -12,8 +12,11 @@ processTest.skipIf(
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-limit-permission-");
     await mkdir(join(root, "scripts/verify"), { recursive: true });
-    await mkdir(join(root, "tests/nested"), { recursive: true });
-    for (const name of ["src", ".agents", "node_modules", "bridge"])
+    await mkdir(join(root, "tests"), { recursive: true });
+    // The guard scans src only. Copy it so permission failures never mutate the checkout.
+    await cp(resolve("src"), join(root, "src"), { recursive: true });
+    await mkdir(join(root, "src/nested"), { recursive: true });
+    for (const name of [".agents", "node_modules", "bridge"])
       await symlink(resolve(name), join(root, name), "dir");
     await symlink(
       resolve("scripts/hopper-demo-x11.py"),
@@ -36,7 +39,7 @@ processTest.skipIf(
       );
     const healthy = await run();
     expect(healthy.exitCode, healthy.stderr).toBe(0);
-    for (const directory of [join(root, "tests"), join(root, "tests/nested")]) {
+    for (const directory of [join(root, "src"), join(root, "src/nested")]) {
       try {
         await chmod(directory, 0);
         const refused = await run();
@@ -47,14 +50,14 @@ processTest.skipIf(
         await chmod(directory, 0o755);
       }
     }
-    await rename(join(root, "tests"), join(root, "tests-saved"));
+    await rename(join(root, "src"), join(root, "src-saved"));
     try {
       const missing = await run();
       expect(missing.exitCode).not.toBe(0);
       expect(missing.stderr).toContain("ENOENT");
-      expect(missing.stderr).toContain(join(root, "tests"));
+      expect(missing.stderr).toContain(join(root, "src"));
     } finally {
-      await rename(join(root, "tests-saved"), join(root, "tests"));
+      await rename(join(root, "src-saved"), join(root, "src"));
     }
   },
 );

@@ -3,6 +3,25 @@ import { DarwinProcessOwnershipInspectionError } from "../../../dist/process/Dar
 import { projectAnalysisError } from "../../../dist/domain/analysisErrorProjection.js";
 import { ExperimentCommandCleanupFailure } from "../command-scope.mjs";
 
+/** Stop results retain non-JSON inspection capabilities; reports retain only facts. */
+const cleanupRecord = (result, options) => ({
+  status: result.status,
+  ...(result.reason === undefined ? {} : { reason: result.reason }),
+  ...(result.cleanupResult === undefined
+    ? {}
+    : { cleanup_result: result.cleanupResult }),
+  ...(result.inspectionCleanup === undefined
+    ? {}
+    : {
+        inspection_failures: result.inspectionCleanup.failures.map(
+          ({ failure, cause }) => ({
+            failure: failureRecord(failure, options),
+            cause: failureRecord(cause, options),
+          }),
+        ),
+      }),
+});
+
 /** Preserve full receipt diagnostics while projecting terminal failures without expanded output. */
 export const failureRecord = (
   cause,
@@ -25,6 +44,16 @@ export const failureRecord = (
             },
       collection_failure: cause.collectionFailure,
       cleanup_failure: cause.cleanupFailure,
+      ...(cause.cancellation === undefined
+        ? {}
+        : {
+            cancellation: {
+              reason: failureRecord(cause.cancellation.reason, {
+                diagnostics,
+                seen,
+              }),
+            },
+          }),
       ...(cause.cleanupResult === undefined
         ? {}
         : { cleanup_result: cause.cleanupResult }),
@@ -32,7 +61,7 @@ export const failureRecord = (
     });
   }
   if (cause instanceof ExperimentCommandCleanupFailure)
-    record.cleanup_result = cause.result;
+    record.cleanup_result = cleanupRecord(cause.result, { diagnostics, seen });
   if (cause instanceof DarwinProcessOwnershipInspectionError) {
     if (diagnostics) {
       record.compiler_outcome = cause.compilerOutcome;
