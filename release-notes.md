@@ -897,6 +897,7 @@
 * **process:** cover observer path resolution errors ([1201c99](https://github.com/morluto/rea/commit/1201c994270055b8f933d3710a1cc951fe6dc286)), closes [#7281](https://github.com/morluto/rea/issues/7281)
 * **process:** drive kernel thread exclusion through Linux procfs ([3f7d0d2](https://github.com/morluto/rea/commit/3f7d0d2d21bbc738a4d66315c4a0be19ec632c84))
 * **process:** inherit project deadlines in agent evaluation fixtures ([f916b3e](https://github.com/morluto/rea/commit/f916b3ecf5455ffc80e300d8cf7eea144d02d61c))
+* **process:** isolate readable procfs thread evidence ([#11933](https://github.com/morluto/rea/issues/11933)) ([93b59be](https://github.com/morluto/rea/commit/93b59bec451a2be9ea49b14b105cd50c99fd72c6))
 * **process:** pass the capture resource scope in the removed-observer test ([4e8e1f5](https://github.com/morluto/rea/commit/4e8e1f5346d7efa6890a86e6ffaebfd80fb6c8f4)), closes [#7281](https://github.com/morluto/rea/issues/7281)
 * **process:** plan scenario admission cases for a host that reaches it ([e1d229c](https://github.com/morluto/rea/commit/e1d229cd6bdff4b0c9ff412d5784bf61f4a92b40))
 * **process:** skip POSIX observer errors on Windows ([cf9e7f7](https://github.com/morluto/rea/commit/cf9e7f7dadff70e3d4395078c2efa2aac2692e34)), closes [#7281](https://github.com/morluto/rea/issues/7281)
