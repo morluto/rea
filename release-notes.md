@@ -2,7 +2,7 @@
 ---
 
 
-## [6.10.0](https://github.com/morluto/rea/compare/rea-agents-6.9.0...rea-agents-6.10.0) (2026-11-17)
+## [6.10.0](https://github.com/morluto/rea/compare/rea-agents-6.9.0...rea-agents-6.10.0) (2026-11-18)
 
 
 ### ⚠ BREAKING CHANGES
