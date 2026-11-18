@@ -164,6 +164,8 @@ export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
+  /** Verbatim selected spelling when it differs from the inspected file path. */
+  readonly callerInputPath?: string;
   /** Selected artifact spelling determines name-based format hints and external companions. */
   readonly artifactSelectedPath?: string;
   /** Info.plist of the app bundle the target was resolved from. */
@@ -317,6 +319,7 @@ export type BinaryTarget =
           | "wxapkg"
           | "uimage"
           | "android-boot-image"
+          | "android-ota-payload"
           | "dmg"
           | "pkg"
           | "intel-hex"
@@ -374,6 +377,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   wxapkg: "archive",
   uimage: "archive",
   "android-boot-image": "archive",
+  "android-ota-payload": "archive",
   dmg: "archive",
   pkg: "archive",
   "intel-hex": "archive",

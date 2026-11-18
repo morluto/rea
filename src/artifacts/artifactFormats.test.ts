@@ -31,6 +31,7 @@ type FormatsWithReaders =
   | "wxapkg"
   | "uimage"
   | "android-boot-image"
+  | "android-ota-payload"
   | "mach-o-universal"
   | "directory"
   | "pyinstaller"

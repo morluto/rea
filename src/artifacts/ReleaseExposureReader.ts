@@ -71,14 +71,20 @@ import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
-import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
+import {
+  inspectPeCodeViewFromBuffer,
+  parsePeRecordStructure,
+} from "../domain/binaryTarget.js";
 import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type {
   ArtifactAdmissionLimit,
   ArtifactIntegrityCheck,
 } from "../domain/artifactOperationError.js";
-import { observeMzWindowsHeader } from "../domain/dosMz.js";
+import {
+  mzWindowsHeaderLayoutLimitation,
+  observeMzWindowsHeader,
+} from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -1108,6 +1114,13 @@ const examineSelectedFile = async (
       state.nativeDigests.set(input.path, input.sha256);
   }
   if (nativeFormat === "pe") readPdb(state, bytes, input.path);
+  else if (
+    nativeFormat === null &&
+    peHeaderState(bytes, bytes.length) === "malformed"
+  ) {
+    noteUnresolvedPe(state, input.path, "malformed");
+    return;
+  }
   await examineMember(state, input, {
     logical: basename(input.path),
     // A selected package executable keeps its native carrier here, so its
@@ -1160,13 +1173,11 @@ const examineMember = async (
     readable = await examineTextMember(state, member, context);
   else if (packageFormat !== null)
     readable = await examinePackagedBinary(state, member, context);
-  else
-    await examineProbedText(
-      state,
-      member,
-      await member.read(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
-      context,
-    );
+  else {
+    const probe = await member.read(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES);
+    noteUnresolvedPeRead(state, member, probe);
+    await examineProbedText(state, member, probe, context);
+  }
   if (packageFormat === null) return;
   if (!readable) {
     state.unreadable += 1;
@@ -1301,13 +1312,13 @@ const examineMapMember = async (
   // A package member whose PE header is undecided may be native, so its `MZ`
   // prefix is no evidence of a linker map.
   if (
-    header !== null &&
+    read !== null &&
     member.packageFormat !== null &&
     !member.kindStated &&
-    noteUndecidedPe(state, member, header)
+    noteUnresolvedPeRead(state, member, read.loaded)
   ) {
     // Bytes read in full are still text, so their credential markers count.
-    if (read?.loaded.kind === "bytes")
+    if (read.loaded.kind === "bytes")
       scanText(
         state,
         member,
@@ -1604,16 +1615,13 @@ const examineTextMember = async (
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
-  // A package member's name is not its format. One kept only as a prefix may
-  // have its PE signature past that prefix, so it stays undecided, as on the
-  // map route; text read in full has no later bytes to decide it.
-  if (
-    loaded.kind === "over_allowance" &&
-    loaded.prefix !== null &&
-    member.packageFormat !== null &&
-    !member.kindStated
-  )
-    noteUndecidedPe(state, member, loaded.prefix);
+  if (member.packageFormat !== null && !member.kindStated) {
+    const pe = peHeaderOfRead(member, loaded);
+    // A complete text read beginning with MZ is not a PE claim without a
+    // signature. A complete malformed PE still leaves debug records unknown.
+    if (loaded.kind === "over_allowance" || pe === "malformed")
+      noteUnresolvedPe(state, member.location, pe, true);
+  }
   return examineLoadedText(
     state,
     scriptRoleOfRead(member, loaded),
@@ -1991,8 +1999,8 @@ const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   const spellings = state.scriptTargets.get(target);
   const spelling = anchoredLocation(state, location);
-  if (spellings?.has(spelling)) return;
   retractLinkerMapGuesses(state, location);
+  if (spellings?.has(spelling)) return;
   state.scriptTargetBytes += Buffer.byteLength(spelling);
   if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES) {
     state.skippedMaps += 1;
@@ -2106,7 +2114,6 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   const spellings = state.mapTargets.get(target);
   const spelling = anchoredLocation(state, location);
-  if (spellings?.has(spelling)) return;
   // A late declaration can identify an exact occurrence already examined as
   // a linker-map candidate. Claim that identity before final target coverage
   // considers other spellings in the normalized bucket.
@@ -2115,6 +2122,7 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   // Retract once per exact declaration; repeating it must not consume peers
   // that only share its normalized lookup key.
   state.skippedMaps += retractLinkerMapGuesses(state, location);
+  if (spellings?.has(spelling)) return;
   state.mapTargetBytes += Buffer.byteLength(spelling);
   if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES) {
     state.skippedMaps += 1;
@@ -2170,6 +2178,14 @@ const retractLinkerMapGuesses = (
     if (paths.size === 0) state.linkerMapGuesses.delete(key);
     return 1;
   }
+  // A read can add an exact guess after an early declaration. Retract that
+  // guess first; an admitted missing spelling cannot identify a peer source.
+  if (
+    state.examinedMembers.get(key)?.has(spelling) === true &&
+    (state.mapTargets.get(key)?.has(spelling) === true ||
+      state.scriptTargets.get(key)?.has(spelling) === true)
+  )
+    return 0;
   // Without an exact source spelling, normalization cannot prove which
   // occurrence the declaration means. Keep companion coverage unresolved.
   state.skippedCompanions += paths.size;
@@ -2363,8 +2379,7 @@ const examinePackagedBinary = async (
           header,
           probe.kind === "bytes" ? header.length : member.declaredSize,
         ));
-  if (native === null && header !== null)
-    noteUndecidedPe(state, member, header);
+  if (native === null) noteUnresolvedPeRead(state, member, probe);
   if (
     native === null &&
     header !== null &&
@@ -2392,30 +2407,75 @@ const examinePackagedBinary = async (
   return image.kind !== "unread";
 };
 
-/**
- * An `MZ` header whose PE signature lies past the bytes read may be native, so
- * the image stays unexamined by the on-disk readers, and it may carry a
- * package that nothing here can clear. Returns whether the header was undecided.
- */
-/** An `MZ` header whose PE signature lies past the bytes read, so it may be native. */
-const isUndecidedPeHeader = (header: Buffer): boolean => {
-  if (header.toString("latin1", 0, 2) !== "MZ") return false;
-  const windows = observeMzWindowsHeader(header);
-  return (
+type PeHeaderState = "other" | "unexamined" | "malformed" | "pe";
+
+/** Judge a PE header by the same structural parser as inventory. */
+const peHeaderState = (bytes: Buffer, size: number | null): PeHeaderState => {
+  if (bytes.toString("latin1", 0, 2) !== "MZ") return "other";
+  const windows = observeMzWindowsHeader(bytes, size ?? bytes.length);
+  if (windows.state === "declared" && windows.signature === "PE") {
+    if (mzWindowsHeaderLayoutLimitation(windows) !== undefined)
+      return "malformed";
+    const record = parsePeRecordStructure(bytes.subarray(windows.offset));
+    if (record.ok) return "pe";
+    return record.error.kind === "incomplete" &&
+      (size === null || windows.offset + record.error.requiredBytes <= size)
+      ? "unexamined"
+      : "malformed";
+  }
+  if (
     windows.state === "signature-needed" ||
     (windows.state === "candidate" && windows.signature === "unobserved")
-  );
+  )
+    return "unexamined";
+  return "other";
 };
 
-const noteUndecidedPe = (
+const peHeaderOfRead = (
+  member: MemberView,
+  loaded: MemberRead,
+): PeHeaderState => {
+  const header = headerOfRead(loaded);
+  return header === null
+    ? "other"
+    : peHeaderState(
+        header,
+        loaded.kind === "bytes" ? header.length : member.declaredSize,
+      );
+};
+
+const noteUnresolvedPeRead = (
   state: ScanState,
-  member: Pick<MemberView, "location">,
-  header: Buffer,
+  member: MemberView,
+  loaded: MemberRead,
+): boolean =>
+  noteUnresolvedPe(
+    state,
+    member.location,
+    peHeaderOfRead(member, loaded),
+    member.packageFormat !== null,
+  );
+
+const noteUnresolvedPe = (
+  state: ScanState,
+  location: string,
+  header: PeHeaderState,
+  packaged = false,
 ): boolean => {
-  if (!isUndecidedPeHeader(header)) return false;
-  state.packagedNative += 1;
-  notePeNotExamined(state, member.location);
-  noteUnexaminedPackage(state);
+  if (header === "malformed") {
+    state.pdbFailed += 1;
+    pushLimitation(
+      state,
+      `Could not decode the PE header in ${location} to inspect debug records.`,
+    );
+    return true;
+  }
+  if (header !== "unexamined") return false;
+  notePeNotExamined(state, location);
+  if (packaged) {
+    state.packagedNative += 1;
+    noteUnexaminedPackage(state);
+  }
   return true;
 };
 
@@ -3385,9 +3445,14 @@ const classifySiblingMap = async (
   if (prefix !== null && hasNodeShebang(prefix)) return;
   // An undecided PE header may be native, so it is no linker-map evidence,
   // nor is a shebang whose program an unresolved variable names.
+  const pe =
+    prefix === null
+      ? "other"
+      : peHeaderState(prefix, loaded.kind === "bytes" ? prefix.length : null);
   if (
     prefix === null ||
-    isUndecidedPeHeader(prefix) ||
+    pe === "unexamined" ||
+    pe === "malformed" ||
     mayHaveSourceMapPrefix(prefix) ||
     nodeShebang(prefix) === undefined
   )
@@ -3564,9 +3629,7 @@ const sniffNativeFormat = (
   if (readMachoHeaderPrefixFacts(bytes).format !== null) return "mach-o";
   const universal = sniffFatFormat(bytes, size);
   if (universal !== null) return universal;
-  const windows = observeMzWindowsHeader(bytes);
-  if (windows.state === "declared" && windows.signature === "PE") return "pe";
-  return null;
+  return peHeaderState(bytes, size) === "pe" ? "pe" : null;
 };
 
 const targetKind = (

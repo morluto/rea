@@ -74,6 +74,8 @@ const directoryIdForChildren = (
         },
         "Artifact",
       ),
+      // Virtual listings take their own identity domain (#8551).
+      content_state: "virtual",
     },
     "Artifact",
   )}`;

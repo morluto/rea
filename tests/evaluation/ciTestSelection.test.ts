@@ -208,6 +208,35 @@ it("traces shared script modules to their tests and falls back for other consume
     "tests/boundary/filesystem/shared.test.ts",
     "tests/boundary/filesystem/verifier.test.ts",
   ]);
+  // Shared fixture modules under scripts/fixtures/ trace to their importing
+  // tests and verifiers, while failing closed when a package/build script loads them.
+  const fixtureSources = {
+    ...sources,
+    "scripts/fixtures/managed/pe.mjs": "",
+    "scripts/verify/managed/conformance.mjs":
+      'import "../../fixtures/managed/pe.mjs";',
+    "tests/boundary/providers/dotnet/pe.test.ts":
+      'import "../../../../scripts/fixtures/managed/pe.mjs";',
+    "tests/boundary/providers/dotnet/conformance.test.ts":
+      'const v = "scripts/verify/managed/conformance.mjs";',
+  };
+  expect(
+    selectedFiles(plan(["scripts/fixtures/managed/pe.mjs"], fixtureSources)),
+  ).toEqual([
+    "tests/boundary/providers/dotnet/conformance.test.ts",
+    "tests/boundary/providers/dotnet/pe.test.ts",
+  ]);
+  expect(
+    plan(["scripts/fixtures/managed/pe.mjs"], {
+      ...fixtureSources,
+      "package.json":
+        '{"scripts":{"fixtures:pe":"node scripts/fixtures/managed/pe.mjs"}}',
+    }),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Script consumer is not traced: package.json uses scripts/fixtures/managed/pe.mjs",
+  });
   // A build script, configuration or package script that loads it is untraced.
   expect(
     plan(["scripts/lib/shared.mjs"], {

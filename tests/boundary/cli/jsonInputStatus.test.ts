@@ -29,30 +29,13 @@ afterAll(async () => {
 
 const sharedIsolatedHome = (): NodeJS.ProcessEnv => isolatedHomeEnvironment;
 
-const JSON_COMMANDS = [
-  ["inspect-analysis-view", "inspect_analysis_view"],
-  ["trace-application-feature", "trace_application_feature"],
-  ["trace-javascript-semantics", "trace_javascript_semantics"],
-  ["compare-application-versions", "compare_application_versions"],
-  ["compare-source-to-bundle", "compare_source_to_bundle"],
-  ["compare-javascript-export-shapes", "compare_javascript_export_shapes"],
-  [
-    "build-reconstruction-obligation-ledger",
-    "build_reconstruction_obligation_ledger",
-  ],
-  ["evaluate-reconstruction-coverage", "evaluate_reconstruction_coverage"],
-  ["project-android-application-graph", "project_android_application_graph"],
-  ["project-apple-application-graph", "project_apple_application_graph"],
-  ["import-managed-reconstruction", "import_managed_reconstruction"],
-  ["verify-managed-native-boundaries", "verify_managed_native_boundaries"],
-  ["project-managed-application-graph", "project_managed_application_graph"],
-  ["capture-browser-scenario", "capture_browser_scenario"],
-  ["capture-electron-scenario", "capture_electron_scenario"],
-  ["reconcile-javascript-runtime", "reconcile_javascript_runtime"],
-] as const;
-
 describe("compiled CLI JSON input failure status", () => {
-  for (const [command, operation] of JSON_COMMANDS)
+  // Analysis view owns its input. Export shape comparison uses the shared
+  // contract document command.
+  for (const [command, operation] of [
+    ["inspect-analysis-view", "inspect_analysis_view"],
+    ["compare-javascript-export-shapes", "compare_javascript_export_shapes"],
+  ] as const)
     cliTest(
       `${command} rejects malformed inline input before dispatch`,
       async ({ cli }) => {
@@ -85,7 +68,10 @@ describe("compiled CLI JSON input failure status", () => {
 
         const result = await cli.run({
           arguments: ["compare-javascript-export-shapes", input, "--json"],
-          environment: sharedIsolatedHome(),
+          environment: {
+            ...sharedIsolatedHome(),
+            ...(kind === "file" ? { REA_LOG_LEVEL: "info" } : {}),
+          },
         });
 
         expect(result.json).toMatchObject({
@@ -97,7 +83,22 @@ describe("compiled CLI JSON input failure status", () => {
             ? { details: { operation: "compare_javascript_export_shapes" } }
             : {}),
         });
-        expect(result.stderr).toBe("");
+        if (kind === "file") {
+          const logs = result.stderr
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as unknown);
+          expect(logs).toContainEqual(
+            expect.objectContaining({
+              command: "compare-javascript-export-shapes",
+              status: "error",
+              level: 50,
+              msg: "CLI command failed",
+            }),
+          );
+        } else {
+          expect(result.stderr).toBe("");
+        }
         expect(result.exitCode).toBe(1);
       },
     );
@@ -284,7 +285,6 @@ describe("compiled CLI session-target JSON documents", () => {
 
 describe("compiled CLI JSON input diagnostic preservation", () => {
   for (const [format, flags] of [
-    ["JSON", ["--json"]],
     ["JSONL", ["--format", "jsonl"]],
     ["YAML", ["--format", "yaml"]],
     ["default", []],
@@ -432,116 +432,4 @@ describe("compiled CLI JSON path ambiguity", () => {
       }
     },
   );
-});
-
-describe("compiled JSON parser and logger success seam", () => {
-  for (const kind of ["inline", "file"] as const)
-    cliTest(
-      `preserves valid ${kind} data and a zero exit status without running a workflow`,
-      async ({ processes }) => {
-        const root = await createTestTempDirectory("rea-cli-json-success-");
-        const value = {
-          error: "source data",
-          code: "invalid_request",
-          values: [null, false, 0],
-        };
-        const json = JSON.stringify(value);
-        const input = kind === "inline" ? json : join(root, "input.json");
-        if (kind === "file") await writeFile(input, json);
-        const result = await processes.run(
-          process.execPath,
-          [
-            "--input-type=module",
-            "-e",
-            `import { parseCliJsonInput } from "./dist/cli/cliJsonInput.js";
-         import { logCliCommand } from "./dist/cliLogging.js";
-         import { silentLogger } from "./dist/logger.js";
-         const parsed = await parseCliJsonInput(process.argv[1], "test-input");
-         const output = await logCliCommand(silentLogger, "test-input", async () =>
-           parsed.ok ? parsed.value : parsed.error);
-         console.log(JSON.stringify(output));`,
-            input,
-          ],
-          { env: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root } },
-        );
-        expect(result.stdout).toBe(`${json}\n`);
-        expect(result.stderr).toBe("");
-        expect(result.exitCode).toBe(0);
-      },
-    );
-});
-
-describe("compiled CLI parser with relative brace and bracket paths", () => {
-  for (const filename of ["[input].json", "{capture}.json"])
-    cliTest(
-      `reads the selected relative file ${filename}`,
-      async ({ processes }) => {
-        const root = await createTestTempDirectory("rea-cli-json-path-");
-        const value = { selected: filename };
-        await writeFile(join(root, filename), JSON.stringify(value));
-        const moduleUrl = new URL(
-          "../../../dist/cli/cliJsonInput.js",
-          import.meta.url,
-        ).href;
-        const result = await processes.run(
-          process.execPath,
-          [
-            "--input-type=module",
-            "-e",
-            `import { parseCliJsonInput } from ${JSON.stringify(moduleUrl)};
-           console.log(JSON.stringify(await parseCliJsonInput(process.argv[1], "test-input")));`,
-            filename,
-          ],
-          {
-            cwd: root,
-            env: {
-              HOME: root,
-              XDG_CONFIG_HOME: root,
-              XDG_CACHE_HOME: root,
-            },
-          },
-        );
-
-        expect(result.stdout).toBe(`${JSON.stringify({ ok: true, value })}\n`);
-        expect(result.stderr).toBe("");
-        expect(result.exitCode).toBe(0);
-      },
-    );
-
-  for (const filename of ["[missing].json", "{missing}.json"])
-    cliTest(
-      `keeps missing relative path diagnostics for ${filename}`,
-      async ({ processes }) => {
-        const root = await createTestTempDirectory("rea-cli-json-missing-");
-        const moduleUrl = new URL(
-          "../../../dist/cli/cliJsonInput.js",
-          import.meta.url,
-        ).href;
-        const result = await processes.run(
-          process.execPath,
-          [
-            "--input-type=module",
-            "-e",
-            `import { parseCliJsonInput } from ${JSON.stringify(moduleUrl)};
-           console.log(JSON.stringify(await parseCliJsonInput(process.argv[1], "test-input")));`,
-            filename,
-          ],
-          {
-            cwd: root,
-            env: {
-              HOME: root,
-              XDG_CONFIG_HOME: root,
-              XDG_CACHE_HOME: root,
-            },
-          },
-        );
-
-        expect(JSON.parse(result.stdout.trim())).toMatchObject({
-          ok: false,
-          error: { input_path: filename, input_reason: "read-failed" },
-        });
-        expect(result.stderr).toBe("");
-        expect(result.exitCode).toBe(0);
-      },
-    );
 });

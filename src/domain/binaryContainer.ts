@@ -252,7 +252,7 @@ export class BinaryReader {
     readonly format: string,
   ) {}
 
-  range(offset: number, size: number, label: string): Buffer {
+  #checkRange(offset: number, size: number, label: string): void {
     if (
       !Number.isSafeInteger(offset) ||
       !Number.isSafeInteger(size) ||
@@ -275,23 +275,33 @@ export class BinaryReader {
         `${label} range is truncated or outside the file`,
         { format: this.format, offset, field: label },
       );
+  }
+
+  range(offset: number, size: number, label: string): Buffer {
+    this.#checkRange(offset, size, label);
     return this.bytes.subarray(offset, offset + size);
   }
 
   u16(offset: number): number {
-    const value = this.range(offset, 2, "16-bit field");
-    return this.little ? value.readUInt16LE() : value.readUInt16BE();
+    this.#checkRange(offset, 2, "16-bit field");
+    return this.little
+      ? this.bytes.readUInt16LE(offset)
+      : this.bytes.readUInt16BE(offset);
   }
 
   u32(offset: number): number {
-    const value = this.range(offset, 4, "32-bit field");
-    return this.little ? value.readUInt32LE() : value.readUInt32BE();
+    this.#checkRange(offset, 4, "32-bit field");
+    return this.little
+      ? this.bytes.readUInt32LE(offset)
+      : this.bytes.readUInt32BE(offset);
   }
 
   word(offset: number, bits: 32 | 64): bigint {
     if (bits === 32) return BigInt(this.u32(offset));
-    const value = this.range(offset, 8, "64-bit field");
-    return this.little ? value.readBigUInt64LE() : value.readBigUInt64BE();
+    this.#checkRange(offset, 8, "64-bit field");
+    return this.little
+      ? this.bytes.readBigUInt64LE(offset)
+      : this.bytes.readBigUInt64BE(offset);
   }
 
   fileRange(offset: bigint, size: bigint, label: string): FileMapping {

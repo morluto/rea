@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { crc32, deflateSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
 
 const zlib = vi.hoisted(() => ({ inflated: 0 }));
@@ -18,11 +18,7 @@ import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
-import {
-  gnuDebuglinkCrc32,
-  parseElfDebugLink,
-  verifyElfDebugCandidate,
-} from "./ElfDebugLink.js";
+import { parseElfDebugLink, verifyElfDebugCandidate } from "./ElfDebugLink.js";
 import {
   elfDebugCandidateFixture,
   elfDebugLinkFixture,
@@ -117,7 +113,7 @@ it("leaves compressed candidate names above the selected budget undecoded", () =
       path: "/artifacts/prog.debug",
       sha256: "cd".repeat(32),
       bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
+      crc32: crc32(candidate),
       prefix: candidate,
     },
     input,
@@ -169,7 +165,7 @@ it("keeps the build-id of a candidate whose names use an unsupported compression
       path: "/artifacts/prog.debug",
       sha256: "cd".repeat(32),
       bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
+      crc32: crc32(candidate),
       prefix: candidate,
     },
     input,
@@ -215,7 +211,7 @@ it("leaves compressed candidate names undecoded when only section zero declares 
       path: "/artifacts/prog.debug",
       sha256: "cd".repeat(32),
       bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
+      crc32: crc32(candidate),
       prefix: candidate,
     },
     input,

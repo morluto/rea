@@ -22,10 +22,8 @@ import {
   clientConfigurationAligned,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { resolveWindowsClaudeDesktopLocation } from "../../../src/application/ClaudeDesktopConfigLocation.js";
-import {
-  supportedClientRegistrationProfile,
-  supportedClients,
-} from "../../../src/application/SupportedClients.js";
+import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { failedConfigurationMessage } from "../../../src/application/SetupClients.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";

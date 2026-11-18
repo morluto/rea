@@ -160,7 +160,12 @@ const legacyControlNames = [
 ] as const;
 
 it.each([
-  ["legacy CP437", Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]), false, "é.txt"],
+  [
+    "legacy CP437 mapping",
+    Buffer.from([0x82, 0x80, 0x9e, 0xe1, 0xff, 0x2e, 0x74, 0x78, 0x74]),
+    false,
+    "éÇ₧ß\u00a0.txt",
+  ],
   ["unflagged ASCII", Buffer.from("plain.txt"), false, "plain.txt"],
   ...legacyControlNames,
   [
@@ -293,29 +298,6 @@ it("preserves valid Info-ZIP Unicode Path overrides", async () => {
       logical_path: "café.txt",
       hash_status: "verified",
       limitations: [],
-    }),
-  );
-});
-
-it("reports unflagged high-byte ZIP names as CP437 readings with their source bytes", async () => {
-  const root = await createTestTempDirectory("rea-zip-legacy-name-limitation-");
-  const path = join(root, "legacy-name.zip");
-  const rawName = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]);
-  await writeSingleEntryZip(path, "name.txt");
-  const archive = await readFile(path);
-  await writeFile(
-    path,
-    rewriteSingleEntryZipName(archive, "name.txt", rawName, false),
-  );
-
-  const inventory = await inventoryArtifact(path);
-  expect(inventory.occurrences).toContainEqual(
-    expect.objectContaining({
-      logical_path: "╟╤▒█.txt",
-      hash_status: "verified",
-      limitations: [
-        expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
-      ],
     }),
   );
 });

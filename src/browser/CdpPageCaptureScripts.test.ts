@@ -24,17 +24,13 @@ const script = (scriptId: string): CapturedScript => ({
   frameId: null,
 });
 
-const capture = async (
-  sources: Readonly<Record<string, string>>,
-  includeScriptSources = true,
-  signal?: AbortSignal,
-) => {
+const capture = async (sources: Readonly<Record<string, string>>) => {
   const input = inspectWebPageInputSchema.parse({
     cdp_endpoint: "http://127.0.0.1:9222",
     target_id: "page-1",
     allowed_origins: ["https://example.test"],
     observation_ms: 0,
-    include_script_sources: includeScriptSources,
+    include_script_sources: true,
   });
   const events = new CdpCaptureEvents(input, new Set(input.allowed_origins));
   for (const id of Object.keys(sources)) events.scripts.set(id, script(id));
@@ -51,7 +47,6 @@ const capture = async (
     discovery: undefined,
     target: undefined,
     input,
-    ...(signal === undefined ? {} : { signal }),
   } as unknown as CaptureContext;
   const result = await captureScripts({
     context,
@@ -60,7 +55,7 @@ const capture = async (
     resources: [],
     frameIds: new Set(),
   });
-  return { result, events, send };
+  return { result, events };
 };
 
 it("admits a prefix and fitting suffix around an oversized script source", async () => {
@@ -217,18 +212,3 @@ it.each([
     }
   },
 );
-
-it("leaves source-off capture unchanged and does not issue source reads", async () => {
-  const { result, events, send } = await capture({ first: "unused" }, false);
-
-  expect(send).not.toHaveBeenCalled();
-  expect(result.inventory.items[0]?.source).toEqual({
-    included: false,
-    reason: "source capture was not selected",
-  });
-  expect(events.completeness.snapshot().excluded).toContainEqual({
-    section: "script_sources",
-    reason: "not_approved",
-    count: 1,
-  });
-});

@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "62"
+  version: "63"
 ---
 
 # REA
@@ -256,11 +256,12 @@ explicit path or endpoint and do not need it.
   other versions are unsupported. Optional matching `binary_path` enables static native addresses and type references; query `method_addresses` with indices or addresses/states, preserving every shared-body method and both artifact identities. Without a linked binary native counts remain unknown. Byte-pattern fallback is inferred; no runtime behavior or same-build pairing is proved. See the
   [IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
 - Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
-  with the explicit local ELF, PE, or thin Mach-O file. This built-in
-  target-free inspection requires no Rust installation or disassembler. Preserve
-  package order, dependency indices, and the section file range. A missing
-  `.dep-v0` section is null metadata, not proof the binary has no dependencies.
-  A rustc commit hash is an inference from a read-only `/rustc/<40-hex>/` path.
+  with the explicit local ELF, PE, thin Mach-O, or WebAssembly core-module
+  file. This built-in target-free inspection requires no Rust installation or
+  disassembler. Preserve package order, dependency indices, and the section file
+  range. A missing `.dep-v0` section is null metadata, not proof the binary has
+  no dependencies. A rustc commit hash is an inference from a
+  `/rustc/<40-hex>/` path in read-only data or a WebAssembly data section.
   For selected crates, use `view: {collection: "packages", names: [...],
   fields: ["name", "version", "source"]}` on the first call; explicitly include
   `dependencies` for direct index references. Use `detail: "summary"` for counts
@@ -269,6 +270,14 @@ explicit path or endpoint and do not need it.
   delivery requires `--evidence_output`.
   See the
   [Rust binary guide](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+- Maven POM or Gradle module metadata: `inspect_maven_gradle_metadata` with
+  the explicit local `pom.xml` or `.module` file. This built-in target-free
+  inspection requires no Maven or Gradle. Preserve coordinates as spelled,
+  dependency and dependencyManagement rows, BOM imports, Gradle variants and
+  rich versions, and unresolved property or parent references. Interpolation,
+  inheritance, tree resolution, and repository access are not performed. See
+  the
+  [Maven POM and Gradle module metadata guide](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
 - PE Authenticode certificate table: `inspect_pe_certificates` with the explicit
   local PE32/PE32+ file. This built-in target-free inspection requires no
   Windows SDK. Preserve WIN_CERTIFICATE ranges, types, payload SHA-256, and
@@ -416,6 +425,14 @@ explicit path or endpoint and do not need it.
   Evidence. CLI summary requires `--evidence_output`. Missing table counts stay
   null; decoded empty tables count zero. Bytecode is not executed. See the
   [Erlang BEAM guide](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+- NuGet `.nupkg` package identity, dependency groups and ZIP inventory:
+  `inspect_nuget_nupkg` with the explicit local file. This built-in
+  target-free inspection does not restore the package, execute it, or contact a
+  feed. Preserve identity fields as present, dependency version ranges as
+  spelled, and path-derived member roles. Missing, ambiguous, or malformed
+  `.nuspec` members still return the inventory with limitations. Encrypted
+  members are listed and not extracted. See the
+  [NuGet packages guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema
