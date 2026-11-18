@@ -846,6 +846,7 @@
 * **environment:** shrink the request-body read-budget fixture ([#11903](https://github.com/morluto/rea/issues/11903)) ([518a2ad](https://github.com/morluto/rea/commit/518a2ad434896d7c33890f4007b3400c1e8cfffb))
 * **environment:** tighten varied write outcomes ([#11965](https://github.com/morluto/rea/issues/11965)) ([845c162](https://github.com/morluto/rea/commit/845c162495279bee570e2fb8d1d3bb84608c3c36))
 * **environment:** tighten write stamp witnesses ([#11960](https://github.com/morluto/rea/issues/11960)) ([3360549](https://github.com/morluto/rea/commit/3360549187768c3aff01640c9eb305f968ae23df))
+* **environment:** trim scenario timing fixtures ([#11990](https://github.com/morluto/rea/issues/11990)) ([6752875](https://github.com/morluto/rea/commit/675287517c98c702ee88ad036c5e3b8dd4bcc7a7))
 * **environment:** use the compiled standalone card proof ([#11935](https://github.com/morluto/rea/issues/11935)) ([01e691f](https://github.com/morluto/rea/commit/01e691f4a20ce8df343622da75e6436327672f9c))
 * **environment:** verify bounded clock format conflicts ([#11979](https://github.com/morluto/rea/issues/11979)) ([8c8f37c](https://github.com/morluto/rea/commit/8c8f37c200788e83be0dd7418650e5c750ce11dd))
 * **environment:** verify equal-key write order ([#11975](https://github.com/morluto/rea/issues/11975)) ([71cf21c](https://github.com/morluto/rea/commit/71cf21c200fac5a25e3ec42116ba902559fef0d3))
