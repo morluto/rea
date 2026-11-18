@@ -310,6 +310,12 @@ cliTest(
       ],
     });
     expect(extracted.exitCode).toBe(1);
+    expect(extracted.json).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringContaining("Godot PCK directory is encrypted"),
+      details: { path: source },
+    });
+    expect(await readdir(root)).toEqual(["encrypted.pck"]);
   },
 );
 
