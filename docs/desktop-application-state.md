@@ -146,8 +146,12 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 | `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
 | `xml`     | An XML name, a declaration or a leading element that parses            | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
 | `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
-| `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
-| `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
+| `text`    | Other decoded text                                                     | Lines, up to 5,000                                                                     |
+| `binary`  | Content that cannot be read as text                                    | None                                                                                   |
+
+Text views decode UTF-8 or strictly valid UTF-16 with a leading byte-order
+mark. UTF-16 containing a NUL character stays binary. These rules also apply
+to documents inside gzip and ZIP files and to the exported task verifier.
 
 A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
