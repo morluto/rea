@@ -36,9 +36,11 @@ implementation already had; no earlier plan is reconstructed.
 4. A missing `.dep-v0` section is null metadata with a limitation. It is not
    evidence that the module has no dependencies.
 5. `format` and `architecture` are `wasm` and `byte_order` is `little`.
-   `bits` is `null`, because WebAssembly declares no container word size and
-   memory address types are not inspected. The report schema refuses any
-   report that combines these facts differently.
+   `bits` is `32 | 64 | null`, and is `null` for this container because
+   WebAssembly declares no container word size and memory address types are
+   not inspected. Null is not a number and must not be coerced. ELF, PE and
+   Mach-O reports stay 32 or 64. The report schema, its field description and
+   the summary view refuse any report that combines these facts differently.
 6. The rustc commit is inferred from `/rustc/<40-hex>/` paths in the module's
    data section. Limitations name that source. A second data section is
    malformed.

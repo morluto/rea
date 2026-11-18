@@ -95,7 +95,10 @@ limitation and leaves `.dep-v0` presence unknown rather than reporting the
 section absent.
 
 The inline Evidence result contains the artifact path, SHA-256, byte length,
-container format, architecture, word size, and byte order. When a `.dep-v0`
+container format, architecture, word size, and byte order. `bits` is
+`32 | 64 | null`. ELF, PE and Mach-O reports are 32 or 64. WebAssembly is
+null: the container declares no word size, null is not a number, and
+consumers must not coerce it. The summary view uses the same field. When a `.dep-v0`
 section is present, `auditable_metadata` contains:
 
 - `section_name`, `.dep-v0` for ELF, PE, and WebAssembly or `__DATA,.dep-v0`
@@ -148,8 +151,10 @@ section named `.dep-v0`. For a version 1 core module, such as
 `wasm32-unknown-unknown` or `wasm32-wasip1` output, the reader walks the
 section framing without validating, instantiating, or executing the module.
 The report's `format` and `architecture` are `wasm` and its `byte_order` is
-`little`. `bits` is `null`: WebAssembly declares no container word size, and
-memory address types are not inspected. The Evidence subject format is
+`little`. `bits` is `null` on the `32 | 64 | null` word size: WebAssembly
+declares no container word size, and memory address types are not inspected.
+JSON output keeps that null. The shared CLI renderer does not substitute a
+number. The Evidence subject format is
 `file`, as for `inspect_wasm_artifact`.
 
 A header, section or section size that ends past the file is truncated. A

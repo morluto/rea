@@ -8,6 +8,7 @@ import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
+  RustContainerBits,
 } from "../domain/rust/rustBinary.js";
 import {
   DEFAULT_RUSTC_HASH_LIMIT,
@@ -29,7 +30,7 @@ const HASH_BYTES = 40;
 export interface RustBinaryImage {
   readonly format: RustBinary["format"];
   readonly architecture: string;
-  readonly bits: RustBinary["bits"];
+  readonly bits: RustContainerBits;
   readonly byte_order: RustBinary["byte_order"];
   readonly auditable_metadata: RustAuditableMetadata | null;
   readonly rustc_commit: RustBinary["rustc_commit"];

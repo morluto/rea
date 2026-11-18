@@ -133,7 +133,9 @@ installation, or target execution is required. The CLI equivalent is
 `inspect-rust-binary PATH`. Preserve artifact SHA-256, package order,
 dependency indices, and the section file range. A missing section is null
 metadata, not proof the binary has no dependencies. An omitted package kind
-stays null. WebAssembly reports a null word size, and components such as
+stays null. WebAssembly reports `bits: null` on a `32 | 64 | null` word size;
+null means the container declares no word size and must not be coerced to a
+number. ELF, PE and Mach-O stay 32 or 64. Components such as
 `wasm32-wasip2` output are unsupported. A rustc commit hash is inferred from a
 `/rustc/<40-hex>/` path in read-only data or a WebAssembly data section and
 does not by itself identify the compiler. Project the retained parent with `inspect_analysis_view`

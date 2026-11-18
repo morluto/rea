@@ -148,6 +148,21 @@ export const inspectRustBinaryInputSchema = z.strictObject({
     ),
 });
 
+/**
+ * Container word size on a Rust dependency report and its summary view.
+ * ELF, PE and Mach-O are 32 or 64. WebAssembly declares no container word
+ * size, so the value is null. Null is not a number and must not be coerced.
+ */
+export type RustContainerBits = 32 | 64 | null;
+
+/** `32 | 64 | null`. Null is valid only for a WebAssembly report. */
+export const rustContainerBitsSchema = z
+  .union([z.literal(32), z.literal(64)])
+  .nullable()
+  .describe(
+    "Container word size: 32 or 64 for ELF, PE and Mach-O. null for WebAssembly, which declares no container word size. null is not a number and must not be coerced to 32 or 64.",
+  ) satisfies z.ZodType<RustContainerBits>;
+
 /** Bounded cargo-auditable observation. A missing section is null, not an empty dependency list. */
 export const rustBinarySchema = z
   .strictObject({
@@ -158,8 +173,7 @@ export const rustBinarySchema = z
     }),
     format: z.enum(["elf", "pe", "macho", "wasm"]),
     architecture: z.string(),
-    /** Native containers declare a word size; WebAssembly declares none. */
-    bits: z.union([z.literal(32), z.literal(64)]).nullable(),
+    bits: rustContainerBitsSchema,
     byte_order: z.enum(["little", "big"]),
     /** The universal slice that was read; file offsets stay inside it. */
     selected_slice: machoTargetSelectionSchema.exactOptional(),

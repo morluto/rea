@@ -15,8 +15,9 @@ from `RustWasmImage`. The dependency decoder, PE alignment allowance and rustc
 path retention are shared and unchanged.
 
 `src/domain/rust/rustBinary.ts` owns the report contract: `format` gains
-`wasm`, `bits` is nullable, and refinements bind `bits`, `architecture`,
-`byte_order` and the dependency section name to the container.
+`wasm`, and `bits` is explicitly `32 | 64 | null`. Null is valid only when
+`format` is `wasm` and is not a number. Refinements bind `bits`,
+`architecture`, `byte_order` and the dependency section name to the container.
 `rustDependencySectionName` is the one owner of that name for the reader and
 the schema. `metadataReportSubjectFormat` in
 `src/domain/apple/machoTargetSelection.ts` maps a `wasm` report to the `file`
@@ -42,7 +43,9 @@ names the searched compiler-path source in limitations.
 
 ## Effects and compatibility
 
-Output widening only: `format` gains `wasm` and `bits` admits `null` for
-`wasm` reports, which were previously refused. No new tool, input, subprocess,
+Output widening only: `format` gains `wasm` and `bits` is `32 | 64 | null`
+on the report and its summary view. Null is admitted only for `wasm`
+reports, which were previously refused. ELF, PE and Mach-O reports remain
+32 or 64. No new tool, input, subprocess,
 temporary file or network access. Native reports change only in limitation
 wording.

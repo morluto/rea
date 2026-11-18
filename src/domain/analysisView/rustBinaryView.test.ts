@@ -162,7 +162,15 @@ it("refuses imported reports whose container facts contradict their format", () 
     bits: null,
     byte_order: "little",
   };
-  expect(projectAnalysisView(parent(wasm), { kind: "summary" }).ok).toBe(true);
+  const accepted = projectAnalysisView(parent(wasm), { kind: "summary" });
+  if (!accepted.ok || accepted.value.kind !== "summary")
+    throw new Error("WebAssembly summary failed");
+  expect(accepted.value.summary).toMatchObject({
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  });
   for (const value of [
     { ...wasm, architecture: "x86_64" },
     { ...wasm, byte_order: "big" as const },
@@ -182,6 +190,8 @@ it("bounds inherited warnings and retains cycle counts without walking a cyclic 
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     summary: {
+      format: "elf",
+      bits: 64,
       auditable_metadata: {
         format_version: null,
         counts: { packages: 1, edges: 1, cyclic_packages: 1 },
