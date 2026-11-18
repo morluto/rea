@@ -2003,9 +2003,10 @@ export const processOwnershipAdmissionRecovery = (
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (
   signal?: AbortSignal,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<void> => {
   assertProcessOwnershipInspectionActive(signal);
-  await systemProcessOwnershipHost.prepare?.(signal);
+  await host.prepare?.(signal);
   assertProcessOwnershipInspectionActive(signal);
 };
 

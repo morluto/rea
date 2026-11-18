@@ -20,8 +20,12 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { runDoctor } from "../application/Doctor.js";
 import type { DoctorProviderInspection } from "../ports/DoctorProviderInspection.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
+import type { ProcessOwnershipHost } from "../process/ProcessOwnership.js";
 import { FirmwareDoctor } from "./FirmwareDoctor.js";
-import { createSystemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
+import {
+  createSystemProcessOwnershipHost,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
 
 const HEADER =
   "The following executables found installed, which are needed by unblob:";
@@ -1308,5 +1312,61 @@ linuxIt(
       );
     expect(run).not.toHaveBeenCalled();
     await doctor.close();
+  },
+);
+
+linuxIt(
+  "uses the selected process-table host through real probe launch and cleanup",
+  async () => {
+    const { environment } = await fixture();
+    await executable(
+      environment.REA_BINWALK_COMMAND,
+      "printf 'binwalk 3.1.0\\n'\n",
+    );
+    const ambientHost = createSystemProcessOwnershipHost("linux", {
+      PATH: process.env.PATH,
+      REA_PROCESS_TABLE_MAX_BYTES: "1",
+    });
+    // Model an already-created ambient singleton with a smaller allowance.
+    const ambientPrepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockImplementation((signal) => ambientHost.prepare!(signal));
+    const owners: (ProcessOwnershipHost | undefined)[] = [];
+    const run: NonNullable<FirmwareDoctorHost["runCommand"]> = (
+      spawn,
+      limits,
+      options,
+    ) => {
+      owners.push(spawn.ownershipHost);
+      return runOwnedCommand(spawn, limits, options);
+    };
+    const doctor = new FirmwareDoctor(
+      {
+        PATH: environment.PATH,
+        REA_BINWALK_COMMAND: environment.REA_BINWALK_COMMAND,
+        REA_PROCESS_TABLE_MAX_BYTES: "8388608",
+      },
+      "linux",
+      { runCommand: run },
+    );
+    try {
+      await expect(ambientHost.prepare!()).rejects.toMatchObject({
+        outputLimitBytes: 1,
+      });
+      const [binwalk] = await doctor.inspect();
+      expect(binwalk).toMatchObject({
+        available: true,
+        providerVersion: "3.1.0",
+      });
+      expect(owners).toHaveLength(2);
+      expect(owners[0]).toBeDefined();
+      expect(owners[1]).toBe(owners[0]);
+      expect(ambientPrepare).not.toHaveBeenCalled();
+      expect(await doctor.close()).toBeUndefined();
+      expect(doctor.hasPendingCleanup).toBe(false);
+    } finally {
+      await doctor.close();
+      ambientPrepare.mockRestore();
+    }
   },
 );

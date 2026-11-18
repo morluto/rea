@@ -26,6 +26,7 @@ import {
   runOwnedCommand,
   OwnedCommandFailure,
 } from "../process/OwnedCommand.js";
+import type { ProcessOwnershipHost } from "../process/ProcessOwnership.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   createSystemProcessOwnershipHost,
@@ -104,13 +105,20 @@ export interface FirmwareDoctorHost {
 /** Read-only tool diagnostics, with unresolved child cleanup retained until close. */
 export class FirmwareDoctor {
   readonly #pendingCleanup = new Set<ProviderProcessSupervisor>();
+  readonly #ownershipHost: ProcessOwnershipHost;
 
   constructor(
     readonly environment: Readonly<NodeJS.ProcessEnv>,
     readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     readonly host: FirmwareDoctorHost = {},
     readonly signal?: AbortSignal,
-  ) {}
+  ) {
+    // Firmware probes are Linux-only; do not allocate native helpers on unsupported hosts.
+    this.#ownershipHost = createSystemProcessOwnershipHost(
+      "linux",
+      environment,
+    );
+  }
 
   /** Inspect each optional tool independently and share host prerequisite probes. */
   async inspect(
@@ -291,11 +299,7 @@ export class FirmwareDoctor {
           : AbortSignal.any([this.signal, timeout]);
       if (this.host.prepareOwnership !== undefined)
         await this.host.prepareOwnership(this.environment, signal);
-      else
-        await createSystemProcessOwnershipHost(
-          "linux",
-          this.environment,
-        ).prepare?.(signal);
+      else await this.#ownershipHost.prepare?.(signal);
       return diagnostic(
         "ps",
         true,
@@ -489,6 +493,7 @@ export class FirmwareDoctor {
           expectedCommand: null,
           cwd: process.cwd(),
           hostEnvironment: this.environment,
+          ownershipHost: this.#ownershipHost,
           env: {
             NO_COLOR: "1",
             PYTHONDONTWRITEBYTECODE: "1",
