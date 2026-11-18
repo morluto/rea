@@ -240,6 +240,7 @@ describe.skipIf(
       lists: `${root}/user's\nlists/`,
       trustedParts: `${root}/trusted\nparts/`,
       trusted: `${root}/trusted\nkeys.gpg`,
+      status: `${root}/installed\nstatus`,
     };
     const configured: QueryRunner = (command, argv, signal) =>
       runHostQuery(
@@ -251,6 +252,8 @@ describe.skipIf(
           `Dir::Etc::TrustedParts=${selected.trustedParts}`,
           "-o",
           `Dir::Etc::Trusted=${selected.trusted}`,
+          "-o",
+          `Dir::State::status=${selected.status}`,
           ...argv,
         ],
         signal,
@@ -274,6 +277,7 @@ describe.skipIf(
       lists: `${root}/state/user lists/`,
       trustedParts: "/etc/apt/trusted.gpg.d/",
       trusted: "/etc/apt/trusted.gpg",
+      status: "/var/lib/dpkg/status",
     });
     expect(
       await resolveAptLocations(
