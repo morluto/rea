@@ -252,6 +252,7 @@
 * **desktop:** admit a build witness folder by the record's own rule ([0ffde0c](https://github.com/morluto/rea/commit/0ffde0cd0923e37901c55a78c8b5fd1f124ae68b))
 * **desktop:** admit build export folders before running the in-computer export ([#11307](https://github.com/morluto/rea/issues/11307)) ([3fb17d7](https://github.com/morluto/rea/commit/3fb17d72a902bfea57cf44a8585f3408504bfc74))
 * **desktop:** align exported task whitespace interpretation ([#11947](https://github.com/morluto/rea/issues/11947)) ([a7c4ee8](https://github.com/morluto/rea/commit/a7c4ee8394c62c67fdd5738c1a3009c1be7319b8))
+* **desktop:** bound exported XML selector traversal ([#12105](https://github.com/morluto/rea/issues/12105)) ([c6033aa](https://github.com/morluto/rea/commit/c6033aaaca3be2e0bae086ae42dd4a66a035488c))
 * **desktop:** exclude configured APT status from repository sources ([#11932](https://github.com/morluto/rea/issues/11932)) ([e98a767](https://github.com/morluto/rea/commit/e98a767428bf8b5fcdfa5c86d3d2021672334626))
 * **desktop:** expand ELF origin paths as literal directory names ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
 * **desktop:** ignore relative XDG bases in capture inventory ([4b5d00b](https://github.com/morluto/rea/commit/4b5d00bebd02f1f67e62b9b5cbc4432cce7322c7))
