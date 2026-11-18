@@ -595,8 +595,8 @@ export const prototypeMutationMayPrecede = (
  * `method` or to its prototype, or by an escape of the object or its
  * prototype. Passing the method itself cannot replace its native [[Call]], and
  * the call that receives the object has already selected the method.
- * With `fresh`, the read's activation initialized the binding, so effects that
- * follow the read in that body reach a different object. `targets` keeps the
+ * With `fresh`, each activation initializes a new instance. Writes to a
+ * shared prototype can still reach later activations. `targets` keeps the
  * recorded effects that may reach the value the read selects.
  */
 export const bindingMethodMayHaveChanged = (
@@ -636,10 +636,14 @@ export const bindingMethodMayHaveChanged = (
     // The native constructor itself also exposes its mutable prototype.
     return receiver || (escape && constructor);
   };
-  const mayPrecede = (effect: t.Node | undefined): boolean =>
+  const mayPrecede = (
+    effect: t.Node | undefined,
+    onInstance: boolean,
+  ): boolean =>
     semanticEffectTiming(read, effect, state) !== "after" &&
     !(
       fresh &&
+      onInstance &&
       effect !== undefined &&
       semanticBindingEffectFollowsRead(
         binding,
@@ -653,7 +657,7 @@ export const bindingMethodMayHaveChanged = (
     state,
     "reference",
   ))
-    if (mayPrecede(effect)) return true;
+    if (mayPrecede(effect, true)) return true;
   return (
     binding.memberWrites.some(
       (effect) =>
@@ -668,14 +672,14 @@ export const bindingMethodMayHaveChanged = (
                   effect.path.at(-1)!,
                   "__proto__",
                 ))))) &&
-        mayPrecede(effect.node),
+        mayPrecede(effect.node, effect.path.length <= 1),
     ) ||
     binding.escapedPaths.some(
       (effect) =>
         targets(effect) &&
         reachesReceiver(effect.path, effect.path.length, true) &&
         effect.node !== state.parentsByNode.get(read) &&
-        mayPrecede(effect.node),
+        mayPrecede(effect.node, effect.path.length === 0),
     )
   );
 };

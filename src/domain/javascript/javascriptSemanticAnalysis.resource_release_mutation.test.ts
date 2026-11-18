@@ -251,6 +251,29 @@ it("keeps a fresh local method captured before argument evaluation complete", ()
   ).toMatchObject([{ resolution: "complete" }]);
 });
 
+it.each([
+  ["stream.__proto__.destroy = replacement", "partial"],
+  ["stream.constructor.prototype.destroy = replacement", "partial"],
+  ["decorate(stream.__proto__)", "partial"],
+  ["decorate(stream.constructor)", "partial"],
+  ["stream.__proto__ = replacement", "complete"],
+  ["stream.destroy = replacement", "complete"],
+  ["observe(stream.__proto__.destroy)", "complete"],
+])(
+  "accounts for effects shared with the next invocation: %s",
+  (effect, resolution) => {
+    expect(
+      releases(`import { createReadStream } from "node:fs";
+    function run() {
+      const stream = createReadStream("fixture.txt");
+      stream.destroy();
+      ${effect};
+    }
+    run(); run();`),
+    ).toMatchObject([{ resolution }]);
+  },
+);
+
 it("retains prior mutations and persistent receiver effects", () => {
   expect(
     releases(`
