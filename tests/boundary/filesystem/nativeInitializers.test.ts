@@ -2,10 +2,45 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics.js";
-import { elf64PieInitializers } from "../../../src/native/initializers/NativeInitializers.fixture.js";
+import {
+  elf64PieInitializers,
+  machoInitializerSymbolKinds,
+} from "../../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("native initializer stable filesystem boundary", () => {
+  it.each([
+    { kind: "N_INDR", type: 0x0a, symbol: "_startup" },
+    { kind: "N_PBUD", type: 0x0c, symbol: "_startup" },
+    { kind: "N_ABS", type: 0x02, symbol: "_alias" },
+    { kind: "N_SECT", type: 0x0e, symbol: "_alias" },
+  ])(
+    "uses address-bearing symbols for initializer names ($kind)",
+    async ({ type, symbol }) => {
+      const root = await createTestTempDirectory("rea-native-init-symbol-");
+      const path = join(root, "program.o");
+      await writeFile(path, machoInitializerSymbolKinds(type));
+      const result = await createNativeInitializersService().inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        format: "mach-o",
+        entries: [
+          {
+            value_va: "0x10",
+            symbol: { name: "_startup", trust: "observed-untrusted" },
+            resolution: "symbol_addend",
+          },
+          {
+            value_va: "0x10",
+            symbol: { name: symbol, trust: "observed-untrusted" },
+            resolution: "raw",
+          },
+        ],
+        coverage: { status: "complete", returned_entries: 2 },
+      });
+    },
+  );
+
   it("reports non-file and malformed selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-native-init-files-");
     const path = join(root, "program");

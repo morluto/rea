@@ -22,6 +22,7 @@ const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
+  ".github/workflows/cache-retention.yml",
   ".github/workflows/mutation.yml",
 ]);
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
@@ -45,6 +46,42 @@ const PORTABLE_CI_REPORTERS = new Set([
   "scripts/ci/test-timing-reporter.mjs",
   "scripts/ci/test-history.mjs",
 ]);
+// Static architecture/lint/schema/test-project verifiers and baselines run in
+// static/build/portable lanes (`code: true`) without requiring host package lanes.
+const STATIC_CODE_ONLY_INPUTS = [
+  "scripts/lib/module-layers.baseline.json",
+  "scripts/lib/module-layers.*",
+  "scripts/lib/module-boundaries.*",
+  "scripts/verify-module-boundaries.mjs",
+  "scripts/verify/architecture-guards.mjs",
+  "scripts/verify/*-guard.*",
+  "scripts/verify/rea-numeric-limits.mjs",
+  "scripts/verify/source-tokens.*",
+  "scripts/verify/keyed-first-match.*",
+  "scripts/verify/reason-marker.*",
+  "scripts/verify/baselines/*.json",
+  "scripts/lint/**",
+  ".oxlintrc.json",
+  ".oxfmtrc.json",
+  ".jscpd.json",
+  "knip.json",
+  "tsconfig.scripts.json",
+  "scripts/verify-advertised-schemas.mjs",
+  "scripts/verify/advertised-schemas/**",
+  "scripts/verify/mcp-client-validation.*",
+  "scripts/verify-test-discovery.mjs",
+  "scripts/verify-test-temp-hygiene.mjs",
+  "scripts/lib/test-projects.mjs",
+];
+// Documentation and product-catalog verifiers/generators exercised by `docs:check`
+// and portable tests without changing packaged host behavior.
+const DOCS_AND_CODE_INPUTS = [
+  "scripts/check-doc-facts.mjs",
+  "scripts/generate-error-schema.mjs",
+  "scripts/lib/product-catalog.*",
+  "scripts/lib/catalog-core.*",
+  "scripts/lib/catalog-cli.*",
+];
 const matchesAny = (file, patterns) =>
   patterns.some((pattern) => matchesGlob(file, pattern));
 
@@ -189,6 +226,17 @@ export function planChanges(request, repository) {
         selected[owner] = true;
     // The documentation check scans living prose outside docs/ too.
     if (isLivingProsePath(file)) selected.docs = true;
+    if (file === ".git-blame-ignore-revs") return;
+    if (
+      file.startsWith("licenses/") ||
+      file === "THIRD_PARTY_NOTICES.md" ||
+      file === "DISCLAIMER.md" ||
+      file === "LICENSE"
+    ) {
+      selected.docs = true;
+      selected.code = true;
+      return;
+    }
     if (
       /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
         file,
@@ -219,6 +267,15 @@ export function planChanges(request, repository) {
     // Timing and report helpers stay on the portable suite. They are not a
     // runtime or provider change.
     if (PORTABLE_CI_REPORTERS.has(file)) {
+      selected.code = true;
+      return;
+    }
+    if (matchesAny(file, DOCS_AND_CODE_INPUTS)) {
+      selected.docs = true;
+      selected.code = true;
+      return;
+    }
+    if (matchesAny(file, STATIC_CODE_ONLY_INPUTS)) {
       selected.code = true;
       return;
     }
@@ -281,7 +338,10 @@ export function planChanges(request, repository) {
       // full qualification retains every native host.
       selected.runtime = true;
       reasons.push(`Unowned runtime source: ${file}`);
-    } else if (file.startsWith(".agents/skills/")) {
+    } else if (
+      file.startsWith(".agents/skills/") ||
+      file.startsWith(".cursor-plugin/skills/")
+    ) {
       selected.runtime = true;
       selected.docs = true;
     } else {

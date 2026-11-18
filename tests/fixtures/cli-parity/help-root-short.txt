@@ -30,6 +30,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
   --full-output                               Show full output envelope
   --help                                      Show help
+  --json                                      Shorthand for --format json
   --llms, --llms-full                         Print LLM-readable manifest
   --mcp                                       Start as MCP stdio server
   --schema                                    Show JSON Schema for command

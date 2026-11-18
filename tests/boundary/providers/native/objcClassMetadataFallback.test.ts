@@ -72,7 +72,10 @@ const inspect = async (
         return nativeClient.execute(operation, parameters, options);
       },
     };
-    return await new EnhancedTools(analysis).execute("get_objc_classes", {});
+    return await new EnhancedTools(analysis).executeValidated({
+      name: "get_objc_classes",
+      input: { pattern: "" },
+    });
   } finally {
     let closeResult: Awaited<ReturnType<typeof nativeClient.close>> | undefined;
     let closeError: unknown;

@@ -9,19 +9,22 @@ const compiledRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../dist",
 );
-const { createCatalogDigestProfiles } = await import(
+const { createCatalogDigestProfiles, DEFAULT_CATALOG_IDENTITY } = await import(
   pathToFileURL(join(compiledRoot, "contracts/catalog/catalogIdentity.js")).href
 );
 // Retain only hashes, with every shared record frozen. Schemas remain owned by
 // the compiled contracts and are converted once for both identities.
-const profiles = Object.entries(createCatalogDigestProfiles())
+const digestProfiles = createCatalogDigestProfiles();
+const profiles = Object.entries(digestProfiles)
   .map(
     ([output, digests]) =>
       `${JSON.stringify(output)}: Object.freeze(${JSON.stringify(digests)})`,
   )
   .join(",");
+const defaultCounts = JSON.stringify(DEFAULT_CATALOG_IDENTITY.counts);
+const defaultDigests = JSON.stringify(digestProfiles.off);
 await writeFile(
   join(compiledRoot, "contracts/catalog/recordedCatalogDigests.js"),
-  `/** Recorded from compiled catalog profiles by scripts/record-catalog-digests.mjs; do not edit. */\nexport const RECORDED_CATALOG_DIGEST_PROFILES = Object.freeze({${profiles}});\n`,
+  `/** Recorded from compiled catalog profiles by scripts/record-catalog-digests.mjs; do not edit. */\nexport const RECORDED_CATALOG_DIGEST_PROFILES = Object.freeze({${profiles}});\nexport const RECORDED_DEFAULT_CATALOG_IDENTITY = Object.freeze({ counts: Object.freeze(${defaultCounts}), digests: Object.freeze(${defaultDigests}) });\n`,
   "utf8",
 );

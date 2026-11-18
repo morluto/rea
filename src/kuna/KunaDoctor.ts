@@ -14,11 +14,9 @@ import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import { kunaInstallationDialect } from "./KunaCommand.js";
-import {
-  createKunaResourceScope,
-  inspectKunaInstallation,
-  type KunaReadinessFailure,
+import type {
+  KunaReadinessFailure,
+  KunaResourceScope,
 } from "./KunaInstallation.js";
 import {
   KUNA_COMMAND_REMEDIATION,
@@ -125,6 +123,8 @@ const versionCheck = async (
   readonly version: string | null;
   readonly check: DoctorProviderCheck;
 }> => {
+  const { createKunaResourceScope, inspectKunaInstallation } =
+    await import("./KunaInstallation.js");
   const kunaResources = createKunaResourceScope(options.resourceScope);
   let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
   try {
@@ -134,7 +134,11 @@ const versionCheck = async (
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch (cause: unknown) {
-    return { version: null, check: probeCleanupFailure(cause, kunaResources) };
+    const { kunaInstallationDialect } = await import("./KunaCommand.js");
+    return {
+      version: null,
+      check: probeCleanupFailure(cause, kunaResources, kunaInstallationDialect),
+    };
   }
   if (!installation.ok) {
     const check = probeFailure(installation.error);
@@ -217,7 +221,8 @@ const cleanupIncompleteCheck = (
  */
 const probeCleanupFailure = (
   cause: unknown,
-  kunaResources: ReturnType<typeof createKunaResourceScope>,
+  kunaResources: KunaResourceScope,
+  kunaInstallationDialect: (typeof import("./KunaCommand.js"))["kunaInstallationDialect"],
 ): DoctorProviderCheck => {
   let recognised = true;
   const failure = classifyProviderFailure(

@@ -398,7 +398,7 @@ const markdownHeading = (path: readonly string[]): string =>
 const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
 
 /** Encode edge spacing that Markdown can represent as character references. */
-export const encodeMarkdownTableCell = (value: string): string => {
+const encodeMarkdownTableCell = (value: string): string => {
   const escaped = escapeTableCell(value);
   let start = 0;
   let end = escaped.length;
