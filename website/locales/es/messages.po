@@ -2282,7 +2282,7 @@ msgstr "{ph0}Inicio{ph1} / Preguntas frecuentes"
 #: website/public/faq/index.html:202
 msgctxt "page:faq/index.html"
 msgid "REA FAQ."
-msgstr "REA PREGUNTAS frecuentes."
+msgstr "Preguntas frecuentes sobre REA."
 
 #: website/public/faq/index.html:203
 msgctxt "page:faq/index.html"
@@ -2316,7 +2316,7 @@ msgstr "{ph0}Análisis{ph1}"
 #, python-brace-format
 msgctxt "page:faq/index.html"
 msgid "{ph0}Troubleshooting{ph1}"
-msgstr "{ph0}Solución de Problemas{ph1}"
+msgstr "{ph0}Solución de problemas{ph1}"
 
 #. {ph0}: <a href="#sharing">
 #. {ph1}: </a>
@@ -2324,7 +2324,7 @@ msgstr "{ph0}Solución de Problemas{ph1}"
 #, python-brace-format
 msgctxt "page:faq/index.html"
 msgid "{ph0}Data and sharing{ph1}"
-msgstr "{ph0}Datos e intercambio{ph1}"
+msgstr "{ph0}Datos y colaboración{ph1}"
 
 #: website/public/faq/index.html:221
 msgctxt "page:faq/index.html"
@@ -2380,9 +2380,9 @@ msgid ""
 " Grok Bot's connector is added from its chat."
 msgstr ""
 "Cualquier agente que admita servidores MCP locales. La configuración incluye"
-" escritorio Claude Code, Claude, Codex, Cursor, Gemini CLI, Windsurf, Devin,"
-" OpenCode, Antigravity, GitHub Copilot CLI, Command Code, Grok Build, OMP y "
-"VS Code. El conector de Grok Bot se agrega desde su chat."
+" Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, "
+"OpenCode, Antigravity, GitHub Copilot CLI, Command Code, Grok Build, OMP y "
+"VS Code. El conector de Grok Bot se añade desde su chat."
 
 #. {ph0}: <a href="../get-started/#agent">
 #. {ph1}: </a>
@@ -2390,7 +2390,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:faq/index.html"
 msgid "{ph0}Connect your coding agent{ph1}."
-msgstr "{ph0}Conecte a su agente de programación{ph1}."
+msgstr "{ph0}Conecta tu agente de programación{ph1}."
 
 #: website/public/faq/index.html:266
 msgctxt "page:faq/index.html"
@@ -2403,13 +2403,13 @@ msgid ""
 "REA releases frequently, including bug fixes. If you installed the CLI with "
 "npm:"
 msgstr ""
-"REA se publica con frecuencia, incluidas correcciones de errores. Si instaló"
-" el CLI con npm:"
+"REA publica versiones con frecuencia, que incluyen correcciones de errores. "
+"Si instalaste la CLI con npm:"
 
 #: website/public/faq/index.html:273
 msgctxt "page:faq/index.html"
 msgid "Terminal · installed CLI"
-msgstr "Terminal · instalado CLI"
+msgstr "Terminal · CLI instalada"
 
 #. {ph0}: <code>npx</code>
 #: website/public/faq/index.html:285
@@ -2419,8 +2419,8 @@ msgid ""
 "Follow the setup refresh command printed by the update. If you set up your "
 "agent through {ph0}, run:"
 msgstr ""
-"Siga el comando de actualización de configuración que imprime la "
-"actualización. Si configura su agente a través de {ph0}, corre:"
+"Sigue el comando de actualización de la configuración que muestra la "
+"actualización. Si configuraste tu agente mediante {ph0}, ejecuta:"
 
 #: website/public/faq/index.html:291
 msgctxt "page:faq/index.html"
@@ -2445,7 +2445,7 @@ msgstr ""
 #: website/public/faq/index.html:311
 msgctxt "page:faq/index.html"
 msgid "Is installing the skill from skills.sh enough?"
-msgstr "Está instalando la habilidad desde skills.sh ¿suficiente?"
+msgstr "¿Basta con instalar la skill desde skills.sh?"
 
 #. {ph0}: <a href="#install">
 #. {ph1}: </a>
@@ -2457,10 +2457,10 @@ msgid ""
 "setup{ph1} to connect the MCP server and install the matching skill, then "
 "restart your agent so it can call the tools."
 msgstr ""
-"La habilidad le da instrucciones de investigación a su agente. Corre "
-"{ph0}Configuración de REA{ph1} para conectar el servidor MCP e instalar la "
-"habilidad correspondiente, reinicie su agente para que pueda llamar a las "
-"herramientas."
+"La skill da a tu agente instrucciones de investigación. Ejecuta la "
+"{ph0}configuración de REA{ph1} para conectar el servidor MCP e instalar la "
+"skill correspondiente, y después reinicia tu agente para que pueda llamar a "
+"las herramientas."
 
 #: website/public/faq/index.html:325
 msgctxt "page:faq/index.html"
@@ -2475,7 +2475,7 @@ msgstr "¿Qué puedo analizar con REA?"
 #: website/public/faq/index.html:329
 msgctxt "page:faq/index.html"
 msgid "Start with the kind of software you have:"
-msgstr "Comience con el tipo de software que tiene:"
+msgstr "Empieza por el tipo de software que tienes:"
 
 #. {ph0}: <a href="../guides/native/" >
 #. {ph1}: </a >
@@ -2486,7 +2486,7 @@ msgid ""
 "{ph0}Native executables and libraries{ph1}: functions, assembly, pseudocode "
 "and references."
 msgstr ""
-"{ph0}Bibliotecas y ejecutables nativos{ph1}: funciones, ensamblado, "
+"{ph0}Ejecutables y bibliotecas nativas{ph1}: funciones, ensamblador, "
 "pseudocódigo y referencias."
 
 #. {ph0}: <a href="../guides/javascript/" >
@@ -2499,7 +2499,7 @@ msgid ""
 "locations."
 msgstr ""
 "{ph0}Aplicaciones JavaScript y Electron{ph1}: módulos, importaciones, IPC y "
-"ubicaciones de origen."
+"ubicaciones en el código fuente."
 
 #. {ph0}: <a href="../guides/browser/">
 #. {ph1}: </a>
@@ -2521,9 +2521,9 @@ msgid ""
 "packaged resources. {ph0}See the case studies{ph1} for worked "
 "investigations."
 msgstr ""
-"REA también tiene flujos de trabajo para ensamblados administrados, APK de "
-"Android, firmware y recursos empaquetados. {ph0}Ver los estudios de "
-"caso{ph1} para investigaciones trabajadas."
+"REA también tiene flujos de trabajo para ensamblados administrados de .NET, "
+"APK de Android, firmware y recursos empaquetados. {ph0}Consulta los casos "
+"prácticos{ph1} para ver investigaciones resueltas."
 
 #: website/public/faq/index.html:354
 msgctxt "page:faq/index.html"
@@ -2536,10 +2536,9 @@ msgid ""
 "Deep native analysis uses one of them. Static JavaScript and .NET inspection"
 " work with the supplied files and do not need a native analysis engine."
 msgstr ""
-"El análisis profundo de programas de código máquina utiliza uno de ellos. La"
-" inspección estática JavaScript y. NET funciona con los archivos "
-"suministrados y no necesita un motor de análisis de programas de código "
-"máquina."
+"El análisis nativo en profundidad usa uno de ellos. La inspección estática "
+"de JavaScript y .NET trabaja con los archivos suministrados y no necesita un"
+" motor de análisis nativo."
 
 #. {ph0}: <a href="../get-started/#native">
 #. {ph1}: </a>
@@ -2551,10 +2550,10 @@ msgid ""
 " and propose an installation. Your host and target determine which provider "
 "can be used. {ph0}Set up native analysis{ph1}."
 msgstr ""
-"Conecte su instalación existente de Ghidra o IDA, o deje que el programa de "
-"instalación detecte Hopper y proponga una instalación. Su anfitrión y "
-"destino determinan qué proveedor se puede utilizar. {ph0}Configurar el "
-"análisis de programas de código máquina{ph1}."
+"Conecta tu instalación existente de Ghidra o IDA, o deja que la "
+"configuración detecte Hopper y proponga una instalación. Tu host y tu "
+"objetivo determinan qué proveedor se puede usar. {ph0}Configura el análisis "
+"nativo{ph1}."
 
 #: website/public/faq/index.html:368
 msgctxt "page:faq/index.html"
@@ -2567,8 +2566,8 @@ msgid ""
 "Yes. The CLI uses the same analysis workflows. For a local JavaScript or "
 "Electron app:"
 msgstr ""
-"Sí. El CLI utiliza los mismos flujos de trabajo de análisis. Para una "
-"aplicación JavaScript o Electron local:"
+"Sí. La CLI usa los mismos flujos de análisis. Para una aplicación JavaScript"
+" o Electron local:"
 
 #: website/public/faq/index.html:375
 msgctxt "page:faq/index.html"
@@ -2584,8 +2583,8 @@ msgid ""
 "Replace the path with an extracted application folder or ASAR file. {ph0}Use"
 " the CLI{ph1} for installation options."
 msgstr ""
-"Reemplace la ruta con una carpeta de aplicación extraída o un archivo ASAR. "
-"{ph0}Utilice el CLI{ph1} para opciones de instalación."
+"Sustituye la ruta por la de una carpeta de aplicación extraída o un archivo "
+"ASAR. Consulta {ph0}Usa la CLI{ph1} para ver las opciones de instalación."
 
 # Reviewed for readable setup and analysis terminology.
 #: website/public/faq/index.html:395
@@ -2617,8 +2616,8 @@ msgid ""
 "implementation. The {ph0}DX-Ball calculation{ph1} and {ph2}CTF flag "
 "checker{ph3} show how that process works."
 msgstr ""
-"Su agente usa estos hallazgos para explicar el comportamiento o escribir y "
-"probar una implementación. El {ph0}cálculo de DX-Ball{ph1} y el "
+"Tu agente usa estos hallazgos para explicar el comportamiento o para "
+"escribir y probar una implementación. El {ph0}cálculo de DX-Ball{ph1} y el "
 "{ph2}comprobador de banderas de CTF{ph3} muestran cómo funciona ese proceso."
 
 #: website/public/faq/index.html:412
@@ -2632,7 +2631,7 @@ msgid ""
 "Give it a local target and one behavior to investigate. For a JavaScript or "
 "Electron app:"
 msgstr ""
-"Asígnele un objetivo local y un comportamiento para investigar. Para una "
+"Dale un objetivo local y un comportamiento que investigar. Para una "
 "aplicación JavaScript o Electron:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
@@ -2647,7 +2646,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:faq/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #. {ph0}: <a href="../guides/">
 #. {ph1}: </a>
@@ -2664,12 +2663,12 @@ msgstr ""
 #: website/public/faq/index.html:452
 msgctxt "page:faq/index.html"
 msgid "Troubleshooting"
-msgstr "Solución de Problemas"
+msgstr "Solución de problemas"
 
 #: website/public/faq/index.html:455
 msgctxt "page:faq/index.html"
 msgid "Why can't my agent see the REA tools?"
-msgstr "¿Por qué mi agente no puede ver las herramientas REA?"
+msgstr "¿Por qué mi agente no ve las herramientas de REA?"
 
 #. {ph0}: <code>doctor</code>
 #: website/public/faq/index.html:456
@@ -2679,13 +2678,13 @@ msgid ""
 "Restart or reconnect your agent after setup. Check its REA registration with"
 " {ph0}; for Codex:"
 msgstr ""
-"Reinicie o vuelva a conectar su agente después de la configuración. "
-"Verifique su registro REA con {ph0}; para Codex:"
+"Reinicia o vuelve a conectar tu agente después de la configuración. "
+"Comprueba su registro de REA con {ph0}; para Codex:"
 
 #: website/public/faq/index.html:462
 msgctxt "page:faq/index.html"
 msgid "Terminal · check one client"
-msgstr "Terminal · compruebe un cliente"
+msgstr "Terminal · comprobar un cliente"
 
 #. {ph0}: <code>codex</code>
 #. {ph1}: <code>claude_code</code>
@@ -2697,9 +2696,9 @@ msgid ""
 "Replace {ph0} with your client ID, such as {ph1} or {ph2}. If the report "
 "shows a missing or stale registration, run setup for that client:"
 msgstr ""
-"Reemplazar {ph0} con su ID de cliente, como {ph1} o {ph2}. Si el informe "
-"muestra un registro faltante o obsoleto, ejecute el programa de instalación "
-"para ese cliente:"
+"Sustituye {ph0} por el identificador de tu cliente, como {ph1} o {ph2}. Si "
+"el informe muestra que el registro falta o está obsoleto, ejecuta la "
+"configuración para ese cliente:"
 
 #: website/public/faq/index.html:482
 msgctxt "page:faq/index.html"
@@ -2716,14 +2715,14 @@ msgid ""
 " remain absent, check the client's MCP connection error. {ph0}More setup "
 "diagnostics{ph1}."
 msgstr ""
-"Revise su plan y reinicie el cliente. Si el registro es correcto pero faltan"
-" herramientas, verifique el error de conexión MCP del cliente. {ph0}Más "
-"diagnósticos de configuración{ph1}."
+"Revisa su plan y reinicia el cliente. Si el registro es correcto pero las "
+"herramientas siguen sin aparecer, mira el error de conexión MCP del cliente."
+" {ph0}Más diagnósticos de configuración{ph1}."
 
 #: website/public/faq/index.html:502
 msgctxt "page:faq/index.html"
 msgid "Do I need to start Hopper first?"
-msgstr "¿Necesito iniciar Hopper primero?"
+msgstr "¿Tengo que iniciar Hopper antes?"
 
 #. {ph0}: <a href="../get-started/#native">
 #. {ph1}: </a >
@@ -2735,10 +2734,10 @@ msgid ""
 "run choice of demo mode or license activation before unattended analysis. "
 "{ph0}See native provider setup{ph1}."
 msgstr ""
-"REA inicia Hopper cuando una operación lo necesita. En macOS, complete la "
-"opción de primera ejecución de modo de demostración o activación de licencia"
-" antes del análisis desatendido. {ph0}Consulte configuración de proveedor "
-"nativo{ph1}."
+"REA inicia Hopper cuando una operación lo necesita. En macOS, completa la "
+"elección del primer arranque (modo de demostración o activación de la "
+"licencia) antes de un análisis desatendido. {ph0}Consulta la configuración "
+"de los proveedores nativos{ph1}."
 
 #: website/public/faq/index.html:512
 msgctxt "page:faq/index.html"
@@ -2754,8 +2753,8 @@ msgid ""
 "{ph0}Update REA{ph1}, restart your agent and retry the same task. A recent "
 "release may already fix the problem."
 msgstr ""
-"{ph0}Actualización REA{ph1}, reinicie su agente y vuelva a intentar la misma"
-" tarea. Es posible que una versión reciente ya solucione el problema."
+"{ph0}Actualiza REA{ph1}, reinicia tu agente y vuelve a intentar la misma "
+"tarea. Puede que una versión reciente ya corrija el problema."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/issues/new/choose" >
 #. {ph1}: </a >
@@ -2767,20 +2766,20 @@ msgid ""
 "system, target type, steps to reproduce and error output. Include the "
 "provider name when the problem involves native analysis."
 msgstr ""
-"Si persiste, {ph0}abrir una incidencia{ph1} con su versión REA, sistema "
-"operativo, tipo de destino, pasos para reproducir y salida de error. Incluya"
-" el nombre del proveedor cuando el problema implique el análisis de "
-"programas de código máquina."
+"Si persiste, {ph0}abre una incidencia{ph1} con tu versión de REA, el sistema"
+" operativo, el tipo de objetivo, los pasos para reproducirlo y la salida del"
+" error. Incluye el nombre del proveedor cuando el problema afecte al "
+"análisis nativo."
 
 #: website/public/faq/index.html:531
 msgctxt "page:faq/index.html"
 msgid "Data and sharing"
-msgstr "Datos e intercambio"
+msgstr "Datos y colaboración"
 
 #: website/public/faq/index.html:534
 msgctxt "page:faq/index.html"
 msgid "Does REA upload my app?"
-msgstr "¿REA carga mi aplicación?"
+msgstr "¿REA sube mi aplicación a algún sitio?"
 
 #: website/public/faq/index.html:535
 msgctxt "page:faq/index.html"
@@ -2788,8 +2787,9 @@ msgid ""
 "REA analyzes targets on your machine. Your agent receives the results, and "
 "its model provider's data policy applies to those results."
 msgstr ""
-"REA analiza los objetivos en su máquina. Su agente recibe los resultados y "
-"la política de datos de su proveedor de modelos se aplica a esos resultados."
+"REA analiza los objetivos en tu máquina. Tu agente recibe los resultados, y "
+"a esos resultados se les aplica la política de datos del proveedor de su "
+"modelo."
 
 #: website/public/faq/index.html:542
 msgctxt "page:faq/index.html"
@@ -2809,10 +2809,10 @@ msgid ""
 "{ph2}pull request{ph3}. Short code excerpts and figures help others follow "
 "the investigation."
 msgstr ""
-"¿Tiene un ejemplo útil de REA? Nos encantaría verlo. Comparta el objetivo, "
-"su pregunta, los hallazgos y cómo los verificó en una {ph0}incidencia{ph1} o"
-" una {ph2}pull request{ph3}. Los fragmentos breves de código y las figuras "
-"ayudan a otros a seguir la investigación."
+"¿Tienes un ejemplo útil de REA? Nos encantaría verlo. Comparte el objetivo, "
+"tu pregunta, los hallazgos y cómo los comprobaste en una "
+"{ph0}incidencia{ph1} o una {ph2}pull request{ph3}. Los fragmentos breves de "
+"código y las figuras ayudan a otros a seguir la investigación."
 
 #. {ph0}: <a href="https://discord.gg/GkcryMnJDM">
 #. {ph1}: </a>
@@ -2823,15 +2823,15 @@ msgid ""
 "Bug reports, feature requests, documentation and code improvements are "
 "welcome too. You can also discuss an example in the {ph0}community{ph1}."
 msgstr ""
-"Los informes de errores, solicitudes de funciones, documentación y mejoras "
-"de código también son bienvenidos. También puede comentar un ejemplo en la "
-"{ph0}comunidad{ph1}."
+"Los informes de errores, las solicitudes de funciones y las mejoras de "
+"documentación y código también son bienvenidos. También puedes comentar un "
+"ejemplo en la {ph0}comunidad{ph1}."
 
 #: website/public/faq/index.html:6
 msgctxt "page:faq/index.html"
 msgid "REA FAQ: Setup, Updates and Troubleshooting"
 msgstr ""
-"Preguntas frecuentes sobre REA: Configuración, Actualizaciones y Solución de"
+"Preguntas frecuentes sobre REA: configuración, actualizaciones y solución de"
 " problemas"
 
 #: website/public/faq/index.html:7
@@ -2840,9 +2840,9 @@ msgid ""
 "Answers to common REA questions: installation, updates, analysis tools, "
 "coding agents, troubleshooting and sharing examples."
 msgstr ""
-"Respuestas a preguntas comunes sobre REA: instalación, actualizaciones, "
+"Respuestas a preguntas habituales sobre REA: instalación, actualizaciones, "
 "herramientas de análisis, agentes de programación, solución de problemas y "
-"ejemplos para compartir."
+"cómo compartir ejemplos."
 
 #: website/public/faq/index.html:206
 msgctxt "page:faq/index.html"
@@ -2857,37 +2857,37 @@ msgstr "Preguntas frecuentes sobre REA"
 #: website/public/faq/index.html:233
 msgctxt "page:faq/index.html"
 msgid "Copy REA setup command"
-msgstr "Copie el comando de configuración REA"
+msgstr "Copiar el comando de configuración de REA"
 
 #: website/public/faq/index.html:274
 msgctxt "page:faq/index.html"
 msgid "Copy REA update command"
-msgstr "Copie el comando de actualización REA"
+msgstr "Copiar el comando de actualización de REA"
 
 #: website/public/faq/index.html:292
 msgctxt "page:faq/index.html"
 msgid "Copy agent setup refresh command"
-msgstr "Comando de actualización de la configuración del agente de copia"
+msgstr "Copiar el comando para actualizar la configuración del agente"
 
 #: website/public/faq/index.html:376
 msgctxt "page:faq/index.html"
 msgid "Copy REA CLI analysis command"
-msgstr "Copie el comando de análisis REA CLI"
+msgstr "Copiar el comando de análisis de la CLI de REA"
 
 #: website/public/faq/index.html:423
 msgctxt "page:faq/index.html"
 msgid "Copy example analysis prompt"
-msgstr "Copie el mensaje de análisis de ejemplo"
+msgstr "Copiar el prompt de análisis de ejemplo"
 
 #: website/public/faq/index.html:463
 msgctxt "page:faq/index.html"
 msgid "Copy client diagnosis command"
-msgstr "Copie el comando de diagnóstico del cliente"
+msgstr "Copiar el comando de diagnóstico del cliente"
 
 #: website/public/faq/index.html:483
 msgctxt "page:faq/index.html"
 msgid "Copy scoped setup command"
-msgstr "Copiar comando de configuración de ámbito"
+msgstr "Copiar el comando de configuración de un solo cliente"
 
 #: website/public/faq/index.html:582
 msgctxt "page:faq/index.html"
@@ -3920,7 +3920,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Guías{ph3} / Observación del navegador"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "See what happens{ph0}when you click."
-msgstr "Vea lo que sucede{ph0}cuando haces clic."
+msgstr "Mira qué ocurre{ph0}cuando haces clic."
 
 #: website/public/guides/browser/index.html:206
 msgctxt "page:guides/browser/index.html"
@@ -3928,7 +3928,7 @@ msgid ""
 "Use a small browser app to connect an action, its network request and the "
 "JavaScript that builds a download."
 msgstr ""
-"Use una pequeña aplicación de navegador para conectar una acción, su "
+"Usa una pequeña aplicación de navegador para conectar una acción, su "
 "solicitud de red y el JavaScript que genera una descarga."
 
 #: website/public/guides/browser/index.html:213
@@ -3950,7 +3950,7 @@ msgstr "{ph0}El ejemplo{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Open the browser{ph1}"
-msgstr "{ph0}Abra el navegador{ph1}"
+msgstr "{ph0}Abre el navegador{ph1}"
 
 #. {ph0}: <a href="#ask">
 #. {ph1}: </a>
@@ -3958,7 +3958,7 @@ msgstr "{ph0}Abra el navegador{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Ask your agent{ph1}"
-msgstr "{ph0}Pregúntele a su agente{ph1}"
+msgstr "{ph0}Pregunta a tu agente{ph1}"
 
 #. {ph0}: <a href="#capture">
 #. {ph1}: </a>
@@ -3966,7 +3966,7 @@ msgstr "{ph0}Pregúntele a su agente{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Capture from CLI{ph1}"
-msgstr "{ph0}Captura desde CLI{ph1}"
+msgstr "{ph0}Captura desde la CLI{ph1}"
 
 #. {ph0}: <a href="#result">
 #. {ph1}: </a>
@@ -3974,12 +3974,12 @@ msgstr "{ph0}Captura desde CLI{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Read the request and script{ph1}"
-msgstr "{ph0}Lea la solicitud y el script{ph1}"
+msgstr "{ph0}Lee la solicitud y el script{ph1}"
 
 #: website/public/guides/browser/index.html:224
 msgctxt "page:guides/browser/index.html"
 msgid "What happens when you click Export?"
-msgstr "¿Qué sucede cuando haces clic en Exportar?"
+msgstr "¿Qué ocurre cuando haces clic en «Export notes»?"
 
 #. {ph0}: <a href="../../examples/notes-web/">
 #. {ph1}: </a>
@@ -4001,7 +4001,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:233
 msgctxt "page:guides/browser/index.html"
 msgid "From the click to the CSV download"
-msgstr "Del clic a la descarga de CSV"
+msgstr "Del clic a la descarga del CSV"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4016,8 +4016,8 @@ msgid ""
 "{ph0}01 · You{ph1}{ph2}Click Export notes{ph3}{ph4}Perform the action in "
 "your browser while the capture is running.{ph5}"
 msgstr ""
-"{ph0}01 · Tú{ph1}{ph2}Haga clic en Exportar notas{ph3}{ph4}Realice la acción"
-" en su navegador mientras se ejecuta la captura.{ph5}"
+"{ph0}01 · Tú{ph1}{ph2}Haz clic en Export notes{ph3}{ph4}Realiza la acción en"
+" tu navegador mientras la captura está en marcha.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4032,7 +4032,7 @@ msgid ""
 "{ph0}02 · REA{ph1}{ph2}Record the request{ph3}{ph4}Capture the request URL, "
 "response status and JSON structure from the selected page.{ph5}"
 msgstr ""
-"{ph0}02 · REA{ph1}{ph2}Registre la solicitud{ph3}{ph4}Capture la URL de la "
+"{ph0}02 · REA{ph1}{ph2}Registra la solicitud{ph3}{ph4}Captura la URL de la "
 "solicitud, el estado de la respuesta y la estructura JSON de la página "
 "seleccionada.{ph5}"
 
@@ -4051,18 +4051,18 @@ msgid ""
 "{ph0}03 · Your agent{ph1}{ph2}Read the export code{ph3}{ph4}Connect the "
 "observed request to {ph5} in {ph6}.{ph7}"
 msgstr ""
-"{ph0}03 · Su agente{ph1}{ph2}Lea el código de exportación{ph3}{ph4}Conecte "
-"la solicitud observada a {ph5} en {ph6}.{ph7}"
+"{ph0}03 · Tu agente{ph1}{ph2}Lee el código de exportación{ph3}{ph4}Conecta "
+"la solicitud observada con {ph5} en {ph6}.{ph7}"
 
 #: website/public/guides/browser/index.html:264
 msgctxt "page:guides/browser/index.html"
 msgid "Start the capture before clicking Export notes."
-msgstr "Inicie la captura antes de hacer clic en Exportar notas."
+msgstr "Inicia la captura antes de hacer clic en Export notes."
 
 #: website/public/guides/browser/index.html:270
 msgctxt "page:guides/browser/index.html"
 msgid "Open Chrome with remote debugging"
-msgstr "Abra Chrome con depuración remota"
+msgstr "Abre Chrome con depuración remota"
 
 #: website/public/guides/browser/index.html:271
 msgctxt "page:guides/browser/index.html"
@@ -4070,13 +4070,13 @@ msgid ""
 "Open the hosted Notes example with a separate browser profile and a local "
 "debugging port. On Linux:"
 msgstr ""
-"Abra el ejemplo de Hosted Notes con un perfil de navegador independiente y "
-"un puerto de depuración local. En Linux:"
+"Abre el ejemplo Notes alojado con un perfil de navegador independiente y un "
+"puerto de depuración local. En Linux:"
 
 #: website/public/guides/browser/index.html:277
 msgctxt "page:guides/browser/index.html"
 msgid "Start the example browser"
-msgstr "Inicie el navegador de ejemplo"
+msgstr "Iniciar el navegador de ejemplo"
 
 #: website/public/guides/browser/index.html:278
 #: website/public/guides/browser/index.html:310
@@ -4093,8 +4093,8 @@ msgid ""
 "Use your installed browser's executable path on macOS or Windows. You can "
 "replace the page URL with another page you want to inspect."
 msgstr ""
-"Utilice la ruta ejecutable de su navegador instalado en macOS o Windows. "
-"Puede reemplazar la URL de la página con otra página que desee inspeccionar."
+"En macOS o Windows, usa la ruta del ejecutable de tu navegador instalado. "
+"Puedes sustituir la URL por la de otra página que quieras inspeccionar."
 
 #: website/public/guides/browser/index.html:297
 msgctxt "page:guides/browser/index.html"
@@ -4102,13 +4102,13 @@ msgid ""
 "REA connects to this existing browser. You keep control of the page, perform"
 " the action, and close the browser when finished."
 msgstr ""
-"REA se conecta a este navegador existente. Usted mantiene el control de la "
-"página, realiza la acción y cierra el navegador cuando termina."
+"REA se conecta a este navegador ya abierto. Tú mantienes el control de la "
+"página, realizas la acción y cierras el navegador al terminar."
 
 #: website/public/guides/browser/index.html:303
 msgctxt "page:guides/browser/index.html"
 msgid "Ask your agent to watch one action"
-msgstr "Pídale a su agente que vea una acción"
+msgstr "Pide a tu agente que observe una acción"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -4122,7 +4122,7 @@ msgstr "Pídale a su agente que vea una acción"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -4137,9 +4137,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to inspect this page while I click Export notes. "
 "What request does it make, and how is the CSV built?{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Use REA para inspeccionar esta página mientras hago clic en "
-"Exportar notas. ¿Qué solicitud hace y cómo se construye el "
-"CSV?{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Usa REA para inspeccionar esta página mientras hago clic en "
+"Export notes. ¿Qué solicitud hace y cómo se construye el CSV?{ph3}{ph4}{ph5}"
 
 #. {ph0}: <code>http://127.0.0.1:9222</code>
 #: website/public/guides/browser/index.html:327
@@ -4149,9 +4148,8 @@ msgid ""
 "Example prompt. Give your agent the debugging endpoint, {ph0}, and the page "
 "URL. Let it start the capture before you click."
 msgstr ""
-"Mensaje de ejemplo. Proporcione a su agente el endpoint de depuración, "
-"{ph0}, y la URL de la página. Deje que inicie la captura antes de hacer "
-"clic."
+"Prompt de ejemplo. Dale a tu agente el endpoint de depuración, {ph0}, y la "
+"URL de la página. Deja que inicie la captura antes de hacer clic."
 
 #: website/public/guides/browser/index.html:332
 msgctxt "page:guides/browser/index.html"
@@ -4160,9 +4158,9 @@ msgid ""
 "reads the resulting evidence. It can then inspect the script behind the "
 "export."
 msgstr ""
-"Su agente descubre el destino de la página, abre una ventana de observación "
-"y lee la evidencia resultante. Luego puede inspeccionar el script detrás de "
-"la exportación."
+"Tu agente descubre el objetivo de la página, abre una ventana de observación"
+" y lee la evidencia resultante. Después puede inspeccionar el script que hay"
+" detrás de la exportación."
 
 #: website/public/guides/browser/index.html:339
 msgctxt "page:guides/browser/index.html"
@@ -4172,12 +4170,12 @@ msgstr "O captura desde la terminal"
 #: website/public/guides/browser/index.html:340
 msgctxt "page:guides/browser/index.html"
 msgid "Find the page's target ID:"
-msgstr "Encontrar el ID de destino de la página:"
+msgstr "Busca el ID de objetivo de la página:"
 
 #: website/public/guides/browser/index.html:343
 msgctxt "page:guides/browser/index.html"
 msgid "Find the page"
-msgstr "Encuentra la página"
+msgstr "Buscar la página"
 
 #. {ph0}: <code>TARGET_ID</code>
 #: website/public/guides/browser/index.html:356
@@ -4187,13 +4185,13 @@ msgid ""
 "Choose the target with the Notes example URL. Replace {ph0} below with its "
 "ID, then run:"
 msgstr ""
-"Elija el destino con la URL de ejemplo de Notes. Reemplazar {ph0} abajo con "
-"su ID, luego ejecute:"
+"Elige el objetivo con la URL del ejemplo Notes. Sustituye {ph0} por su ID en"
+" el comando de abajo y ejecuta:"
 
 #: website/public/guides/browser/index.html:362
 msgctxt "page:guides/browser/index.html"
 msgid "Capture the next ten seconds"
-msgstr "Captura los siguientes diez segundos"
+msgstr "Capturar los próximos diez segundos"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -4204,9 +4202,9 @@ msgid ""
 "Let the command connect for a few seconds, then click {ph0}Export notes{ph1}"
 " in that browser. The result arrives after the observation window ends."
 msgstr ""
-"Deje que el comando se conecte durante unos segundos y luego haga clic en "
-"{ph0}Notas de exportación{ph1} en ese navegador. El resultado llega después "
-"de que finaliza la ventana de observación."
+"Deja que el comando se conecte durante unos segundos y después haz clic en "
+"{ph0}Export notes{ph1} en ese navegador. El resultado llega cuando termina "
+"la ventana de observación."
 
 #: website/public/guides/browser/index.html:383
 msgctxt "page:guides/browser/index.html"
@@ -4215,24 +4213,24 @@ msgid ""
 " window, and the shape of the JSON response. Earlier requests are outside "
 "this capture."
 msgstr ""
-"El resultado capturado incluye la página seleccionada, la actividad de la "
-"red durante esa ventana y la forma de la respuesta JSON. Las solicitudes "
-"anteriores están fuera de esta captura."
+"El resultado capturado incluye la página seleccionada, la actividad de red "
+"durante esa ventana y la estructura de la respuesta JSON. Las solicitudes "
+"anteriores quedan fuera de esta captura."
 
 #: website/public/guides/browser/index.html:390
 msgctxt "page:guides/browser/index.html"
 msgid "Read the request and export script"
-msgstr "Leer el script de solicitud y exportación"
+msgstr "Lee la solicitud y el script de exportación"
 
 #: website/public/guides/browser/index.html:393
 msgctxt "page:guides/browser/index.html"
 msgid "Recorded with REA 4.1.0 on the local Notes example"
-msgstr "Grabado con REA 4.1.0 en el ejemplo de notas locales"
+msgstr "Registrado con REA 4.1.0 en el ejemplo Notes local"
 
 #: website/public/guides/browser/index.html:398
 msgctxt "page:guides/browser/index.html"
 msgid "Captured fact"
-msgstr "Hecho capturado"
+msgstr "Dato capturado"
 
 #: website/public/guides/browser/index.html:399
 msgctxt "page:guides/browser/index.html"
@@ -4259,7 +4257,7 @@ msgstr "Iniciador de la solicitud"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} · script"
-msgstr "{ph0} · guión"
+msgstr "{ph0} · script"
 
 #: website/public/guides/browser/index.html:416
 msgctxt "page:guides/browser/index.html"
@@ -4273,7 +4271,7 @@ msgstr "Estructura de respuesta"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} with {ph1} and {ph2} fields"
-msgstr "{ph0} con {ph1} y {ph2} campos"
+msgstr "{ph0} con los campos {ph1} y {ph2}"
 
 #: website/public/guides/browser/index.html:427
 msgctxt "page:guides/browser/index.html"
@@ -4288,9 +4286,9 @@ msgid ""
 "The request identifies the data source, and REA records {ph0} as its "
 "initiator. Read the captured script source to see how the data is used:"
 msgstr ""
-"La solicitud identifica el origen de datos y los registros REA {ph0} como su"
-" iniciador. Lea la fuente de script capturada para ver cómo se utilizan los "
-"datos:"
+"La solicitud identifica el origen de los datos, y REA registra {ph0} como su"
+" iniciador. Lee el código fuente del script capturado para ver cómo se usan "
+"los datos:"
 
 #. {ph0}: <code>notes.json</code>
 #: website/public/guides/browser/index.html:461
@@ -4301,9 +4299,9 @@ msgid ""
 "formatting step comes from the script; the network capture establishes that "
 "this click requested {ph0}."
 msgstr ""
-"La descarga se construye en la página utilizando la respuesta JSON. El paso "
-"de formateo CSV proviene del script; la captura de red establece que se "
-"solicitó este clic {ph0}."
+"La descarga se construye en la página a partir de la respuesta JSON. El paso"
+" que da formato CSV viene del script; la captura de red establece que este "
+"clic solicitó {ph0}."
 
 #. {ph0}: <code>notes.json</code>
 #: website/public/guides/browser/index.html:477
@@ -4313,8 +4311,8 @@ msgid ""
 "Find the script that requests {ph0}. How does it escape titles containing "
 "commas or quotation marks?"
 msgstr ""
-"Busque el script que solicita {ph0}. ¿Cómo se escapa de los títulos que "
-"contienen comas o comillas?"
+"Busca el script que solicita {ph0}. ¿Cómo escapa los títulos que contienen "
+"comas o comillas?"
 
 #. {ph0}: <a href="../javascript/">
 #. {ph1}: </a>
@@ -4325,14 +4323,14 @@ msgid ""
 "For an installed JavaScript or Electron app, continue with the "
 "{ph0}application workflow{ph1} to follow files and process boundaries."
 msgstr ""
-"Para una aplicación JavaScript o Electron instalada, continúe con el "
-"{ph0}flujo de trabajo de aplicaciones{ph1} para seguir los límites de "
-"archivos y procesos."
+"Para una aplicación JavaScript o Electron instalada, continúa con el "
+"{ph0}flujo de trabajo de aplicaciones{ph1} para seguir los archivos y los "
+"límites entre procesos."
 
 #: website/public/guides/browser/index.html:6
 msgctxt "page:guides/browser/index.html"
 msgid "Browser and Network Analysis — REA"
-msgstr "Análisis de Navegadores y Redes-REA"
+msgstr "Análisis del navegador y de la red — REA"
 
 #: website/public/guides/browser/index.html:7
 msgctxt "page:guides/browser/index.html"
@@ -4340,8 +4338,8 @@ msgid ""
 "Observe a Notes export with REA: select a browser page, capture a click, "
 "inspect the request and follow the export script."
 msgstr ""
-"Observe una exportación de notas con REA: seleccione una página del "
-"navegador, capture un clic, inspeccione la solicitud y siga el script de "
+"Observa una exportación de notas con REA: selecciona una página del "
+"navegador, captura un clic, inspecciona la solicitud y sigue el script de "
 "exportación."
 
 #: website/public/guides/browser/index.html:212
@@ -4357,27 +4355,27 @@ msgstr "Observación del navegador"
 #: website/public/guides/browser/index.html:278
 msgctxt "page:guides/browser/index.html"
 msgid "Copy start the example browser"
-msgstr "Copie inicie el navegador de ejemplo"
+msgstr "Copiar el comando para iniciar el navegador de ejemplo"
 
 #: website/public/guides/browser/index.html:310
 msgctxt "page:guides/browser/index.html"
 msgid "Copy example prompt"
-msgstr "Copie el mensaje de ejemplo"
+msgstr "Copiar el prompt de ejemplo"
 
 #: website/public/guides/browser/index.html:344
 msgctxt "page:guides/browser/index.html"
 msgid "Copy find the page"
-msgstr "Copiar buscar la página"
+msgstr "Copiar el comando para buscar la página"
 
 #: website/public/guides/browser/index.html:363
 msgctxt "page:guides/browser/index.html"
 msgid "Copy capture the next ten seconds"
-msgstr "Copiar el prompt de captura de los próximos diez segundos"
+msgstr "Copiar el comando para capturar los próximos diez segundos"
 
 #: website/public/guides/browser/index.html:428
 msgctxt "page:guides/browser/index.html"
 msgid "Copy read the loaded scripts"
-msgstr "Copiar leer los scripts cargados"
+msgstr "Copiar el comando para leer los scripts cargados"
 
 #: website/public/guides/browser/index.html:516
 msgctxt "page:guides/browser/index.html"
@@ -4400,7 +4398,7 @@ msgstr "{ph0}Inicio{ph1} / Guías"
 #: website/public/guides/index.html:202
 msgctxt "page:guides/index.html"
 msgid "REA guides."
-msgstr "Guías REA."
+msgstr "Guías de REA."
 
 #: website/public/guides/index.html:203
 msgctxt "page:guides/index.html"
@@ -4408,8 +4406,8 @@ msgid ""
 "Analyze a native function, an Electron export or a browser request. Each "
 "guide includes a prompt, code and results."
 msgstr ""
-"Analice una función nativa, una exportación Electron o una solicitud del "
-"navegador. Cada guía incluye un mensaje, código y resultados."
+"Analiza una función nativa, una exportación en Electron o una solicitud del "
+"navegador. Cada guía incluye un prompt, código y resultados."
 
 #: website/public/guides/index.html:210
 msgctxt "page:guides/index.html"
@@ -4424,12 +4422,12 @@ msgstr "Configurar REA"
 #: website/public/guides/index.html:213
 msgctxt "page:guides/index.html"
 msgid "Connect your coding agent or use REA from the terminal."
-msgstr "Conecte su agente de programación o use REA desde la terminal."
+msgstr "Conecta tu agente de programación o usa REA desde la terminal."
 
 #: website/public/guides/index.html:214
 msgctxt "page:guides/index.html"
 msgid "Get started with REA"
-msgstr "Comience con REA"
+msgstr "Primeros pasos con REA"
 
 #: website/public/guides/index.html:218
 msgctxt "page:guides/index.html"
@@ -4439,7 +4437,7 @@ msgstr "Programas de código máquina"
 #: website/public/guides/index.html:220
 msgctxt "page:guides/index.html"
 msgid "Recover a sound-pan calculation"
-msgstr "Recuperar un cálculo de la posición del sonido izquierda/derecha"
+msgstr "Recupera el cálculo de la posición estéreo de un sonido"
 
 #: website/public/guides/index.html:221
 msgctxt "page:guides/index.html"
@@ -4447,9 +4445,9 @@ msgid ""
 "Start with a Windows game executable. Inspect instructions, follow a caller,"
 " read numeric constants and check the recovered C."
 msgstr ""
-"Comience con un ejecutable de juego Windows. Inspeccione las instrucciones, "
-"siga a la persona que llama, lea las constantes numéricas y verifique la C "
-"recuperada."
+"Empieza con el ejecutable de un juego de Windows. Inspecciona las "
+"instrucciones, sigue a un llamador, lee las constantes numéricas y comprueba"
+" el código C recuperado."
 
 #: website/public/guides/index.html:231
 msgctxt "page:guides/index.html"
@@ -4464,7 +4462,7 @@ msgstr "JavaScript y Electron"
 #: website/public/guides/index.html:237
 msgctxt "page:guides/index.html"
 msgid "Follow a CSV export"
-msgstr "Siga una exportación de CSV"
+msgstr "Sigue una exportación a CSV"
 
 #: website/public/guides/index.html:238
 msgctxt "page:guides/index.html"
@@ -4472,14 +4470,14 @@ msgid ""
 "A small Notes app spreads one feature across the renderer, preload and main "
 "process. Use REA to connect the API, IPC channel and file writer."
 msgstr ""
-"Una pequeña aplicación de notas distribuye una función en el renderizador, "
-"la precarga y el proceso principal. Utilice REA para conectar la API, el "
-"canal IPC y el escritor de archivos."
+"Una pequeña aplicación de notas reparte una función entre el proceso de "
+"renderizado, el script de precarga y el proceso principal. Usa REA para "
+"conectar la API, el canal IPC y el código que escribe el archivo."
 
 #: website/public/guides/index.html:248
 msgctxt "page:guides/index.html"
 msgid "JavaScript & Electron guide"
-msgstr "Guía JavaScript y Electron"
+msgstr "Guía de JavaScript y Electron"
 
 #. {ph0}: <a href="../showcase/notion/">
 #. {ph1}: </a>
@@ -4488,7 +4486,7 @@ msgstr "Guía JavaScript y Electron"
 msgctxt "page:guides/index.html"
 msgid "For a larger packaged app, follow {ph0}Notion's clipboard bridge{ph1}."
 msgstr ""
-"Para obtener una aplicación empaquetada más grande, siga {ph0}Puente del "
+"Para una aplicación empaquetada más grande, sigue el {ph0}puente del "
 "portapapeles de Notion{ph1}."
 
 #: website/public/guides/index.html:258
@@ -4499,7 +4497,7 @@ msgstr "Comportamiento del navegador"
 #: website/public/guides/index.html:260
 msgctxt "page:guides/index.html"
 msgid "Observe a click"
-msgstr "Observar un clic"
+msgstr "Observa un clic"
 
 #: website/public/guides/index.html:261
 msgctxt "page:guides/index.html"
@@ -4507,8 +4505,8 @@ msgid ""
 "Open a working Notes example, capture an export request and find the code "
 "that turns its response into a download."
 msgstr ""
-"Abra un ejemplo de notas de trabajo, capture una solicitud de exportación y "
-"busque el código que convierte su respuesta en una descarga."
+"Abre un ejemplo de notas que funciona, captura una solicitud de exportación "
+"y encuentra el código que convierte su respuesta en una descarga."
 
 #: website/public/guides/index.html:270
 msgctxt "page:guides/index.html"
@@ -4518,7 +4516,7 @@ msgstr "Guía de observación del navegador"
 #: website/public/guides/index.html:6
 msgctxt "page:guides/index.html"
 msgid "Reverse Engineering Guides — REA"
-msgstr "Guías de Ingeniería Inversa-REA"
+msgstr "Guías de ingeniería inversa — REA"
 
 #: website/public/guides/index.html:7
 msgctxt "page:guides/index.html"
@@ -4526,8 +4524,8 @@ msgid ""
 "Learn REA through short worked examples: a native calculation, an Electron "
 "CSV export and a browser request."
 msgstr ""
-"Aprenda REA a través de breves ejemplos trabajados: un cálculo nativo, una "
-"exportación Electron CSV y una solicitud del navegador."
+"Aprende REA con ejemplos breves y resueltos: un cálculo nativo, una "
+"exportación a CSV en Electron y una solicitud del navegador."
 
 #: website/public/guides/index.html:310
 msgctxt "page:guides/index.html"
@@ -4554,7 +4552,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Guías{ph3} / JavaScript y Electron"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "Trace an Electron{ph0}CSV export."
-msgstr "Rastrear un Electron{ph0}Exportación CSV."
+msgstr "Sigue una exportación{ph0}a CSV en Electron."
 
 #: website/public/guides/javascript/index.html:206
 msgctxt "page:guides/javascript/index.html"
@@ -4562,8 +4560,8 @@ msgid ""
 "Follow a button click from the page API, through Electron IPC, to the CSV "
 "file writer."
 msgstr ""
-"Haga clic en un botón desde la API de la página, a través de Electron IPC, "
-"hasta el escritor de archivos CSV."
+"Sigue el clic de un botón desde la API de la página, a través del IPC de "
+"Electron, hasta el código que escribe el archivo CSV."
 
 #: website/public/guides/javascript/index.html:213
 msgctxt "page:guides/javascript/index.html"
@@ -4584,7 +4582,7 @@ msgstr "{ph0}El ejemplo{ph1}"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Ask your agent{ph1}"
-msgstr "{ph0}Pregúntele a su agente{ph1}"
+msgstr "{ph0}Pregunta a tu agente{ph1}"
 
 #. {ph0}: <a href="#follow">
 #. {ph1}: </a>
@@ -4592,7 +4590,7 @@ msgstr "{ph0}Pregúntele a su agente{ph1}"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Trace the export code{ph1}"
-msgstr "{ph0}Rastrear el código de exportación{ph1}"
+msgstr "{ph0}Sigue el código de exportación{ph1}"
 
 #. {ph0}: <a href="#try">
 #. {ph1}: </a>
@@ -4608,12 +4606,12 @@ msgstr "{ph0}Prueba el ejemplo{ph1}"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Inspect the CSV writer{ph1}"
-msgstr "{ph0}Inspeccione la grabadora CSV{ph1}"
+msgstr "{ph0}Inspecciona la escritura del CSV{ph1}"
 
 #: website/public/guides/javascript/index.html:224
 msgctxt "page:guides/javascript/index.html"
 msgid "Where does “Export notes” go?"
-msgstr "¿A dónde van las \"Notas de exportación\"?"
+msgstr "¿Adónde lleva «Export notes»?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -4625,14 +4623,14 @@ msgid ""
 "an API in the page, crosses into the main process, and writes a CSV. The "
 "behavior is spread across several files."
 msgstr ""
-"Esta guía utiliza una pequeña aplicación Electron. Haciendo clic {ph0}Notas "
-"de exportación{ph1} llama a una API en la página, cruza al proceso principal"
-" y escribe un CSV. El comportamiento se distribuye en varios archivos."
+"Esta guía usa una pequeña aplicación Electron. Al hacer clic en {ph0}Export "
+"notes{ph1}, se llama a una API de la página, se pasa al proceso principal y "
+"se escribe un CSV. El comportamiento está repartido entre varios archivos."
 
 #: website/public/guides/javascript/index.html:232
 msgctxt "page:guides/javascript/index.html"
 msgid "The CSV export across Electron processes"
-msgstr "La exportación CSV a través de procesos Electron"
+msgstr "La exportación a CSV a través de los procesos de Electron"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4650,7 +4648,7 @@ msgid ""
 "{ph0}Renderer → preload{ph1}{ph2}{ph3}{ph4}{ph5}{ph6} calls the API exposed "
 "by {ph7}.{ph8}"
 msgstr ""
-"{ph0}Renderizador → precarga{ph1}{ph2}{ph3}{ph4}{ph5}{ph6} llama a la API "
+"{ph0}Renderizado → precarga{ph1}{ph2}{ph3}{ph4}{ph5}{ph6} llama a la API "
 "expuesta por {ph7}.{ph8}"
 
 #. {ph0}: <span class="flow-label">
@@ -4667,8 +4665,8 @@ msgid ""
 "{ph0}Between processes{ph1}{ph2}{ph3}{ph4}{ph5}The preload invokes an IPC "
 "channel: a named message to the main process.{ph6}"
 msgstr ""
-"{ph0}Entre procesos{ph1}{ph2}{ph3}{ph4}{ph5}La precarga invoca un canal IPC:"
-" un mensaje con nombre para el proceso principal.{ph6}"
+"{ph0}Entre procesos{ph1}{ph2}{ph3}{ph4}{ph5}El script de precarga invoca un "
+"canal IPC: un mensaje con nombre dirigido al proceso principal.{ph6}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4684,8 +4682,8 @@ msgid ""
 "{ph0}Main process{ph1}{ph2}An export handler{ph3}{ph4}{ph5} handles that "
 "channel and calls the CSV writer.{ph6}"
 msgstr ""
-"{ph0}Proceso principal{ph1}{ph2}Un manipulador de "
-"exportaciones{ph3}{ph4}{ph5} maneja ese canal y llama al escritor CSV.{ph6}"
+"{ph0}Proceso principal{ph1}{ph2}Un controlador de exportación{ph3}{ph4}{ph5}"
+" atiende ese canal y llama al código que escribe el CSV.{ph6}"
 
 #. {ph0}: <code>csv.js</code>
 #. {ph1}: <code>main.js</code>
@@ -4694,7 +4692,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0} formats the notes → {ph1} writes {ph2}."
-msgstr "{ph0} formatea las notas → {ph1} escribe {ph2}."
+msgstr "{ph0} da formato a las notas → {ph1} escribe {ph2}."
 
 #: website/public/guides/javascript/index.html:265
 msgctxt "page:guides/javascript/index.html"
@@ -4703,14 +4701,14 @@ msgid ""
 "API. The path is inferred from code; a runtime capture can check what "
 "executes."
 msgstr ""
-"REA hace coincidir la llamada IPC literal con su controlador e identifica la"
-" API expuesta. La ruta se infiere del código; una captura en tiempo de "
-"ejecución puede verificar qué se ejecuta."
+"REA empareja la llamada IPC literal con su controlador e identifica la API "
+"expuesta. El recorrido se infiere del código; una captura en tiempo de "
+"ejecución puede comprobar qué se ejecuta."
 
 #: website/public/guides/javascript/index.html:273
 msgctxt "page:guides/javascript/index.html"
 msgid "Ask about the CSV export"
-msgstr "Pregunte por la exportación CSV"
+msgstr "Pregunta por la exportación a CSV"
 
 #. {ph0}: <a href="../../get-started/#agent">
 #. {ph1}: </a>
@@ -4721,8 +4719,8 @@ msgid ""
 "{ph0}Connect your agent to REA{ph1} and give it the app directory or ASAR "
 "file:"
 msgstr ""
-"{ph0}Conecte a su agente a REA{ph1} y asígnele el directorio de la "
-"aplicación o el archivo ASAR:"
+"{ph0}Conecta tu agente a REA{ph1} y dale el directorio de la aplicación o el"
+" archivo ASAR:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -4736,7 +4734,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #: website/public/guides/javascript/index.html:284
 #: website/public/guides/javascript/index.html:441
@@ -4757,7 +4755,7 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find what happens when I export notes in this "
 "app. Where is the CSV created?{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Use REA para averiguar qué sucede cuando exporto notas en "
+"{ph0}›{ph1}{ph2}Usa REA para averiguar qué ocurre cuando exporto notas en "
 "esta aplicación. ¿Dónde se crea el CSV?{ph3}{ph4}{ph5}"
 
 #. {ph0}: <code>app.asar</code>
@@ -4768,8 +4766,8 @@ msgid ""
 "Example prompt. Include the absolute path to the application folder or "
 "{ph0}."
 msgstr ""
-"Mensaje de ejemplo. Incluya la ruta absoluta a la carpeta de la aplicación o"
-" {ph0}."
+"Prompt de ejemplo. Incluye la ruta absoluta de la carpeta de la aplicación o"
+" de {ph0}."
 
 #: website/public/guides/javascript/index.html:305
 msgctxt "page:guides/javascript/index.html"
@@ -4778,14 +4776,14 @@ msgid ""
 " process boundaries. Your agent uses that map to narrow the investigation to"
 " the export feature."
 msgstr ""
-"REA lee los archivos de la aplicación y crea un mapa de puntos de entrada, "
-"módulos y límites de procesos. Su agente usa ese mapa para limitar la "
-"investigación a la función de exportación."
+"REA lee los archivos de la aplicación y construye un mapa de puntos de "
+"entrada, módulos y límites entre procesos. Tu agente usa ese mapa para "
+"acotar la investigación a la función de exportación."
 
 #: website/public/guides/javascript/index.html:312
 msgctxt "page:guides/javascript/index.html"
 msgid "Trace the export code"
-msgstr "Rastrear el código de exportación"
+msgstr "Sigue el código de exportación"
 
 #: website/public/guides/javascript/index.html:313
 msgctxt "page:guides/javascript/index.html"
@@ -4798,8 +4796,8 @@ msgid ""
 "The page knows the method name. The implementation lives in the preload, "
 "which exposes it to the renderer."
 msgstr ""
-"La página conoce el nombre del método. La implementación vive en la "
-"precarga, que la expone al renderizador."
+"La página conoce el nombre del método. La implementación está en el script "
+"de precarga, que la expone al proceso de renderizado."
 
 #. {ph0}: <code>notes.exportCsv</code>
 #. {ph1}: <code>notes:export</code>
@@ -4810,8 +4808,8 @@ msgid ""
 "REA records {ph0} and the literal channel {ph1}. It pairs that invocation "
 "with the single matching handler in the main process."
 msgstr ""
-"Registros REA {ph0} y el canal literal {ph1}. Empareja esa invocación con el"
-" único controlador coincidente en el proceso principal."
+"REA registra {ph0} y el canal literal {ph1}. Empareja esa invocación con el "
+"único controlador que coincide en el proceso principal."
 
 #. {ph0}: <code>csv.js</code>
 #. {ph1}: <code>notes.csv</code>
@@ -4822,14 +4820,14 @@ msgid ""
 "Reading the handler answers the original question: {ph0} formats the notes, "
 "and the main process writes {ph1} into the user's Downloads folder."
 msgstr ""
-"Leer el controlador responde a la pregunta original: {ph0} formatea las "
-"notas y el proceso principal escribe {ph1} en la carpeta de descargas del "
+"Leer el controlador responde a la pregunta original: {ph0} da formato a las "
+"notas y el proceso principal escribe {ph1} en la carpeta Descargas del "
 "usuario."
 
 #: website/public/guides/javascript/index.html:388
 msgctxt "page:guides/javascript/index.html"
 msgid "Analyze the example yourself"
-msgstr "Analice el ejemplo usted mismo"
+msgstr "Analiza el ejemplo tú mismo"
 
 #. {ph0}: <a class="button" href="../../examples/notes-example.zip"
 #. download="notes-example.zip" >
@@ -4843,7 +4841,7 @@ msgstr "{ph0}Descargar ZIP de ejemplo{ph1}"
 #: website/public/guides/javascript/index.html:404
 msgctxt "page:guides/javascript/index.html"
 msgid "Browse the six source files"
-msgstr "Explore los seis archivos fuente"
+msgstr "Explora los seis archivos fuente"
 
 #: website/public/guides/javascript/index.html:440
 msgctxt "page:guides/javascript/index.html"
@@ -4859,9 +4857,9 @@ msgid ""
 "Replace the path with the folder you unzipped. You should find one IPC "
 "channel and one matching handler in {ph0}. Source locations are in {ph1}."
 msgstr ""
-"Reemplace la ruta con la carpeta que descomprimió. Debería encontrar un "
-"canal IPC y un controlador coincidente en {ph0}. Las ubicaciones de origen "
-"están en {ph1}."
+"Sustituye la ruta por la de la carpeta que has descomprimido. Deberías "
+"encontrar un canal IPC y un controlador que coincide en {ph0}. Las "
+"ubicaciones en el código fuente están en {ph1}."
 
 #: website/public/guides/javascript/index.html:459
 msgctxt "page:guides/javascript/index.html"
@@ -4870,14 +4868,14 @@ msgid ""
 "agent can follow a literal string, API name or IPC channel with REA's "
 "feature tracing tools."
 msgstr ""
-"Para su propia aplicación, use el mismo comando con su directorio o ruta "
-"ASAR. Un agente puede seguir una cadena literal, un nombre de API o un canal"
-" IPC con las herramientas de rastreo de funciones de REA."
+"Para tu propia aplicación, usa el mismo comando con su directorio o la ruta "
+"de su ASAR. Un agente puede seguir una cadena literal, un nombre de API o un"
+" canal IPC con las herramientas de rastreo de funciones de REA."
 
 #: website/public/guides/javascript/index.html:466
 msgctxt "page:guides/javascript/index.html"
 msgid "Inspect the CSV writer"
-msgstr "Inspeccione la grabadora CSV"
+msgstr "Inspecciona la escritura del CSV"
 
 #. {ph0}: <code>notes:export</code>
 #: website/public/guides/javascript/index.html:468
@@ -4887,8 +4885,8 @@ msgid ""
 "Follow {ph0} to its handler. Which inputs reach the CSV writer, and what "
 "happens if writing the file fails?"
 msgstr ""
-"Sigue {ph0} hasta su controlador. ¿Qué entradas llegan al escritor CSV y qué"
-" sucede si falla la escritura del archivo?"
+"Sigue {ph0} hasta su controlador. ¿Qué entradas llegan al código que escribe"
+" el CSV y qué ocurre si falla la escritura del archivo?"
 
 #: website/public/guides/javascript/index.html:474
 msgctxt "page:guides/javascript/index.html"
@@ -4897,10 +4895,10 @@ msgid ""
 "and ambiguous handlers can remain unresolved; runtime observations give you "
 "another way to investigate them."
 msgstr ""
-"Utilice las ubicaciones de origen para inspeccionar esos detalles. Los "
-"nombres de canal calculados y los controladores ambiguos pueden permanecer "
-"sin resolver; las observaciones en tiempo de ejecución le brindan otra forma"
-" de investigarlos."
+"Usa las ubicaciones en el código fuente para inspeccionar esos detalles. Los"
+" nombres de canal calculados y los controladores ambiguos pueden quedar sin "
+"resolver; las observaciones en tiempo de ejecución te dan otra forma de "
+"investigarlos."
 
 #. {ph0}: <a href="../../showcase/notion/" >
 #. {ph1}: </a >
@@ -4913,8 +4911,8 @@ msgid ""
 "{ph0}Follow Notion's clipboard bridge{ph1} {ph2}Apply the same approach to a"
 " packaged Electron app.{ph3}"
 msgstr ""
-"{ph0}Siga el puente del portapapeles de Notion{ph1} {ph2}Aplique el mismo "
-"enfoque a una aplicación Electron empaquetada.{ph3}"
+"{ph0}Sigue el puente del portapapeles de Notion{ph1} {ph2}Aplica el mismo "
+"método a una aplicación Electron empaquetada.{ph3}"
 
 #. {ph0}: <a href="../browser/">
 #. {ph1}: </a >
@@ -4927,8 +4925,8 @@ msgid ""
 "{ph0}Observe a browser export{ph1}{ph2}Capture a real click and see which "
 "request it makes.{ph3}"
 msgstr ""
-"{ph0}Observar una exportación del navegador{ph1}{ph2}Capture un clic real y "
-"vea qué solicitud realiza.{ph3}"
+"{ph0}Observa una exportación en el navegador{ph1}{ph2}Captura un clic real y"
+" mira qué solicitud hace.{ph3}"
 
 #. {ph0}: <a href="../native/">
 #. {ph1}: </a >
@@ -4947,7 +4945,7 @@ msgstr ""
 #: website/public/guides/javascript/index.html:6
 msgctxt "page:guides/javascript/index.html"
 msgid "JavaScript and Electron Analysis — REA"
-msgstr "Análisis de JavaScript y Electron-REA"
+msgstr "Análisis de JavaScript y Electron — REA"
 
 #: website/public/guides/javascript/index.html:7
 msgctxt "page:guides/javascript/index.html"
@@ -4956,9 +4954,9 @@ msgid ""
 "with REA. Includes downloadable example files and a verified analysis "
 "result."
 msgstr ""
-"Rastree una exportación de Notes CSV a través de una API de renderizador, "
-"precarga y controlador IPC con REA. Incluye archivos de ejemplo descargables"
-" y un resultado de análisis verificado."
+"Sigue con REA la exportación a CSV de Notes a través de una API del proceso "
+"de renderizado, el script de precarga y un controlador IPC. Incluye archivos"
+" de ejemplo descargables y un resultado de análisis verificado."
 
 #: website/public/guides/javascript/index.html:212
 msgctxt "page:guides/javascript/index.html"
@@ -4973,12 +4971,12 @@ msgstr "JavaScript y Electron"
 #: website/public/guides/javascript/index.html:284
 msgctxt "page:guides/javascript/index.html"
 msgid "Copy example prompt"
-msgstr "Copie el mensaje de ejemplo"
+msgstr "Copiar el prompt de ejemplo"
 
 #: website/public/guides/javascript/index.html:441
 msgctxt "page:guides/javascript/index.html"
 msgid "Copy static application analysis"
-msgstr "Copiar análisis de aplicaciones estáticas"
+msgstr "Copiar el comando de análisis estático de aplicaciones"
 
 #: website/public/guides/javascript/index.html:520
 msgctxt "page:guides/javascript/index.html"
@@ -5006,9 +5004,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "Recover DX-Ball's{ph0}sound-pan calculation."
-msgstr ""
-"Recuperar DX-Ball 's{ph0}cálculo de la posición del sonido izquierda / "
-"derecha."
+msgstr "Recupera el cálculo de la{ph0}posición estéreo del sonido en DX-Ball."
 
 #: website/public/guides/native/index.html:205
 msgctxt "page:guides/native/index.html"
@@ -5016,8 +5012,8 @@ msgid ""
 "Inspect the original instructions, identify the input and constants, then "
 "check the recovered C."
 msgstr ""
-"Inspeccione las instrucciones originales, identifique la entrada y las "
-"constantes, luego verifique la C recuperada."
+"Inspecciona las instrucciones originales, identifica la entrada y las "
+"constantes, y después comprueba el código C recuperado."
 
 #: website/public/guides/native/index.html:212
 msgctxt "page:guides/native/index.html"
@@ -5038,7 +5034,7 @@ msgstr "{ph0}El ejemplo{ph1}"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Ask your agent{ph1}"
-msgstr "{ph0}Pregúntele a su agente{ph1}"
+msgstr "{ph0}Pregunta a tu agente{ph1}"
 
 #. {ph0}: <a href="#follow">
 #. {ph1}: </a>
@@ -5046,7 +5042,7 @@ msgstr "{ph0}Pregúntele a su agente{ph1}"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Read the REA results{ph1}"
-msgstr "{ph0}Lea los resultados del REA{ph1}"
+msgstr "{ph0}Lee los resultados de REA{ph1}"
 
 #. {ph0}: <a href="#result">
 #. {ph1}: </a>
@@ -5054,7 +5050,7 @@ msgstr "{ph0}Lea los resultados del REA{ph1}"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Recover and check{ph1}"
-msgstr "{ph0}Recuperar y comprobar{ph1}"
+msgstr "{ph0}Recupera y comprueba{ph1}"
 
 #. {ph0}: <a href="#try">
 #. {ph1}: </a>
@@ -5067,7 +5063,7 @@ msgstr "{ph0}Usa tu propio binario{ph1}"
 #: website/public/guides/native/index.html:223
 msgctxt "page:guides/native/index.html"
 msgid "Calculate left/right sound panning"
-msgstr "Calcular el posicionamiento del sonido estéreo izquierdo/derecho"
+msgstr "Cálculo de la posición izquierda/derecha del sonido"
 
 #: website/public/guides/native/index.html:224
 msgctxt "page:guides/native/index.html"
@@ -5075,9 +5071,9 @@ msgid ""
 "In DX-Ball, a brick hit supplies a horizontal screen position. The sound "
 "code turns it into a left/right panning value."
 msgstr ""
-"En DX-Ball, un golpe de ladrillo proporciona una posición horizontal de la "
-"pantalla. El código de sonido lo convierte en un valor de panorámica "
-"izquierda / derecha."
+"En DX-Ball, el golpe a un ladrillo aporta una posición horizontal en "
+"pantalla. El código de sonido la convierte en un valor de posición estéreo "
+"(izquierda/derecha)."
 
 #. {ph0}: <code>0x00406400</code>
 #. {ph1}: <code>__ftol()</code>
@@ -5089,14 +5085,15 @@ msgid ""
 "{ph1}. REA also returns its instructions and callers, which give the agent a"
 " way to investigate the missing arithmetic."
 msgstr ""
-"La función de inicio, {ph0}, tiene un resultado corto del descompilador: una"
-" llamada a {ph1}. REA también devuelve sus instrucciones y llamadas, que le "
-"dan al agente una forma de investigar la aritmética faltante."
+"La función de partida, {ph0}, tiene un resultado de descompilador muy corto:"
+" una llamada a {ph1}. REA también devuelve sus instrucciones y sus "
+"llamadores, lo que da al agente una manera de investigar la aritmética que "
+"falta."
 
 #: website/public/guides/native/index.html:235
 msgctxt "page:guides/native/index.html"
 msgid "New to these terms?"
-msgstr "¿Eres nuevo en estos términos?"
+msgstr "¿No conoces estos términos?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5109,8 +5106,8 @@ msgid ""
 "{ph0}Instructions:{ph1} the steps the processor runs, shown in readable form"
 " such as {ph2} or {ph3}."
 msgstr ""
-"{ph0}Instrucciones:{ph1} los pasos que ejecuta el procesador, que se "
-"muestran en forma legible, como {ph2} o {ph3}."
+"{ph0}Instrucciones:{ph1} los pasos que ejecuta el procesador, mostrados de "
+"forma legible, como {ph2} o {ph3}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5122,8 +5119,8 @@ msgid ""
 " instructions back into C-like code. It can miss parts, as in this example."
 msgstr ""
 "{ph0}Resultado del descompilador / pseudocódigo:{ph1} el intento de una "
-"herramienta de análisis de volver a convertir las instrucciones en código "
-"tipo C. Puede perder partes, como en este ejemplo."
+"herramienta de análisis de convertir las instrucciones de nuevo en código "
+"parecido a C. Puede omitir partes, como en este ejemplo."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5181,7 +5178,7 @@ msgid ""
 "supplies the value used by the floating-point instructions.{ph5}"
 msgstr ""
 "{ph0}01 · Instrucciones{ph1}{ph2}Una entrada entera{ph3}{ph4}Una lectura de "
-"pila proporciona el valor utilizado por las instrucciones de coma "
+"la pila proporciona el valor que usan las instrucciones de coma "
 "flotante.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -5198,8 +5195,8 @@ msgid ""
 "{ph0}02 · Caller{ph1}{ph2}A screen coordinate{ph3}{ph4}The brick-hit caller "
 "passes {ph5}.{ph6}"
 msgstr ""
-"{ph0}02 · Llamador{ph1}{ph2}Una coordenada de pantalla{ph3}{ph4}El llamador "
-"golpeado por un ladrillo pasa {ph5}.{ph6}"
+"{ph0}02 · Llamador{ph1}{ph2}Una coordenada de pantalla{ph3}{ph4}El llamador,"
+" el código del golpe a un ladrillo, pasa {ph5}.{ph6}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5216,9 +5213,9 @@ msgid ""
 "{ph0}03 · Data bytes{ph1}{ph2}The numeric constants{ph3}{ph4}Referenced "
 "bytes decode to {ph5}, {ph6} and a scale value.{ph7}"
 msgstr ""
-"{ph0}03 · Bytes de datos{ph1}{ph2}Las constantes "
-"numéricas{ph3}{ph4}Decodificación de bytes referenciados a {ph5}, {ph6} y un"
-" valor de escala.{ph7}"
+"{ph0}03 · Bytes de datos{ph1}{ph2}Las constantes numéricas{ph3}{ph4}Los "
+"bytes referenciados se decodifican como {ph5}, {ph6} y un valor de "
+"escala.{ph7}"
 
 #: website/public/guides/native/index.html:294
 msgctxt "page:guides/native/index.html"
@@ -5226,13 +5223,13 @@ msgid ""
 "REA supplies the instructions, call relationship and bytes. The agent "
 "interprets them together."
 msgstr ""
-"REA proporciona las instrucciones, la relación función-llamada y los bytes. "
-"El agente los interpreta juntos."
+"REA proporciona las instrucciones, la relación de llamada y los bytes. El "
+"agente los interpreta en conjunto."
 
 #: website/public/guides/native/index.html:301
 msgctxt "page:guides/native/index.html"
 msgid "Ask about the behavior"
-msgstr "Pregunte sobre el comportamiento"
+msgstr "Pregunta por el comportamiento"
 
 #. {ph0}: <a href="../../get-started/#agent" >
 #. {ph1}: </a >
@@ -5245,9 +5242,9 @@ msgid ""
 "After {ph0}connecting REA to your agent{ph1} and {ph2}setting up a native "
 "analysis tool{ph3}, provide the local executable and a question:"
 msgstr ""
-"Después {ph0}conectando REA a su agente{ph1} y {ph2}configuración de una "
-"herramienta de análisis de programas de código máquina{ph3}, proporcione el "
-"ejecutable local y una pregunta:"
+"Después de {ph0}conectar REA a tu agente{ph1} y de {ph2}configurar una "
+"herramienta de análisis nativo{ph3}, indica el ejecutable local y una "
+"pregunta:"
 
 #: website/public/guides/native/index.html:313
 msgctxt "page:guides/native/index.html"
@@ -5257,7 +5254,7 @@ msgstr "¿Qué herramienta de análisis debo usar?"
 #: website/public/guides/native/index.html:314
 msgctxt "page:guides/native/index.html"
 msgid "REA needs one of these to read native programs:"
-msgstr "REA necesita uno de estos para leer programas nativos:"
+msgstr "REA necesita una de estas para leer programas nativos:"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5278,9 +5275,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "See {ph0}Set up native analysis{ph1} for the steps."
-msgstr ""
-"Véase {ph0}Configurar el análisis de programas de código máquina{ph1} para "
-"los pasos."
+msgstr "Consulta los pasos en {ph0}Configurar el análisis nativo{ph1}."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -5294,7 +5289,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #: website/public/guides/native/index.html:347
 #: website/public/guides/native/index.html:478
@@ -5315,9 +5310,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find how DX-Ball calculates sound panning. "
 "Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Use REA para averiguar cómo DX-Ball calcula el "
-"posicionamiento del sonido estéreo. Explique el cálculo y muestre el "
-"código.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Usa REA para averiguar cómo calcula DX-Ball la posición "
+"estéreo del sonido. Explica el cálculo y muestra el código.{ph3}{ph4}{ph5}"
 
 #: website/public/guides/native/index.html:364
 msgctxt "page:guides/native/index.html"
@@ -5326,9 +5320,9 @@ msgid ""
 "executable. REA doesn't include DX-Ball, so use your own copy, or ask the "
 "same kind of question about another small Windows program you have."
 msgstr ""
-"Mensaje de ejemplo. Proporcione a su agente la ruta al ejecutable local de "
-"DX-Ball 1.07. REA no incluye DX-Ball, así que use su propia copia o haga el "
-"mismo tipo de pregunta sobre otro pequeño programa Windows que tenga."
+"Prompt de ejemplo. Dale a tu agente la ruta de tu ejecutable local de DX-"
+"Ball 1.07. REA no incluye DX-Ball, así que usa tu propia copia o haz el "
+"mismo tipo de pregunta sobre otro programa pequeño de Windows que tengas."
 
 #: website/public/guides/native/index.html:371
 msgctxt "page:guides/native/index.html"
@@ -5346,9 +5340,9 @@ msgid ""
 "{ph0}Windows:{ph1} in File Explorer, right-click the file and choose "
 "{ph2}Copy as path{ph3}. On Windows 10, hold Shift while right-clicking."
 msgstr ""
-"{ph0}Windows:{ph1} en el Explorador de archivos, haga clic con el botón "
-"derecho en el archivo y elija {ph2}Copiar como ruta{ph3}. En Windows 10, "
-"mantenga presionada la tecla Mayús mientras hace clic con el botón derecho."
+"{ph0}Windows:{ph1} en el Explorador de archivos, haz clic derecho en el "
+"archivo y elige {ph2}Copiar como ruta de acceso{ph3}. En Windows 10, mantén "
+"pulsada la tecla Mayús mientras haces clic derecho."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5361,9 +5355,8 @@ msgid ""
 "{ph0}macOS:{ph1} in Finder, right-click the file, hold Option and choose "
 "{ph2}Copy \"…\" as Pathname{ph3}."
 msgstr ""
-"{ph0}macOS:{ph1} en Finder, haga clic con el botón derecho en el archivo, "
-"mantenga presionada la opción y elija {ph2}Copie \"\"\" como nombre de "
-"ruta{ph3}."
+"{ph0}macOS:{ph1} en Finder, haz clic derecho en el archivo, mantén pulsada "
+"la tecla Opción y elige {ph2}Copiar «…» como nombre de ruta{ph3}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5374,18 +5367,18 @@ msgid ""
 "{ph0}Any system:{ph1} drag the file into a terminal window and its path "
 "appears."
 msgstr ""
-"{ph0}Cualquier sistema:{ph1} arrastre el archivo a una ventana de terminal y"
+"{ph0}Cualquier sistema:{ph1} arrastra el archivo a una ventana de terminal y"
 " aparecerá su ruta."
 
 #: website/public/guides/native/index.html:390
 msgctxt "page:guides/native/index.html"
 msgid "Read the REA results"
-msgstr "Lea los resultados del REA"
+msgstr "Lee los resultados de REA"
 
 #: website/public/guides/native/index.html:391
 msgctxt "page:guides/native/index.html"
 msgid "Read the input"
-msgstr "Lea la entrada"
+msgstr "Lee la entrada"
 
 #: website/public/guides/native/index.html:400
 msgctxt "page:guides/native/index.html"
@@ -5393,14 +5386,14 @@ msgid ""
 "The instructions load an integer argument and convert it for floating-point "
 "arithmetic. This is the input absent from the first pseudocode view."
 msgstr ""
-"Las instrucciones cargan un argumento entero y lo convierten para aritmética"
-" de coma flotante. Esta es la entrada ausente en la primera vista de "
-"pseudocódigo."
+"Las instrucciones cargan un argumento entero y lo convierten para la "
+"aritmética de coma flotante. Esta es la entrada que faltaba en la primera "
+"vista de pseudocódigo."
 
 #: website/public/guides/native/index.html:405
 msgctxt "page:guides/native/index.html"
 msgid "Follow the caller"
-msgstr "Siga a la persona que llama"
+msgstr "Sigue al llamador"
 
 #. {ph0}: <code>0x14</code>
 #: website/public/guides/native/index.html:414
@@ -5410,14 +5403,14 @@ msgid ""
 "REA identifies the brick-hit caller. Its earlier instructions multiply the "
 "tile coordinate by 30; adding {ph0} (20) gives the brick's screen position."
 msgstr ""
-"REA identifica a la persona que llama al golpe de ladrillo. Sus "
-"instrucciones anteriores multiplican la coordenada del mosaico por 30; "
-"sumando {ph0} (20) da la posición de la pantalla del ladrillo."
+"REA identifica al llamador: el código del golpe a un ladrillo. Sus "
+"instrucciones anteriores multiplican la coordenada de la casilla por 30; al "
+"sumar {ph0} (20) se obtiene la posición del ladrillo en pantalla."
 
 #: website/public/guides/native/index.html:419
 msgctxt "page:guides/native/index.html"
 msgid "Read the referenced constants"
-msgstr "Lee las constantes a las que se hace referencia"
+msgstr "Lee las constantes referenciadas"
 
 #: website/public/guides/native/index.html:430
 msgctxt "page:guides/native/index.html"
@@ -5425,14 +5418,13 @@ msgid ""
 "The arithmetic references these addresses. Reading the bytes supplies the "
 "actual values; the instruction order tells the agent how they are used."
 msgstr ""
-"La aritmética hace referencia a estas direcciones. La lectura de los bytes "
-"proporciona los valores reales; el orden de instrucción le dice al agente "
-"cómo se usan."
+"La aritmética hace referencia a estas direcciones. Leer los bytes da los "
+"valores reales; el orden de las instrucciones indica al agente cómo se usan."
 
 #: website/public/guides/native/index.html:437
 msgctxt "page:guides/native/index.html"
 msgid "Write and check the recovered function"
-msgstr "Escriba y verifique la función recuperada"
+msgstr "Escribe y comprueba la función recuperada"
 
 #: website/public/guides/native/index.html:446
 msgctxt "page:guides/native/index.html"
@@ -5441,9 +5433,9 @@ msgid ""
 "before integer conversion. The calculation puts the center of the screen at "
 "the center of the stereo field."
 msgstr ""
-"Con una escala de 1.0, las posiciones de pantalla 0, 320 y 640 se asignan a "
-"-500, 0 y 500 antes de la conversión de enteros. El cálculo coloca el centro"
-" de la pantalla en el centro del campo estéreo."
+"Con una escala de 1.0, las posiciones de pantalla 0, 320 y 640 corresponden "
+"a −500, 0 y 500 antes de la conversión a entero. El cálculo sitúa el centro "
+"de la pantalla en el centro del campo estéreo."
 
 #: website/public/guides/native/index.html:451
 msgctxt "page:guides/native/index.html"
@@ -5452,8 +5444,8 @@ msgid ""
 " inputs against the original x86 function and reproduced all 63 compiled "
 "bytes of the complete function."
 msgstr ""
-"El agente utilizó los hallazgos de REA para escribir el C. Comprobaciones "
-"separadas compararon 3205 entradas con la función x86 original y "
+"El agente usó los hallazgos de REA para escribir el código C. Comprobaciones"
+" independientes compararon 3.205 entradas con la función x86 original y "
 "reprodujeron los 63 bytes compilados de la función completa."
 
 #. {ph0}: <a href="../../showcase/dx-ball/#sound-pan" >
@@ -5463,7 +5455,8 @@ msgstr ""
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}See the full investigation and assembly-to-C comparison{ph1}"
 msgstr ""
-"{ph0}Vea la investigación completa y la comparación de assembly-to-C{ph1}"
+"{ph0}Ver la investigación completa y la comparación entre ensamblador y "
+"C{ph1}"
 
 #: website/public/guides/native/index.html:463
 msgctxt "page:guides/native/index.html"
@@ -5481,10 +5474,10 @@ msgid ""
 "questions include “How is this file parsed?” or “Which function handles this"
 " menu action?”"
 msgstr ""
-"{ph0}Conecte un proveedor de análisis de programas de código máquina{ph1}, "
-"luego proporcione a su agente un ejecutable o biblioteca local y una función"
-" para investigar. Las preguntas iniciales útiles incluyen \"¿ Cómo se "
-"analiza este archivo?\"o\" ¿Qué función maneja esta acción de menú?”"
+"{ph0}Conecta un proveedor de análisis nativo{ph1} y después dale a tu agente"
+" un ejecutable o una biblioteca local y una funcionalidad que investigar. "
+"Algunas preguntas útiles para empezar: «¿Cómo se interpreta este archivo?» o"
+" «¿Qué función gestiona esta acción del menú?»."
 
 #: website/public/guides/native/index.html:471
 msgctxt "page:guides/native/index.html"
@@ -5492,8 +5485,8 @@ msgid ""
 "If you already know a function name or address, you can query it from the "
 "terminal. For a configured Ghidra installation:"
 msgstr ""
-"Si ya conoce el nombre o la dirección de una función, puede consultarla "
-"desde el terminal. Para una instalación Ghidra configurada:"
+"Si ya conoces el nombre o la dirección de una función, puedes consultarla "
+"desde la terminal. Con una instalación de Ghidra configurada:"
 
 #: website/public/guides/native/index.html:477
 msgctxt "page:guides/native/index.html"
@@ -5510,10 +5503,10 @@ msgid ""
 "session. Your agent's MCP queries reuse the imported binary while that "
 "session is open."
 msgstr ""
-"Reemplace la ruta de destino y {ph0} con su propio nombre de función o "
-"dirección. Cada invocación CLI importa y analiza el binario, luego cierra su"
-" sesión. Las consultas MCP de su agente reutilizan el binario importado "
-"mientras esa sesión está abierta."
+"Sustituye la ruta del objetivo y {ph0} por el nombre o la dirección de tu "
+"función. Cada invocación de la CLI importa y analiza el binario y después "
+"cierra su sesión. Las consultas MCP de tu agente reutilizan el binario "
+"importado mientras esa sesión siga abierta."
 
 #: website/public/guides/native/index.html:496
 msgctxt "page:guides/native/index.html"
@@ -5521,14 +5514,14 @@ msgid ""
 "Read the pseudocode alongside instructions and references. When a result "
 "leaves a call or value unresolved, use that location as the next question."
 msgstr ""
-"Lea el pseudocódigo junto con las instrucciones y referencias. Cuando un "
-"resultado deja una llamada o un valor sin resolver, use esa ubicación como "
-"la siguiente pregunta."
+"Lee el pseudocódigo junto con las instrucciones y las referencias. Cuando un"
+" resultado deje sin resolver una llamada o un valor, usa esa ubicación como "
+"siguiente pregunta."
 
 #: website/public/guides/native/index.html:6
 msgctxt "page:guides/native/index.html"
 msgid "Native Binary Analysis — REA"
-msgstr "Análisis Binario Nativo-REA"
+msgstr "Análisis de binarios nativos — REA"
 
 #: website/public/guides/native/index.html:7
 msgctxt "page:guides/native/index.html"
@@ -5536,8 +5529,8 @@ msgid ""
 "Recover a native calculation with REA: inspect instructions, follow a "
 "caller, read constants and check reconstructed C."
 msgstr ""
-"Recupere un cálculo nativo con REA: inspeccione instrucciones, siga a una "
-"persona que llama, lea constantes y verifique C reconstruido."
+"Recupera un cálculo nativo con REA: inspecciona instrucciones, sigue a un "
+"llamador, lee constantes y comprueba el código C reconstruido."
 
 #: website/public/guides/native/index.html:211
 msgctxt "page:guides/native/index.html"
@@ -5552,12 +5545,12 @@ msgstr "Análisis de programas de código máquina"
 #: website/public/guides/native/index.html:347
 msgctxt "page:guides/native/index.html"
 msgid "Copy example prompt"
-msgstr "Copie el mensaje de ejemplo"
+msgstr "Copiar el prompt de ejemplo"
 
 #: website/public/guides/native/index.html:478
 msgctxt "page:guides/native/index.html"
 msgid "Copy function analysis"
-msgstr "Análisis de la función de copia"
+msgstr "Copiar el comando de análisis de funciones"
 
 #: website/public/guides/native/index.html:521
 msgctxt "page:guides/native/index.html"
@@ -11069,7 +11062,7 @@ msgstr "Archivo CSV"
 #: website/public/guides/index.html:266
 msgctxt "page:guides/index.html"
 msgid "Your click"
-msgstr "Su clic"
+msgstr "Tu clic"
 
 #: website/public/guides/index.html:267
 msgctxt "page:guides/index.html"
@@ -11084,27 +11077,27 @@ msgstr "Script de exportación"
 #: website/public/guides/javascript/index.html:371
 msgctxt "page:guides/javascript/index.html"
 msgid "REA result · summary.ipc excerpt"
-msgstr "REA resultado · resumen.extracto de ipc"
+msgstr "Resultado de REA · extracto de summary.ipc"
 
 #: website/public/guides/native/index.html:394
 msgctxt "page:guides/native/index.html"
 msgid "REA instruction excerpt · 0x406409"
-msgstr "Extracto de instrucciones REA · 0x406409"
+msgstr "Extracto de instrucciones de REA · 0x406409"
 
 #: website/public/guides/native/index.html:408
 msgctxt "page:guides/native/index.html"
 msgid "REA caller excerpt · 0x411f5b"
-msgstr "Extracto de la persona que llama REA · 0x411f5b"
+msgstr "Extracto del llamador de REA · 0x411f5b"
 
 #: website/public/guides/native/index.html:422
 msgctxt "page:guides/native/index.html"
 msgid "REA byte results · interpreted as little-endian doubles"
-msgstr "Resultados de bytes REA · interpretados como dobles little-endian"
+msgstr "Resultados de bytes de REA · interpretados como doubles little-endian"
 
 #: website/public/guides/native/index.html:439
 msgctxt "page:guides/native/index.html"
 msgid "Recovered C · excerpt"
-msgstr "Extracto recuperado de C *"
+msgstr "C recuperado · extracto"
 
 #: website/public/index.html:300 website/public/index.html:1054
 msgctxt "page:index.html"
@@ -11466,9 +11459,9 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to analyze {ph3} and explain how it exports data. "
 "Show the relevant code and source locations.{ph4}{ph5}{ph6}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Utilice REA para analizar {ph3} y explique cómo exporta "
-"datos. Muestre el código relevante y las ubicaciones de "
-"origen.{ph4}{ph5}{ph6}"
+"{ph0}›{ph1}{ph2}Usa REA para analizar {ph3} y explica cómo exporta los "
+"datos. Muestra el código relevante y las ubicaciones en el código "
+"fuente.{ph4}{ph5}{ph6}"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -11565,8 +11558,8 @@ msgid ""
 "With {ph0} and npm available, run setup, choose your coding agent and review"
 " the proposed changes."
 msgstr ""
-"Con {ph0} y npm disponible, ejecute el programa de instalación, elija su "
-"agente de programación y revise los cambios propuestos."
+"Con {ph0} y npm disponibles, ejecuta la configuración, elige tu agente de "
+"programación y revisa los cambios propuestos."
 
 #. {ph0}: <span translate="no">Node.js</span>
 #: website/public/first-investigation/index.html:209
@@ -11718,7 +11711,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} · example source excerpt"
-msgstr "{ph0} · extracto de fuente de ejemplo"
+msgstr "{ph0} · extracto del código fuente del ejemplo"
 
 #. {ph0}: <a href="../../examples/notes-web/">
 #. {ph1}: </a>
@@ -11735,7 +11728,7 @@ msgid ""
 "{ph0}Open the example{ph1} · {ph2}Download {ph3}{ph4} · {ph5}Download "
 "{ph6}{ph7}"
 msgstr ""
-"{ph0}Abra el ejemplo{ph1} · {ph2}Descargar {ph3}{ph4} · {ph5}Descargar "
+"{ph0}Abrir el ejemplo{ph1} · {ph2}Descargar {ph3}{ph4} · {ph5}Descargar "
 "{ph6}{ph7}"
 
 #. {ph0}: <span translate="no">renderer.js</span>
@@ -11745,7 +11738,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0} · example source"
-msgstr "{ph0} · fuente de ejemplo"
+msgstr "{ph0} · código fuente del ejemplo"
 
 #. {ph0}: <code>notes-example</code>
 #. {ph1}: <span translate="no">Node.js</span>
@@ -11757,9 +11750,9 @@ msgid ""
 "folder. Analyze it with {ph1} and npm; Electron is not needed for this "
 "example."
 msgstr ""
-"Descargue el ejemplo y descomprímalo. El archivo contiene la versión "
-"completa {ph0} carpeta. Analícelo con {ph1} y npm; Electron no es necesario "
-"para este ejemplo."
+"Descarga el ejemplo y descomprímelo. El archivo contiene la carpeta {ph0} "
+"completa. Analízalo con {ph1} y npm; Electron no hace falta para este "
+"ejemplo."
 
 #. {ph0}: <span translate="no">Node.js</span>
 #. {ph1}: <a href="get-started/">
@@ -11888,11 +11881,10 @@ msgid ""
 "capture Evidence, or connect Everywhere's MCP server to inspect captured "
 "traffic with your agent."
 msgstr ""
-"Para examinar los cuerpos de las solicitudes y respuestas HTTP, use "
-"{ph0}Fiddler Everywhere: capturas SAZ, MCP y habilidades públicas{ph1}. "
-"Exporte SAZ o HAR 1.2 para obtener Evidence de capturas en REA sin conexión,"
-" o conecte el servidor MCP de Everywhere para inspeccionar el tráfico "
-"capturado con su agente."
+"Para los cuerpos de las solicitudes y respuestas HTTP, usa {ph0}Fiddler "
+"Everywhere: capturas SAZ, MCP y skills públicas{ph1}. Exporta SAZ o HAR 1.2 "
+"para obtener Evidence de captura en REA sin conexión, o conecta el servidor "
+"MCP de Everywhere para inspeccionar el tráfico capturado con tu agente."
 
 #. {ph0}: <br />
 #: website/public/blog/index.html:207
@@ -15226,7 +15218,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Guías{ph3} / Entornos de RL"
 #: website/public/guides/rl-environments/index.html:204
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments."
-msgstr "Crear entornos de RL."
+msgstr "Crea entornos de RL."
 
 #: website/public/guides/rl-environments/index.html:205
 #: website/public/guides/rl-environments/index.html:7
@@ -15265,12 +15257,12 @@ msgstr "Antes de empezar"
 #: website/public/guides/rl-environments/index.html:374
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment"
-msgstr "Ejecute el entorno"
+msgstr "Ejecuta el entorno"
 
 #: website/public/guides/rl-environments/index.html:455
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Check what works"
-msgstr "Compruebe qué funciona"
+msgstr "Comprueba qué funciona"
 
 #: website/public/guides/rl-environments/index.html:231
 msgctxt "page:guides/rl-environments/index.html"
@@ -15299,7 +15291,7 @@ msgid ""
 "{ph0}01 · Record{ph1}{ph2}Use a test app{ph3}{ph4}Capture requests, "
 "responses, and the results of changes.{ph5}"
 msgstr ""
-"{ph0}01 · Grabar{ph1}{ph2}Use una aplicación de prueba{ph3}{ph4}Capture las "
+"{ph0}01 · Grabar{ph1}{ph2}Usa una aplicación de prueba{ph3}{ph4}Captura las "
 "solicitudes, las respuestas y los resultados de los cambios.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -15316,8 +15308,8 @@ msgid ""
 "state{ph3}{ph4}Export a runnable AgentEnv folder with the recording and a "
 "test.{ph5}"
 msgstr ""
-"{ph0}02 · Crear con REA{ph1}{ph2}Cree las herramientas y el estado "
-"local{ph3}{ph4}Exporte una carpeta de AgentEnv ejecutable con la grabación y"
+"{ph0}02 · Crear con REA{ph1}{ph2}Crea las herramientas y el estado "
+"local{ph3}{ph4}Exporta una carpeta de AgentEnv ejecutable con la grabación y"
 " una prueba.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -15334,8 +15326,8 @@ msgid ""
 "agent{ph3}{ph4}Add task goals and reward checks for evaluation or RL "
 "training.{ph5}"
 msgstr ""
-"{ph0}03 · Ejecutar con AgentEnv{ph1}{ph2}Entregue el entorno a un "
-"agente{ph3}{ph4}Añada objetivos de tarea y comprobaciones de recompensa para"
+"{ph0}03 · Ejecutar con AgentEnv{ph1}{ph2}Entrega el entorno a un "
+"agente{ph3}{ph4}Añade objetivos de tarea y comprobaciones de recompensa para"
 " la evaluación o el entrenamiento de RL.{ph5}"
 
 #: website/public/guides/rl-environments/index.html:265
@@ -15358,11 +15350,11 @@ msgid ""
 "create, edit, and delete data. REA records the app you provide; you start it"
 " and prepare its test data."
 msgstr ""
-"{ph0}Configure REA con su agente de programación{ph1}. Para grabar una "
-"aplicación, necesita un navegador de la familia Chrome y una instancia de "
+"{ph0}Configura REA con tu agente de programación{ph1}. Para grabar una "
+"aplicación, necesitas un navegador de la familia Chrome y una instancia de "
 "prueba en ejecución en la que el agente pueda crear, editar y eliminar "
-"datos. REA graba la aplicación que usted le indique; usted la inicia y "
-"prepara sus datos de prueba."
+"datos. REA graba la aplicación que tú le indiques; tú la inicias y preparas "
+"sus datos de prueba."
 
 #. {ph0}: <a href="https://github.com/scaleapi/agentenv-framework#install" >
 #. {ph1}: </a >
@@ -15375,14 +15367,14 @@ msgid ""
 "and start Docker. REA's compatibility check uses AgentEnv version {ph2} with"
 " Python 3.12."
 msgstr ""
-"Para ejecutar el entorno exportado, instale el {ph0}framework AgentEnv{ph1} "
-"e inicie Docker. La comprobación de compatibilidad de REA usa la versión "
+"Para ejecutar el entorno exportado, instala el {ph0}framework AgentEnv{ph1} "
+"e inicia Docker. La comprobación de compatibilidad de REA usa la versión "
 "{ph2} de AgentEnv con Python 3.12."
 
 #: website/public/guides/rl-environments/index.html:291
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Record and build with your agent"
-msgstr "Grabe y cree con su agente"
+msgstr "Graba y crea con tu agente"
 
 #: website/public/guides/rl-environments/index.html:292
 msgctxt "page:guides/rl-environments/index.html"
@@ -15390,8 +15382,8 @@ msgid ""
 "Tell your agent which app and operations to cover. For an app with folders, "
 "adapt this example:"
 msgstr ""
-"Indique a su agente qué aplicación y qué operaciones debe cubrir. Para una "
-"aplicación con carpetas, adapte este ejemplo:"
+"Indica a tu agente qué aplicación y qué operaciones debe cubrir. Para una "
+"aplicación con carpetas, adapta este ejemplo:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -15406,7 +15398,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #: website/public/guides/rl-environments/index.html:302
 #: website/public/guides/rl-environments/index.html:347
@@ -15437,12 +15429,12 @@ msgid ""
 " {ph6}, which does not exist yet. Check which operations are supported and "
 "report any gaps.{ph7}{ph8}{ph9}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Use REA para crear un entorno de AgentEnv a partir de mi "
-"aplicación web de prueba en {ph3}. Cubra el listado, la creación, el cambio "
-"de nombre y la eliminación de carpetas. Puede crear y eliminar carpetas de "
-"prueba; deje sin cambios los datos existentes. Inicie sesión como admin con "
-"la contraseña de {ph4}. Use el navegador en {ph5} y exporte a {ph6}, que "
-"todavía no existe. Compruebe qué operaciones se admiten e informe de "
+"{ph0}›{ph1}{ph2}Usa REA para crear un entorno de AgentEnv a partir de mi "
+"aplicación web de prueba en {ph3}. Cubre el listado, la creación, el cambio "
+"de nombre y la eliminación de carpetas. Puedes crear y eliminar carpetas de "
+"prueba; deja sin cambios los datos existentes. Inicia sesión como admin con "
+"la contraseña de {ph4}. Usa el navegador en {ph5} y exporta a {ph6}, que "
+"todavía no existe. Comprueba qué operaciones se admiten e informa de "
 "cualquier carencia.{ph7}{ph8}{ph9}"
 
 #. {ph0}: <code>APP_PASSWORD</code>
@@ -15454,9 +15446,9 @@ msgid ""
 "in the environment that starts REA's MCP server so the password stays out of"
 " the prompt."
 msgstr ""
-"Mensaje de ejemplo. Sustituya la URL, las operaciones, la cuenta y las "
-"rutas. Defina {ph0} en el entorno que inicia el servidor MCP de REA para que"
-" la contraseña no aparezca en el mensaje."
+"Prompt de ejemplo. Sustituye la URL, las operaciones, la cuenta y las rutas."
+" Define {ph0} en el entorno que inicia el servidor MCP de REA para que la "
+"contraseña no aparezca en el prompt."
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -15468,14 +15460,14 @@ msgid ""
 "operations, and exports the environment. After export, continue with "
 "{ph0}running the environment{ph1}."
 msgstr ""
-"Su agente inspecciona la aplicación, graba una sesión, comprueba las "
-"operaciones admitidas y exporta el entorno. Tras la exportación, continúe "
+"Tu agente inspecciona la aplicación, graba una sesión, comprueba las "
+"operaciones admitidas y exporta el entorno. Tras la exportación, continúa "
 "con {ph0}la ejecución del entorno{ph1}."
 
 #: website/public/guides/rl-environments/index.html:338
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Or use a saved recording"
-msgstr "O use una grabación guardada"
+msgstr "O usa una grabación guardada"
 
 #: website/public/guides/rl-environments/index.html:339
 msgctxt "page:guides/rl-environments/index.html"
@@ -15485,14 +15477,14 @@ msgid ""
 " new or empty folder:"
 msgstr ""
 "Un archivo HAR registra las solicitudes y respuestas de red de un navegador."
-" Exporte uno que incluya los cuerpos de las respuestas de la API desde el "
-"panel de red del navegador y, después, cree el entorno en una carpeta nueva "
+" Exporta uno que incluya los cuerpos de las respuestas de la API desde el "
+"panel de red del navegador y, después, crea el entorno en una carpeta nueva "
 "o vacía:"
 
 #: website/public/guides/rl-environments/index.html:346
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build the environment"
-msgstr "Cree el entorno"
+msgstr "Crear el entorno"
 
 #. {ph0}: <code>capture-browser-scenario</code>
 #. {ph1}: <code>--dry-run</code>
@@ -15505,11 +15497,11 @@ msgid ""
 " build reads local data and writes the folder without contacting the app. "
 "Add {ph1} to review the report without writing files."
 msgstr ""
-"También puede pasar el JSON de Evidence de captura guardado por {ph0} de REA"
-" o por la inspección de HAR. Evidence es la grabación guardada junto con la "
-"información de su origen. La creación lee datos locales y escribe la carpeta"
-" sin contactar con la aplicación. Añada {ph1} para revisar el informe sin "
-"escribir archivos."
+"También puedes pasar el JSON de Evidence de captura guardado por {ph0} de "
+"REA o por la inspección de HAR. Evidence es la grabación guardada junto con "
+"la información de su origen. La creación lee datos locales y escribe la "
+"carpeta sin contactar con la aplicación. Añade {ph1} para revisar el informe"
+" sin escribir archivos."
 
 #: website/public/guides/rl-environments/index.html:366
 msgctxt "page:guides/rl-environments/index.html"
@@ -15529,13 +15521,13 @@ msgid ""
 "Whether your agent exported the folder or you built it from a recording, run"
 " it with AgentEnv:"
 msgstr ""
-"Tanto si su agente exportó la carpeta como si usted la creó a partir de una "
-"grabación, ejecútela con AgentEnv:"
+"Tanto si tu agente exportó la carpeta como si la creaste tú a partir de una "
+"grabación, ejecútala con AgentEnv:"
 
 #: website/public/guides/rl-environments/index.html:381
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment test"
-msgstr "Ejecute la prueba del entorno"
+msgstr "Ejecutar la prueba del entorno"
 
 #: website/public/guides/rl-environments/index.html:393
 msgctxt "page:guides/rl-environments/index.html"
@@ -15543,7 +15535,7 @@ msgid ""
 "Use the path your agent reported if it differs. The first run builds the "
 "container image and needs access to its image and package sources."
 msgstr ""
-"Use la ruta que indicó su agente si es distinta. La primera ejecución "
+"Usa la ruta que indicó tu agente si es distinta. La primera ejecución "
 "construye la imagen del contenedor y necesita acceso a los orígenes de su "
 "imagen y de sus paquetes."
 
@@ -15562,7 +15554,7 @@ msgstr ""
 #: website/public/guides/rl-environments/index.html:406
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Add tasks and reward checks"
-msgstr "Añada tareas y comprobaciones de recompensa"
+msgstr "Añade tareas y comprobaciones de recompensa"
 
 #: website/public/guides/rl-environments/index.html:407
 msgctxt "page:guides/rl-environments/index.html"
@@ -15571,9 +15563,9 @@ msgid ""
 "and run training. Your coding agent can help write the tasks and checks. "
 "Start with one operation the environment supports:"
 msgstr ""
-"Use el entorno con su framework de RL para definir objetivos, puntuar "
-"resultados y ejecutar el entrenamiento. Su agente de programación puede "
-"ayudarle a escribir las tareas y las comprobaciones. Empiece por una "
+"Usa el entorno con tu framework de RL para definir objetivos, puntuar "
+"resultados y ejecutar el entrenamiento. Tu agente de programación puede "
+"ayudarte a escribir las tareas y las comprobaciones. Empieza por una "
 "operación que el entorno admita:"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
@@ -15592,11 +15584,11 @@ msgid ""
 "the result. Reset the environment before each run. Use the AgentEnv task and"
 " verifier formats.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Use este entorno exportado para añadir una tarea de AgentEnv"
-" que pida a un agente crear una carpeta llamada Practice. Compruebe el "
-"estado del entorno para confirmar que la carpeta existe con ese nombre y use"
-" esa comprobación para puntuar el resultado. Restablezca el entorno antes de"
-" cada ejecución. Use los formatos de tarea y de verificador de "
+"{ph0}›{ph1}{ph2}Usa este entorno exportado para añadir una tarea de AgentEnv"
+" que pida a un agente crear una carpeta llamada Practice. Comprueba el "
+"estado del entorno para confirmar que la carpeta existe con ese nombre y usa"
+" esa comprobación para puntuar el resultado. Restablece el entorno antes de "
+"cada ejecución. Usa los formatos de tarea y de verificador de "
 "AgentEnv.{ph3}{ph4}{ph5}"
 
 #: website/public/guides/rl-environments/index.html:440
@@ -15606,7 +15598,7 @@ msgid ""
 " changes data should check the resulting state; a retrieval task can check "
 "an answer against a recorded value."
 msgstr ""
-"Mensaje de ejemplo para un entorno que admite la creación de carpetas. Una "
+"Prompt de ejemplo para un entorno que admite la creación de carpetas. Una "
 "tarea que cambia datos debe comprobar el estado resultante; una tarea de "
 "consulta puede contrastar una respuesta con un valor grabado."
 
@@ -15622,7 +15614,7 @@ msgid ""
 msgstr ""
 "La exportación incluye el entorno ejecutable y su prueba básica. La "
 "calificación específica de cada tarea se añade en el flujo de evaluación. "
-"Consulte la {ph0}documentación de AgentEnv{ph1} para conocer las tareas, los"
+"Consulta la {ph0}documentación de AgentEnv{ph1} para conocer las tareas, los"
 " verificadores y las conexiones de agentes."
 
 #: website/public/guides/rl-environments/index.html:456
@@ -15633,10 +15625,10 @@ msgid ""
 "change. Repeat with different values. For deletes, record the missing-item "
 "response and the updated list."
 msgstr ""
-"Para que los cambios se admitan, grabe los resultados además de la acción: "
-"lea un elemento, cámbielo y vuelva a leer el elemento y su lista antes del "
-"siguiente cambio. Repita con valores distintos. Para las eliminaciones, "
-"grabe la respuesta de elemento inexistente y la lista actualizada."
+"Para que los cambios se admitan, graba los resultados además de la acción: "
+"lee un elemento, cámbialo y vuelve a leer el elemento y su lista antes del "
+"siguiente cambio. Repite con valores distintos. Para las eliminaciones, "
+"graba la respuesta de elemento inexistente y la lista actualizada."
 
 #. {ph0}: <code>environment-compare</code>
 #: website/public/guides/rl-environments/index.html:462
@@ -15649,7 +15641,7 @@ msgid ""
 "data."
 msgstr ""
 "Superar la prueba de arranque, que un agente complete una tarea y coincidir "
-"con la aplicación original son comprobaciones distintas. Para la última, use"
+"con la aplicación original son comprobaciones distintas. Para la última, usa"
 " {ph0} con una grabación aparte de las llamadas hechas a la aplicación desde"
 " los mismos datos iniciales."
 
@@ -15660,7 +15652,7 @@ msgid ""
 "paths. Custom headers, query values, and body tokens can remain. Credential-"
 "name warnings identify places to review; they do not remove those values."
 msgstr ""
-"Antes de compartir la carpeta, revise los cuerpos de respuesta y las rutas "
+"Antes de compartir la carpeta, revisa los cuerpos de respuesta y las rutas "
 "locales que conserva. Pueden quedar cabeceras personalizadas, valores de "
 "consulta y tokens en los cuerpos. Los avisos de nombres de credenciales "
 "señalan lugares que revisar; no eliminan esos valores."
@@ -15679,7 +15671,7 @@ msgid ""
 "reports and comparison commands. The {ph2}environment reference{ph3} covers "
 "direct MCP serving, state controls, and limits."
 msgstr ""
-"Siga la {ph0}guía completa de grabación y validación{ph1} para conocer los "
+"Sigue la {ph0}guía completa de grabación y validación{ph1} para conocer los "
 "informes de cobertura y los comandos de comparación. La {ph2}referencia de "
 "entornos{ph3} cubre el servicio directo por MCP, los controles de estado y "
 "los límites."
@@ -15687,27 +15679,27 @@ msgstr ""
 #: website/public/guides/rl-environments/index.html:6
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments with REA"
-msgstr "Crear entornos de RL con REA"
+msgstr "Crea entornos de RL con REA"
 
 #: website/public/guides/rl-environments/index.html:302
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment prompt"
-msgstr "Copie el mensaje del entorno"
+msgstr "Copiar el prompt del entorno"
 
 #: website/public/guides/rl-environments/index.html:347
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment build command"
-msgstr "Copie el comando de creación del entorno"
+msgstr "Copiar el comando de creación del entorno"
 
 #: website/public/guides/rl-environments/index.html:382
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment run command"
-msgstr "Copie el comando de ejecución del entorno"
+msgstr "Copiar el comando de ejecución del entorno"
 
 #: website/public/guides/rl-environments/index.html:419
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy task prompt"
-msgstr "Copie el mensaje de la tarea"
+msgstr "Copiar el prompt de la tarea"
 
 #: website/public/guides/rl-environments/index.html:507
 msgctxt "page:guides/rl-environments/index.html"
@@ -15768,7 +15760,7 @@ msgstr "{ph0}Antes de empezar{ph1}"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Record with your agent{ph1}"
-msgstr "{ph0}Grabe con su agente{ph1}"
+msgstr "{ph0}Graba con tu agente{ph1}"
 
 #. {ph0}: <a href="#build">
 #. {ph1}: </a>
@@ -15776,7 +15768,7 @@ msgstr "{ph0}Grabe con su agente{ph1}"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Use a saved recording{ph1}"
-msgstr "{ph0}Use una grabación guardada{ph1}"
+msgstr "{ph0}Usa una grabación guardada{ph1}"
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -15784,7 +15776,7 @@ msgstr "{ph0}Use una grabación guardada{ph1}"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Run the environment{ph1}"
-msgstr "{ph0}Ejecute el entorno{ph1}"
+msgstr "{ph0}Ejecuta el entorno{ph1}"
 
 #. {ph0}: <a href="#tasks">
 #. {ph1}: </a>
@@ -15792,7 +15784,7 @@ msgstr "{ph0}Ejecute el entorno{ph1}"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Add tasks and rewards{ph1}"
-msgstr "{ph0}Añada tareas y recompensas{ph1}"
+msgstr "{ph0}Añade tareas y recompensas{ph1}"
 
 #. {ph0}: <a href="#check">
 #. {ph1}: </a>
@@ -15800,7 +15792,7 @@ msgstr "{ph0}Añada tareas y recompensas{ph1}"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Check what works{ph1}"
-msgstr "{ph0}Compruebe qué funciona{ph1}"
+msgstr "{ph0}Comprueba qué funciona{ph1}"
 
 #: website/public/showcase/index.html:301
 msgctxt "page:showcase/index.html"
@@ -16023,10 +16015,10 @@ msgid ""
 "renderer has since changed; the recorded source locations accompany the API,"
 " channel and handler findings."
 msgstr ""
-"Grabado por REA 4.1.0 en una versión anterior del ejemplo que aparece a "
-"continuación. El renderizador ha cambiado desde entonces; las ubicaciones de"
-" origen grabadas acompañan a los hallazgos de la API, el canal y el "
-"controlador."
+"Registrado por REA 4.1.0 en una versión anterior del ejemplo de abajo. El "
+"proceso de renderizado ha cambiado desde entonces; las ubicaciones "
+"registradas en el código fuente acompañan a los hallazgos sobre la API, el "
+"canal y el controlador."
 
 #. {ph0}: <code>--client</code>
 #: website/public/get-started/index.html:635
@@ -16067,7 +16059,7 @@ msgid ""
 "with an MCP registration. The macOS headless profile requires a source build"
 " or a release that includes it."
 msgstr ""
-"{ph0}IDA{ph1} (Windows; macOS arm64 sin interfaz gráfica): use una "
+"{ph0}IDA{ph1} (Windows; macOS arm64 sin interfaz gráfica): usa una "
 "instalación de IDA existente con un registro MCP. El perfil sin interfaz "
 "gráfica de macOS requiere una compilación desde el código fuente o una "
 "versión que lo incluya."
@@ -16127,9 +16119,9 @@ msgid ""
 "use Ghidra on Linux arm64."
 msgstr ""
 "{ph0}Hopper{ph1} (macOS o Linux): la configuración de REA lo detecta u "
-"ofrece instalarlo. En macOS, abra Hopper una vez y elija el modo de "
-"demostración o active una licencia antes de su primer análisis. La "
-"configuración automatizada en Linux requiere x86_64; use Ghidra en Linux "
+"ofrece instalarlo. En macOS, abre Hopper una vez y elige el modo de "
+"demostración o activa una licencia antes de tu primer análisis. La "
+"configuración automatizada en Linux requiere x86_64; usa Ghidra en Linux "
 "arm64."
 
 #~ msgctxt "page:get-started/index.html"
