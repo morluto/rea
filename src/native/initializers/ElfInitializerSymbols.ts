@@ -3,6 +3,12 @@ import { assertArtifactReadActive } from "../../resources/index.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
+  ELF_SHN_XINDEX,
+  ElfSymbolSectionIndexTables,
+  readElfSymbolSectionReference,
+  type ElfSymbolSection,
+} from "../../domain/elfSymbolSectionIndex.js";
+import {
   elfStringTableText,
   observeElfStringTableEntry,
 } from "../../domain/elfStringTable.js";
@@ -21,11 +27,11 @@ import {
   type InitializerSymbolName,
 } from "./initializerReport.js";
 
-/** One symbol-table row. `section` 0 is an undefined import. */
+/** One symbol-table row; an unknown section is not an undefined import. */
 export interface ElfInitializerSymbol {
   readonly name: InitializerSymbolName | null;
   readonly value: bigint;
-  readonly section: number;
+  readonly section: ElfSymbolSection | null;
   readonly type: number;
   /** `st_size`: the bytes a COPY relocation against this symbol writes. */
   readonly size: bigint;
@@ -162,6 +168,7 @@ const readTable = (
   section: NativeSection,
   budget: number,
   notes: InitializerNotes,
+  extendedTables: ElfSymbolSectionIndexTables<NativeSection>,
 ): {
   readonly symbols: ElfInitializerSymbol[];
   readonly truncated: boolean;
@@ -188,6 +195,8 @@ const readTable = (
     );
   const symbols: ElfInitializerSymbol[] = [];
   let nameMissing = false;
+  let sectionMissing = false;
+  let extendedBytes: Buffer | null | undefined;
   for (let index = 0; index < count; index += 1) {
     const at = start + index * width;
     const parsed = readElfSymbol(
@@ -201,15 +210,49 @@ const readTable = (
     }
     const named = stringAt(strings, parsed.value.name_offset, notes);
     nameMissing ||= named.missing;
+    const rawSection = parsed.value.section_index;
+    if (rawSection === ELF_SHN_XINDEX) {
+      if (extendedBytes === undefined) {
+        const companion = extendedTables.tableFor(section.index, declared);
+        if (companion.ok) {
+          const { offset, size } = companion.value;
+          extendedBytes = facts.bytes.subarray(
+            Number(offset),
+            Number(offset + size),
+          );
+        } else {
+          notes.add(
+            `ELF ${companion.error.message}; affected symbol sections are unknown.`,
+          );
+          extendedBytes = null;
+        }
+      }
+    }
+    const resolved = readElfSymbolSectionReference(
+      rawSection,
+      index,
+      sections.length,
+      facts.little,
+      extendedBytes ?? undefined,
+    );
+    if (!resolved.ok)
+      notes.add(
+        `ELF ${resolved.error.message}; affected symbol sections are unknown.`,
+      );
+    sectionMissing ||= !resolved.ok;
     symbols.push({
       name: named.name,
       value: parsed.value.value,
-      section: parsed.value.section_index,
+      section: resolved.ok ? resolved.value : null,
       type: parsed.value.type,
       size: parsed.value.size,
     });
   }
-  return { symbols, truncated, incomplete: nameMissing || strings === null };
+  return {
+    symbols,
+    truncated,
+    incomplete: nameMissing || sectionMissing || strings === null,
+  };
 };
 
 /** Load SHT_SYMTAB and SHT_DYNSYM once. Defined STT_FUNC names win ties. */
@@ -219,6 +262,7 @@ export const loadElfSymbolIndex = (
   notes: InitializerNotes,
 ): ElfSymbolIndex => {
   const tables = new Map<number, readonly ElfInitializerSymbol[]>();
+  const extendedTables = new ElfSymbolSectionIndexTables(sections);
   type RankedName = {
     readonly name: InitializerSymbolName;
     readonly func: boolean;
@@ -242,16 +286,22 @@ export const loadElfSymbolIndex = (
       map.set(key, { name, func });
   };
   const consider = (symbol: ElfInitializerSymbol): void => {
-    if (symbol.section === 0 || symbol.name === null) return;
+    if (
+      symbol.section === null ||
+      symbol.name === null ||
+      (symbol.section.kind !== "section" && symbol.section.kind !== "absolute")
+    )
+      return;
     if (symbol.type === STT_SECTION || symbol.type === STT_FILE) return;
     const func = symbol.type === STT_FUNC;
     rank(ranked, symbol.value, symbol.name, func);
-    rank(
-      inSection,
-      sectionSymbolKey(symbol.section, symbol.value),
-      symbol.name,
-      func,
-    );
+    if (symbol.section.kind === "section")
+      rank(
+        inSection,
+        sectionSymbolKey(symbol.section.index, symbol.value),
+        symbol.name,
+        func,
+      );
   };
   let budget = SYMBOL_SCAN;
   let unreadable = false;
@@ -278,7 +328,14 @@ export const loadElfSymbolIndex = (
       unreadable = true;
       return;
     }
-    const table = readTable(facts, sections, section, budget, notes);
+    const table = readTable(
+      facts,
+      sections,
+      section,
+      budget,
+      notes,
+      extendedTables,
+    );
     budget -= table.symbols.length;
     tables.set(index, table.symbols);
     truncated ||= table.truncated;
@@ -332,15 +389,19 @@ export const relocationFromEntry = (
   }
   if (entry.symbolIndex === 0 || symbols === undefined) return unresolved();
   const symbol = symbols[entry.symbolIndex];
-  if (symbol === undefined) return unresolved();
-  if (symbol.section === 0)
+  if (symbol === undefined || symbol.section === null) return unresolved();
+  if (symbol.section.kind === "undefined")
     return {
       method: "unresolved_import",
       value: null,
       importName: symbol.name,
       definedName: null,
     };
-  if (entry.type !== absolute || symbol.type === STT_GNU_IFUNC)
+  if (
+    (symbol.section.kind !== "section" && symbol.section.kind !== "absolute") ||
+    entry.type !== absolute ||
+    symbol.type === STT_GNU_IFUNC
+  )
     return unresolved();
   const addend = addendOf(entry, inplace);
   if (addend === null) return unresolved();
@@ -352,7 +413,9 @@ export const relocationFromEntry = (
       symbol.type === STT_SECTION || symbol.type === STT_FILE || addend !== 0n
         ? null
         : symbol.name,
-    sectionIndex: symbol.section,
+    ...(symbol.section.kind === "section"
+      ? { sectionIndex: symbol.section.index }
+      : {}),
   };
 };
 

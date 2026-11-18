@@ -74,8 +74,6 @@
   "src/domain/windows/ntfsMftAttributes.ts": 38,
   "src/domain/windows/ntfsUsnJournal.ts": 23,
   "src/domain/wxapkgFormat.ts": 4,
-  "src/domain/zipEndOfCentralDirectory.ts": 8,
-  "src/domain/zipPackageFormat.ts": 3,
   "src/dotnet/ManagedConstantValue.ts": 12,
   "src/dotnet/ManagedFieldConstants.ts": 1,
   "src/dotnet/ManagedFieldDefinitionRows.ts": 1,

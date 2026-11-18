@@ -272,9 +272,11 @@ const parsePom = (
       MAVEN_GRADLE_METADATA_XML_NODES,
       nodes,
     );
+  // Maven's XML reader applies XML 1.0 end-of-line handling, so a POM saved
+  // with CRLF yields the same property and coordinate text as one with LF.
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
-    lineEndings: "preserve",
+    lineEndings: "normalize",
   });
   if (!parsed.ok)
     throw parsed.error.kind === "unsupported"
@@ -323,15 +325,15 @@ const parsePom = (
   const properties =
     propertiesElement === undefined
       ? []
-      : childElements(propertiesElement).flatMap((property) => {
-          const name = nonempty(property.localName);
-          if (name === null) return [];
+      : childElements(propertiesElement).map((property) => {
           // A property may hold a repository URL; its userinfo never leaves the parser.
           const {
             url: value,
             url_credentials_redacted: value_credentials_redacted,
           } = redactRecordedTransportUrl(elementText(property));
-          return [{ name, value, value_credentials_redacted }];
+          // Maven property keys are the written qualified names, not XML
+          // expanded names: different prefixes remain different keys.
+          return { name: property.tagName, value, value_credentials_redacted };
         });
   const dependencyManagementElement = soleNamed(root, "dependencyManagement");
   const managedContainer = dependencyManagementElement
@@ -641,8 +643,7 @@ export const parseMavenGradleMetadata = (
     );
   let source: string;
   try {
-    // ignoreBOM: true kept a leading U+FEFF; "preserve" is that same policy.
-    source = decodeStrictUtf8(bytes, "preserve");
+    source = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     throw malformedInput(
       MAVEN_GRADLE_METADATA_FORMAT,

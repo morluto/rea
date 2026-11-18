@@ -42,7 +42,6 @@ import {
   PcapConfigurationFailure,
   assertWiresharkExecutableIdentity,
   inspectPcapClient,
-  locateWiresharkTool,
   resolvePcapTools,
   pcapConfigurationAvailability,
   PCAP_TOOL_REMEDIATION,
@@ -514,11 +513,9 @@ export class PcapProvider {
       ["tshark", selection.tshark],
       ["capinfos", selection.capinfos],
     ] as const) {
-      const path = locateWiresharkTool(selected, this.environment);
-      if (path === undefined) continue;
       let commandPath: ArtifactCommandPath;
       try {
-        commandPath = await selectArtifactCommandPath(path, signal);
+        commandPath = await selectArtifactCommandPath(selected.command, signal);
       } catch (cause) {
         if (
           cause instanceof Error &&

@@ -277,8 +277,8 @@ cliTest(
 cliTest(
   "retains encrypted-directory declarations without claiming an empty package",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-pck-encrypted-cli-");
-    const source = join(root, "encrypted.pck");
+    const root = await createTestTempDirectory("rea-pck-refusal-");
+    const source = join(root, "game.pck");
     const bytes = buildGodotPck(4, members, { packFlags: 3 });
     const directory = Number(bytes.readBigUInt64LE(32));
     bytes.fill(0xff, directory + 4);
@@ -310,6 +310,12 @@ cliTest(
       ],
     });
     expect(extracted.exitCode).toBe(1);
+    expect(extracted.json).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringMatching(/\bencrypted\b/iu),
+      details: { path: source },
+    });
+    expect(await readdir(root)).toEqual(["game.pck"]);
   },
 );
 

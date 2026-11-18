@@ -159,7 +159,10 @@ export const elfUnmappedInitializerTargets = (
  * ELF64 PIE: DT_INIT, RELATIVE init_array, one import, one RELR fini slot.
  * `needed` prepends that many DT_NEEDED entries, which repeat by design.
  */
-export const elf64PieInitializers = (needed = 0): Buffer => {
+export const elf64PieInitializers = (
+  needed = 0,
+  relrTags: "standard" | "android" = "standard",
+): Buffer => {
   const file = Buffer.alloc(0xc00);
   const dynstr = cStringTable(["imp_init"]);
   const strtab = cStringTable(["ctor_a", "ctor_b", "fini_fn"]);
@@ -202,9 +205,9 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
     [7, 0x480],
     [8, 96],
     [9, 24],
-    [36, 0x500],
-    [35, 8],
-    [37, 8],
+    [relrTags === "android" ? 0x6fffe000 : 36, 0x500],
+    [relrTags === "android" ? 0x6fffe001 : 35, 8],
+    [relrTags === "android" ? 0x6fffe003 : 37, 8],
     [6, 0x520],
     [5, 0x560],
     [10, dynstr.bytes.length],
@@ -670,6 +673,55 @@ export const machoX8664ObjectInitializers = (): Buffer => {
   nlist(0x250, 1, 0n);
   nlist(0x260, 9, 0x10n);
   strings.copy(file, 0x270);
+  return file;
+};
+
+/**
+ * LLVM 19.1.7 golden: llvm-mc -triple=x86_64-apple-macosx -filetype=obj input.s.
+ * Producer source (Lstartup is a temporary label, absent from the symbol table):
+ *   .text
+ *   .space 8, 0x90
+ *   Lstartup: ret
+ *   .globl _alias
+ *   .set _alias, _external
+ *   .section __DATA,__mod_init_func,mod_init_funcs
+ *   .p2align 3
+ *   .quad Lstartup
+ * llvm-readobj --symbols --relocations confirms N_INDR _alias has n_value=8
+ * (the string index of _external), and the slot has a section-relative relocation.
+ */
+export const machoIndirectInitializerGolden = (): Buffer =>
+  Buffer.from(
+    "z/rt/gcAAAEDAAAAAQAAAAMAAABQAQAAAAAAAAAAAAAZAAAA6AAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAABgAAAAAAAAAcAEAAAAAAAAYAAAAAAAAAAcAAAAHAAAAAgAAAAAAAABfX3RleHQAAAAA" +
+      "AAAAAAAAX19URVhUAAAAAAAAAAAAAAAAAAAAAAAACQAAAAAAAABwAQAAAAAAAAAAAAAAAAAAAAQA" +
+      "gAAAAAAAAAAAAAAAAF9fbW9kX2luaXRfZnVuYwBfX0RBVEEAAAAAAAAAAAAAEAAAAAAAAAAIAAAA" +
+      "AAAAAIABAAADAAAAiAEAAAEAAAAJAAAAAAAAAAAAAAAAAAAAAgAAABgAAACQAQAAAgAAALABAAAY" +
+      "AAAACwAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQkJCQkJCQkMMAAAAAAAAACAAAAAAAAAAAAAAAAQAA" +
+      "BgEAAAALAAAACAAAAAAAAAAIAAAAAQAAAAAAAAAAAAAAAF9hbGlhcwBfZXh0ZXJuYWwAAAAAAAAA",
+    "base64",
+  );
+
+/** An n_value string index collides with a real initializer address. */
+export const machoInitializerSymbolKinds = (type: number): Buffer => {
+  const file = Buffer.alloc(0x400);
+  machoX8664ObjectInitializers().copy(file);
+  // The second, section-relative pointer also selects _startup at 0x10.
+  file.writeBigUInt64LE(0x10n, 0x228);
+  // First symbol: an indirect alias to the unresolved _external, whose string
+  // index (0x10) is not the address of _startup. Defined kinds serve as controls.
+  file.writeUInt8(type | 1, 0x254);
+  file.writeUInt8(type === 0x0e ? 1 : 0, 0x255);
+  file.writeBigUInt64LE(0x10n, 0x258);
+  file.writeUInt32LE(0x20, 0x260);
+  const strings = Buffer.alloc(0x30);
+  strings.write("_alias", 1);
+  strings.write("_external", 0x10);
+  strings.write("_startup", 0x20);
+  file.writeUInt32LE(0x300, 280);
+  file.writeUInt32LE(strings.length, 284);
+  strings.copy(file, 0x300);
   return file;
 };
 
