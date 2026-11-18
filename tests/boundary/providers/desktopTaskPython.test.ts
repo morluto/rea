@@ -230,23 +230,27 @@ const runVerifier = async (
     ),
   );
   return JSON.parse(
-    execFileSync("python3", ["-I", "-B", "-c", DRIVER, folder, verifier], {
-      input: JSON.stringify({
-        saves,
-        durations,
-        answers: computer.answers,
-        retry_answers: computer.retryAnswers,
-        exec: computer.exec ?? true,
-        cleanup_failures: computer.cleanupFailures,
-        retry: computer.retry,
-        cancel_cleanup: computer.cancelCleanup,
-        reload_verifier: computer.reloadVerifier,
-        concurrent: computer.concurrent,
-        parallel_retry: computer.parallelRetry,
-        report_failure: computer.reportFailure,
-      }),
-      encoding: "utf8",
-    }),
+    execFileSync(
+      process.platform === "win32" ? "python" : "python3",
+      ["-I", "-B", "-X", "utf8", "-c", DRIVER, folder, verifier],
+      {
+        input: JSON.stringify({
+          saves,
+          durations,
+          answers: computer.answers,
+          retry_answers: computer.retryAnswers,
+          exec: computer.exec ?? true,
+          cleanup_failures: computer.cleanupFailures,
+          retry: computer.retry,
+          cancel_cleanup: computer.cancelCleanup,
+          reload_verifier: computer.reloadVerifier,
+          concurrent: computer.concurrent,
+          parallel_retry: computer.parallelRetry,
+          report_failure: computer.reportFailure,
+        }),
+        encoding: "utf8",
+      },
+    ),
   ) as VerifierOutput;
 };
 
