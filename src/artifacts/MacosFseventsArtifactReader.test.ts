@@ -8,9 +8,11 @@ import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInv
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   FSEVENTS_INLINE_BLOCK_LIMIT,
+  FSEVENTS_INLINE_DIAGNOSTIC_LIMIT,
   FSEVENTS_INLINE_EVENT_LIMIT,
   FSEVENTS_MAX_DECOMPRESSED_BYTES,
   FSEVENTS_MAX_FILE_BYTES,
+  FSEVENTS_MAX_INLINE_PATH_BYTES,
   parseMacosFseventsBytes,
   type MacosFseventsStoreVersion,
 } from "../domain/apple/macosFsevents.js";
@@ -110,6 +112,7 @@ it("inventories a gzipped 2SLD store end to end with UTF-8 paths and 64-bit IDs"
     "Directory-wide rotation correlation",
   );
   expect(inventory.occurrences[0]).toMatchObject({
+    artifact_kind: "resource",
     artifact_format: "macos-fsevents",
     format_metadata: {
       kind: "macos-fsevents",
@@ -280,6 +283,28 @@ it("preserves raw_path_hex on invalid UTF-8 paths, unknown flag bits, and traili
   expect(parsed.value.limitations.join(" ")).toContain("unknown_mask");
 });
 
+it("counts omitted diagnostics accurately when more than 32 invalid UTF-8 paths occur", () => {
+  const block = buildDlsBlock({
+    version: "1SLD",
+    records: Array.from({ length: 40 }, (_, index) => ({
+      pathBytes: Buffer.from([0x2f, 0xff, 0xfe, 0x30 + (index % 10)]),
+      eventId: BigInt(index + 1),
+      flags: 1,
+    })),
+  });
+  const parsed = parseMacosFseventsBytes(block);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+
+  expect(parsed.value.metadata.non_utf8_path_count).toBe(40);
+  expect(parsed.value.metadata.diagnostics).toHaveLength(
+    FSEVENTS_INLINE_DIAGNOSTIC_LIMIT,
+  );
+  expect(parsed.value.metadata.omitted_diagnostics).toBe(
+    40 - FSEVENTS_INLINE_DIAGNOSTIC_LIMIT,
+  );
+});
+
 it("bounds inline block and event samples while accumulating whole-file totals", () => {
   const blocks = Array.from({ length: 34 }, (_, index) =>
     buildDlsBlock({
@@ -379,8 +404,32 @@ it("rejects foreign headers, undersized stream headers, corrupt gzip, and over-l
     ok: false,
     error: {
       kind: "limit",
+      limitKind: "decompressed-bytes",
+      limitBytes: FSEVENTS_MAX_DECOMPRESSED_BYTES,
       boundary: "capacity",
       message: expect.stringContaining("decompressed stream exceeds"),
+    },
+  });
+
+  const oversizedSample = buildDlsBlock({
+    version: "2SLD",
+    records: [
+      {
+        pathBytes: Buffer.alloc(FSEVENTS_MAX_INLINE_PATH_BYTES + 1, 0x61),
+        eventId: 1n,
+        flags: 1,
+        nodeId: 1n,
+      },
+    ],
+  });
+  expect(parseMacosFseventsBytes(oversizedSample)).toEqual({
+    ok: false,
+    error: {
+      kind: "limit",
+      limitKind: "sample-path-bytes",
+      limitBytes: FSEVENTS_MAX_INLINE_PATH_BYTES,
+      boundary: "capacity",
+      message: expect.stringContaining("expansion allowance"),
     },
   });
 
@@ -389,10 +438,30 @@ it("rejects foreign headers, undersized stream headers, corrupt gzip, and over-l
     ok: false,
     error: {
       kind: "limit",
+      limitKind: "input-bytes",
+      limitBytes: FSEVENTS_MAX_FILE_BYTES,
       boundary: "file-size",
       message: expect.stringContaining("maximum"),
     },
   });
+
+  const limitReader = new MacosFseventsArtifactReader(
+    await writeStoreFile("oversized-sample", gzipSync(oversizedSample)),
+  );
+  await expect(async () => {
+    for await (const _ of limitReader.entries()) {
+      // exhausted by limit failure
+    }
+  }).rejects.toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+    fixedAllowance: {
+      kind: "parser",
+      limit: FSEVENTS_MAX_INLINE_PATH_BYTES,
+      unit: "bytes",
+    },
+  });
+  await limitReader.close();
 
   const path = await writeStoreFile(
     "bad-fsevents",

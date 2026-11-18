@@ -22,8 +22,9 @@ and contract review can happen on a bounded increment.
   those signatures (`4+` bytes when compressed, so truncated gzip streams are
   classified and reported as malformed rather than ignored).
 - Decompress single-member or concatenated multi-member gzip streams offline with
-  fixed input (`16 MiB`) and decompressed output (`64 MiB`) ceilings enforced
-  before unbounded allocation; refuse over-limit streams as `limit` failures.
+  fixed input (`16 MiB`), decompressed output (`64 MiB`), and inline sampled
+  path (`256 KiB`) ceilings enforced before unbounded allocation; refuse
+  over-limit streams with fixed-allowance `limit` failures.
 - Support Disk Log Stream generations `1SLD` (event ID, flags, path), `2SLD`
   (adds 64-bit node ID), and `3SLD` (adds 64-bit node ID and trailing 32-bit
   word), preserving full 64-bit event IDs and node IDs as exact strings.

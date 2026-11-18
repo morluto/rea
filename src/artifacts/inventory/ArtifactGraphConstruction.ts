@@ -592,6 +592,7 @@ const artifactRoleForFormat = (
       format: zipPackageFormatForPath(path) ?? format,
     };
   if (format === "plist") return { kind: "plist", format };
+  if (format === "macos-fsevents") return { kind: "resource", format };
   if (artifactFormatDescriptor(format)?.roleContainer === true)
     return { kind: "container", format };
   return {

@@ -6,19 +6,24 @@ import {
   type ArtifactFormatMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import {
+  FSEVENTS_MAX_DECOMPRESSED_BYTES,
   FSEVENTS_MAX_FILE_BYTES,
+  FSEVENTS_MAX_INLINE_PATH_BYTES,
   parseMacosFseventsBytes,
+  type MacosFseventsDecodeFailure,
   type MacosFseventsInventory,
+  type MacosFseventsLimitKind,
 } from "../domain/apple/macosFsevents.js";
-import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactFileSource,
+  artifactFixedLimitFailure,
   ArtifactReaderFailure,
   ArtifactResourceScope,
   assertArtifactReadActive,
   type ArtifactEntry,
+  type ArtifactFixedLimit,
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
@@ -123,6 +128,8 @@ export class MacosFseventsArtifactReader implements ArtifactReader {
     if (initial.size > FSEVENTS_MAX_FILE_BYTES)
       throw this.#failure({
         kind: "limit",
+        limitKind: "input-bytes",
+        limitBytes: FSEVENTS_MAX_FILE_BYTES,
         boundary: "file-size",
         message: `file is ${String(initial.size)} bytes (maximum ${String(FSEVENTS_MAX_FILE_BYTES)})`,
       });
@@ -143,6 +150,8 @@ export class MacosFseventsArtifactReader implements ArtifactReader {
         if (bufferedBytes + chunk.length > FSEVENTS_MAX_FILE_BYTES)
           throw this.#failure({
             kind: "limit",
+            limitKind: "input-bytes",
+            limitBytes: FSEVENTS_MAX_FILE_BYTES,
             boundary: "file-size",
             message: `buffered input exceeds ${String(FSEVENTS_MAX_FILE_BYTES)} bytes`,
           });
@@ -157,19 +166,56 @@ export class MacosFseventsArtifactReader implements ArtifactReader {
     return parsed.value;
   }
 
-  #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
-          `macOS FSEvents store is malformed: ${failure.message}`,
-        )
-      : new ArtifactReaderFailure(
-          "limit",
-          `macOS FSEvents store exceeds a fixed limit: ${failure.message}`,
-          failure.boundary === undefined ? {} : { boundary: failure.boundary },
-        );
+  #failure(failure: MacosFseventsDecodeFailure): ArtifactReaderFailure {
+    if (failure.kind === "format")
+      return new ArtifactReaderFailure(
+        "format",
+        `macOS FSEvents store is malformed: ${failure.message}`,
+      );
+    return artifactFixedLimitFailure(
+      fixedAllowanceFor(failure.limitKind, failure.limitBytes),
+      `macOS FSEvents store exceeds a fixed limit: ${failure.message}`,
+      failure.boundary,
+    );
   }
 }
+
+const FIXED_ALLOWANCES: Record<
+  MacosFseventsLimitKind,
+  { readonly name: string; readonly kind: "input" | "parser" }
+> = {
+  "input-bytes": {
+    name: "macOS FSEvents compressed or raw store input",
+    kind: "input",
+  },
+  "decompressed-bytes": {
+    name: "macOS FSEvents decompressed Disk Log Stream",
+    kind: "parser",
+  },
+  "sample-path-bytes": {
+    name: "macOS FSEvents sampled inline path strings",
+    kind: "parser",
+  },
+};
+
+const fixedAllowanceFor = (
+  limitKind: MacosFseventsLimitKind,
+  fallbackBytes: number,
+): ArtifactFixedLimit => {
+  const entry = FIXED_ALLOWANCES[limitKind];
+  const limit =
+    limitKind === "input-bytes"
+      ? FSEVENTS_MAX_FILE_BYTES
+      : limitKind === "decompressed-bytes"
+        ? FSEVENTS_MAX_DECOMPRESSED_BYTES
+        : FSEVENTS_MAX_INLINE_PATH_BYTES || fallbackBytes;
+  return {
+    name: entry.name,
+    kind: entry.kind,
+    limit,
+    unit: "bytes",
+  };
+};
 
 const coverageOf = (limitations: readonly string[]): ArtifactReaderTraversal =>
   limitations.length === 0

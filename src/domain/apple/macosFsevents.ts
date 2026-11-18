@@ -6,6 +6,7 @@ import {
 
 import { errorMessage } from "../../kernel/errorMessage.js";
 import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
+import { Budget } from "../budget.js";
 import type { RegionDecodeFailure } from "../firmware/regionDecoder.js";
 import { err, ok, type Result } from "../result.js";
 import { decodeStrictUtf8, isStrictUtf8 } from "../strictUtf8.js";
@@ -20,6 +21,7 @@ import {
   FSEVENTS_INLINE_EVENT_LIMIT,
   FSEVENTS_MAX_DECOMPRESSED_BYTES,
   FSEVENTS_MAX_FILE_BYTES,
+  FSEVENTS_MAX_INLINE_PATH_BYTES,
   RecentEventIdTracker,
   type MacosFseventsBlockSummary,
   type MacosFseventsDiagnostic,
@@ -27,6 +29,21 @@ import {
   type MacosFseventsRecordSample,
   type MacosFseventsStoreVersion,
 } from "./macosFseventsFlags.js";
+
+/** Named ceiling classes enforced while decoding an FSEvents store file. */
+export type MacosFseventsLimitKind =
+  | "input-bytes"
+  | "decompressed-bytes"
+  | "sample-path-bytes";
+
+export type MacosFseventsDecodeFailure =
+  | { readonly kind: "format"; readonly message: string }
+  | (RegionDecodeFailure & {
+      readonly kind: "limit";
+      readonly limitKind: MacosFseventsLimitKind;
+      readonly limitBytes: number;
+      readonly boundary: "file-size" | "capacity";
+    });
 
 export type {
   MacosFseventsBlockSummary,
@@ -44,6 +61,7 @@ export {
   FSEVENTS_INLINE_EVENT_LIMIT,
   FSEVENTS_MAX_DECOMPRESSED_BYTES,
   FSEVENTS_MAX_FILE_BYTES,
+  FSEVENTS_MAX_INLINE_PATH_BYTES,
 } from "./macosFseventsFlags.js";
 
 const DLS_HEADER_BYTES = 12;
@@ -157,16 +175,20 @@ export const hasMacosFseventsHeader = (prefix: Uint8Array): boolean =>
     readDlsSignature(prefix, 0) !== undefined) ||
   sniffGzipDlsSignature(prefix) !== undefined;
 
-const formatFailure = (message: string): RegionDecodeFailure => ({
+const formatFailure = (message: string): MacosFseventsDecodeFailure => ({
   kind: "format",
   message,
 });
 
 const limitFailure = (
+  limitKind: MacosFseventsLimitKind,
+  limitBytes: number,
   message: string,
   boundary: "file-size" | "capacity",
-): RegionDecodeFailure => ({
+): MacosFseventsDecodeFailure => ({
   kind: "limit",
+  limitKind,
+  limitBytes,
   message,
   boundary,
 });
@@ -175,11 +197,13 @@ const unwrapGzipStream = (
   rawBytes: Buffer,
 ): Result<
   { readonly stream: Buffer; readonly compression: "gzip" | "none" },
-  RegionDecodeFailure
+  MacosFseventsDecodeFailure
 > => {
   if (rawBytes.length > FSEVENTS_MAX_FILE_BYTES)
     return err(
       limitFailure(
+        "input-bytes",
+        FSEVENTS_MAX_FILE_BYTES,
         `input is ${String(rawBytes.length)} bytes (maximum ${String(FSEVENTS_MAX_FILE_BYTES)})`,
         "file-size",
       ),
@@ -188,6 +212,8 @@ const unwrapGzipStream = (
     if (rawBytes.length > FSEVENTS_MAX_DECOMPRESSED_BYTES)
       return err(
         limitFailure(
+          "decompressed-bytes",
+          FSEVENTS_MAX_DECOMPRESSED_BYTES,
           `stream is ${String(rawBytes.length)} bytes (maximum ${String(FSEVENTS_MAX_DECOMPRESSED_BYTES)})`,
           "capacity",
         ),
@@ -203,6 +229,8 @@ const unwrapGzipStream = (
     if ((error as { code?: unknown }).code === "ERR_BUFFER_TOO_LARGE")
       return err(
         limitFailure(
+          "decompressed-bytes",
+          FSEVENTS_MAX_DECOMPRESSED_BYTES,
           `decompressed stream exceeds ${String(FSEVENTS_MAX_DECOMPRESSED_BYTES)} bytes`,
           "capacity",
         ),
@@ -222,6 +250,7 @@ class FseventsAccumulator {
   readonly #stream: Buffer;
   readonly #reader: BinaryReader;
   readonly #recentIds = new RecentEventIdTracker();
+  readonly #samplePathBudget = new Budget(FSEVENTS_MAX_INLINE_PATH_BYTES);
 
   readonly versionsSeen = new Set<MacosFseventsStoreVersion>();
   readonly blocks: MacosFseventsBlockSummary[] = [];
@@ -242,7 +271,6 @@ class FseventsAccumulator {
   unmountCount = 0;
   eotCount = 0;
   truncatedPathFlagCount = 0;
-  // not-an-allowance: total malformed UTF-8 paths tallied across full stream; diagnostic sample stops at FSEVENTS_INLINE_DIAGNOSTIC_LIMIT.
   nonUtf8PathCount = 0;
   malformedRecordCount = 0;
   trailingZeroBytes = 0;
@@ -263,7 +291,7 @@ class FseventsAccumulator {
 
   scanBlock(
     pos: number,
-  ): Result<{ readonly nextPos: number | null }, RegionDecodeFailure> {
+  ): Result<{ readonly nextPos: number | null }, MacosFseventsDecodeFailure> {
     const version = readDlsSignature(this.#stream, pos);
     if (version === undefined) {
       this.trailingNonDlsBytes = true;
@@ -295,11 +323,13 @@ class FseventsAccumulator {
     }
 
     this.versionsSeen.add(version);
-    const stats = this.#scanBlockRecords(
+    const scanned = this.#scanBlockRecords(
       pos + DLS_HEADER_BYTES,
       blockEnd,
       version,
     );
+    if (!scanned.ok) return scanned;
+    const stats = scanned.value;
     if (this.blocks.length < FSEVENTS_INLINE_BLOCK_LIMIT) {
       this.blocks.push({
         index: this.blockCount,
@@ -323,7 +353,16 @@ class FseventsAccumulator {
     startCursor: number,
     blockEnd: number,
     version: MacosFseventsStoreVersion,
-  ) {
+  ): Result<
+    {
+      readonly cursor: number;
+      readonly recordCount: number;
+      readonly firstId: bigint | null;
+      readonly lastId: bigint | null;
+      readonly malformed: boolean;
+    },
+    MacosFseventsDecodeFailure
+  > {
     const suffixBytes = SUFFIX_BYTES_BY_VERSION[version];
     let cursor = startCursor;
     let recordCount = 0;
@@ -354,32 +393,32 @@ class FseventsAccumulator {
         );
         break;
       }
-      const eventId = this.#consumeRecord(cursor, nul, version);
-      firstId ??= eventId;
-      lastId = eventId;
+      const consumed = this.#consumeRecord(cursor, nul, version);
+      if (!consumed.ok) return consumed;
+      firstId ??= consumed.value;
+      lastId = consumed.value;
       recordCount += 1;
       cursor = suffixStart + suffixBytes;
     }
 
-    return { cursor, recordCount, firstId, lastId, malformed };
+    return ok({ cursor, recordCount, firstId, lastId, malformed });
   }
 
   #consumeRecord(
     cursor: number,
     nulOffset: number,
     version: MacosFseventsStoreVersion,
-  ): bigint {
+  ): Result<bigint, MacosFseventsDecodeFailure> {
     const pathBytes = this.#stream.subarray(cursor, nulOffset);
     const suffixStart = nulOffset + 1;
     const strictUtf8 = isStrictUtf8(pathBytes);
     if (!strictUtf8) {
       this.nonUtf8PathCount += 1;
-      if (this.nonUtf8PathCount <= FSEVENTS_INLINE_DIAGNOSTIC_LIMIT)
-        this.addDiagnostic(
-          cursor,
-          "invalid-utf8-path",
-          `path at offset ${String(cursor)} is not valid UTF-8 (${String(pathBytes.length)} bytes)`,
-        );
+      this.addDiagnostic(
+        cursor,
+        "invalid-utf8-path",
+        `path at offset ${String(cursor)} is not valid UTF-8 (${String(pathBytes.length)} bytes)`,
+      );
     }
 
     const eventId = this.#reader.word(suffixStart, 64);
@@ -411,6 +450,15 @@ class FseventsAccumulator {
     this.previousEventId = eventId;
 
     if (this.records.length < FSEVENTS_INLINE_EVENT_LIMIT) {
+      if (!this.#samplePathBudget.tryCharge(pathBytes.length))
+        return err(
+          limitFailure(
+            "sample-path-bytes",
+            FSEVENTS_MAX_INLINE_PATH_BYTES,
+            `sampled record paths exceed inline ${String(FSEVENTS_MAX_INLINE_PATH_BYTES)}-byte expansion allowance`,
+            "capacity",
+          ),
+        );
       this.records.push({
         block_index: this.blockCount,
         stream_offset: cursor,
@@ -431,7 +479,7 @@ class FseventsAccumulator {
     }
 
     this.recordCount += 1;
-    return eventId;
+    return ok(eventId);
   }
 
   #accumulateFlags(
@@ -494,7 +542,7 @@ class FseventsAccumulator {
  */
 export const parseMacosFseventsBytes = (
   inputBytes: Uint8Array,
-): Result<MacosFseventsInventory, RegionDecodeFailure> => {
+): Result<MacosFseventsInventory, MacosFseventsDecodeFailure> => {
   const rawBuffer = asBuffer(inputBytes);
   const unwrapped = unwrapGzipStream(rawBuffer);
   if (!unwrapped.ok) return unwrapped;

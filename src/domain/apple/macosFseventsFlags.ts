@@ -7,6 +7,9 @@ export const FSEVENTS_MAX_FILE_BYTES = 16 * 1024 * 1024;
 /** Fixed ceiling on decompressed Disk Log Stream bytes across gzip members. */
 export const FSEVENTS_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 
+/** Fixed byte budget across inline sampled record paths (`path` + `raw_path_hex`). */
+export const FSEVENTS_MAX_INLINE_PATH_BYTES = 256 * 1024;
+
 /** Maximum DLS block summaries embedded inline in format metadata. */
 export const FSEVENTS_INLINE_BLOCK_LIMIT = 32;
 
