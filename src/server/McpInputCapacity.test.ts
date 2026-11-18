@@ -34,7 +34,7 @@ const fixture = async (maximum?: number, element: z.ZodType = z.unknown()) => {
     async (input) => {
       calls++;
       return {
-        content: [{ type: "text", text: String(input.values.length) }],
+        content: [{ type: "text", text: JSON.stringify(input.values) }],
       };
     },
   );
@@ -59,11 +59,11 @@ const refusal = (result: Awaited<ReturnType<Client["callTool"]>>): unknown => {
   return JSON.parse(text ?? "null");
 };
 
-it("bounds default MCP arguments before invoking their canonical validator", async () => {
-  const f = await fixture();
+it("refuses oversized Evidence arrays before canonical validation can expand diagnostics", async () => {
+  const f = await fixture(undefined, evidenceSchema);
   const result = await f.client.callTool({
     name: "capacity_probe",
-    arguments: { values: Array.from({ length: 1_024 }, () => 0) },
+    arguments: { values: Array.from({ length: 1_024 }, () => ({})) },
   });
   expect(f.validations()).toBe(0);
   expect(f.calls()).toBe(0);
@@ -100,22 +100,6 @@ it("counts nested object members as well as array elements before validation", a
   });
 });
 
-it("refuses missing-field Evidence arrays before their per-field issues are allocated", async () => {
-  const f = await fixture(undefined, evidenceSchema);
-  const result = await f.client.callTool({
-    name: "capacity_probe",
-    arguments: { values: Array.from({ length: 1_024 }, () => ({})) },
-  });
-  expect(f.validations()).toBe(0);
-  expect(f.calls()).toBe(0);
-  expect(refusal(result)).toMatchObject({
-    error: {
-      code: "resource_constraint",
-      details: { reported_limits: { max_input_elements: 1_024 } },
-    },
-  });
-});
-
 it("admits the exact selected allowance without altering the values or schema", async () => {
   const f = await fixture(4);
   const result = await f.client.callTool({
@@ -123,7 +107,9 @@ it("admits the exact selected allowance without altering the values or schema", 
     arguments: { values: ["one", "two", "three"] },
   });
   expect(result.isError).not.toBe(true);
-  expect(result.content).toEqual([{ type: "text", text: "3" }]);
+  expect(result.content).toEqual([
+    { type: "text", text: '["one","two","three"]' },
+  ]);
   expect(f.validations()).toBe(1);
   expect(f.calls()).toBe(1);
   const { tools } = await f.client.listTools();

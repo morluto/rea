@@ -134,7 +134,7 @@ cliTest("fails closed at the callback limit", async ({ cli }) => {
   expect(result.json).toMatchObject({
     code: "resource_constraint",
     retryable: false,
-    details: { reported_limits: { limit: "callbacks", maximum: 1 } },
+    details: { reported_limits: { boundary: "callbacks", maximum: 1 } },
     remediation: {
       action: expect.stringContaining("Raise max_callbacks above 1"),
     },

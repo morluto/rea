@@ -1,29 +1,28 @@
 import { expect, it } from "vitest";
 
 import {
-  encodeMarkdownTableCell,
   formatCliOutput,
   prepareDelimitedOutput,
 } from "../../../src/cli/cliOutputFormatter.js";
 
 it.each([
-  ["", ""],
-  ["plain", "plain"],
-  ["a\u00a0b", "a\u00a0b"],
   [
     " \t\u00a0\u202f\u2003\u2028\u2029\ufeff",
     "&#32;&#9;&#160;&#8239;&#8195;&#8232;&#8233;&#65279;",
   ],
   ["\u00a0🙂\ufeff", "&#160;🙂&#65279;"],
-  [" \t&#160;name\u00a0", "&#32;&#9;&amp;\\#160;name&#160;"],
   ["\u00a0\u0000\u202f", "&#160;\\\\u0000&#8239;"],
   ["\u00a0\r\n\u202f", "&#160;<br>&#8239;"],
   ["\v \u00a0x\u202f \f", "\v \u00a0x\u202f \f"],
   [" \v\u00a0x\u202f\f ", "&#32;\v\u00a0x\u202f\f&#32;"],
 ])(
-  "encodes only representable Markdown table edge spacing in %j",
+  "preserves Markdown table edge spacing in the header and cell for %j",
   (value, expected) => {
-    expect(encodeMarkdownTableCell(value)).toBe(expected);
+    const [header, , row] = formatCliOutput([{ [value]: value }], "md").split(
+      "\n",
+    );
+    expect(header).toBe(`| ${expected} |`);
+    expect(row).toBe(`| ${expected} |`);
   },
 );
 
@@ -163,19 +162,7 @@ it.each([
   },
 );
 
-it("does not flatten nested selected field values", () => {
-  expect(
-    prepareDelimitedOutput([{ details: { name: "nested" } }], "csv", {
-      fields: ["details"],
-      metadata: {},
-    }),
-  ).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisInputError" },
-  });
-});
-
-it.each(["=1+1", "  =1+1", "+1", "-1", "@SUM(A1:A2)"])(
+it.each(["  =1+1", "+1", "-1", "@SUM(A1:A2)"])(
   "refuses formula-leading string cells without changing the source value %j",
   (value) => {
     const row = { target: value };

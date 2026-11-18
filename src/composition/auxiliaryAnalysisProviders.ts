@@ -15,6 +15,18 @@ type AuxiliaryProviderDeclaration = ConstructorParameters<
   typeof LazyAnalysisProvider
 >[0];
 
+/** Declare the lazy execution-free .NET static provider wiring. */
+export const managedStaticProviderDeclaration =
+  (): AuxiliaryProviderDeclaration => ({
+    identity: MANAGED_STATIC_PROVIDER,
+    capabilities: managedStaticCapabilities(),
+    load: async () => {
+      const { ManagedStaticProvider } =
+        await import("../dotnet/ManagedStaticProvider.js");
+      return new ManagedStaticProvider();
+    },
+  });
+
 /** Wire the three existing auxiliary AnalysisProvider implementations lazily. */
 export const auxiliaryAnalysisProviderDeclarations = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
@@ -41,14 +53,6 @@ export const auxiliaryAnalysisProviderDeclarations = (
         return new NativeMacOSProvider(environment, undefined, platform);
       },
     },
-    {
-      identity: MANAGED_STATIC_PROVIDER,
-      capabilities: managedStaticCapabilities(),
-      load: async () => {
-        const { ManagedStaticProvider } =
-          await import("../dotnet/ManagedStaticProvider.js");
-        return new ManagedStaticProvider();
-      },
-    },
+    managedStaticProviderDeclaration(),
   ];
 };
