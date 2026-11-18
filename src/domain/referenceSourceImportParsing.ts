@@ -254,12 +254,17 @@ const parseWithBabel = (
   ast: File | undefined;
   reasons: readonly string[];
   moduleOnlyErrors: readonly string[];
+  requiresModuleLoader?: true;
 } => {
   // The shared parser owns filename precedence and observed package context.
   const plugins = parserPluginsForPath(path);
 
   try {
-    const { file: ast, moduleOnlyErrors } = parseRecoveredJavaScript(
+    const {
+      file: ast,
+      moduleOnlyErrors,
+      requiresModuleLoader,
+    } = parseRecoveredJavaScript(
       source,
       path,
       {
@@ -274,6 +279,7 @@ const parseWithBabel = (
       ast,
       reasons: ast.errors.map((error) => error.message),
       moduleOnlyErrors,
+      ...(requiresModuleLoader ? { requiresModuleLoader } : {}),
     };
   } catch (cause: unknown) {
     return {
@@ -335,17 +341,18 @@ export const parseReferenceSourceImports = (
       limitations: [],
     };
   }
-  const { ast, reasons, moduleOnlyErrors } = parseWithBabel(
-    path,
-    source,
-    packageType,
-  );
+  const { ast, reasons, moduleOnlyErrors, requiresModuleLoader } =
+    parseWithBabel(path, source, packageType);
   const limitations =
     moduleOnlyErrors.length === 0
       ? []
       : [
           `Strict-mode errors apply only if this file is an ES module: ${moduleOnlyErrors.join("; ")}`,
         ];
+  if (requiresModuleLoader)
+    limitations.push(
+      `Imports in ${path} apply only if Node loads it as an ES module. Its package loader mode is unknown.`,
+    );
   const parseFailures = reasons.map((reason) => ({
     path,
     parser: "babel",
@@ -373,7 +380,8 @@ export const parseReferenceSourceImports = (
     relationships: relationships.map((relationship) => ({
       ...relationship,
       parse_state:
-        parseFailures.length > 0 && relationship.parse_state === "parsed"
+        (parseFailures.length > 0 || requiresModuleLoader) &&
+        relationship.parse_state === "parsed"
           ? "partial"
           : relationship.parse_state,
     })),

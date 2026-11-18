@@ -216,6 +216,7 @@ export interface RecoveredJavaScriptParse {
   readonly file: ParsedJavaScriptSource;
   /** Errors that apply only if a source of unknown mode is an ES module. */
   readonly moduleOnlyErrors: readonly string[];
+  readonly requiresModuleLoader?: true;
 }
 
 /**
@@ -232,6 +233,22 @@ export const parseRecoveredJavaScript = (
 ): RecoveredJavaScriptParse => {
   const filenameType = runtimeSourceTypeForPath(sourcePath);
   const packageContext = packageContextForPath(sourcePath, observedPackageType);
+  if (
+    packageContext === "unknown" &&
+    posix.extname(sourcePath ?? "") === ".js" &&
+    source.startsWith("\uFEFF#!")
+  ) {
+    return {
+      file: parseWithRuntimeContext(
+        source,
+        sourcePath,
+        { ...options, sourceType: "module", errorRecovery: true },
+        "module",
+      ),
+      moduleOnlyErrors: [],
+      requiresModuleLoader: true,
+    };
+  }
   // Retain TypeScript import syntax for later CommonJS compilation.
   const sourceType =
     filenameType !== "unambiguous"
