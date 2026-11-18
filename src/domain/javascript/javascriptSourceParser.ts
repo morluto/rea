@@ -133,28 +133,43 @@ const parseWithRuntimeContext = (
   // hashbang; JavaScript CommonJS loading does not. Preserve original indexes
   // through Babel's origin options rather than repairing downstream ranges.
   const compilerSource = /\.(?:jsx|ts|tsx|mts|cts)$/iu.test(sourcePath ?? "");
+  const signedHashbang = source.startsWith("\uFEFF#!");
+  const conditionalCommonJs =
+    signedHashbang &&
+    !compilerSource &&
+    (filenameMode === "commonjs" || packageContext === "commonjs");
   const conditionalModule =
-    source.startsWith("\uFEFF#!") &&
+    signedHashbang &&
     ambiguousHashbangPath &&
     (signaturePackageContext === undefined ||
       signaturePackageContext === "unknown" ||
       (suffixOnlySource && signaturePackageContext === "module"));
-  const loaderCondition = conditionalModule
-    ? suffixOnlySource
-      ? `Source in ${sourcePath ?? "<unknown>"} is recovered under an ES module interpretation. Its loader invocation is unknown; direct entrypoint and module import can differ.`
-      : `Source in ${sourcePath ?? "<unknown>"} is parseable only if Node loads it as an ES module. Its package loader mode is unknown.`
-    : undefined;
+  const loaderCondition = conditionalCommonJs
+    ? `Source in ${sourcePath ?? "<unknown>"} is recovered as CommonJS when imported through the ES module loader. Direct execution and require can reject this BOM/hashbang.`
+    : conditionalModule
+      ? suffixOnlySource
+        ? `Source in ${sourcePath ?? "<unknown>"} is recovered under an ES module interpretation. Its loader invocation is unknown; direct entrypoint and module import can differ.`
+        : `Source in ${sourcePath ?? "<unknown>"} is parseable only if Node loads it as an ES module. Its package loader mode is unknown.`
+      : undefined;
   const hashbangSignature =
-    source.startsWith("\uFEFF#!") &&
+    signedHashbang &&
     (compilerSource ||
+      conditionalCommonJs ||
       conditionalModule ||
       filenameMode === "module" ||
       (filenameMode === undefined && signaturePackageContext === "module"));
+  const parserOptions = { ...options };
+  if (conditionalCommonJs) {
+    parserOptions.sourceType = "commonjs";
+    delete parserOptions.allowAwaitOutsideFunction;
+    delete parserOptions.allowReturnOutsideFunction;
+    delete parserOptions.allowNewTargetOutsideFunction;
+  }
   const file = parse(
     hashbangSignature ? source.slice(1) : source,
     hashbangSignature
       ? {
-          ...options,
+          ...parserOptions,
           ...(conditionalModule ? { sourceType: "module" as const } : {}),
           startIndex: (options.startIndex ?? 0) + 1,
           startColumn: (options.startColumn ?? 0) + 1,
