@@ -46,9 +46,23 @@ describe("Ghidra release admission", () => {
     expect(ghidraKnownProviderDefect("12.2")).toBe(
       GHIDRA_CLANG_O0_SWITCH_DEFECT,
     );
-    expect(ghidraKnownProviderDefectLimitation("12.2")).toBe(
-      "Known provider defect ghidra-9996: Ghidra 12.2 can omit jump-table flow references and emit incorrect decompiler output for Clang -O0 x86-64 switches whose case labels start above zero. Upstream issue https://github.com/NationalSecurityAgency/ghidra/issues/9996 is closed by c93917a622211349998f641de54cfdbe0e0e5bee, milestone 12.2.1, which is not yet released. This limitation is recorded only for the exact 12.2 build and clears on 12.2.1. REA's verified switch lane compiles with -O2 and does not cover this shape.",
+    const limitation = ghidraKnownProviderDefectLimitation("12.2");
+    expect(limitation).toEqual(
+      ghidraKnownProviderDefectLimitation(SUPPORTED_GHIDRA_VERSION),
     );
+    for (const fact of [
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.id,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.release,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.fixed_in,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.fix_commit,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.upstream_issue,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.compiler,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.optimization,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.architecture,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.construct,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.effect,
+    ])
+      expect(limitation).toEqual(expect.stringContaining(fact));
     expect(ghidraVersionDetail("12.2")).toBe("12.2");
   });
 

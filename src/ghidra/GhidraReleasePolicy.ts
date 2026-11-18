@@ -96,7 +96,7 @@ export const ghidraKnownProviderDefectLimitation = (
 ): string | undefined => {
   const defect = ghidraKnownProviderDefect(providerVersion);
   if (defect === undefined) return undefined;
-  return `Known provider defect ${defect.id}: Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for Clang ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded only for the exact ${defect.release} build and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
+  return `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for ${defect.scope.compiler} ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded only for the exact ${defect.release} build and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
 };
 
 /**
