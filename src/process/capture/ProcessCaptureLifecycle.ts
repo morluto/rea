@@ -392,6 +392,11 @@ export const buildCaptureResult = (
           ]
         : []),
       "Process trees are sampled and may omit short-lived descendants.",
+      ...(options.manifest.platform !== "win32"
+        ? [
+            "The target runs as the capture PTY session leader; still-running children in its foreground process group receive terminal SIGHUP when it exits unless they leave the group or ignore SIGHUP.",
+          ]
+        : []),
       ...(options.samplingPartial
         ? ["Process-tree sampling ended with an incomplete observation."]
         : []),

@@ -329,3 +329,49 @@ it.each(["symlink_not_followed", "observer_owned"] as const)(
     expect(result.truncated).toBe(false);
   },
 );
+
+it("records the PTY session-leader SIGHUP limitation on POSIX captures only", () => {
+  const capture = emptyCapture();
+  const buildForPlatform = (platform: string) =>
+    buildCaptureResult({
+      frames: [],
+      exit: { exitCode: 0, reason: "exited" },
+      samples: [],
+      before: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      after: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      truncationDetails: truncationDetails([], [], []),
+      scenario: processScenarioSchema.parse(base),
+      rootPid: 1,
+      samplingPartial: false,
+      renderedFrames: [],
+      interactions: [],
+      checkpoints: capture.filesystem_checkpoints,
+      settlement: {
+        state: capture.settlement.state,
+        elapsed_ms: capture.settlement.elapsed_ms,
+      },
+      manifest: { ...capture.manifest, platform },
+      eventJournal: [],
+    });
+
+  for (const posixPlatform of ["linux", "darwin"]) {
+    expect(buildForPlatform(posixPlatform).limitations).toContain(
+      "The target runs as the capture PTY session leader; still-running children in its foreground process group receive terminal SIGHUP when it exits unless they leave the group or ignore SIGHUP.",
+    );
+  }
+  expect(
+    buildForPlatform("win32").limitations.some((line) =>
+      line.includes("SIGHUP"),
+    ),
+  ).toBe(false);
+});

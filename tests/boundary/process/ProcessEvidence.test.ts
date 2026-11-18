@@ -5,6 +5,7 @@ import {
   createProcessScenarioPlanEvidence,
 } from "../../../src/application/process/ProcessEvidence.js";
 import {
+  buildCaptureResult,
   createRunManifest,
   observeLaunchedExecutable,
   observeSelectedExecutable,
@@ -172,4 +173,63 @@ it("preserves selected local environment and input values", async () => {
     status: "changed",
     terminal: "changed",
   });
+});
+
+it("projects the PTY session-leader SIGHUP limitation onto process capture Evidence", () => {
+  const scenario = processScenarioSchema.parse({
+    executable: "/bin/echo",
+    working_directory: "/tmp",
+  });
+  const base = emptyUnverifiedProcessCapture();
+  const executableSha256 = "0".repeat(64);
+  const scenarioProjection = processScenarioCommitment(
+    scenario,
+    executableSha256,
+  );
+  const comparisonContract = processComparisonContract(scenario);
+  const manifest = {
+    ...base.manifest,
+    platform: "darwin",
+    scenario: scenarioProjection,
+    comparison_contract: comparisonContract,
+    full_scenario_sha256: digestProcessCommitment(scenarioProjection),
+    comparison_contract_sha256: digestProcessCommitment(comparisonContract),
+    executable_sha256: executableSha256,
+    normalization_sha256: digestProcessCommitment(scenario.normalization),
+  };
+  const emptySnapshot = {
+    files: [],
+    truncated: false,
+    completeRoots: [],
+    coverage: base.truncation_details.filesystem_before,
+  };
+  const pending = buildCaptureResult({
+    frames: [],
+    exit: { exitCode: 0, reason: "exited" },
+    samples: [],
+    before: emptySnapshot,
+    after: emptySnapshot,
+    truncationDetails: base.truncation_details,
+    scenario,
+    rootPid: 1,
+    samplingPartial: false,
+    renderedFrames: [],
+    interactions: [],
+    checkpoints: base.filesystem_checkpoints,
+    settlement: {
+      state: base.settlement.state,
+      elapsed_ms: base.settlement.elapsed_ms,
+    },
+    manifest,
+    eventJournal: [],
+  });
+  const capture = parseProcessCapture({
+    ...pending,
+    settlement: base.settlement,
+    cleanup: base.cleanup,
+  });
+  const evidence = createProcessCaptureEvidence(scenario, capture);
+  expect(evidence.limitations).toContain(
+    "The target runs as the capture PTY session leader; still-running children in its foreground process group receive terminal SIGHUP when it exits unless they leave the group or ignore SIGHUP.",
+  );
 });
