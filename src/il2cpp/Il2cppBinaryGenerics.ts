@@ -366,7 +366,7 @@ export function* linkGenericMethodsSteps(
             // Capacity is a budget refusal, never a fact about this row.
             if (
               !(cause instanceof Il2cppBinaryFormatFailure) ||
-              cause.kind === "capacity"
+              cause.kind === "limit"
             )
               throw cause;
             issue(row, specAt, cause.message);

@@ -1,6 +1,7 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { peImportsSchema } from "../../../src/domain/native/peImports.js";
 import { createPeImportsService } from "../../../src/composition/binaryDiagnostics.js";
 import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -36,6 +37,30 @@ describe("PE import stable filesystem boundary", () => {
         ],
       });
     }
+  });
+
+  it("retains partial Evidence for an import name beyond the read allowance", async () => {
+    const root = await createTestTempDirectory("rea-pe-imports-name-limit-");
+    const path = join(root, "app.exe");
+    await writeFile(
+      path,
+      peImportImage({
+        sectionBytes: 8192,
+        dlls: [{ name: "n".repeat(4097), functions: [] }],
+      }),
+    );
+    const result = await createPeImportsService().inspect({ path });
+    if (!result.ok) throw result.error;
+    const report = peImportsSchema.parse(result.value.normalized_result);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imports[0]?.name).toBeNull();
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "name_unreadable",
+        message: expect.stringContaining("4096-byte read allowance"),
+      }),
+    );
+    expect(result.value.subject?.local_path).toBe(path);
   });
 
   it("returns typed resource and cancellation failures", async () => {
@@ -85,7 +110,7 @@ describe("PE import stable filesystem boundary", () => {
     if (dlls.ok) throw new Error("Expected DLL budget failure");
     expect(dlls.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { limit: "dlls", maximum: 1 },
+      reportedLimits: { boundary: "dlls", maximum: 1 },
       remediationAction: expect.stringContaining("Raise max_dlls above 1"),
       retryable: false,
     });
@@ -96,11 +121,13 @@ describe("PE import stable filesystem boundary", () => {
     if (text.ok) throw new Error("Expected retained-text failure");
     expect(text.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { limit: "retained_text", maximum: 16777216 },
+      reportedLimits: { boundary: "retained_text", maximum: 16777216 },
       remediationAction: undefined,
       fixedAllowance: {
-        name: expect.stringContaining("16777216-byte PE import retained-text"),
+        name: expect.stringContaining("PE import retained-text allowance"),
         kind: "bytes",
+        limit: 16777216,
+        unit: "bytes",
       },
       retryable: false,
     });

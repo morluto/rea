@@ -23,8 +23,6 @@ import { expandSemanticGetterResult } from "./javascriptSemanticGetterResultWalk
 
 import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 
-export type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
-
 export const semanticClassCandidates = (
   root: t.Node,
   state: JavaScriptSemanticAnalysisState,

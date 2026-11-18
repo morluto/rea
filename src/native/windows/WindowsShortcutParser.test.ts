@@ -18,10 +18,8 @@ import {
   wrongClsidShortcut,
 } from "../../../tests/fixtures/binaryDiagnostics/windowsShortcut.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const input = inspectWindowsShortcutInputSchema.parse({
   path: "/artifacts/shortcut.lnk",
@@ -311,7 +309,7 @@ it("lists an unknown ExtraData signature instead of dropping it", async () => {
 
 it("rejects a Shell Link whose CLSID is not the documented value", async () => {
   await expect(parse(wrongClsidShortcut())).rejects.toBeInstanceOf(
-    WindowsShortcutFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -319,8 +317,12 @@ it("rejects a HeaderSize other than 0x4C", async () => {
   await expect(
     parse(windowsShortcutBytes({ headerSize: 0x50, extraData: [] })),
   ).rejects.toMatchObject({
-    name: "WindowsShortcutFormatFailure",
-    kind: "malformed",
+    failure: {
+      kind: "malformed",
+      format: "windows-shortcut",
+      offset: 0,
+      field: "HeaderSize",
+    },
   });
 });
 
@@ -402,6 +404,26 @@ it("treats any TerminalSize below 4 as the ExtraData terminal", async () => {
     expect(report.extra_data.terminal_offset).toBe(base.length);
     expect(report.coverage.status).toBe("complete");
   }
+});
+
+it("reports bytes appended after the ExtraData TerminalBlock", async () => {
+  const link = powershellHiddenIconSpoofShortcut();
+  const report = await parse(
+    Buffer.concat([link, Buffer.from("PK\x03\x04appended", "latin1")]),
+  );
+  expect(report.extra_data.terminal_offset).toBe(link.length - 4);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: link.length,
+  });
+  expect(report.issues).toEqual([
+    {
+      code: "malformed_structure",
+      offset: link.length,
+      message:
+        "12 byte(s) follow the ExtraData TerminalBlock and are not part of the Shell Link",
+    },
+  ]);
 });
 
 it("derives target facts from a stored environment target alone", async () => {
@@ -616,6 +638,62 @@ it("keeps readable dates for FILETIME values before 1970", async () => {
     windowsShortcutBytes({ creationTime: 110133216000000000n }),
   );
   expect(report.header.creation_time.iso8601).toBe("1950-01-01T00:00:00.000Z");
+});
+
+it.each([
+  [-10_001n, "1969-12-31T23:59:59.998Z"],
+  [-10_000n, "1969-12-31T23:59:59.999Z"],
+  [-9_999n, "1969-12-31T23:59:59.999Z"],
+  [-1n, "1969-12-31T23:59:59.999Z"],
+  [0n, "1970-01-01T00:00:00.000Z"],
+  [1n, "1970-01-01T00:00:00.000Z"],
+  [9_999n, "1970-01-01T00:00:00.000Z"],
+  [10_000n, "1970-01-01T00:00:00.001Z"],
+] as const)(
+  "projects 100-ns clocks into their containing millisecond (%s)",
+  async (delta, iso8601) => {
+    const filetime = 116444736000000000n + delta;
+    const timestamp = 122192928000000000n + delta;
+    const uuid = uuidV1Bytes(timestamp, 1, TRACKER_MAC);
+    const report = await parse(
+      windowsShortcutBytes({
+        creationTime: filetime,
+        accessTime: filetime,
+        writeTime: filetime,
+        extraData: [
+          { kind: "tracker", droid: [uuid, uuid], birthDroid: [uuid, uuid] },
+        ],
+      }),
+    );
+    for (const time of [
+      report.header.creation_time,
+      report.header.access_time,
+      report.header.write_time,
+    ])
+      expect(time).toEqual({ raw: filetime.toString(), iso8601 });
+    const tracker = report.extra_data.blocks[0]?.decoded;
+    if (tracker?.kind !== "tracker")
+      throw new Error("Expected TrackerDataBlock");
+    for (const time of [
+      ...tracker.droid_uuid_v1,
+      ...tracker.birth_droid_uuid_v1,
+    ])
+      expect(time).toMatchObject({
+        timestamp_100ns: timestamp.toString(),
+        timestamp_iso8601: iso8601,
+      });
+  },
+);
+
+it("keeps missing FILETIMEs distinct from the earliest nonzero instant", async () => {
+  const report = await parse(
+    windowsShortcutBytes({ creationTime: 0n, accessTime: 1n }),
+  );
+  expect(report.header.creation_time).toEqual({ raw: "0", iso8601: null });
+  expect(report.header.access_time).toEqual({
+    raw: "1",
+    iso8601: "1601-01-01T00:00:00.000Z",
+  });
 });
 
 it("marks an IDList without a TerminalID as partial", async () => {

@@ -10,17 +10,15 @@ import {
   unlink,
   type FileHandle,
 } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import type {
-  ArtifactResourceScope,
-  ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../resources/index.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -35,6 +33,8 @@ import {
   readStableFileBytes,
 } from "../filesystem/readStableFileBytes.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
+import { xdgBase } from "./XdgBase.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** The most bytes a secret file of at most `characters` may hold: those in UTF-8 and a line break. */
 const maxFileBytes = (characters: number) => characters * 4 + 2;
@@ -42,13 +42,14 @@ const maxFileBytes = (characters: number) => characters * 4 + 2;
 /** The folder of secret files on the build host: `rea/build-secrets` under the XDG config folder, or `~/.config`. */
 export const buildSecretsDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): string => {
-  const xdg = environment.XDG_CONFIG_HOME;
-  const root =
-    xdg !== undefined && isAbsolute(xdg)
-      ? xdg
-      : join(homeDirectoryFromEnvironment(environment, platform), ".config");
+  const root = xdgBase(environment.XDG_CONFIG_HOME, () =>
+    // Resolve the home fallback only when it is the one that applies: on a host
+    // without a passwd entry for the caller it can throw, and an absolute
+    // XDG_CONFIG_HOME leaves it unused.
+    join(homeDirectoryFromEnvironment(environment, platform), ".config"),
+  );
   return join(root, "rea", "build-secrets");
 };
 
@@ -177,7 +178,7 @@ export const readBuildSecretFile = async (
         );
         let text: string;
         try {
-          text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          text = decodeStrictUtf8(bytes, "strip-signature");
         } catch {
           result = err(`${path} is not UTF-8 text.`);
           return;

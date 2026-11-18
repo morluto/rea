@@ -4,7 +4,6 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
-  MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
   MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
   MAXIMUM_DEBUGGER_MAX_SESSIONS,
@@ -12,6 +11,7 @@ import {
   MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
   MINIMUM_DEBUGGER_MAX_SESSIONS,
+  MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
 import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
@@ -23,7 +23,6 @@ import {
   DEBUGGER_MAX_PENDING_COMMANDS_SETTING,
   DEBUGGER_MAX_SESSIONS_SETTING,
   parseDebuggerSessionLimits,
-  resolveDebuggerSessionLimits,
 } from "./debuggerSessionLimits.js";
 
 it("uses the shared defaults when the settings are unset", () => {
@@ -34,7 +33,7 @@ it("uses the shared defaults when the settings are unset", () => {
     value: 120_000,
     source: "default",
     minimum: MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-    maximum: MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
     unit: "ms",
   });
   expect(parsed.value.maxSessions).toMatchObject({
@@ -94,7 +93,7 @@ it.each([
     DEBUGGER_COMMAND_DEADLINE_SETTING,
     "0",
     MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-    MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    MAX_NODE_TIMER_DELAY_MS,
     120_000,
     "ms",
   ],
@@ -302,9 +301,12 @@ it("defers an invalid GDB deadline until a command reads it", () => {
     code: "configuration_invalid",
     details: { settings: parsed.error.settings },
   });
-  expect(
-    resolveDebuggerSessionLimits({
-      [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1500",
-    }).commandDeadline,
-  ).toMatchObject({ value: 1500, source: "setting" });
+  const valid = parseDebuggerSessionLimits({
+    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1500",
+  });
+  if (!valid.ok) throw valid.error;
+  expect(valid.value.commandDeadline).toMatchObject({
+    value: 1500,
+    source: "setting",
+  });
 });

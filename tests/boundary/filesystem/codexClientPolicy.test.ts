@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -16,7 +17,7 @@ import {
   codexToolPolicy,
   codexToolPolicySource,
 } from "../../fixtures/codexToolPolicy.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it.each(["tables", "inline table"] as const)(
   "preserves Codex %s policy and status through refresh",
@@ -35,6 +36,7 @@ it.each(["tables", "inline table"] as const)(
     const status = async () =>
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client }) => client === "codex");
@@ -46,7 +48,7 @@ it.each(["tables", "inline table"] as const)(
         currentClientRegistrationCommand(),
       ),
     ).toEqual({ status: "already_current" });
-    const overrides = { REA_MCP_INPUT_SCHEMA_PROFILE: "full" };
+    const overrides = { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" };
     expect(
       await configureClientConfiguration(
         client,
@@ -132,6 +134,7 @@ it.each([
       ),
     ).toEqual({ status: "failed", reason: "readback" });
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     expect(statuses.find(({ client }) => client === "codex")).toMatchObject({
@@ -171,6 +174,7 @@ it.each([{ tools: ["binary_session"] }, { tools: ["*"] }, { tools: [] }])(
     const status = async () =>
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client }) => client === "copilot_cli");

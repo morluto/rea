@@ -428,7 +428,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
                     page.write_text(original.replace("</main>", inserted + "</main>", 1))
                     self.assertTrue(any(message in error for error in VERIFY.check_site(site)[3]))
 
-    def test_repository_links_reject_missing_files_and_old_markdown_anchors(self):
+    def test_repository_links_preserve_targets_and_containment_through_aliased_roots(self):
         with tempfile.TemporaryDirectory() as directory:
             container = Path(directory)
             root = container / "repository"
@@ -449,54 +449,12 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
                 "[File](../docs/removed.md)\n"
                 "[Escape](../../outside.md)\n"
             )
-            errors = VERIFY.check_repository_links(alias)
-            self.assertTrue(any("missing Markdown fragment" in error for error in errors))
-            self.assertTrue(any("missing repository target" in error for error in errors))
-            self.assertTrue(
-                any("missing repository target: ../../outside.md" in error for error in errors)
-            )
-
-    def test_site_links_accept_directory_aliases_and_still_reject_escape(self):
-        with tempfile.TemporaryDirectory() as directory:
-            site = Path(directory) / "public"
-            shutil.copytree(ROOT / "website/_site", site)
-            canonical_site = site.resolve()
-            alias = Path(directory) / "public-alias"
-            alias.symlink_to(canonical_site, target_is_directory=True)
-            self.assertEqual(VERIFY.check_site(canonical_site)[3], [])
-            self.assertEqual(VERIFY.check_site(alias)[3], [])
-
-            page = canonical_site / "faq/index.html"
-            page.write_text(
-                page.read_text().replace(
-                    "</main>",
-                    '<a href="https://rea.tools/../../outside/">Escape</a></main>',
-                    1,
-                )
-            )
-            errors = VERIFY.check_site(alias)[3]
-            self.assertTrue(
-                any("reference leaves the website" in error for error in errors)
-            )
-
-    def test_repository_links_accept_aliased_roots_and_reject_escaping_links(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = (Path(directory) / "repository").resolve()
-            (root / "website/public").mkdir(parents=True)
-            (root / "docs").mkdir()
-            (root / "docs/guide.md").write_text("# Guide\n")
-            page = root / "website/README.md"
-            page.write_text("[Guide](../docs/guide.md#guide)\n")
-            alias = Path(directory) / "repository-alias"
-            alias.symlink_to(root, target_is_directory=True)
-            self.assertEqual(VERIFY.check_repository_links(root), [])
-            self.assertEqual(VERIFY.check_repository_links(alias), [])
-            (root.parent / "outside.md").write_text("# Outside\n")
-            page.write_text("[Outside](../../outside.md)\n")
             for boundary in (root, alias):
                 with self.subTest(boundary=boundary):
-                    self.assertEqual(VERIFY.check_repository_links(boundary), [
-                        "website/README.md: missing repository target: ../../outside.md"
+                    self.assertCountEqual(VERIFY.check_repository_links(boundary), [
+                        "website/README.md: missing Markdown fragment: ../docs/guide.md#removed",
+                        "website/README.md: missing repository target: ../docs/removed.md",
+                        "website/README.md: missing repository target: ../../outside.md",
                     ])
 
     def test_site_links_preserve_containment_through_aliased_roots(self):
@@ -515,10 +473,12 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             self.assertEqual(VERIFY.check_site(site)[3], expected)
             self.assertEqual(VERIFY.check_site(alias)[3], expected)
             (site.parent / "outside.html").write_text("<p>Outside</p>")
-            page.write_text(page.read_text().replace("guide.html#answer", "../outside.html"))
-            for boundary in (site, alias):
-                with self.subTest(boundary=boundary):
-                    self.assertIn("index.html: reference leaves the website: ../outside.html", VERIFY.check_site(boundary)[3])
+            content = page.read_text()
+            for reference in ("../outside.html", "https://rea.tools/../outside.html"):
+                page.write_text(content.replace("guide.html#answer", reference))
+                for boundary in (site, alias):
+                    with self.subTest(boundary=boundary, reference=reference):
+                        self.assertIn(f"index.html: reference leaves the website: {reference}", VERIFY.check_site(boundary)[3])
 
     def test_preview_preserves_pages_prefix_for_assets_and_directory_redirects(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -526,6 +486,9 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             (site / "guide").mkdir()
             (site / "guide/index.html").write_text("<h1>Guide</h1>")
             (site / "asset.css").write_text("body { color: black; }")
+            comment = b"\xff\x80\r\n"
+            archive = bytes.fromhex("504b0506" + "00" * 16) + len(comment).to_bytes(2, "little") + comment
+            (site / "download.zip").write_bytes(archive)
             for prefix in ("/", "/rea/"):
                 with self.subTest(prefix=prefix), ThreadingHTTPServer(("127.0.0.1", 0), WEBSITE.preview_handler(site, prefix)) as server:
                     worker = Thread(target=server.serve_forever, daemon=True)
@@ -537,6 +500,8 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
                             self.assertEqual(response.read(), b"<h1>Guide</h1>")
                         with urlopen(base + prefix + "asset.css") as response:
                             self.assertIn(b"color: black", response.read())
+                        with urlopen(base + prefix + "download.zip") as response:
+                            self.assertEqual(response.read(), archive)
                         with self.assertRaises(HTTPError) as error:
                             urlopen(base + prefix + "missing")
                         with contextlib.closing(error.exception) as response:
@@ -774,21 +739,11 @@ class WebsiteTranslationChecks(unittest.TestCase):
                     self.assertTrue(set(parser.copy_targets) <= parser.ids)
         for fixture in WEBSITE.NOTES_FIXTURES:
             self.assertEqual((site / fixture).read_bytes(), (ROOT / "website/public" / fixture).read_bytes())
-        with ThreadingHTTPServer(("127.0.0.1", 0), WEBSITE.preview_handler(site, "/rea/")) as server:
-            worker = Thread(target=server.serve_forever, daemon=True)
-            worker.start()
-            try:
-                base = f"http://127.0.0.1:{server.server_port}/rea/"
-                with urlopen(base + "ar/faq?test=1") as response:
-                    self.assertEqual(response.url, base + "ar/faq/?test=1")
-                    self.assertIn(b'lang="ar"', response.read())
-                with urlopen(base + "assets/i18n.js") as response:
-                    self.assertIn(b"export function t", response.read())
-                with urlopen(base + "examples/notes-example.zip") as response:
-                    self.assertEqual(response.read(), (site / "examples/notes-example.zip").read_bytes())
-            finally:
-                server.shutdown()
-                worker.join()
+        runtime = "assets/i18n.js"
+        self.assertEqual((site / runtime).read_bytes(), (ROOT / "website/public" / runtime).read_bytes())
+        arabic = VERIFY.HtmlReferences()
+        arabic.feed((site / "ar/faq/index.html").read_text())
+        self.assertEqual(arabic.lang, "ar")
 
     def test_every_reading_page_loads_theme_before_styles(self):
         site = ROOT / "website/_site"

@@ -20,7 +20,7 @@ import type {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import {
   normalizeCaptureFailure,
   describeProcessCaptureExecutionFailure,
@@ -33,7 +33,7 @@ import {
   type ProcessCaptureCleanupRetainer,
 } from "./ProcessCaptureRead.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 
 const hasSameIdentity = (
   before: Stats,
@@ -280,11 +280,7 @@ export class ProcessCaptureSnapshotFailure extends ProcessCaptureError {
     const primary = this.cleanupPrimary;
     if (!(primary instanceof AnalysisAccessDeniedError)) return this;
     return this.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          this,
-          "capture_process",
-        ).bindCleanupDependencies([primary, this])
+      ? analysisErrorWithCleanupDependencies(primary, this, "capture_process")
       : primary;
   }
 }
@@ -435,8 +431,19 @@ export const snapshotRoots = async (
   const unobservedSubtrees: NonNullable<
     FilesystemCoverage["unobserved_subtrees"]
   > = [];
+  const resolvedObserverPaths = await Promise.all(
+    observerPaths.map(async (path) => {
+      try {
+        return await realpath(path);
+      } catch (cause: unknown) {
+        const code = filesystemSystemCode(cause);
+        if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+        throw cause;
+      }
+    }),
+  );
   const observerRoots = new Set(
-    await Promise.all(observerPaths.map((path) => realpath(path))),
+    resolvedObserverPaths.filter((path): path is string => path !== undefined),
   );
   const observerNames = new Set(
     [...observerRoots].map((path) => basename(path)),

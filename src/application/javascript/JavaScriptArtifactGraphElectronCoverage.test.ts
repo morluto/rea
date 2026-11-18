@@ -17,7 +17,6 @@ import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTy
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps as buildGraph } from "./JavaScriptArtifactGraphBuilder.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
-import { electronModuleReferenced } from "./ElectronBoundaryAnalysis.js";
 
 const SHA256 = "a".repeat(64);
 const PATH = "main.js";
@@ -178,25 +177,14 @@ describe("Electron semantic coverage", () => {
     expect(electronSemantics).toBeUndefined();
   });
 
-  it("does not count a type-only Electron import as boundary coverage", () => {
-    // A `.js` fixture cannot carry `import type`, so the module predicate is
-    // exercised directly here.
-    const analysisWith = (
-      kind: "require" | "type-import",
-    ): JavaScriptArtifactAnalysis =>
-      ({
-        files: [
-          {
-            file: fileFor(""),
-            javascript: null,
-            semantic: {
-              ir: { moduleLinks: [{ kind, specifier: "electron" }] },
-            },
-          },
-        ],
-      }) as unknown as JavaScriptArtifactAnalysis;
-    expect(electronModuleReferenced(analysisWith("require"))).toBe(true);
-    expect(electronModuleReferenced(analysisWith("type-import"))).toBe(false);
+  it("does not count a type-only Electron import as boundary coverage", async () => {
+    const result = await graphFor(
+      'import type { BrowserWindow } from "electron";\nexport type Window = BrowserWindow;\n',
+      undefined,
+      "main.ts",
+    );
+    expect(result.electronSemantics).toBeUndefined();
+    expect(result.limitations).not.toContain(EMPTY_COVERAGE);
   });
 
   it("matches a supported Electron subpath and ignores an unrelated package", async () => {
@@ -278,30 +266,19 @@ it("does not count a whole type-only import when semantics are skipped", async (
   expect(electronSemantics).toBeUndefined();
 });
 
-it("does not treat a worker URL path as an Electron module", async () => {
-  // `new Worker(new URL("electron", import.meta.url))` records a `worker`
-  // reference whose specifier is a path relative to the importing source.
-  const { electronSemantics } = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-    (entry) => ({ ...entry, semantic: null }),
-  );
-  expect(electronSemantics).toBeUndefined();
-});
-
-it("reports the same Electron applicability as the retained static fact", async () => {
-  // `analysis_coverage.applicability.electron` is the domain owner of the same
-  // question, so a worker URL path must be unknown for both outputs.
-
+it("retains an electron-named worker URL without claiming Electron coverage", async () => {
   const entry = await analyzedEntry(
     `const worker = new Worker(new URL("electron", import.meta.url));\n`,
   );
-  expect(entry.javascript?.analysis_coverage?.applicability.electron).toBe(
+  expect(entry.javascript?.references).toContainEqual(
+    expect.objectContaining({ kind: "worker", specifier: "electron" }),
+  );
+  expect(entry.javascript?.analysis_coverage.applicability.electron).toBe(
     "unknown",
   );
-  const graph = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-  );
+  const graph = graphForEntries([{ ...entry, semantic: null }]);
   expect(graph.electronSemantics).toBeUndefined();
+  expect(graph.limitations).not.toContain(EMPTY_COVERAGE);
 });
 
 it("does not count a resolve-only Electron reference as coverage", async () => {
@@ -420,7 +397,7 @@ it("reports partial coverage when a successful static pass stopped at a limit", 
     `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
     (entry) => {
       const javascript = entry.javascript!;
-      const coverage = javascript.analysis_coverage!;
+      const coverage = javascript.analysis_coverage;
       return {
         ...entry,
         javascript: {

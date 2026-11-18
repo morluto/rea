@@ -10,6 +10,7 @@ describe("IDA diagnostic credential redaction", () => {
       url: "http://localhost:1234/mcp",
       headers: { Authorization: "Bearer fixture-secret" },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     }).url;
     expect(
@@ -25,6 +26,7 @@ describe("IDA diagnostic credential redaction", () => {
       headers: { "X-Private": "café secret" },
       sensitive: { headers: ["X-Private"], env: [] },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     }).url;
     expect(
@@ -46,6 +48,7 @@ describe("IDA diagnostic credential redaction", () => {
         url: "http://127.0.0.1:12345/mcp",
         headers: Object.fromEntries(reversed ? entries.reverse() : entries),
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
       }).text;
       expect(
@@ -66,6 +69,7 @@ describe("IDA diagnostic credential redaction", () => {
         CoOkIe: " session=cookie-secret\t",
       },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     }).text;
     expect(
@@ -74,6 +78,18 @@ describe("IDA diagnostic credential redaction", () => {
       ),
     ).toBe(
       "raw=[redacted transport credential]; wire=[redacted transport credential]; token=[redacted transport credential]; proxy=[redacted transport credential]; bare=[redacted transport credential]; cookie=[redacted transport credential]",
+    );
+  });
+  it("redacts a Set-Cookie value but not its attributes", () => {
+    const redact = createIdaDiagnosticRedactor({
+      url: "http://127.0.0.1:12345/mcp",
+      headers: { "Set-Cookie": "sid=private-secret; Path=/; HttpOnly" },
+      mode: "attached",
+      protocol: "native",
+      timeoutMs: 1000,
+    }).text;
+    expect(redact("rejected private-secret at /caller/input")).toBe(
+      "rejected [redacted transport credential] at /caller/input",
     );
   });
   it("does not treat empty HTTP authentication as diagnostic content", () => {
@@ -85,6 +101,7 @@ describe("IDA diagnostic credential redaction", () => {
         Cookie: "\t",
       },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     }).text;
     const message = "Failed at /caller/input \t with ordinary whitespace";
@@ -98,6 +115,7 @@ describe("IDA diagnostic credential redaction", () => {
         headers: { [name]: "\t" },
         sensitive: { headers: [name.toLowerCase()], env: [] },
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
       }).text;
       expect(redact("input\tvalue")).toBe(
@@ -110,6 +128,7 @@ describe("IDA diagnostic credential redaction", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Bearer alpha", Cookie: "redacted" },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     }).text;
     expect(redact("alpha redacted")).toBe("␟ ␟");
@@ -192,6 +211,7 @@ it.each(credentialCases)(
       url: "http://127.0.0.1:12345/mcp",
       headers,
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     }).text;
     expect(redact(message)).toBe(expected);
@@ -204,6 +224,7 @@ it("redacts full configured malformed headers without guessing their internal va
     url: "http://127.0.0.1:12345/mcp",
     headers: { Authorization: header },
     mode: "attached",
+    protocol: "native",
     timeoutMs: 1000,
   });
   expect(redactor.text(header)).toBe("[redacted transport credential]");
@@ -218,6 +239,7 @@ const redactorFor = (header: string, name = "Authorization") =>
     url: "http://127.0.0.1:12345/mcp",
     headers: { [name]: header },
     mode: "attached",
+    protocol: "native",
     timeoutMs: 1000,
   });
 
@@ -406,6 +428,7 @@ it("redacts protocol-decoded Basic credentials and password without treating ord
   const redactor = createIdaDiagnosticRedactor({
     url: "http://127.0.0.1:12345/mcp",
     mode: "attached",
+    protocol: "native",
     timeoutMs: 1000,
     headers: {
       Authorization: `Basic ${Buffer.from("user:secret").toString("base64")}`,
@@ -425,6 +448,7 @@ it.each(["text", "json"] as const)(
     const redactor = createIdaDiagnosticRedactor({
       url: "http://127.0.0.1:12345/mcp",
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
       headers: { Cookie: "a=Q" },
     });
@@ -446,6 +470,7 @@ it.each(["text", "json"] as const)(
       const redactor = createIdaDiagnosticRedactor({
         url: "http://127.0.0.1:12345/mcp",
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
         headers,
       });
@@ -463,6 +488,7 @@ it.each(["dXNlcjpzZWNyZXQ=", "dXNlcjpzZWNyZXQ", "dXNlcjpzZWNyZXQ=="])(
     const redactor = createIdaDiagnosticRedactor({
       url: "http://127.0.0.1:12345/mcp",
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
       headers: { Authorization: `Basic ${payload}` },
     });
@@ -487,6 +513,7 @@ describe("overlapping IDA credential source spans", () => {
         url: "http://127.0.0.1:12345/mcp",
         headers: Object.fromEntries(reversed ? entries.reverse() : entries),
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
       });
       const result = redactor.text(
@@ -502,6 +529,7 @@ describe("overlapping IDA credential source spans", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Custom abc", Cookie: "a=cde; b=def" },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     });
     expect(redactor.text("prefix abcdefg suffix")).toBe(
@@ -537,6 +565,7 @@ describe("credential-safe redaction markers", () => {
       const redactor = createIdaDiagnosticRedactor({
         url: "http://127.0.0.1:12345/mcp",
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
         headers: { Authorization: "Custom " + secret, Cookie: "a=X" },
       });
@@ -553,6 +582,7 @@ describe("credential-safe redaction markers", () => {
     const redactor = createIdaDiagnosticRedactor({
       url: "http://127.0.0.1:12345/mcp",
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
       headers: {
         Authorization:
@@ -574,6 +604,7 @@ describe("unclassified diagnostic blocks and message ownership", () => {
       const redactor = createIdaDiagnosticRedactor({
         url: "http://127.0.0.1:12345/mcp",
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
         headers,
       });
@@ -612,6 +643,7 @@ it("redacts explicitly marked registration values without guessing from environm
     env: { PRIVATE_VALUE: "marked-secret", IDADIR: "/caller/ida" },
     sensitive: { env: ["PRIVATE_VALUE"], headers: [] },
     mode: "attached",
+    protocol: "native",
     timeoutMs: 1000,
   });
   expect(environment.text("marked-secret /caller/ida")).toBe(
@@ -622,6 +654,7 @@ it("redacts explicitly marked registration values without guessing from environm
     headers: { "X-Custom": "marked-header", "X-Input": "retained" },
     sensitive: { headers: ["x-custom"], env: [] },
     mode: "attached",
+    protocol: "native",
     timeoutMs: 1000,
   });
   expect(headers.text("marked-header retained")).toBe(

@@ -237,7 +237,7 @@ describe("initial author declaration", () => {
 });
 
 describe("GitHub status boundary", () => {
-  it.each([76467478, 208281322, 161784452, 342580529])(
+  it.each([76467478, 208281322, 161784452, 342580529, 25068])(
     "publishes a labeled exemption for author ID %s after checking the head",
     async (id) => {
       const input = fixture({ user: { id }, body: null });

@@ -98,11 +98,15 @@ primary-key index's own direction and declared collation. `rows.row_offset`
 reports the rows skipped before the window and `rows.next_row_offset` the offset
 to request for the following page; it is `null` once the window reaches the end.
 Pass `row_offset` (CLI `--row-offset`, requires `table`, default 0) to skip into
-a table rather than repeating earlier rows. A table that declares all of
-`rowid`, `_rowid_` and `oid` as columns and has no primary key reports
-`order: "unspecified"` and refuses a non-zero `row_offset`, because the skipped
-prefix would be arbitrary. Pages compose only while the reported database and
-WAL SHA-256 match; re-inspecting a changed snapshot restarts the sequence.
+a table rather than repeating earlier rows. If columns shadow all three
+built-in names (`rowid`, `_rowid_`, and `oid`), REA can use a declared
+[`INTEGER PRIMARY KEY` rowid alias](https://www.sqlite.org/lang_createtable.html#rowids_and_the_integer_primary_key),
+even when that column is outside the requested projection. A separately
+indexed key, including inline `INTEGER PRIMARY KEY DESC`, does not name the
+rowid. With no usable order, the first sample reports `order: "unspecified"`
+and a non-zero `row_offset` is refused. Pages compose only while the reported
+database and WAL SHA-256 match; re-inspecting a changed snapshot restarts the
+sequence.
 View, virtual-table and shadow-table row reads are unsupported.
 
 SQLite integers are decimal strings so every signed 64-bit value survives JSON
@@ -153,8 +157,7 @@ in the MCP client's whole-call deadline; increasing only that deadline does not
 change the worker budget. No server restart is needed.
 
 The result's `worker_timeout_ms` reports the actual parent-supervised budget,
-including the default. Historical Evidence without this field has unknown
-execution settings, not an inferred default. Explicit input selection is also
+including the default, and Evidence without it is malformed. Explicit input selection is also
 retained in Evidence parameters; omission stays omitted. Completed observations
 retained under cancellation or cleanup failure keep the same budget facts.
 Timeout errors name the selected milliseconds, exact CLI/MCP controls, and
@@ -216,9 +219,10 @@ tests automatically. `npm run test:sqlite:run` runs the same cases when the
 compiled runtime and generated test artifacts are already current.
 
 The reusable SQLite CI workflow consumes the shared build artifact and tests
-the latest Node 22.x unavailable-runtime diagnostics, the minimum supported
-24.15.0 release, and the latest 24.x and 26.x releases. The repository-pinned
-runtime also runs the full suite. CI's required gate waits for every selected
+Node 22.x unavailable-runtime diagnostics, the repository-pinned 24.x release,
+and the latest 24.x and 26.x releases; `.github/workflows/sqlite-runtime.yml`
+owns the exact versions. The repository-pinned runtime also runs the full
+suite. CI's required gate waits for every selected
 SQLite matrix job; a failed, cancelled, skipped or missing selected lane blocks
 the gate. Workflow changes themselves select the build and compatibility lane.
 

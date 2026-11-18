@@ -38,7 +38,7 @@ records in those bytes are still decoded. Only the first `.eh_frame` and
 `.eh_frame_hdr` section is decoded, and only the first `PT_GNU_EH_FRAME`
 program header. A duplicate section, or a duplicate `PT_GNU_EH_FRAME` when no
 `.eh_frame_hdr` section supplies the header, keeps `coverage.status` at
-`incomplete`.
+`partial`.
 
 `eh_frame_hdr` reports version, the three pointer encodings, the `.eh_frame`
 pointer, the declared FDE count, and how many binary-search table entries
@@ -57,7 +57,7 @@ in 32 bits is not decoded: `fde_count` is null, the header is `incomplete`,
 and the decoded FDEs stay in the result. A header whose FDE count encoding is
 `DW_EH_PE_omit` (`0xff`), as GNU ld writes when it cannot build the search
 table, is `present` with a null `fde_count`, no table rows, and comparison
-`unavailable`; it does not make coverage incomplete. A header that declares
+`unavailable`; it does not make coverage partial. A header that declares
 an FDE count but writes `DW_EH_PE_omit` as its table encoding is `present`
 with that count, no table rows, and comparison `unavailable`, and also keeps
 coverage complete. A non-zero FDE count under an indirect encoding is the
@@ -76,7 +76,7 @@ stay 4 bytes wide.
 
 LEB128 operands retain their signed or unsigned 64-bit value, including valid
 ten-byte sign padding. An overflowing or unterminated operand is not wrapped
-into a function address: its affected record is omitted, coverage is incomplete,
+into a function address: its affected record is omitted, coverage is partial,
 and other decodable records remain available. A negative FDE range is likewise
 omitted rather than interpreted as a positive size.
 
@@ -85,12 +85,12 @@ address. In `.eh_frame` they are relative to the GOT: `DT_PLTGOT` when the
 dynamic table names it, otherwise the `.got.plt` or `.got` section address.
 A limitation names the base that was used. When no GOT base is declared,
 those values are unresolved: the affected record is not reported and
-`coverage.status` is `incomplete`.
+`coverage.status` is `partial`.
 
 `debug_frame.status` is `present`, `absent`, `incomplete`, or `unknown`. It
 is `unknown` when the image has no section headers or unreadable section
 names. It is `incomplete`, with a null `location` and `coverage.status` at
-`incomplete`, when the section is `SHT_NOBITS` or its bytes are not all in
+`partial`, when the section is `SHT_NOBITS` or its bytes are not all in
 the file. The `.eh_frame` results stay in the report. This command does not
 decode `.debug_frame`.
 
@@ -105,7 +105,7 @@ length of the CFA program. CFA instructions are counted and not evaluated.
 A CIE whose augmentation has a letter other than `z`, `L`, `P`, `R`, `S`, or
 `B` is not decoded: the encodings of later letters cannot be trusted, so its
 FDEs are not decoded either. A limitation counts those FDEs and coverage is
-`incomplete`.
+`partial`.
 
 `ranges` is one page of FDEs. Each range has `start`, `end`, decimal `size`,
 the containing `SHF_ALLOC` section, an exact symbol name when a symbol starts
@@ -116,7 +116,7 @@ selects at run time, and a limitation says so. Symbol names, section names,
 and augmentation strings are target-derived and untrusted. Indirect EH
 pointers are not dereferenced. An FDE whose initial location is indirect names
 a pointer slot, not its function, so it is not reported as a range; a
-limitation counts those FDEs and coverage is `incomplete`. An indirect
+limitation counts those FDEs and coverage is `partial`. An indirect
 `eh_frame_ptr` does not locate `.eh_frame`, and the header is `incomplete`.
 A search table with an indirect encoding is not read: the header is
 `incomplete`, the comparison is `unavailable`, and the table does not bound a
@@ -154,17 +154,17 @@ was decoded, the scan stops after the last FDE the table names, as libgcc's
 `PT_GNU_EH_FRAME` lookup only binary-searches that table. Later bytes are not
 decoded and a limitation says so. Without a usable table, the scan stops at
 the first record that fails to decode, as libgcc's linear FDE search does,
-and `coverage.status` is `incomplete`. A CIE with an unrecognized
+and `coverage.status` is `partial`. A CIE with an unrecognized
 augmentation letter, or an FDE that uses one, also stops that scan. Reaching the end of the segment with
-no terminator also keeps coverage `incomplete`, because the table's extent is
+no terminator also keeps coverage `partial`, because the table's extent is
 then unknown.
 
 Addresses map to file offsets through `SHF_ALLOC` sections, then `PT_LOAD`
 segments. A section without `SHF_ALLOC`, such as `.comment` or `.debug_*`,
 is not loaded, so its `sh_addr` is never used for translation and it is never
 reported as the section containing a range. A record that ends past the table, or non-zero bytes after
-the terminator, keeps `coverage.status` at `incomplete`. Relocatable objects
-stay incomplete because relocations are not applied.
+the terminator, keeps `coverage.status` at `partial`. Relocatable objects
+stay partial because relocations are not applied.
 
 ## Limits and failures
 
@@ -173,7 +173,7 @@ The selected file is limited to 64 MiB by default (512 MiB maximum).
 separately to CIE records and to FDEs. Exceeding either budget fails without
 partial success. One page returns at most 4096 ranges. Symbol lookup stops
 after 65536 entries across `.symtab` and `.dynsym` combined. Reaching that
-cap keeps `coverage.status` at `incomplete`. Only symbols at decoded FDE
+cap keeps `coverage.status` at `partial`. Only symbols at decoded FDE
 starts are kept, and a name is decoded only for a returned range. The names
 on one page share a fixed 16 MiB text allowance; a page that exceeds it fails
 with a resource error whose recovery is a smaller `limit`, because
@@ -181,7 +181,7 @@ with a resource error whose recovery is a smaller `limit`, because
 
 Compressed symbol or name tables and symbol-table links that do not name a
 file-backed `SHT_STRTAB` section leave symbol names unknown and coverage
-incomplete; decoded FDE ranges remain available.
+partial; decoded FDE ranges remain available.
 
 A compressed dynamic section cannot supply `DT_PLTGOT`. Without another
 observed GOT base, affected data-relative unwind pointers remain unresolved.
