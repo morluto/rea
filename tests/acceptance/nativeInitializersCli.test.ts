@@ -11,8 +11,41 @@ import {
 } from "../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { aps2InitializerImage } from "../fixtures/nativeAps2Initializers.js";
 
 const contract = toolContract("inspect_native_initializers");
+
+cliTest(
+  "reads APS2 RELA alongside RELR through the public CLI without changing the image",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-aps2-initializers-cli-");
+    const path = join(root, "library.so");
+    const bytes = aps2InitializerImage();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_entries: 7,
+    });
+    expect(
+      report.entries
+        .filter((entry) => entry.kind === "init_array")
+        .map((entry) => [entry.value_va, entry.resolution]),
+    ).toEqual([
+      ["0x100", "relative_addend"],
+      ["0x110", "relative_addend"],
+      [null, "unresolved_import"],
+    ]);
+    expect(
+      report.entries.find((entry) => entry.kind === "fini_array"),
+    ).toMatchObject({ value_va: "0x120", resolution: "relr" });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "keeps an unrelocated ELF alias's value and source identity through the CLI",

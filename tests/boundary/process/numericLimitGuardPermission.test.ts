@@ -1,4 +1,12 @@
-import { chmod, copyFile, mkdir, rename, symlink } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  realpath,
+  rename,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -10,20 +18,38 @@ processTest.skipIf(
 )(
   "fails the numeric limit guard when a required scan directory is unreadable",
   async ({ processes }) => {
-    const root = await createTestTempDirectory("rea-limit-permission-");
+    const root = await realpath(
+      await createTestTempDirectory("rea-limit-permission-"),
+    );
+    const source = join(root, "src");
+    const nested = join(source, "nested");
     await mkdir(join(root, "scripts/verify"), { recursive: true });
-    await mkdir(join(root, "tests/nested"), { recursive: true });
-    for (const name of ["src", ".agents", "node_modules", "bridge"])
-      await symlink(resolve(name), join(root, name), "dir");
-    await symlink(
-      resolve("scripts/hopper-demo-x11.py"),
-      join(root, "scripts/hopper-demo-x11.py"),
+    await mkdir(join(source, "domain"), { recursive: true });
+    await mkdir(join(source, "resources"));
+    await mkdir(nested);
+    await symlink(resolve("node_modules"), join(root, "node_modules"), "dir");
+    await writeFile(
+      join(source, "domain/analysisSettingDefinitions.ts"),
+      'export const ANALYSIS_SETTINGS = { fixture: { environment: "REA_PERMISSION_LIMIT", updateMode: "runtime" } };',
     );
-    await symlink(
-      resolve("tests/boundary"),
-      join(root, "tests/boundary"),
-      "dir",
+    await writeFile(
+      join(source, "domain/numericLimitRegistry.ts"),
+      "export const NUMERIC_LIMIT_REGISTRY = [];",
     );
+    await writeFile(
+      join(nested, "limit.ts"),
+      "export const limit = Number(process.env.REA_PERMISSION_LIMIT);",
+    );
+    for (const owner of [
+      "domain/artifactReaderLimits.ts",
+      "domain/webNetworkCapture.ts",
+      "resources/ArtifactReaderLimits.ts",
+    ]) {
+      await writeFile(
+        join(source, owner),
+        'export const limit = { update_mode: "parameter" };',
+      );
+    }
     await copyFile(
       "scripts/verify/rea-numeric-limits.mjs",
       join(root, "scripts/verify/rea-numeric-limits.mjs"),
@@ -36,7 +62,8 @@ processTest.skipIf(
       );
     const healthy = await run();
     expect(healthy.exitCode, healthy.stderr).toBe(0);
-    for (const directory of [join(root, "tests"), join(root, "tests/nested")]) {
+    expect(healthy.stdout).toContain("1 discovered.");
+    for (const directory of [source, nested]) {
       try {
         await chmod(directory, 0);
         const refused = await run();
@@ -47,14 +74,15 @@ processTest.skipIf(
         await chmod(directory, 0o755);
       }
     }
-    await rename(join(root, "tests"), join(root, "tests-saved"));
+    const saved = join(root, "src-saved");
+    await rename(source, saved);
     try {
       const missing = await run();
       expect(missing.exitCode).not.toBe(0);
       expect(missing.stderr).toContain("ENOENT");
-      expect(missing.stderr).toContain(join(root, "tests"));
+      expect(missing.stderr).toContain(source);
     } finally {
-      await rename(join(root, "tests-saved"), join(root, "tests"));
+      await rename(saved, source);
     }
   },
 );

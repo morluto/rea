@@ -144,7 +144,7 @@ const parseGoReport = createAnalysisViewResultReader(goBinarySchema);
 const parseRustReport = createAnalysisViewResultReader(rustBinarySchema);
 
 /** UUID version 8 derived from the first 16 bytes of the parent Evidence digest. */
-export const cycloneDxSerialNumber = (evidenceDigest: string): string => {
+const cycloneDxSerialNumber = (evidenceDigest: string): string => {
   const bytes = Buffer.alloc(16);
   Buffer.from(evidenceDigest.slice(0, 32), "hex").copy(bytes);
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x80;

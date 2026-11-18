@@ -2727,7 +2727,8 @@ it("refuses a device file name the selected Windows host cannot store before pul
 exit 0`,
   );
   const provider = new AdbProvider({
-    environment: { REA_ADB_PATH: binary },
+    // A double leading slash gives Win32 a UNC root and still opens the POSIX fixture.
+    environment: { REA_ADB_PATH: `/${binary}` },
     platform: "win32",
   });
   const result = await provider.execute({

@@ -82,11 +82,12 @@ const explicitFixtureOwners = (path) =>
 // Verifier scripts are imported by their tests like source modules.
 const isVerifier = (path) =>
   /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path);
-// Shared script modules. A change is traced through the tests, verifiers and
-// other shared modules that import it; any other consumer (build, test
-// runners, configuration) shapes every run, so it selects the full suite.
+// Shared script and fixture modules. A change is traced through the tests,
+// verifiers and other shared modules that import it; any other consumer (build,
+// test runners, configuration) shapes every run, so it selects the full suite.
 const isScriptLibrary = (path) =>
-  !isCheckerInput(path) && /^scripts\/lib\/.+\.m?[jt]s$/u.test(path);
+  !isCheckerInput(path) &&
+  /^scripts\/(?:lib|fixtures)\/.+\.m?[jt]s$/u.test(path);
 // Other scripts (build, test runners, CI) shape every run and are not traced.
 const isModule = (path) =>
   !isCheckerInput(path) &&

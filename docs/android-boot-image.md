@@ -81,7 +81,8 @@ The reader admits at most 4,096 vendor ramdisk table entries and an entry size
 of at most 4,096 bytes. A vendor `header_size` above 1 MiB is the same kind of
 capacity limit. Those checks happen before the table is read. Unsupported
 header revisions return `unsupported_target`; truncated declared structures
-return `truncated`; malformed layouts return `invalid_request`. These refusals
+return `truncated`; malformed layouts return `invalid_request`. The page
+padding after the last component carries no data and may be absent. These refusals
 do not produce an empty successful inventory. Gaps inside a vendor ramdisk
 section, or bytes between the sequential layout and a recovery DTBO, are named
 in limitations instead of being invented as entries.

@@ -227,7 +227,11 @@ Each newly analyzed JavaScript file retains `analysis_coverage` in its graph
 observation. `syntax` distinguishes complete parsing, recovered syntax errors,
 failed parsing and unexamined source. `semantics` records the number of observed
 unknown findings and typed uncertainty, including returned-reference widening
-and unavailable type-only compiler options. `examination` reports static semantic
+and unavailable type-only compiler options. `conditional-loader` records a
+BOM/hashbang source recovered with an uncertain package mode or loader
+invocation. Its overall `parse_status` stays partial without inventing a syntax
+error. Dependency and worker Evidence retains the loader limitation.
+`examination` reports static semantic
 resource limits and Electron wrapper expansion limits independently. A completed
 pass does not establish complete runtime semantics. Route examination and result
 capacity remain in the separate route inventory.
@@ -353,6 +357,20 @@ execute them.
 
 JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
 code unit, matching the original bytes identified by the artifact digest.
+A BOM before a hashbang is accepted for TypeScript and JSX compiler inputs,
+explicit ES modules, and JavaScript in an observed module package.
+For this prefix, suffix-only source names, including `.cjs` and case variants such as `.MJS`,
+retain a conditional interpretation: direct entrypoint and module import can
+select different loaders. A known CommonJS package can load these files
+through an ES module import using CommonJS grammar.
+An unknown package scope or a package without a `type` field retains a
+conditional interpretation for ordinary `.js` and suffix-only JavaScript files. Application analysis and
+reference import can recover either script or ES module syntax without
+establishing the runtime loader.
+Source indexes and later-line columns still refer to the original text.
+CommonJS sources with this prefix retain a conditional interpretation through
+ES module import. Direct execution and require can reject the same source.
+A plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
 angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.

@@ -10,7 +10,6 @@ import {
 } from "../../tests/fixtures/androidBootImage.js";
 import {
   compressionFromPrefix,
-  hasAndroidBootImageMagic,
   inspectAvbFooter,
   parseAndroidBootHeader,
   parseVendorRamdiskTable,
@@ -29,10 +28,7 @@ const failed = (bytes: Buffer, fileSize = bytes.length) => {
   return result.error;
 };
 
-it("recognizes ANDROID! and VNDRBOOT and names compression from a prefix", () => {
-  expect(hasAndroidBootImageMagic(Buffer.from("ANDROID!"))).toBe(true);
-  expect(hasAndroidBootImageMagic(Buffer.from("VNDRBOOT"))).toBe(true);
-  expect(hasAndroidBootImageMagic(Buffer.from("short"))).toBe(false);
+it("names recognized compression from a component prefix", () => {
   expect(compressionFromPrefix(Buffer.from([0x1f, 0x8b]))).toBe("gzip");
   expect(compressionFromPrefix(Buffer.from([0x04, 0x22, 0x4d, 0x18]))).toBe(
     "lz4",
@@ -168,6 +164,68 @@ it("rejects an unsupported version, a bad page size, and a truncated image", () 
     kind: "truncated",
     failure: { format: "android-boot-image" },
   });
+});
+
+it("accepts an image that ends at its last declared byte", () => {
+  // Each end follows the layout: the last structure starts on a page and the
+  // image ends at its final byte.
+  const cases = [
+    // 2048-byte pages: kernel, then the 7-byte ramdisk on page 2.
+    { image: buildBootImage({ version: 0 }), end: 2 * 2048 + 7 },
+    // Recovery DTBO on page 3, then the 3-byte DTB on page 4.
+    {
+      image: buildBootImage({
+        version: 2,
+        recoveryDtbo: Buffer.from("dtbo"),
+        dtb: Buffer.from("dtb"),
+      }),
+      end: 4 * 2048 + 3,
+    },
+    // 4096-byte pages: kernel, ramdisk, then the 9-byte signature on page 3.
+    {
+      image: buildBootImage({
+        version: 4,
+        signature: Buffer.from("signature"),
+      }),
+      end: 3 * 4096 + 9,
+    },
+    // Vendor ramdisk section on page 1, then the 3-byte DTB on page 2.
+    {
+      image: buildVendorBootImage({
+        version: 3,
+        ramdisk: Buffer.from("vendor-ramdisk"),
+        dtb: Buffer.from("dtb"),
+      }),
+      end: 2 * 4096 + 3,
+    },
+    // Section, one 108-byte table entry, then 26 bootconfig bytes on page 3.
+    {
+      image: buildVendorBootImage({
+        version: 4,
+        ramdisks: [{ name: "one", type: 1, bytes: Buffer.from("aaa") }],
+        bootconfig: Buffer.from("androidboot.hardware=test\n"),
+      }),
+      end: 3 * 4096 + 26,
+    },
+    // The 108-byte ramdisk table on page 2 is the last declared structure.
+    {
+      image: buildVendorBootImage({
+        version: 4,
+        ramdisks: [{ name: "one", type: 1, bytes: Buffer.from("aaa") }],
+      }),
+      end: 2 * 4096 + 108,
+    },
+  ];
+  for (const { image, end } of cases) {
+    expect(image.subarray(end).every((byte) => byte === 0)).toBe(true);
+    const padded = parsed(image);
+    expect(padded).toMatchObject({ dataEnd: end, imageEnd: image.length });
+    expect(parsed(image.subarray(0, end))).toEqual(padded);
+    expect(failed(image.subarray(0, end - 1))).toMatchObject({
+      kind: "truncated",
+      message: `image is truncated: components end at byte ${String(end)} but the file is ${String(end - 1)} bytes`,
+    });
+  }
 });
 
 it("aligns a kernel larger than 2^31 without allocating the image", () => {
@@ -544,6 +602,7 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
   const happy = appendAvbFooter(image);
   const footer = inspectAvbFooter({
     fileSize: happy.length,
+    dataEnd: facts.dataEnd,
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
@@ -563,6 +622,7 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
   });
   const bare = inspectAvbFooter({
     fileSize: image.length,
+    dataEnd: facts.dataEnd,
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
@@ -575,6 +635,7 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
   const short = Buffer.concat([image, Buffer.alloc(10)]);
   const shortFooter = inspectAvbFooter({
     fileSize: short.length,
+    dataEnd: facts.dataEnd,
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
@@ -583,12 +644,53 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
   expect(shortFooter.ok).toBe(true);
   if (!shortFooter.ok) return;
   expect(shortFooter.value.limitations[0]).toContain("10 trailing bytes");
+  const unpadded = inspectAvbFooter({
+    fileSize: facts.dataEnd,
+    dataEnd: facts.dataEnd,
+    imageEnd: facts.imageEnd,
+    headerOccupied: facts.headerOccupied,
+    components: facts.components,
+    tail: null,
+  });
+  expect(unpadded).toMatchObject({
+    ok: true,
+    value: { present: false, limitations: [] },
+  });
+  const cut = inspectAvbFooter({
+    fileSize: facts.dataEnd - 1,
+    dataEnd: facts.dataEnd,
+    imageEnd: facts.imageEnd,
+    headerOccupied: facts.headerOccupied,
+    components: facts.components,
+    tail: null,
+  });
+  expect(cut).toMatchObject({ ok: false, error: { kind: "truncated" } });
+  // avbtool records the unpadded size and places vbmeta on the next block.
+  const signed = appendAvbFooter(image.subarray(0, facts.dataEnd), {
+    vbmetaOffset: facts.imageEnd,
+    originalImageSize: facts.dataEnd,
+    partitionSize: 2 * facts.imageEnd,
+  });
+  expect(
+    inspectAvbFooter({
+      fileSize: signed.length,
+      dataEnd: facts.dataEnd,
+      imageEnd: facts.imageEnd,
+      headerOccupied: facts.headerOccupied,
+      components: facts.components,
+      tail: signed.subarray(signed.length - 64),
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: { present: true, originalImageSize: facts.dataEnd },
+  });
   const colliding = appendAvbFooter(image, {
     vbmetaOffset: 2048,
     vbmeta: Buffer.alloc(16),
   });
   const collision = inspectAvbFooter({
     fileSize: colliding.length,
+    dataEnd: facts.dataEnd,
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
