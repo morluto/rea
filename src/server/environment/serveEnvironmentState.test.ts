@@ -501,9 +501,12 @@ describe("state data plane timing and order", () => {
       addByUri(1),
       { jsonrpc: "2.0", id: 2, method: "data/get" },
     ]);
-    await download.reached(batch, "state fetch admission");
-    const reset = plane.post({ jsonrpc: "2.0", method: "data/reset" });
+    let reset: Promise<Response>;
     try {
+      await download.reached(batch, "state fetch admission");
+      reset = Promise.resolve(
+        plane.postRaw({ jsonrpc: "2.0", method: "data/reset" }),
+      );
       await resetQueued.reached(reset, "reset queue admission");
     } finally {
       download.release(new Response(JSON.stringify(renamedDocument())));
@@ -534,7 +537,9 @@ describe("state data plane timing and order", () => {
       },
     ]);
     // The get arrived with the add, before the reset, so it reports the loaded state.
-    await expect(reset).resolves.toEqual({ status: 202, json: undefined });
+    const notification = await reset;
+    expect(notification.status).toBe(202);
+    expect(await notification.text()).toBe("");
     expect(loginOf(plane.store)).toBe("probe");
   });
 });
