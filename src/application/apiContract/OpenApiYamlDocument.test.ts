@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { apiContractSchema } from "../../domain/apiContract/apiContract.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectApiContractEvidence } from "./ApiContractService.js";
 import { decodeOpenApiYaml } from "./OpenApiYamlDocument.js";
 
@@ -129,43 +130,50 @@ it("rejects YAML that the decoder cannot compose, without inventing declarations
     "openapi: 3.0.4\npaths: [\n",
     "openapi-yaml",
   );
-  expect(contractError(malformedResult)).toContain(
-    "OpenAPI YAML could not be parsed",
-  );
-  // A refused read still names the file it read, so the caller can key the
-  // refusal to the snapshot it observed.
+  // The refusal is a typed input error on the selected path, independent of
+  // the explanatory wording each adapter renders.
+  expect(refusalOf(malformedResult)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+  });
+  // A refused read still names the file snapshot it read, so the caller can
+  // key the refusal to the snapshot it observed.
   if (malformedResult.ok) throw new Error("expected a refusal");
   expect(malformedResult.error).toMatchObject({
-    issues: [{ path: ["path"], reason: "invalid_format" }],
     partialObservation: { kind: "file-snapshot-hash" },
   });
 
-  const repeated = contractError(
-    await importText(
-      "repeated.yaml",
-      yamlText(["/a"]).replace(
-        '  version: "1"',
-        '  version: "1"\n  version: "2"',
-      ),
-      "openapi-yaml",
+  const repeatedResult = await importText(
+    "repeated.yaml",
+    yamlText(["/a"]).replace(
+      '  version: "1"',
+      '  version: "1"\n  version: "2"',
     ),
+    "openapi-yaml",
   );
-  expect(repeated).toContain("repeats a mapping key");
+  expect(refusalOf(repeatedResult)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+  });
   // `yaml` locates the repeated key at the second `version` (line 5); the
   // diagnostic must name that line, not one past it.
-  expect(repeated).toContain("at line 5 (");
+  const repeatedIssue = refusalOf(repeatedResult).issues[0];
+  expect(repeatedIssue?.message).toMatch(/line 5\b/u);
 });
 
 it("rejects composition failures and non-scalar keys without escaping the Result", async () => {
-  const unresolved = contractError(
-    await importText(
-      "unresolved.yaml",
-      'openapi: 3.0.4\ninfo:\n  title: Owned API\n  version: "1"\npaths: *missing\n',
-      "openapi-yaml",
-    ),
+  const unresolvedResult = await importText(
+    "unresolved.yaml",
+    'openapi: 3.0.4\ninfo:\n  title: Owned API\n  version: "1"\npaths: *missing\n',
+    "openapi-yaml",
   );
-  expect(unresolved).toContain("unresolved alias");
-  expect(unresolved).not.toContain("*missing");
+  expect(refusalOf(unresolvedResult)).toMatchObject({
+    code: "invalid_request",
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+  });
+  expect(contractError(unresolvedResult)).not.toContain("*missing");
 
   // The `yaml` refusal names the alias source verbatim, so a credential-bearing
   // source must not reach the diagnostic.
@@ -176,45 +184,46 @@ it("rejects composition failures and non-scalar keys without escaping the Result
       "openapi-yaml",
     ),
   );
-  expect(credentialAlias).toContain("unresolved alias");
   expect(credentialAlias).not.toContain("s3cret");
 
-  const tagged = contractError(
-    await importText(
-      "tagged.yaml",
-      [
-        "openapi: 3.0.4",
-        "info:",
-        "  title: Owned API",
-        '  version: "1"',
-        "paths:",
-        "  /a:",
-        "    get:",
-        "      operationId: !custom op",
-      ].join("\n"),
-      "openapi-yaml",
-    ),
+  const taggedResult = await importText(
+    "tagged.yaml",
+    [
+      "openapi: 3.0.4",
+      "info:",
+      "  title: Owned API",
+      '  version: "1"',
+      "paths:",
+      "  /a:",
+      "    get:",
+      "      operationId: !custom op",
+    ].join("\n"),
+    "openapi-yaml",
   );
   // The decoder drops an unresolved tag as a warning, which would report the
-  // untouched scalar as an ordinary operation.
-  expect(tagged).toContain("could not be parsed");
+  // untouched scalar as an ordinary operation; the refusal must stay typed.
+  expect(refusalOf(taggedResult)).toMatchObject({
+    code: "invalid_request",
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+  });
 
-  const complexKey = contractError(
-    await importText(
-      "complex-key.yaml",
-      [
-        "openapi: 3.0.4",
-        "info:",
-        "  title: Owned API",
-        '  version: "1"',
-        "paths:",
-        "  ? [/pets]",
-        "  : {get: {operationId: op}}",
-      ].join("\n"),
-      "openapi-yaml",
-    ),
+  const complexKeyResult = await importText(
+    "complex-key.yaml",
+    [
+      "openapi: 3.0.4",
+      "info:",
+      "  title: Owned API",
+      '  version: "1"',
+      "paths:",
+      "  ? [/pets]",
+      "  : {get: {operationId: op}}",
+    ].join("\n"),
+    "openapi-yaml",
   );
-  expect(complexKey).toContain("non-scalar mapping key");
+  expect(refusalOf(complexKeyResult)).toMatchObject({
+    code: "invalid_request",
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+  });
 });
 
 it("keeps parser source excerpts out of public diagnostics", async () => {
@@ -333,13 +342,10 @@ it("keeps collection-valued sequence items and names the selected format in pars
     "info: {title: t}\npaths: {}\n",
     "openapi-yaml",
   );
-  const missingVersion = contractError(missingVersionResult);
-  expect(missingVersion).toContain("OpenAPI YAML document");
-  expect(missingVersion).not.toContain("OpenAPI JSON object");
-  // The wording is checked through the YAML decoder; the refusal itself must
-  // stay a typed input error naming the refused argument.
-  if (missingVersionResult.ok) throw new Error("expected a refusal");
-  expect(missingVersionResult.error).toMatchObject({
+  // The refusal itself must stay a typed input error naming the refused
+  // argument; which syntax the caller selected is asserted below.
+  expect(refusalOf(missingVersionResult)).toMatchObject({
+    code: "invalid_request",
     issues: [{ path: ["path"], reason: "invalid_format" }],
   });
 
@@ -348,9 +354,10 @@ it("keeps collection-valued sequence items and names the selected format in pars
     'openapi: "3.3.0"\ninfo: {}\n',
     "openapi-yaml",
   );
-  expect(contractError(unsupportedVersionResult)).toContain(
-    "Only OpenAPI 3.0, 3.1 and 3.2 YAML documents are supported.",
-  );
+  expect(refusalOf(unsupportedVersionResult)).toMatchObject({
+    code: "unsupported_target",
+    category: "unsupported_target",
+  });
   if (unsupportedVersionResult.ok) throw new Error("expected a refusal");
   expect(unsupportedVersionResult.error._tag).toBe(
     "AnalysisUnsupportedTargetError",
@@ -591,4 +598,21 @@ const contractError = (
     result.error.message,
     ...(issues ?? []).map(({ message }) => message),
   ].join("\n");
+};
+
+// Project the typed refusal so tests assert codes and structured facts rather
+// than freezing the explanatory sentence each adapter renders. Input issues are
+// carried under `details`.
+const refusalOf = (result: Awaited<ReturnType<typeof importText>>) => {
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected a refusal");
+  const projected = projectAnalysisError(result.error);
+  const details = projected.details as
+    | { readonly issues?: readonly { readonly message?: string }[] }
+    | undefined;
+  return {
+    code: projected.code,
+    category: projected.category,
+    issues: details?.issues ?? [],
+  };
 };

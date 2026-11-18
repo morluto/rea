@@ -46,11 +46,6 @@ export const apiContractViewRequestSchema = z.discriminatedUnion("collection", [
   }),
 ]);
 
-export const apiContractFormatSchema = z.enum([
-  "openapi-json",
-  "openapi-yaml",
-  "graphql-sdl",
-]);
 const apiContractFileBytesSchema = z
   .int()
   .positive()
