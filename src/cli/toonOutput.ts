@@ -4,7 +4,10 @@ import type { Writable } from "node:stream";
 
 import { encodeLines } from "@toon-format/toon";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { CommandCancellationScope } from "./commandCancellation.js";
 import { bufferedJsonParts } from "../domain/jsonSerialization.js";
@@ -66,16 +69,9 @@ export class ToonOutputCleanupFailure extends ProviderCleanupError {
   }
 }
 
-/** A disposition attested by the signal owner, including final stage cleanup. */
-class ToonOutputCancellation extends AnalysisCancelledError {
-  constructor(
-    operation: string,
-    readonly exitStatus: 130 | 143,
-    cause: unknown,
-  ) {
-    super(operation, { cause });
-  }
-}
+// Only this output owner can attest a process disposition for a cancellation.
+// The shared factory remains the sole constructor of the domain error.
+const cancellationStatuses = new WeakMap<AnalysisCancelledError, 130 | 143>();
 
 /** Read the output owner's disposition without inferring it from ambient state. */
 export const toonOutputCancellationStatus = (
@@ -85,8 +81,8 @@ export const toonOutputCancellationStatus = (
     cause instanceof ToonOutputCleanupFailure
       ? cause.outputFailure?.cause
       : cause;
-  return failure instanceof ToonOutputCancellation
-    ? failure.exitStatus
+  return failure instanceof AnalysisCancelledError
+    ? cancellationStatuses.get(failure)
     : undefined;
 };
 
@@ -136,14 +132,13 @@ export const writeToonOutput = async (
     const firstStagedPart = next.value;
     const cancellation = new CommandCancellationScope();
     let retained = false;
-    const cancelled = () =>
-      cancellation.exitStatus === undefined
-        ? undefined
-        : new ToonOutputCancellation(
-            operation,
-            cancellation.exitStatus,
-            cancellation.signal.reason,
-          );
+    const cancelled = () => {
+      const status = cancellation.exitStatus;
+      if (status === undefined) return undefined;
+      const failure = cancelledBy(operation, cancellation.signal);
+      cancellationStatuses.set(failure, status);
+      return failure;
+    };
     const checkCancellation = () => {
       const failure = cancelled();
       if (failure !== undefined) throw failure;
