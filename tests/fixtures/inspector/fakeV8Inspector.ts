@@ -16,6 +16,12 @@ interface InspectorCommand {
   readonly params: Readonly<Record<string, unknown>>;
 }
 
+interface FakeInspectorTarget {
+  readonly url: string;
+  readonly attached?: unknown;
+  readonly omitDebuggerUrl?: boolean;
+}
+
 interface FakeV8InspectorOptions {
   readonly targetUrl: string;
   readonly attached?: unknown;
@@ -33,15 +39,16 @@ interface FakeV8InspectorOptions {
     readonly method: string;
     readonly params: unknown;
   }[];
-  readonly additionalTargetUrl?: string;
+  readonly additionalTargets?: readonly FakeInspectorTarget[];
   readonly additionalTargetCount?: number;
-  readonly closeOnMethod?: string;
+  readonly disconnectAfterDebuggerEnable?: boolean;
   readonly hangOnMethod?: string;
 }
 
 export interface FakeV8Inspector {
   readonly endpoint: string;
   readonly targetId: string;
+  readonly targetIds: readonly string[];
   readonly commands: readonly InspectorCommand[];
   close(): Promise<void>;
 }
@@ -51,7 +58,29 @@ export const startFakeV8Inspector = async (
   options: FakeV8InspectorOptions,
 ): Promise<FakeV8Inspector> => {
   const targetId = "00000000-0000-4000-8000-000000000001";
-  const otherTargetId = "00000000-0000-4000-8000-000000000002";
+  const primary: FakeInspectorTarget = {
+    url: options.targetUrl,
+    attached: options.attached,
+  };
+  const additionalTargets = [
+    ...(options.additionalTargets ?? []),
+    ...Array.from(
+      { length: options.additionalTargetCount ?? 0 },
+      () => primary,
+    ),
+  ];
+  const advertisedTargets = [
+    { ...primary, id: targetId },
+    ...additionalTargets.map((attributes, index) => ({
+      ...attributes,
+      id: `00000000-0000-4000-8000-${String(index + 2).padStart(12, "0")}`,
+    })),
+  ];
+  const targetPaths = new Set(
+    advertisedTargets
+      .filter(({ omitDebuggerUrl }) => !omitDebuggerUrl)
+      .map(({ id }) => `/${id}`),
+  );
   const commands: InspectorCommand[] = [];
   const sockets = new Set<WebSocket>();
   let port = 0;
@@ -72,35 +101,11 @@ export const startFakeV8Inspector = async (
     }
     if (request.url === "/json/list") {
       response.end(
-        JSON.stringify([
-          target(targetId, options.targetUrl, {
-            type: options.targetType ?? "node",
-            port,
-            attached: options.attached,
-          }),
-          ...(options.additionalTargetUrl === undefined
-            ? []
-            : [
-                target(otherTargetId, options.additionalTargetUrl, {
-                  type: options.targetType ?? "node",
-                  port,
-                  attached: options.attached,
-                }),
-              ]),
-          ...Array.from(
-            { length: options.additionalTargetCount ?? 0 },
-            (_, index) =>
-              target(
-                `00000000-0000-4000-8000-${String(index + 3).padStart(12, "0")}`,
-                options.targetUrl,
-                {
-                  type: options.targetType ?? "node",
-                  port,
-                  attached: options.attached,
-                },
-              ),
+        JSON.stringify(
+          advertisedTargets.map((attributes) =>
+            target(attributes, options.targetType ?? "node", port),
           ),
-        ]),
+        ),
       );
       return;
     }
@@ -109,7 +114,7 @@ export const startFakeV8Inspector = async (
   });
   const webSockets = new WebSocketServer({ noServer: true });
   http.on("upgrade", (request, socket, head) => {
-    if (request.url !== `/${targetId}` && request.url !== `/${otherTargetId}`) {
+    if (request.url === undefined || !targetPaths.has(request.url)) {
       socket.destroy();
       return;
     }
@@ -131,6 +136,7 @@ export const startFakeV8Inspector = async (
   return {
     endpoint: `http://127.0.0.1:${String(port)}`,
     targetId,
+    targetIds: advertisedTargets.map(({ id }) => id),
     commands,
     async close() {
       for (const socket of sockets) socket.terminate();
@@ -155,13 +161,14 @@ const registerInspectorSocket = (
   socket.on("message", (raw) => {
     const command = parseCommand(raw.toString());
     commands.push(command);
-    if (options.closeOnMethod === command.method) {
-      socket.close();
-      return;
-    }
     if (options.hangOnMethod === command.method) return;
     respondToInspectorCommand(socket, command, options);
     socket.send(JSON.stringify({ id: command.id, result: {} }));
+    if (
+      options.disconnectAfterDebuggerEnable &&
+      command.method === "Debugger.enable"
+    )
+      socket.close();
   });
 };
 
@@ -233,20 +240,23 @@ const sendScriptEvents = (
 };
 
 const target = (
-  id: string,
-  url: string,
-  options: {
-    readonly type: "node" | "page";
-    readonly port: number;
-    readonly attached: unknown;
-  },
+  {
+    id,
+    url,
+    attached,
+    omitDebuggerUrl,
+  }: FakeInspectorTarget & { readonly id: string },
+  type: "node" | "page",
+  port: number,
 ) => ({
   id,
-  type: options.type,
+  type,
   title: "redacted-by-provider",
   url,
-  ...(options.attached === undefined ? {} : { attached: options.attached }),
-  webSocketDebuggerUrl: `ws://localhost:${String(options.port)}/${id}`,
+  ...(attached === undefined ? {} : { attached }),
+  ...(omitDebuggerUrl
+    ? {}
+    : { webSocketDebuggerUrl: `ws://localhost:${String(port)}/${id}` }),
 });
 
 const parseCommand = (raw: string): InspectorCommand => {

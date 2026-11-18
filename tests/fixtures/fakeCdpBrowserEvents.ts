@@ -709,17 +709,6 @@ const emitCaptureNavigation = (
   port: number,
   options: FakeOptions,
 ): void => {
-  if (
-    command.method === "Page.captureScreenshot" &&
-    options.screenshotDocumentLoader !== undefined
-  )
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-main",
-        url: `http://127.0.0.1:${String(port)}/app?token=frame-secret`,
-        loaderId: options.screenshotDocumentLoader,
-      },
-    });
   const navigationUrl =
     command.method === "DOMSnapshot.captureSnapshot"
       ? options.navigateDuringCaptureUrl

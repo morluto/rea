@@ -52,20 +52,6 @@ const laterInWindowRequest = (
   },
 });
 
-const expectNoCommittedFrameWithInvalidTimeline = (
-  observation: Awaited<ReturnType<typeof observeWithFake>>["observation"],
-) => {
-  expect(observation.timeline).not.toContainEqual(
-    expect.objectContaining({ type: "navigation_committed" }),
-  );
-  expect(observation.completeness.excluded).toContainEqual(
-    expect.objectContaining({
-      section: "timeline",
-      reason: "invalid_protocol_value",
-    }),
-  );
-};
-
 it("fails closed on an untimestamped cross-origin main-frame commit during clock sampling", async () => {
   const { observation } = await observeDuringClockSampling(
     (command, origin) => {
@@ -97,22 +83,11 @@ it("fails closed on an untimestamped cross-origin main-frame commit during clock
   );
 });
 
-it("keeps an unidentifiable frame commit unknown without inventing a main-frame event", async () => {
-  const { observation } = await observeDuringClockSampling((command) =>
-    command.method === "Performance.getMetrics"
-      ? [frameNavigated(command, { url: "https://outside.invalid/unknown" })]
-      : undefined,
-  );
-
-  expect(observation.window.end_reason).toBe("window_elapsed");
-  expectNoCommittedFrameWithInvalidTimeline(observation);
-  expect(observation.completeness.unavailable_sections).toContain("timeline");
-});
-
-it("records a malformed child identity without treating it as the main frame", async () => {
+it("accounts for each malformed frame commit without inventing a main-frame navigation", async () => {
   const { observation } = await observeDuringClockSampling((command) =>
     command.method === "Performance.getMetrics"
       ? [
+          frameNavigated(command, { url: "https://outside.invalid/unknown" }),
           frameNavigated(command, {
             id: 3,
             parentId: "frame-main",
@@ -123,7 +98,17 @@ it("records a malformed child identity without treating it as the main frame", a
   );
 
   expect(observation.window.end_reason).toBe("window_elapsed");
-  expectNoCommittedFrameWithInvalidTimeline(observation);
+  expect(observation.timeline).not.toContainEqual(
+    expect.objectContaining({ type: "navigation_committed" }),
+  );
+  expect(observation.completeness.unavailable_sections).toContain("timeline");
+  expect(observation.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+      count: 2,
+    }),
+  );
 });
 
 it("updates the main frame from a pre-arm root replacement without inventing a navigation row", async () => {

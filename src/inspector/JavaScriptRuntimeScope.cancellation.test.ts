@@ -122,7 +122,7 @@ it("stops Inspector target authorization after the current stat settles", async 
   fileAccess.extraPath = extraPath;
   const fake = await startFakeV8Inspector({
     targetUrl: nodeDiscoveryTargetUrl(path),
-    additionalTargetUrl: nodeDiscoveryTargetUrl(extraPath),
+    additionalTargets: [{ url: nodeDiscoveryTargetUrl(extraPath) }],
     additionalTargetCount: 1,
   });
   fixtures.push(fake);
