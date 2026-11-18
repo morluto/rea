@@ -47,6 +47,35 @@ const header = (fields: {
   return bytes;
 };
 
+it.each([0, 4])(
+  "merges empty PartitionInfo occurrences and keeps last scalar values (size: %s)",
+  (size) => {
+    const hash = Buffer.alloc(32, 0xab);
+    const fragments = [
+      { size: 8, hash: Buffer.alloc(32) },
+      { size },
+      { hash },
+      {},
+    ];
+    const bytes = buildAndroidOtaPayload({
+      partitions: [
+        {
+          name: "boot",
+          oldInfoFragments: fragments,
+          newInfoFragments: fragments,
+          operations: [{ type: 0, data: Buffer.from("BOOT") }],
+        },
+      ],
+    });
+    const parsed = parse(bytes);
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.partitions[0]).toMatchObject({
+      oldPartitionInfo: { size, hashHex: hash.toString("hex") },
+      newPartitionInfo: { size, hashHex: hash.toString("hex") },
+    });
+  },
+);
+
 it("recognizes CrAU v2 and refuses any other readable major version", () => {
   expect(recognizeAndroidOtaPayload(Buffer.from("nope"))).toBeUndefined();
   expect(recognizeAndroidOtaPayload(Buffer.from("CrAU"))).toEqual({

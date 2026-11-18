@@ -44,7 +44,10 @@ coordinate: [only group/version coordinates may be inherited](https://maven.apac
 For a POM, `parent` records the declared parent coordinates and `relative_path`
 when present. `relative_path_declared` distinguishes an empty `<relativePath/>`,
 which disables Maven's local parent lookup, from an omitted tag. `properties`
-lists each child of `<properties>` as name and value. URL userinfo
+lists each child of `<properties>` as its written qualified name and value.
+Prefixes remain part of the key: `a:revision` and `b:revision` stay distinct
+even when both prefixes bind to the same XML namespace URI, and match the
+spelling kept in `${a:revision}` and `${b:revision}` references. URL userinfo
 credentials in a property value are removed and `value_credentials_redacted`
 is `true`; when the credential span cannot be located, `value` is `null`.
 `dependencies` comes from the project's `<dependencies>` list.

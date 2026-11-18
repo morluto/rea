@@ -1548,7 +1548,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         ),
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "passes the selected environment to the actual browser launch boundary",
+          "passes the selected environment to the $platform browser launch boundary",
         ),
       ),
       handshake: covered(
