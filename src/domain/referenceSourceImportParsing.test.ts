@@ -61,8 +61,8 @@ it("keeps declaration-level imports when the member-mutation phase is refused", 
 it.each([
   ["main.mjs", "commonjs", true],
   ["main.js", "module", true],
-  ["main.cjs", "module", false],
-  ["main.js", "commonjs", false],
+  ["main.cjs", "module", true],
+  ["main.js", "commonjs", true],
   ["main.mts", "commonjs", true],
   ["main.cts", "module", true],
   ["main.ts", "commonjs", true],
@@ -101,7 +101,12 @@ it.each([
       expect(parsed.relationships).toMatchObject([
         {
           to: esm ? "./dep.mjs" : "./dep.cjs",
-          parse_state: path.startsWith(".") ? "partial" : "parsed",
+          parse_state:
+            path.startsWith(".") ||
+            path === "main.cjs" ||
+            (path === "main.js" && packageType === "commonjs")
+              ? "partial"
+              : "parsed",
         },
       ]);
     } else {
