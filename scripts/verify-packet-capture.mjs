@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -15,10 +16,12 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -29,7 +32,7 @@ if (!isAbsolute(process.env.REA_TSHARK_COMMAND ?? ""))
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-capture-verifier-",
 });
 const path = join(root.path, "network with spaces.pcap");
@@ -112,24 +115,30 @@ const expectedAddressSpace = Math.min(
     .map((value) => (value === "unlimited" ? Infinity : Number(value))),
 );
 
-await withVerifierCleanup(async () => {
+// The root is removed only after the client and transport confirm.
+root.releaseAfter(() => client.close());
+root.releaseAfter(() => transport.close());
+await withVerifierFixture(root, async () => {
   await writeFile(path, source);
   await writeFile(bluetooth, bluetoothSource);
   await client.connect(transport);
   const tool = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_packet_capture",
   );
-  assert.ok(tool?.outputSchema);
+  assert.ok(tool);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(tool.inputSchema));
-  assert.ok(ajv.validateSchema(tool.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(tool.name)));
   const inspect = async (input) => {
     const response = await client.callTool({
       name: tool.name,
       arguments: input,
     });
     assert.ok(
-      ajv.validate(tool.outputSchema, response.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(tool.name),
+        response.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const evidence = parseEvidence(
@@ -275,10 +284,10 @@ await withVerifierCleanup(async () => {
   const pcapTool = (await client.listTools()).tools.find(
     (t) => t.name === "inspect_pcap_capture",
   );
-  assert.ok(pcapTool?.outputSchema);
+  assert.ok(pcapTool);
   const pcapAjv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(pcapAjv.validateSchema(pcapTool.inputSchema));
-  assert.ok(pcapAjv.validateSchema(pcapTool.outputSchema));
+  assert.ok(pcapAjv.validateSchema(canonicalOutputSchema(pcapTool.name)));
   for (const capturePath of [path, bluetooth]) {
     const capinfosOutput = (
       await execute(
@@ -315,7 +324,10 @@ await withVerifierCleanup(async () => {
       arguments: { path: capturePath, detail: "summary" },
     });
     assert.ok(
-      pcapAjv.validate(pcapTool.outputSchema, response.structuredContent),
+      pcapAjv.validate(
+        canonicalOutputSchema(pcapTool.name),
+        response.structuredContent,
+      ),
       pcapAjv.errorsText(),
     );
     const summary = parseEvidence(
@@ -392,9 +404,9 @@ await withVerifierCleanup(async () => {
   const discovery = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_packet_fields",
   );
-  assert.ok(discovery?.outputSchema);
+  assert.ok(discovery);
   assert.ok(ajv.validateSchema(discovery.inputSchema));
-  assert.ok(ajv.validateSchema(discovery.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(discovery.name)));
   const nativeProfile = join(root.path, "native-profile");
   await mkdir(nativeProfile);
   const native = (
@@ -421,7 +433,10 @@ await withVerifierCleanup(async () => {
       arguments: input,
     });
     assert.ok(
-      ajv.validate(discovery.outputSchema, response.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(discovery.name),
+        response.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const evidence = parseEvidence(
@@ -523,7 +538,7 @@ await withVerifierCleanup(async () => {
     "network with spaces.pcap",
     "paged.pcap",
   ]);
-}, [() => client.close(), () => transport.close(), () => root.close()]);
+});
 console.log(
   JSON.stringify(
     {

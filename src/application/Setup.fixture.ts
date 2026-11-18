@@ -12,25 +12,23 @@ import type {
   SetupHopperInstallResult,
 } from "./SetupInstallFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { DoctorReport, DoctorScope } from "./Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
-  DoctorReport,
-  DoctorScope,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
-import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
 /** Recording setup host for service-level planning and recovery tests. */
 export class FakeSetupHost implements SetupHost {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory = "/fixture/home";
   skillDestinations(clientIds: readonly string[]) {
-    return skillDestinations(this.homeDirectory, clientIds);
+    return skillDestinations(this.homeDirectory, clientIds, {}, this.platform);
   }
   registrationCommand: readonly string[];
   registrationCommandBlocker?: string;

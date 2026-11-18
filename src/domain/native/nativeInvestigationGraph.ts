@@ -1,7 +1,7 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import {
-  objcImplementationClassName,
   nativeMetadataEvidenceSchema,
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
@@ -101,10 +101,18 @@ export type NativeInvestigationEdge = z.infer<
 /** Explicit inventory coverage so missing graph parts are not read as absent. */
 export const nativeInvestigationCoverageSchema = z.strictObject({
   facet: z.string().min(1),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
+  status: z
+    .enum([...coverageStatusSchema.options, "unsupported", "not_requested"])
+    .describe(
+      "unknown when the producer could not tell how much of the facet it covered; omitted is then null.",
+    ),
   reason: z.string().nullable(),
   examined: z.int().nonnegative(),
-  omitted: z.int().nonnegative(),
+  omitted: z
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe("Omitted items; null when the count is unknown."),
 });
 
 export const nativeInvestigationProviderSchema = z.strictObject({
@@ -367,8 +375,7 @@ export const joinInterfaceBuilderDispatch = (
       (candidate) =>
         candidate.method_type === "instance" &&
         candidate.selector === selector &&
-        (className === null ||
-          objcImplementationClassName(candidate) === className),
+        (className === null || candidate.class_name === className),
     );
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;

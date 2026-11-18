@@ -384,23 +384,6 @@ describe("GameCube DOL block permissions and state", () => {
     });
   });
 
-  it("does not verify a DOL block whose permissions were never measured", async () => {
-    const image = await attestMutated((mappings) => {
-      const text = mappings.find((m) => m.block === ".text0");
-      if (text === undefined) throw new Error("Missing text mapping");
-      delete text.readable;
-      delete text.writable;
-      delete text.executable;
-    });
-    expect(image.status).toBe("mismatch");
-    expect(
-      checkNamed(image.checks, "block_permissions_measured"),
-    ).toMatchObject({ matched: false, observed: [".text0"] });
-    expect(blockCheck(image.checks, ".text0", TEXT_ADDRESS)).toMatchObject({
-      matched: false,
-    });
-  });
-
   it("flags a text block that is not readable", async () => {
     const image = await attestMutated((mappings) => {
       const text = mappings.find((m) => m.block === ".text0");

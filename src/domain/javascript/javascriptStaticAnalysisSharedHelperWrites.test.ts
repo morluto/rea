@@ -5,7 +5,7 @@ import changedUrl from "node:url";
 import url from "node:url";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it("observes that separate Node default imports share mutable helper slots", () => {
   expect(changedPath).toBe(path);

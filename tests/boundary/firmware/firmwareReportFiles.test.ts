@@ -7,14 +7,15 @@ import {
   FirmwareFileAccess,
 } from "../../../src/firmware/FirmwareFiles.js";
 import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
-import { firmwareFailure } from "../../../src/firmware/FirmwareFailures.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
+import { firmwareFailureDialect } from "../../../src/firmware/FirmwareFailures.js";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import {
   normalizeBinwalkReport,
   normalizeUnblobReport,
@@ -25,6 +26,12 @@ import {
 } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+/** Classify a raw firmware failure the way the firmware producers do. */
+const firmwareFailure = (
+  cause: unknown,
+  context: Parameters<typeof firmwareFailureDialect>[0],
+) => classifyProviderFailure(cause, firmwareFailureDialect(context));
 
 it.each([
   ["invalid leading byte", [0xff]],

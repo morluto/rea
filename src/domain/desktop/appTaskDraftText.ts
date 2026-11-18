@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -11,6 +12,7 @@ import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The pointers a diff lists, of every kind. */
 type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;
@@ -77,11 +79,6 @@ const parentBelowRoot = (pointer: string): string | undefined => {
 /** Whether the diff names an element by one of its attributes, as `[name=p][@xid=6]`, rather than by its tag alone or its position. */
 const namedByAttribute = (pointer: string) =>
   (pointer.split("/").at(-1) ?? "").includes("[@");
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** An element's attributes; none for any other value. */
 const attributesOf = (value: JsonValue | undefined) =>
@@ -161,7 +158,7 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
     )
       continue;
     const selector = `[name=${after.name}][@${key}=${value}]`;
-    const pointer = `${parent}/children/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+    const pointer = `${parent}/children/${escapeJsonPointerToken(selector)}`;
     if (
       resolvePointer(ends.baseline, pointer, "xml") === before &&
       resolvePointer(ends.final, pointer, "xml") === after
@@ -296,6 +293,7 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
             identifier: false,
           }));
       }
+      // generation-cap: ancestor tags climbed to name an element
       return [current, ...[...passed.slice(1), named].slice(0, MAX_TAG_CLIMB)]
         .filter((element, index, all) => all.indexOf(element) === index)
         .map((element) => ({ element, pointer: element, identifier: false }));

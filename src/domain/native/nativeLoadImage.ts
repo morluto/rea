@@ -33,10 +33,9 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       initialized: z.boolean(),
       loaded: z.boolean(),
       overlay: z.boolean(),
-      // Optional so inspection snapshots saved before permissions were measured still parse.
-      readable: z.boolean().optional(),
-      writable: z.boolean().optional(),
-      executable: z.boolean().optional(),
+      readable: z.boolean(),
+      writable: z.boolean(),
+      executable: z.boolean(),
       length: integer.min(1),
       source_file_index: integer.nullable(),
       file_offset: integer.nullable(),
@@ -50,8 +49,8 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       offset: integer.max(0xffff).nullable(),
       status: z.string().min(1),
       type: z.int(),
-      // Missing on retained observations made before the provider recorded it.
-      symbol: z.string().nullable().exactOptional(),
+      /** Ghidra's relocation symbol name; null when the relocation has none. */
+      symbol: z.string().nullable(),
       values: z.array(
         z.int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
       ),

@@ -10,11 +10,11 @@ import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { discoverSetupState } from "./SetupPlan.js";
 import type { MsixPackageView } from "./MsixPackageStorage.js";
 import {
-  supportedClientRegistrationProfile,
   registrationWriteBlocker,
   supportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 // Host joins keep containment checks meaningful on POSIX test hosts too.
 const PROFILE = String.raw`C:\Users\a`;
@@ -870,5 +870,34 @@ describe("setup tool family scope", () => {
     expect(result.plannedActions.map(({ kind }) => kind)).toContain(
       "install_hopper",
     );
+  });
+});
+
+it("discloses the selected catalog profile before applying it with the family scope", async () => {
+  const host = new FakeSetupHost();
+  host.doctorHealthy = true;
+  host.skill = "unchanged";
+  host.clients = [
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: "/cursor.json",
+    },
+  ];
+  const selection = {
+    clientIds: ["cursor"],
+    toolCatalogProfile: "hot-cold" as const,
+    toolFamilies: "session,application",
+  };
+  const plan = await runSetup({ ...options(false), ...selection }, host);
+  expect(plan.plannedActions[0]?.detail).toContain(
+    "REA_MCP_TOOL_CATALOG_PROFILE=hot-cold",
+  );
+  expect(host.configuredProviderEnvironments).toEqual([]);
+  const applied = await runSetup({ ...options(true), ...selection }, host);
+  expect(applied.status).toBe("ready");
+  expect(host.configuredProviderEnvironments).toContainEqual({
+    REA_MCP_TOOL_FAMILIES: "session,application",
+    REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
   });
 });

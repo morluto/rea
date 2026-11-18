@@ -1,4 +1,5 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { dirname, join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash, randomBytes } from "node:crypto";
@@ -10,15 +11,15 @@ import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "../ArtifactHash.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
-import * as artifactPaths from "../ArtifactPaths.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import {
   cArchiveExecutable,
   pyzArchive,
@@ -282,6 +283,27 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
   });
 });
 
+it("names whether an opened PyInstaller entry is foreign or differs from inventory", async () => {
+  const bytes = archive(Buffer.from("first"));
+  await withPyInstallerReader(bytes, async (reader) => {
+    await reader.prepareContainer(hash(bytes));
+    const [entry] = await members(reader);
+    if (entry === undefined) throw new Error("Missing member");
+    await expect(
+      reader.open({ ...entry, adapterKey: "not-inventoried" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
+    await expect(
+      reader.open({ ...entry, declaredSize: (entry.declaredSize ?? 0) + 1 }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+  });
+});
+
 it.each(["ENOENT", "ENOTDIR"] as const)(
   "retains changed-source evidence when an admitted carrier becomes unaddressable (%s)",
   async (code) => {
@@ -392,7 +414,11 @@ it.each([false, true])(
         void consumed.catch(() => undefined);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            consumed,
+            "PyInstaller operation",
+          );
           controller.abort(caller);
           let closed = false;
           closing = reader.close().then(() => {
@@ -616,7 +642,11 @@ it("joins a late private-file close and retries its failed owner after cancellat
       .next()
       .catch((cause: unknown) => cause);
     try {
-      await entered.promise;
+      await awaitAcknowledgement(
+        entered.promise,
+        listing,
+        "PyInstaller operation",
+      );
       let settled = false;
       const closing = reader.close().then(() => {
         settled = true;
@@ -690,7 +720,11 @@ for (const cancel of [false, true]) {
           (cause: unknown) => ({ ok: false as const, cause }),
         );
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            reading,
+            "PyInstaller operation",
+          );
           expect(output.readableEnded).toBe(false);
           expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           if (cancel) {
@@ -825,7 +859,11 @@ it.each([false, true])(
           .catch((cause: unknown) => cause);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            first,
+            "PyInstaller operation",
+          );
           await setImmediate();
           expect(handles.size).toBe(1);
           caller.abort(reason);
@@ -928,7 +966,11 @@ it.each(
       );
       let second: Promise<ArtifactEntry[]> | undefined;
       try {
-        await entered.promise;
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
         expect(reader.formatMetadata()).toBeUndefined();
         if (peer) {
           second = members(reader);
@@ -1031,7 +1073,11 @@ it("keeps a physical parse failure primary despite simultaneous caller cancellat
       );
       let second: Promise<unknown> | undefined;
       try {
-        await entered.promise;
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
         second = members(reader).catch((cause: unknown) => cause);
         release.resolve();
         const original = await first;
@@ -1042,8 +1088,7 @@ it("keeps a physical parse failure primary despite simultaneous caller cancellat
         expect(reader.formatMetadata()).toBeUndefined();
       } finally {
         release.resolve();
-        await first;
-        await second;
+        await Promise.allSettled([first, ...(second ? [second] : [])]);
         reads.mockRestore();
       }
     },

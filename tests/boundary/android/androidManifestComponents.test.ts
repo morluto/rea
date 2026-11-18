@@ -35,8 +35,8 @@ it.each([
   },
 );
 
-it("keeps pre-projection package parses independent", () => {
-  const older = {
+it("refuses package results without the component projection", () => {
+  const unprojected = {
     engine: {
       name: "jadx",
       version: null,
@@ -60,15 +60,10 @@ it("keeps pre-projection package parses independent", () => {
     resource_count: 0,
     signature_verification: "not_performed",
   };
-  const first = androidResultSchemas.inspect_android_package.parse(older);
-  expect(first.components).toMatchObject({ status: "unavailable", items: [] });
-  first.components.limitations.push("local parse mutation");
-  try {
-    const second = androidResultSchemas.inspect_android_package.parse(older);
-    expect(second.components.limitations).not.toContain("local parse mutation");
-  } finally {
-    first.components.limitations.pop();
-  }
+  expect(
+    androidResultSchemas.inspect_android_package.safeParse(unprojected).error
+      ?.issues,
+  ).toEqual([expect.objectContaining({ path: ["components"] })]);
 });
 
 it("projects exact declared component attributes without inferring runtime defaults", () => {
@@ -151,9 +146,9 @@ it("enforces the process copy budget across individually valid components", () =
   ).toBeLessThanOrEqual(ANDROID_MANIFEST_LIMITS.processBytes);
 });
 
-it("keeps historical declaration omissions unknown rather than absent", () => {
+it("refuses components without their declaration facets", () => {
   const parsed =
-    androidResultSchemas.inspect_android_package.shape.components.parse({
+    androidResultSchemas.inspect_android_package.shape.components.safeParse({
       status: "complete",
       items: [
         {
@@ -174,17 +169,20 @@ it("keeps historical declaration omissions unknown rather than absent", () => {
       ],
       limitations: [],
     });
-  expect(parsed.status).toBe("complete");
-  expect(parsed.items[0]?.declaration_coverage).toBe("unknown");
-  for (const field of [
-    "enabled",
-    "process",
-    "grant_uri_permissions",
-    "intent_filters",
-    "meta_data",
-    "location",
-  ])
-    expect(parsed.items[0]).not.toHaveProperty(field);
+  expect(new Set(parsed.error?.issues.map(({ path }) => path.at(-1)))).toEqual(
+    new Set([
+      "declaration_coverage",
+      "declaration_index",
+      "location",
+      "enabled",
+      "enabled_declaration",
+      "process",
+      "grant_uri_permissions",
+      "grant_uri_permissions_declaration",
+      "intent_filters",
+      "meta_data",
+    ]),
+  );
 });
 
 const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>

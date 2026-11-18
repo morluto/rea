@@ -1,9 +1,10 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { readClientConfigurationFiles } from "../../../src/application/ClientConfigurationFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it("attributes case-folded Windows overrides without disclosing values", async () => {
   const root = await createTestTempDirectory("rea-config-override-origin-");
@@ -47,12 +48,16 @@ it("keeps a malformed stored environment attributed to its file", async () => {
       },
     }),
   );
-  const result = await readClientConfigurationFiles({
-    name: "cursor",
-    registrationProfile: supportedClientRegistrationProfile("cursor"),
-    format: "json",
-    configPath,
-  });
+  const result = await readClientConfigurationFiles(
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    },
+    undefined,
+    HOST_PLATFORM.platform,
+  );
   expect(result).toMatchObject({
     ok: false,
     error: { detail: expect.stringContaining(`Configuration ${configPath}`) },

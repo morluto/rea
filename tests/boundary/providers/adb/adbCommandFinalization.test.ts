@@ -1,6 +1,7 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
+import { afterAll, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 
 import { runAdbCapture } from "../../../../src/adb/AdbCommand.js";
 import {
@@ -16,38 +17,26 @@ import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { AnalysisTimeoutError } from "../../../../src/domain/analysisErrorCore.js";
+import { OwnedCommandFailure } from "../../../../src/process/OwnedCommand.js";
+import { ArtifactResourceScope } from "../../../../src/resources/index.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const hooks = vi.hoisted(() => ({
   afterCommand: undefined as (() => void) | undefined,
   failure: undefined as unknown,
 }));
 
-vi.mock("../../../../src/process/ExecFileOutput.js", async (importOriginal) => {
+vi.mock("../../../../src/adb/AdbProcess.js", async (importOriginal) => {
   const actual =
-    await importOriginal<
-      typeof import("../../../../src/process/ExecFileOutput.js")
-    >();
+    await importOriginal<typeof import("../../../../src/adb/AdbProcess.js")>();
   return {
     ...actual,
-    execFileBytes: async (...args: Parameters<typeof actual.execFileBytes>) => {
+    runAdbProcess: async (...args: Parameters<typeof actual.runAdbProcess>) => {
       try {
-        return await actual.execFileBytes(...args);
-      } catch (cause: unknown) {
-        hooks.failure = cause;
-        throw cause;
-      } finally {
-        hooks.afterCommand?.();
-      }
-    },
-    execFileOutput: async (
-      ...args: Parameters<typeof actual.execFileOutput>
-    ) => {
-      try {
-        return await actual.execFileOutput(...args);
-      } catch (cause: unknown) {
-        hooks.failure = cause;
-        throw cause;
+        const outcome = await actual.runAdbProcess(...args);
+        if (!outcome.ok) hooks.failure = outcome.failure.cause;
+        return outcome;
       } finally {
         hooks.afterCommand?.();
       }
@@ -60,6 +49,15 @@ beforeEach(() => {
   hooks.failure = undefined;
 });
 
+const resources = new ArtifactResourceScope();
+afterAll(() => resources.close());
+
+/** The selected adb, retaining unfinished command cleanup in this file's scope. */
+const host = async (environment: NodeJS.ProcessEnv) => ({
+  ...(await resolveAdbBinary(environment, HOST_PLATFORM.platform)),
+  resources,
+});
+
 const capture = async (
   script: string,
   signal?: AbortSignal,
@@ -68,7 +66,7 @@ const capture = async (
   runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    await resolveAdbBinary({ ...process.env, REA_ADB_PATH: process.execPath }),
+    await host({ ...process.env, REA_ADB_PATH: process.execPath }),
     ["-e", script],
     limits,
     signal,
@@ -117,7 +115,7 @@ test("hands completed bytes to the consuming provider after a late abort", async
     await capture("process.stdout.write('observed')", controller.signal),
   ).toEqual({
     ok: true,
-    value: { stdout: Buffer.from("observed"), stderr: Buffer.alloc(0) },
+    value: { stdout: Buffer.from("observed"), stderr: "" },
   });
 });
 
@@ -131,16 +129,17 @@ test("retains the command owner's exact cancellation reason after active process
     { timeoutMs: 5000, maxOutputBytes: 1024 },
   );
   try {
-    await vi.waitFor(async () =>
+    await waitFor(async () =>
       expect(await readFile(ready, "utf8")).toBe("ready"),
     );
     controller.abort(null);
     const error = await failureOf(pending);
     expect(error._tag).toBe("AnalysisCancelledError");
     expect(error.cause).toBeNull();
+    expect(hooks.failure).toBeInstanceOf(OwnedCommandFailure);
     expect(hooks.failure).toMatchObject({
-      _tag: "ExecFileOutputCancelledError",
-      cause: null,
+      reason: "cancelled",
+      cancellation: { reason: null },
     });
   } finally {
     controller.abort(null);
@@ -154,7 +153,7 @@ const clientScript = async (source: string) => {
   await writeFile(binary, `#!${process.execPath}\n${source}\n`, {
     mode: 0o755,
   });
-  return resolveAdbBinary({ ...process.env, REA_ADB_PATH: binary });
+  return host({ ...process.env, REA_ADB_PATH: binary });
 };
 const nativeClientTest = test.skipIf(process.platform === "win32");
 
@@ -164,7 +163,7 @@ test.each([null, "caller stopped", new Error("caller stopped")] as const)(
     const controller = new AbortController();
     controller.abort(reason);
     const error: unknown = await inspectAdbClient(
-      await resolveAdbBinary({ REA_ADB_PATH: process.execPath }),
+      await host({ REA_ADB_PATH: process.execPath }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -208,7 +207,7 @@ nativeClientTest(
     const controller = new AbortController();
     hooks.afterCommand = () => controller.abort(null);
     const error: unknown = await inspectAdbClient(
-      await resolveAdbBinary({ REA_ADB_PATH: join(root, "missing") }),
+      await host({ REA_ADB_PATH: join(root, "missing") }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -313,7 +312,6 @@ nativeClientTest.each([false, true])(
     expect(prerequisite.capturedOutput).toEqual(capturedOutput);
     expect(result.error.capturedOutput).toEqual(capturedOutput);
   },
-  20000,
 );
 
 nativeClientTest(
@@ -350,5 +348,4 @@ nativeClientTest(
       details: { timeout_ms: 10000 },
     });
   },
-  20000,
 );

@@ -28,7 +28,7 @@ replaces the classic floating-point unit, so it misinterprets ordinary
 
 The lane therefore imports with `PowerPC:BE:32:default` and compiler spec
 `default`, commits that choice in the analysis profile as
-`language_selection: "provider-pinned-v1"`, and checks the language Ghidra
+`language_selection: "provider-pinned"`, and checks the language Ghidra
 reports after import. A different language set through
 `REA_GHIDRA_LANGUAGE_ID` (and optionally `REA_GHIDRA_COMPILER_SPEC_ID`)
 replaces the lane default and is admitted against the installed language

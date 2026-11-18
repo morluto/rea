@@ -1,4 +1,4 @@
-import type { ManagedExceptionRegion } from "./ManagedMemberInspectorCore.js";
+import type { ManagedExceptionRegion } from "../domain/managed/managedMemberInspectorCore.js";
 import type { ExceptionRegionParseResult } from "./ManagedMemberInstructionDecoder.js";
 
 const clauseFlagsIssue = (region: ManagedExceptionRegion): string | null =>
