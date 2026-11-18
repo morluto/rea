@@ -3,6 +3,8 @@ import {
   changedEvidenceSubject,
   fileIdentity,
 } from "../../../tests/fixtures/evidenceSubject.js";
+import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
@@ -41,12 +43,13 @@ const report: RustBinary = {
   limitations: [],
 };
 const parent = (value = structuredClone(report)): AnalysisViewParent => {
+  const architecture = binaryMetadataArchitecture(value.architecture);
   const evidence = createEvidence(
     {
       path: value.artifact.path,
       sha256: value.artifact.sha256,
-      format: "elf",
-      architecture: "x86_64",
+      format: metadataReportSubjectFormat(value),
+      ...(architecture === undefined ? {} : { architecture }),
     },
     { id: "rust-auditable", name: "Rust reader", version: "1" },
     {
@@ -140,12 +143,55 @@ it("checks exact artifact identity and subject architecture for every Rust view"
   }
 });
 
+const withSectionName = (
+  value: RustBinary,
+  section_name: NonNullable<RustBinary["auditable_metadata"]>["section_name"],
+): RustBinary => ({
+  ...value,
+  auditable_metadata:
+    value.auditable_metadata === null
+      ? null
+      : { ...value.auditable_metadata, section_name },
+});
+
+it("refuses imported reports whose container facts contradict their format", () => {
+  const wasm: RustBinary = {
+    ...structuredClone(report),
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  };
+  const accepted = projectAnalysisView(parent(wasm), { kind: "summary" });
+  if (!accepted.ok || accepted.value.kind !== "summary")
+    throw new Error("WebAssembly summary failed");
+  expect(accepted.value.summary).toMatchObject({
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  });
+  for (const value of [
+    { ...wasm, architecture: "x86_64" },
+    { ...wasm, byte_order: "big" as const },
+    { ...wasm, bits: 32 as const },
+    { ...structuredClone(report), architecture: "wasm" },
+    withSectionName(wasm, "__DATA,.dep-v0"),
+    withSectionName(structuredClone(report), "__DATA,.dep-v0"),
+  ])
+    expect(projectAnalysisView(parent(value), { kind: "summary" }).ok).toBe(
+      false,
+    );
+});
+
 it("bounds inherited warnings and retains cycle counts without walking a cyclic graph", () => {
   const input = { ...parent(), limitations: ["x".repeat(300_000)] };
   const result = projectAnalysisView(input, { kind: "summary" });
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     summary: {
+      format: "elf",
+      bits: 64,
       auditable_metadata: {
         format_version: null,
         counts: { packages: 1, edges: 1, cyclic_packages: 1 },
