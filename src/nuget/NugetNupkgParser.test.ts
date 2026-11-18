@@ -141,6 +141,9 @@ it("reads identity, license, repository, dependency groups and folder roles", as
   );
   expect(report.coverage.status).toBe("complete");
   expect(report.limitations).toContain(NUPKG_LIMITATIONS.memberRoles);
+  expect(report.limitations).not.toContainEqual(
+    expect.stringContaining("beside <group> elements were omitted"),
+  );
 });
 
 it("keeps the stored ZIP member name beside its logical path", async () => {
@@ -185,7 +188,49 @@ it("records ungrouped dependencies as a group with a null target framework", asy
       ],
     },
   ]);
+  expect(report.limitations).not.toContain(
+    NUPKG_LIMITATIONS.ungroupedBesideGroups(1),
+  );
 });
+
+const NET8_GROUP =
+  '<group targetFramework="net8.0"><dependency id="Bar" version="2.0.0" /></group>';
+
+it.for([
+  ["in one <dependencies> element", `<dependencies>\n      ${NET8_GROUP}`],
+  [
+    "in a separate <dependencies> element",
+    `<dependencies>${NET8_GROUP}</dependencies>\n    <dependencies>`,
+  ],
+])(
+  "omits ungrouped dependencies beside groups %s, as NuGet does",
+  async ([, opening]) => {
+    const bytes = await nugetNupkgFixture({
+      nuspec: ungroupedNuspec.replace("<dependencies>", opening!),
+      includeRels: false,
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.dependency_groups).toEqual([
+      {
+        target_framework: "net8.0",
+        dependencies: [
+          {
+            id: "Bar",
+            version: "2.0.0",
+            include: null,
+            exclude: null,
+            development_dependency: null,
+          },
+        ],
+      },
+    ]);
+    expect(report.limitations).toContain(
+      NUPKG_LIMITATIONS.ungroupedBesideGroups(1),
+    );
+  },
+);
 
 it("inventories a package with no .nuspec and leaves identity unknown", async () => {
   const bytes = await nugetNupkgMissingNuspecFixture();
