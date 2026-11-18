@@ -91,6 +91,8 @@ Lbounded_default:
 .p2align 1
 Lmasked_table:
   .byte 0, 2, 4, 6, 8, 10, 12, 14
-  .zero 248
+  .rept 248
+  .byte 0
+  .endr
 Lbounded_table:
   .byte 0, 2, 4, 6

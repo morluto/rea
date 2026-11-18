@@ -110,25 +110,10 @@ export type GhidraKnownProviderDefect =
   | typeof GHIDRA_CLANG_O0_SWITCH_DEFECT
   | typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT;
 
-/** Defects recorded for one observed application version. */
-export const ghidraKnownProviderDefects = (
-  providerVersion: string,
-): readonly GhidraKnownProviderDefect[] => {
-  const compatibility = ghidraReleaseCompatibility(providerVersion);
-  if (
-    compatibility.status !== "verified" &&
-    compatibility.status !== "compatible"
-  )
-    return [];
-  return compatibility.status === "verified"
-    ? [GHIDRA_CLANG_O0_SWITCH_DEFECT, GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT]
-    : [GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT];
-};
-
 const formatClosedSwitchDefect = (
   defect: typeof GHIDRA_CLANG_O0_SWITCH_DEFECT,
 ): string =>
-  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for ${defect.scope.compiler} ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded only for the exact ${defect.release} build and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
+  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for ${defect.scope.compiler} ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded for parsed ${defect.release} releases whose patch is below ${defect.fixed_in}, including a zero patch and a suffix, and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
 
 const formatOpenSwitchDefect = (
   defect: typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
@@ -222,6 +207,41 @@ export const ghidraConfigurationVersion = (raw: string): string | undefined => {
   const patch = version.patch === 0 ? "" : `.${String(version.patch)}`;
   const suffix = version.suffix === "-" ? "" : version.suffix;
   return `${String(version.major)}.${String(version.minor)}${patch}${suffix}`;
+};
+
+const parsedReleasePrecedes = (
+  version: GhidraReleaseVersion,
+  boundary: Pick<GhidraReleaseVersion, "major" | "minor" | "patch">,
+): boolean =>
+  version.major < boundary.major ||
+  (version.major === boundary.major && version.minor < boundary.minor) ||
+  (version.major === boundary.major &&
+    version.minor === boundary.minor &&
+    version.patch < boundary.patch);
+
+/**
+ * Defects for one observed application version. `ghidra-9996` follows the
+ * parsed major, minor, and patch, so `12.2`, `12.2.0`, and `12.2.0-DEV` all
+ * carry it and `12.2.1` does not. A suffix does not change the patch.
+ * `ghidra-10154` stays on every admitted build until a fix release is known.
+ */
+export const ghidraKnownProviderDefects = (
+  providerVersion: string,
+): readonly GhidraKnownProviderDefect[] => {
+  const version = parseGhidraRelease(providerVersion);
+  if (version === undefined) return [];
+  const fix = parseGhidraRelease(GHIDRA_CLANG_O0_SWITCH_DEFECT.fixed_in);
+  const defects: GhidraKnownProviderDefect[] = [];
+  if (
+    fix !== undefined &&
+    version.major === 12 &&
+    version.minor === 2 &&
+    parsedReleasePrecedes(version, fix)
+  )
+    defects.push(GHIDRA_CLANG_O0_SWITCH_DEFECT);
+  if (ghidraReleaseAccepted(providerVersion))
+    defects.push(GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT);
+  return defects;
 };
 
 const integerGroup = (value: string | undefined): number | undefined => {

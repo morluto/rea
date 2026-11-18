@@ -1193,14 +1193,15 @@ does not satisfy this host-validated admission rule. Ghidra 12.2 declares
 JDK 25 or newer and sets no maximum. The bridge is verified with Ghidra 12.2
 and JDK 25. Ghidra 12.1 is not accepted: the bridge calls
 `PrototypeModel.getStorageLocations` with the four-argument form added in 12.2,
-and 12.1 only has the three-argument method. A session whose `application.version` is exactly `12.2` records known provider
+and 12.1 only has the three-argument method. A session whose parsed
+`application.version` is 12.2 with patch 0 records known provider
 defect `ghidra-9996`: Clang `-O0` x86-64 switches whose case labels start above
 zero can lose jump-table flow references and yield incorrect decompiler output.
+`12.2`, `12.2.0`, and `12.2.0` with a suffix all carry it.
 [Ghidra #9996](https://github.com/NationalSecurityAgency/ghidra/issues/9996) is
 closed by `c93917a622211349998f641de54cfdbe0e0e5bee` and milestoned for 12.2.1,
-which is not yet released. The limitation is attached to that exact build's
-session and decompile results and is absent from `12.2.1` and every other
-version string. REA's switch verifier compiles with `-O2`, so it does not
+which is not yet released. The limitation clears on parsed `12.2.1` and is
+absent from later patches and later minors. REA's switch verifier compiles with `-O2`, so it does not
 detect this shape. Every admitted session also records `ghidra-10154`.
 [Ghidra #10154](https://github.com/NationalSecurityAgency/ghidra/issues/10154)
 is open: an AArch64 byte-offset switch bounded only by `and #0xff` loses its

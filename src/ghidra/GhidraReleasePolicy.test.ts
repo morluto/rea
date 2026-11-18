@@ -75,8 +75,19 @@ describe("Ghidra release admission", () => {
         `${raw}; compatible ${ghidraReleaseLine()} release (verified build ${SUPPORTED_GHIDRA_VERSION})`,
       );
     }
-    const openDefect = ghidraKnownProviderDefectLimitations("12.2")[1];
-    for (const raw of ["12.2.0", "12.2.1", "12.2-DEV", "12.3"]) {
+    const [closedDefect, openDefect] =
+      ghidraKnownProviderDefectLimitations("12.2");
+    for (const raw of ["12.2", "12.2.0", "12.2.0-DEV", "12.2-DEV"]) {
+      expect(ghidraKnownProviderDefects(raw)).toEqual([
+        GHIDRA_CLANG_O0_SWITCH_DEFECT,
+        GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+      ]);
+      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([
+        closedDefect,
+        openDefect,
+      ]);
+    }
+    for (const raw of ["12.2.1", "12.3"]) {
       expect(ghidraKnownProviderDefects(raw)).toEqual([
         GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
       ]);
