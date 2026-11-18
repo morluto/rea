@@ -35,6 +35,7 @@ import {
   type AnalysisExecution,
 } from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
+import { ADB_DEVICE_OBSERVATION_AUTHORITY } from "../domain/adb/adbDeviceAnalysis.js";
 import type {
   AdbDisplayNumericIssues,
   AdbDisplayPartialObservation,
@@ -181,6 +182,42 @@ const SCREEN_TIMEOUT_MS = 60_000;
 const SCREEN_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 const BUGREPORT_TIMEOUT_MS = 600_000;
 const BUGREPORT_MAX_OUTPUT_BYTES = 1024 * 1024;
+
+/**
+ * Commit an ADB observation as Evidence that names the device's authority. Every
+ * retained receipt and partial travels through here so none can fall back to the
+ * subject-derived default for a target REA does not own.
+ */
+const createObservationEvidence = (
+  operation: string,
+  parameters: Record<string, JsonValue>,
+  execution: AnalysisExecution,
+) =>
+  createAnalysisExecutionEvidence(
+    operation,
+    parameters,
+    {
+      ...execution,
+      authority: execution.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
+    },
+    "observed",
+  );
+
+/**
+ * Stamp the device's authority on every successful execution at the adapter
+ * boundary, so a caller-projected or retained observation cannot fall back to a
+ * subject-derived authority for a target REA does not own.
+ */
+const observedExecution = (
+  result: Result<AnalysisExecution, AnalysisError>,
+): Result<AnalysisExecution, AnalysisError> =>
+  result.ok
+    ? ok({
+        ...result.value,
+        authority:
+          result.value.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
+      })
+    : result;
 
 /** Carry the exact digest owner through caller-specific partial-result mapping. */
 class AdbDigestFailure extends Error {
@@ -968,12 +1005,7 @@ export class AdbProvider {
     const partialObservation =
       execution === undefined
         ? undefined
-        : createAnalysisExecutionEvidence(
-            operation,
-            parameters,
-            execution,
-            "observed",
-          );
+        : createObservationEvidence(operation, parameters, execution);
     return new ProviderCleanupError(
       ADB_PROVIDER_IDENTITY.id,
       resources,
@@ -1087,12 +1119,7 @@ export class AdbProvider {
             throw cleanup;
           },
           partial: (completed) =>
-            createAnalysisExecutionEvidence(
-              operation,
-              parameters,
-              completed,
-              "observed",
-            ),
+            createObservationEvidence(operation, parameters, completed),
         },
       ),
     );
@@ -1237,7 +1264,9 @@ export class AdbProvider {
           );
         }
       }
-      return await this.#executeOperation(request, options);
+      return observedExecution(
+        await this.#executeOperation(request, options),
+      );
     } finally {
       release();
     }
@@ -2540,6 +2569,8 @@ export class AdbProvider {
                     limitations: completed.limitations,
                     locations: completed.locations,
                     confidence: "observed",
+                    authority:
+                      completed.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
                   },
                 ),
               },

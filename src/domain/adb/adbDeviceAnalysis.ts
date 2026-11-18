@@ -6,6 +6,14 @@ import { z } from "zod";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { localPathStringSchema } from "../localPath.js";
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
+import type { EvidenceAuthority } from "../evidence.js";
+
+/**
+ * A device is a service REA attaches to and does not own, so what it reports is
+ * an external observation rather than one bound to a shipped artifact.
+ */
+export const ADB_DEVICE_OBSERVATION_AUTHORITY: EvidenceAuthority =
+  "external-service";
 
 /**
  * Device serials as adb prints them: emulator-5554, USB identifiers, and

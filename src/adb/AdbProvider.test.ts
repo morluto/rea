@@ -1692,6 +1692,9 @@ exit 1`,
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence).toMatchObject({
     operation: "push_adb_file",
+    // The retained receipt names the service authority, not the subject-derived
+    // default a partial observation would otherwise fall back to.
+    authority: "external-service",
     normalized_result: {
       local_path: localFile,
       device_path: "/data/local/tmp/payload.bin",

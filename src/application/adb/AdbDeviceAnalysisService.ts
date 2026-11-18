@@ -4,6 +4,7 @@ import type {
   ExecutionOptions,
 } from "../../ports/AnalysisProvider.js";
 import {
+  ADB_DEVICE_OBSERVATION_AUTHORITY,
   adbRequestSchema,
   adbDeviceListObservationSchema,
   type AdbOperation,
@@ -38,7 +39,7 @@ export class AdbDeviceAnalysisService {
           // reports is an external observation rather than a replay REA drives.
           const observed = {
             ...result.value,
-            authority: result.value.authority ?? "external-service",
+            authority: result.value.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
           } as const;
           return request.operation === "list_adb_devices"
             ? projectDeviceList(observed)
