@@ -10,8 +10,9 @@
       wider session id, so the two 400-byte families are distinguishable.
 - [x] Select a profile explicitly, and report `ambiguous_format` instead of
       guessing when the length matches more than one.
-- [x] Decode fixed-width strings through `strictUtf8` and name any field without a
-      terminator or valid UTF-8.
+- [x] Decode fixed-width strings through `strictUtf8` and name any field that is not
+      valid UTF-8. A member that fills its whole width is well formed without a
+      terminator (`__attribute_nonstring__`), so only malformed bytes are marked.
 - [x] Keep unknown `ut_type` values inspectable with the raw number.
 - [x] Report a truncated tail without discarding the records before it.
 - [x] Return an empty result for an empty file, which carries no layout facts.
