@@ -118,6 +118,7 @@ it.each([
   {
     tags: [
       [0x6fffe000n, 0x100n],
+      [0x6fffe001n, 16n],
       [0x6fffe003n, 4n],
     ],
     caseName: "invalid entry width",
