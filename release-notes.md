@@ -764,6 +764,7 @@
 * check the deadlines Vitest applies to collected tests ([87743d6](https://github.com/morluto/rea/commit/87743d67f54c9cc803147b5341b0e6e89eb20621))
 * **ci:** double test deadlines on hosted runners ([#10417](https://github.com/morluto/rea/issues/10417)) ([cc7d73d](https://github.com/morluto/rea/commit/cc7d73d23af50ffa4dff3f51035070f48b8b9447))
 * **ci:** retire loader-ownership history seeding ([#10404](https://github.com/morluto/rea/issues/10404)) ([da91bbd](https://github.com/morluto/rea/commit/da91bbd4eb417405895ff2621b2798e1f598d30e))
+* **ci:** reuse the shared CLI for Godot PCK checks ([#11984](https://github.com/morluto/rea/issues/11984)) ([58bf973](https://github.com/morluto/rea/commit/58bf97399334d53ede5893f9e10b8f58ce48b7dc))
 * clear file-owned MCP schema validation after each file ([1569186](https://github.com/morluto/rea/commit/1569186aa62434a77f3a75a366c29c0d2060f25f))
 * **cli:** assert retained entropy Evidence beside the cleanup diagnostic ([6c8be10](https://github.com/morluto/rea/commit/6c8be105a2d92a69b1ae91b24c7dea18b0cb2e2c)), closes [#7279](https://github.com/morluto/rea/issues/7279)
 * **cli:** assert the retained entropy observation at its current location ([9e24b36](https://github.com/morluto/rea/commit/9e24b36fa69423098627309cb61f8bbf1d23d3f8)), closes [#7279](https://github.com/morluto/rea/issues/7279)
