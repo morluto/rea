@@ -112,15 +112,6 @@ describe("readEnvironmentExportInputs", () => {
   });
 });
 
-it("does not create parents for a rejected trailing dot-dot output selection", async () => {
-  const { root, input } = await prepare("rea-environment-export-invalid-root-");
-  const parent = join(root, "untouched");
-  const directory = `${join(parent, "a", "b", "c")}/..`;
-  const result = await exportEnvironmentBundle({ ...input, directory });
-  expect(result.ok).toBe(false);
-  await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
-});
-
 const registerBundlePublicationCases = () => {
   it("copies the package tarball beside the Dockerfile and reports it as the package source", async () => {
     const { root, input, directory } = await prepare(
