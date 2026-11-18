@@ -514,8 +514,10 @@ const decodeExtent = (
 
 const decodePartitionInfo = (
   bytes: Uint8Array,
+  info: PartitionInfoDraft,
 ): Result<PartitionInfoDraft, AndroidOtaPayloadParseError> => {
-  const info = emptyPartitionInfo();
+  // Protobuf singular messages merge across occurrences. Only fields present
+  // in this occurrence replace earlier values; an empty message erases none.
   const walked = walk(bytes, (field, wire, reader) => {
     if (field === 1 && wire === WireType.Varint) {
       info.size = unwrap(asSafeUint(reader.uint64(), "partition size"));
@@ -622,11 +624,18 @@ const decodePartition = (
       return;
     }
     if (field === 6 && wire === WireType.LengthDelimited) {
-      partition.oldPartitionInfo = unwrap(decodePartitionInfo(reader.bytes()));
+      partition.oldPartitionInfo = unwrap(
+        decodePartitionInfo(
+          reader.bytes(),
+          partition.oldPartitionInfo ?? emptyPartitionInfo(),
+        ),
+      );
       return;
     }
     if (field === 7 && wire === WireType.LengthDelimited) {
-      partition.newPartitionInfo = unwrap(decodePartitionInfo(reader.bytes()));
+      partition.newPartitionInfo = unwrap(
+        decodePartitionInfo(reader.bytes(), partition.newPartitionInfo),
+      );
       return;
     }
     if (field === 8 && wire === WireType.LengthDelimited) {
