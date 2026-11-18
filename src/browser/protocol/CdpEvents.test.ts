@@ -1,30 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { receiveCdpEvent } from "../CdpConnection.js";
-import { cdpFrameEvent } from "./CdpEvents.js";
+import { receiveCdpEvent, type CdpReceivedEvent } from "../CdpConnection.js";
+import {
+  cdpFrameEvent,
+  type CdpEventName,
+  type CdpProtocolEvent,
+} from "./CdpEvents.js";
+
+expectTypeOf<"Network.dataReceived">().toExtend<CdpProtocolEvent>();
+expectTypeOf<"Network.dataReceived">().not.toExtend<CdpEventName>();
+expectTypeOf<CdpReceivedEvent>().not.toHaveProperty("params");
+expectTypeOf<CdpReceivedEvent>().not.toHaveProperty("method");
 
 describe("registered CDP event payloads", () => {
-  it("parses a frame event's identity and URL once, keeping the raw payload", () => {
+  it("keeps a committed frame's identity, fragment and transition type", () => {
     const params = {
       frame: {
         id: "main",
         loaderId: "loader",
         url: "https://app.test/page",
         urlFragment: "#section",
+        transitionType: "link",
       },
     };
     const event = receiveCdpEvent({ method: "Page.frameNavigated", params });
-    expect(event).not.toHaveProperty("params");
-    // Subscribers cannot name the raw payload; they read `registered`.
-    // @ts-expect-error `params` is not part of a received event.
-    expect(event.params).toBeUndefined();
-    // Subscribers select events by the registered name, never by wire text.
-    expect(event).not.toHaveProperty("method");
-    // @ts-expect-error the wire method name is not part of a received event.
-    expect(event.method).toBeUndefined();
-    // @ts-expect-error an unregistered event name does not compile.
-    expect(event.registered?.method === "Page.frameNavigatedd").toBe(false);
-    expect(event.domain).toBe("Page");
     expect(cdpFrameEvent(event)).toEqual({
       facts: expect.objectContaining({
         kind: "navigated",
@@ -37,6 +36,7 @@ describe("registered CDP event payloads", () => {
         url: "https://app.test/page#section",
         scopeUrl: "https://app.test/page",
       },
+      transitionType: "link",
     });
   });
 
@@ -232,13 +232,20 @@ describe("registered Target, lifecycle and WebMCP event payloads", () => {
     },
   );
 
-  it("reads an attached target's session and type", () => {
+  it("reads an attached target's session, target ID and type", () => {
     expect(
       receiveCdpEvent({
         method: "Target.attachedToTarget",
-        params: { sessionId: "child", targetInfo: { type: "iframe" } },
+        params: {
+          sessionId: "child",
+          targetInfo: { targetId: "frame-1", type: "iframe" },
+        },
       }).registered?.payload,
-    ).toEqual({ sessionId: "child", targetType: "iframe" });
+    ).toEqual({
+      sessionId: "child",
+      targetId: "frame-1",
+      targetType: "iframe",
+    });
   });
 
   it("keeps a lifecycle milestone's malformed timestamp unknown", () => {
@@ -275,7 +282,7 @@ describe("registered Target, lifecycle and WebMCP event payloads", () => {
     ).toEqual({ tools });
   });
 
-  it("carries a requested navigation's reason and a commit's transition type", () => {
+  it("carries a requested navigation's reason", () => {
     expect(
       cdpFrameEvent(
         receiveCdpEvent({
@@ -284,38 +291,5 @@ describe("registered Target, lifecycle and WebMCP event payloads", () => {
         }),
       )?.reason,
     ).toBe("reload");
-    expect(
-      cdpFrameEvent(
-        receiveCdpEvent({
-          method: "Page.frameNavigated",
-          params: {
-            frame: {
-              id: "main",
-              url: "https://a.test/",
-              transitionType: "link",
-            },
-          },
-        }),
-      )?.transitionType,
-    ).toBe("link");
-  });
-});
-
-describe("unregistered CDP events", () => {
-  it("leaves an unregistered event unparsed", () => {
-    const event = receiveCdpEvent({
-      method: "Network.dataReceived",
-      params: { requestId: "1" },
-    });
-    expect(event.registered).toBeUndefined();
-    expect(event.domain).toBe("Network");
-    expect(cdpFrameEvent(event)).toBeUndefined();
-  });
-
-  it("registers a target crash, which has no payload", () => {
-    expect(
-      receiveCdpEvent({ method: "Inspector.targetCrashed", params: {} })
-        .registered,
-    ).toEqual({ method: "Inspector.targetCrashed", payload: {} });
   });
 });

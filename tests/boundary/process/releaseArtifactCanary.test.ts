@@ -87,6 +87,7 @@ processTest.skipIf(process.platform === "win32")(
         version,
         type: "module",
         files: ["scripts"],
+        scripts: { preinstall: 'node -e "process.exit(42)"' },
       }),
     );
     await copyFile(
@@ -134,6 +135,7 @@ if (process.argv[2] === "mcp") {
         ],
         {
           cwd: controller,
+          env: { ...process.env, npm_config_allow_scripts: "rea-test-control" },
           timeoutMs: Math.min(2_147_483_647, preparationBudget + 30_000),
         },
       );

@@ -35,7 +35,15 @@ const MACHO_HEADER_REGION = "Mach-O header and load commands";
 type KunaEntryPlacement =
   | { readonly kind: "code" }
   | { readonly kind: "import-slot" }
-  | { readonly kind: "data"; readonly region: string }
+  | {
+      readonly kind: "data";
+      readonly region: string;
+      /**
+       * The enclosing segment is executable, so only the section declaration
+       * says the bytes are not instructions. False for the Mach-O header.
+       */
+      readonly codePossible: boolean;
+    }
   /** No section or the header holds the address, so its content is unknown. */
   | { readonly kind: "unplaced" };
 
@@ -61,6 +69,9 @@ export type KunaInventoryLayout =
 export const KUNA_LAYOUT_NOT_APPLICABLE: KunaInventoryLayout = Object.freeze({
   status: "not-applicable",
 });
+
+/** `VM_PROT_EXECUTE` in a segment's initial protection. */
+const VM_PROT_EXECUTE = 0x4;
 
 const CODE = Object.freeze({ kind: "code" } as const);
 const IMPORT_SLOT = Object.freeze({ kind: "import-slot" } as const);
@@ -93,6 +104,7 @@ export const MACHO_LOAD_COMMAND_PREFIX: KunaInputPrefix = Object.freeze({
 const sectionPlacement = (
   flags: number,
   name: string,
+  executableSegment: boolean,
 ): PlacedRegion["placement"] => {
   const type = flags & SECTION_TYPE;
   if (
@@ -101,13 +113,13 @@ const sectionPlacement = (
   )
     return CODE;
   if (IMPORT_SLOT_TYPES.has(type)) return IMPORT_SLOT;
-  return { kind: "data", region: name };
+  return { kind: "data", region: name, codePossible: executableSegment };
 };
 
 /**
  * Read a thin Mach-O's section table from its header and load commands, as
- * inspect_macho reports them. A section that declares no instructions holds
- * data; a format failure leaves the inventory unclassified with its reason.
+ * inspect_macho reports them. Retain both section instruction flags and segment
+ * executability. A format failure leaves the inventory unclassified with its reason.
  */
 export const readKunaMachoLayout = async (head: {
   readonly bytes: number;
@@ -156,7 +168,11 @@ export const readKunaMachoLayout = async (head: {
         start: section.address,
         end: section.address + section.size,
         name: region,
-        placement: sectionPlacement(section.flags, region),
+        placement: sectionPlacement(
+          section.flags,
+          region,
+          (segment.protection & VM_PROT_EXECUTE) !== 0,
+        ),
       });
     }
   }
@@ -195,7 +211,7 @@ const placeAddress = (
   }
   if (found !== undefined && address < found.end) return found.placement;
   if (header !== null && address >= header.start && address < header.end)
-    return { kind: "data", region: MACHO_HEADER_REGION };
+    return { kind: "data", region: MACHO_HEADER_REGION, codePossible: false };
   return UNPLACED;
 };
 
@@ -220,11 +236,14 @@ export const placeKunaEntry = (
       ? { kind: "unclassified", reason: layout.reason }
       : NOT_APPLICABLE;
 
+/** Where the layout places an entry it holds outside code and import slots. */
+export type KunaDataPlacement = Extract<KunaEntryPlacement, { kind: "data" }>;
+
 /** Kuna's inventory split by what the target's layout says each entry is. */
 interface KunaInventoryPlacements {
   readonly layout: KunaInventoryLayout;
-  /** The data region of each entry the layout places outside code and import slots. */
-  readonly data: ReadonlyMap<KunaInventoryFunction, string>;
+  /** The data placement of each entry the layout places outside code and import slots. */
+  readonly data: ReadonlyMap<KunaInventoryFunction, KunaDataPlacement>;
   /** Entries a Mach-O layout holds in no section and not in its header. */
   readonly unplaced: ReadonlySet<KunaInventoryFunction>;
 }
@@ -234,12 +253,12 @@ export const placeKunaInventory = (
   inventory: readonly KunaInventoryFunction[],
   layout: KunaInventoryLayout,
 ): KunaInventoryPlacements => {
-  const data = new Map<KunaInventoryFunction, string>();
+  const data = new Map<KunaInventoryFunction, KunaDataPlacement>();
   const unplaced = new Set<KunaInventoryFunction>();
   if (layout.status === "mach-o")
     for (const entry of inventory) {
       const placement = placeAddress(layout, BigInt(entry.address));
-      if (placement.kind === "data") data.set(entry, placement.region);
+      if (placement.kind === "data") data.set(entry, placement);
       else if (placement.kind === "unplaced") unplaced.add(entry);
     }
   return { layout, data, unplaced };
@@ -250,19 +269,76 @@ const describeRegion = (region: string): string =>
     ? `the ${MACHO_HEADER_REGION}`
     : `${region}, a Mach-O section whose attributes declare no instructions`;
 
+/**
+ * In an executable segment the section declaration alone does not rule out
+ * code: a direct call may target bytes the section calls non-instructions.
+ */
+const executableDataNote = (placement: KunaDataPlacement): string =>
+  placement.codePossible
+    ? " Its segment is executable, so that declaration alone does not prove the bytes are not code."
+    : "";
+
 /** Why a procedure operation refuses an entry Kuna lists in a data region. */
 export const kunaDataEntryMessage = (
   entry: KunaInventoryFunction,
-  region: string,
+  placement: KunaDataPlacement,
 ): string =>
-  `${entry.name} (${entry.address}) lies in ${describeRegion(region)}, so it is data that Kuna lists, not a procedure. address_name and xrefs accept its address.`;
+  placement.codePossible
+    ? `${entry.name} (${entry.address}) lies in ${describeRegion(placement.region)}, so REA's Kuna lane does not treat it as a procedure.${executableDataNote(placement)} address_name and xrefs accept its address.`
+    : `${entry.name} (${entry.address}) lies in ${describeRegion(placement.region)}, so it is data that Kuna lists, not a procedure. address_name and xrefs accept its address.`;
+
+/**
+ * Why a procedure operation refuses a name whose every entry lies in a data
+ * region. With an entry in an executable segment it keeps the same caveat as
+ * one refused entry instead of calling them all data.
+ */
+export const kunaDataEntriesMessage = (
+  selector: string,
+  entries: readonly {
+    readonly entry: KunaInventoryFunction;
+    readonly placement: KunaDataPlacement;
+  }[],
+): string => {
+  const addresses = entries.map(({ entry }) => entry.address).join(", ");
+  return entries.some(({ placement }) => placement.codePossible)
+    ? `${selector} names ${String(entries.length)} Kuna entries that lie in Mach-O data regions (${addresses}), so REA's Kuna lane treats none of them as a procedure. At least one lies in an executable segment, where a section declaration alone does not prove the bytes are not code. address_name and xrefs accept their addresses.`
+    : `${selector} names ${String(entries.length)} Kuna entries that lie in Mach-O data regions (${addresses}); they are data, not procedures.`;
+};
+
+/** The recovery a refused data entry offers; executable placements may be decoded elsewhere. */
+export const kunaDataEntryRemediation = (
+  placement: KunaDataPlacement,
+): string => dataRemediation("the data address", "it", placement.codePossible);
+
+/** The recovery a name whose entries all lie in data regions offers. */
+export const kunaDataEntriesRemediation = (
+  placements: readonly KunaDataPlacement[],
+): string =>
+  dataRemediation(
+    "the data addresses",
+    "one",
+    placements.some(({ codePossible }) => codePossible),
+  );
+
+const dataRemediation = (
+  addresses: string,
+  target: string,
+  codePossible: boolean,
+): string =>
+  `Inspect ${addresses} with address_name or xrefs, or select a procedure entry from list_procedures.${
+    codePossible
+      ? ` To decode ${target} as code, open the target with the Ghidra provider.`
+      : ""
+  } Do not repeat the unchanged call.`;
 
 /** How address_name qualifies a name Kuna lists for data. */
 export const kunaDataNameLimitation = (
   entry: KunaInventoryFunction,
-  region: string,
+  placement: KunaDataPlacement,
 ): string =>
-  `Kuna lists ${entry.name} in its function inventory, but ${entry.address} lies in ${describeRegion(region)}, so the name labels data.`;
+  placement.codePossible
+    ? `Kuna lists ${entry.name} in its function inventory, but ${entry.address} lies in ${describeRegion(placement.region)}, so REA treats the name as a data label.${executableDataNote(placement)}`
+    : `Kuna lists ${entry.name} in its function inventory, but ${entry.address} lies in ${describeRegion(placement.region)}, so the name labels data.`;
 
 /**
  * The caveat a direct answer about one kept entry carries: the listings'
@@ -282,12 +358,12 @@ export const kunaEntryLimitations = (
     : [];
 
 /**
- * What a listing omitted as data, and what it kept without a classification,
+ * What a listing omitted from its procedures or kept without a classification,
  * among the inventory entries its query selected.
  */
 export const kunaInventoryLimitations = (
   layout: KunaInventoryLayout,
-  omittedRegions: readonly string[],
+  omitted: readonly KunaDataPlacement[],
   unplaced: number,
 ): readonly string[] => {
   if (layout.status === "unavailable")
@@ -295,19 +371,23 @@ export const kunaInventoryLimitations = (
       `REA could not read the target's Mach-O section table (${layout.reason}), so Kuna's inventory is kept unclassified and may include data symbols.`,
     ];
   const limitations: string[] = [];
-  if (omittedRegions.length > 0) {
+  if (omitted.length > 0) {
     const counts = new Map<string, number>();
-    for (const region of omittedRegions)
+    for (const { region } of omitted)
       counts.set(region, (counts.get(region) ?? 0) + 1);
-    const one = omittedRegions.length === 1;
+    const one = omitted.length === 1;
+    const entries = one ? "it" : "them";
+    const omission = omitted.some(({ codePossible }) => codePossible)
+      ? `REA leaves ${entries} out of the procedure inventory. For entries in sections mapped by executable segments, the absence of instruction flags leaves code status uncertain.`
+      : `REA classifies ${entries} as data and leaves ${entries} out of the procedure inventory.`;
     limitations.push(
-      `Kuna's inventory also lists ${String(omittedRegions.length)} ${one ? "entry" : "entries"} in Mach-O data regions (${[
+      `Kuna's inventory also lists ${String(omitted.length)} ${one ? "entry" : "entries"} in Mach-O data regions (${[
         ...counts,
       ]
         .map(([region, count]) => `${region}: ${String(count)}`)
         .join(
           "; ",
-        )}): the header, or sections whose attributes declare no instructions. REA omits ${one ? "it as data rather than a procedure entry" : "them as data rather than procedure entries"}; address_name and xrefs still accept ${one ? "its address" : "their addresses"}.`,
+        )}): the header, or sections whose attributes declare no instructions. ${omission} address_name and xrefs still accept ${one ? "its address" : "their addresses"}.`,
     );
   }
   if (unplaced > 0) {

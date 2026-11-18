@@ -3,7 +3,6 @@ import {
   cliCommand,
 } from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
-import { z } from "zod";
 import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
 import { estimateTokenCount } from "tokenx";
 import { createMarkdownRenderer, disposeMdItInstance } from "vitepress";
@@ -13,7 +12,6 @@ import {
   redactCliCommandFailure,
   renderCliCommandFailure,
 } from "../../../src/cli/argumentErrors.js";
-import { explicitSensitiveValueOptions } from "../../../src/cli/explicitSensitiveArguments.js";
 
 import { readCliOutputArguments } from "../../../src/cliOutput.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
@@ -157,7 +155,6 @@ const fixtureDiagnostic = (
 ): string => {
   const cli = createCommandCli();
   registerCliCommand(cli, "inspect", {
-    options: z.object({ ...explicitSensitiveValueOptions }),
     run: () => undefined,
   });
   const entry = cliCommand(cli, "inspect")!;

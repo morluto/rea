@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 
 /** Match the native owner's ordinary spelling only for extended local drive paths. */
@@ -144,7 +145,8 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
         15000,
         "Android workspace guardian startup timed out",
       );
-      const observation = readySchema.parse(JSON.parse(line));
+      const decoded = parseJsonWithDuplicatePolicy(line, "reject");
+      const observation = readySchema.parse(decoded.ok ? decoded.value : null);
       if (
         win32.dirname(localDrivePath(observation.path)).toLowerCase() !==
           localDrivePath(win32.resolve(parent)).toLowerCase() ||

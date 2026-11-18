@@ -240,7 +240,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly comSpec?: string;
   /** Select the admitted 16-bit real-mode MZ import instead of auto-detection. */
   readonly dosMz?: true;
-  readonly dosCom?: true;
+  /** DOS COM import selected from the committed analysis profile. */
+  readonly dosCom?: { readonly loader: "ComLoader" | "BinaryLoader" };
   readonly rawBinary?: {
     readonly languageId: string;
     readonly compilerSpecId: string;
@@ -794,7 +795,7 @@ export interface GhidraHeadlessArgumentOptions {
   readonly mipsSoftFloat?: true;
   readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
   readonly dosMz?: true;
-  readonly dosCom?: true;
+  readonly dosCom?: { readonly loader: "ComLoader" | "BinaryLoader" };
   readonly rawBinary?: {
     readonly languageId: string;
     readonly compilerSpecId: string;
@@ -843,7 +844,7 @@ const validateExistingProjectOptions = (
       throw new GhidraAdmissionError("existing_project_program_name");
     if (options.psp === true)
       throw new GhidraAdmissionError("existing_project_psp");
-    if (options.dosMz === true || options.dosCom === true)
+    if (options.dosMz === true || options.dosCom !== undefined)
       throw new GhidraAdmissionError("existing_project_dos");
     if (rawBinary !== undefined)
       throw new GhidraAdmissionError("existing_project_raw_binary");
@@ -882,7 +883,7 @@ export const ghidraHeadlessArguments = (
     gamecubeDol !== undefined &&
     (options.psp === true ||
       options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       options.mipsSoftFloat === true ||
       options.riscvCallingConvention !== undefined ||
       rawBinary !== undefined ||
@@ -892,7 +893,7 @@ export const ghidraHeadlessArguments = (
   if (
     options.psp === true &&
     (options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       override !== undefined)
   )
     throw new GhidraAdmissionError("psp_combined");
@@ -902,7 +903,7 @@ export const ghidraHeadlessArguments = (
     options.mipsSoftFloat === true &&
     (options.psp === true ||
       options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       rawBinary !== undefined)
   )
     throw new GhidraAdmissionError("mips_soft_float_scope");
@@ -911,20 +912,20 @@ export const ghidraHeadlessArguments = (
     (options.psp === true ||
       options.mipsSoftFloat === true ||
       options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       rawBinary !== undefined)
   )
     throw new GhidraAdmissionError("riscv_calling_convention_scope");
   if (
     override !== undefined &&
-    (options.dosMz === true || options.dosCom === true)
+    (options.dosMz === true || options.dosCom !== undefined)
   )
     throw new GhidraAdmissionError("language_override_dos");
   if (override !== undefined && rawBinary !== undefined)
     throw new GhidraAdmissionError("language_override_raw_binary");
   if (
     rawBinary !== undefined &&
-    (options.dosMz === true || options.dosCom === true)
+    (options.dosMz === true || options.dosCom !== undefined)
   )
     throw new GhidraAdmissionError("raw_binary_dos");
   return [
@@ -956,12 +957,15 @@ export const ghidraHeadlessArguments = (
                   "-cspec",
                   "default",
                 ]
-              : options.dosCom === true
+              : options.dosCom !== undefined
                 ? [
                     "-loader",
-                    "BinaryLoader",
-                    "-loader-baseAddr",
-                    "1000:0100",
+                    options.dosCom.loader,
+                    // ComLoader owns 0000:0100. BinaryLoader is the explicit
+                    // fallback and still needs the real-mode segment base.
+                    ...(options.dosCom.loader === "BinaryLoader"
+                      ? ["-loader-baseAddr", "1000:0100"]
+                      : []),
                     "-processor",
                     "x86:LE:16:Real Mode",
                     "-cspec",
@@ -1013,7 +1017,7 @@ export const ghidraHeadlessArguments = (
     options.scriptLogPath,
     "-scriptPath",
     bridgeDirectory,
-    ...(options.dosCom === true
+    ...(options.dosCom !== undefined
       ? [
           "-preScript",
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.prepareCom),

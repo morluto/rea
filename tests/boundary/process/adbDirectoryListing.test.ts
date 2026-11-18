@@ -63,6 +63,7 @@ if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"
   exit 0
 fi
+if [ "$1" = start-server ]; then exit 0; fi
 if [ "$1" = -s ]; then shift 2; fi
 [ "$1" = shell ] || exit 90
 shift
@@ -90,6 +91,7 @@ if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"
   exit 0
 fi
+if [ "$1" = start-server ]; then exit 0; fi
 if [ "$1" = -s ]; then shift 2; fi
 [ "$1" = shell ] || exit 90
 exec ${shellQuote(process.execPath)} -e 'process.stdout.write(Buffer.from("${encoded}", "base64"))'

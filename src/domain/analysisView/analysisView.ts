@@ -15,11 +15,14 @@ import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
+import { projectNugetNupkgView } from "./nugetNupkgView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
+import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
   parseAnalysisViewResult,
   analysisViewResultInputError,
+  parentArtifactPath,
 } from "./analysisViewParent.js";
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
@@ -34,6 +37,7 @@ import { projectCommandObservationView } from "./commandObservationView.js";
 import { projectFridaSessionStatusView } from "./fridaSessionStatusView.js";
 import { projectGoBinaryView } from "./goBinaryView.js";
 import { projectRustBinaryView } from "./rustBinaryView.js";
+import { projectCycloneDxView } from "./cyclonedxView.js";
 import { projectNativeFunctionMatchingView } from "./nativeFunctionMatchingView.js";
 import { projectNativeInventoryView } from "./nativeInventoryView.js";
 import {
@@ -147,27 +151,6 @@ const unsupportedParent = (
     },
   );
 
-const parentArtifactPath = (parent: AnalysisViewParent): string => {
-  if (
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null &&
-    "artifact" in parent.normalizedResult &&
-    typeof parent.normalizedResult.artifact === "object" &&
-    parent.normalizedResult.artifact !== null &&
-    "path" in parent.normalizedResult.artifact &&
-    typeof parent.normalizedResult.artifact.path === "string"
-  )
-    return parent.normalizedResult.artifact.path;
-  if (
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null &&
-    "input_path" in parent.normalizedResult &&
-    typeof parent.normalizedResult.input_path === "string"
-  )
-    return parent.normalizedResult.input_path;
-  return parent.evidenceId;
-};
-
 /** Check a projector result against the result union before sealing it. */
 const sealProjected = (
   projected: Result<UnsignedAnalysisView, AnalysisError>,
@@ -198,8 +181,10 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
+  retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
+  retain("inspect_nuget_nupkg", projectNugetNupkgView),
   retain("frida_session_status", projectFridaSessionStatusView),
   retain("gdb_console", projectCommandObservationView),
   retain("inspect_with_objdump", projectCommandObservationView),
@@ -357,6 +342,8 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "cyclonedx")
+    return sealProjected(projectCycloneDxView(parent, view));
   if (view.kind === "recorded-array") {
     return sealProjected(projectRecordedArrayView(parent, view));
   }
