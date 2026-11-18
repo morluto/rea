@@ -257,7 +257,9 @@ describe("Windows Ghidra doctor authority", () => {
       ok: false,
       classification: "missing_dependency",
       detail: "Authored native artifact unavailable diagnostic",
-      remediation: expect.stringContaining("matching Windows x64 REA package"),
+      remediation: expect.stringContaining(
+        "matching published Windows x64 REA package",
+      ),
     });
   });
 
