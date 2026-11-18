@@ -663,7 +663,7 @@ export const registerContractCommand = <
           logCliCommand(logger, description.command, async () => {
             const options = selected.admitDeliveryOptions(values);
             if (!options.ok) return projectAnalysisError(options.error);
-            const read = await readJsonInputs(selected, values, signal);
+            const read = await readJsonInputs(selected, options.value, signal);
             if (!read.ok) return read.error;
             const admitted = selected.admit(read.value);
             // Admission and handler issues alike name renamed fields by CLI key.
@@ -981,7 +981,7 @@ export const registerRoutedCommand = (
             if (!options.ok) return projectAnalysisError(options.error);
             const read = await readJsonInputs(
               description,
-              shared.value,
+              options.value,
               signal,
               ownJsonInputs(description, sharedJson),
             );
