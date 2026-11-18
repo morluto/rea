@@ -174,6 +174,7 @@
 * **ci:** let npm retry upstream registry connection resets ([3f361d8](https://github.com/morluto/rea/commit/3f361d820fd4a54e037bf60726e79217586ad431))
 * **ci:** repair Python catalog test and deep static check failures ([8ffea11](https://github.com/morluto/rea/commit/8ffea11ee30d5e0d442a8d14b27e05b0441b9e18))
 * **ci:** repair shared progress, cleanup and verifier failures ([#11727](https://github.com/morluto/rea/issues/11727)) ([552d1c7](https://github.com/morluto/rea/commit/552d1c7108b99d1c9ec15d8b629ae07dc56d4714))
+* **ci:** restore formatting for JavaScript tests ([#11951](https://github.com/morluto/rea/issues/11951)) ([2b26bd1](https://github.com/morluto/rea/commit/2b26bd107e8ca0d236f34e5c62d9e0f94d235acf))
 * **ci:** satisfy typed switch exhaustiveness checks ([3676ec6](https://github.com/morluto/rea/commit/3676ec632bfbe4fde2f5303daa0d9261072ce04a))
 * **ci:** select debugger command handlers through the command registry ([#11686](https://github.com/morluto/rea/issues/11686)) ([4c8e616](https://github.com/morluto/rea/commit/4c8e616029ed7b45adb5fdfcaf0148dd011a40e0)), closes [#11654](https://github.com/morluto/rea/issues/11654)
 * **ci:** settle cancelled test-group descendants ([#10229](https://github.com/morluto/rea/issues/10229)) ([070cfce](https://github.com/morluto/rea/commit/070cfce443f803c22f9b958c2f6e85a23b288241))
