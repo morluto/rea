@@ -30,6 +30,11 @@ import {
   TSHARK_COMMAND_ENV,
 } from "../../../src/pcap/PcapConfiguration.js";
 import { PcapSnapshot } from "../../../src/pcap/PcapSnapshot.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+  readStableArtifact,
+} from "../../../src/resources/index.js";
 import * as regularFile from "../../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import type { PcapCommandLauncher } from "../../../src/pcap/PcapCommand.js";
@@ -600,5 +605,96 @@ it.skipIf(isWindows).each([
     });
     onTestFinished(() => provider.close());
     expect(await provider.inspectAvailability()).toMatchObject(expected);
+  },
+);
+
+it.skipIf(!hasNativeBound)(
+  "keeps cleanupIncomplete true when snapshot closes before a failed primary cleanup releases",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-pcap-primary-cleanup-",
+    );
+    const capturePath = join(directory, "sample.pcap");
+    await writeFile(capturePath, Buffer.from("pcap-fixture-bytes"));
+    const resolvedCapinfos = await realpath(capinfosStub);
+    let capinfosReads = 0;
+    let blockPrimaryRelease = true;
+    let primaryLeaseRetained = false;
+
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tsharkStub,
+        REA_CAPINFOS_COMMAND: capinfosStub,
+      },
+      artifactReader: async (path, maximumBytes, signal, kind, scope) => {
+        if ((await realpath(path)) === resolvedCapinfos) {
+          capinfosReads += 1;
+          if (capinfosReads === 5) {
+            const lease = new AnalysisCleanupLease(async () => {
+              if (blockPrimaryRelease)
+                throw new Error("controlled tool descriptor close failure");
+            }, [path]);
+            scope?.retain({
+              kind: "lease",
+              resource: path,
+              lease,
+            });
+            primaryLeaseRetained = true;
+            throw new ArtifactReaderFailure(
+              "io",
+              "Controlled descriptor close failure after reading capinfos",
+              {
+                cleanup: {
+                  reason: "Controlled descriptor close failure",
+                  resources: [path],
+                },
+                cleanupLeases: [lease],
+                cause: new Error("controlled primary EIO"),
+              },
+            );
+          }
+        }
+        return readStableArtifact(path, maximumBytes, signal, kind, scope);
+      },
+    });
+
+    const originalClose = PcapSnapshot.prototype.close;
+    let failSnapshotClose = true;
+    const closeSpy = vi
+      .spyOn(PcapSnapshot.prototype, "close")
+      .mockImplementation(async function (this: PcapSnapshot) {
+        if (failSnapshotClose) {
+          failSnapshotClose = false;
+          throw new Error("controlled snapshot close failure");
+        }
+        return originalClose.call(this);
+      });
+
+    try {
+      const result = await provider.execute({
+        operation: "inspect_pcap_capture",
+        input: { path: capturePath },
+      });
+      expect(primaryLeaseRetained).toBe(true);
+      expect(failSnapshotClose).toBe(false);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.cleanupIncomplete).toBe(true);
+
+      // Releasing only the snapshot leaves the primary cleanup failure open.
+      await expect(provider.close()).rejects.toThrow();
+      expect(result.error.cleanupResources).toEqual([resolvedCapinfos]);
+      expect(result.error.cleanupIncomplete).toBe(true);
+
+      // Once the primary read lease also releases, cleanup becomes complete.
+      blockPrimaryRelease = false;
+      await expect(provider.close()).resolves.toBeUndefined();
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      blockPrimaryRelease = false;
+      failSnapshotClose = false;
+      closeSpy.mockRestore();
+      await provider.close();
+    }
   },
 );

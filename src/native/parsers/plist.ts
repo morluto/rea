@@ -1,4 +1,5 @@
 import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
+import { parseLastWinsJson } from "../../domain/jsonDuplicateMember.js";
 import {
   plistDuplicateKeyLimitations,
   type PlistDuplicateKeys,
@@ -157,7 +158,7 @@ export const readPlistJson = (output: string): PlistJsonParseAttempt => {
     // plutil output can carry a UTF-8 BOM, which JSON.parse rejects outright.
     const text = output.replace(/^\uFEFF/u, "");
     decoded = ok(
-      JSON.parse(
+      parseLastWinsJson(
         text,
         (
           _key: string,

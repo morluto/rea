@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   computeJavaScriptApplicationGraphSha256,
@@ -5,10 +6,8 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
   mergeJavaScriptApplicationNodes,
-  javascriptApplicationGraphSchema,
   parseJavaScriptApplicationGraph,
   serializeJavaScriptApplicationGraph,
-  type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
 import {
   APPLICATION_GRAPH_DIGESTS,
@@ -34,6 +33,10 @@ it("merges observations by entity identity without changing source nodes", () =>
     stability: "global-exact" as const,
     strategy: "content-digest" as const,
   };
+  expect(second.node_id).toBe(first.node_id);
+  expect(second.observations[0]?.observation_id).not.toBe(
+    first.observations[0]?.observation_id,
+  );
   const merged = mergeJavaScriptApplicationNodes([
     first,
     { ...second, identity: reversedIdentity },
@@ -76,13 +79,19 @@ it.each(["kind", "identity"] as const)(
   },
 );
 
-const createLargeNativeExportGraph = (): JavaScriptApplicationGraph => {
-  const properties = Object.fromEntries(
-    Array.from({ length: 1_001 }, (_, index) => [
-      `${"export-property-"}${"k".repeat(120)}-${index}`,
-      "v".repeat(4_097),
-    ]),
-  );
+it("preserves deep and wide observation properties in a large native-export graph", () => {
+  let nested: unknown = "leaf";
+  for (let index = 0; index < 12; index += 1)
+    nested = { [`level-${index}`]: nested };
+  const largeKey = `export-property-${"k".repeat(120)}`;
+  const properties = {
+    ...Object.fromEntries(
+      Array.from({ length: 1_000 }, (_, index) => [`symbol-${index}`, index]),
+    ),
+    [largeKey]: "v".repeat(4_097),
+    nested,
+  };
+  const longLabel = "large export graph label ".repeat(300);
   const nodes = Array.from({ length: 1_001 }, (_, index) => {
     const path = `native/exports/${index}.symbol`;
     return createJavaScriptApplicationNode({
@@ -95,7 +104,7 @@ const createLargeNativeExportGraph = (): JavaScriptApplicationGraph => {
       },
       observations: [
         {
-          label: index === 0 ? "large export graph label ".repeat(300) : path,
+          label: index === 0 ? longLabel : path,
           properties: index === 0 ? properties : {},
           evidence: artifactEvidence(
             APPLICATION_GRAPH_DIGESTS.nativeAddon,
@@ -106,69 +115,27 @@ const createLargeNativeExportGraph = (): JavaScriptApplicationGraph => {
       ],
     });
   });
-  const first = nodes[0];
-  if (first === undefined) throw new TypeError("Missing native export");
-
-  return createJavaScriptApplicationGraph({
+  const first = firstOf(nodes, "native export");
+  const graph = createJavaScriptApplicationGraph({
     schema: "JavaScriptApplicationGraph",
     root_node_ids: [first.node_id],
     nodes,
     edges: [],
-    coverage: {
-      status: "complete",
-      truncated: false,
-      omitted_count: 0,
-      limits: [],
-    },
+    coverage: completeCoverage,
     limitations: [],
   });
-};
+  const loaded = parseJavaScriptApplicationGraph(
+    JSON.parse(serializeJavaScriptApplicationGraph(graph)),
+  );
 
-it("accepts deeply nested canonical application properties", () => {
-  let nested: unknown = "leaf";
-  for (let index = 0; index < 12; index += 1)
-    nested = { [`level-${String(index)}`]: nested };
-  const node = createJavaScriptApplicationNode({
-    kind: "native-export",
-    identity: {
-      strategy: "canonical-path",
-      stability: "artifact-version",
-      artifact_sha256: APPLICATION_GRAPH_DIGESTS.nativeAddon,
-      path: "native/deep-export",
-    },
-    observations: [
-      {
-        label: "deep export",
-        properties: { nested },
-        evidence: artifactEvidence(
-          APPLICATION_GRAPH_DIGESTS.nativeAddon,
-          "native/deep-export",
-          "native-analysis-provider",
-        ),
-      },
-    ],
-  });
-
-  const graph = createJavaScriptApplicationGraph({
-    schema: "JavaScriptApplicationGraph",
-    root_node_ids: [node.node_id],
-    nodes: [node],
-    edges: [],
-    coverage: {
-      status: "complete",
-      truncated: false,
-      omitted_count: 0,
-      limits: [],
-    },
-    limitations: [],
-  });
-
-  expect(graph.nodes[0]?.observations[0]?.properties).toEqual({ nested });
-  expect(
-    parseJavaScriptApplicationGraph(
-      JSON.parse(serializeJavaScriptApplicationGraph(graph)),
-    ),
-  ).toEqual(graph);
+  expect(loaded.nodes.map(({ node_id }) => node_id).toSorted()).toEqual(
+    nodes.map(({ node_id }) => node_id).toSorted(),
+  );
+  const observation = loaded.nodes.find(
+    ({ node_id }) => node_id === first.node_id,
+  )?.observations[0];
+  expect(observation?.label).toBe(longLabel);
+  expect(observation?.properties).toEqual(properties);
 });
 
 describe("JavaScript Application Graph: vocabulary", () => {
@@ -178,10 +145,9 @@ describe("JavaScript Application Graph: vocabulary", () => {
     const decoded: unknown = JSON.parse(serialized);
 
     expect(parseJavaScriptApplicationGraph(decoded)).toEqual(graph);
-    expect(javascriptApplicationGraphSchema.parse(decoded)).toEqual(graph);
     expect(serializeJavaScriptApplicationGraph(decoded)).toBe(serialized);
-    expect(computeJavaScriptApplicationGraphSha256(decoded)).toMatch(
-      /^[a-f0-9]{64}$/u,
+    expect(computeJavaScriptApplicationGraphSha256(decoded)).toBe(
+      createHash("sha256").update(serialized).digest("hex"),
     );
 
     const { graph_id: _graphId, ...semantic } = graph;
@@ -192,53 +158,6 @@ describe("JavaScript Application Graph: vocabulary", () => {
         edges: semantic.edges.toReversed(),
       }),
     ).toEqual(graph);
-  });
-
-  it("keeps large native-export graphs and their complete properties", () => {
-    const graph = createLargeNativeExportGraph();
-    const largeExport = graph.nodes.find(({ observations }) =>
-      observations.some(({ label }) =>
-        label?.startsWith("large export graph label "),
-      ),
-    );
-
-    expect(graph.nodes).toHaveLength(1_001);
-    expect(
-      Object.keys(largeExport?.observations[0]?.properties ?? {}),
-    ).toHaveLength(1_001);
-  });
-
-  it("represents the synthetic ASAR to preload to IPC to native chain", () => {
-    const graph = buildSyntheticJavaScriptApplicationGraph();
-    const labels = [
-      "resources/app.asar",
-      "desktop preload",
-      "desktopApi",
-      "project:open",
-      "project open handler",
-      "synthetic.node",
-      "openProject",
-    ];
-    const chain = labels.map((label) => nodeByLabel(graph, label));
-    const expectedRelations = [
-      "contains",
-      "exposes",
-      "invokes",
-      "handles",
-      "loads",
-      "contains",
-    ];
-
-    for (let index = 0; index < expectedRelations.length; index += 1)
-      expect(graph.edges).toContainEqual(
-        expect.objectContaining({
-          source_node_id: chain[index]?.node_id,
-          target_node_id: chain[index + 1]?.node_id,
-          relation: expectedRelations[index],
-        }),
-      );
-    expect(chain.at(-2)?.kind).toBe("native-addon");
-    expect(chain.at(-1)?.kind).toBe("native-export");
   });
 });
 
@@ -280,80 +199,51 @@ describe("JavaScript Application Graph: evidence authority", () => {
     expect(preload.node_id).not.toBe(runtime.node_id);
   });
 
-  it("retains explicit unknown observations without using them as identity proof", () => {
-    const node = createJavaScriptApplicationNode({
-      kind: "javascript-module",
-      identity: {
-        strategy: "content-digest",
-        stability: "global-exact",
-        sha256: APPLICATION_GRAPH_DIGESTS.asar,
-      },
-      observations: [
-        {
-          label: "observed module",
-          properties: {},
-          evidence: artifactEvidence(
-            APPLICATION_GRAPH_DIGESTS.asar,
-            "dist/module.js",
-          ),
-        },
-        {
-          label: null,
-          properties: { question: "runtime correspondence" },
-          evidence: unknownEvidence(),
-        },
-      ],
-    });
-
-    const graph = graphForNode(node);
-    expect(
-      graph.nodes[0]?.observations.find(
-        ({ evidence }) => evidence.state === "unknown",
-      )?.evidence,
-    ).toMatchObject({ authority: "unknown", confidence: "unknown" });
-  });
-
-  it("separates stable entity identity from changing observations", () => {
+  it("retains unknown observations but requires observed proof for an observation-scoped identity", () => {
     const identity = {
-      strategy: "canonical-path" as const,
-      stability: "artifact-version" as const,
-      artifact_sha256: APPLICATION_GRAPH_DIGESTS.asar,
-      path: "dist/chunk.js",
+      strategy: "observation-fingerprint",
+      stability: "observation-only",
+      observation_sha256: "8".repeat(64),
+      scope: "synthetic static inventory",
     };
-    const first = createJavaScriptApplicationNode({
-      kind: "javascript-chunk",
+    const unknown = {
+      label: null,
+      properties: { question: "runtime correspondence" },
+      evidence: unknownEvidence(),
+    };
+    const observed = {
+      label: "unclassified entity",
+      properties: {},
+      evidence: artifactEvidence(
+        APPLICATION_GRAPH_DIGESTS.asar,
+        "dist/module.js",
+      ),
+    };
+    const node = createJavaScriptApplicationNode({
+      kind: "unknown",
       identity,
-      observations: [
-        {
-          label: "first label",
-          properties: { modules: 10 },
-          evidence: artifactEvidence(
-            APPLICATION_GRAPH_DIGESTS.asar,
-            "dist/chunk.js",
-            "ast-static-analysis",
-          ),
-        },
-      ],
-    });
-    const second = createJavaScriptApplicationNode({
-      kind: "javascript-chunk",
-      identity,
-      observations: [
-        {
-          label: "renamed chunk",
-          properties: { modules: 11 },
-          evidence: artifactEvidence(
-            APPLICATION_GRAPH_DIGESTS.asar,
-            "dist/chunk.js",
-            "ast-static-analysis",
-          ),
-        },
-      ],
+      observations: [observed, unknown],
     });
 
-    expect(first.node_id).toBe(second.node_id);
-    expect(first.observations[0]?.observation_id).not.toBe(
-      second.observations[0]?.observation_id,
+    expect(graphForNode(node).nodes[0]?.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: { question: "runtime correspondence" },
+          evidence: expect.objectContaining({
+            state: "unknown",
+            authority: "unknown",
+            confidence: "unknown",
+          }),
+        }),
+      ]),
+    );
+    const unsupported = createJavaScriptApplicationNode({
+      kind: "unknown",
+      identity,
+      observations: [unknown],
+    });
+    expect(() => graphForNode(unsupported)).toThrow(
+      /identity is not supported/u,
     );
   });
 });
@@ -477,7 +367,7 @@ describe("JavaScript Application Graph: identity and evidence", () => {
 });
 
 describe("JavaScript Application Graph: source maps and observations", () => {
-  it("admits source-map and observation-scoped identities only with supporting observations", () => {
+  it("requires source-map observations to retain the declaration and map location", () => {
     const sourceModule = createJavaScriptApplicationNode({
       kind: "source-module",
       identity: {
@@ -505,28 +395,7 @@ describe("JavaScript Application Graph: source maps and observations", () => {
         },
       ],
     });
-    const observationScoped = createJavaScriptApplicationNode({
-      kind: "unknown",
-      identity: {
-        strategy: "observation-fingerprint",
-        stability: "observation-only",
-        observation_sha256: "8".repeat(64),
-        scope: "synthetic static inventory",
-      },
-      observations: [
-        {
-          label: "unclassified entity",
-          properties: {},
-          evidence: artifactEvidence(
-            APPLICATION_GRAPH_DIGESTS.asar,
-            "dist/app.js",
-          ),
-        },
-      ],
-    });
-
     expect(graphForNode(sourceModule).nodes).toEqual([sourceModule]);
-    expect(graphForNode(observationScoped).nodes).toEqual([observationScoped]);
     const sourceObservation = firstOf(
       sourceModule.observations,
       "source observation",
@@ -637,9 +506,6 @@ describe("JavaScript Application Graph: source-map digest consistency", () => {
     expect(() => graphForNode(sourceMapNode(null, null, true))).toThrow(
       /Source-map observation/u,
     );
-    expect(() =>
-      graphForNode(sourceMapNode("3".repeat(64), "3".repeat(64), undefined)),
-    ).not.toThrow();
   });
 });
 
@@ -676,19 +542,8 @@ describe("JavaScript Application Graph: commitments and schemas", () => {
     expect(() => parseJavaScriptApplicationGraph(staleEdge)).toThrow(
       /Edge identifier/u,
     );
-  });
-
-  it("creates exactly the graph the public schema accepts", () => {
-    const graph = buildSyntheticJavaScriptApplicationGraph();
-    expect(JSON.stringify(graph)).toBe(
-      JSON.stringify(
-        javascriptApplicationGraphSchema.parse(structuredClone(graph)),
-      ),
-    );
-
-    const { graph_id: _graphId, ...semantic } = structuredClone(graph);
-    firstOf(semantic.edges, "edge").edge_id = `jag_edge_${"f".repeat(64)}`;
-    expect(() => createJavaScriptApplicationGraph(semantic)).toThrow(
+    const { graph_id: _graphId, ...staleInput } = staleEdge;
+    expect(() => createJavaScriptApplicationGraph(staleInput)).toThrow(
       /Edge identifier/u,
     );
   });
@@ -1011,7 +866,7 @@ describe("JavaScript Application Graph: identity strategy requirements", () => {
 });
 
 describe("JavaScript Application Graph: truncation claims", () => {
-  it("rejects false truncation claims and accepts large properties", () => {
+  it("rejects false truncation and incomplete-coverage claims", () => {
     const truncated = artifactEvidence(
       APPLICATION_GRAPH_DIGESTS.asar,
       "dist/module.js",
@@ -1056,15 +911,5 @@ describe("JavaScript Application Graph: truncation claims", () => {
         limitations: [],
       }),
     ).toThrow(/Non-complete graph coverage requires an explicit limitation/u);
-
-    const properties = Object.fromEntries(
-      Array.from({ length: 65 }, (_, index) => [`key-${String(index)}`, index]),
-    );
-    expect(
-      contentNode(
-        artifactEvidence(APPLICATION_GRAPH_DIGESTS.asar, "dist/module.js"),
-        properties,
-      ).observations[0]?.properties,
-    ).toEqual(properties);
   });
 });

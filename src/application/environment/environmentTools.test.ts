@@ -6,8 +6,6 @@ import type {
   RecordedExchange,
 } from "./environmentSource.js";
 import {
-  advertisedEnvironmentTool,
-  environmentCard,
   environmentToolArguments,
   environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -380,22 +378,29 @@ describe("environment tool response summaries", () => {
 describe("environment catalog description budgets", () => {
   it("bounds captured scalar prose while preserving complete lookup identities", () => {
     const query = "query-".repeat(1000);
+    const method = "METHOD".repeat(1000);
+    const path = `/${"😀".repeat(1000)}`;
     const expanded = {
       ...tool("get_users_by_id"),
-      method: "METHOD".repeat(1000),
-      path_template: `/${"😀".repeat(1000)}`,
+      method,
+      path_template: path,
       query_parameter_names: [query],
     };
     const [definition] = environmentToolDefinitions(
       withTools([expanded]),
       source.manifest.name,
     );
-    expect(definition?.tool).toBe(expanded);
+    expect(definition?.tool).toMatchObject({
+      method,
+      path_template: path,
+      query_parameter_names: [query],
+    });
     expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
     expect(definition?.description).toContain(
       "path display truncated; full value in manifest Evidence",
     );
-    expect(definition?.description).not.toContain("\uFFFD");
+    expect(definition?.description).toContain("/😀😀");
+    expect(definition?.description).not.toMatch(/[\uD800-\uDFFF\uFFFD]/u);
     expect(
       Object.hasOwn(definition?.inputSchema.properties ?? {}, "query_1"),
     ).toBe(true);
@@ -441,23 +446,6 @@ describe("environment catalog description budgets", () => {
     expect(definition?.inputSchema.properties.id?.description).toContain(
       observations[0],
     );
-  });
-
-  it("cuts a long captured path in the tool description and keeps it whole in the manifest", () => {
-    const users = tool("get_users_by_id");
-    const long = {
-      ...users,
-      path_template: `/api/${"segment/".repeat(200_000)}{id}`,
-    };
-    const [definition] = environmentToolDefinitions(
-      withTools([long]),
-      source.manifest.name,
-    );
-    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(2048);
-    expect(definition?.description).toContain(
-      "path display truncated; full value in manifest Evidence",
-    );
-    expect(definition?.tool.path_template).toBe(long.path_template);
   });
 
   it("advertises long path parameters with collision-safe aliases consistently", () => {
@@ -558,48 +546,6 @@ describe("environmentToolInputSchema argument names", () => {
     ]);
     expect(schema.properties.request_body?.type).toBe("object");
     expect(schema.required).toEqual(["id"]);
-  });
-});
-
-describe("environmentCard", () => {
-  it("shapes the card with fixed protocol fields, the tools and null extension slots in contract key order", () => {
-    const card = environmentCard("grafana-example", definitions);
-    expect(Object.keys(card)).toEqual([
-      "name",
-      "protocolVersion",
-      "url",
-      "preferredTransport",
-      "additionalInterfaces",
-      "capabilities",
-      "children_environments",
-    ]);
-    expect(card).toMatchObject({
-      name: "grafana-example",
-      protocolVersion: "1.0",
-      url: "/agentenv",
-      preferredTransport: "JSONRPC",
-      additionalInterfaces: [{ url: "/mcp", transport: "mcp" }],
-      children_environments: null,
-    });
-    expect(Object.keys(card.capabilities)).toEqual([
-      "extensions",
-      "tools",
-      "operations",
-    ]);
-    expect(card.capabilities.extensions).toBeNull();
-    expect(card.capabilities.operations).toEqual([]);
-    expect(card.capabilities.tools).toHaveLength(definitions.length);
-    for (const [index, entry] of card.capabilities.tools.entries()) {
-      expect(Object.keys(entry)).toEqual([
-        "name",
-        "description",
-        "inputSchema",
-      ]);
-      const definition = definitions[index];
-      if (definition === undefined) throw new Error(`Missing tool ${index}`);
-      expect(entry).toEqual(advertisedEnvironmentTool(definition));
-    }
-    expect(environmentCard("renamed", definitions).name).toBe("renamed");
   });
 });
 

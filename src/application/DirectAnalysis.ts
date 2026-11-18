@@ -1,6 +1,7 @@
 import {
   admitOneShotOperation,
   type DirectAnalysisTool,
+  type DirectEnhancedToolName,
 } from "./oneShotOperationInput.js";
 import { completedOperationEvidence } from "./binary/SessionEvidenceReuse.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
@@ -34,7 +35,6 @@ import {
 } from "./investigation/InvestigationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
-import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import {
   ARTIFACT_ANALYSIS_OPERATIONS,
   type ArtifactAnalysisOperation,
@@ -940,10 +940,7 @@ const isWorkflowEvidenceTool = (
     | ArtifactAnalysisOperation
     | ManagedToolName
     | DirectAnalysisTool,
-): tool is Exclude<
-  Extract<DirectAnalysisTool, EnhancedToolName>,
-  "analyze_function"
-> =>
+): tool is DirectEnhancedToolName =>
   tool === "binary_overview" ||
   tool === "inspect_native_api" ||
   tool === "inspect_native_dispatch_metadata" ||

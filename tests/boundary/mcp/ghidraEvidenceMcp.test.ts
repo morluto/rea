@@ -728,10 +728,10 @@ describe("Ghidra MCP evidence parity", () => {
           expect.stringMatching(/not original source.*Hopper.equivalent/iu),
         ]),
       );
-      const directAnalyzed = await new EnhancedTools(session).execute(
-        "analyze_function",
-        { procedure: "fixture_main" },
-      );
+      const directAnalyzed = await new EnhancedTools(session).executeValidated({
+        name: "analyze_function",
+        input: { procedure: "fixture_main" },
+      });
       if (!directAnalyzed.ok) throw directAnalyzed.error;
       expect(analyzed.normalized_result).toEqual(directAnalyzed.value);
     } finally {

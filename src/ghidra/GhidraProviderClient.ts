@@ -621,9 +621,13 @@ export const createGhidraProviderClient = (input: {
   const launcherDecompileTimeout = decompileTimeout.ok
     ? decompileTimeout.value
     : undefined;
+  const startupTimeout = readRuntimeSetting(
+    () => config.ghidraStartupTimeoutMs,
+  );
+  if (!startupTimeout.ok) return startupTimeout;
   const client = clientFactory({
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
-    startupTimeoutMs: config.ghidraStartupTimeoutMs,
+    startupTimeoutMs: startupTimeout.value,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
     bridgeMaxReplyBytes: config.bridgeMaxReplyBytes,

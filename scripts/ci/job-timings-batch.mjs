@@ -39,7 +39,7 @@ export async function collectJobTimingsBatch({
       status: "completed",
       createdAfter: cutoff,
       lookbackHours: 24,
-      overlap: "Each hourly run re-reads the preceding 24 hours.",
+      overlap: "Each scheduled run re-reads the preceding 24 hours.",
       pagination:
         "Run listings use the first 100; jobs are paginated within the remaining time and 16 MiB response limits.",
       maxRunsPerWorkflow: MAX_RUNS_PER_WORKFLOW,

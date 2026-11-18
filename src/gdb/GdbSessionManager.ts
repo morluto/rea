@@ -2,6 +2,7 @@ import {
   unknownTarget,
   type SessionTargetIdentity,
 } from "../domain/targetIdentity.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import {
   observeDebuggerLaunchFile,
   retryDebuggerStartupFileCleanup,
@@ -1019,19 +1020,9 @@ export class GdbSessionManager {
                   : []),
               ],
             });
-      const processOutput = session.supervisor.snapshot();
-      const capturedOutput = {
-        stdout: processOutput.stdout.text,
-        stderr: processOutput.stderr.text,
-        truncated:
-          processOutput.diagnosticTruncated === true ||
-          processOutput.stdout.observedBytes > processOutput.stdout.bytes ||
-          processOutput.stderr.observedBytes > processOutput.stderr.bytes,
-        stdout_bytes: processOutput.stdout.observedBytes,
-        stderr_bytes: processOutput.stderr.observedBytes,
-        exit_code: processOutput.exitCode ?? null,
-        signal: processOutput.signal ?? null,
-      };
+      const capturedOutput = capturedProviderOutput(
+        session.supervisor.snapshot(),
+      );
       const stopped = await this.#stopDebuggerOnly(session);
       if (stopped.status === "incomplete") {
         this.#sessions.add(session);
@@ -2263,10 +2254,13 @@ export class GdbSessionManager {
             );
             return;
           }
-          const cancellation = new AnalysisCancelledError(operation, {
-            cause: signal?.reason,
-            partialObservation: evidence,
-          });
+          const cancellation = cancelledBy(
+            operation,
+            carriedReason(signal?.reason),
+            {
+              partialObservation: evidence,
+            },
+          );
           const cleanupFailure = this.#sessions.retainCleanupFailure(
             session,
             operation,
