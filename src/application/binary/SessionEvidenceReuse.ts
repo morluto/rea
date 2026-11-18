@@ -1,6 +1,5 @@
 import {
   evidenceSubjectDisplay,
-  withEvidenceTargetCallerPath,
   type Evidence,
 } from "../../domain/evidence.js";
 import { basename } from "node:path";
@@ -111,29 +110,24 @@ export const completedOperationEvidence = (
           parameters,
           options.evidenceById,
         );
-  if (reusable !== undefined)
-    return ok(withEvidenceTargetCallerPath(reusable, options.target));
+  if (reusable !== undefined) return ok(reusable);
   const observation = {
     ...execution,
     subject:
       execution.subject === undefined ? options.target : execution.subject,
   };
-  const admitted = admitCompletedAnalysis(
-    operation,
-    parameters,
-    observation,
-    options.admitRecovery,
-  );
+  const admitted = admitCompletedAnalysis(operation, parameters, observation, {
+    callerTarget: options.target,
+    admit: options.admitRecovery,
+  });
   if (!admitted.ok) return admitted;
   return ok(
-    withEvidenceTargetCallerPath(
-      createAnalysisExecutionEvidence(
-        operation,
-        parameters,
-        observation,
-        "observed",
-      ),
-      options.target,
+    createAnalysisExecutionEvidence(
+      operation,
+      parameters,
+      observation,
+      "observed",
+      { callerTarget: options.target },
     ),
   );
 };

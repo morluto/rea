@@ -34,7 +34,6 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
-import { withEvidenceTargetCallerPath } from "../../domain/evidence.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
@@ -1581,17 +1580,18 @@ export class BinarySession
         name,
         arguments_,
         evidenceExecution,
-        this.admitRecoveryObservation.bind(this),
+        {
+          callerTarget: active.target,
+          admit: this.admitRecoveryObservation.bind(this),
+        },
       );
       if (!admitted.ok) return admitted;
-      const evidence = withEvidenceTargetCallerPath(
-        createAnalysisExecutionEvidence(
-          name,
-          arguments_,
-          evidenceExecution,
-          "observed",
-        ),
-        active.target,
+      const evidence = createAnalysisExecutionEvidence(
+        name,
+        arguments_,
+        evidenceExecution,
+        "observed",
+        { callerTarget: active.target },
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) {

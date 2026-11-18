@@ -25,7 +25,6 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
-  withEvidenceTargetCallerPath,
   type Evidence,
   type EvidenceLocation,
 } from "../domain/evidence.js";
@@ -248,8 +247,10 @@ const workflowSubject = (target: BinaryTarget | undefined) =>
 export const createWorkflowEvidence = (
   input: WorkflowEvidenceInput,
 ): Evidence =>
-  withEvidenceTargetCallerPath(
-    createEvidence(workflowSubject(input.target), REA_WORKFLOW_PROVIDER, {
+  createEvidence(
+    workflowSubject(input.target),
+    REA_WORKFLOW_PROVIDER,
+    {
       operation: input.operation,
       parameters: input.parameters,
       result: input.result,
@@ -272,8 +273,8 @@ export const createWorkflowEvidence = (
       ...(input.operation === "batch_decompile"
         ? { locations: batchProcedureLocations(input.result) }
         : {}),
-    }),
-    input.target,
+    },
+    { callerTarget: input.target },
   );
 
 const admitWorkflowRecovery = (
@@ -292,9 +293,6 @@ const admitWorkflowRecovery = (
         ? null
         : {
             path: evidenceInput.target.path,
-            ...(evidenceInput.target.callerInputPath === undefined
-              ? {}
-              : { callerInputPath: evidenceInput.target.callerInputPath }),
             sha256: evidenceInput.target.sha256,
             format: evidenceInput.target.format,
             architecture: evidenceInput.target.architecture ?? null,
@@ -331,6 +329,7 @@ const admitWorkflowRecovery = (
       locations: [],
       evidenceLinks: [],
     },
+    evidenceInput.target,
   );
   const additional = estimateJsonStorage([
     observation.result,
