@@ -288,6 +288,7 @@ cliTest(
       status: "planned",
       directory: null,
       next: [],
+      coverage: { reads: { state: 5, recorded: 9 } },
     });
     expect(await readdir(root)).toEqual(["grafana.har"]);
 
