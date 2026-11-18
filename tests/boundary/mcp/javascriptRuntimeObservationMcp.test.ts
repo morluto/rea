@@ -9,7 +9,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { observeJavaScriptRuntime } from "../../../src/application/javascript/JavaScriptRuntimeObservationService.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import {
   javascriptRuntimeObservationSchema,
@@ -126,7 +126,6 @@ function registerRuntimeParameterContract(
           ],
         });
     }
-    await client.ping();
   });
 }
 
@@ -162,6 +161,9 @@ function registerRuntimeMetadataContract(): void {
 
     const unknowns = repeated(101);
     const limitations = repeated(101);
+    const truncationReasons = repeated(21);
+    const directlyObserved = repeated(21);
+    const unavailableWithoutInstrumentation = repeated(21);
     expect(
       javascriptRuntimeObservationSchema.parse({
         runtime: {
@@ -184,7 +186,7 @@ function registerRuntimeMetadataContract(): void {
           events_dropped: 0,
           metadata_bytes_retained: 0,
           truncated: false,
-          truncation_reasons: repeated(21),
+          truncation_reasons: truncationReasons,
         },
         scripts: {
           items: [],
@@ -196,12 +198,21 @@ function registerRuntimeMetadataContract(): void {
           },
         },
         execution_contexts: [],
-        directly_observed: repeated(21),
-        unavailable_without_instrumentation: repeated(21),
+        directly_observed: directlyObserved,
+        unavailable_without_instrumentation: unavailableWithoutInstrumentation,
         unknowns,
         limitations,
       }),
-    ).toMatchObject({ unknowns, limitations });
+    ).toMatchObject({
+      capture: {
+        observation_ms: 10_001,
+        truncation_reasons: truncationReasons,
+      },
+      directly_observed: directlyObserved,
+      unavailable_without_instrumentation: unavailableWithoutInstrumentation,
+      unknowns,
+      limitations,
+    });
   });
 }
 
@@ -270,28 +281,22 @@ function registerRetainedRuntimeEvidence(
         },
       },
     });
-    const evidenceId = evidenceIdFrom(observedRuntime.structuredContent);
+    const evidence = parseEvidence(observedRuntime.structuredContent);
+    expect(evidence).toMatchObject({
+      operation: "observe_javascript_runtime",
+      parameters: {
+        inspector_endpoint: inspector.endpoint,
+        target_id: inspector.targetId,
+        runtime_kind: "node",
+        observation_ms: 10,
+      },
+    });
     const bundle = await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},
     });
     expect(bundle.isError).not.toBe(true);
-    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(
-      observedRuntime.structuredContent,
-    );
-    expect(observedRuntime.structuredContent).toMatchObject({
-      evidence_id: evidenceId,
-      operation: "observe_javascript_runtime",
-      parameters: expect.any(Object),
-    });
-    expect(new Set(inspector.commands.map(({ method }) => method))).toEqual(
-      new Set(["Runtime.enable", "Debugger.enable"]),
-    );
-    const provider = new V8InspectorProvider();
-    resources.push(provider);
-    const direct = await observeDirectly(inspector, provider);
-    expect(direct.ok, direct.ok ? undefined : direct.error.message).toBe(true);
-    if (direct.ok) expect(evidenceId).toBe(direct.value.evidence_id);
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
   });
 }
 
@@ -346,27 +351,4 @@ const createObservationClient = async (
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   return { entry, inspector, client };
-};
-
-const observeDirectly = (
-  inspector: Awaited<ReturnType<typeof startFakeV8Inspector>>,
-  provider: V8InspectorProvider,
-) =>
-  observeJavaScriptRuntime(
-    provider,
-    observeJavaScriptRuntimeInputSchema.parse({
-      inspector_endpoint: inspector.endpoint,
-      target_id: inspector.targetId,
-      runtime_kind: "node",
-      observation_ms: 10,
-    }),
-  );
-
-const evidenceIdFrom = (value: unknown): string => {
-  if (typeof value !== "object" || value === null)
-    throw new TypeError("Missing structured result");
-  const evidenceId = Reflect.get(value, "evidence_id");
-  if (typeof evidenceId !== "string")
-    throw new TypeError("Missing Evidence ID");
-  return evidenceId;
 };

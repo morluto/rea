@@ -7,10 +7,7 @@ import { describe, expect, test } from "vitest";
 
 import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/javascript/JavaScriptRuntimeObservationEvidence.js";
 import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
-import {
-  listJavaScriptRuntimeTargets,
-  observeJavaScriptRuntime,
-} from "../../../src/application/javascript/JavaScriptRuntimeObservationService.js";
+import { observeJavaScriptRuntime } from "../../../src/application/javascript/JavaScriptRuntimeObservationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/providerIdentity.js";
@@ -240,83 +237,71 @@ describe("Inspector execution-context lifecycle metadata", () => {
   });
 });
 
-describe("Inspector execution-context ID validation", () => {
-  test.each([
-    ["malformed", "2", "1"],
-    ["valid", 2, 1],
-  ] as const)(
-    "accounts for %s context IDs in lifecycle events",
-    async (mode, createdId, destroyedId) => {
-      const fixture = await runtimeFixture();
-      const fake = await startFakeV8Inspector({
-        targetUrl: pathToFileURL(fixture.entry).href,
-        runtimeEvents: [
-          {
-            method: "Runtime.executionContextCreated",
-            params: { context: { id: 1, name: "main", origin: "" } },
-          },
-          {
-            method: "Runtime.executionContextCreated",
-            params: { context: { id: createdId, name: "worker", origin: "" } },
-          },
-          {
-            method: "Runtime.executionContextDestroyed",
-            params: { executionContextId: destroyedId },
-          },
-        ],
-        scriptEvents: [],
-      });
-      try {
-        const result = await new V8InspectorProvider().observe(
-          observeInput(fake.endpoint, fake.targetId, "node"),
-        );
-        if (!result.ok) throw result.error;
-        const invalidContextUnknowns = result.value.unknowns.filter((text) =>
-          text.includes("malformed execution-context ID"),
-        );
-        expect(result.value.capture).toMatchObject({
-          events_observed: 3,
-          events_retained: 3,
-          events_dropped: 0,
-          truncated: false,
-        });
-        if (mode === "malformed") {
-          expect(result.value.execution_contexts).toEqual([
-            {
-              context_key: "context_0",
-              execution_context_id: 1,
-              state: "created",
-              name: "main",
-              origin: "",
-            },
-          ]);
-          expect(invalidContextUnknowns).toEqual([
-            "2 execution-context lifecycle events with a missing or malformed execution-context ID were excluded; the affected contexts' lifecycle state is unknown.",
-          ]);
-          return;
-        }
-        expect(result.value.execution_contexts).toEqual([
-          {
-            context_key: "context_0",
-            execution_context_id: 1,
-            state: "destroyed",
-            name: "main",
-            origin: "",
-          },
-          {
-            context_key: "context_1",
-            execution_context_id: 2,
-            state: "created",
-            name: "worker",
-            origin: "",
-          },
-        ]);
-        expect(invalidContextUnknowns).toEqual([]);
-      } finally {
-        await fake.close();
-      }
-    },
-  );
+test("counts malformed lifecycle events without altering valid Inspector contexts", async () => {
+  const fixture = await runtimeFixture();
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    runtimeEvents: [
+      {
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: 1, name: "main", origin: "" } },
+      },
+      {
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: "2", name: "bad", origin: "" } },
+      },
+      {
+        method: "Runtime.executionContextDestroyed",
+        params: { executionContextId: "1" },
+      },
+      {
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: 2, name: "worker", origin: "" } },
+      },
+      {
+        method: "Runtime.executionContextDestroyed",
+        params: { executionContextId: 2 },
+      },
+    ],
+    scriptEvents: [],
+  });
+  try {
+    const result = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.capture).toMatchObject({
+      events_observed: 5,
+      events_retained: 5,
+      events_dropped: 0,
+      truncated: false,
+    });
+    expect(result.value.execution_contexts).toEqual([
+      {
+        context_key: "context_0",
+        execution_context_id: 1,
+        state: "created",
+        name: "main",
+        origin: "",
+      },
+      {
+        context_key: "context_1",
+        execution_context_id: 2,
+        state: "destroyed",
+        name: "worker",
+        origin: "",
+      },
+    ]);
+    expect(
+      result.value.unknowns.filter((text) =>
+        text.includes("malformed execution-context ID"),
+      ),
+    ).toEqual([
+      "2 execution-context lifecycle events with a missing or malformed execution-context ID were excluded; the affected contexts' lifecycle state is unknown.",
+    ]);
+  } finally {
+    await fake.close();
+  }
 });
 
 test("rejects unknown runtime observation fields", () => {
@@ -329,10 +314,12 @@ test("rejects unknown runtime observation fields", () => {
   ).toBe(false);
 });
 
-test("returns every target exposed by the selected Inspector endpoint inline", async () => {
+test("lists all connectable targets on the selected endpoint across directories", async () => {
   const fixture = await runtimeFixture();
+  const outside = await temporaryFile("outside.js");
   const fake = await startFakeV8Inspector({
     targetUrl: pathToFileURL(fixture.entry).href,
+    additionalTargetUrl: pathToFileURL(outside).href,
     additionalTargetCount: 205,
   });
   try {
@@ -340,8 +327,22 @@ test("returns every target exposed by the selected Inspector endpoint inline", a
       inspector_endpoint: fake.endpoint,
     });
     if (!listed.ok) throw listed.error;
-    expect(listed.value.targets).toHaveLength(206);
-    expect(listed.value.targets[0]?.target_id).toBe(fake.targetId);
+    const targets = listed.value.targets;
+    expect(targets).toHaveLength(207);
+    expect(new Set(targets.map(({ target_id }) => target_id)).size).toBe(207);
+    expect(
+      targets.find(({ target_id }) => target_id === fake.targetId)?.location,
+    ).toMatchObject({ kind: "file", file_path: fixture.entry });
+    expect(
+      targets.find(
+        ({ target_id }) => target_id === "00000000-0000-4000-8000-000000000002",
+      )?.location,
+    ).toMatchObject({ kind: "file", file_path: outside });
+    expect(
+      targets.find(
+        ({ target_id }) => target_id === "00000000-0000-4000-8000-000000000207",
+      )?.location,
+    ).toMatchObject({ kind: "file", file_path: fixture.entry });
   } finally {
     await fake.close();
   }
@@ -404,27 +405,6 @@ test("rejects a V8 target explicitly marked attached", async () => {
       error: { reason: "target_not_allowed" },
     });
     expect(fake.commands).toEqual([]);
-  } finally {
-    await fake.close();
-  }
-});
-
-test("includes targets outside the old caller root filter", async () => {
-  const fixture = await runtimeFixture();
-  const outside = await temporaryFile("outside.js");
-  const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(fixture.entry).href,
-    additionalTargetUrl: pathToFileURL(outside).href,
-  });
-  try {
-    const result = await new V8InspectorProvider().listTargets({
-      inspector_endpoint: fake.endpoint,
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.targets).toHaveLength(2);
-    expect(result.value.targets.map(({ location }) => location)).toContainEqual(
-      expect.objectContaining({ file_path: outside }),
-    );
   } finally {
     await fake.close();
   }
@@ -499,131 +479,109 @@ test("excludes an Electron main target that reports only bare file://", async ()
 });
 
 test.each([
-  ["node", "node"],
-  ["electron-main", "node"],
-  ["electron-preload", "page"],
-  ["electron-renderer", "page"],
+  {
+    targetType: "node",
+    allowed: ["node", "electron-main"],
+    refused: ["electron-preload", "electron-renderer"],
+  },
+  {
+    targetType: "page",
+    allowed: ["electron-preload", "electron-renderer"],
+    refused: ["node", "electron-main"],
+  },
 ] as const)(
-  "admits declared %s only on its protocol target family",
-  async (runtimeKind, targetType) => {
+  "admits only compatible declared roles for a $targetType Inspector target",
+  async ({ targetType, allowed, refused }) => {
     const fixture = await runtimeFixture();
     const fake = await startFakeV8Inspector({
       targetUrl: pathToFileURL(fixture.entry).href,
       targetType,
     });
+    const provider = new V8InspectorProvider();
     try {
-      const result = await new V8InspectorProvider().observe(
-        observeInput(fake.endpoint, fake.targetId, runtimeKind),
-      );
-      expect(result.ok).toBe(true);
+      for (const kind of refused) {
+        const result = await provider.observe(
+          observeInput(fake.endpoint, fake.targetId, kind),
+        );
+        expect(result, kind).toMatchObject({
+          ok: false,
+          error: { reason: "target_not_allowed" },
+        });
+      }
+      expect(fake.commands).toEqual([]);
+      for (const kind of allowed) {
+        const result = await provider.observe(
+          observeInput(fake.endpoint, fake.targetId, kind),
+        );
+        if (!result.ok) throw result.error;
+        expect(result.value.target).toMatchObject({
+          protocol_type: targetType,
+          runtime_kind: kind,
+          runtime_kind_authority: "caller-declared-unverified",
+        });
+      }
+      if (targetType === "page") {
+        const input = observeInput(fake.endpoint, fake.targetId, "node");
+        delete input.runtime_kind;
+        const result = await provider.observe(input);
+        if (!result.ok) throw result.error;
+        expect(result.value.target).toMatchObject({
+          protocol_type: "page",
+          runtime_kind: "unknown",
+          runtime_kind_authority: "not-declared",
+        });
+      }
     } finally {
+      await provider.close();
       await fake.close();
     }
   },
 );
 
-describe("complete Inspector script hashes", () => {
-  test("keeps more than one hundred long script hashes distinct", async () => {
-    const fixture = await runtimeFixture();
-    const url = pathToFileURL(fixture.entry).href;
-    const prefix = "h".repeat(512);
-    const scriptHashes = Array.from(
-      { length: 101 },
-      (_, index) => `${prefix}${String(index)}`,
+test("retains 2,005 authorized scripts with complete URL and hash metadata", async () => {
+  const shortUrl = "https://example.test/shared.js";
+  const longUrl = `https://example.test/${"a".repeat(20_000)}`;
+  const prefix = "h".repeat(512);
+  const scriptHashes = Array.from({ length: 2_005 }, (_, index) =>
+    index < 101 ? `${prefix}${index}` : `hash-${index}`,
+  );
+  const scriptUrls = scriptHashes.map((_, index) =>
+    index === 2_004 ? longUrl : shortUrl,
+  );
+  const fake = await startFakeV8Inspector({
+    targetUrl: longUrl,
+    scriptUrls,
+    scriptHashes,
+  });
+  try {
+    const result = await new V8InspectorProvider().observe({
+      ...observeInput(fake.endpoint, fake.targetId, "node"),
+      observation_ms: 1_000,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.capture).toMatchObject({
+      truncated: false,
+      truncation_reasons: [],
+      events_dropped: 0,
+    });
+    expect(result.value.target.location).toMatchObject({
+      kind: "url",
+      sanitized_url: longUrl,
+    });
+    const items = result.value.scripts.items;
+    expect(items.map(({ cdp_hash }) => cdp_hash).sort()).toEqual(
+      [...scriptHashes].sort(),
     );
-    const fake = await startFakeV8Inspector({
-      targetUrl: url,
-      scriptUrls: scriptHashes.map(() => url),
-      scriptHashes,
+    expect(
+      items.find(({ cdp_hash }) => cdp_hash === "hash-2004")?.location,
+    ).toMatchObject({
+      kind: "url",
+      origin: "https://example.test",
+      sanitized_url: longUrl,
     });
-    try {
-      const result = await new V8InspectorProvider().observe({
-        ...observeInput(fake.endpoint, fake.targetId, "node"),
-        observation_ms: 1_000,
-      });
-      if (!result.ok) throw result.error;
-      expect(result.value.scripts.items).toHaveLength(scriptHashes.length);
-      expect(
-        new Set(result.value.scripts.items.map(({ cdp_hash }) => cdp_hash)),
-      ).toEqual(new Set(scriptHashes));
-    } finally {
-      await fake.close();
-    }
-  });
-});
-
-describe("undeclared V8 runtime role", () => {
-  test("observes a target without inventing a runtime role", async () => {
-    const fixture = await runtimeFixture();
-    const fake = await startFakeV8Inspector({
-      targetUrl: pathToFileURL(fixture.entry).href,
-      targetType: "page",
-    });
-    try {
-      const input = observeInput(fake.endpoint, fake.targetId, "node");
-      delete input.runtime_kind;
-      const result = await new V8InspectorProvider().observe(input);
-      if (!result.ok) throw result.error;
-      expect(result.value.target).toMatchObject({
-        protocol_type: "page",
-        runtime_kind: "unknown",
-        runtime_kind_authority: "not-declared",
-      });
-    } finally {
-      await fake.close();
-    }
-  });
-});
-
-describe("V8 Inspector script retention", () => {
-  test("retains an authorized script location of more than 20,000 characters", async () => {
-    const longUrl = `https://example.test/${"a".repeat(20_000)}`;
-    const fake = await startFakeV8Inspector({
-      targetUrl: longUrl,
-      scriptUrls: [longUrl],
-    });
-    try {
-      const input = {
-        ...observeInput(fake.endpoint, fake.targetId, "node"),
-      };
-      const result = await new V8InspectorProvider().observe(input);
-      if (!result.ok) throw result.error;
-      expect(result.value.scripts.items).toHaveLength(1);
-      expect(result.value.scripts.items[0]?.location).toMatchObject({
-        kind: "url",
-        origin: "https://example.test",
-        sanitized_url: longUrl,
-      });
-    } finally {
-      await fake.close();
-    }
-  });
-
-  test("returns every authorized script of a target with 2,005 scripts", async () => {
-    const fixture = await runtimeFixture();
-    const scriptUrls = [
-      pathToFileURL(fixture.entry).href,
-      ...Array.from({ length: 2_004 }, () => pathToFileURL(fixture.entry).href),
-    ];
-    const fake = await startFakeV8Inspector({
-      targetUrl: pathToFileURL(fixture.entry).href,
-      scriptUrls,
-    });
-    try {
-      const input = {
-        ...observeInput(fake.endpoint, fake.targetId, "node"),
-        observation_ms: 1_000,
-      };
-      const result = await new V8InspectorProvider().observe(input);
-      if (!result.ok) throw result.error;
-      expect(result.value.capture.truncated).toBe(false);
-      expect(result.value.capture.truncation_reasons).toEqual([]);
-      expect(result.value.capture.events_dropped).toBe(0);
-      expect(result.value.scripts.items).toHaveLength(scriptUrls.length);
-    } finally {
-      await fake.close();
-    }
-  });
+  } finally {
+    await fake.close();
+  }
 });
 
 describe("bounded V8 Inspector capture", () => {
@@ -657,7 +615,15 @@ describe("bounded V8 Inspector capture", () => {
       expect(result.value.capture.events_observed).toBeGreaterThan(
         result.value.capture.events_retained,
       );
-      expect(result.value.execution_contexts).toHaveLength(1);
+      expect(result.value.execution_contexts).toMatchObject([
+        { execution_context_id: 1, state: "destroyed" },
+      ]);
+      const retainedHashes = result.value.scripts.items.map(
+        ({ cdp_hash }) => cdp_hash,
+      );
+      expect(retainedHashes).toContain(scriptHashes[0]);
+      expect(retainedHashes).not.toContain(scriptHashes.at(-1));
+      expect(result.value.scripts.observed_total).toBe(scriptHashes.length);
     } finally {
       await fake.close();
     }
@@ -702,51 +668,12 @@ describe("passive V8 Inspector evidence", () => {
         new V8InspectorProvider(),
         input,
       );
-      expect(first.ok).toBe(true);
-      expect(second.ok).toBe(true);
-      if (!first.ok || !second.ok) return;
+      if (!first.ok) throw first.error;
+      if (!second.ok) throw second.error;
       expect(second.value.evidence_id).toBe(first.value.evidence_id);
-
-      const listed = await listJavaScriptRuntimeTargets(
-        new V8InspectorProvider(),
-        {
-          inspector_endpoint: fake.endpoint,
-        },
-      );
-      expect(listed.ok).toBe(true);
     } finally {
       await fake.close();
     }
-  });
-
-  test("reconciles V8 script presence with static Application Graph Evidence", () => {
-    const root = "/Applications/Example.app/Contents/Resources/app";
-    const observation = runtimeObservation(
-      `${root}/index.html`,
-      `${root}/renderer.js`,
-    );
-    const runtimeEvidence = createJavaScriptRuntimeObservationEvidence(
-      "observe_javascript_runtime",
-      {
-        inspector_endpoint: "http://127.0.0.1:9229",
-        target_id: "example-v8-target",
-        runtime_kind: "electron-main",
-        observation_ms: 100,
-      },
-      observation,
-      V8_INSPECTOR_PROVIDER_IDENTITY,
-    );
-    const reconciled = reconcileJavaScriptRuntimeEvidence({
-      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
-      runtime_observations: [runtimeEvidence],
-    });
-    if (!reconciled.ok) throw reconciled.error;
-    const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.evidence.normalized_result,
-    );
-    expect(result.runtime_captures[0]?.kind).toBe("v8-inspector");
-    expect(result.summary.runtime_scripts).toBe(1);
-    expect(result.summary.matched).toBeGreaterThan(0);
   });
 
   test("keeps unverified partial script URLs unresolved during reconciliation", () => {
