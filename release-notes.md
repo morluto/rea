@@ -459,6 +459,7 @@
 * **setup:** stop treating Antigravity's .gemini storage as Gemini CLI ([5b158b2](https://github.com/morluto/rea/commit/5b158b2d1d39468c5b17ef9072ca24179d9117fd)), closes [#7567](https://github.com/morluto/rea/issues/7567)
 * **setup:** stop writing the default compact input profile for Kimi and LM Studio ([#10559](https://github.com/morluto/rea/issues/10559)) ([6c062c9](https://github.com/morluto/rea/commit/6c062c9c2ae603a58a8d74ee1d07bc4e03906e5c))
 * **setup:** supply registration profile in catalog test ([a8527d4](https://github.com/morluto/rea/commit/a8527d43b8439476f5c9d1497315dfe7dd5e1f38))
+* **setup:** write the recommended tool call timeout into dsh registrations ([#4043](https://github.com/morluto/rea/issues/4043)) ([82e16b4](https://github.com/morluto/rea/commit/82e16b4dda6a5e526845a26ad09251f8fa69807d))
 * **skill:** keep recovery client IDs aligned with the setup registry ([0b21b6c](https://github.com/morluto/rea/commit/0b21b6ce03199e260f88739bf7ee3bcd1ec9854b)), closes [#7640](https://github.com/morluto/rea/issues/7640)
 * **snapshot:** locate entry diagnostics by collection and index ([4ad1eb5](https://github.com/morluto/rea/commit/4ad1eb5beb1520274deb8ca1fe894359c7d4cb11))
 * **snapshot:** retain schema diagnostics in file failures ([213fcc8](https://github.com/morluto/rea/commit/213fcc8ce110c4c8a7d15550bcb80bfff4720e7a)), closes [#7442](https://github.com/morluto/rea/issues/7442) [#7875](https://github.com/morluto/rea/issues/7875)
