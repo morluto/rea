@@ -8,15 +8,15 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../../resources/ArtifactReader.js";
-import {
-  DirectoryArtifactEntryAccessDenied,
-  DirectoryArtifactReader,
-  DirectoryArtifactRootFailure,
-} from "../DirectoryArtifactReader.js";
 import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
 import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+} from "../../resources/index.js";
 
 const archive = build({
   $archiver: "NSKeyedArchiver",

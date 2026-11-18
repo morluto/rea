@@ -22,7 +22,7 @@ import {
 import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -38,6 +38,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SignatureOwner = Extract<
   ArtifactResourceOwner,
@@ -93,7 +94,7 @@ const signatureReadFailure = (
         path: target.path,
         phase: "target-version-binding",
         system_code: typeof code === "string" ? code : null,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );
@@ -222,11 +223,11 @@ export const withSignatureTarget = async (
       );
       bindArtifactFileCleanup(cause, failure);
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           outcome,
           failure,
           "inspect_signature",
-        ).bindCleanupDependencies([outcome, failure]),
+        ),
       );
     }
     return err(outcome);
@@ -244,7 +245,7 @@ const signatureCleanupFailure = (
     NATIVE_MACOS_PROVIDER_IDENTITY.id,
     resources,
     {
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       phase: `signature-snapshot-${phase}`,
       path: target.path,
     },
@@ -270,7 +271,7 @@ const snapshotFailure = (
       diagnostics: {
         path: target.path,
         phase: `signature-snapshot-${phase}`,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );

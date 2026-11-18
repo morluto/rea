@@ -1,3 +1,4 @@
+import type { FixedCeilingFacts } from "./fixedAllowanceRemediation.js";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -56,11 +57,17 @@ export class BinaryMappingFailure extends BinaryFormatFailure {
  * `LimitRef`; it defaults to the boundary when a decoder has only one.
  */
 export class BinaryResourceFailure extends ParseFailureError<"limit"> {
+  /**
+   * @param maximum_bytes The exceeded maximum, in `unit`. Despite its name,
+   *   some producers count entries or values; `unit` says which, and is
+   *   undefined when the producer has not named it.
+   */
   constructor(
     readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
     message: string,
     allowance: string = boundary,
+    readonly unit?: "bytes" | "entries",
   ) {
     super({
       kind: "limit",
@@ -71,6 +78,14 @@ export class BinaryResourceFailure extends ParseFailureError<"limit"> {
     this.name = "BinaryResourceFailure";
   }
 }
+
+/** The exceeded maximum as fixed-ceiling facts; the unit only when its producer named it. */
+export const binaryResourceCeiling = (
+  failure: BinaryResourceFailure,
+): FixedCeilingFacts => ({
+  limit: failure.maximum_bytes,
+  ...(failure.unit === undefined ? {} : { unit: failure.unit }),
+});
 
 /** The failure's allowance when it is one of `allowances`, else `null`. */
 export const binaryResourceAllowance = <Allowance extends string>(
@@ -166,6 +181,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Non-zero-fill bytes within the file and the segment's file range. */
+      readonly on_disk: boolean;
       /** Declared `reloff` and `nreloc`, which only object files populate. */
       readonly relocations: { readonly offset: number; readonly count: number };
     }
@@ -214,7 +231,8 @@ export type BinaryContainer = BinaryContainerFacts &
           readonly dynamicSegments: readonly ElfDynamicSegment[];
         };
       }
-    | { readonly format: "pe" | "macho" }
+    | { readonly format: "pe" }
+    | { readonly format: "macho"; readonly macho_cpu_type: number }
   );
 
 /** All declared file-backed image memory, including PE headers at the image base. */
@@ -234,7 +252,7 @@ export class BinaryReader {
     readonly format: string,
   ) {}
 
-  range(offset: number, size: number, label: string): Buffer {
+  #checkRange(offset: number, size: number, label: string): void {
     if (
       !Number.isSafeInteger(offset) ||
       !Number.isSafeInteger(size) ||
@@ -257,23 +275,33 @@ export class BinaryReader {
         `${label} range is truncated or outside the file`,
         { format: this.format, offset, field: label },
       );
+  }
+
+  range(offset: number, size: number, label: string): Buffer {
+    this.#checkRange(offset, size, label);
     return this.bytes.subarray(offset, offset + size);
   }
 
   u16(offset: number): number {
-    const value = this.range(offset, 2, "16-bit field");
-    return this.little ? value.readUInt16LE() : value.readUInt16BE();
+    this.#checkRange(offset, 2, "16-bit field");
+    return this.little
+      ? this.bytes.readUInt16LE(offset)
+      : this.bytes.readUInt16BE(offset);
   }
 
   u32(offset: number): number {
-    const value = this.range(offset, 4, "32-bit field");
-    return this.little ? value.readUInt32LE() : value.readUInt32BE();
+    this.#checkRange(offset, 4, "32-bit field");
+    return this.little
+      ? this.bytes.readUInt32LE(offset)
+      : this.bytes.readUInt32BE(offset);
   }
 
   word(offset: number, bits: 32 | 64): bigint {
     if (bits === 32) return BigInt(this.u32(offset));
-    const value = this.range(offset, 8, "64-bit field");
-    return this.little ? value.readBigUInt64LE() : value.readBigUInt64BE();
+    this.#checkRange(offset, 8, "64-bit field");
+    return this.little
+      ? this.bytes.readBigUInt64LE(offset)
+      : this.bytes.readBigUInt64BE(offset);
   }
 
   fileRange(offset: bigint, size: bigint, label: string): FileMapping {
@@ -309,6 +337,8 @@ export class BinaryReader {
         "structure",
         16 * 1024 * 1024,
         `${label} exceeds the 16 MiB structural decoding budget`,
+        "structure",
+        "bytes",
       );
     return this.fileRange(offset, size, label).offset;
   }

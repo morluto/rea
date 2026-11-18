@@ -174,7 +174,7 @@ describe("provider boundaries", () => {
       providerBoundaryFacts([
         edge("src/inspector/A.ts", "src/browser/CdpConnection.js"),
         edge("src/inspector/A.ts", "src/browser/protocol/CdpEvents.js"),
-        edge("src/inspector/A.ts", "src/browser/ElectronFileScope.js"),
+        edge("src/inspector/A.ts", "src/browser/CdpBrowserProvider.js"),
         edge("src/electron/B.ts", "src/browser/CdpConnection.js"),
       ]).crossProvider,
     ).toEqual({ "electron -> browser": 1, "inspector -> browser": 1 });
@@ -207,18 +207,18 @@ describe("provider boundaries", () => {
     ).toEqual({ "providers -> ghidra": 1 });
   });
 
-  it("skips only the exact declared file-to-file exception", () => {
+  it("counts domain-to-platform imports without a local-path exception", () => {
     expect(
       layerGraphFacts([
         edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
       ]).upward,
-    ).toEqual({});
+    ).toEqual({ "domain -> platform": 1 });
     expect(
       layerGraphFacts([
         edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
         edge("src/domain/other.ts", "src/platform/HostPlatform.js"),
         edge("src/domain/localPath.ts", "src/platform/Other.js"),
       ]).upward,
-    ).toEqual({ "domain -> platform": 2 });
+    ).toEqual({ "domain -> platform": 3 });
   });
 });

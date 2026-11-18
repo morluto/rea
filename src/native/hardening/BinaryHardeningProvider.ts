@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectOwnedArtifactIdentityFailure,
@@ -28,10 +31,14 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import { readElfHardening } from "./ElfHardening.js";
 import { readMachoHardening } from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
 
@@ -134,19 +141,14 @@ const binaryHardeningFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The binary hardening structural allowance",
-          "parser",
-        ),
-      },
-    );
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...fixedAllowanceOptions(
+        "The binary hardening structural allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (
@@ -182,7 +184,7 @@ const binaryHardeningFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

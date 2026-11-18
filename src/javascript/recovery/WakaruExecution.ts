@@ -4,8 +4,10 @@ import {
   createAnalysisExecution,
   type ExecutionOptions,
 } from "../../ports/AnalysisProvider.js";
-import type { SafeOutputTree } from "../../resources/index.js";
-import type { ArtifactResourceScope } from "../../resources/index.js";
+import type {
+  SafeOutputTree,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,

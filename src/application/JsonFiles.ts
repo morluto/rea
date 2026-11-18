@@ -1,11 +1,11 @@
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   AnalysisCancelledError,
   type AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
-  type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
@@ -33,6 +33,7 @@ import {
   fileAccessFailureReason,
 } from "../resources/index.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 // The JSON read owner records the exact leases it binds; consumers never
 // infer cleanup ownership from matching resource labels.
@@ -215,8 +216,7 @@ const jsonFileReadFailure = (
       cause: cause.physicalCause,
       path,
     });
-  if (isJsonReadCancellation(cause, signal))
-    return cancelledBy(operation, signal);
+  if (isAbortOf(cause, signal)) return cancelledBy(operation, signal);
   return new EvidenceFileError(
     "read",
     cause instanceof NonRegularFileReadError
@@ -237,10 +237,7 @@ const jsonFileCleanupError = <Value>(
     cause: failure,
     path,
     cleanup: {
-      reason:
-        failure.cleanupCause instanceof Error
-          ? failure.cleanupCause.message
-          : String(failure.cleanupCause),
+      reason: errorMessage(failure.cleanupCause),
       resources: [failure.path],
     },
   });
@@ -273,19 +270,4 @@ const jsonFileCleanupError = <Value>(
   }).bindCleanupDependencies([primary, cleanup]);
   if (!primary.cleanupIncomplete) rememberJsonReadCleanup(combined, failure);
   return combined;
-};
-
-const isJsonReadCancellation = (
-  cause: unknown,
-  signal?: AbortSignal,
-): signal is AbortedSignal => {
-  if (signal?.aborted !== true) return false;
-  if (cause === signal.reason) return true;
-  return (
-    cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    cause.cause === signal.reason
-  );
 };

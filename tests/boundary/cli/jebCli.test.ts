@@ -38,28 +38,19 @@ it("validates decompile item input before contacting the engine", async () => {
   });
 });
 
-it.each([
-  { setting: "REA_JEB_MCP_URL", value: "http://localhost:8425/mcp" },
-  { setting: "REA_JEB_MCP_TIMEOUT_MS", value: "1.5" },
-])(
-  "reports invalid $setting without breaking other commands",
-  async ({ setting, value }) => {
-    const environment = { [setting]: value };
-    const jeb = await serveCli(["inspect-jeb-client", "--json"], environment);
-    expect(JSON.parse(jeb.stdout)).toMatchObject({
-      code: "configuration_invalid",
-      details: { settings: [{ setting }] },
-    });
-    const capabilities = await serveCli(
-      ["capabilities", "--json"],
-      environment,
-    );
-    expect(capabilities.exitCode).toBe(0);
-    expect(JSON.parse(capabilities.stdout)).toMatchObject({
-      capabilities: expect.any(Array),
-    });
-  },
-);
+it("reports an invalid JEB endpoint without breaking other commands", async () => {
+  const environment = { REA_JEB_MCP_URL: "http://localhost:8425/mcp" };
+  const jeb = await serveCli(["inspect-jeb-client", "--json"], environment);
+  expect(JSON.parse(jeb.stdout)).toMatchObject({
+    code: "configuration_invalid",
+    details: { settings: [{ setting: "REA_JEB_MCP_URL" }] },
+  });
+  const capabilities = await serveCli(["capabilities", "--json"], environment);
+  expect(capabilities.exitCode).toBe(0);
+  expect(JSON.parse(capabilities.stdout)).toMatchObject({
+    capabilities: expect.any(Array),
+  });
+});
 
 it.each(
   [

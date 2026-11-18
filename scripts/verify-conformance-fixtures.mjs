@@ -45,14 +45,13 @@ process.stdout.write(
 );
 
 async function resolveSourceRoot(manifestPath, declaredSourceRoot) {
+  if (declaredSourceRoot !== undefined)
+    return realpath(resolve(process.cwd(), declaredSourceRoot));
   const candidates = [
-    declaredSourceRoot === undefined
-      ? null
-      : resolve(process.cwd(), declaredSourceRoot),
     resolve(process.cwd(), "tests/conformance"),
     resolve(dirname(dirname(dirname(manifestPath))), "tests/conformance"),
     resolve(dirname(manifestPath), "../../tests/conformance"),
-  ].filter((candidate) => candidate !== null);
+  ];
   for (const candidate of candidates) {
     try {
       return await realpath(candidate);

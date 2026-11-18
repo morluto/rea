@@ -7,7 +7,6 @@ import { expect, it, vi } from "vitest";
 
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as fitStructure from "./fit/FitStructure.js";
@@ -26,6 +25,7 @@ import {
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const MIB = 1024 * 1024;
 
@@ -545,7 +545,9 @@ it("preserves a final validation failure when cancellation overlaps it", async (
   );
   const controller = new AbortController();
   const finalValidation = phaseGate();
-  const failure = new ArtifactReaderFailure("integrity", "carrier changed");
+  const failure = new ArtifactReaderFailure("integrity", "carrier changed", {
+    integrityCheck: "container-identity",
+  });
   const read = ArtifactFileSource.prototype.read;
   const readChunks = fileChunks.readFileHandleChunks;
   let owner: ArtifactFileSource | undefined;

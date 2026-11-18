@@ -1,5 +1,5 @@
 import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
@@ -34,6 +34,7 @@ import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   SafeOutputTree,
   outputDirectoryAdmissionRefusal,
+  AnalysisCleanupLease,
 } from "../resources/index.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
@@ -49,6 +50,7 @@ import {
   firmwareFileSizeLimit,
   firmwareToolUnavailable,
   resolveFirmwareCommand,
+  firmwareExecutionOutput,
   runFirmwareCommand,
   readFirmwareCommandReport,
   type FirmwareLauncher,
@@ -67,7 +69,7 @@ import {
   firmwarePhaseInterruption,
   firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
-import { AnalysisCleanupLease } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
 interface PendingFirmwareCleanup {
@@ -168,6 +170,8 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       Record<string, string | undefined>
     > = process.env,
     readonly launcher?: FirmwareLauncher,
+    /** The host the engines run on; selects the supported-host gate and environment rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Inspect regions or explicitly extract selected bytes without changing the source. */
@@ -290,7 +294,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -311,7 +315,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path, pending.tree?.tree.outputRoot ?? path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -332,7 +336,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -350,7 +354,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     // Capture configuration after queue admission; later operations may select updates.
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
@@ -384,6 +388,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         engineName,
         request.operation,
         this.#files,
+        this.host.platform,
         signal,
       );
       root = await PrivateRuntimeRoot.create({ prefix: "rea-firmware-" });
@@ -427,15 +432,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         });
         for (const selected of [command.command, command.limiter])
           await assertArtifactCommandPath(selected, request.operation, {
-            capturedOutput: {
-              stdout: output.stdout.text,
-              stderr: output.stderr.text,
-              stdout_bytes: output.stdout.bytes,
-              stderr_bytes: output.stderr.bytes,
-              exit_code: output.exit_code ?? null,
-              signal: output.signal,
-              truncated: false,
-            },
+            capturedOutput: firmwareExecutionOutput(output),
           });
         return output;
       };
@@ -709,7 +706,7 @@ const finishFirmwareWorkspace = async (
           ? [request.input.output_directory]
           : []),
       ],
-      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { reason: errorMessage(cause) },
       {
         cause,
         operation: request.operation,

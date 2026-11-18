@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -28,6 +29,7 @@ import { normalizeUnblobReport } from "../../../src/firmware/FirmwareReports.js"
 import { startFirmwareDeadline } from "../../../src/firmware/FirmwareDeadline.js";
 import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const validateAdvertisedFirmwareOutput = async (
   result: Awaited<ReturnType<typeof publishFirmwareExtraction>>,
@@ -41,7 +43,10 @@ const validateAdvertisedFirmwareOutput = async (
     name: "schema",
     version: "1",
   });
-  const client = new Client({ name: "schema-client", version: "1" });
+  const client = new Client(
+    { name: "schema-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   server.registerTool(
     contract.name,
     { outputSchema: toolOutputSchemaWithMetadata(contract) },
@@ -60,7 +65,7 @@ const validateAdvertisedFirmwareOutput = async (
     expect(ajv.validateSchema(schema as AnySchema)).toBe(true);
     const validate = ajv.compile(schema as AnySchema);
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "fixture", version: null },
       {
         operation: "extract_firmware",

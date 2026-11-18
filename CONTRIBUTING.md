@@ -126,10 +126,10 @@ the human owner and must not attest to a human review on their behalf.
 
 The `PR readiness` check reports pending for drafts and requires a named human
 owner and all three template declarations for non-drafts. PRs authored by
-@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
-the declaration; their human ownership, review, and evidence responsibilities
-above still apply. The check identifies authors by GitHub account ID. It checks
-that the declaration is filled, not whether the code or evidence is correct.
+@morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or @vincentkoc are
+exempt from the declaration. Their human ownership, review, and evidence
+responsibilities above still apply. The check identifies authors by GitHub
+account ID and verifies that they filled in the declaration.
 Existing PRs can copy the **Author readiness** section from the current template.
 Open PRs must have distinct head commits because GitHub shares commit statuses.
 
@@ -418,8 +418,8 @@ installs that bundle with Skills 1.7.2 using default repository-root discovery
 and checks every installed file, alongside the packaged setup checks.
 CI validates generated outputs and retains them as artifacts; do not commit
 them. Reviewed source metadata, including
-`src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json`, remains
-tracked and checked for freshness.
+`src/generatedPackageMetadata.ts`, `docs/error-contract.schema.json` and
+`docs/user-visible-errors.csv`, remains tracked and checked for freshness.
 
 The packaged skill contains instructions and inventory metadata, not runtime
 schema hashes. Its conformance commitment covers that exact bundle and portable

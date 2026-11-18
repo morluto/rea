@@ -5,6 +5,26 @@ import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { importVerifierSource } from "./verifier-source-loader.mjs";
 
 /**
+ * An allocated root the fixture owns; `close` removes it.
+ * @typedef {{
+ *   readonly path: string;
+ *   close: () => Promise<void>;
+ * }} VerifierFixtureRoot
+ */
+/**
+ * A directory the verifier keeps after the run; nothing removes it.
+ * @typedef {{
+ *   readonly path: string;
+ *   readonly kept: true;
+ * }} VerifierArtifactDirectory
+ */
+/**
+ * One cleanup that must confirm; a rejection or throw means it did not.
+ * @typedef {() => unknown} VerifierCleanupTask
+ */
+/** @typedef {typeof import("../../src/process/PrivateRuntimeRoot.js")} PrivateRuntimeRootModule */
+
+/**
  * One verifier fixture root and everything that may still use files under it.
  *
  * The root is a `PrivateRuntimeRoot` from `src/process`. MCP clients and
@@ -16,15 +36,21 @@ import { importVerifierSource } from "./verifier-source-loader.mjs";
  * confirmed, then the root.
  */
 export class VerifierFixture {
+  /** @type {VerifierFixtureRoot} */
   #root;
+  /** @type {VerifierCleanupTask[]} */
   #pending = [];
   #released = false;
+  /** @type {Promise<void> | undefined} */
   #releasing;
   // Closed when the first release starts and never reopened: a resource that
   // joined after others had closed would be released out of order.
   #registrationClosed = false;
 
-  /** Take ownership of a root that is already allocated: `{ path, close() }`. */
+  /**
+   * Take ownership of a root that is already allocated: `{ path, close() }`.
+   * @param {VerifierFixtureRoot} root
+   */
   constructor(root) {
     this.#root = root;
   }
@@ -36,6 +62,7 @@ export class VerifierFixture {
    * blocks children from creating temporary directories beneath it. Its
    * removal retries Windows sharing violations (`EBUSY`, `EPERM`) while a
    * child that has exited still holds a handle on a file beneath it.
+   * @param {{ readonly prefix?: string; readonly parent?: string; readonly private?: boolean }} [options]
    */
   static async open({ prefix, parent, private: owned = true } = {}) {
     if (!owned) {
@@ -54,9 +81,13 @@ export class VerifierFixture {
           }),
       });
     }
-    const { PrivateRuntimeRoot } = await importVerifierSource(
-      new URL("../../src/process/PrivateRuntimeRoot.ts", import.meta.url).href,
-      import.meta.url,
+    // The loader imports the TypeScript source this module type describes.
+    const { PrivateRuntimeRoot } = /** @type {PrivateRuntimeRootModule} */ (
+      await importVerifierSource(
+        new URL("../../src/process/PrivateRuntimeRoot.ts", import.meta.url)
+          .href,
+        import.meta.url,
+      )
     );
     return new VerifierFixture(
       await PrivateRuntimeRoot.create({
@@ -71,6 +102,8 @@ export class VerifierFixture {
    * after the run: receipts, transcripts, client profiles and Evidence. It is
    * never removed. Allocation names it on stderr, so a run that fails before
    * writing its receipt still reports where its artifacts are.
+   * @param {{ readonly prefix?: string; readonly parent?: string }} [options]
+   * @returns {Promise<VerifierArtifactDirectory>}
    */
   static async keepArtifacts({ prefix, parent } = {}) {
     const { path } = await createCanonicalTemporaryDirectory(
@@ -78,7 +111,7 @@ export class VerifierFixture {
       ...(parent === undefined ? [] : [parent]),
     );
     process.stderr.write(`Keeping verifier artifacts at ${path}\n`);
-    return Object.freeze({ path, kept: true });
+    return Object.freeze({ path, kept: /** @type {const} */ (true) });
   }
 
   get path() {
@@ -90,7 +123,12 @@ export class VerifierFixture {
     return this.#released;
   }
 
-  /** Register a cleanup that must confirm before the root may be removed. */
+  /**
+   * Register a cleanup that must confirm before the root may be removed.
+   * @template {VerifierCleanupTask} T
+   * @param {T} cleanup
+   * @returns {T}
+   */
   releaseAfter(cleanup) {
     if (this.#registrationClosed)
       throw new Error(
@@ -105,8 +143,10 @@ export class VerifierFixture {
    * such as an auxiliary MCP client. Each cleanup runs now, in order, even
    * after an earlier one fails. One that fails stays registered, so `release`
    * retries it and keeps the root until it confirms; the failures are thrown.
+   * @param {Iterable<VerifierCleanupTask>} cleanups
    */
   async closeEarly(cleanups) {
+    /** @type {unknown[]} */
     const failures = [];
     for (const cleanup of cleanups) {
       const once = this.releaseAfter(onceConfirmed(cleanup));
@@ -125,6 +165,7 @@ export class VerifierFixture {
    * confirmed stopped and has no cleanup this fixture could retry (an owned
    * command whose cleanup is incomplete). Every release then fails, naming
    * `reason` and the root.
+   * @param {string} reason
    */
   retain(reason) {
     this.releaseAfter(() => {
@@ -142,12 +183,17 @@ export class VerifierFixture {
    * reviewer instead of removing it, and name it and `reason` on stderr. A
    * run keeps its fixture this way only on request; a cleanup that fails
    * retains the root as `release` would, and a later `keep` retries it.
+   * @param {string} reason
    */
   async keep(reason) {
     await this.#settle(false);
     process.stderr.write(`Keeping verifier fixture ${this.path}: ${reason}\n`);
   }
 
+  /**
+   * @param {boolean} removeRoot
+   * @returns {Promise<void>}
+   */
   #settle(removeRoot) {
     if (this.#released) return Promise.resolve();
     this.#registrationClosed = true;
@@ -157,8 +203,11 @@ export class VerifierFixture {
     return this.#releasing;
   }
 
+  /** @param {boolean} removeRoot */
   async #attemptRelease(removeRoot) {
+    /** @type {unknown[]} */
     const failures = [];
+    /** @type {VerifierCleanupTask[]} */
     const unconfirmed = [];
     for (const cleanup of this.#pending) {
       try {
@@ -191,6 +240,7 @@ export class VerifierFixture {
 
   // The failure carries this fixture as its cleanup lease, so whoever holds
   // the failure can retry the release.
+  /** @param {readonly unknown[]} errors */
   #retained(errors) {
     return Object.assign(
       new AggregateError(errors, "Verifier cleanup failed"),
@@ -202,6 +252,10 @@ export class VerifierFixture {
 /**
  * Run a verifier against its fixture and release the fixture afterwards,
  * keeping both the verification failure and any cleanup failure.
+ * @template T
+ * @param {VerifierFixture} fixture
+ * @param {(fixture: VerifierFixture) => T | Promise<T>} operation
+ * @returns {Promise<T>}
  */
 export async function withVerifierFixture(fixture, operation) {
   try {
@@ -222,8 +276,11 @@ export async function withVerifierFixture(fixture, operation) {
  * Share one cleanup between fixtures that each depend on it: concurrent and
  * later calls reuse a confirmed or in-flight attempt, and a failed attempt is
  * retried by the next call.
+ * @param {VerifierCleanupTask} cleanup
+ * @returns {() => Promise<unknown>}
  */
 export function onceConfirmed(cleanup) {
+  /** @type {Promise<unknown> | undefined} */
   let attempt;
   return () => {
     attempt ??= Promise.resolve()

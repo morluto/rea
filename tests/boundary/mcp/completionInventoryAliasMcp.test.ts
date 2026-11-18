@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const provider = { id: "fixed-fixture", name: "Fixed fixture", version: "1" };
 
@@ -43,7 +44,10 @@ it.each([false, true])(
           ),
       },
     });
-    const client = new Client({ name: "procedure-completion", version: "1" });
+    const client = new Client(
+      { name: "procedure-completion", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
 
@@ -106,10 +110,13 @@ it("evaluates later alias rows before the MCP completion limit is applied", asyn
       execute: async () => ok(createAnalysisExecution(rows, provider)),
     },
   });
-  const client = new Client({
-    name: "large-completion-inventory",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "large-completion-inventory",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

@@ -3,7 +3,7 @@ import {
   readTsharkJsonPackets,
   type TsharkJsonBudget,
   type TsharkPacketLayers,
-} from "./TsharkJsonPackets.js";
+} from "../domain/pcap/tsharkJsonPackets.js";
 import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
@@ -14,6 +14,7 @@ import { parsePcapHttpUri } from "./PcapHttpUri.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { parseDnsMessageRaw } from "./PcapDnsWire.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { isRecord as object } from "../kernel/isRecord.js";
 
 const OPERATION = "inspect_pcap_capture";
 /** Bounds JSON decoding plus its expanded object graph before JSON.parse. */
@@ -166,9 +167,6 @@ export interface TsharkFields {
   readonly partial: boolean;
 }
 
-const object = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** Map a refused tshark document to the pcap operation's typed failure. */
 const decodeTsharkPackets = async (
   stdout: string,
@@ -188,7 +186,10 @@ const decodeTsharkPackets = async (
         "memory",
         "tshark JSON exceeds the bounded decoding budget",
         { max_json_bytes: failure.maxBytes },
-        fixedAllowanceOptions("The tshark JSON decoding allowance", "capture"),
+        fixedAllowanceOptions("The tshark JSON decoding allowance", "capture", {
+          limit: failure.maxBytes,
+          unit: "bytes",
+        }),
       );
     case "json-expansion":
       throw new AnalysisResourceConstraintError(
@@ -196,7 +197,14 @@ const decodeTsharkPackets = async (
         "memory",
         "tshark JSON expansion exceeds the decoding budget",
         { max_decoded_bytes: failure.maxDecodedBytes },
-        fixedAllowanceOptions("The tshark JSON expansion allowance", "capture"),
+        fixedAllowanceOptions(
+          "The tshark JSON expansion allowance",
+          "capture",
+          {
+            limit: failure.maxDecodedBytes,
+            unit: "bytes",
+          },
+        ),
       );
     case "malformed-json":
       throw new AnalysisProtocolError("tshark emitted malformed JSON", {
@@ -297,6 +305,7 @@ export const parseTsharkJsonOutput = async (
         fixedAllowanceOptions(
           "The packet-inventory retained-fact allowance",
           "capture",
+          { limit: MAX_RETAINED_BYTES, unit: "bytes" },
         ),
       );
   };

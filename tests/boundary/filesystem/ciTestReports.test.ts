@@ -649,11 +649,57 @@ it("recovers complete module costs from real blob reports without executing test
     unhandledErrors: 0,
     files: [{ state: "failed" }],
   });
+  const failedRun = await executeTimingReport(root, {
+    SHARD_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  });
+  expect(failedRun.summary).toContain("Failed test modules reported: 1.");
+  expect(failedRun.summary).toContain('- "sample.test.js"');
+  expect(failedRun.stdout).toContain("Failed test modules reported: 1.");
+  expect(failedRun.stdout).toContain('- "sample.test.js"');
   // Even a caller accidentally marking the merge successful cannot publish this report.
   await executeTimingReport(root);
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("caps the failed file list and limits partial diagnostics to reported modules", async () => {
+  const root = await createTestTempDirectory("rea-ci-failed-sample-");
+  await writeFile(
+    join(root, "test-timings.json"),
+    JSON.stringify({
+      version: 1,
+      success: false,
+      unhandledErrors: 2,
+      files: [
+        ...Array.from({ length: 21 }, (_, index) => ({
+          name: `tests/z${String(20 - index).padStart(2, "0")}.test.ts`,
+          durationMs: 1,
+          state: "failed",
+        })),
+        { name: "tests/<tag>.test.ts", durationMs: 1, state: "failed" },
+        { name: "tests/passed.test.ts", durationMs: 1, state: "passed" },
+      ],
+    }),
+  );
+  const { summary, stdout } = await executeTimingReport(root, {
+    SHARD_RESULT: "skipped",
+    SOURCE_REQUIRED: "true",
+    SOURCE_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  });
+  expect(summary).toContain("Partial test diagnostics");
+  expect(summary).toContain(
+    '```text\nFailed test modules reported: 22.\n- "tests/<tag>.test.ts"',
+  );
+  expect(stdout).toContain("Failed test modules reported: 22.");
+  expect(stdout).toContain('- "tests/<tag>.test.ts"');
+  expect(stdout).toContain('- "tests/z18.test.ts"');
+  expect(stdout).not.toContain("z19.test.ts");
+  expect(stdout).not.toContain("passed.test.ts");
+  expect(stdout).toContain("2 more in the test report.");
+  expect(stdout).toContain("Unhandled Vitest errors reported: 2.");
 });
 
 it("verifies exactly the selected subset and never publishes it as timing history", async () => {
@@ -670,10 +716,11 @@ it("verifies exactly the selected subset and never publishes it as timing histor
   }
   await workflowGit(root, ["add", "src", "tests"]);
   const selection = {
-    version: 2,
+    version: 3,
     mode: "selected",
     reason: "Affected tests: 2 changed",
-    groups: [["src/a.test.ts"], ["tests/b.test.ts"]],
+    files: ["src/a.test.ts", "tests/b.test.ts"],
+    shards: 2,
   };
   const run = async (names: readonly string[], plan: unknown = selection) => {
     await writeFile(
@@ -707,7 +754,7 @@ it("verifies exactly the selected subset and never publishes it as timing histor
       stderr: expect.stringContaining("Incomplete selected test inventory"),
     });
   // A full plan keeps the complete tracked inventory and its history.
-  const full = { version: 2, mode: "full", reason: "Shared", groups: [] };
+  const full = { version: 3, mode: "full", reason: "Shared" };
   await expect(
     run(["src/a.test.ts", "tests/b.test.ts"], full),
   ).rejects.toMatchObject({
@@ -719,11 +766,12 @@ it("verifies exactly the selected subset and never publishes it as timing histor
   ).resolves.toContain("tests/unselected.test.ts");
   // An unreadable plan fails closed.
   for (const plan of [
-    { ...selection, version: 1 },
-    { ...selection, groups: [] },
-    { ...selection, groups: [["../escape.test.ts"]] },
-    { ...selection, groups: [["src/a.test.ts"], ["src/a.test.ts"]] },
-    { ...full, groups: [["src/a.test.ts"]] },
+    { ...selection, version: 2 },
+    { ...selection, files: [] },
+    { ...selection, files: ["../escape.test.ts"] },
+    { ...selection, files: ["src/a.test.ts", "src/a.test.ts"] },
+    { ...selection, shards: 3 },
+    { ...full, files: ["src/a.test.ts"] },
   ])
     await expect(run(["src/a.test.ts"], plan)).rejects.toMatchObject({
       stderr: expect.stringContaining("Invalid portable test selection plan"),

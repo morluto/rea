@@ -5,6 +5,7 @@ import {
   resolveWindowsChangeTimeSettle,
   type WindowsChangeTimeSettleLimits,
 } from "../config/windowsChangeTimeSettle.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 /**
  * Windows advances a file's ChangeTime shortly after it is written, without any
@@ -23,6 +24,7 @@ import {
  */
 
 export interface ChangeTimeSettleSeams {
+  /** The host whose filesystem produced the stats; omission is the running host. */
   readonly platform?: NodeJS.Platform | undefined;
   readonly now?: (() => number) | undefined;
   readonly sleep?: ((delayMs: number) => Promise<void>) | undefined;
@@ -74,7 +76,7 @@ const changeTimeMayStillDrift = (
   stats: Stats,
   seams: ChangeTimeSettleSeams = {},
 ): boolean => {
-  const platform = seams.platform ?? process.platform;
+  const platform = seams.platform ?? HOST_PLATFORM.platform;
   if (platform !== "win32") return false;
   const changeTime = changeTimeMs(stats);
   // An unreadable ChangeTime cannot establish that it has settled; re-observation
@@ -102,7 +104,7 @@ export const settleChangeTimeBaseline = async (
   seams: ChangeTimeSettleSeams = {},
 ): Promise<Stats> => {
   throwIfAborted(seams);
-  if ((seams.platform ?? process.platform) !== "win32") {
+  if ((seams.platform ?? HOST_PLATFORM.platform) !== "win32") {
     const observed = await read();
     throwIfAborted(seams);
     return observed;

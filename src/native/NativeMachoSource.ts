@@ -6,9 +6,10 @@ import {
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  hashStableRootArtifactHandle,
+  targetDigestChangedFailure,
 } from "../resources/index.js";
-import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";
-import { targetDigestChangedFailure } from "../artifacts/withArtifactTargetIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A positional reader for one slice of the descriptor bound to the target. */
 export interface NativeMachoSource {
@@ -33,9 +34,7 @@ export class NativeMachoSourceVerificationFailure extends ArtifactReaderFailure 
       verificationCause instanceof ArtifactReaderFailure
         ? verificationCause.reason
         : "io",
-      verificationCause instanceof Error
-        ? verificationCause.message
-        : String(verificationCause),
+      errorMessage(verificationCause),
       {
         cause: verificationCause,
         ...(verificationCause instanceof ArtifactReaderFailure
@@ -45,7 +44,7 @@ export class NativeMachoSourceVerificationFailure extends ArtifactReaderFailure 
                 ? {}
                 : { cancellation: verificationCause.cancellation }),
             }
-          : {}),
+          : { integrityCheck: undefined }),
       },
       verificationCause instanceof ArtifactReaderFailure
         ? verificationCause.details

@@ -1,3 +1,4 @@
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
@@ -38,10 +39,13 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type ReadAt,
-} from "../apple/MachoLoadCommandReader.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
-import { locatePeResourcePayloads } from "../pe/PeResourceLayout.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
+import {
+  abortIfNeeded,
+  ArtifactReaderFailure,
+  artifactParseFailure,
+} from "../../resources/index.js";
+import { locatePeResourcePayloads } from "../../domain/pe/peResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
 const CPU_TYPE_ARM64 = 0x0100000c;
@@ -147,7 +151,11 @@ export const locateDenoStandalone = async (
   } catch (cause) {
     if (
       cause instanceof ArtifactReaderFailure &&
-      (cause.reason === "format" || cause.reason === "limit")
+      (cause.reason === "format" ||
+        cause.reason === "malformed" ||
+        cause.reason === "truncated" ||
+        cause.reason === "unsupported" ||
+        cause.reason === "limit")
     )
       return { status: "present", failure: cause };
     throw cause;
@@ -473,7 +481,7 @@ const locateIntelTrailers = async (
       const at = BigInt(sentinelStart);
       if (owned.some((range) => at >= range.start && at < range.end)) continue;
       if (lengthAt + 8 > window.length) continue;
-      const claimed = window.readBigUInt64LE(lengthAt);
+      const claimed = new BinaryReader(window, true, "deno").word(lengthAt, 64);
       const sliceEnd = base + sliceSize;
       const offset = sentinelStart + INTEL_SENTINEL.length + 8;
       if (offset < base || offset > sliceEnd) continue;
@@ -813,7 +821,8 @@ const confirmsSuiNote = async (
   );
   return (
     prefix !== undefined &&
-    prefix.readUInt16LE(0) === SECTION_NAME_BYTES.length &&
+    new BinaryReader(prefix, true, "deno").u16(0) ===
+      SECTION_NAME_BYTES.length &&
     prefix.subarray(2).equals(SECTION_NAME_BYTES)
   );
 };
@@ -828,7 +837,7 @@ const readSuiRange = async (
   const prefix = await readExact(carrier, descriptorOffset, wanted);
   if (prefix === undefined)
     throw denoCarrierFailure("ELF SUI descriptor is truncated");
-  const nameLength = prefix.readUInt16LE(0);
+  const nameLength = new BinaryReader(prefix, true, "deno").u16(0);
   if (nameLength !== SECTION_NAME_BYTES.length) return undefined;
   // A descriptor too short for the whole name has not shown `d3n0l4nd`, so
   // the note stays unconfirmed and the image stays with native inventory.
@@ -850,14 +859,19 @@ const locatePeResources = async (carrier: Carrier): Promise<SectionRange[]> => {
     Math.min(carrier.fileSize, PE_HEADER_PROBE_BYTES),
   );
   if (headers === undefined) return [];
-  const payloads = await locatePeResourcePayloads(
-    headers,
-    carrier.fileSize,
-    (offset, length) => readExact(carrier, offset, length),
-    RT_RCDATA,
-    RESOURCE_NAME,
-    MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-  );
+  let payloads: Awaited<ReturnType<typeof locatePeResourcePayloads>>;
+  try {
+    payloads = await locatePeResourcePayloads(
+      headers,
+      carrier.fileSize,
+      (offset, length) => readExact(carrier, offset, length),
+      RT_RCDATA,
+      RESOURCE_NAME,
+      MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+    );
+  } catch (cause) {
+    throw artifactParseFailure(cause, carrier.signal);
+  }
   return payloads.map(({ offset, bytes }) => {
     if (bytes > MAX_INSPECT_PE_FILE_BYTES) throw denoPeLimit();
     return { offset, length: bytes, embedding: "pe-resource" };

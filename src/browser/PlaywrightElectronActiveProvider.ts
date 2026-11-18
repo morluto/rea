@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -10,10 +11,10 @@ import {
 } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { _electron as electron } from "playwright-core";
@@ -63,6 +64,8 @@ const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const hookPath = fileURLToPath(
   new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
@@ -96,6 +99,8 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     private readonly launch: typeof electron.launch = async (options) =>
       (await import("playwright-core"))._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
+    // The host the application launches and is cleaned up on.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   identity(): ProviderIdentity {
@@ -193,12 +198,10 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         executablePath: paths.executable,
         cwd: paths.root,
         env: {
-          ...safeElectronEnvironment(this.environment, runId),
+          ...safeElectronEnvironment(this.environment, runId, this.platform),
           REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
             length: applicationArgs.length,
-            sha256: createHash("sha256")
-              .update(JSON.stringify(applicationArgs))
-              .digest("hex"),
+            sha256: sha256Hex(JSON.stringify(applicationArgs)),
           }),
         },
         args: applicationArgs,
@@ -274,7 +277,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           actions,
           retained.state,
         );
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         capture = {
           ...retainedCapture,
           limitations: [
@@ -294,7 +297,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       outcome = err(error);
     }
     if (application !== undefined) {
-      const owner = new ElectronCaptureCleanup(application, ownership, lineage);
+      const owner = new ElectronCaptureCleanup(
+        application,
+        ownership,
+        lineage,
+        this.platform,
+      );
       const released = await owner.release(this.#resources);
       const cleanup = owner.processResult;
       outcome = captureOutcomeWithCancellation(outcome, options.signal);
@@ -314,9 +322,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
                 "Electron process and transport cleanup failed",
               );
         const reason = failures
-          .map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          )
+          .map((failure) => errorMessage(failure))
           .join("; ");
         const failure = new BrowserObservationError(
           OPERATION,
@@ -345,11 +351,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         );
         owner.bind(failure);
         if (outcome.ok) return err(failure);
-        const composed = analysisErrorWithCleanupFailure(
+        const composed = analysisErrorWithCleanupDependencies(
           outcome.error,
           failure,
           OPERATION,
-        ).bindCleanupDependencies([outcome.error, failure]);
+        );
         if (failure.partialObservation !== undefined)
           composed.partialObservation = failure.partialObservation;
         return err(composed);
@@ -439,7 +445,7 @@ const cancelledCapture = (
 export const safeElectronEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   runId: string,
-  platform = process.platform,
+  platform: NodeJS.Platform,
 ): Record<string, string> =>
   Object.fromEntries([
     ...[
@@ -577,7 +583,7 @@ const providerError = (cause: unknown): AnalysisError => {
     {
       cause,
       diagnostics: {
-        message: cause instanceof Error ? cause.message : String(cause),
+        message: errorMessage(cause),
       },
     },
   );

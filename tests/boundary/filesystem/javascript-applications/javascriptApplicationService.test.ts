@@ -17,7 +17,7 @@ import {
   readJavaScriptArtifactFiles,
 } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "../../../../src/javascript/analysis/JavaScriptSourceAnalysis.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";

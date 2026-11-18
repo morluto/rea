@@ -22,6 +22,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Run a setup command with ownership of its entire process family and partial output. */
 export const runDesktopBuildOwnedCommand = async (input: {
@@ -212,6 +213,6 @@ export const desktopBuildOwnedCommandReason = (cause: unknown): string => {
       ? preparation.capturedOutput?.stderr.trim()
       : undefined) ??
     "";
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return stderr === "" ? message : `${message}: ${stderr.slice(-2000)}`;
 };

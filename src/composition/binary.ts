@@ -10,18 +10,20 @@ import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
 import type { Logger } from "pino";
-import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
+import {
+  auxiliaryAnalysisProviderDeclarations,
+  managedStaticProviderDeclaration,
+} from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { LINUX_HOPPER_LAUNCHER_VERIFICATION } from "../application/LinuxHopper.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
-import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { combineBundleResourceClients } from "../application/binary/BundleResourceSession.js";
 import {
   BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
   BUNDLE_NATIVE_RESOURCE_OPERATIONS,
-  combineBundleResourceClients,
-} from "../application/binary/BundleResourceSession.js";
+} from "../ports/BundleResourceOperations.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
@@ -73,9 +75,7 @@ const composeDeepBinarySession = (
   );
   const ghidra = new GhidraProvider(config, logger, environment);
   const ida = new IdaProvider(config, environment, (registration, selected) =>
-    createIdaMcpConnection(registration, selected, {
-      platform: HOST_PLATFORM.platform,
-    }),
+    createIdaMcpConnection(registration, selected, { platform }),
   );
   const kuna = new KunaProvider(environment, {
     regexMatchingDeadline: config.regexMatchingDeadline,
@@ -149,13 +149,13 @@ const createBundleResourceFactory = (
 /** Compose an execution-free managed session without native provider selection. */
 export const createManagedBinarySession = (): BinarySession =>
   composeBinarySession(new AnalysisProviderRegistry([]), [
-    new ManagedStaticProvider(),
+    new LazyAnalysisProvider(managedStaticProviderDeclaration()),
   ]);
 
 /** Compose the artifact operations without candidates for deep analysis engines. */
 export const createArtifactBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../artifacts/ArtifactProvider.js").then(({ ArtifactProvider }) =>
     composeBinarySession(
@@ -176,7 +176,7 @@ export const createArtifactBinarySession = (
 /** Compose native inspection utilities without candidates for deep analysis. */
 export const createNativeBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../native/NativeMacOSProvider.js").then(({ NativeMacOSProvider }) =>
     composeBinarySession(

@@ -36,7 +36,10 @@ import {
   hasPossibleCommonJsDelegateWrite,
   semanticFactoryLoaderMemberAt,
 } from "./javascriptSemanticRequireOrigin.js";
-import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
+import {
+  semanticPrecisionControls,
+  semanticResourceLimitReason,
+} from "./javascriptSemanticResourceLimits.js";
 import { createStaticPathIntrinsicQuery } from "./javascriptStaticPathIntrinsics.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
@@ -70,7 +73,12 @@ import {
   indexJavaScriptElectronIdentitySteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
-import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
+import {
+  commonJsWrapperRedeclarationCount,
+  javaScriptSourceLoaderCondition,
+  recoveredJavaScriptSyntaxErrorCount,
+  type ParsedJavaScriptSource,
+} from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
@@ -95,7 +103,9 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
   file: ParsedJavaScriptSource,
   refusal: AnalysisResourceConstraintError,
 ): JavaScriptStaticAnalysis => {
-  const parserErrors = file.errors.length;
+  const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
+  const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   const reason = `The member-mutation phase was refused (${refusal.reason}); findings that depend on member-mutation facts were not examined.`;
@@ -104,7 +114,17 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
       parserErrors === 0
         ? { status: "complete", error_count: 0 }
         : { status: "recovered", error_count: parserErrors },
-    semantics: { unknown_findings: null, uncertainty: [] },
+    semantics: {
+      unknown_findings: null,
+      uncertainty: [
+        ...(loaderCondition === undefined
+          ? []
+          : ["conditional-loader" as const]),
+        ...(wrapperRedeclarations === 0
+          ? []
+          : ["commonjs-wrapper-redeclaration" as const]),
+      ],
+    },
     examination: {
       status: "not-examined",
       semantic_resource_limits: [],
@@ -121,7 +141,9 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
     parse_error_count: parserErrors,
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
+      ...(loaderCondition === undefined ? [] : [loaderCondition]),
       `${reason} Absence of findings is not evidence of absence.`,
       ...(parserErrors > 0
         ? [
@@ -243,7 +265,8 @@ const finalizeStaticAnalysis = (
   bindings: JavaScriptSemanticAnalysisState,
   routes: JavaScriptRouteSourceFacts,
 ): JavaScriptStaticAnalysis => {
-  const parserErrors = file.errors.length;
+  const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
+  const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
   // A `worker` or `service-worker` reference records a URL relative to the
   // importing source, so `new Worker(new URL("electron", import.meta.url))` is
@@ -264,6 +287,11 @@ const finalizeStaticAnalysis = (
       value.loader !== "factory-loader",
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const controls = semanticPrecisionControls(
+    resourceLimits,
+    accumulator.electronCallPathLimits ?? [],
+    bindings.precision,
+  );
   const candidateElectron = [
     ...accumulator.browserWindows,
     ...accumulator.contextBridgeApis,
@@ -272,6 +300,7 @@ const finalizeStaticAnalysis = (
     ...accumulator.protocols,
     ...accumulator.appPathChanges,
   ].some(({ value }) => value.loader_authority === "candidate");
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const coverage: JavaScriptStaticCoverage = {
     syntax:
       parserErrors === 0
@@ -280,6 +309,9 @@ const finalizeStaticAnalysis = (
     semantics: {
       unknown_findings: accumulator.unknownFindings,
       uncertainty: [
+        ...(loaderCondition === undefined
+          ? []
+          : ["conditional-loader" as const]),
         ...(accumulator.unknownFindings > 0
           ? ["dynamic-findings" as const]
           : []),
@@ -289,6 +321,9 @@ const finalizeStaticAnalysis = (
         ...(typeOnlySideEffect
           ? ["type-only-module-side-effect" as const]
           : []),
+        ...(wrapperRedeclarations === 0
+          ? []
+          : ["commonjs-wrapper-redeclaration" as const]),
       ],
     },
     examination: {
@@ -303,10 +338,12 @@ const finalizeStaticAnalysis = (
         : { semantic_precision: bindings.precision }),
       electron_call_paths_limited:
         (accumulator.electronCallPathLimits?.size ?? 0) > 0,
+      ...(controls.length === 0 ? {} : { controls }),
     },
     applicability: { electron: electronObserved ? "observed" : "unknown" },
   };
   const limitations = [
+    ...(loaderCondition === undefined ? [] : [loaderCondition]),
     ...(bindings.valueResourceLimits.has("alias-selections")
       ? [semanticResourceLimitReason("alias-selections", bindings.precision)]
       : []),
@@ -322,12 +359,17 @@ const finalizeStaticAnalysis = (
       .sort()
       .map(
         (control) =>
-          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call (--semantic-precision JSON); no REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
+          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call; coverage records the control. No REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
       ),
     ...(parserErrors === 0
       ? []
       : [
           "The parser recovered from syntax errors; affected facts are partial.",
+        ]),
+    ...(wrapperRedeclarations === 0
+      ? []
+      : [
+          "A top-level lexical declaration redeclares a CommonJS wrapper parameter, so this module cannot evaluate. Recovered syntax was examined completely.",
         ]),
     ...(accumulator.unknownFindings === 0
       ? []
@@ -420,6 +462,7 @@ const finalizeStaticAnalysis = (
         accumulator.moduleRangeIndex,
       ),
     },
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations,
   };
 };

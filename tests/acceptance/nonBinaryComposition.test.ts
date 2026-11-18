@@ -12,6 +12,7 @@ import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const connect = async (environment: NodeJS.ProcessEnv) => {
   const session = createTestBinarySession(() => {
@@ -25,7 +26,10 @@ const connect = async (environment: NodeJS.ProcessEnv) => {
       javascriptRecovery: createJavaScriptRecoveryProvider(environment),
     },
   );
-  const client = new Client({ name: "composition-parity", version: "1" });
+  const client = new Client(
+    { name: "composition-parity", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await closeVerifierResources([
       () => client.close(),

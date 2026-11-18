@@ -1,18 +1,41 @@
 import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedDshHome = "";
+
+beforeAll(async () => {
+  sharedDshHome = (await createTestWorkspace("rea-dsh-shared-")).root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedDshHome)) {
+    await rm(join(sharedDshHome, entry), { recursive: true, force: true });
+  }
+});
+
+afterAll(async () => {
+  if (sharedDshHome !== "") {
+    await removeTestWorkspace(sharedDshHome);
+  }
+});
 
 cliTest.for(["setup", "uninstall"] as const)(
   "DSH CLI %s refuses a multi-document patch without losing caller content",
   async (operation, { cli }) => {
-    const home = await createTestTempDirectory("rea-dsh-multiple-documents-");
+    const home = sharedDshHome;
     const profile = join(home, ".dsh");
     const config = join(profile, "cordis.patch.yml");
     await mkdir(profile);
@@ -314,7 +337,10 @@ async function verifyGeneratedLauncher(
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "dsh-setup-lifecycle", version: "1" });
+  const client = new Client(
+    { name: "dsh-setup-lifecycle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   try {
     await client.connect(transport);
     expect((await client.listTools()).tools.map(({ name }) => name)).toContain(
@@ -337,7 +363,7 @@ async function verifyGeneratedLauncher(
 cliTest.for(["null", "caller-value", "[caller-value]"])(
   "DSH CLI refuses to edit config %s and plain uninstall removes its owned row",
   async (configValue, { cli }) => {
-    const home = await createTestTempDirectory("rea-dsh-malformed-config-");
+    const home = sharedDshHome;
     const profile = join(home, ".dsh");
     const config = join(profile, "cordis.patch.yml");
     await mkdir(profile);
@@ -407,7 +433,7 @@ cliTest.for([
 ])(
   "DSH CLI rejects setup and preserves ownership for $label",
   async ({ patch, remediation, removal }, { cli }) => {
-    const home = await createTestTempDirectory("rea-dsh-ownership-");
+    const home = sharedDshHome;
     const profile = join(home, ".dsh");
     const config = join(profile, "cordis.patch.yml");
     await mkdir(profile);

@@ -95,7 +95,9 @@ remain available.
 
 Raise `max_modinfo_key_bytes` or `max_modinfo_value_bytes` on the next MCP call
 to retain the omitted text. The returned limitation names the required byte
-budget. CLI flags are `--max-modinfo-key-bytes` and `--max-modinfo-value-bytes`.
+budget, and `modinfo.omission_limits` records each control that omitted text
+(`control_kind: "parameter"`, with its effective value, default and range).
+CLI flags are `--max-modinfo-key-bytes` and `--max-modinfo-value-bytes`.
 Each accepts an integer from 1 through 536870912 bytes, matching the maximum
 input size. No restart is required; file, entry and raw-hex budgets do not
 change. These are per-call controls, not runtime settings.

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -189,12 +190,12 @@ it.each([true, false])(
     const outputPath = join(root, "partial.json");
     if (refused) await writeFile(outputPath, "existing caller file");
     const provider = { id: "fixture", name: "Fixture", version: "1" };
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "source_fixture",
       parameters: {},
       result: { observed: 7 },
     });
-    const partial = createEvidence(undefined, provider, {
+    const partial = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "derived_fixture",
       parameters: {},
       result: { completed_sources: 1 },

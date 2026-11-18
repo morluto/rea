@@ -1,3 +1,4 @@
+import { producerLimitControl } from "../domain/producerResourceLimits.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
   projectSelectedArtifactFileFailure,
@@ -26,6 +27,7 @@ import {
 import {
   RUST_AUDITABLE_FORMAT_VERSIONS,
   rustBinarySchema,
+  rustcPartialCoverage,
   type InspectRustBinaryInput,
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
@@ -36,16 +38,18 @@ import {
   readRustBinaryImage,
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
-import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
+import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
 import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 
 import {
+  RUST_PRODUCER_DEFAULTS,
   resolveRustProducerLimits,
   rustProducerLimitsSchema,
   type RustProducerLimits,
 } from "../domain/rust/rustResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_rust_binary";
 
@@ -132,7 +136,11 @@ export class RustBinaryProvider implements RustBinaryPort {
             ...selected.limitations,
           ],
         };
-        retainCompilerPathsWithinReport(report, limits.output_bytes);
+        retainCompilerPathsWithinReport(
+          report,
+          limits.output_bytes,
+          rustcLimitation(image.rustc_commit),
+        );
         if (
           Buffer.byteLength(JSON.stringify(report), "utf8") >
           limits.output_bytes
@@ -187,7 +195,12 @@ const outputLimit = (path: string, maxOutputBytes: number) =>
     { maximum_output_bytes: maxOutputBytes },
     {
       retryable: false,
-      remediationAction: `Increase producer_limits.output_bytes above ${String(maxOutputBytes)} bytes on the next inspect_rust_binary call (CLI --producer-limits JSON); no restart is required. Input, dependency parser and transport limits remain independent. Repeating the unchanged request does not raise admission.`,
+      remediationAction: `Increase producer_limits.output_bytes above ${String(maxOutputBytes)} bytes on the next inspect_rust_binary call; no restart is required. Input, dependency parser and transport limits remain independent. Repeating the unchanged request does not raise admission.`,
+      limit: producerLimitControl(
+        "output_bytes",
+        maxOutputBytes,
+        RUST_PRODUCER_DEFAULTS.output_bytes,
+      ),
     },
   );
 
@@ -228,7 +241,6 @@ const limitationsFor = (
         "Dependency indices contain a cycle. The cycle is reported and was not traversed.",
       ]
     : []),
-  ...rustcLimitation(image.rustc_commit),
 ];
 
 const unknownFormatLimitation = (
@@ -254,11 +266,11 @@ const rustcLimitation = (
     ];
   if (commit.coverage?.reason === "report_bytes")
     return [
-      "Compiler-path retention exhausted the complete-report byte allowance; retained hashes are a prefix and compiler coverage is partial. Dependency observations are independent. Increase producer_limits.output_bytes on the next call (CLI --producer-limits JSON) to raise report admission; no restart is required. Increasing max_rustc_hashes alone does not raise it.",
+      "Compiler-path retention exhausted the complete-report byte allowance; retained hashes are a prefix and compiler coverage is partial. Dependency observations are independent. Raise the control in rustc_commit.coverage.limit on the next call to raise report admission; no restart is required. Increasing max_rustc_hashes alone does not raise it.",
     ];
   if (commit.coverage?.status === "partial")
     return [
-      `Compiler-path retention reached max_rustc_hashes=${String(commit.coverage.effective_limit)}; the listed hashes are a prefix and compiler coverage is partial. Increase max_rustc_hashes on the next inspect_rust_binary call (CLI --max-rustc-hashes) to retain more paths; no restart is required. Dependency observations are independent. The complete-report byte allowance still applies.`,
+      `Compiler-path retention reached max_rustc_hashes=${String(commit.coverage.effective_limit)}; the listed hashes are a prefix and compiler coverage is partial. Raise the control in rustc_commit.coverage.limit on the next call to retain more paths; no restart is required. Dependency observations are independent. The complete-report byte allowance still applies.`,
     ];
   if (commit.hashes.length === 1)
     return [
@@ -269,19 +281,34 @@ const rustcLimitation = (
   ];
 };
 
-/** Optional inferred paths never displace independently observed dependency facts. */
+/**
+ * Optional inferred paths never displace independently observed dependency
+ * facts. The compiler guidance describes the retained result: the reader's
+ * guidance when it fits; the reader's record and control without that
+ * guidance (which restates rustc_commit.coverage) when only the guidance
+ * does not fit; otherwise the trimming guidance, which names its control
+ * directly because no compiler record may survive. Byte trimming is reported
+ * only when it removes a path.
+ */
 const retainCompilerPathsWithinReport = (
   report: RustBinary,
   maxOutputBytes: number,
+  compilerGuidance: readonly string[],
 ): void => {
   const commit = report.rustc_commit;
+  const withGuidance = [...report.limitations, ...compilerGuidance];
   if (
     commit === null ||
-    Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes
-  )
+    Buffer.byteLength(
+      JSON.stringify({ ...report, limitations: withGuidance }),
+    ) <= maxOutputBytes
+  ) {
+    report.limitations = withGuidance;
     return;
+  }
+  if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return;
   const limitation =
-    "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call (CLI --producer-limits JSON); no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
+    "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call; no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
   const baseline = {
     ...report,
     rustc_commit: null,
@@ -290,26 +317,32 @@ const retainCompilerPathsWithinReport = (
   const empty = {
     ...commit,
     hashes: [],
-    coverage: {
-      status: "partial" as const,
-      reason: "report_bytes" as const,
-      effective_limit: maxOutputBytes,
-    },
+    coverage: rustcPartialCoverage("report_bytes", maxOutputBytes),
   };
   const available =
     maxOutputBytes -
     Buffer.byteLength(JSON.stringify({ ...baseline, rustc_commit: empty }));
   let retainedBytes = 0;
   let count = 0;
-  for (const hash of commit.hashes) {
+  // The complete record does not fit, so trimming removes at least one path
+  // and the byte coverage it records stays true.
+  for (const hash of commit.hashes.slice(0, -1)) {
     const bytes =
       Buffer.byteLength(JSON.stringify(hash)) + (count === 0 ? 0 : 1);
     if (bytes > available - retainedBytes) break;
     retainedBytes += bytes;
     count++;
   }
-  report.rustc_commit =
-    count === 0 ? null : { ...empty, hashes: commit.hashes.slice(0, count) };
+  if (count === 0) {
+    // The control stays recorded although no compiler record survives.
+    report.rustc_commit = null;
+    if (empty.coverage.limit !== undefined)
+      report.rustc_commit_omission = {
+        reason: "report_bytes",
+        limit: empty.coverage.limit,
+      };
+  } else
+    report.rustc_commit = { ...empty, hashes: commit.hashes.slice(0, count) };
   report.limitations = baseline.limitations;
 };
 
@@ -332,11 +365,20 @@ const failureForPrimary = (
         ...(cause.constraint.resource === "transport"
           ? {
               retryable: false,
-              remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call (CLI --producer-limits JSON); no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
+              remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
+              limit: producerLimitControl(
+                "output_bytes",
+                limits.output_bytes,
+                RUST_PRODUCER_DEFAULTS.output_bytes,
+              ),
             }
           : fixedAllowanceOptions(
               "This Rust dependency parser allowance",
               "parser",
+              {
+                limit: cause.constraint.reported_limits.maximum_bytes,
+                unit: "bytes",
+              },
             )),
       },
     );
@@ -389,7 +431,7 @@ const artifactFailure = (
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };
@@ -415,7 +457,12 @@ const artifactReaderFailure = (
       {
         cause,
         retryable: false,
-        remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} bytes on the next inspect_rust_binary call (CLI --producer-limits JSON); no restart is required. Select the same complete artifact, without truncating its bytes. Report, dependency parser and host memory limits remain independent.`,
+        remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} bytes on the next inspect_rust_binary call; no restart is required. Select the same complete artifact, without truncating its bytes. Report, dependency parser and host memory limits remain independent.`,
+        limit: producerLimitControl(
+          "input_bytes",
+          limits.input_bytes,
+          RUST_PRODUCER_DEFAULTS.input_bytes,
+        ),
       },
     );
   if (cause.reason === "path")

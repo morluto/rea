@@ -11,10 +11,10 @@ import { execFileOutput } from "../process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   downloadHopperPackage,
-  isHopperRequestCancellation,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -38,6 +38,7 @@ import {
   type VerifiedLinuxHopperLauncher,
 } from "./LinuxHopperPublisher.js";
 import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Package-manager output retained per stream without stopping the command. */
 const PACKAGE_MANAGER_OUTPUT_BYTES = 64 * 1024;
@@ -208,7 +209,7 @@ const operationFailure = (
     cause instanceof Error ? Reflect.get(cause, "code") : undefined;
   return {
     operation,
-    detail: cause instanceof Error ? cause.message : String(cause),
+    detail: errorMessage(cause),
     ...(path === undefined ? {} : { path }),
     ...(typeof code === "string" ? { systemCode: code } : {}),
   };
@@ -281,7 +282,7 @@ export class LinuxHopperTemporaryCleanupOwner {
         await cleanup(path);
         this.pending.delete(path);
       } catch (cause: unknown) {
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         failures.push(
           `Linux Hopper temporary cleanup failed for ${path}: ${reason}`,
         );
@@ -490,7 +491,7 @@ export const installLinuxHopper = async (
       return { status: "installed", launcherPath };
     })();
   } catch (cause: unknown) {
-    const cancelled = isHopperRequestCancellation(cause, options.signal);
+    const cancelled = isAbortOf(cause, options.signal);
     result = {
       status: "failed",
       reason: cancelled ? "cancelled" : stage,
@@ -507,7 +508,7 @@ export const installLinuxHopper = async (
       ...result,
       cleanupFailure: {
         path: temporary,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     };
   }

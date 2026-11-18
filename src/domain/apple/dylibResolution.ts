@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
 import { cancelledBy } from "../analysisErrorCore.js";
 
@@ -229,7 +230,7 @@ export const dylibResolutionResultSchema = z.strictObject({
   edges: z.array(edgeSchema),
   findings: z.array(findingSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     unparsed_images: z.array(z.string()),
     roots_without_architecture: z.array(z.string()),
   }),

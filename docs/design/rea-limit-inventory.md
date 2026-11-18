@@ -30,7 +30,7 @@ this process is using. A rejected Windows ChangeTime launch value does not
 establish an accepted configuration, so that failure omits `pending_restart`.
 The other values reported here are in force, so `pending_restart` is false. Prose that only says to
 restart REA is marked `prose`. `mcp_server_restart_required` is a
-server-identity alignment state in `src/serverIdentity.ts`, not a setting field.
+server-identity alignment state in `src/process/ServerIdentity.ts`, not a setting field.
 
 Three numeric limits are absent from this tree and are being moved into the
 runtime system on their own PRs. This audit does not change them:
@@ -121,7 +121,7 @@ These stay out of `update_analysis_settings`.
 | ----------------------------------- | -------------------------------------- | ------------------: | -------: | ------------------------: | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `REA_DEBUGGER_MAX_PENDING_COMMANDS` | `src/domain/analysisResourceLimits.ts` |                  16 |        1 |                       256 | debugger manager construction               | Queue capacity of the manager created at startup. `update_mode: "restart"` and `pending_restart: false`.    |
 | `REA_DEBUGGER_MAX_SESSIONS`         | `src/domain/analysisResourceLimits.ts` |                   8 |        1 |                        64 | debugger manager construction               | Session-pool size of the manager created at startup. `update_mode: "restart"` and `pending_restart: false`. |
-| `REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS` | `src/domain/hopperStartupFailure.ts`   |               10000 |        1 |                2147483647 | Linux private-display adapter start         | The helper reads the process environment. Prose restart.                                                    |
+| `REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS` | `src/hopper/HopperStartupFailure.ts`   |               10000 |        1 |                2147483647 | Linux private-display adapter start         | The helper reads the process environment. Prose restart.                                                    |
 | `REA_JADX_ACTIVE_PROCESSOR_COUNT`   | `src/android/JadxConfiguration.ts`     | unset (JVM default) |        1 |                2147483647 | JADX JVM launch                             | `-XX:ActiveProcessorCount` is fixed for that JVM. Prose on invalid values.                                  |
 | `REA_JADX_HEAP_MIB`                 | `src/android/JadxConfiguration.ts`     | unset (JVM default) |        1 | `Number.MAX_SAFE_INTEGER` | JADX JVM launch                             | `-Xmx` is fixed for that JVM. Prose on invalid values.                                                      |
 | `REA_KUNA_CACHE_MAX_BYTES`          | `src/kuna/KunaConfiguration.ts`        |          4294967296 |  1048576 | `Number.MAX_SAFE_INTEGER` | Kuna cache construction                     | The cache is sized once for the provider. Prose restart.                                                    |

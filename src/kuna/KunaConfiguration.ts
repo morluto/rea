@@ -181,7 +181,7 @@ const refuseInvalidLaunch = (
 /** Parse the Kuna settings without touching the filesystem or the executable. */
 export const readKunaConfiguration = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Result<KunaConfiguration, KunaConfigurationFailure> => {
   const command = environment.REA_KUNA_COMMAND;
   if (command === undefined || command.length === 0)

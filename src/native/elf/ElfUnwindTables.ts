@@ -31,7 +31,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const DW_EH_PE_OMIT = 0xff;
 /** CIE augmentation letters, compared as bytes. */
@@ -1089,7 +1089,7 @@ export const parseElfUnwindRanges = (
           : input.offset + pageRows.length,
     },
     coverage: {
-      status: incomplete ? "incomplete" : "complete",
+      status: incomplete ? "partial" : "complete",
       total_ranges: ranges.length,
       total_cies: cies.length,
       ranges_with_symbols: withSymbols,

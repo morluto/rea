@@ -1,27 +1,11 @@
 import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
-import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
-import {
-  assertArtifactSelectedSource,
-  resolveArtifactSourcePath,
-} from "../ArtifactSelectedSource.js";
 import { InesArtifactReader } from "../InesArtifactReader.js";
 import {
   openRootArtifact,
   hashStableRootArtifactHandle,
-} from "../inventory/hashStableRootArtifact.js";
-import { absoluteCallerPath } from "../../filesystem/callerPath.js";
-import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
-import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
-import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { createArtifactReader } from "../createArtifactReader.js";
-import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
-import {
-  ArtifactEmbeddedFormatProbes,
-  type ArtifactEmbeddedFormatProbeFacts,
-} from "../ArtifactEmbeddedFormatProbes.js";
-import {
+  abortIfNeeded,
   withArtifactRegularFile,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
@@ -30,22 +14,32 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../../resources/index.js";
-import { lstat, realpath } from "node:fs/promises";
-import { dirname } from "node:path";
-import { isPathWithinRoot } from "../../domain/localPath.js";
-import {
   SafeOutputTreeDestinationRefusal,
   ArtifactPathRegistry,
   normalizeArtifactPath,
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
+  assertArtifactFileSelectedSource,
+  assertArtifactSelectedSource,
+  resolveArtifactSourcePath,
+  resolveAsarHeaderAdmission,
 } from "../../resources/index.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
+import { artifactFormatDescriptor } from "../artifactFormats.js";
+import { createArtifactReader } from "../createArtifactReader.js";
+import {
+  ArtifactEmbeddedFormatProbes,
+  type ArtifactEmbeddedFormatProbeFacts,
+} from "../ArtifactEmbeddedFormatProbes.js";
+import { lstat, realpath } from "node:fs/promises";
+import { dirname } from "node:path";
+import { isPathWithinRoot } from "../../domain/localPath.js";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,

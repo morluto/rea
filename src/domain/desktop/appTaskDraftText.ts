@@ -12,7 +12,7 @@ import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The pointers a diff lists, of every kind. */
 type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;
@@ -293,6 +293,7 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
             identifier: false,
           }));
       }
+      // generation-cap: ancestor tags climbed to name an element
       return [current, ...[...passed.slice(1), named].slice(0, MAX_TAG_CLIMB)]
         .filter((element, index, all) => all.indexOf(element) === index)
         .map((element) => ({ element, pointer: element, identifier: false }));

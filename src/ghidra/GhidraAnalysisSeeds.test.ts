@@ -25,7 +25,6 @@ import {
   ghidraSeedFailure,
   ghidraSeedReportSchema,
   ghidraSeedLimitations,
-  parseGhidraSeeds,
   resolveGhidraAnalysisSeeds,
   snapshotGhidraAnalysisSeeds,
   type GhidraSeedCommitment,
@@ -33,6 +32,7 @@ import {
 } from "./GhidraAnalysisSeeds.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import { parseGhidraSeeds } from "../domain/native/ghidraSeedFile.js";
 
 const directories: string[] = [];
 let resources = new ArtifactResourceScope();

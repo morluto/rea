@@ -1,54 +1,14 @@
 {
-  "upward": {
-    "application -> catalogDiscovery.ts": 1,
-    "application -> catalogIdentity.ts": 2,
-    "application -> mcpStartupPolicy.ts": 3,
-    "application -> serverIdentity.ts": 1,
-    "artifacts -> application": 1,
-    "composition -> cliCommandNames.ts": 3,
-    "dotnet -> application": 1
-  },
+  "upward": {},
   "cycles": [
-    "application <-> artifacts",
-    "artifacts <-> native",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
     "cli <-> cliEvidenceCommands.ts",
     "cli <-> cliOutput.ts",
     "main <-> server"
   ],
-  "crossProvider": {
-    "android -> artifacts": 2,
-    "android -> native": 1,
-    "apktool -> artifacts": 2,
-    "artifacts -> dotnet": 3,
-    "artifacts -> javascript": 1,
-    "artifacts -> native": 2,
-    "browser -> artifacts": 6,
-    "browser -> electron": 5,
-    "browser -> javascript": 1,
-    "captures -> pcap": 2,
-    "desktop -> browser": 1,
-    "desktop -> electron": 1,
-    "electron -> artifacts": 2,
-    "flutter -> artifacts": 1,
-    "go -> native": 2,
-    "gpu -> artifacts": 2,
-    "gpu -> native": 5,
-    "il2cpp -> ghidra": 1,
-    "il2cpp -> native": 5,
-    "inspector -> browser": 2,
-    "kuna -> artifacts": 1,
-    "kuna -> native": 2,
-    "model -> artifacts": 1,
-    "native -> artifacts": 13,
-    "rust -> native": 2
-  },
+  "crossProvider": {},
   "entry": {
-    "application -> artifacts": 11,
-    "application -> browser": 2,
-    "application -> desktop": 41,
-    "application -> frida": 2,
-    "application -> reference": 8
+    "application -> desktop": 14
   }
 }

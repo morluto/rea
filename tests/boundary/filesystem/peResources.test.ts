@@ -2,7 +2,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createPeResourcesService } from "../../../src/composition/binaryDiagnostics.js";
-import { peResourceFixture } from "../../../src/artifacts/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("PE resource stable filesystem boundary", () => {

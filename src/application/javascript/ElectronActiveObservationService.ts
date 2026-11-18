@@ -26,6 +26,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { createElectronActiveEvidence } from "./ElectronActiveEvidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 const PROVIDER_ID = "rea-playwright-electron-active";
@@ -91,7 +92,7 @@ const resolveInputPath = async (
         issue: {
           path: [field],
           reason: "invalid_value",
-          message: `Cannot resolve ${field} ${selected}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          message: `Cannot resolve ${field} ${selected}: ${errorMessage(cause)}`,
         },
         cause,
       },
@@ -136,7 +137,7 @@ const notExecutable = (
   issue: {
     path: ["executable_path"],
     reason: "invalid_value",
-    message: `executable_path ${selected} is not an executable file: ${cause instanceof Error ? cause.message : String(cause)}`,
+    message: `executable_path ${selected} is not an executable file: ${errorMessage(cause)}`,
   },
   cause,
 });

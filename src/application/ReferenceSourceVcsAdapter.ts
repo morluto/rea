@@ -19,8 +19,9 @@ import {
   RegularFileReadFailure,
   retryRegularFileCleanup,
 } from "../process/RegularFileRead.js";
-import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { referenceSourceResourceFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 export type ReferenceSourceVcsInfo =
   | {
@@ -282,6 +283,3 @@ const errorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" && cause !== null && "code" in cause
     ? String(cause.code)
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

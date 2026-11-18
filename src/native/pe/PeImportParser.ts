@@ -15,7 +15,7 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
-import { readPeImage } from "../metadata/PeImage.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import {
   MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
   type InspectPeImportsInput,
@@ -294,7 +294,9 @@ export const parsePeImports = async (
       }
       const hintNameRva = Number(thunk);
       try {
-        const hintAt = map(hintNameRva, 3);
+        // The two-byte hint and the separately mapped name may occupy adjacent
+        // RVA sections with different file translations.
+        const hintAt = map(hintNameRva, 2);
         const hint = reader.u16(hintAt);
         const name = cString(hintNameRva + 2);
         retain(name);

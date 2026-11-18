@@ -1,5 +1,6 @@
 import { objcClassSymbol } from "../objcClassSymbol.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   BINARY_ARCHITECTURES,
   type BinaryTarget,
@@ -338,7 +339,11 @@ type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
 /** Per-facet coverage; empty arrays are meaningful only with this record. */
 export const nativeMetadataCoverageSchema = z.strictObject({
   facet: z.string().min(1),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
+  status: z.enum([
+    ...knownCoverageStatusSchema.options,
+    "unsupported",
+    "not_requested",
+  ]),
   reason: z.string().nullable(),
   examined: z.int().nonnegative(),
   decoded: z.int().nonnegative(),
@@ -373,12 +378,12 @@ export type ObjcClassDiscoveryCoverage = z.infer<
   typeof objcClassDiscoveryCoverageSchema
 >;
 
-/** Nominal Swift type kinds recorded by `__swift5_types` descriptors. */
+/** Nominal Swift type kinds recorded by `__swift5_types` and `__swift5_types2` descriptors. */
 export const swiftDeclKindSchema = z.enum(["class", "struct", "enum", "actor"]);
 
 /**
  * One nominal type context descriptor. `location` is the descriptor itself;
- * evidence cites its `__swift5_types` record. `qualified_name` is null when a
+ * evidence cites its type record by section. `qualified_name` is null when a
  * parent context is unresolved, rather than a shortened guess.
  */
 export const swiftDeclSchema = z.strictObject({

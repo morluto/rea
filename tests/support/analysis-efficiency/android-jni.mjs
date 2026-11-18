@@ -118,7 +118,17 @@ const expectedSlots = (candidate, row) => {
     assert.equal(slot.address, gold.address);
     assert.equal(slot.file_offset, Number(BigInt(gold.file_offset)));
     assert.equal(slot.value, gold.resolved_word);
-    assert.equal(slot.relocation?.encoding, gold.encoding.toLowerCase());
+    assert.equal(
+      slot.relocation?.encoding,
+      gold.logical_encoding ?? gold.encoding.toLowerCase(),
+    );
+    if (gold.packing !== undefined) {
+      assert.deepEqual(slot.relocation?.packing, gold.packing);
+      assert.equal(
+        slot.relocation?.record_file_offset,
+        gold.record_file_offset,
+      );
+    }
   }
 };
 
@@ -157,14 +167,9 @@ function checkFixture(report, query) {
     assert.equal(library.sha256, gold.sha256);
     assert.equal(library.abi, library.path.split("/")[1]);
     assert.equal(library.failure, null);
-    if (values.variant === "aps2") {
-      assert.notEqual(library.coverage.tables_status, "complete");
-      assert.ok(library.unknowns.some((text) => /APS2|packed/i.test(text)));
-    } else {
-      assert.ok(["complete", "partial"].includes(library.coverage.status));
-      if (library.coverage.status === "partial")
-        assert.ok(library.unknowns.length > 0);
-    }
+    assert.ok(["complete", "partial"].includes(library.coverage.status));
+    if (library.coverage.status === "partial")
+      assert.ok(library.unknowns.length > 0);
   }
   const selectedMethods = report.declarations.filter(
     (row) =>
@@ -597,7 +602,7 @@ async function qualifyRetainedRemoval(invoke) {
       detail: "complete",
     });
     assert.equal(parent.operation, "inspect_android_jni_bindings");
-    assert.equal(parent.subject.digest.sha256, targetSha);
+    assert.equal(parent.subject.identity.sha256, targetSha);
     assert.equal(parent.normalized_result.apk.path, ownedCopy);
     const report = parent.normalized_result;
     (values.variant === "conscrypt" ? checkConscrypt : checkFixture)(
@@ -671,11 +676,10 @@ async function qualifyRetainedRemoval(invoke) {
         (row) => row.table != null,
       ).length;
     }
-    if (values.variant !== "aps2")
-      assert.ok(
-        tableEntries > 0,
-        "Relocated slot evidence must remain available after APK removal",
-      );
+    assert.ok(
+      tableEntries > 0,
+      "Relocated slot evidence must remain available after APK removal",
+    );
     const proof = join(output, "retained-removal-evidence.json");
     await invoke("export_evidence_bundle", { path: proof });
     const bundle = JSON.parse(await readFile(proof, "utf8"));
@@ -883,7 +887,7 @@ try {
           ? "inspect_analysis_view"
           : "inspect_android_jni_bindings",
       );
-      assert.equal(evidence.subject.digest.sha256, targetSha);
+      assert.equal(evidence.subject.identity.sha256, targetSha);
       const parent = {
         id:
           values.detail === "summary"
@@ -927,7 +931,7 @@ try {
         );
         assert.ok(parent, "Complete source Evidence must remain exportable");
         assert.equal(parent.operation, "inspect_android_jni_bindings");
-        assert.equal(parent.subject.digest.sha256, targetSha);
+        assert.equal(parent.subject.identity.sha256, targetSha);
         if (report !== undefined)
           assert.deepEqual(parent.normalized_result, report);
         report = parent.normalized_result;

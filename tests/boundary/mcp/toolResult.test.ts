@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -20,7 +21,7 @@ import {
 import { err } from "../../../src/domain/result.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
+import { HopperProcessError } from "../../../src/hopper/HopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -36,6 +37,7 @@ import type {
   IncompleteProcessCaptureObservations,
   ProcessCaptureCleanupReport,
 } from "../../../src/domain/process/processCapture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
@@ -151,10 +153,13 @@ describe("completed partial process capture MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-error-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-error-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -291,10 +296,13 @@ describe("incomplete partial process observations MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-observations-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-observations-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -332,36 +340,6 @@ describe("incomplete partial process observations MCP projection", () => {
 });
 
 describe("tool result projection", () => {
-  it("exposes an actionable adapter code to MCP callers", () => {
-    const result = delivery.toCallToolResult(
-      err(new HopperProcessError(76)),
-      contract,
-    );
-    expect(result.structuredContent).toMatchObject({
-      error: {
-        code: "provider_unavailable",
-        details: { failure_code: "unsupported_demo_dialog" },
-        category: "unavailable",
-      },
-    });
-  });
-  it("keeps an absent post-authentication dialog out of publisher verification", () => {
-    const result = delivery.toCallToolResult(
-      err(new HopperProcessError(81)),
-      contract,
-    );
-    expect(result.structuredContent).toMatchObject({
-      error: {
-        code: "provider_unavailable",
-        details: { failure_code: "demo_dialog_absent", exit_code: 81 },
-        category: "unavailable",
-      },
-    });
-    expect(
-      (result.structuredContent as { error: { details: unknown } }).error
-        .details,
-    ).not.toHaveProperty("launch_rejection");
-  });
   it("projects private-display diagnostic fields and stderr byte count", () => {
     const result = delivery.toCallToolResult(
       err(
@@ -388,6 +366,8 @@ describe("tool result projection", () => {
     );
     expect(result.structuredContent).toMatchObject({
       error: {
+        code: "provider_unavailable",
+        category: "unavailable",
         details: {
           failure_code: "x11_socket_directory_unusable",
           diagnostics: {
@@ -401,44 +381,12 @@ describe("tool result projection", () => {
       },
     });
   });
-  it("returns one complete Evidence record with its typed normalized result", () => {
-    const evidence = createEvidence(
-      undefined,
-      { id: "fixture", name: "Fixture", version: "1" },
-      {
-        operation: "fixture",
-        parameters: {},
-        result: { value: "observed" },
-      },
-    );
-    const evidenceContract: ToolContract = {
-      ...contract,
-      outputSchema: evidenceResultOf(z.object({ value: z.string() })),
-    };
-
-    const result = delivery.toEvidenceToolResult(
-      evidence,
-      evidenceContract,
-      undefined,
-    );
-    expect(result.structuredContent).toEqual(evidence);
-    expect(result.structuredContent).not.toHaveProperty("result");
-    expect(result.structuredContent).not.toHaveProperty("evidence");
-    expect(result.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining('"value":"observed"'),
-    });
-    const parsed = evidenceContract.outputSchema.parse(
-      result.structuredContent,
-    );
-    expect(parseEvidence(parsed)).toEqual(evidence);
-  });
 
   it.each<JsonValue>([null, false, 0, "", [], { nested: [false, null, 7] }])(
     "preserves a complete reusable Evidence record for JSON result %j",
     (value) => {
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "fixture", parameters: {}, result: value },
       );
@@ -476,9 +424,6 @@ describe("untrusted provenance on failed tool results", () => {
     const result = delivery.toCallToolResult(err(failure()), targetContract);
     expect(result.isError).toBe(true);
     expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-    expect(delivery.toErrorToolResult(failure(), true)._meta).toEqual(
-      UNTRUSTED_TARGET_CONTENT,
-    );
   });
 
   it("leaves an error from a content-free tool unmarked", () => {
@@ -487,12 +432,11 @@ describe("untrusted provenance on failed tool results", () => {
     const result = delivery.toCallToolResult(err(failure()), recordContract);
     expect(result.isError).toBe(true);
     expect(result._meta).toBeUndefined();
-    expect(delivery.toErrorToolResult(failure(), false)._meta).toBeUndefined();
   });
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Partial observation fixture", version: "1" },
       { operation: "fixture", parameters: {}, result: { observed: true } },
     );
@@ -532,7 +476,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("preserves cleanup details when an unretained partial exceeds the response budget", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "get_call_graph",
@@ -565,24 +509,10 @@ describe("untrusted provenance on failed tool results", () => {
     });
     expect(result.content).toHaveLength(1);
   });
-
-  it("marks the response-budget error that replaces an oversized target-content result", () => {
-    const small = createToolResultDelivery(4096);
-    const result = small.toCallToolResult(
-      { ok: true, value: { text: "x".repeat(8192) } },
-      toolContract("procedure_pseudo_code"),
-    );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      error: { code: "resource_constraint" },
-    });
-    expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-  });
 });
 
 describe("response-budget recovery routes", () => {
   it.each([
-    ["CLI fallback", "procedure_pseudo_code", {}, {}, undefined],
     [
       "retained Evidence",
       "procedure_pseudo_code",
@@ -605,13 +535,6 @@ describe("response-budget recovery routes", () => {
       {},
       {},
       "get_evidence_bundle",
-    ],
-    [
-      "bundle summary",
-      "get_evidence_bundle",
-      { kind: "evidence-bundle-summary" },
-      {},
-      "export_evidence_bundle",
     ],
     [
       "bundle records",

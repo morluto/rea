@@ -1,12 +1,13 @@
 import type { FileHandle } from "node:fs/promises";
 import { open, realpath, writeFile } from "node:fs/promises";
+import { javascriptSourceAnalysis } from "../../src/composition/javascriptSourceAnalysis.js";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { analyzeJavaScriptApplication } from "../../src/application/javascript/JavaScriptApplicationService.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { DirectoryArtifactReader } from "../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../src/resources/index.js";
 
 const injected = vi.hoisted(() => ({
   opened: undefined as ((path: unknown, file: FileHandle) => void) | undefined,
@@ -105,6 +106,7 @@ it.each(
       { input_path: root, source_paths: ["main.js"] },
       scope,
       {
+        sourceAnalysis: javascriptSourceAnalysis,
         signal: controller.signal,
         progress: {
           report: async (update) => {

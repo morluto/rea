@@ -1,3 +1,4 @@
+import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
@@ -53,7 +54,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
@@ -124,6 +125,8 @@ const budgetFailure = (count: number, label: string): BinaryResourceFailure =>
     "structure",
     MAX_BINARY_HARDENING_TABLE_ENTRIES,
     `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry structural budget. This release has no runtime override.`,
+    "structure",
+    "entries",
   );
 
 const budget = (count: number, label: string): void => {
@@ -992,12 +995,11 @@ const readFeatureNotes = (
       incomplete,
     };
   } catch (cause) {
+    // A parser budget keeps confirmed PIE/NX/RELRO while note features stay unknown.
+    if (isParseLimit(cause, "elf-notes"))
+      return { words: new Map(), searched, incomplete: cause.message };
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
     if (cause.reason === "cancelled") throw cause;
-    // A note budget must not drop PIE, NX, or RELRO. The walker names the
-    // budget it hit, entry or text, and the feature rows stay unknown.
-    if (cause.reason === "limit")
-      return { words: new Map(), searched, incomplete: cause.message };
     throw new BinaryFormatFailure("malformed", cause.message);
   }
 };

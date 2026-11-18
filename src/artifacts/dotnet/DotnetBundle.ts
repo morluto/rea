@@ -3,17 +3,15 @@ import {
   DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
   type DotnetBundleReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 
 import {
   readArtifactFileChunks,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../../resources/index.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
+  abortIfNeeded,
 } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -259,9 +257,13 @@ class BundleCursor {
   private exactInteger(value: bigint): number {
     if (value > BigInt(Number.MAX_SAFE_INTEGER))
       throw artifactFixedLimitFailure(
-        ".NET bundle exact integer range",
-        Number.MAX_SAFE_INTEGER,
-        "integer units",
+        {
+          name: "The .NET bundle exact integer range",
+          kind: "parser",
+          limit: Number.MAX_SAFE_INTEGER,
+          unit: "integer units",
+        },
+        `A .NET bundle offset or size of ${String(value)} is above the exact integer range of ${String(Number.MAX_SAFE_INTEGER)}.`,
       );
     return Number(value);
   }

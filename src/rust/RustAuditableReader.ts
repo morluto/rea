@@ -9,7 +9,7 @@ import {
 } from "../domain/rust/rustBinary.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
-import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Compressed zlib stream limit. */
@@ -231,19 +231,17 @@ const parseDocument = (
     throw malformedSection("Dependency JSON is not valid UTF-8", cause);
   }
   assertDepth(text);
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (cause) {
-    throw malformedSection("Dependency section JSON is invalid", cause);
-  }
   // JSON.parse keeps the last of a repeated field; the format allows one.
-  const duplicate = findDuplicateJsonMember(text);
-  if (duplicate !== undefined)
-    throw malformedInput(
-      RUST_AUDITABLE_FORMAT,
-      `Dependency JSON contains duplicate field ${JSON.stringify(duplicate.name)}`,
-    );
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
+        `Dependency JSON contains duplicate field ${JSON.stringify(decoded.duplicate.name)}`,
+      );
+    throw malformedSection("Dependency section JSON is invalid", decoded.cause);
+  }
+  const value = decoded.value;
   const version = documentVersionSchema.safeParse(value);
   if (!version.success)
     throw malformedSection(

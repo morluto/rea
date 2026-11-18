@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -29,13 +32,15 @@ import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   BinaryResourceFailure,
+  binaryResourceCeiling,
   binaryResourceAllowance,
 } from "../../domain/binaryContainer.js";
 import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
   parseNativeExports,
-} from "./NativeExportParser.js";
+} from "../../domain/native/nativeExportParser.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_exports";
 
@@ -85,23 +90,27 @@ export class NativeExportsProvider implements NativeExportsPort {
 /** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
 const limitRecovery = (
   limit: NativeExportLimit | null,
-  maximum: number,
+  cause: BinaryResourceFailure,
 ): ResourceConstraintRecovery => {
+  const maximum = cause.maximum_bytes;
   switch (limit) {
     case "rows":
       return fixedAllowanceOptions(
-        `The ${String(maximum)}-entry native export inventory allowance`,
+        "The native export inventory allowance",
         "count",
+        { limit: maximum, unit: "entries" },
       );
     case "retained_text":
       return fixedAllowanceOptions(
-        `The ${String(maximum)}-byte native export retained-text allowance`,
+        "The native export retained-text allowance",
         "bytes",
+        { limit: maximum, unit: "bytes" },
       );
     case null:
       return fixedAllowanceOptions(
         "The native export structural decoding allowance",
         "parser",
+        binaryResourceCeiling(cause),
       );
   }
 };
@@ -120,19 +129,13 @@ const nativeExportsFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...limitRecovery(
+        binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
         cause,
-        ...limitRecovery(
-          binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
-          cause.maximum_bytes,
-        ),
-      },
-    );
+      ),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (
@@ -168,7 +171,7 @@ const nativeExportsFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

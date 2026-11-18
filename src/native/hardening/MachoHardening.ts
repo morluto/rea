@@ -19,7 +19,7 @@ import {
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import { machoBinaryArchitecture } from "../../domain/binaryTarget.js";
-import { decodeMachoFixedName } from "../AppleMachoNames.js";
+import { decodeMachoFixedName } from "../../domain/apple/appleMachoNames.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
@@ -35,7 +35,7 @@ import {
 } from "../../domain/native/binaryHardening.js";
 import { assertArtifactReadActive } from "../../resources/index.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
-import { readMachoEncryption } from "../../artifacts/apple/MachoEncryptionReader.js";
+import { readMachoEncryption } from "../../domain/apple/machoEncryptionReader.js";
 import {
   frameLoadCommands,
   readMachoContainer,
@@ -43,7 +43,7 @@ import {
   type MachoLoadCommand,
   type MachoSliceHeader,
   type ReadAt,
-} from "../../artifacts/apple/MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 
 const MH_EXECUTE = 0x2;
 const MH_DYLIB = 0x6;

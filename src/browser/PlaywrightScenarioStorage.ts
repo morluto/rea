@@ -30,6 +30,7 @@ import {
   scenarioCommandTimeoutMs,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type StorageEventMethod =
   | "Runtime.executionContextCreated"
@@ -745,7 +746,7 @@ export class PlaywrightScenarioStorage {
         {
           cause,
           cleanup: {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             resources: ["browser_transport", "browser_storage_bootstrap"],
           },
         },

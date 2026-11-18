@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   bindArtifactFileCleanup,
   AnalysisCleanupLease,
@@ -7,6 +8,8 @@ import {
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";
+
+import { HOPPER_BRIDGE_SCRIPT_URL } from "./HopperBridgeSources.js";
 import { accessSync, constants, statSync } from "node:fs";
 
 import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
@@ -29,7 +32,7 @@ import { selectedHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscove
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -64,6 +67,7 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 
 import { hopperCapabilities } from "./HopperProviderCapabilities.js";
 import { HOPPER_PROVIDER_IDENTITY } from "./HopperProviderMetadata.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {
@@ -92,7 +96,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
     private readonly config: AppConfig,
     private readonly logger: Logger,
     environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     /**
      * Linux launcher authentication from Hopper setup, supplied by
      * composition. Without it a Linux launch is refused before Hopper runs.
@@ -252,7 +256,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       const failure = new ProviderCleanupError(
         HOPPER_PROVIDER_IDENTITY.id,
         this.#ownedResources.cleanupResources,
-        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { reason: errorMessage(cause) },
         { cause, operation: "close_owned_resources" },
       );
       bindArtifactFileCleanup(cause, failure);
@@ -337,9 +341,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
             this.config.hopperLoaderArgs.length > 0
               ? this.config.hopperLoaderArgs
               : derivedLoaderArgs.value,
-          bridgeScriptPath: fileURLToPath(
-            new URL("../../bridge/hopper_bridge.py", import.meta.url),
-          ),
+          bridgeScriptPath: fileURLToPath(HOPPER_BRIDGE_SCRIPT_URL),
           bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
           ...(this.platform === "linux"
             ? {
@@ -350,13 +352,16 @@ export class HopperProvider implements AnalysisProviderCandidate {
               }
             : { launchMode: "native" as const }),
         },
-        this.linuxLauncherVerification === undefined
-          ? {}
-          : {
-              verifyLinuxLauncher: this.linuxLauncherVerification.inspect,
-              retryPublisherCleanup:
-                this.linuxLauncherVerification.retryCleanup,
-            },
+        {
+          platform: this.platform,
+          ...(this.linuxLauncherVerification === undefined
+            ? {}
+            : {
+                verifyLinuxLauncher: this.linuxLauncherVerification.inspect,
+                retryPublisherCleanup:
+                  this.linuxLauncherVerification.retryCleanup,
+              }),
+        },
       ),
       ...(context === undefined ? {} : { runId: context.runId }),
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,
@@ -610,11 +615,11 @@ export class HopperProvider implements AnalysisProviderCandidate {
         return closed.ok
           ? err(descriptors)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 closed.error,
                 descriptors,
                 "close_binary",
-              ).bindCleanupDependencies([closed.error, descriptors]),
+              ),
             );
       },
     };

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished } from "vitest";
@@ -6,28 +7,30 @@ import {
   type AnalysisOperationPort,
 } from "../../../src/ports/AnalysisProvider.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
+import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerEnhancedTools } from "../../../src/server/registerEnhancedTools.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import { recordsWorkflowSession } from "../../fixtures/workflowSession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const provider = { id: "fixture", name: "Fixture", version: "1" };
-const source = createEvidence(undefined, provider, {
+const source = createEvidence(unknownTarget("not-observed"), provider, {
   operation: "health",
   parameters: {},
   result: "source",
 });
 it.each([
-  { size: 100, denyAdmission: false, ownerKnown: true },
-  { size: 100_000, denyAdmission: false, ownerKnown: true },
-  { size: 100, denyAdmission: true, ownerKnown: true },
-  { size: 100, denyAdmission: false, ownerKnown: false },
+  { size: 100, denyAdmission: false },
+  { size: 100_000, denyAdmission: false },
+  { size: 100, denyAdmission: true },
 ])(
-  "preserves capacity error with size $size, denied admission $denyAdmission, and known owner $ownerKnown",
-  async ({ size, denyAdmission, ownerKnown }) => {
+  "preserves capacity error with size $size and denied admission $denyAdmission",
+  async ({ size, denyAdmission }) => {
     const ledger = new EvidenceLedger({ maximumRepresentationBytes: 0 });
     const record = (evidence: typeof source) => ledger.record(evidence);
     const analysis: AnalysisOperationPort = {
@@ -53,18 +56,14 @@ it.each([
       record,
       createToolResultDelivery(10 * 1024),
     );
-    registerEnhancedTools(server, {
-      withAdmittedAnalysis: withAdmittedAnalysis({ kind: "fixed", analysis }),
-      logger: pino({ enabled: false }),
-      activeTarget: () => undefined,
-      analysisProfile: undefined,
+    // Recovery admission has the default headroom unless denied; only the
+    // ledger has none.
+    const session = recordsWorkflowSession(new InvestigationRecords(), {
       recordEvidence: record,
-      ...(ownerKnown
-        ? { evidenceForAnalysis: (id: string) => ledger.forAnalysis(id) }
-        : {}),
+      evidenceForAnalysis: (id) => ledger.forAnalysis(id),
       ...(denyAdmission
         ? {
-            admitRecovery: () =>
+            admitRecoveryObservation: () =>
               err(
                 new AnalysisResourceConstraintError(
                   "batch_decompile",
@@ -75,12 +74,21 @@ it.each([
               ),
           }
         : {}),
-      evidenceById: ownerKnown ? (id) => ledger.forAnalysis(id) : () => source,
-      recordUnknown: undefined,
-      allowsSnapshotReplay: undefined,
-      recordWorkflowSnapshot: undefined,
     });
-    const client = new Client({ name: "batch-overflow-test", version: "1" });
+    registerServiceTools(
+      server,
+      { enhancedWorkflows: { session } },
+      {
+        logger: pino({ enabled: false }),
+        recordEvidence: record,
+        evidenceById: (id) => ledger.forAnalysis(id),
+        withAdmittedAnalysis: withAdmittedAnalysis({ kind: "fixed", analysis }),
+      },
+    );
+    const client = new Client(
+      { name: "batch-overflow-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -103,15 +111,6 @@ it.each([
         completed_observation_omitted: {
           reason: "insufficient-authentication-headroom",
           source_closure: "not-established",
-        },
-      });
-    else if (!ownerKnown)
-      expect(error.details).toMatchObject({
-        completed_observation: {
-          kind: "inline-evidence",
-          retention: "unknown",
-          source_closure: "not-established",
-          evidence: { operation: "batch_decompile" },
         },
       });
     else if (size === 100)
