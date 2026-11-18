@@ -15,7 +15,7 @@ import {
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
-const verifierRun = createVerifierRun();
+const verifierRun = createVerifierRun({ inheritProcessRunId: true });
 const manifestArgument = process.argv[2] ?? "build/conformance/manifest.json";
 const manifestPath = await realpath(resolve(manifestArgument));
 const sourceRoot = await resolveSourceRoot(manifestPath, process.argv[3]);

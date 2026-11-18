@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -7,13 +8,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, it, onTestFinished } from "vitest";
 
 import { splitNmSymbolRecords } from "../../../scripts/lib/conformance-fixtures.mjs";
 import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { waitFor } from "../../support/testWait.js";
 import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const digest = (bytes: string | Buffer) =>
@@ -35,6 +38,7 @@ const ownedFixture = async (prefix: string) => {
 
 it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
   { mode: "complete", marker: "REA_C_ENTRY" },
+  { mode: "cancelled", marker: "REA_C_ENTRY" },
   { mode: "renamed", marker: "REA_C_ENTRY" },
   { mode: "wrong-prefix", marker: "REA_C_ENTRY" },
   { mode: "prefix-complete", marker: "REA_C_ENTRY" },
@@ -97,6 +101,41 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
         fixtures,
       }),
     );
+    if (mode === "cancelled") {
+      const helper = join(root, "file");
+      const ready = join(root, "file-started");
+      await writeFile(
+        helper,
+        '#!/bin/sh\nprintf "%s\\n" "$$" > "$CONFORMANCE_FILE_STARTED"\nexec sleep 15\n',
+      );
+      await chmod(helper, 0o755);
+      const controller = new AbortController();
+      const pending = commands.exec(
+        process.execPath,
+        [verifier, manifest, sources],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: [root, process.env.PATH ?? ""].join(delimiter),
+            CONFORMANCE_FILE_STARTED: ready,
+          },
+          signal: controller.signal,
+          timeout: 25_000,
+        },
+      );
+      await awaitAcknowledgement(
+        waitFor(() => readFile(ready)),
+        pending,
+        "conformance file probe",
+      );
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({
+        reason: "cancelled",
+        cleanupFailure: null,
+      });
+      return;
+    }
     const result = commands.exec(
       process.execPath,
       [verifier, manifest, sources],

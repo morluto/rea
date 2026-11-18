@@ -50,6 +50,48 @@ describe("verifier run identity", { concurrent: false }, () => {
   });
 
   it.runIf(process.platform !== "win32")(
+    "keeps a fresh report ID while verifying descendants with an inherited token",
+    async () => {
+      const inherited = "fixture-parent-process-token";
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { completeVerifierRun, createVerifierRun } from "./scripts/lib/verifier-run.mjs";
+const run = createVerifierRun({ inheritProcessRunId: true });
+const child = spawn(process.execPath, ["-e",
+  "process.stdout.write('ready'); process.stdin.resume()"]);
+const closed = once(child, "close");
+try {
+  await once(child.stdout, "data");
+  process.stdout.write(JSON.stringify({
+    run: await completeVerifierRun(run),
+    child: child.pid,
+    processToken: process.env.REA_PROCESS_RUN_ID,
+  }));
+} finally {
+  child.stdin.end();
+  await closed;
+}
+`,
+        ],
+        { env: { ...process.env, REA_PROCESS_RUN_ID: inherited } },
+      );
+      const report = JSON.parse(stdout);
+      expect(report.processToken).toBe(inherited);
+      expect(report.run.run_id).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(report.run.process_lineage).toMatchObject({
+        status: "verified",
+        descendants: [expect.objectContaining({ pid: report.child })],
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "reports token-verified live descendants",
     async () => {
       const previousRunId = process.env.REA_PROCESS_RUN_ID;

@@ -43,25 +43,30 @@ import { readFile, readdir } from "node:fs/promises";
  */
 /** @typedef {{ readonly pid: number; readonly parentPid: number; readonly processGroupId: number }} ProcessMember */
 
-/** @type {VerifierRunStart | undefined} */
+/** @type {{ readonly report: VerifierRunStart, readonly processRunId: string } | undefined} */
 let activeVerifierRun;
 
 /**
- * Allocate one verifier identity before work and propagate it to child processes.
+ * Allocate one verifier report identity before work and propagate a process token.
+ * A verifier launched as an owned command can retain its caller's process token
+ * so its descendants remain attributable during interruption and cleanup.
+ * @param {{ readonly inheritProcessRunId?: boolean }} [options]
  * @returns {VerifierRunStart}
  */
-export const createVerifierRun = () => {
-  if (activeVerifierRun !== undefined) {
-    process.env.REA_PROCESS_RUN_ID = activeVerifierRun.run_id;
-    return activeVerifierRun;
+export const createVerifierRun = (options = {}) => {
+  if (activeVerifierRun === undefined) {
+    const report = Object.freeze({
+      run_id: randomUUID(),
+      verifier_pid: process.pid,
+      parent_pid: process.ppid,
+    });
+    const inherited = options.inheritProcessRunId
+      ? process.env.REA_PROCESS_RUN_ID
+      : undefined;
+    activeVerifierRun = { report, processRunId: inherited || report.run_id };
   }
-  activeVerifierRun = Object.freeze({
-    run_id: randomUUID(),
-    verifier_pid: process.pid,
-    parent_pid: process.ppid,
-  });
-  process.env.REA_PROCESS_RUN_ID = activeVerifierRun.run_id;
-  return activeVerifierRun;
+  process.env.REA_PROCESS_RUN_ID = activeVerifierRun.processRunId;
+  return activeVerifierRun.report;
 };
 
 /**
@@ -127,6 +132,10 @@ const observeVerifierLineage = async (run, observedAt) => {
       members.filter(({ pid }) => pid !== observerPid),
       run.verifier_pid,
     );
+    const expectedProcessRunId =
+      activeVerifierRun?.report === run
+        ? activeVerifierRun.processRunId
+        : run.run_id;
     for (const member of descendants) {
       let memberRunId;
       try {
@@ -139,7 +148,7 @@ const observeVerifierLineage = async (run, observedAt) => {
           `descendant ${String(member.pid)} environment was unreadable`,
         );
       }
-      if (memberRunId !== run.run_id)
+      if (memberRunId !== expectedProcessRunId)
         return unavailableLineage(
           run,
           observedAt,
