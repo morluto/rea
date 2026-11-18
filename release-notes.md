@@ -804,6 +804,7 @@
 * **environment:** consolidate bounded path description coverage ([#11936](https://github.com/morluto/rea/issues/11936)) ([49a6101](https://github.com/morluto/rea/commit/49a610199f072b66b170cd7217ed1e44d7235784))
 * **environment:** consolidate captured write completion checks ([#11905](https://github.com/morluto/rea/issues/11905)) ([7973afd](https://github.com/morluto/rea/commit/7973afdfaa872efdb49fde70bbc703a9d729a005))
 * **environment:** consolidate clock parsing and formatting checks ([#11902](https://github.com/morluto/rea/issues/11902)) ([f687b68](https://github.com/morluto/rea/commit/f687b68d12658267c77b1ce30b4461301e20a2f7))
+* **environment:** consolidate compare chronology probes ([#11940](https://github.com/morluto/rea/issues/11940)) ([52ceaaf](https://github.com/morluto/rea/commit/52ceaafe64f0bb5d8e1398d7f7807a7b2d6aefcd))
 * **environment:** consolidate data-plane ordering proofs ([#11929](https://github.com/morluto/rea/issues/11929)) ([a4a5772](https://github.com/morluto/rea/commit/a4a57727e96e9c3aae203bf67f641489e0aecba9))
 * **environment:** consolidate list query contracts ([#11916](https://github.com/morluto/rea/issues/11916)) ([d72dfb8](https://github.com/morluto/rea/commit/d72dfb8c69376c14a0fcc386dc3f7d639b4abc97))
 * **environment:** consolidate long query alias coverage ([#11938](https://github.com/morluto/rea/issues/11938)) ([aac23cb](https://github.com/morluto/rea/commit/aac23cb4b1097a23ece047e555635e82e6633a4f))
