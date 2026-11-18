@@ -11,9 +11,29 @@ import {
 } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
+const importedDotfiles = [
+  ".cjs",
+  ".CJS",
+  ".JS",
+  ".MJS",
+  ".jsx",
+  ".JSX",
+  ".ts",
+  ".TS",
+  ".mts",
+  ".MTS",
+  ".cts",
+  ".CTS",
+  ".tsx",
+  ".TSX",
+].map((name, index) => ({
+  path: `esm/dot-${index}/${name}`,
+  specifier: `./dot-${index}/${name}`,
+}));
+
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-bom-hashbang-");
-  const files = {
+  const files: Record<string, string> = {
     "package.json": JSON.stringify({ type: "commonjs", main: "module.mjs" }),
     "module.mjs":
       '\uFEFF#!/usr/bin/env node\nconst face="😀"; import {marker} from "./dep.mjs"; console.log(JSON.stringify({marker}));',
@@ -38,6 +58,13 @@ const fixture = async () => {
       '#!/usr/bin/env node\nconst {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
     "dep.mjs": "export const marker=42;",
     "dep.cjs": "exports.marker=42;",
+    ...Object.fromEntries(
+      importedDotfiles.map(({ path }) => [
+        path,
+        '\uFEFF#!/usr/bin/env node\r\nconst face="😀"; import {marker} from "../../dep.mjs"; export {marker};',
+      ]),
+    ),
+    "esm/invoke.mjs": `const modules = await Promise.all([${importedDotfiles.map(({ specifier }) => `import(${JSON.stringify(specifier)})`).join(",")}]); console.log(JSON.stringify(modules.map(({marker}) => marker)));`,
   };
   await writeFixtureFiles(root, files);
   return { root, files };
@@ -62,6 +89,15 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         code: 1,
         stderr: expect.stringContaining("SyntaxError"),
       });
+    expect(await runNodeJsonControl(root, "esm/invoke.mjs")).toEqual(
+      importedDotfiles.map(() => 42),
+    );
+    await expect(
+      runNodeJsonControl(root, "esm/dot-0/.cjs"),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("SyntaxError"),
+    });
     const { graph, statistics } = await analyzeJavaScriptDirectory(
       surface,
       cli,
@@ -77,8 +113,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["typed.mts", "static-import", "dep.mjs"],
       ["typed.cts", "require", "dep.cjs"],
       ["plain.cjs", "require", "dep.cjs"],
+      ...importedDotfiles.map(
+        ({ path }) => [path, "static-import", "dep.mjs"] as const,
+      ),
     ] as const) {
-      const source = files[path];
+      const source = files[path]!;
       const line = source.split(/\r?\n/u)[1]!;
       const start = line.indexOf(kind === "require" ? "require" : "import");
       const end = line.indexOf(kind === "require" ? ")" : ";", start) + 1;
@@ -110,6 +149,27 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         },
       });
     }
+    const dotfile = graph.nodes
+      .flatMap(({ observations }) => observations)
+      .find(
+        ({ properties }) =>
+          properties.path === "esm/dot-0/.cjs" &&
+          properties.text_status !== undefined,
+      );
+    expect(dotfile).toMatchObject({
+      properties: {
+        parse_status: "partial",
+        analysis_coverage: {
+          syntax: { status: "complete", error_count: 0 },
+          semantics: { uncertainty: ["conditional-loader"] },
+        },
+      },
+      evidence: {
+        limitations: expect.arrayContaining([
+          expect.stringContaining("loader invocation is unknown"),
+        ]),
+      },
+    });
     expect(
       graph.edges.filter(
         ({ relation, evidence }) =>
@@ -161,18 +221,19 @@ cliTest.runIf(process.platform !== "win32")(
         .map(({ path }) => path)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual(["rejected.cjs", "rejected.js"]);
-    for (const path of [
-      "module.mjs",
-      "esm/main.js",
-      "esm/.js",
-      "esm/.mjs",
-      "view.jsx",
-      "typed.mts",
+    for (const [path, parseState] of [
+      ["module.mjs", "parsed"],
+      ["esm/main.js", "parsed"],
+      ["esm/.js", "partial"],
+      ["esm/.mjs", "partial"],
+      ["view.jsx", "parsed"],
+      ["typed.mts", "parsed"],
+      ...importedDotfiles.map(({ path }) => [path, "partial"] as const),
     ] as const) {
       expect(graph.entries).toContainEqual(
         expect.objectContaining({
           path,
-          sha256: createHash("sha256").update(files[path]).digest("hex"),
+          sha256: createHash("sha256").update(files[path]!).digest("hex"),
         }),
       );
       expect(graph.relationships).toContainEqual(
@@ -180,7 +241,7 @@ cliTest.runIf(process.platform !== "win32")(
           from_path: path,
           to: "dep.mjs",
           kind: "imports",
-          parse_state: "parsed",
+          parse_state: parseState,
           resolution: "internal",
         }),
       );
