@@ -3,7 +3,6 @@ import { expect, it, onTestFinished, vi } from "vitest";
 const fixture = vi.hoisted(() => ({
   failures: new Map<string, string>(),
   abortErrors: new Set<string>(),
-  reads: [] as string[],
   tasks: new Map<number, readonly string[]>(),
   children: new Map<string, string>(),
   holdPath: undefined as string | undefined,
@@ -50,7 +49,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const [path] = args;
       const filename = String(path);
       if (!filename.startsWith("/proc/")) return filesystem.readdir(...args);
-      fixture.reads.push(filename);
       if (filename === fixture.holdReaddirPath) {
         fixture.readdirStarted = true;
         fixture.readdirCount += 1;
@@ -79,7 +77,6 @@ vi.mock("../ProcessInspectionFile.js", () => ({
   readProcessInspectionFile: async (filename: string, signal?: AbortSignal) => {
     if (!filename.startsWith("/proc/"))
       throw new Error(`Unexpected inspection fixture path: ${filename}`);
-    fixture.reads.push(filename);
     const code = fixture.failures.get(filename);
     if (code !== undefined) throw Object.assign(new Error(code), { code });
     if (fixture.abortErrors.has(filename)) {
@@ -217,7 +214,6 @@ const psFixture = (): string =>
 const setUpFixture = (): void => {
   fixture.failures.clear();
   fixture.abortErrors.clear();
-  fixture.reads.length = 0;
   fixture.tasks.clear();
   fixture.children.clear();
   fixture.holdPath = undefined;
@@ -248,7 +244,10 @@ const setUpFixture = (): void => {
   fixture.children.set("200:200", "300");
 };
 
-const start = (runId = fixture.runId) => {
+const start = (
+  runId = fixture.runId,
+  onSample?: (sample: ProcessSample) => void,
+) => {
   const samples: ProcessSample[] = [];
   const resourceScope = new ProcessCaptureResourceScope();
   const stop = startProcessSampler({
@@ -259,6 +258,7 @@ const start = (runId = fixture.runId) => {
     limit: 20,
     samples,
     resourceScope,
+    recordEvent: (_channel, index) => onSample?.(samples[index]!),
   });
   onTestFinished(async () => {
     await stop();
@@ -321,6 +321,17 @@ const deferred = (): { readonly promise: Promise<void>; resolve(): void } => {
   return { promise, resolve };
 };
 
+const sampleThrough = async (pids: readonly number[]) => {
+  const remaining = new Set(pids);
+  const published = deferred();
+  const sampling = start(fixture.runId, ({ pid }) => {
+    remaining.delete(pid);
+    if (remaining.size === 0) published.resolve();
+  });
+  await published.promise;
+  return sampling;
+};
+
 const expectPartialFailure = async (
   path: string,
   code: string,
@@ -328,9 +339,7 @@ const expectPartialFailure = async (
 ): Promise<void> => {
   setUpFixture();
   fixture.failures.set(path, code);
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes(path));
-  await flushImmediateProcPass();
+  const { samples, stop } = await sampleThrough(expectedPids);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([...expectedPids]),
@@ -345,7 +354,7 @@ it.each([
   ["/proc/200/stat", "EACCES", [100, 400]],
   ["/proc/200/stat", "EIO", [100, 400]],
   ["/proc/200/cmdline", "EPERM", [100, 200, 300, 400]],
-  ["/proc/100/task", "EIO", [100]],
+  ["/proc/100/task", "EIO", [100, 200, 300, 400]],
   ["/proc/100/task/100/children", "EACCES", [100, 200, 300, 400]],
   ["/proc/200/task/200/children", "EPERM", [100, 200, 400]],
 ] as const)(
@@ -390,14 +399,10 @@ it("retains only the stable procfs root if it changes during ps fallback discove
     "300 200 100 100 discovery-only-grandchild-command",
     "400 100 100 100 discovery-only-sibling-command",
   ].join("\n");
-  const { samples, stop } = start();
-  await waitFor(() => fixture.psReads > 0);
-  await waitFor(
-    () =>
-      fixture.statReads.get(100) === 5 &&
-      samples.some((sample) => sample.pid === 100),
-  );
+  const { samples, stop } = await sampleThrough([100]);
   const result = await stop();
+  expect(fixture.psReads).toBeGreaterThan(0);
+  expect(fixture.statReads.get(100)).toBe(5);
   expect(samples.map(({ pid }) => pid)).toEqual([100]);
   expect(samples[0]?.command).toBe("fixture-command-100");
   expect(result.partial).toBe(true);
@@ -414,12 +419,7 @@ it("rejects a ps child edge when procfs reports a different parent", async () =>
     "300 200 100 100 discovery-only-grandchild-command",
     "400 100 100 100 discovery-only-sibling-command",
   ].join("\n");
-  const { samples, stop } = start();
-  await waitFor(
-    () =>
-      samples.some((sample) => sample.pid === 100) &&
-      samples.some((sample) => sample.pid === 400),
-  );
+  const { samples, stop } = await sampleThrough([100, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual([100, 400]);
   expect(samples.map(({ command }) => command)).toEqual([
@@ -434,9 +434,7 @@ it("retains children from readable threads while reporting another thread's EIO"
   fixture.tasks.set(100, ["100", "101"]);
   fixture.children.set("100:101", "");
   fixture.failures.set("/proc/100/task/101/children", "EIO");
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/100/task/101/children"));
-  await flushImmediateProcPass();
+  const { samples, stop } = await sampleThrough([100, 200, 300, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([100, 200, 300, 400]),
@@ -453,8 +451,7 @@ it.each(["ENOENT", "ESRCH"] as const)(
   async (code) => {
     setUpFixture();
     fixture.failures.set("/proc/200/stat", code);
-    const { samples, stop } = start();
-    await waitFor(() => samples.some((row) => row.pid === 400));
+    const { samples, stop } = await sampleThrough([100, 400]);
     const result = await stop();
     expect(samples.map(({ pid }) => pid)).toEqual(
       expect.arrayContaining([100, 400]),
@@ -485,9 +482,7 @@ it.each(["EACCES", "EIO"] as const)(
 it("does not swallow an unrelated filesystem AbortError as sampler cancellation", async () => {
   setUpFixture();
   fixture.abortErrors.add("/proc/200/stat");
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/200/stat"));
-  await flushImmediateProcPass();
+  const { samples, stop } = await sampleThrough([100, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([100, 400]),
@@ -563,9 +558,7 @@ it("retains a stable root row when child enumeration and its ps fallback both fa
   fixture.failures.set("/proc/100/task/100/children", "EACCES");
   fixture.failures.set("/proc/100/task/101/children", "EIO");
   fixture.psFailure = "EIO";
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/100/task/101/children"));
-  await flushImmediateProcPass();
+  const { samples, stop } = await sampleThrough([100]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toContain(100);
   expect(result.partial).toBe(true);
@@ -661,12 +654,7 @@ it.each([0, -1])(
 
 it("marks a completed clean pass as neither partial nor interrupted", async () => {
   setUpFixture();
-  const { samples, stop } = start();
-  await waitFor(() =>
-    [100, 200, 300, 400].every((pid) =>
-      samples.some((sample) => sample.pid === pid),
-    ),
-  );
+  const { stop } = await sampleThrough([100, 200, 300, 400]);
   const result = await stop();
   expect(result.partial).toBe(false);
   expect(result.coverage.sampling_failures).toBe(0);
