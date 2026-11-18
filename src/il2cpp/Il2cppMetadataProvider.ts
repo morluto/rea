@@ -91,11 +91,22 @@ const failureForPrimary = (
   )
     return parseLimitConstraint(
       OPERATION,
-      cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
+      cause.reason === "native-type-text-capacity" ||
+        cause.reason === "wasm-memory-capacity"
+        ? "memory"
+        : "capacity",
       cause,
       fixedAllowanceOptions(
-        "The IL2CPP native-link allowance",
-        cause.reason === "native-type-text-capacity" ? "parser" : "count",
+        cause.reason === "wasm-memory-capacity"
+          ? "The wasm32 linear-memory reconstruction allowance"
+          : cause.reason === "wasm-module-capacity"
+            ? "The wasm32 module parser allowance"
+            : "The IL2CPP native-link allowance",
+        cause.reason === "native-type-text-capacity"
+          ? "parser"
+          : cause.reason === "wasm-memory-capacity"
+            ? "bytes"
+            : "count",
         {
           limit: cause.failure.limit.maximum,
           ...(cause.unit === undefined ? {} : { unit: cause.unit }),
@@ -523,6 +534,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const decoded = "metadata" in value ? value.metadata : value;
         const link = "metadata" in value ? value.link : undefined;
         const binaryPath = input.binary_path;
+        let linkedFormat: "elf" | "macho" | "pe" | "wasm" | undefined;
         let sliceLimitations: readonly string[] = [];
         let linked: Pick<
           Il2cppMetadata,
@@ -578,6 +590,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               assertArtifactReadActive(options?.signal);
               linkStep = linking.next();
             }
+            linkedFormat = linkStep.value.format;
             linked = binaryReport(linkStep.value, {
               path: binaryPath,
               sha256: binary.sha256,
@@ -608,7 +621,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             "Only unencrypted global-metadata.dat versions 24, 27, 29, 31 and 39 are decoded; names, counts and string literals are observed file content, not runtime behavior.",
             binaryPath === undefined
               ? "Native code addresses and IL2CPP binary registration are not recovered without binary_path."
-              : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.`,
+              : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means ${linkedFormat === "wasm" ? "no module claimed the method or its table slot names an imported function, which has no body in this module" : "no module claimed the method or its slot has an unresolved relocation"}.`,
             ...(linked.binary?.format === "elf"
               ? [
                   "ELF symbolic pointers use the selected file's defined symbols to derive link-image addresses; runtime symbol interposition, external definitions, TLS addresses and IFUNC results are not established.",

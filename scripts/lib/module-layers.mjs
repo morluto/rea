@@ -418,6 +418,16 @@ const isEntryFile = (unit, target) =>
  */
 export const PROVIDER_DEPENDENCIES = Object.freeze([
   Object.freeze({
+    from: "il2cpp",
+    to: "wasm",
+    files: Object.freeze(["WasmModuleImage.ts"]),
+    // Unity WebGL builds ship IL2CPP code as a wasm32 module. Linking reads
+    // its initial linear memory and function table with the wasm provider's
+    // module reader instead of parsing the module sections twice.
+    reason:
+      "IL2CPP links WebGL builds through the wasm provider's module image reader",
+  }),
+  Object.freeze({
     from: "inspector",
     to: "browser",
     files: Object.freeze([
