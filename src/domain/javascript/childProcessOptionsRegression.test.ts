@@ -162,3 +162,87 @@ describe("child-process options detection", () => {
     }
   });
 });
+
+it.each([
+  ["intrinsic", 'spawn("tool", [], { env: new Object() })', true],
+  [
+    "shadowed",
+    'function f(Object) { spawn("tool", [], { env: new Object() }) }',
+    null,
+  ],
+  [
+    "overwritten",
+    'globalThis.Object = replacement; spawn("tool", [], { env: new Object() })',
+    null,
+  ],
+  [
+    "opaque write",
+    'eval("Object = replacement"); spawn("tool", [], { env: new Object() })',
+    null,
+  ],
+  ["argument", 'spawn("tool", [], { env: new Object(input) })', null],
+  ["custom", 'spawn("tool", [], { env: new Custom() })', null],
+] as const)(
+  "qualifies constructor environment: %s",
+  (_label, code, expected) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import { spawn } from "node:child_process"; ${code};`,
+    );
+    expect(ir.childProcessSpawns[0]?.environmentSupplied).toBe(expected);
+  },
+);
+
+it.each([
+  ["exec callback", 'const cb = () => {}; exec("tool", cb)', false],
+  [
+    "exec alias callback",
+    'const original = () => {}; const cb = original; exec("tool", cb)',
+    false,
+  ],
+  [
+    "exec callback with property",
+    'const cb = () => {}; cb.env = {}; exec("tool", cb)',
+    false,
+  ],
+  [
+    "exec later spread",
+    'const cb = () => {}; exec("tool", cb, ...args)',
+    false,
+  ],
+  ["execFile callback", 'function cb() {} execFile("tool", cb)', false],
+  [
+    "execFile callback with property",
+    'function cb() {} cb.env = {}; execFile("tool", cb)',
+    false,
+  ],
+  [
+    "execFile later spread",
+    'function cb() {} execFile("tool", cb, ...args)',
+    false,
+  ],
+  [
+    "execFile third-slot callback",
+    'function cb() {} cb.env = {}; execFile("tool", [], cb)',
+    null,
+  ],
+  [
+    "reassigned callback",
+    'let cb = () => {}; cb = input; exec("tool", cb)',
+    null,
+  ],
+  [
+    "opaque callback write",
+    'function f() { let cb = () => {}; eval("cb = input"); exec("tool", cb) }',
+    null,
+  ],
+  ["unknown callback", 'function f(cb) { exec("tool", cb) }', null],
+  ["spread before callback", "function cb() {} exec(...args, cb)", null],
+] as const)(
+  "qualifies callback overload environment: %s",
+  (_label, code, expected) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import { exec, execFile } from "node:child_process"; ${code};`,
+    );
+    expect(ir.childProcessSpawns[0]?.environmentSupplied).toBe(expected);
+  },
+);

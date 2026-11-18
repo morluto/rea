@@ -15,6 +15,30 @@ const cases = [
     0,
   ],
   ['spawn("control", [], {stdio:"inherit"})', "control", "inherit", 0],
+  [
+    'spawn("intrinsic-object-env", [], {env:new Object()})',
+    "intrinsic-object-env",
+    "default",
+    0,
+  ],
+  [
+    'exec("exec-function-env", callbackWithEnv)',
+    "exec-function-env",
+    "default",
+    null,
+  ],
+  [
+    'execFile("execfile-second-function-env", callbackWithEnv)',
+    "execfile-second-function-env",
+    "default",
+    null,
+  ],
+  [
+    'execFile("execfile-third-function-env", [], callbackWithEnv)',
+    "execfile-third-function-env",
+    "default",
+    0,
+  ],
   ['spawn("global-nan-env", [], {env:NaN})', "global-nan-env", "default", 0],
   [
     '((NaN) => spawn("shadowed-nan-env", [], {env:NaN}))({})',
@@ -243,7 +267,38 @@ const exportAssignmentSource = `
 const environmentCommands = [
   "named-argv",
   "execfile-dynamic",
+  "intrinsic-object-env",
+];
+
+// These inputs can supply an env at runtime, but cannot establish it statically.
+const unknownEnvironmentCommands: readonly (string | null)[] = [
+  "eval-callback",
+  "cjs-wrapper-callback",
+  "getter",
+  "spread-after",
+  "annex-b-local",
+  "named-null-spread",
+  "constructed-argv",
+  "reassigned-callback",
+  "ambiguous-slot",
+  "callback-alias",
+  null,
+  "captured-argv",
+  "inline-getter",
+  "annex-b-argv",
+  "export-assignment-annex",
+  "cjs-wrapper-argv",
+  "constructed-callback",
+  "mapped-callback",
+  "spread-slot",
+  "shadowed-undefined",
   "shadowed-nan-env",
+  "spread-before",
+  "unknown-options",
+  "inline-unknown",
+  "computed",
+  "imported-callback",
+  "execfile-third-function-env",
 ];
 
 // Callback/options ambiguity cannot change exec's effective stdio.
@@ -253,6 +308,46 @@ const opaqueExecCallbackCommands = [
   "mapped-callback",
   "cjs-wrapper-callback",
 ];
+
+type SemanticGraph = Awaited<
+  ReturnType<typeof analyzeJavaScriptDirectory>
+>["semantic_graph"];
+
+const expectEnvironment = (
+  graph: SemanticGraph,
+  child: SemanticGraph["nodes"][number],
+  command: string | null,
+): void => {
+  const environment = unknownEnvironmentCommands.includes(command)
+    ? null
+    : environmentCommands.includes(String(command));
+  expect(child.properties.environment_supplied, String(command)).toBe(
+    environment,
+  );
+  const relations = graph.relations.filter(
+    (relation) =>
+      relation.relation === "supplies-env" &&
+      relation.target_node_id === child.node_id,
+  );
+  expect(relations, String(command)).toHaveLength(
+    environment === false ? 0 : 1,
+  );
+  if (environment !== false)
+    expect(relations[0]?.resolution, String(command)).toBe(
+      environment === null || child.properties.builtin_authority === "candidate"
+        ? "candidate"
+        : "resolved",
+    );
+  const unknowns = graph.unknowns.filter(
+    (unknown) =>
+      unknown.node_id === child.node_id &&
+      unknown.family === "child-process" &&
+      unknown.relation_kinds.includes("supplies-env"),
+  );
+  expect(unknowns, String(command)).toHaveLength(environment === null ? 1 : 0);
+  if (environment === null)
+    expect(unknowns[0]).toMatchObject({ reason: "unknown-value" });
+};
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves effective stdio, overloads and explicit unknowns through %s",
@@ -264,6 +359,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         import {done as imported} from "./external.mjs";
         throw new Error("static fixture must never execute");
         function done(){}
+        function callbackWithEnv(){} callbackWithEnv.env = {};
         const captured=[]; const absent=null;
         function run(input,key){
           const callback=done; const argv=[];
@@ -354,9 +450,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       const [mode, count] = entry;
       expect(child.properties.stdio_mode, String(command)).toBe(mode);
       expect(child.properties.argv_count, String(command)).toBe(count);
-      expect(child.properties.environment_supplied, String(command)).toBe(
-        environmentCommands.includes(String(command)),
-      );
+      expectEnvironment(graph, child, command);
       expect(child.identity.source_range).not.toBeNull();
       const stdio = graph.relations.filter(
         (relation) =>
@@ -384,13 +478,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       );
       if (mode === "dynamic")
         expect(unknowns[0]).toMatchObject({ reason: "unknown-value" });
-      expect(
-        graph.relations.filter(
-          (relation) =>
-            relation.relation === "supplies-env" &&
-            relation.target_node_id === child.node_id,
-        ),
-      ).toHaveLength(environmentCommands.includes(String(command)) ? 1 : 0);
       expect(
         graph.relations.filter(
           (relation) =>
