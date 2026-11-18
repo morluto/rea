@@ -9,6 +9,7 @@ import {
   createRunManifest,
   observeLaunchedExecutable,
   observeSelectedExecutable,
+  POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import {
   accountFullyObservedProcessCapture,
@@ -230,6 +231,6 @@ it("projects the PTY session-leader SIGHUP limitation onto process capture Evide
   });
   const evidence = createProcessCaptureEvidence(scenario, capture);
   expect(evidence.limitations).toContain(
-    "The target runs as the capture PTY session leader; still-running children in its foreground process group receive terminal SIGHUP when it exits unless they leave the group or ignore SIGHUP.",
+    POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
   );
 });
