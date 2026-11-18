@@ -1,7 +1,12 @@
 import type { MatchNativeFunctionsInput } from "../../contracts/native/functionMatchingContracts.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  ANALYSIS_EVIDENCE_PREDICATE,
+  isImmutableEvidence,
+  type Evidence,
+  evidenceFileTarget,
+} from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { retainedEvidenceReferenceSchema } from "../../domain/evidenceReference.js";
 import {
@@ -82,9 +87,9 @@ export const resolveNativeMatchingSources = async (
   ): Promise<Evidence> => {
     const evidence = await resolve(raw, path, borrowable);
     if (
-      evidence.predicate_type !== "rea.analysis" ||
+      evidence.predicate_type !== ANALYSIS_EVIDENCE_PREDICATE ||
       !operations.includes(evidence.operation) ||
-      evidence.subject === null
+      evidenceFileTarget(evidence) === undefined
     ) {
       const message = `Expected artifact-bound rea.analysis ${operations.join(" or ")} Evidence, received ${evidence.predicate_type} ${evidence.operation}`;
       throw new AnalysisInputError(

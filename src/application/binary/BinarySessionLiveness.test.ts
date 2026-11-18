@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { elf } from "../../domain/binaryTarget.fixture.js";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -16,7 +16,7 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
@@ -115,9 +115,14 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   const parameters = { document: "0", address: "0x1000" };
   expect((await session.open(process.execPath)).ok).toBe(true);
   const bound = await session.execute("address_name", parameters);
-  expect(bound.ok).toBe(true);
+  if (!bound.ok) throw bound.error;
   const child = deep.created[0];
-  if (child === undefined || !bound.ok) throw new Error("Expected bound read");
+  if (child === undefined) throw new Error("Expected bound read");
+  const liveReplay = await session.execute("address_name", parameters);
+  if (!liveReplay.ok) throw liveReplay.error;
+  expect(
+    liveReplay.value.sourceEvidence?.map((source) => source.evidence_id),
+  ).toEqual([bound.value.evidenceId]);
   child.execute = () =>
     Promise.resolve(
       ok(
@@ -136,7 +141,9 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   expect(session.exportEvidenceBundle().records).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        subject: null,
+        subject: expect.objectContaining({
+          identity: { kind: "unknown", reason: "not-observed" },
+        }),
         normalized_result: "unbound observation",
       }),
     ]),
@@ -169,13 +176,14 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
     ).ok,
   ).toBe(true);
   const replay = await session.execute("address_name", parameters);
-  expect(replay.ok).toBe(true);
-  if (replay.ok) {
-    expect(replay.value.evidenceId).toBe(bound.value.evidenceId);
-    expect(replay.value.limitations).toContain(
-      "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
-    );
-  }
+  if (!replay.ok) throw replay.error;
+  expect(replay.value.evidenceId).toBe(bound.value.evidenceId);
+  expect(
+    replay.value.sourceEvidence?.map((source) => source.evidence_id),
+  ).toEqual([bound.value.evidenceId]);
+  expect(replay.value.limitations).toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+  );
 });
 
 describe("BinarySession open liveness", () => {
@@ -343,21 +351,11 @@ describe("BinarySession open liveness", () => {
 });
 
 it("clears retired runtime availability after cancelled-switch restoration", async () => {
-  let closeStarted!: () => void;
-  const closing = new Promise<void>((resolve) => {
-    closeStarted = resolve;
-  });
-  let releaseClose!: () => void;
-  const closeGate = new Promise<void>((resolve) => {
-    releaseClose = resolve;
-  });
+  const closing = phaseGate();
   const { session, deep } = openSession({
     failOperationInitially: true,
-    releaseBeforeCleanup: releaseClose,
-    beforeFirstClose: async () => {
-      closeStarted();
-      await closeGate;
-    },
+    releaseBeforeCleanup: closing.release,
+    beforeFirstClose: () => closing.hold(),
   });
   expect((await session.open(process.execPath)).ok).toBe(true);
   expect((await session.execute("address_name", {})).ok).toBe(false);
@@ -381,12 +379,12 @@ it("clears retired runtime availability after cancelled-switch restoration", asy
   await writeFile(alternate, elf(2, 1, 62));
   const switching = session.open(alternate, { signal: controller.signal });
   const cancelled = await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(closing, switching, "provider close");
+    await closing.reached(switching, "provider close");
     controller.abort();
-    releaseClose();
+    closing.release();
     return await switching;
   }, [
-    releaseClose,
+    closing.release,
     async () => {
       await switching;
     },

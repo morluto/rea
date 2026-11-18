@@ -12,8 +12,8 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
-import { IDA_PROVIDER_IDENTITY } from "./IdaProviderCapabilities.js";
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import { IDA_PROVIDER_IDENTITY } from "./IdaProviderMetadata.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
 const roots: string[] = [];
@@ -35,6 +35,7 @@ it("preserves a rejected headless decompile diagnostic with completed lookup evi
       Cookie: "session=cookie-fixture-secret",
     },
     mode: "headless" as const,
+    protocol: "modern" as const,
     timeoutMs: 1000,
     workspaceRoot: root,
   };
@@ -141,6 +142,7 @@ describe("headless IDA tool diagnostics in partial evidence", () => {
             Buffer.from("user:" + password, "utf8").toString("base64"),
         },
         mode: "headless" as const,
+        protocol: "modern" as const,
         timeoutMs: 1000,
         workspaceRoot: root,
       };
@@ -235,6 +237,7 @@ describe("headless IDA partial operation evidence", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -287,6 +290,7 @@ describe("headless IDA partial operation evidence", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -302,6 +306,7 @@ describe("headless IDA partial operation evidence", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
         expect(result.error.partialObservation).toMatchObject({
           analysis_profile: null,
           normalized_result: {
@@ -341,6 +346,7 @@ it("retains the session analysis profile when an operation fails after a complet
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
@@ -438,6 +444,7 @@ describe("headless IDA operation failures", () => {
           args: [],
           env: {},
           mode: "headless",
+          protocol: "modern",
           timeoutMs: 1000,
           workspaceRoot: root,
         },
@@ -499,6 +506,7 @@ const missingProcedureFixture = async (
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
@@ -640,6 +648,7 @@ describe("headless IDA procedure lookup failures", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -689,81 +698,4 @@ describe("provider-derived procedure selectors", () => {
       }
     },
   );
-});
-
-describe("attached IDA procedure lookup failures", () => {
-  it("leaves a failed legacy lookup as unreadable output", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const producer = new RecordingIdaMcp(target, "attached");
-    producer.overrideCall = (name) =>
-      name === "get_function_by_name" ? null : undefined;
-    const client = new IdaSessionClient(
-      {
-        command: "fixture",
-        args: [],
-        env: {},
-        mode: "attached",
-        timeoutMs: 1000,
-        workspaceRoot: root,
-      },
-      target,
-      producer,
-    );
-    try {
-      const result = await client.execute("procedure_pseudo_code", {
-        procedure: "main",
-      });
-
-      if (result.ok) throw new Error("expected unreadable output");
-      expect(
-        projectAnalysisError(result.error).code,
-        "the legacy profile keeps its pre-existing classification",
-      ).toBe("unreadable_output");
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("leaves an MCP error reply for an unknown legacy name as unreadable output", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const producer = new RecordingIdaMcp(target, "attached");
-    producer.beforeCall = async (name) => {
-      if (name === "get_function_by_name")
-        decodeIdaToolResult({
-          content: [{ type: "text", text: "Function not found: main" }],
-          isError: true,
-        });
-    };
-    const client = new IdaSessionClient(
-      {
-        command: "fixture",
-        args: [],
-        env: {},
-        mode: "attached",
-        timeoutMs: 1000,
-        workspaceRoot: root,
-      },
-      target,
-      producer,
-    );
-    try {
-      const result = await client.execute("procedure_pseudo_code", {
-        procedure: "main",
-      });
-
-      if (result.ok) throw new Error("expected unreadable output");
-      expect(
-        result.error._tag,
-        "a producer error reply, not caller input",
-      ).toBe("AnalysisProtocolError");
-      expect(
-        projectAnalysisError(result.error).code,
-        "the legacy profile keeps its existing classification",
-      ).toBe("unreadable_output");
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
 });

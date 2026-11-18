@@ -30,7 +30,6 @@ cliTest(
         bundlePath,
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(response.exitCode).toBe(0);
     const bundle = evidenceBundleSchema.parse(
@@ -57,5 +56,4 @@ cliTest(
       ]),
     );
   },
-  90_000,
 );

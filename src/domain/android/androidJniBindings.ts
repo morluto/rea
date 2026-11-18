@@ -1,6 +1,9 @@
-import { createHash } from "node:crypto";
+import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
+import { coverageStatusSchema } from "../coverage.js";
+import { excludedValues } from "../schemaConstraints.js";
 import { z } from "zod";
 import {
+  androidManifestSplitsSchema,
   androidNativeDeclarationSchema,
   androidNativeDeclarationsSchema,
   type AndroidNativeDeclarations,
@@ -13,11 +16,12 @@ import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const count = z.int().nonnegative();
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
-const status = z.enum(["complete", "partial", "unknown"]);
+const status = coverageStatusSchema;
 const ABI_LAYOUTS = new Map<string, readonly [string, number]>([
   ["arm64-v8a", ["arm64", 64]],
   ["armeabi-v7a", ["arm", 32]],
@@ -61,6 +65,25 @@ export const androidJniLibraryIdentitySchema = z.strictObject({
   declared_size: count.nullable(),
   compressed_size: count.nullable(),
 });
+/**
+ * Why one selected library has no facts. An `integrity` failure names the
+ * reader check it violated in `integrity_check`; no other kind carries one.
+ */
+const androidJniLibraryFailureSchema = z.union([
+  z.strictObject({
+    kind: z.literal("integrity"),
+    message: z.string(),
+    integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS),
+  }),
+  z.strictObject({
+    kind: excludedValues(
+      z.string(),
+      ["integrity"],
+      "an integrity failure names its integrity_check",
+    ),
+    message: z.string(),
+  }),
+]);
 export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   abi_compatibility: z.enum(["consistent", "mismatch", "unknown"]),
   byte_order: z.enum(["little", "big"]).nullable(),
@@ -72,14 +95,12 @@ export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   table_count: count,
   table_entry_count: count,
   unknowns: z.array(z.string()),
-  failure: z.strictObject({ kind: z.string(), message: z.string() }).nullable(),
+  failure: androidJniLibraryFailureSchema.nullable(),
 });
 export const androidJniLibraryObservationSchema =
   androidJniLibraryIdentitySchema.extend({
     facts: androidJniLibraryFactsSchema.nullable(),
-    failure: z
-      .strictObject({ kind: z.string(), message: z.string() })
-      .nullable(),
+    failure: androidJniLibraryFailureSchema.nullable(),
   });
 export type AndroidJniLibraryObservation = z.infer<
   typeof androidJniLibraryObservationSchema
@@ -146,7 +167,11 @@ export const androidJniBindingSchema = z.strictObject({
 export const androidJniReportSchema = z.strictObject({
   apk: z.strictObject({ path: z.string(), sha256: digest }),
   selection: androidJniSelectionSchema,
-  native_inventory: androidNativeDeclarationsSchema.omit({ methods: true }),
+  // Reports saved before the bridge read split facts omit them; live
+  // inventories always carry them.
+  native_inventory: androidNativeDeclarationsSchema
+    .omit({ methods: true })
+    .extend({ manifest_splits: androidManifestSplitsSchema.exactOptional() }),
   library_inventory: androidJniLibraryInventorySchema,
   declarations: z.array(androidJniDeclarationSchema),
   selected_declaration_ids: z.array(z.string()),
@@ -158,7 +183,7 @@ export const androidJniReportSchema = z.strictObject({
 export type AndroidJniReport = z.infer<typeof androidJniReportSchema>;
 export const ANDROID_JNI_REPORT_BYTES = 16 * 1024 * 1024;
 const id = (kind: string, parts: readonly unknown[]): string =>
-  `${kind}_${createHash("sha256").update(JSON.stringify(parts)).digest("hex")}`;
+  `${kind}_${sha256Hex(JSON.stringify(parts))}`;
 
 /** JNI escaping is over UTF-16 code units; it can fail for non-Java-source names. */
 export const expectedJniNames = (
@@ -222,6 +247,29 @@ export const expectedJniNames = (
 };
 
 type ProjectionFailure = { readonly kind: "capacity" };
+/**
+ * An APK whose manifest requires splits, or whose requirements are unknown, may
+ * keep native libraries in split APKs this inventory never examined.
+ */
+const withSplitRequirements = (
+  inventory: AndroidJniReport["library_inventory"],
+  splits: AndroidNativeDeclarations["manifest_splits"],
+): AndroidJniReport["library_inventory"] => {
+  const reason =
+    splits.status === "unknown"
+      ? `Split APK requirements are unknown (${splits.reason}); native libraries may be in split APKs not examined here.`
+      : splits.split_required || splits.required_split_types.length > 0
+        ? `The manifest requires split APKs${splits.required_split_types.length === 0 ? "" : ` (${splits.required_split_types.join(", ")})`}; native libraries in those splits are not in this APK.`
+        : undefined;
+  return reason === undefined
+    ? inventory
+    : {
+        ...inventory,
+        status: inventory.status === "complete" ? "partial" : inventory.status,
+        unknowns: [...inventory.unknowns, reason],
+      };
+};
+
 /** Join once against the COMPLETE declaration inventory before applying selection. */
 export const projectAndroidJniBindings = (input: {
   readonly apk: AndroidJniReport["apk"];
@@ -230,6 +278,10 @@ export const projectAndroidJniBindings = (input: {
   readonly libraries: readonly AndroidJniLibraryObservation[];
   readonly libraryInventory: AndroidJniReport["library_inventory"];
 }): Result<AndroidJniReport, ProjectionFailure> => {
+  const libraryInventory = withSplitRequirements(
+    input.libraryInventory,
+    input.inventory.manifest_splits,
+  );
   const declarations = input.inventory.methods.map((method) => ({
     ...method,
     declaration_id: id("jni_method", [
@@ -446,7 +498,7 @@ export const projectAndroidJniBindings = (input: {
         (candidate) => candidate.class_attribution === "ambiguous-native-pair",
       );
       const incomplete =
-        input.libraryInventory.status !== "complete" ||
+        libraryInventory.status !== "complete" ||
         abiLibraries.some(
           (library) =>
             library.failure !== null ||
@@ -497,13 +549,14 @@ export const projectAndroidJniBindings = (input: {
     scope: input.inventory.scope,
     coverage: input.inventory.coverage,
     unknowns: input.inventory.unknowns,
+    manifest_splits: input.inventory.manifest_splits,
   };
   const report: AndroidJniReport = {
     apk: input.apk,
     selection: input.selection,
     native_inventory,
     library_inventory: {
-      ...input.libraryInventory,
+      ...libraryInventory,
       selected_libraries: libraries.length,
     },
     declarations,

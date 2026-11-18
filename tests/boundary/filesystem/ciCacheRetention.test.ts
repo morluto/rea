@@ -89,8 +89,9 @@ describe("Turbo snapshot retention", () => {
     ).toEqual([4]);
   });
 
-  it("retains the newest portable snapshots without a caller keep key", () => {
+  it("retains the newest portable and Windows build snapshots without a caller keep key", () => {
     const portable = "rea-portable-build-v2-Linux-X64-";
+    const windowsBuild = "rea-windows-build-v1-Windows-X64-";
     const deletions = selectPrefixDeletions(
       [
         cache(7, `${portable}one`, "2026-10-20T01:00:00Z"),
@@ -100,6 +101,16 @@ describe("Turbo snapshot retention", () => {
       { prefix: portable },
     );
     expect(deletions.map((entry) => entry.id)).toEqual([7]);
+    expect(
+      selectPrefixDeletions(
+        [
+          cache(10, `${windowsBuild}one`, "2026-10-20T01:00:00Z"),
+          cache(11, `${windowsBuild}two`, "2026-10-20T02:00:00Z"),
+          cache(12, `${windowsBuild}three`, "2026-10-20T03:00:00Z"),
+        ],
+        { prefix: windowsBuild },
+      ).map((entry) => entry.id),
+    ).toEqual([10]);
   });
 
   it("refuses prefixes and lists that can reach download caches", () => {
@@ -269,13 +280,20 @@ describe("retention orchestration", () => {
 
   it("deletes nothing when a later list is incomplete", async () => {
     const deleted: number[] = [];
-    const page = Array.from({ length: 100 }, (_, index) =>
-      cache(index + 1, `${prefix}${String(index)}`, "2026-10-20T01:00:00Z"),
-    );
+    const requests: string[] = [];
+    const page = [
+      cache(1, `${prefix}old`, "2026-10-20T01:00:00Z"),
+      cache(2, `${prefix}mid`, "2026-10-20T02:00:00Z"),
+      cache(3, `${prefix}new`, "2026-10-20T03:00:00Z"),
+    ];
     await expect(
       retainCaches({
         repository,
         request: async (_method, endpoint) => {
+          requests.push(
+            new URL(endpoint, "https://example.test").searchParams.get("key") ??
+              "",
+          );
           if (endpoint.includes("npm-download-"))
             throw new Error("list failed after the first family");
           return { actions_caches: page };
@@ -283,10 +301,39 @@ describe("retention orchestration", () => {
         deleteCache: async (id) => {
           deleted.push(id);
         },
-        families: [{ prefix, keepKey: `${prefix}0` }],
+        families: [{ prefix, keepKey: `${prefix}new` }],
         dedupeNpmDownloads: true,
       }),
-    ).rejects.toThrow(/list failed|exceeded/u);
+    ).rejects.toThrow("list failed after the first family");
+    expect(requests).toEqual([prefix, "npm-download-"]);
+    expect(deleted).toEqual([]);
+  });
+});
+
+describe("cache listing and retention", () => {
+  const repository = "morluto/rea";
+  const prefix = "rea-static-v1-Linux-X64-";
+
+  it("deletes nothing when the cache listing reaches the page cap", async () => {
+    const deleted: number[] = [];
+    let requests = 0;
+    const page = Array.from({ length: 100 }, (_, index) =>
+      cache(index + 1, `${prefix}${String(index)}`, "2026-10-20T01:00:00Z"),
+    );
+    await expect(
+      retainCaches({
+        repository,
+        request: async () => {
+          requests += 1;
+          return { actions_caches: page };
+        },
+        deleteCache: async (id) => {
+          deleted.push(id);
+        },
+        families: [{ prefix, keepKey: `${prefix}0` }],
+      }),
+    ).rejects.toThrow(/exceeded.*pages/u);
+    expect(requests).toBe(10);
     expect(deleted).toEqual([]);
   });
 

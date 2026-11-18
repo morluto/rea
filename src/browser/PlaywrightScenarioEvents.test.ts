@@ -4,6 +4,7 @@ import type { BrowserContext, Page, Request, Response } from "playwright-core";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 describe("declared secrets in scenario events", () => {
   it("redacts encoded declared secrets from text evidence and fingerprints", () => {
@@ -283,6 +284,64 @@ describe("PlaywrightScenarioEvents", () => {
   });
 });
 
+it("retains network response events with HTTP status codes above 599 without error", () => {
+  const contextListeners = new Map<string, (value: unknown) => void>();
+  const context = {
+    on: (name: string, listener: (value: unknown) => void) => {
+      contextListeners.set(name, listener);
+    },
+    off: () => {},
+  } as unknown as BrowserContext;
+  const page = {
+    url: () => "https://app.example.test/",
+    context: () => context,
+    on: () => {},
+  } as unknown as Page;
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: "/opt/chromium" },
+    start_url: { url: "https://app.example.test/" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    capture: { events: ["network"] },
+  });
+  const secrets = resolveScenarioSecrets(scenario, {});
+  const events = new PlaywrightScenarioEvents({
+    page,
+    context,
+    enabled: new Set(["network"]),
+    secrets,
+  });
+  const request = {
+    url: () => "https://app.example.test/api/check",
+    method: () => "GET",
+    resourceType: () => "xhr",
+    postDataBuffer: () => null,
+    redirectedFrom: () => null,
+    failure: () => null,
+    headers: () => ({}),
+    headersArray: async () => [],
+    frame: () => ({ page: () => page }),
+  } as unknown as Request;
+  const response = {
+    request: () => request,
+    url: () => request.url(),
+    status: () => 999,
+    headers: () => ({ "content-type": "text/plain" }),
+    headersArray: async () => [{ name: "content-type", value: "text/plain" }],
+    body: async () => Buffer.from("denied"),
+  } as unknown as Response;
+
+  contextListeners.get("request")?.(request);
+  expect(() => contextListeners.get("response")?.(response)).not.toThrow();
+  const items = events.result().items;
+  const responseEvent = items.find((e) => e.kind === "response");
+  expect(responseEvent).toBeDefined();
+  expect(responseEvent).toMatchObject({
+    kind: "response",
+    status: 999,
+    url: { url: "https://app.example.test/api/check" },
+  });
+});
+
 it("retains ordinary event volumes and reports event-count exhaustion", () => {
   const listeners = new Map<string, ((value: Error) => void)[]>();
   const page = {
@@ -486,7 +545,7 @@ const sourceTransactionCapture = async (
   };
   listeners.get("request")!(request);
   if (!options.metadataOnly)
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(capture.result().items).toContainEqual(
         expect.objectContaining({ kind: "network-content", phase: "request" }),
       ),
@@ -534,7 +593,7 @@ const sourceTransactionCapture = async (
     });
     listeners.get("requestfinished")!(followup);
     if (!options.metadataOnly)
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(
           capture
             .result()

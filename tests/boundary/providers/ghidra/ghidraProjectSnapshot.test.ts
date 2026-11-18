@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   copyExistingGhidraProject,
   fingerprintGhidraProject,
@@ -21,6 +21,8 @@ import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 let resources: ArtifactResourceScope;
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
+  "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 beforeEach(() => {
   resources = new ArtifactResourceScope();
 });
@@ -85,7 +87,9 @@ it("rejects a project whose copied content differs from the committed analysis p
     }),
   ).rejects.toMatchObject({
     _tag: "AnalysisArtifactChangedError",
-    cause: { name: "RegularFileChangedError" },
+    operation: "open_binary",
+    path: source,
+    reason: GHIDRA_PROJECT_PROFILE_MISMATCH,
   });
 });
 

@@ -1,3 +1,4 @@
+import { LC } from "./machoLoadCommandCodes.js";
 import { err, ok, type Result } from "../result.js";
 import {
   machoLoadCommandAlignment,
@@ -13,8 +14,12 @@ export interface MachoLoadCommandTableHeader {
   readonly commandBytes: number;
 }
 
+/** Byte offset of `mach_header.flags`, shared by the 32- and 64-bit headers. */
+export const MACHO_HEADER_FLAGS_OFFSET = 24;
+
 export interface MachoHeaderDeclarations extends MachoLoadCommandTableHeader {
   readonly fileType: number;
+  readonly flags: number;
   readonly identity: { readonly cpuType: number; readonly cpuSubtype: number };
 }
 
@@ -39,6 +44,7 @@ export const readMachoHeaderDeclarations = (
     commandCount: view.getUint32(16, littleEndian),
     commandBytes,
     fileType: view.getUint32(12, littleEndian),
+    flags: view.getUint32(MACHO_HEADER_FLAGS_OFFSET, littleEndian),
     identity: prefix.identity,
   });
 };
@@ -134,6 +140,155 @@ export class MachoLoadCommandCursor {
         );
   }
 }
+
+// Fields with fixed uint32 layouts in mach-o/loader.h. This table is the single
+// owner of those layouts; consumers read decoded fields rather than offsets.
+const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
+  [LC.SYMTAB, ["symoff", "nsyms", "stroff", "strsize"]],
+  [LC.SYMSEG, ["offset", "size"]],
+  [
+    LC.DYSYMTAB,
+    [
+      "ilocalsym",
+      "nlocalsym",
+      "iextdefsym",
+      "nextdefsym",
+      "iundefsym",
+      "nundefsym",
+      "tocoff",
+      "ntoc",
+      "modtaboff",
+      "nmodtab",
+      "extrefsymoff",
+      "nextrefsyms",
+      "indirectsymoff",
+      "nindirectsyms",
+      "extreloff",
+      "nextrel",
+      "locreloff",
+      "nlocrel",
+    ],
+  ],
+  [LC.TWOLEVEL_HINTS, ["offset", "nhints"]],
+  [LC.PREBIND_CKSUM, ["cksum"]],
+  [LC.CODE_SIGNATURE, ["dataoff", "datasize"]],
+  [LC.SEGMENT_SPLIT_INFO, ["dataoff", "datasize"]],
+  [LC.ENCRYPTION_INFO, ["cryptoff", "cryptsize", "cryptid"]],
+  [
+    LC.DYLD_INFO,
+    [
+      "rebase_off",
+      "rebase_size",
+      "bind_off",
+      "bind_size",
+      "weak_bind_off",
+      "weak_bind_size",
+      "lazy_bind_off",
+      "lazy_bind_size",
+      "export_off",
+      "export_size",
+    ],
+  ],
+  [
+    LC.DYLD_INFO_ONLY,
+    [
+      "rebase_off",
+      "rebase_size",
+      "bind_off",
+      "bind_size",
+      "weak_bind_off",
+      "weak_bind_size",
+      "lazy_bind_off",
+      "lazy_bind_size",
+      "export_off",
+      "export_size",
+    ],
+  ],
+  [LC.FUNCTION_STARTS, ["dataoff", "datasize"]],
+  [LC.DATA_IN_CODE, ["dataoff", "datasize"]],
+  [LC.DYLIB_CODE_SIGN_DRS, ["dataoff", "datasize"]],
+  [LC.ENCRYPTION_INFO_64, ["cryptoff", "cryptsize", "cryptid", "pad"]],
+  [LC.LINKER_OPTIMIZATION_HINT, ["dataoff", "datasize"]],
+  [LC.DYLD_EXPORTS_TRIE, ["dataoff", "datasize"]],
+  [LC.DYLD_CHAINED_FIXUPS, ["dataoff", "datasize"]],
+  [LC.ATOM_INFO, ["dataoff", "datasize"]],
+  [LC.FUNCTION_VARIANTS, ["dataoff", "datasize"]],
+  [LC.FUNCTION_VARIANT_FIXUPS, ["dataoff", "datasize"]],
+]);
+
+/** Names of a command's fixed uint32 fields, or undefined for other layouts. */
+export const machoFixedWordFieldNames = (
+  command: number,
+): readonly string[] | undefined => FIXED_WORD_FIELDS.get(command);
+
+/**
+ * Decode a command's fixed uint32 fields from the bytes after its 8-byte
+ * header. Undefined for commands without a fixed layout; null when truncated.
+ */
+export const decodeMachoFixedWordFields = (
+  command: number,
+  fieldBytes: Uint8Array,
+  littleEndian: boolean,
+): Readonly<Record<string, number>> | null | undefined => {
+  const names = FIXED_WORD_FIELDS.get(command);
+  if (names === undefined) return undefined;
+  if (fieldBytes.byteLength < names.length * 4) return null;
+  const view = new DataView(
+    fieldBytes.buffer,
+    fieldBytes.byteOffset,
+    fieldBytes.byteLength,
+  );
+  return Object.fromEntries(
+    names.map((name, index) => [name, view.getUint32(index * 4, littleEndian)]),
+  );
+};
+
+/** `symtab_command` fields from an admitted command body. Null when truncated. */
+export const readMachoSymtabCommand = (
+  body: Uint8Array,
+  littleEndian: boolean,
+): {
+  readonly symoff: number;
+  readonly nsyms: number;
+  readonly stroff: number;
+  readonly strsize: number;
+} | null => {
+  const fields = decodeMachoFixedWordFields(
+    LC.SYMTAB,
+    body.subarray(8),
+    littleEndian,
+  );
+  if (fields === null || fields === undefined) return null;
+  const { symoff, nsyms, stroff, strsize } = fields;
+  if (
+    symoff === undefined ||
+    nsyms === undefined ||
+    stroff === undefined ||
+    strsize === undefined
+  )
+    return null;
+  return { symoff, nsyms, stroff, strsize };
+};
+
+/**
+ * `linkedit_data_command` fields from an admitted command body. Null when
+ * truncated or when `command` does not use the linkedit_data_command layout.
+ */
+export const readMachoLinkeditDataCommand = (
+  command: number,
+  body: Uint8Array,
+  littleEndian: boolean,
+): { readonly dataOffset: number; readonly dataSize: number } | null => {
+  const fields = decodeMachoFixedWordFields(
+    command,
+    body.subarray(8),
+    littleEndian,
+  );
+  if (fields === null || fields === undefined) return null;
+  const { dataoff, datasize } = fields;
+  if (dataoff === undefined || datasize === undefined) return null;
+  return { dataOffset: dataoff, dataSize: datasize };
+};
 
 export type MachoCommandStringFailure =
   | {

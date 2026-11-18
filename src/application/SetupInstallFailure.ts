@@ -1,9 +1,15 @@
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
+import {
+  describeHopperRequestFailure,
+  hopperRequestRecovery,
+  type HopperRequestFailure,
+} from "./HopperDownload.js";
 import { HOPPER_LINUX_PRIMARY_FINGERPRINT } from "./HopperReleaseFeed.js";
 import type { LinuxPackageInstallFailure } from "./LinuxHopper.js";
 
 export type SetupFailureCode =
   | "unsupported_host"
+  | "incompatible_host_version"
   | "download_failed"
   | "integrity_mismatch"
   | "authorization_or_package_manager_failed"
@@ -33,6 +39,8 @@ export type SetupHopperInstallResult =
       readonly status: "failed";
       readonly code: SetupFailureCode;
       readonly remediation: string;
+      /** The vendor request whose observed transport failure produced `code`. */
+      readonly download?: HopperRequestFailure;
     };
 
 export type SetupHopperInstallFailure = Extract<
@@ -42,9 +50,11 @@ export type SetupHopperInstallFailure = Extract<
 
 export type HopperInstallFailureReason =
   | "unsupported_host"
+  | "incompatible_host_version"
   | "release_metadata"
   | "download"
   | "integrity"
+  | "launcher_digest_mismatch"
   | "authorization_or_package_manager"
   | "launcher_missing"
   | "runtime_dependencies"
@@ -104,11 +114,37 @@ const packageManagerRemediation = (
   return `The system package-manager command failed (${failure.command}; ${status}); ${observed} Resolve the reported problem, grant the authorization the command needs, or install the planned Hopper package and Linux runtime dependencies manually, then rerun rea setup.`;
 };
 
-/** Map provider installer failures to stable setup codes and safe recovery. */
+/**
+ * Map provider installer failures to stable setup codes and safe recovery. A
+ * failed vendor request replaces the stage's generic advice with its observed
+ * URL and outcome, and stays structured for programmatic callers.
+ */
 export const setupInstallFailure = (
   reason: HopperInstallFailureReason,
-  packageFailure?: LinuxPackageInstallFailure,
-  platform: NodeJS.Platform = "darwin",
+  context: {
+    readonly packageFailure?: LinuxPackageInstallFailure | undefined;
+    readonly platform?: NodeJS.Platform;
+    readonly download?: HopperRequestFailure | undefined;
+  } = {},
+): SetupHopperInstallFailure => {
+  const failure = stageFailure(
+    reason,
+    context.packageFailure,
+    context.platform ?? "darwin",
+  );
+  return context.download === undefined
+    ? failure
+    : {
+        ...failure,
+        remediation: `${describeHopperRequestFailure(context.download)} ${hopperRequestRecovery(context.download)}`,
+        download: context.download,
+      };
+};
+
+const stageFailure = (
+  reason: HopperInstallFailureReason,
+  packageFailure: LinuxPackageInstallFailure | undefined,
+  platform: NodeJS.Platform,
 ): SetupHopperInstallFailure => {
   switch (reason) {
     case "unsupported_host":
@@ -117,12 +153,26 @@ export const setupInstallFailure = (
         code: "unsupported_host",
         remediation: "Use a supported host, then rerun rea setup.",
       };
+    case "incompatible_host_version":
+      return {
+        status: "failed",
+        code: "incompatible_host_version",
+        remediation:
+          "The current Hopper release requires a newer macOS version than this Mac runs, so REA did not install it. Update macOS to at least the version the installer detail names, or install a Hopper release that supports this macOS version yourself and set HOPPER_LAUNCHER_PATH to its launcher, then rerun rea setup.",
+      };
     case "integrity":
       return {
         status: "failed",
         code: "integrity_mismatch",
         remediation:
           "The Hopper download failed integrity verification. Retry setup; if it repeats, update REA before installing.",
+      };
+    case "launcher_digest_mismatch":
+      return {
+        status: "failed",
+        code: "integrity_mismatch",
+        remediation:
+          "The package signature verified, so the download is authentic, but the vendor release feed describes a different launcher build, so REA cannot identify this Hopper build and did not install it. Retrying setup or updating REA does not change the feed; report the mismatch to the Hopper vendor and rerun setup after the feed is corrected.",
       };
     case "authorization_or_package_manager":
       return {

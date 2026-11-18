@@ -8,7 +8,7 @@ import {
   resolveJavaScriptGenericInvocation,
 } from "./javascriptIntrinsicInvocation.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,

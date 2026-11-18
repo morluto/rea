@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 
-import { readFile, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
+
+import { readStableArtifact } from "../../../dist/resources/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../../../dist/resources/ArtifactReader.js";
+import {
+  ArtifactFileCleanupFailure,
+  artifactFileCompletion,
+  artifactFilePrimaryFacts,
+} from "../../../dist/resources/ArtifactFileOperation.js";
 
 import { reconcileJavaScriptRuntimeEvidence } from "../../../dist/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { analyzeJavaScriptApplicationWithOwnedScope } from "../../lib/javascript-application-analysis.mjs";
+import { withVerifierArtifactScope } from "../../lib/verifier-artifact-scope.mjs";
 import {
   completeVerifierRun,
   createVerifierRun,
@@ -52,9 +61,11 @@ for (const encoded of options.mapping) {
   const mapping = parseMapping(encoded, staticLayers.length);
   staticLayers[mapping.layer].runtime_mappings.push(mapping.value);
 }
-const runtimeObservations = (
-  await Promise.all(options["runtime-evidence"].map(readEvidenceFile))
-).flat();
+const runtimeObservations = [];
+for (const path of options["runtime-evidence"]) {
+  const observations = await readEvidenceFile(path);
+  for (const observation of observations) runtimeObservations.push(observation);
+}
 const reconciled = reconcileJavaScriptRuntimeEvidence({
   static_layers: staticLayers,
   runtime_observations: runtimeObservations,
@@ -95,10 +106,37 @@ process.stdout.write(
 );
 
 async function readEvidenceFile(path) {
-  const bytes = await readFile(await realpath(path));
-  if (bytes.byteLength > 64 * 1024 * 1024)
-    throw new Error(`Runtime Evidence exceeds 64 MiB: ${path}`);
-  const value = JSON.parse(bytes.toString("utf8"));
+  let outcome;
+  try {
+    outcome = {
+      ok: true,
+      value: await withVerifierArtifactScope(async (scope) =>
+        readStableArtifact(
+          await realpath(path),
+          64 * 1024 * 1024,
+          undefined,
+          undefined,
+          scope,
+        ),
+      ),
+    };
+  } catch (cause) {
+    outcome = { ok: false, cause };
+  }
+  if (!outcome.ok && outcome.cause instanceof ArtifactFileCleanupFailure) {
+    const completion = artifactFileCompletion(outcome.cause);
+    outcome =
+      completion === undefined
+        ? { ok: false, cause: artifactFilePrimaryFacts(outcome.cause).cause }
+        : { ok: true, value: completion.value };
+  }
+  if (!outcome.ok) {
+    const cause = outcome.cause;
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
+      throw new Error(`Runtime Evidence exceeds 64 MiB: ${path}`, { cause });
+    throw cause;
+  }
+  const value = JSON.parse(outcome.value.bytes.toString("utf8"));
   return Array.isArray(value) ? value : [value];
 }
 

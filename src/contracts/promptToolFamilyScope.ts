@@ -2,10 +2,9 @@ import { PROMPT_CONTRACTS, type PromptContract } from "./promptContracts.js";
 import { toolFamilyId } from "./toolFamilies.js";
 
 /**
- * Workflows whose every suggested tool is in the advertised families.
- * A partial workflow would direct the agent to a disabled call, so a prompt
- * is advertised only when its complete tool set is in scope; an absent
- * selection keeps the complete inventory, matching unscoped servers.
+ * Require core workflow tools and omit optional routes whose tools are disabled.
+ * Consumers share this projected contract so discovery, rendering and catalog
+ * identity agree. An absent selection preserves the complete inventory.
  */
 export const promptsForToolFamilies = (
   selection: ReadonlySet<string> | undefined,
@@ -13,11 +12,15 @@ export const promptsForToolFamilies = (
 ): readonly PromptContract[] =>
   selection === undefined
     ? contracts
-    : contracts.filter(({ steps }) =>
-        steps.every(({ tools }) =>
-          tools.every((tool) => {
+    : contracts.flatMap((contract) => {
+        const steps: PromptContract["steps"][number][] = [];
+        for (const step of contract.steps) {
+          const available = step.tools.every((tool) => {
             const family = toolFamilyId(tool);
             return family !== undefined && selection.has(family);
-          }),
-        ),
-      );
+          });
+          if (available) steps.push(step);
+          else if (step.availability !== "optional") return [];
+        }
+        return [{ ...contract, steps }];
+      });

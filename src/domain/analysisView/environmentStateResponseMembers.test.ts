@@ -76,18 +76,18 @@ it("masks an item envelope member proved minted on every item path, and serves t
   ).toMatchObject({ served: true, reason: null });
 });
 
-it("does not transfer a collection envelope's minted-member proof to its item paths", () => {
-  expect(
-    viewOf(entityRows("/v1/entities"), "get_entities_by_uuid"),
-  ).toMatchObject({
-    shape: "recorded",
-    reason: "envelope-varies",
+it.each([
+  ["/v1/entities", "get_entities"],
+  ["/v1/policies", "get_policies"],
+] as const)("keeps minted-member proof local to %s", (path, tool) => {
+  const { views } = environmentStateViewOf(
+    timedCaptureEvidence(entityRows(path)),
+  );
+  expect(views.find((view) => view.tool === tool)).toMatchObject({
+    shape: "document",
+    per_response_members: ["request_id"],
   });
-});
-
-it("masks a minted member only on the paths whose reads minted it", () => {
-  // The request id is minted on /v1/policies, not on the entities' own paths.
-  expect(viewOf(entityRows("/v1/policies"), "get_entities_by_uuid")).toEqual({
+  expect(views.find((view) => view.tool === "get_entities_by_uuid")).toEqual({
     tool: "get_entities_by_uuid",
     shape: "recorded",
     reason: "envelope-varies",
@@ -119,10 +119,11 @@ it("never takes a changing member for a minted one unless its value is a UUID or
     ["GET", "/api/notes/1", { status: "draft", note: { id: 1, text: "a" } }],
     ["GET", "/api/notes/2", { status: "kept", note: { id: 2, text: "b" } }],
   ];
-  expect(viewOf(rows, "get_jobs_current")).not.toHaveProperty(
-    "per_response_members",
-  );
-  expect(viewOf(rows, "get_notes_by_id")).toMatchObject({
+  const { views } = environmentStateViewOf(timedCaptureEvidence(rows));
+  const jobs = views.find((view) => view.tool === "get_jobs_current");
+  expect(jobs).toMatchObject({ shape: "document" });
+  expect(jobs).not.toHaveProperty("per_response_members");
+  expect(views.find((view) => view.tool === "get_notes_by_id")).toMatchObject({
     shape: "recorded",
     reason: "envelope-varies",
   });

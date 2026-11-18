@@ -4,13 +4,43 @@ import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 
 import { prefixedDigestSchema } from "./../domain/digests.js";
-import { evidenceRecordFiltersSchema } from "../domain/evidenceRecordSummary.js";
+import {
+  EVIDENCE_LINK_INSPECTION_LIMIT,
+  EVIDENCE_RECORD_SELECTION_LIMIT,
+  evidenceLinkStatusFilterSchema,
+  evidenceLinkTraversalSchema,
+  evidenceRecordFiltersSchema,
+} from "../domain/evidenceRecordSummary.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
 
-/** Complete retained Evidence, or selected discovery metadata without payloads. */
+/** Complete retained Evidence, discovery metadata, a page of complete records, or link membership. */
 export const getEvidenceBundleInputSchema = z.strictObject({
-  detail: z.enum(["complete", "summary"]).default("complete"),
+  detail: z
+    .enum(["complete", "summary", "records", "links"])
+    .default("complete"),
   filters: evidenceRecordFiltersSchema.optional(),
+  offset: z
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("records or links: first matching row to return; default 0."),
+  limit: z
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `records: maximum complete records, default ${String(EVIDENCE_RECORD_SELECTION_LIMIT)}. links: maximum link rows, default ${String(EVIDENCE_LINK_INSPECTION_LIMIT)}.`,
+    ),
+  traversal: evidenceLinkTraversalSchema
+    .optional()
+    .describe(
+      "links only: direct (default) reads the selected records' own links; retained-closure also follows retained links.",
+    ),
+  link_status: evidenceLinkStatusFilterSchema
+    .optional()
+    .describe(
+      "links only: rows to return, default missing. Counts always cover every inspected link.",
+    ),
 });
 
 /** Optional document selection for volatile navigation context. */

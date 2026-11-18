@@ -72,18 +72,66 @@ Carrier byte order is independent of blob byte order.
 
 Malformed magic, truncation, unknown flags/extensions, invalid UTF-8, duplicate
 raw asset keys and conflicting blob declarations fail closed with named reasons.
-Zero padding after a complete blob is allowed. The blob read ceiling is 256 MiB;
-PE carriers also use the shared 512 MiB input, 65,536 directory-entry and 8 MiB
-resource-metadata ceilings. The decoder admits at most 100,000 assets whose
-names total at most 8 MiB, and 4,096 exec arguments totaling at most 1 MiB of
-text. These are fixed resource bounds, not Node format limits, checked before
-decoding names or creating records; a hit fails as a limit with no runtime
-override. Asset and argument decoding, padding scans, and inventory construction
+Zero padding after a complete blob is allowed. Producer admission defaults to
+a 256 MiB blob, 100,000 assets whose names total at most 8 MiB, and 4,096 exec
+arguments totaling at most 1 MiB of text. These are resource policies, not Node
+format limits. Select `artifact_limits.node_sea` on inspection or extraction to
+change them before decoding names or creating records. Asset and argument
+decoding, padding scans, and inventory construction
 yield in bounded batches and honor caller cancellation. Asset count and name
-budgets bound retained metadata independently of stored member body sizes. The PE
-name probe reads headers from the first 64 KiB of the carrier; a PE whose
-headers extend beyond that is left to native classification. Snapshot and
-code-cache bytes remain opaque.
+budgets bound retained metadata independently of stored member body sizes.
+
+| `artifact_limits.node_sea` field |   Default | Unit and admission                                     |
+| -------------------------------- | --------: | ------------------------------------------------------ |
+| `blob_bytes`                     | 268435456 | Bytes in one blob, checked before reading and decoding |
+| `asset_count`                    |    100000 | Asset records                                          |
+| `asset_name_bytes`               |   8388608 | Aggregate raw UTF-8 asset-name bytes                   |
+| `argument_count`                 |      4096 | Exec-argument records                                  |
+| `argument_bytes`                 |   1048576 | Aggregate raw UTF-8 exec-argument bytes                |
+| `recognition_header_count`       |      4096 | ELF header rows admitted for recognition               |
+| `recognition_load_command_bytes` |   8388608 | Mach-O load-command bytes admitted for recognition     |
+
+Exhausted recognition remains unknown, not examined absence. Inventory preserves
+native-root facts or another positively recognized pack and records the exact
+recognition limit inline. If extraction cannot establish a supported pack, it
+refuses with that admission cause. Confirmed SEA blob admission still returns a
+typed resource failure. ELF note-owner matching reads only the prefix needed to distinguish
+`NODE_SEA_BLOB`; an unrelated long owner does not consume retained string space
+or conceal a later SEA note. This does not change malformed framing checks.
+
+For example, retain the same active carrier and retry an argument-count refusal:
+
+```json
+{ "artifact_limits": { "node_sea": { "argument_count": 8192 } } }
+```
+
+The CLI spelling is:
+
+```sh
+rea inspect-artifact ./application --artifact-limits '{"node_sea":{"argument_count":8192}}' --json
+```
+
+Failures report `reader_limit`, including the exact parameter, effective value,
+unit, supported range and required value when known. Changes apply on the next
+call without restarting REA. Delivery summary, paging and extraction selection
+cannot bypass whole-manifest admission. Omitted selections stay omitted in
+Evidence parameters; selecting `artifact_limits` records the accepted selection
+and `effective_limits`. Those are conditional policies for encountered readers,
+not a claim that every listed format was examined. The independent aggregate
+member-work override is `artifact_limits.expanded_bytes`; omission keeps the
+encoded-size-derived work allowance. Runtime Buffer/string representation limits
+and host memory remain independent of larger selected budgets.
+
+PE carriers additionally use the shared 512 MiB input, 65,536 directory-entry
+and 8 MiB resource-metadata ceilings; the Node SEA selections do not raise those
+shared PE-parser boundaries. The PE name probe reads headers from the first
+64 KiB of the carrier; a PE whose
+headers extend beyond that is left to native classification. ELF note tables
+are read for at most one note per 12 carrier bytes in total, the most that
+disjoint tables can hold, so program headers that repeat the same notes do not
+rescan them once per header. Past that count the remaining tables are
+unreadable: an ELF without a confirmed blob keeps its native classification,
+and one with a blob fails closed. Snapshot and code-cache bytes remain opaque.
 
 ## Verification
 

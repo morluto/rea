@@ -1,3 +1,4 @@
+import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
@@ -77,7 +78,7 @@ describe("Ghidra MCP capability routing", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 
   it("keeps a Ghidra null-pseudocode observation's limitations on its batch item", async () => {
     const bodyless = "0x401020";
@@ -112,20 +113,34 @@ describe("Ghidra MCP capability routing", () => {
         arguments: { addresses: ["0x401000", bodyless] },
       });
       expect(batch.isError).not.toBe(true);
-      const result = toolContract("batch_decompile").outputSchema.parse(
-        batch.structuredContent,
-      ).normalized_result;
-      expect(result.items[0]).not.toHaveProperty("limitations");
+      const result = batchDecompileResultSchema.parse(
+        toolContract("batch_decompile").outputSchema.parse(
+          batch.structuredContent,
+        ).normalized_result,
+      );
+      // The successful item keeps its own observation's caveats (#8350).
+      const answered = parseEvidence(
+        (
+          await harness.mcp.callTool({
+            name: "procedure_pseudo_code",
+            arguments: { procedure: "0x401000" },
+          })
+        ).structuredContent,
+      );
+      const answeredLimitations = [...new Set(answered.limitations)];
+      if (answeredLimitations.length === 0)
+        expect(result.items[0]).not.toHaveProperty("limitations");
+      else
+        expect(result.items[0]).toMatchObject({
+          limitations: answeredLimitations,
+        });
       expect(result).toEqual({
         items: [
           expect.objectContaining({ address: "0x401000", status: "ok" }),
           expect.objectContaining({
             address: bodyless,
-            status: "error",
-            error: expect.objectContaining({
-              code: "capability_unavailable",
-              details: expect.objectContaining({ provider_id: "ghidra" }),
-            }),
+            status: "unavailable",
+            reason: "no_pseudocode",
             limitations: [...new Set(observed.limitations)],
           }),
         ],
@@ -136,5 +151,5 @@ describe("Ghidra MCP capability routing", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 });

@@ -15,9 +15,12 @@ import { z } from "zod";
 
 import {
   applyReleasePleasePatch,
+  createReleaseProposal,
+  describeReleaseProposalError,
   releaseProposalSearchDepth,
 } from "../../../scripts/lib/release-proposal.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -33,12 +36,100 @@ const silent = {
   trace() {},
 };
 
+it("reports an HTTP status when a release proposal error has no message", () => {
+  const failure = Object.assign(new Error(""), {
+    name: "HttpError",
+    status: 504,
+    request: { headers: { authorization: "secret" } },
+  });
+  expect(describeReleaseProposalError(failure)).toBe("HttpError (HTTP 504)");
+  expect(describeReleaseProposalError(new Error("broken"))).toBe("broken");
+});
+
 beforeAll(async () => {
   upstream = await import("release-please");
   githubRuntime = require("release-please/build/src/github.js");
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+it("preserves the existing overflow notes if their replacement fails", async () => {
+  const write = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("upload failed"))
+    .mockResolvedValueOnce({
+      data: { content: { html_url: "https://example.test/notes" } },
+    });
+  const getContent = vi.fn().mockResolvedValue({
+    data: { type: "file", sha: "existing-blob" },
+  });
+  const createNewBranch = vi.fn();
+  const forkBranch = vi.fn();
+  const github = {
+    repository: { owner: "fixture", repo: "rea" },
+    getBranchSha: vi.fn().mockResolvedValue("existing-branch"),
+    createNewBranch,
+    forkBranch,
+    octokit: { repos: { getContent, createOrUpdateFileContents: write } },
+  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  const update = () =>
+    upstream.GitHub.prototype.createFileOnNewBranch.call(
+      github,
+      "release-notes.md",
+      "Notes: café",
+      "notes",
+      "main",
+    );
+  await expect(update()).rejects.toThrow("upload failed");
+  expect(forkBranch).not.toHaveBeenCalled();
+  expect(createNewBranch).not.toHaveBeenCalled();
+  await expect(update()).resolves.toBe("https://example.test/notes");
+  expect(write).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      branch: "notes",
+      sha: "existing-blob",
+      content: Buffer.from("Notes: café", "utf8").toString("base64"),
+    }),
+  );
+});
+
+it("creates overflow notes on a new branch without requiring an existing file", async () => {
+  const write = vi.fn().mockResolvedValue({
+    data: { content: { html_url: "https://example.test/notes" } },
+  });
+  const createNewBranch = vi.fn();
+  const github = {
+    repository: { owner: "fixture", repo: "rea" },
+    getBranchSha: vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce("base-sha"),
+    createNewBranch,
+    octokit: {
+      repos: {
+        getContent: vi
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error("missing"), { status: 404 }),
+          ),
+        createOrUpdateFileContents: write,
+      },
+    },
+  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  await expect(
+    upstream.GitHub.prototype.createFileOnNewBranch.call(
+      github,
+      "release-notes.md",
+      "Notes",
+      "notes",
+      "main",
+    ),
+  ).resolves.toBe("https://example.test/notes");
+  expect(createNewBranch).toHaveBeenCalledWith("notes", "base-sha");
+  expect(write).toHaveBeenCalledWith(
+    expect.not.objectContaining({ sha: expect.anything() }),
+  );
+});
 
 function respond(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -320,6 +411,145 @@ async function releaseFixture({
   );
   return { manifest, github, requests, pages, historyQueries };
 }
+
+const mergedRelease = {
+  number: 7104,
+  body: "Release notes",
+  merged_at: "2026-11-12T08:58:31Z",
+  merge_commit_sha: latest,
+  base: { ref: "main" },
+  head: {
+    ref: "release-please--branches--main--components--rea-agents",
+    repo: { full_name: "fixture/rea" },
+  },
+  labels: [],
+};
+const proposalContext = {
+  repository: "fixture/rea",
+  sourceSha: latest,
+  targetBranch: "main",
+  eventName: "push",
+};
+const proposalReads =
+  (pages: unknown) => async (command: string, args: string[]) => {
+    if (command === "gh") return JSON.stringify(pages);
+    if (command === "git" && args[0] === "rev-parse") return "false\n";
+    if (command === "git" && args[0] === "rev-list") return "2\n";
+    throw new Error(`Unexpected proposal read: ${command} ${args.join(" ")}`);
+  };
+
+it("defers the release merge's push while its tag has not been created", async () => {
+  const fixture = await releaseFixture({ releases: [] });
+  // This is the original failure while the publication workflow creates the tag.
+  await expect(fixture.manifest.createPullRequests()).rejects.toThrow(
+    "no matching release or tag found",
+  );
+  const loadManifest = vi.fn(async () => fixture.manifest);
+  await expect(
+    createReleaseProposal(
+      proposalReads([[], [mergedRelease]]),
+      proposalContext,
+      loadManifest,
+    ),
+  ).resolves.toEqual({ kind: "release-merge", pullRequest: 7104 });
+  expect(loadManifest).not.toHaveBeenCalled();
+});
+
+it.each([
+  { name: "ordinary push", prs: [] },
+  { name: "unmerged PR", prs: [{ ...mergedRelease, merged_at: null }] },
+  {
+    name: "ordinary PR with no description",
+    prs: [
+      {
+        ...mergedRelease,
+        body: null,
+        head: { ...mergedRelease.head, ref: "feature" },
+      },
+    ],
+  },
+  {
+    name: "deleted head repository",
+    prs: [{ ...mergedRelease, head: { ...mergedRelease.head, repo: null } }],
+  },
+  {
+    name: "different merge commit",
+    prs: [{ ...mergedRelease, merge_commit_sha: baseline }],
+  },
+  {
+    name: "fork release branch",
+    prs: [
+      {
+        ...mergedRelease,
+        head: { ...mergedRelease.head, repo: { full_name: "fork/rea" } },
+      },
+    ],
+  },
+  {
+    name: "ordinary feature PR",
+    prs: [
+      { ...mergedRelease, head: { ...mergedRelease.head, ref: "feature" } },
+    ],
+  },
+  {
+    name: "another base branch",
+    prs: [{ ...mergedRelease, base: { ref: "release/6.7.0" } }],
+  },
+])("keeps a genuinely missing release fatal for $name", async ({ prs }) => {
+  const fixture = await releaseFixture({ releases: [] });
+  await expect(
+    createReleaseProposal(
+      proposalReads([prs]),
+      proposalContext,
+      async () => fixture.manifest,
+    ),
+  ).rejects.toThrow("no matching release or tag found");
+});
+
+it.each(["workflow_dispatch", undefined])(
+  "does not defer manual proposal preparation for event %s",
+  async (eventName) => {
+    const fixture = await releaseFixture({ releases: [] });
+    const run = vi.fn(proposalReads([[mergedRelease]]));
+    await expect(
+      createReleaseProposal(
+        run,
+        { ...proposalContext, eventName },
+        async () => fixture.manifest,
+      ),
+    ).rejects.toThrow("no matching release or tag found");
+    expect(run.mock.calls.every(([command]) => command === "git")).toBe(true);
+  },
+);
+
+it.each([
+  { name: "malformed API response", pages: { message: "unavailable" } },
+  {
+    name: "ambiguous release identity",
+    pages: [[mergedRelease, { ...mergedRelease, number: 7105 }]],
+  },
+])("fails closed on $name before preparing a proposal", async ({ pages }) => {
+  const loadManifest = vi.fn();
+  await expect(
+    createReleaseProposal(proposalReads(pages), proposalContext, loadManifest),
+  ).rejects.toThrow();
+  expect(loadManifest).not.toHaveBeenCalled();
+});
+
+it("preserves an API failure instead of treating the push as ordinary", async () => {
+  const failure = new Error("GitHub lookup unavailable");
+  const loadManifest = vi.fn();
+  await expect(
+    createReleaseProposal(
+      async () => {
+        throw failure;
+      },
+      proposalContext,
+      loadManifest,
+    ),
+  ).rejects.toBe(failure);
+  expect(loadManifest).not.toHaveBeenCalled();
+});
 
 it("builds the root Node proposal without commit-file lookups and retains extra-file updates", async () => {
   const fixture = await releaseFixture();
@@ -790,11 +1020,13 @@ it("requires complete local history when sizing the upstream search", async () =
   );
 });
 
-const releasePatchFixture = async () => {
+const releasePatchFixture = async (outsideProject = false) => {
   const root = await createTestTempDirectory("rea-release-git-patch-");
   const project = join(root, "project space Ω");
-  const dependencyPath = "node_modules/release dependency space Ω";
-  const directory = join(project, dependencyPath);
+  const dependencies = join(project, "node_modules");
+  const directory = outsideProject
+    ? join(root, "release dependency space Ω")
+    : join(dependencies, "release-please");
   const upstreamDirectory = dirname(
     require.resolve("release-please/package.json"),
   );
@@ -809,20 +1041,22 @@ const releasePatchFixture = async () => {
     if (member === undefined) throw new Error("Patch header omitted its path");
     return member;
   });
-  await mkdir(join(project, "scripts/lib"), { recursive: true });
   await mkdir(dirname(patchPath), { recursive: true });
+  await mkdir(dependencies, { recursive: true });
   await mkdir(directory, { recursive: true });
+  if (outsideProject)
+    await symlink(directory, join(dependencies, "release-please"), "junction");
   await writeFile(join(project, "package.json"), '{"type":"module"}');
   await writeFile(patchPath, patch);
-  for (const script of ["release-proposal.mjs", "release-notes.mjs"])
-    await copyFile(
-      join(source, "scripts/lib", script),
-      join(project, "scripts/lib", script),
-    );
+  await copyScriptsWithImports(
+    ["scripts/lib/release-proposal.mjs"],
+    project,
+    source,
+  );
   for (const dependency of ["semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),
-      join(project, "node_modules", dependency),
+      join(dependencies, dependency),
       "junction",
     );
   for (const member of ["package.json", ...members]) {
@@ -836,17 +1070,17 @@ const releasePatchFixture = async () => {
     GIT_CONFIG_VALUE_0: "true",
   };
   const git = (...args: string[]) =>
-    execute("git", args, { cwd: project, env: environment });
+    execute("git", args, { cwd: directory, env: environment });
   // Installation owns the patched dependency. Reverse only the private copy
   // to obtain the exact upstream input for the fresh-application control.
-  await git("apply", "--reverse", "--directory", dependencyPath, patchPath);
+  await git("apply", "--reverse", patchPath);
   const apply = () =>
     execute(
       process.execPath,
       [
         "--input-type=module",
         "-e",
-        `import { applyReleasePleasePatch } from ${JSON.stringify(pathToFileURL(join(project, "scripts/lib/release-proposal.mjs")).href)}; await applyReleasePleasePatch(${JSON.stringify(directory)});`,
+        `import { applyReleasePleasePatch } from ${JSON.stringify(pathToFileURL(join(project, "scripts/lib/release-proposal.mjs")).href)}; await applyReleasePleasePatch();`,
       ],
       { cwd: project, env: environment, timeout: 10_000 },
     );
@@ -854,27 +1088,26 @@ const releasePatchFixture = async () => {
     Promise.all(
       members.map((member) => readFile(join(directory, member), "utf8")),
     );
-  return { directory, apply, contents, git, dependencyPath, patchPath };
+  return { directory, apply, contents, git, patchPath };
 };
 
-it("applies the private dependency patch with protected Git paths and is idempotent", async () => {
-  const fixture = await releasePatchFixture();
-  const original = await fixture.contents();
-  await fixture.apply();
-  const patched = await fixture.contents();
-  expect(patched).not.toEqual(original);
-  expect(patched.join("\n")).toContain("const rootOnlyNode =");
-  await fixture.git(
-    "apply",
-    "--check",
-    "--reverse",
-    "--directory",
-    fixture.dependencyPath,
-    fixture.patchPath,
-  );
-  await fixture.apply();
-  expect(await fixture.contents()).toEqual(patched);
-});
+it.each([
+  { location: "inside the checkout", outsideProject: false },
+  { location: "outside the checkout", outsideProject: true },
+])(
+  "applies the private dependency patch $location and is idempotent",
+  async ({ outsideProject }) => {
+    const fixture = await releasePatchFixture(outsideProject);
+    const original = await fixture.contents();
+    await fixture.apply();
+    const patched = await fixture.contents();
+    expect(patched).not.toEqual(original);
+    expect(patched.join("\n")).toContain("const rootOnlyNode =");
+    await fixture.git("apply", "--check", "--reverse", fixture.patchPath);
+    await fixture.apply();
+    expect(await fixture.contents()).toEqual(patched);
+  },
+);
 
 it("rejects a different dependency version before patching", async () => {
   const fixture = await createTestTempDirectory("rea-release-patch-");

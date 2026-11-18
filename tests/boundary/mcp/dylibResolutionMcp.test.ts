@@ -23,13 +23,17 @@ import { dylibResolutionResultSchema } from "../../../src/domain/apple/dylibReso
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const withClient = async (
   verify: (client: Client) => Promise<void>,
 ): Promise<void> => {
   const session = createTestBinarySession(new ArtifactProvider(process.env));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "dylib-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "dylib-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -111,7 +115,12 @@ it("traces dylib resolution for an opened app bundle and rejects a changed targe
       arguments: {},
     });
     expect(changed.isError).toBe(true);
-    expect(JSON.stringify(parseMcpToolError(changed))).toContain("integrity");
+    expect(parseMcpToolError(changed)).toMatchObject({
+      error: {
+        category: "integrity_mismatch",
+        details: { reason: "integrity", integrity_check: "container-identity" },
+      },
+    });
   });
 });
 
@@ -572,9 +581,12 @@ it("ignores process settings on an explicitly selected library root through MCP"
         ?.dyld_environment,
     ).toEqual(settings);
     expect(
-      trace.findings.find(({ kind }) => kind === "dyld-environment-present")
-        ?.explanation,
-    ).toContain("entries in this non-executable root are observations");
+      trace.findings.find(({ kind }) => kind === "dyld-environment-present"),
+    ).toMatchObject({
+      image: "library.dylib",
+      basis: "derived",
+      explanation: expect.stringContaining(settings[0]!),
+    });
   });
 });
 

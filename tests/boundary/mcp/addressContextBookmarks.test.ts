@@ -4,10 +4,16 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { AnalysisProtocolError } from "../../../src/domain/analysisErrorCore.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisCancelledError,
+  AnalysisProtocolError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each([
   ["resolved padded", true, "0x00401000", "0x401000", "available"],
@@ -57,7 +63,10 @@ it.each([
       close: async () => ok(null),
     }));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "bookmark-verifier", version: "1" });
+    const client = new Client(
+      { name: "bookmark-verifier", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -79,6 +88,74 @@ it.each([
       expect(body.result.bookmarks.state).toBe(state);
       if (state === "available")
         expect(body.result.bookmarks.value).toEqual([bookmark]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "reports each unresolved facet cleanup over MCP (cancellation=%s)",
+  async (cancelled) => {
+    const identity = { id: "fixture", name: "Fixture", version: "1" };
+    const directory = await createTestTempDirectory("rea-context-cleanup-");
+    const target = join(directory, "fixture.com");
+    await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
+    const session = createTestBinarySession(() => ({
+      execute: async (operation) => {
+        if (cancelled && operation === "resolve_containing_procedure")
+          return err(new AnalysisCancelledError(operation));
+        if (operation === "comment" || operation === "inline_comment")
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              identity.id,
+              operation,
+              "controlled failure",
+              {
+                cleanup: {
+                  reason: "controlled cleanup failure",
+                  resources: [operation],
+                },
+              },
+            ),
+          );
+        return ok(createAnalysisExecution(null, identity));
+      },
+      close: async () => ok(null),
+    }));
+    const server = createServer({ kind: "session", session });
+    const client = new Client(
+      { name: "context-cleanup", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect(
+        (
+          await client.callTool({
+            name: "open_binary",
+            arguments: { path: target, format: "dos-com" },
+          })
+        ).isError,
+      ).not.toBe(true);
+      const response = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: "0x401001", document: "fixture" },
+      });
+      expect(response.isError).toBe(true);
+      expect(parseMcpToolError(response)).toMatchObject({
+        error: {
+          code: "cleanup_incomplete",
+          details: {
+            cleanup: "incomplete",
+            resources: expect.arrayContaining(["comment", "inline_comment"]),
+          },
+        },
+      });
     } finally {
       await client.close();
       await server.close();

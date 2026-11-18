@@ -1,0 +1,12 @@
+$ rea no-such-command  # stdout is a terminal
+exit: 1
+--- stdout
+Error: 'no-such-command' is not a command for 'rea'. Did you mean 'cutter-command'?
+
+Suggested commands:
+  rea cutter-command
+  rea --help          # see all available commands
+  rea --update        # upgrade from <version> to 999.0.0
+<end>
+--- stderr
+<end>

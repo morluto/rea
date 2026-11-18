@@ -27,7 +27,7 @@ body:
     attributes:
       label: Documentation location
       description: Link the page, section, command, API, skill, or inline comment.
-      placeholder: README.md#quick-start or docs/mcp-contracts.md
+      placeholder: README.md#quick-start or docs/reference/mcp-contracts.md
     validations:
       required: true
 

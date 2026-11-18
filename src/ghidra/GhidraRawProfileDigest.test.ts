@@ -5,14 +5,23 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 
-// Digests commit to the current shared policy, including the instruction status
-// revision that prevents reuse of snapshots with the previous ambiguous result.
-const RAW_DIGESTS = {
-  "6502": "8e33776d1cc5c5d77d32923d5978c05ec2d989d00920dd458cc2dafb4c9c0cad",
-  "x86-disabled-analyzer":
-    "d17bddc8ac110c891d30fb989fc7906df421bd9bea5df4aac05a950f50c7bdaf",
-} as const;
+// A profile digest is the digest of its committed parameters; these tests pin
+// the parameters (runtime selections and the producer identity) rather than a
+// literal hash that every bridge or REA release would have to re-record.
+const expectCommittedProfile = (
+  profile: ReturnType<typeof createAnalysisProfile> | null | undefined,
+): void => {
+  if (profile == null) throw new Error("Expected an analysis profile");
+  expect(profile.parameters).toMatchObject({
+    producer: ghidraProducerIdentity(),
+  });
+  expect(profile.digest).toBe(
+    createAnalysisProfile(profile.provider, profile.parameters).digest,
+  );
+};
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
   const parsed = parseConfig({ GHIDRA_INSTALL_DIR: "/ghidra", ...environment });
@@ -32,19 +41,18 @@ const raw = (architecture: "6502" | "x86", entryPoint: string): BinaryTarget =>
     entryPointSource: entryPoint,
   }) as unknown as BinaryTarget;
 
-describe("raw-binary analysis profile digest", () => {
+describe("raw-binary analysis profile commitments", () => {
   it("commits the 6502 raw profile to the current shared policy", async () => {
     const ghidra = new GhidraProvider(configFor({}), silentLogger, {}, host);
     const resolved = await ghidra.resolveAnalysisProfile(raw("6502", "0x8001"));
     if (!resolved.ok) throw resolved.error;
-    expect(resolved.value.profile?.digest).toBe(RAW_DIGESTS["6502"]);
+    expectCommittedProfile(resolved.value.profile);
     expect(resolved.value.profile?.parameters).toMatchObject({
       target_format: "raw-binary",
       loader: "BinaryLoader",
       language_id: "6502:LE:16:default",
-      language_selection: "caller-supplied-v1",
-      load_image_evidence: "independent-raw-mapping-context-v4",
-      instruction_status: "unlisted-address-without-decode-v1",
+      language_selection: "caller-supplied",
+      entry_point: "0x8001",
       analyzer_preset: "ghidra-default",
     });
   });
@@ -60,10 +68,9 @@ describe("raw-binary analysis profile digest", () => {
     );
     const resolved = await ghidra.resolveAnalysisProfile(raw("x86", "0x1000"));
     if (!resolved.ok) throw resolved.error;
-    expect(resolved.value.profile?.digest).toBe(
-      RAW_DIGESTS["x86-disabled-analyzer"],
-    );
+    expectCommittedProfile(resolved.value.profile);
     expect(resolved.value.profile?.parameters).toMatchObject({
+      analyzer_preset: expect.any(String),
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],
       },

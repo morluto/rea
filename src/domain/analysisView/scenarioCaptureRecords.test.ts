@@ -166,8 +166,10 @@ describe("scenarioCaptureRecords", () => {
         bodySize: -1,
       },
     });
-    expect(manifestLimitations(projected)).toContain(
-      "1 of 7 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
+    expect(manifestLimitations(projected)).toContainEqual(
+      expect.stringMatching(
+        /1 of 7.*usable request line.*no response body.*status and content type.*may be absent/iu,
+      ),
     );
   });
 
@@ -282,6 +284,7 @@ it("reserves retained request-body expansion before schema decoding or projectio
   try {
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: capture,
@@ -330,6 +333,7 @@ it("reserves request text even when another event's body was not captured", () =
     // The capture's containers fit this budget; only its request text does not.
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: { ...capture, events: { ...capture.events, items } },

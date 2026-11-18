@@ -2,13 +2,15 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-bun-verifier-" });
-const commands = await createVerifierCommands();
+const root = await VerifierFixture.open({ prefix: "rea-bun-verifier-" });
+let commands;
 const run = (command, args, options = {}) =>
   commands.exec(command, args, {
     timeout: 120_000,
@@ -17,8 +19,12 @@ const run = (command, args, options = {}) =>
   });
 // The root holds the compiled target and child temporary files. Release it
 // only after every owned command family has settled.
-let commandsClosed = false;
-await withVerifierCleanup(async () => {
+// The root is removed only after the owned commands confirm.
+root.releaseAfter(async () => {
+  if (commands !== undefined) await commands.close();
+});
+await withVerifierFixture(root, async () => {
+  commands = await createVerifierCommands();
   const source = join(root.path, "hello.ts");
   await writeFile(source, 'console.log("REA_BUN_VERIFICATION");\n');
   const docker = process.argv.includes("--docker");
@@ -102,12 +108,4 @@ await withVerifierCleanup(async () => {
       2,
     ),
   );
-}, [
-  async () => {
-    await commands.close();
-    commandsClosed = true;
-  },
-  async () => {
-    if (commandsClosed) await root.close();
-  },
-]);
+});

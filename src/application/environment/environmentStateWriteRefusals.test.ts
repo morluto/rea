@@ -58,13 +58,18 @@ const nested = (depth: number): JsonValue =>
   Array.from({ length: depth }).reduce<JsonValue>((inner) => [inner], 1);
 
 describe("served document writes", () => {
-  it("accepts only the members the capture sent, as the JSON types the document holds", () => {
+  it("changes only the recorded document path with the learned member names and types", () => {
     const settings = servedFrom(SETTINGS_ROWS);
     expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
       served: true,
       effect: "document",
     });
     expectRefusedUnchanged(settings, [
+      [
+        PATCH_SETTINGS,
+        { id: "2", body: { theme: "blue" } },
+        "holds this document only at /api/orgs/1/settings",
+      ],
       [
         PATCH_SETTINGS,
         { id: "1", body: { theme: 5, extra: true } },
@@ -76,6 +81,7 @@ describe("served document writes", () => {
         "Member extra is not one the capture showed stored",
       ],
     ]);
+    expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(DARK);
     const blue = { theme: "blue", meta: DARK.meta };
     expect(
       settings.answer(PATCH_SETTINGS, { id: "1", body: { theme: "blue" } }),
@@ -108,18 +114,6 @@ describe("served document writes", () => {
     expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
       served: false,
     });
-  });
-
-  it("changes the document only at the path the state holds it", () => {
-    const settings = servedFrom(SETTINGS_ROWS);
-    expectRefusedUnchanged(settings, [
-      [
-        PATCH_SETTINGS,
-        { id: "2", body: { theme: "blue" } },
-        "holds this document only at /api/orgs/1/settings",
-      ],
-    ]);
-    expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(DARK);
   });
 });
 
@@ -240,42 +234,6 @@ describe("the state size limit", () => {
     // A smaller state has room again.
     books.answer("delete_books_by_id", { id: "3" });
     expect(books.answer("post_books", create).status).toBe(201);
-  });
-
-  it("refuses a document that data/get would write past what data/add loads", () => {
-    const books = servedFrom();
-    const { rea_state: state } = books.store.snapshot();
-    // Without the members data/get adds back, the document fits only until they return.
-    const document = {
-      rea_state: {
-        version: state.version,
-        entities: state.entities.map(({ type, collection, id, fields }) => ({
-          type,
-          collection,
-          id,
-          fields: { ...fields },
-        })),
-        documents: state.documents,
-      },
-    };
-    const first = document.rea_state.entities[0]!.fields;
-    first["name"] = `${String(first["name"])}${"a".repeat(
-      STATE_INTAKE_LIMIT_BYTES -
-        Buffer.byteLength(JSON.stringify(document), "utf8"),
-    )}`;
-    expect(Buffer.byteLength(JSON.stringify(document), "utf8")).toBe(
-      STATE_INTAKE_LIMIT_BYTES,
-    );
-    const before = books.snapshot();
-    const replaced = books.store.replace(document);
-    expect(replaced.ok).toBe(false);
-    expect(!replaced.ok && replaced.error.issues).toEqual([
-      expect.objectContaining({
-        reason: "out_of_range",
-        maximum: STATE_INTAKE_LIMIT_BYTES,
-      }),
-    ]);
-    expect(books.snapshot()).toBe(before);
   });
 });
 

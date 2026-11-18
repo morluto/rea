@@ -2,8 +2,8 @@ import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisRes
 import { executeComposedWorkflow } from "../../../src/application/WorkflowEvidence.js";
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { ok } from "../../../src/domain/result.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { expect, it } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { composedWorkflowFixture } from "../../fixtures/composedWorkflowEvidence.js";
@@ -176,12 +176,10 @@ it.each([false, true])(
 );
 
 it("deduplicates repeated and nested consumed records without linking unrelated concurrent work", async () => {
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const summaryExecution = phaseGate();
   const fixture = await composedWorkflowFixture({
     beforeSummary: async () => {
-      entered.resolve();
-      await release.promise;
+      await summaryExecution.hold();
     },
   });
   await fixture.open();
@@ -200,8 +198,8 @@ it("deduplicates repeated and nested consumed records without linking unrelated 
       return nested.ok ? ok(nested.value.result) : nested;
     },
   );
-  await entered.promise;
   try {
+    await summaryExecution.reached(overview, "summary execution");
     const other = await executeComposedWorkflow(
       fixture.session,
       async (observed) => {
@@ -213,7 +211,7 @@ it("deduplicates repeated and nested consumed records without linking unrelated 
       },
     );
     if (!other.ok) throw other.error;
-    release.resolve();
+    summaryExecution.release();
     const result = await overview;
     if (!result.ok) throw result.error;
     const atomic = fixture.session
@@ -234,7 +232,7 @@ it("deduplicates repeated and nested consumed records without linking unrelated 
       ),
     ).toHaveLength(1);
   } finally {
-    release.resolve();
+    summaryExecution.release();
     await overview;
   }
 });
@@ -267,8 +265,8 @@ it("rehydrates the original atomic identity from an authenticated snapshot witho
         {},
       );
       if (!execution.ok) return execution;
-      expect(execution.value.limitations).toContain(
-        "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+      expect(execution.value.limitations).toContainEqual(
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
       );
       return ok(execution.value.result);
     },
@@ -391,8 +389,8 @@ it("reruns an ambiguous snapshot binding before selecting composed Evidence link
       (operation) => operation === "read_binary_inventory_summary",
     ),
   ).toHaveLength(1);
-  expect(after.value.limitations).not.toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(after.value.limitations).not.toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
   if (after.value.evidenceId === undefined)
     throw new Error("Fresh provider observation was not committed");

@@ -22,6 +22,7 @@ const record = (
       instant: parseOffsetDateTimeInstant(new Date(start).toISOString()),
       ms: start,
     },
+    end: parseOffsetDateTimeInstant(new Date(end).toISOString()),
     endMs: end,
   },
 });
@@ -68,7 +69,7 @@ describe("short-id creation limits", () => {
     const prior = record(0, "GET", "/api/projects", [0, 5]);
     const unknown = {
       ...prior,
-      timing: { ...prior.timing, endMs: undefined },
+      timing: { ...prior.timing, end: undefined, endMs: undefined },
     };
     const post = record(1, "POST", "/api/imports", [10, 11]);
     const later = record(2, "GET", "/api/projects/7", [20, 21]);
@@ -277,49 +278,43 @@ describe("the entity identities creation limits use", () => {
 
 describe("the ids creation limits keep", () => {
   it("keeps and charges only the shown ids a creation returned", () => {
-    let retained = 0;
-    const lists = 50;
-    const reads = Array.from({ length: lists }, (_, index) =>
-      record(index < lists / 2 ? index : index + 1, "GET", "/api/projects"),
-    );
-    const post = record(lists / 2, "POST", "/api/imports");
-    const rows = (extra: number) =>
-      Array.from({ length: 1000 }, (_, row) => ({
-        id: `proj-${String(row + extra).padStart(5, "0")}`,
-      }));
-    const bodies = new Map<number, JsonValue>(
-      reads.map((read) => [
-        read.ordinal,
-        read.ordinal > post.ordinal
-          ? [...rows(0), { id: "proj-made" }]
-          : rows(0),
-      ]),
-    );
-    expect(
-      projectsLimit(reads, post, bodies, {
+    const reads = [
+      record(0, "GET", "/api/projects"),
+      record(2, "GET", "/api/projects"),
+    ];
+    const post = record(1, "POST", "/api/imports");
+    const chargeOf = (after: readonly string[]) => {
+      let retained = 0;
+      const bodies = new Map<number, JsonValue>([
+        [0, [{ id: "proj-existing" }]],
+        [2, after.map((id) => ({ id }))],
+      ]);
+      const limit = projectsLimit(reads, post, bodies, {
         created: ["proj-made"],
         retain: (bytes) => {
           retained += bytes;
         },
-      }),
-    ).toBe(post);
-    // One kept id per later list, not a thousand per list.
-    expect(retained).toBeGreaterThan(0);
-    expect(retained).toBeLessThan(lists * 1000 * 16);
+      });
+      return { limit, retained };
+    };
+    const narrow = chargeOf(["proj-made"]);
+    const broad = chargeOf(["proj-made", "proj-other", "proj-more"]);
+    const missing = chargeOf(["proj-new", "proj-other", "proj-more"]);
+    expect(narrow.limit).toBe(post);
+    expect(broad.limit).toBe(post);
+    expect(missing.limit).toBeUndefined();
+    expect(broad.retained).toBe(narrow.retained);
+    expect(broad.retained).toBeGreaterThan(missing.retained);
   });
 });
 
 describe("the reads creation limits parse", () => {
-  /**
-   * The creation limit of `/api/projects` over list reads, a POST returning `proj-0002` that later
-   * lists show, and the write that ends the initial reads; with the reads parsed, and those whose
-   * body was read after its parse ended.
-   */
-  const parsedLimit = (
-    reads: readonly StateRecordFacts[],
-    post: StateRecordFacts,
-    until: StateRecordFacts,
-  ) => {
+  it("parses only reads before the cutoff and inspects each body while its parse is charged", () => {
+    const reads = [0, 2, 4, 5].map((ordinal) =>
+      record(ordinal, "GET", "/api/projects"),
+    );
+    const post = record(1, "POST", "/api/imports");
+    const until = record(3, "PUT", "/api/projects/proj-0001");
     const parsed: number[] = [];
     const outside = new Set<number>();
     let parsing = false;
@@ -369,34 +364,8 @@ describe("the reads creation limits parse", () => {
       },
       until,
     );
-    return { limit, parsed, outside };
-  };
-
-  it("parses no read at or after the write that ends the initial reads, since no id it shows can be fresh", () => {
-    const reads = [0, 2, 4, 5].map((ordinal) =>
-      record(ordinal, "GET", "/api/projects"),
-    );
-    const post = record(1, "POST", "/api/imports");
-    const { limit, parsed } = parsedLimit(
-      reads,
-      post,
-      record(3, "PUT", "/api/projects/proj-0001"),
-    );
     expect(limit).toBe(post);
     expect(parsed).toEqual([0, 2]);
-  });
-
-  it("reads the ids a body shows only while its parse is charged", () => {
-    const reads = [0, 2].map((ordinal) =>
-      record(ordinal, "GET", "/api/projects"),
-    );
-    const post = record(1, "POST", "/api/imports");
-    const { limit, outside } = parsedLimit(
-      reads,
-      post,
-      record(3, "PUT", "/api/projects/proj-0001"),
-    );
-    expect(limit).toBe(post);
     expect([...outside]).toEqual([]);
   });
 });

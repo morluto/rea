@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveCliJsonPaths } from "./cliJsonInput.js";
+import {
+  cliJsonCallerPathSchema,
+  resolveCliJsonPaths,
+} from "./cli/cliJsonInput.js";
 import { electronActiveObservationInputSchema } from "./domain/javascript/electronActiveObservation.js";
 
 const paths = [
@@ -14,6 +17,15 @@ const paths = [
 ] as const;
 
 describe("CLI JSON path normalization", () => {
+  it.each([" ", "\t\r\n", "\u00a0", "\u2003", "\ufeff"])(
+    "refuses blank caller path %j before normalization",
+    (path) => {
+      expect(cliJsonCallerPathSchema.safeParse(path).success).toBe(false);
+      expect(resolveCliJsonPaths({ executable_path: path }, paths)).toEqual({
+        executable_path: path,
+      });
+    },
+  );
   it.each([
     ["executable_path", ""],
     ["executable_path", " \t "],
@@ -123,7 +135,7 @@ describe("CLI JSON path normalization", () => {
       expect.objectContaining({
         path: ["executable_path"],
         code: "invalid_format",
-        message: expect.stringContaining("absolute local filesystem path"),
+        format: "regex",
       }),
     ]);
   });

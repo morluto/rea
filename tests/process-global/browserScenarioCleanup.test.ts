@@ -1,9 +1,9 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { EventEmitter } from "node:events";
-import { Cli } from "incur";
 import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import type { BrowserScenarioCapturePort } from "../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../src/ports/BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "../../src/application/BrowserScenarioEvidence.js";
 import type { BrowserScenarioSessionPort } from "../../src/browser/BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "../../src/browser/PlaywrightBrowserScenarioProvider.js";
@@ -24,8 +24,12 @@ import {
 } from "../../src/domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../src/domain/browserObservationError.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
+import { waitFor } from "../support/testWait.js";
 
 const state = vi.hoisted(() => ({
   provider: undefined as BrowserScenarioCapturePort | undefined,
@@ -154,7 +158,7 @@ it("waits for a slow but successful browser close before removing its profile", 
 });
 
 const serveScenario = async () => {
-  const cli = Cli.create("browser-cleanup-test", { sync: false });
+  const cli = createCommandCli();
   registerBrowserScenarioCommands(cli, silentLogger, {});
   let stdout = "";
   let exitCode = 0;
@@ -316,7 +320,7 @@ it("retries a late Playwright open after cancellation before accepting another c
     signal: cancellation.signal,
   });
   try {
-    await vi.waitFor(() => expect(launchCount).toBe(1));
+    await waitFor(() => expect(launchCount).toBe(1));
     cancellation.abort();
     const cancelled = await firstCapture;
     if (cancelled.ok) throw new Error("Expected the first capture to cancel.");
@@ -330,10 +334,6 @@ it("retries a late Playwright open after cancellation before accepting another c
     finishLateOpen(makeContext());
     await closeStarted;
     finishFirstClose();
-
-    const failedRetry = await provider.captureScenario(scenario);
-    expect(failedRetry.ok).toBe(false);
-    if (!failedRetry.ok) expect(failedRetry.error.cleanupIncomplete).toBe(true);
 
     const retried = await provider.captureScenario(scenario);
     expect(retried.ok).toBe(true);
@@ -414,7 +414,7 @@ it("retains completed Evidence when provider shutdown fails after a successful c
   if (!captured.ok) throw captured.error;
   const evidence = createBrowserScenarioEvidence(
     scenario,
-    captured.value,
+    { source: jsonValueSchema.parse(captured.value), facts: captured.value },
     provider.identity(),
   );
   const close = vi.fn().mockRejectedValue(

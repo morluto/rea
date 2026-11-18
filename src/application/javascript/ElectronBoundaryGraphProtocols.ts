@@ -7,9 +7,9 @@ import {
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
-import { astObservationEvidence } from "./JavaScriptArtifactGraphEvidence.js";
 import {
   addElectronInferenceEdge,
+  electronFindingEvidence,
   electronFindingSourceNode,
   electronObservationIdentity,
 } from "./ElectronBoundaryGraphContext.js";
@@ -67,6 +67,9 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
     role: value.role,
     session: value.session,
     enabled_privileges: value.enabled_privileges,
+    ...(value.loader_authority === "candidate"
+      ? { loader_authority: "candidate" }
+      : {}),
   };
   const limitations =
     scheme !== null
@@ -86,10 +89,12 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
   const node = context.accumulator.addNode({
     kind: "url-scheme",
     identity:
-      scheme === null
+      scheme === null || value.loader_authority === "candidate"
         ? artifactLocalIdentity(
             file.sha256,
-            "electron-dynamic-url-scheme",
+            value.loader_authority === "candidate"
+              ? "electron-candidate-url-scheme"
+              : "electron-dynamic-url-scheme",
             // Identical bytes at two paths are separate occurrences whose
             // expressions can resolve differently.
             `${file.path}:${value.api}:${javascriptSourceRangeKey(value.location)}`,
@@ -103,14 +108,17 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
       {
         label: scheme ?? value.scheme.expression ?? String(value.scheme.value),
         properties: facts,
-        evidence: astObservationEvidence({
-          sha256: file.sha256,
-          path: file.path,
-          range: value.location,
-          operation: "observe-protocol-registration",
-          coverage,
-          limitations,
-        }),
+        evidence: electronFindingEvidence(
+          {
+            sha256: file.sha256,
+            path: file.path,
+            range: value.location,
+            operation: "observe-protocol-registration",
+            coverage,
+            limitations,
+          },
+          value.loader_authority,
+        ),
       },
     ],
   });
@@ -123,6 +131,7 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
     // Granting privileges exposes the scheme; the other roles claim its links.
     relation: value.role === "privileged-scheme" ? "exposes" : "handles",
     operation: "map-protocol-registration",
+    loaderAuthority: value.loader_authority,
     properties: facts,
     limitations,
   });

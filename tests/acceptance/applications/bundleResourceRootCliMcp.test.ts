@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { build } from "plist";
 import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -216,11 +218,13 @@ cliTest.skipIf(process.platform !== "darwin")(
 
     const retained = await call("get_evidence_bundle", {});
     expect(retained.isError).not.toBe(true);
-    const evidenceBundle = toolContract(
-      "get_evidence_bundle",
-    ).outputSchema.parse(retained.structuredContent);
+    const evidenceBundle = evidenceBundleSchema.parse(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        retained.structuredContent,
+      ).result,
+    );
     for (const operation of resourceOperations) {
-      const record = evidenceBundle.result.records.find(
+      const record = evidenceBundle.records.find(
         (record) => record.operation === operation,
       );
       expectResourceEvidence(record, operation, firstBundle);
@@ -324,7 +328,11 @@ const expectResourceEvidence = (
   );
   expect(evidence).toMatchObject({
     operation,
-    subject: null,
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
     normalized_result: {
       resource_root: {
         caller_path: bundle,

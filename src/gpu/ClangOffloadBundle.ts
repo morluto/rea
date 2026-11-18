@@ -1,10 +1,11 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { scheduler } from "node:timers/promises";
 import type { GpuObject } from "../domain/gpu/gpuCodeObjects.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+} from "../domain/binaryContainer.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   gpuCount,
   GPU_OBJECT_BYTES,
@@ -28,10 +29,16 @@ export const readClangBundleDirectory = async (
   declarations: { object: GpuObject; amdTarget: AmdGpuTargetIdentity | null }[];
   end: number;
 }> => {
-  const header = await source.read(base, 32),
-    count = gpuCount(header.readBigUInt64LE(24));
+  const header = await source.read(base, 32);
   if (!header.subarray(0, 24).equals(CLANG_BUNDLE_MAGIC))
     rejectGpu("Invalid Clang offload bundle magic");
+  const declaredCount = header.readBigUInt64LE(24);
+  // Every entry needs three 64-bit words before its variable-length ID.
+  // Compare before numeric conversion so even a uint64 maximum stays a
+  // malformed extent rather than a capacity or host-precision refusal.
+  if (declaredCount > BigInt(Math.floor((source.size - base - 32) / 24)))
+    rejectGpu("Clang offload bundle directory is truncated");
+  const count = gpuCount(declaredCount);
   if (count > 65536)
     throw new BinaryResourceFailure(
       "structure",
@@ -63,8 +70,9 @@ export const readClangBundleDirectory = async (
       );
     let name: string;
     try {
-      name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      name = decodeStrictUtf8(
         await source.read(position + 24, nameSize),
+        "preserve",
       );
     } catch (cause) {
       if (cause instanceof TypeError)

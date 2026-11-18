@@ -1,16 +1,34 @@
 import type { z } from "zod";
 import type { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
 import { ownedJsonValueSchema } from "../jsonValue.js";
+import { EvidenceIntegrityError } from "../evidenceErrors.js";
+
+/** Bind a projected artifact to the parent subject when one is recorded. */
+export const validateAnalysisViewSubject = (
+  subject: Evidence["subject"] | undefined,
+  artifactSha256: string | null | undefined,
+): Result<void, EvidenceIntegrityError> => {
+  const file = evidenceFileTarget({ subject });
+  return file === undefined || file.sha256 === artifactSha256
+    ? ok(undefined)
+    : err(
+        new EvidenceIntegrityError(
+          `Parent subject SHA-256 ${file.sha256} differs from analysis artifact SHA-256 ${artifactSha256 ?? "unknown"}.`,
+        ),
+      );
+};
 
 /** Parent record already resolved from inline Evidence or a session reference. */
 export interface AnalysisViewParent {
   readonly evidenceId: string;
   readonly operation: string;
+  readonly predicateType: string;
   readonly normalizedResult: unknown;
+  readonly rawResult?: unknown;
   readonly provider?: Evidence["provider"];
   readonly analysisProfile?: Evidence["analysis_profile"];
   readonly authority?: Evidence["authority"];
@@ -86,3 +104,25 @@ export const analysisViewResultInputError = (
     { source: { normalized_result: input } },
     { cause },
   );
+
+/** Path named by a parent result, or the Evidence id when the result has none. */
+export const parentArtifactPath = (parent: AnalysisViewParent): string => {
+  if (
+    typeof parent.normalizedResult === "object" &&
+    parent.normalizedResult !== null &&
+    "artifact" in parent.normalizedResult &&
+    typeof parent.normalizedResult.artifact === "object" &&
+    parent.normalizedResult.artifact !== null &&
+    "path" in parent.normalizedResult.artifact &&
+    typeof parent.normalizedResult.artifact.path === "string"
+  )
+    return parent.normalizedResult.artifact.path;
+  if (
+    typeof parent.normalizedResult === "object" &&
+    parent.normalizedResult !== null &&
+    "input_path" in parent.normalizedResult &&
+    typeof parent.normalizedResult.input_path === "string"
+  )
+    return parent.normalizedResult.input_path;
+  return parent.evidenceId;
+};
