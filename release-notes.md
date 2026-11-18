@@ -824,6 +824,7 @@
 * **adr:** accept the target identity decision ([#11340](https://github.com/morluto/rea/issues/11340)) ([d7c6541](https://github.com/morluto/rea/commit/d7c65418b5a1f17ef0921a4efda13b662354e619))
 * **adr:** record one tagged target identity as the Evidence subject ([#11328](https://github.com/morluto/rea/issues/11328)) ([28e95f3](https://github.com/morluto/rea/commit/28e95f34d0854a9d8fe98750d1d284f61496b593))
 * **adr:** split src/domain by subsystem behind one entry point ([#11231](https://github.com/morluto/rea/issues/11231)) ([c272d05](https://github.com/morluto/rea/commit/c272d050b18dcadd31df5d3678e0c1d799c16ec0))
+* **browser:** describe exact role locator names ([#12099](https://github.com/morluto/rea/issues/12099)) ([230f862](https://github.com/morluto/rea/commit/230f86240f04a79e96c1ac64ea3d4cbd5db76af9))
 * **changelog:** remove Copilot from 6.6.0 human thanks ([26e51d0](https://github.com/morluto/rea/commit/26e51d0ce1db1261525a88cfb476a668a87bb5d0)), closes [#7674](https://github.com/morluto/rea/issues/7674) [#7755](https://github.com/morluto/rea/issues/7755)
 * **ci:** describe CI lanes without counts that drift ([ee3e627](https://github.com/morluto/rea/commit/ee3e627efb2992f3c1405a979006fc4b9f571c28)), closes [#7616](https://github.com/morluto/rea/issues/7616) [#7617](https://github.com/morluto/rea/issues/7617)
 * **ci:** remove dated shard measurements from the testing guides ([#10414](https://github.com/morluto/rea/issues/10414)) ([243e401](https://github.com/morluto/rea/commit/243e4015cbf453448e42f66fbdf99df34adfb331))
