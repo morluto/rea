@@ -195,6 +195,7 @@
 * **cli:** render help in REA and list csv and tsv formats ([#11688](https://github.com/morluto/rea/issues/11688)) ([a8cd584](https://github.com/morluto/rea/commit/a8cd584ccf90fb32ce0ef14e6eeb1c040fe6db30))
 * **cli:** report observe-web-session progress on stderr ([3e95d22](https://github.com/morluto/rea/commit/3e95d22dd4bfd3274e613e76ededd899381fd078))
 * **cli:** report the byte-entropy provider id in cleanup diagnostics ([bac8a11](https://github.com/morluto/rea/commit/bac8a115cdd5c6c3e2e6edb9b220d306b1f0fa63)), closes [#7279](https://github.com/morluto/rea/issues/7279)
+* **cli:** show --json in global help ([#12058](https://github.com/morluto/rea/issues/12058)) ([39e8403](https://github.com/morluto/rea/commit/39e8403306af0764c6319a514193d9fb4dad794e))
 * **cli:** treat ENOTCONN on stdout as a closed reader ([#11275](https://github.com/morluto/rea/issues/11275)) ([ac9064b](https://github.com/morluto/rea/commit/ac9064b394474970bc8ee8c5f1344bac7398d681))
 * **cli:** validate plist and dylib-root options with their contract fields ([#10557](https://github.com/morluto/rea/issues/10557)) ([e68e548](https://github.com/morluto/rea/commit/e68e548a3d4548236688c1f3cd4db64e056c91cd))
 * **contracts:** advertise name reservations without look-around ([6cfc2fa](https://github.com/morluto/rea/commit/6cfc2fa62d3158d089fad74a8c12c76d0f6150d3)), closes [#10389](https://github.com/morluto/rea/issues/10389)
