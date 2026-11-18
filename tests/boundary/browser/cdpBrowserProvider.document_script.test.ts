@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
-import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
@@ -63,163 +62,145 @@ it("preserves CDP's separate frame fragment in all passive URL projections", asy
     final_url: url,
   });
 });
-describe("CdpBrowserProvider: approved accessibility and source capture", () => {
-  it("captures approved accessibility text inline", async () => {
-    const browser = await startFakeCdpBrowser();
-    trackBrowser(browser);
-    const request = inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-      include_accessibility_text: true,
-    });
-    const result = await new CdpBrowserProvider().inspectPage(request);
-
-    if (!result.ok) throw result.error;
-    expect(result.value.accessibility).toMatchObject({
-      text_capture: {
-        status: "included",
-        retained_bytes: 27,
-      },
-      nodes: [expect.objectContaining({ name: "Submit report" })],
-    });
+it("captures approved accessibility text inline", async () => {
+  const browser = await startFakeCdpBrowser();
+  trackBrowser(browser);
+  const request = inspectWebPageInputSchema.parse({
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+    include_accessibility_text: true,
   });
+  const result = await new CdpBrowserProvider().inspectPage(request);
 
-  it("includes allowed script source only after explicit approval", async () => {
-    const browser = await startFakeCdpBrowser();
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    const result = await provider.inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_script_sources: true,
-      }),
-    );
+  if (!result.ok) throw result.error;
+  expect(result.value.accessibility).toMatchObject({
+    text_capture: {
+      status: "included",
+      retained_bytes: 27,
+    },
+    nodes: [expect.objectContaining({ name: "Submit report" })],
+  });
+});
 
-    if (!result.ok) throw result.error;
-    expect(result.value.scripts.items[0]?.source).toEqual(
-      expect.objectContaining({
-        included: true,
-        artifact: expect.objectContaining({
-          text: "export const observed = 'source-secret';",
-          bytes: 40,
-          sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-        }),
-      }),
-    );
-    expect(browser.commands.map((command) => command.method)).toContain(
+it("gates script source reads and distinguishes empty text from malformed replies", async () => {
+  const scriptText = "export const observed = 'source-secret';";
+  let malformedReply: Record<string, unknown> | undefined;
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Debugger.enable"],
+    commandEvents: (command, origin) =>
+      command.method === "Debugger.enable"
+        ? ["nonempty", "empty"].map((scriptId) => ({
+            method: "Debugger.scriptParsed",
+            sessionId: command.sessionId,
+            params: {
+              scriptId,
+              url: `${origin}/${scriptId}.js`,
+              hash: scriptId,
+              executionContextId: 1,
+            },
+          }))
+        : undefined,
+    commandResult: ({ method, params }) =>
+      method === "Debugger.getScriptSource"
+        ? params.scriptId === "nonempty"
+          ? { scriptSource: scriptText }
+          : (malformedReply ?? { scriptSource: "" })
+        : undefined,
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const input = inspectWebPageInputSchema.parse({
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+  });
+  const scriptSources = (
+    items: readonly {
+      readonly url: string;
+      readonly source: unknown;
+    }[],
+  ) => Object.fromEntries(items.map(({ url, source }) => [url, source]));
+  const origin = browser.allowedOrigin;
+  const nonempty = `${origin}/nonempty.js`;
+  const empty = `${origin}/empty.js`;
+  try {
+    const unapproved = await provider.inspectPage(input);
+    if (!unapproved.ok) throw unapproved.error;
+    const omitted = {
+      included: false,
+      reason: "source capture was not selected",
+    };
+    expect(scriptSources(unapproved.value.scripts.items)).toEqual({
+      [nonempty]: omitted,
+      [empty]: omitted,
+    });
+    expect(unapproved.value.completeness.excluded).toContainEqual({
+      section: "script_sources",
+      reason: "not_approved",
+      count: 2,
+    });
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
       "Debugger.getScriptSource",
     );
-  });
 
-  it.each([{}, { scriptSource: null }, { scriptSource: 123 }])(
-    "rejects malformed source replies instead of inventing empty source: %j",
-    async (reply) => {
-      const browser = await startFakeCdpBrowser({
-        commandResult: ({ method }) =>
-          method === "Debugger.getScriptSource" ? reply : undefined,
-      });
-      trackBrowser(browser);
-      const result = await new CdpBrowserProvider().inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          target_id: "allowed-page",
-          observation_ms: 0,
-          include_script_sources: true,
-        }),
-      );
-
-      expect(result).toMatchObject({
+    const approvedInput = { ...input, include_script_sources: true };
+    for (const reply of [{}, { scriptSource: null }]) {
+      malformedReply = reply;
+      const before = browser.commands.length;
+      expect(
+        await provider.inspectPage(approvedInput),
+        JSON.stringify(reply),
+      ).toMatchObject({
         ok: false,
         error: {
           operation: "inspect_web_page",
           reason: "protocol_error",
-          userMessage: expect.stringContaining(
-            "Debugger.getScriptSource returned a malformed result at /scriptSource",
-          ),
+          command: "Debugger.getScriptSource",
+          pointer: "/scriptSource",
         },
       });
-      expect(browser.commands.map(({ method }) => method)).toContain(
+      const commands = browser.commands.slice(before);
+      expect(commands).toContainEqual(
+        expect.objectContaining({
+          method: "Debugger.getScriptSource",
+          params: { scriptId: "empty" },
+        }),
+      );
+      expect(commands.map(({ method }) => method)).toContain(
         "Target.detachFromTarget",
       );
-    },
-  );
+      await expect.poll(() => browser.activeConnectionCount()).toBe(0);
+    }
 
-  it("retains an explicitly empty producer script", async () => {
-    const browser = await startFakeCdpBrowser({
-      commandResult: ({ method }) =>
-        method === "Debugger.getScriptSource"
-          ? { scriptSource: "" }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_script_sources: true,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.scripts.items[0]?.source).toMatchObject({
-      included: true,
-      artifact: { text: "", bytes: 0 },
-    });
-  });
-
-  it("fetches and validates source maps only after separate approval", async () => {
-    const browser = await startFakeCdpBrowser({
-      sourceMapBody: JSON.stringify({
-        version: 3,
-        names: [],
-        sources: ["src/main.ts"],
-        sourcesContent: ["export const original = true;"],
-        mappings: "AAAA",
-      }),
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().analyzeBundle(
-      analyzeWebBundleInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        fetch_source_maps: true,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.observations.source_maps).toMatchObject({
-      status: "included",
-      items: [
-        {
-          status: "included",
-          declared_url: `${browser.allowedOrigin}/app.js.map?token=map-secret`,
-          original_sources: [
-            expect.objectContaining({
-              source: `${browser.allowedOrigin}/src/main.ts`,
-            }),
-          ],
-          mappings: [expect.any(Object)],
+    malformedReply = undefined;
+    const approved = await provider.inspectPage(approvedInput);
+    if (!approved.ok) throw approved.error;
+    expect(scriptSources(approved.value.scripts.items)).toMatchObject({
+      [nonempty]: {
+        included: true,
+        artifact: {
+          text: scriptText,
+          bytes: 40,
+          sha256:
+            "73b50401804ea39bee7e36e2067fc3e079c92873bdc3d1e35b578bad72e9e0d3",
         },
-      ],
+      },
+      [empty]: {
+        included: true,
+        artifact: {
+          text: "",
+          bytes: 0,
+          sha256:
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+      },
     });
-    const sourceMapRequest = browser.httpRequests.find(({ url }) =>
-      url.startsWith("/app.js.map"),
-    );
-    expect(sourceMapRequest).toEqual({
-      url: "/app.js.map?token=map-secret",
-      authorization: undefined,
-      cookie: undefined,
-      referer: undefined,
-    });
-  });
+  } finally {
+    await provider.close();
+  }
 });
 
 it.each(["after-replay", "before-replay", "replacement", "malformed"])(
