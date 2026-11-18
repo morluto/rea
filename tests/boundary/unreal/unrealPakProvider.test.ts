@@ -226,7 +226,8 @@ it("reports the path budget, not a file size, when path text exceeds it", async 
       expect(result.error).toMatchObject({
         resource: "transport",
         reportedLimits: {
-          maximum_path_utf16_units: 2048,
+          boundary: "maximum_path_utf16_units",
+          maximum: 2048,
         },
       });
     // An early refusal leaves no Evidence, and complete CLI JSON uses the same
