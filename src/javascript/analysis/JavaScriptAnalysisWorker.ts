@@ -30,7 +30,8 @@ import type {
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { randomUUID } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
@@ -109,6 +110,40 @@ import { sha256Hex } from "../../kernel/sha256Hex.js";
 const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
 const MIB = 1024 * 1024;
+
+/**
+ * Environment for the JavaScript worker child.
+ *
+ * An ambient `NODE_OPTIONS` is always stripped so it cannot reprogram a process
+ * that parses untrusted target files. The portable verifier still needs its
+ * offline guard inside this child, so it passes an explicit preload through
+ * `REA_JAVASCRIPT_WORKER_VERIFICATION_PRELOAD`; only an existing absolute
+ * `.cjs`/`.mjs` file is honored.
+ */
+export function javascriptWorkerEnvironment(
+  ambient: NodeJS.ProcessEnv,
+  verificationPreload: string | undefined,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...ambient,
+    UV_THREADPOOL_SIZE: "1",
+  };
+  delete environment.NODE_OPTIONS;
+  if (isVerificationPreload(verificationPreload)) {
+    environment.NODE_OPTIONS = `--require ${JSON.stringify(verificationPreload)}`;
+  }
+  return environment;
+}
+
+function isVerificationPreload(value: string | undefined): value is string {
+  return (
+    value !== undefined &&
+    value !== "" &&
+    isAbsolute(value) &&
+    (value.endsWith(".cjs") || value.endsWith(".mjs")) &&
+    existsSync(value)
+  );
+}
 const STATIC_CHECKPOINT_RETENTION_EXPANSION = 6;
 /**
  * Share of the parent's free heap that static checkpoints may fill once the
@@ -751,11 +786,10 @@ export class JavaScriptAnalysisWorker {
     if (this.#runtime.supervisor !== undefined && this.#ready) return;
     this.#phase = "startup";
     this.#heapLimitBytes = 0;
-    const environment: NodeJS.ProcessEnv = {
-      ...process.env,
-      UV_THREADPOOL_SIZE: "1",
-    };
-    delete environment.NODE_OPTIONS;
+    const environment = javascriptWorkerEnvironment(
+      process.env,
+      process.env.REA_JAVASCRIPT_WORKER_VERIFICATION_PRELOAD,
+    );
     await this.#runtime.start(
       {
         command: process.execPath,
