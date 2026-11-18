@@ -50,7 +50,7 @@ the verified Ghidra 12.2 and JDK 25 build.
 | `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                           | Host Swift compiler, Ghidra 12.2, and full JDK 25                         |
 | `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 double-float and RV32 ilp32 ELF through CLI and MCP           | RISC-V Clang, LLD, LLVM readelf and objdump, Ghidra 12.2, and full JDK 25 |
 | `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang `-O2` and stripped switch fixtures; does not cover the Clang `-O0` non-zero-base defect | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.2, and full JDK 25            |
-| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O                  | Clang with AArch64 target support, Ghidra 12.2, and full JDK 25           |
+| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; `and #0xff` byte-offset table expected unrecovered on 12.2; host ARM64 Mach-O | Clang with AArch64 target support, Ghidra 12.2, and full JDK 25           |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                               | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites       |
 | `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                   | Ghidra 12.2, full JDK 25, and the matching native artifact                |
 | `npm run verify:ghidra:dol`                | Any supported Ghidra host; source-owned PowerPC GameCube DOL fixture built from a linker script (never executed) | Clang with PowerPC target, LLD, GNU readelf, Ghidra 12.2, and full JDK 25 |
@@ -59,7 +59,10 @@ The optional Swift lane compiles a source-owned fixture and checks modern and
 provider-demangled procedure names through real stdio MCP, with and without the
 dSYM companion. It checks unfiltered, structs, and literal-name filters,
 same-address alias evidence, deduplication, and explicit unresolved categories.
-It does not add a Swift prerequisite to the host C fixture lane.
+It does not add a Swift prerequisite to the host C fixture lane. It does not
+compile the AArch64 `and #0xff` byte-offset switch from Ghidra #10154.
+`npm run verify:ghidra:aarch64-jump-table` assembles that shape and expects
+Ghidra 12.2 to leave the jump table unrecovered.
 
 The host lane also verifies namespaced C++ ABI symbols and annotation identity.
 That facet requires Ghidra's matching `demangler_gnu_v2_41` native component in

@@ -82,22 +82,61 @@ export const GHIDRA_CLANG_O0_SWITCH_DEFECT = {
     "https://github.com/NationalSecurityAgency/ghidra/issues/9996",
 } as const;
 
-export type GhidraKnownProviderDefect = typeof GHIDRA_CLANG_O0_SWITCH_DEFECT;
+/**
+ * Exact Ghidra 12.2 PUBLIC build. Open upstream issue #10154 has no fix
+ * commit and no milestone. REA reproduced the unrecovered jump table on
+ * this build with an AArch64 ELF object of the reported instruction shape.
+ */
+export const GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT = {
+  kind: "known-provider-defect",
+  id: "ghidra-10154",
+  provider_id: "ghidra",
+  release: "12.2",
+  status: "open",
+  scope: {
+    architecture: "aarch64",
+    optimization: "-O",
+    construct: "switch",
+    bound: "and-0xff",
+    table: "byte-offset",
+    source: "swift-enum",
+  },
+  effect: "jump-table-unrecovered-function-truncated",
+  upstream_issue:
+    "https://github.com/NationalSecurityAgency/ghidra/issues/10154",
+} as const;
 
-/** Only the exact 12.2 application version carries the closed #9996 defect. */
-export const ghidraKnownProviderDefect = (
-  providerVersion: string,
-): GhidraKnownProviderDefect | undefined =>
-  providerVersion === "12.2" ? GHIDRA_CLANG_O0_SWITCH_DEFECT : undefined;
+export type GhidraKnownProviderDefect =
+  | typeof GHIDRA_CLANG_O0_SWITCH_DEFECT
+  | typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT;
 
-/** Session and decompile limitation for the exact Ghidra 12.2 switch defect. */
-export const ghidraKnownProviderDefectLimitation = (
+/** Defects recorded for one observed application version. */
+export const ghidraKnownProviderDefects = (
   providerVersion: string,
-): string | undefined => {
-  const defect = ghidraKnownProviderDefect(providerVersion);
-  if (defect === undefined) return undefined;
-  return `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for ${defect.scope.compiler} ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded only for the exact ${defect.release} build and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
-};
+): readonly GhidraKnownProviderDefect[] =>
+  providerVersion === "12.2"
+    ? [GHIDRA_CLANG_O0_SWITCH_DEFECT, GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT]
+    : [];
+
+const formatClosedSwitchDefect = (
+  defect: typeof GHIDRA_CLANG_O0_SWITCH_DEFECT,
+): string =>
+  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for ${defect.scope.compiler} ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded only for the exact ${defect.release} build and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
+
+const formatOpenSwitchDefect = (
+  defect: typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+): string =>
+  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} leaves an ${defect.scope.architecture} ${defect.scope.construct} unrecovered when it is a ${defect.scope.table} bounded by ${defect.scope.bound}. The function body stops at the indirect branch. Upstream issue ${defect.upstream_issue} is ${defect.status} and names a Swift ${defect.scope.optimization} ${defect.scope.source} switch; it has no fix commit and no milestone. REA reproduced the unrecovered jump table on the exact ${defect.release} build with an AArch64 ELF object of that instruction shape. A compare-bounded byte table still recovers. This record is attached only to the exact ${defect.release} build, and no later release is known to clear it.`;
+
+/** Session and decompile limitations for the observed Ghidra build. */
+export const ghidraKnownProviderDefectLimitations = (
+  providerVersion: string,
+): readonly string[] =>
+  ghidraKnownProviderDefects(providerVersion).map((defect) =>
+    defect.id === "ghidra-9996"
+      ? formatClosedSwitchDefect(defect)
+      : formatOpenSwitchDefect(defect),
+  );
 
 /**
  * Limitation recorded when a session runs a compatible build other than the

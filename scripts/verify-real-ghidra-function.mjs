@@ -650,6 +650,45 @@ export async function verifyNativeTypeLayout(client, typeNames) {
   return { layout, payload, state, bits, base };
 }
 
+/**
+ * Oracle for masked-byte-switch.S. Ghidra 12.2 issue #10154 leaves this
+ * `and #0xff` byte-offset branch unrecovered. A recovered switch fails the
+ * lane so the exact-build limitation can be removed with the fix.
+ */
+export async function verifyMaskedByteSwitch(client) {
+  const names = await inventoryCall(client, "list_names", {
+    document: null,
+    address: null,
+  });
+  const procedure = requireProcedure(names, "rea_masked_byte_switch");
+  const dossier = await functionCall(client, "analyze_function", {
+    procedure: procedure.address,
+  });
+  const pseudocode = await functionCall(client, "procedure_pseudo_code", {
+    document: null,
+    procedure: procedure.address,
+  });
+  const tables = dossier.native_api?.jump_tables ?? [];
+  if (tables.length !== 0)
+    throw new Error(
+      `Masked byte switch recovered a jump table: ${JSON.stringify(tables)}`,
+    );
+  if (
+    typeof pseudocode !== "string" ||
+    !pseudocode.includes("Could not recover jumptable") ||
+    !pseudocode.includes("Too many branches") ||
+    pseudocode.includes("case 0:")
+  )
+    throw new Error(
+      `Masked byte switch did not keep the unrecovered jump table: ${pseudocode}`,
+    );
+  return {
+    address: procedure.address,
+    jump_tables: tables.length,
+    unrecovered: true,
+  };
+}
+
 export async function verifyRelativeSwitch(client, procedures, entrySize) {
   // Relocatable loaders may choose an assembler-generated alias as the function name.
   const names = await inventoryCall(client, "list_names", {

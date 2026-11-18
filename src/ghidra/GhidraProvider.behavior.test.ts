@@ -1,7 +1,7 @@
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 import { ghidraFailureOutput } from "./GhidraDiagnostics.js";
 import {
-  ghidraKnownProviderDefectLimitation,
+  ghidraKnownProviderDefectLimitations,
   unverifiedGhidraBuildLimitation,
 } from "./GhidraReleasePolicy.js";
 import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
@@ -1564,7 +1564,9 @@ describe("Ghidra client projection", () => {
       expect.stringContaining("The bridge is verified against"),
     );
     expect(result.value.limitations).toEqual(
-      expect.arrayContaining([ghidraKnownProviderDefectLimitation("12.2")]),
+      expect.arrayContaining([
+        ...ghidraKnownProviderDefectLimitations("12.2"),
+      ]),
     );
     expect(startCount).toBe(1);
   });

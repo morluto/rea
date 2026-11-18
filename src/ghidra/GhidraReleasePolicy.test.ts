@@ -7,9 +7,10 @@ import {
   ghidraReleaseAccepted,
   ghidraReleaseCompatibility,
   ghidraReleaseLine,
+  GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
   GHIDRA_CLANG_O0_SWITCH_DEFECT,
-  ghidraKnownProviderDefect,
-  ghidraKnownProviderDefectLimitation,
+  ghidraKnownProviderDefects,
+  ghidraKnownProviderDefectLimitations,
   ghidraVersionDetail,
   unverifiedGhidraBuildLimitation,
 } from "./GhidraReleasePolicy.js";
@@ -25,31 +26,15 @@ describe("Ghidra release admission", () => {
     });
     expect(ghidraReleaseAccepted("12.2")).toBe(true);
     expect(unverifiedGhidraBuildLimitation("12.2")).toBeUndefined();
-    expect(ghidraKnownProviderDefect("12.2")).toEqual({
-      kind: "known-provider-defect",
-      id: "ghidra-9996",
-      provider_id: "ghidra",
-      release: "12.2",
-      fixed_in: "12.2.1",
-      scope: {
-        compiler: "clang",
-        architecture: "x86-64",
-        optimization: "-O0",
-        construct: "switch",
-        case_base: "above-zero",
-      },
-      effect: "jump-table-flow-references-omitted",
-      fix_commit: "c93917a622211349998f641de54cfdbe0e0e5bee",
-      upstream_issue:
-        "https://github.com/NationalSecurityAgency/ghidra/issues/9996",
-    });
-    expect(ghidraKnownProviderDefect("12.2")).toBe(
+    expect(ghidraKnownProviderDefects("12.2")).toEqual([
       GHIDRA_CLANG_O0_SWITCH_DEFECT,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+    ]);
+    const limitations = ghidraKnownProviderDefectLimitations("12.2");
+    expect(limitations).toEqual(
+      ghidraKnownProviderDefectLimitations(SUPPORTED_GHIDRA_VERSION),
     );
-    const limitation = ghidraKnownProviderDefectLimitation("12.2");
-    expect(limitation).toEqual(
-      ghidraKnownProviderDefectLimitation(SUPPORTED_GHIDRA_VERSION),
-    );
+    const [closedSwitch, openSwitch] = limitations;
     for (const fact of [
       GHIDRA_CLANG_O0_SWITCH_DEFECT.id,
       GHIDRA_CLANG_O0_SWITCH_DEFECT.release,
@@ -62,7 +47,22 @@ describe("Ghidra release admission", () => {
       GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.construct,
       GHIDRA_CLANG_O0_SWITCH_DEFECT.effect,
     ])
-      expect(limitation).toEqual(expect.stringContaining(fact));
+      expect(closedSwitch).toEqual(expect.stringContaining(fact));
+    for (const fact of [
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.id,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.release,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.status,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.upstream_issue,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.architecture,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.optimization,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.construct,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.bound,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.table,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.source,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.effect,
+    ])
+      expect(openSwitch).toEqual(expect.stringContaining(fact));
+    expect(openSwitch).not.toContain(GHIDRA_CLANG_O0_SWITCH_DEFECT.fix_commit);
     expect(ghidraVersionDetail("12.2")).toBe("12.2");
   });
 
@@ -76,8 +76,8 @@ describe("Ghidra release admission", () => {
       );
     }
     for (const raw of ["12.2.0", "12.2.1", "12.2-DEV", "12.3"]) {
-      expect(ghidraKnownProviderDefect(raw)).toBeUndefined();
-      expect(ghidraKnownProviderDefectLimitation(raw)).toBeUndefined();
+      expect(ghidraKnownProviderDefects(raw)).toEqual([]);
+      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([]);
     }
     expect(ghidraReleaseLine()).toBe("12.x (>=12.2)");
   });
