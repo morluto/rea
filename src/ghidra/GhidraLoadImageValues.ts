@@ -12,7 +12,6 @@ import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   GHIDRA_COM_EXECUTABLE_FORMAT,
-  selectGhidraComImport,
   type GhidraComImportSelection,
 } from "./GhidraComImport.js";
 
@@ -337,7 +336,7 @@ const appliedComLayout = (
       linearAddress: "0x10100",
       limitations: [
         COM_HEADERLESS_LIMITATION,
-        "Ghidra ComLoader rejected this image. REA imported it with BinaryLoader at 1000:0100 (linear 0x10100). loader_fallback.reason is the typed rejection.",
+        "The measured BinaryLoader layout places the file at 1000:0100 (linear 0x10100).",
         "Verification covers complete original/modified source identity, mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x1000 is imposed for analysis; it is not an observed running process.",
         "The PSP, initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.",
         COM_MAPPING_END_LIMITATION,
@@ -351,15 +350,12 @@ export const attestGhidraDosComLoadImage = (
   bytes: Buffer,
   targetSha256: string,
   observations: NativeLoadImageObservation,
+  selection: GhidraComImportSelection,
 ): Result<NativeLoadImage, string> => {
   if (sha256Hex(bytes) !== targetSha256)
     return err("Ghidra COM snapshot digest does not match the admitted target");
   const length = validateDosComLength(bytes.length);
   if (!length.ok) return length;
-  const selection = selectGhidraComImport(
-    observations.source_files[0]?.name ?? "",
-    bytes,
-  );
   const { checks, check } = createLoadImageChecks();
   const source = observations.source_files[0];
   const observedLoader = observedComLoader(observations.executable_format);

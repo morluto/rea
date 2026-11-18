@@ -222,12 +222,13 @@ export const fixtureDosOverlapLoadImage = () => {
 };
 
 /** Source-owned COM image ComLoader rejects, imported by the raw fallback. */
-export const fixtureDosComLoadImage = (): {
+export const fixtureDosComLoadImage = (
+  bytes: Buffer = Buffer.from("b83412c3", "hex"),
+): {
   bytes: Buffer;
   sha256: string;
   observation: NativeLoadImageObservation;
 } => {
-  const bytes = Buffer.from("b83412c3", "hex");
   const digest = hash(bytes);
   return {
     bytes,
@@ -250,7 +251,7 @@ export const fixtureDosComLoadImage = (): {
         {
           block: "ram",
           start: "0x10100",
-          end: "0x10103",
+          end: `0x${(0x10100 + bytes.length - 1).toString(16)}`,
           address_space: "ram",
           initialized: true,
           loaded: true,

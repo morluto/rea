@@ -24,7 +24,7 @@ import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCle
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
-import { ghidraProfileComLoader } from "./GhidraComImport.js";
+import { ghidraProfileComImport } from "./GhidraComImport.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
@@ -359,6 +359,13 @@ export const createGhidraProviderClient = (input: {
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return prerequisites;
   const committedProfile = prerequisites.value.profile;
+  const comImport =
+    target.format === "dos-com"
+      ? ghidraProfileComImport(committedProfile.parameters)
+      : undefined;
+  if (comImport?.ok === false)
+    return err(ghidraProfileConflict("open_binary", comImport.error));
+  const comSelection = comImport?.value;
   const checkpoint = ghidraCheckpointSelectionSchema
     .optional()
     .safeParse(committedProfile.parameters.owned_checkpoint);
@@ -670,13 +677,9 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { riscvCallingConvention }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
-      ...(target.format === "dos-com"
-        ? {
-            dosCom: {
-              loader: ghidraProfileComLoader(committedProfile.parameters),
-            },
-          }
-        : {}),
+      ...(comSelection === undefined
+        ? {}
+        : { dosCom: { loader: comSelection.loader } }),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
         ? {}
         : {
@@ -987,6 +990,7 @@ export const createGhidraProviderClient = (input: {
       measured: observed,
       client,
       languageOverride: importLanguage,
+      comSelection,
       mapSessionError: (failure) =>
         projectSessionError(
           operation,

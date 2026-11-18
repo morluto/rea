@@ -65,6 +65,8 @@ import {
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import {
   fixtureDosLoadImage,
+  fixtureDosComLoadImage,
+  fixtureDosComLoaderLoadImage,
   compareDosClientFixture,
 } from "./GhidraLoadImage.fixture.js";
 import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js";
@@ -2729,6 +2731,66 @@ describe("Ghidra measured raw load-image projection", () => {
       }
     },
   );
+});
+
+it("compares measured COM import evidence against the loader committed at admission", async () => {
+  const { bytes, sha256 } = fixtureDosComLoaderLoadImage();
+  const { observation } = fixtureDosComLoadImage(bytes);
+  observation.source_files[0]!.name = "fixture.bin";
+  const root = await mkdtemp(join(tmpdir(), "rea-ghidra-com-selection-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "fixture.com");
+  await writeFile(path, bytes);
+  const ghidra = provider(installationHost(), () => ({
+    start: async () => ok(sessionInfo()),
+    callTool: async () => ok(jsonValueSchema.parse(observation)),
+    readTargetSnapshot: async () => ok({ kind: "captured", bytes }),
+    close: async () => ok(null),
+  }));
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target: BinaryTarget = {
+    path,
+    sha256,
+    kind: "executable",
+    format: "dos-com",
+    architecture: "x86",
+    availableArchitectures: ["x86"],
+  };
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok) throw profile.error;
+  if (profile.value.profile === null)
+    throw new Error("Expected a DOS COM profile");
+  expect(profile.value.profile.parameters.loader).toBe("ComLoader");
+  const client = ghidra.createClient(target, profile.value.profile);
+  try {
+    const result = await client.execute("inspect_native_load_image", {});
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      status: "mismatch",
+      loader: "BinaryLoader",
+      load_address: "1000:0100",
+      observations: observation,
+      checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "loader",
+          expected: "ComLoader",
+          observed: "BinaryLoader",
+          matched: false,
+        }),
+        expect.objectContaining({
+          name: "load_address",
+          expected: "0000:0100",
+          observed: "1000:0100",
+          matched: false,
+        }),
+      ]),
+    });
+    expect(result.value.result).not.toHaveProperty("loader_fallback");
+  } finally {
+    await client.close();
+  }
 });
 
 describe("Ghidra measured DOS load-image projection", () => {

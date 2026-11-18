@@ -11,9 +11,8 @@ import {
 import { ghidraSnapshotFileName } from "./GhidraTargetSnapshot.js";
 
 /**
- * Ghidra 12.2 ComLoader acceptance, owned here so import selection and the
- * load-image check use one rule. The prepare script still requires the
- * program Ghidra actually created.
+ * Ghidra 12.2 ComLoader acceptance, used to commit the import selection. The
+ * prepare script still requires the program Ghidra actually created.
  *
  * ComLoader (`ghidra.app.util.opinion.ComLoader` in 12.2) returns no load spec
  * unless the provider name ends in `.com`, the bytes are not an MZ image, and
@@ -212,12 +211,27 @@ export const resolveGhidraComImport = async (
   );
 };
 
-/** The loader a committed DOS COM profile selected. */
-export const ghidraProfileComLoader = (
+/** Read the selected import once for launch and independent attestation. */
+export const ghidraProfileComImport = (
   parameters: Readonly<Record<string, unknown>>,
-): GhidraComImportSelection["loader"] => {
+): Result<GhidraComImportSelection, string> => {
   const loader = parameters.loader;
-  if (loader === GHIDRA_COM_LOADER || loader === GHIDRA_COM_BINARY_LOADER)
-    return loader;
-  throw new Error("DOS COM analysis profile has no selected loader");
+  if (loader === GHIDRA_COM_LOADER && parameters.loader_fallback === undefined)
+    return ok(comLoaderSelection());
+  if (loader === GHIDRA_COM_BINARY_LOADER) {
+    const fallback = parameters.loader_fallback;
+    if (
+      typeof fallback === "object" &&
+      fallback !== null &&
+      "loader" in fallback &&
+      fallback.loader === GHIDRA_COM_LOADER &&
+      "reason" in fallback
+    ) {
+      const reason = GHIDRA_COM_LOADER_REJECTIONS.find(
+        (candidate) => candidate === fallback.reason,
+      );
+      if (reason !== undefined) return ok(binaryFallback(reason));
+    }
+  }
+  return err("The DOS COM analysis profile has no valid loader selection.");
 };

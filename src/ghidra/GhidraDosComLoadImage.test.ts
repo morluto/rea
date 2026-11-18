@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { selectGhidraComImport } from "./GhidraComImport.js";
 import { attestGhidraDosComLoadImage } from "./GhidraLoadImageValues.js";
 import {
   compareDosFixture,
@@ -11,6 +12,18 @@ import {
   nativeLoadImageSchema,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
+
+const attestComFixture = ({
+  bytes,
+  sha256,
+  observation,
+}: ReturnType<typeof fixtureDosComLoadImage>) =>
+  attestGhidraDosComLoadImage(
+    bytes,
+    sha256,
+    observation,
+    selectGhidraComImport("fixture.com", bytes),
+  );
 
 const mutations: ReadonlyArray<
   readonly [string, (o: NativeLoadImageObservation) => void]
@@ -96,11 +109,7 @@ const mutations: ReadonlyArray<
 describe("COM independent load-image checks", () => {
   it("verifies all bytes and the imposed entry context without a PSP claim", () => {
     const f = fixtureDosComLoadImage();
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -122,11 +131,7 @@ describe("COM independent load-image checks", () => {
   });
   it("verifies a ComLoader image at 0000:0100 including the zero PSP placeholder", () => {
     const f = fixtureDosComLoaderLoadImage();
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -150,11 +155,7 @@ describe("COM independent load-image checks", () => {
     const f = fixtureDosComLoadImage();
     f.observation.executable_format = "Old-style DOS Executable (COM)";
     if (f.observation.mappings[0]) f.observation.mappings[0].start = "0x100";
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -169,11 +170,7 @@ describe("COM independent load-image checks", () => {
   it("omits load segment and entry when the measured import is not a known COM layout", () => {
     const f = fixtureDosComLoadImage();
     if (f.observation.mappings[0]) f.observation.mappings[0].start = "0x200";
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     if (!result.ok || !("checks" in result.value))
       throw new Error("Expected a retained mismatch");
     expect(result.value.status).toBe("mismatch");
@@ -192,11 +189,7 @@ describe("COM independent load-image checks", () => {
   it.each(mutations)("retains mismatch evidence for %s", (_name, damage) => {
     const f = fixtureDosComLoadImage();
     damage(f.observation);
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     expect(result).toMatchObject({
       ok: true,
       value: { status: "mismatch", observations: f.observation },
@@ -239,9 +232,7 @@ describe("COM independent load-image checks", () => {
 
   it("rejects stale snapshot identity", () => {
     const f = fixtureDosComLoadImage();
-    expect(
-      attestGhidraDosComLoadImage(f.bytes, "f".repeat(64), f.observation).ok,
-    ).toBe(false);
+    expect(attestComFixture({ ...f, sha256: "f".repeat(64) }).ok).toBe(false);
   });
 });
 
@@ -249,11 +240,7 @@ describe("COM load-image field contracts", () => {
   it("keeps a measured load address when the executable format is unknown", () => {
     const f = fixtureDosComLoadImage();
     f.observation.executable_format = "not-a-loader";
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     if (!result.ok || !("checks" in result.value))
       throw new Error("Expected a retained mismatch");
     expect(result.value).toMatchObject({
@@ -281,11 +268,7 @@ describe("COM load-image field contracts", () => {
     expect(nativeLoadImageSchema.safeParse(withoutEntry).success).toBe(false);
   });
   it("rejects a verified COM result that omits its loader or mixes layouts", () => {
-    const recognized = attestGhidraDosComLoadImage(
-      fixtureDosComLoaderLoadImage().bytes,
-      fixtureDosComLoaderLoadImage().sha256,
-      fixtureDosComLoaderLoadImage().observation,
-    );
+    const recognized = attestComFixture(fixtureDosComLoaderLoadImage());
     if (
       !recognized.ok ||
       recognized.value.status !== "verified" ||
@@ -304,11 +287,7 @@ describe("COM load-image field contracts", () => {
         load_address: "1000:0100",
       }).success,
     ).toBe(false);
-    const fallback = attestGhidraDosComLoadImage(
-      fixtureDosComLoadImage().bytes,
-      fixtureDosComLoadImage().sha256,
-      fixtureDosComLoadImage().observation,
-    );
+    const fallback = attestComFixture(fixtureDosComLoadImage());
     if (
       !fallback.ok ||
       fallback.value.status !== "verified" ||
