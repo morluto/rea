@@ -117,16 +117,10 @@ export interface FakeOptions {
   readonly cachedResponseBody?: string;
   readonly invalidResponseBodyBase64?: boolean;
   readonly webMcpTools?: boolean;
-  readonly webMcpConsequential?: JsonValue;
   /** Replaces the primary tool's registration stack; returning `undefined` omits it. */
   readonly webMcpStackTrace?: (origin: string) => JsonValue | undefined;
-  readonly webMcpSameUrlRegistrations?: "retain" | "remove-second";
   readonly webMcpFrameCount?: number;
-  readonly webMcpSchemaPropertyCount?: number;
   readonly webMcpChildLeavesScope?: boolean;
-  readonly webMcpChildTransientBlank?: boolean;
-  readonly webMcpChildRecoversAfterTransient?: boolean;
-  readonly webMcpChildNavigatesAllowed?: boolean;
   readonly electronFileUrl?: string;
   /** Omit attached from the Electron page's HTTP discovery target. */
   readonly omitElectronTargetAttachmentState?: boolean;
