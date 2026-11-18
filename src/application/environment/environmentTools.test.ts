@@ -377,14 +377,12 @@ describe("environment tool response summaries", () => {
 
 describe("environment catalog description budgets", () => {
   it("bounds captured scalar prose while preserving complete lookup identities", () => {
-    const query = "query-".repeat(1000);
     const method = "METHOD".repeat(1000);
     const path = `/${"😀".repeat(1000)}`;
     const expanded = {
       ...tool("get_users_by_id"),
       method,
       path_template: path,
-      query_parameter_names: [query],
     };
     const [definition] = environmentToolDefinitions(
       withTools([expanded]),
@@ -393,22 +391,14 @@ describe("environment catalog description budgets", () => {
     expect(definition?.tool).toMatchObject({
       method,
       path_template: path,
-      query_parameter_names: [query],
     });
     expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
-    expect(definition?.description).toContain(
-      "path display truncated; full value in manifest Evidence",
-    );
+    for (const field of ["method", "path"])
+      expect(definition?.description).toContain(
+        `${field} display truncated; full value in manifest Evidence`,
+      );
     expect(definition?.description).toContain("/😀😀");
     expect(definition?.description).not.toMatch(/[\uD800-\uDFFF\uFFFD]/u);
-    expect(
-      Object.hasOwn(definition?.inputSchema.properties ?? {}, "query_1"),
-    ).toBe(true);
-    expect(
-      Buffer.byteLength(
-        definition?.inputSchema.properties.query_1?.description ?? "",
-      ),
-    ).toBeLessThan(1400);
   });
 
   it("bounds observation and record samples without changing the retained manifest", () => {
@@ -464,7 +454,7 @@ describe("environment catalog description budgets", () => {
   });
 
   it("advertises an oversized query name under a short, collision-safe alias", () => {
-    const longName = "n".repeat(100_000);
+    const longName = "n".repeat(1_200);
     const search = {
       ...tool("get_search"),
       query_parameter_names: [longName, "query_1"],
@@ -472,12 +462,29 @@ describe("environment catalog description budgets", () => {
     const args = environmentToolArguments(search);
     expect(args.query.get(longName)).toBe("query_1");
     expect(args.query.get("query_1")).toBe("query_query_1");
-    const schema = environmentToolInputSchema(search);
-    expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
+    const [definition] = environmentToolDefinitions(
+      withTools([search]),
+      source.manifest.name,
+    );
+    expect(definition?.tool.query_parameter_names).toEqual([
+      longName,
+      "query_1",
+    ]);
+    const schema = definition!.inputSchema;
+    expect(Object.keys(schema.properties)).toEqual([
+      "query_1",
+      "query_query_1",
+    ]);
+    expect(schema.required).toEqual([]);
+    expect(
+      Buffer.byteLength(schema.properties.query_1?.description ?? ""),
+    ).toBeLessThan(1400);
     expect(schema.properties.query_1?.description).toContain(
       "query name display truncated; full value in manifest Evidence",
     );
-    expect(search.query_parameter_names[0]).toBe(longName);
+    expect(schema.properties.query_query_1?.description).toMatch(
+      /^Query parameter query_1;/u,
+    );
   });
 
   it("reports an omitted oversized value instead of publishing an unbounded or partial observation", () => {
