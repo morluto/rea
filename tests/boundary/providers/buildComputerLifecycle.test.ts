@@ -4,9 +4,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it, onTestFinished } from "vitest";
 
-import { fakeBuildComputers as setUp } from "../../fixtures/fakeAgentEnvComputer.js";
+import {
+  awaitFakeDeployWait,
+  fakeBuildComputers as setUp,
+} from "../../fixtures/fakeAgentEnvComputer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { waitFor } from "../../support/testWait.js";
 
 it("joins a start still in progress when the owner closes, and refuses later starts", async () => {
   const { computers, runner, start } = await setUp(
@@ -18,12 +20,16 @@ it("joins a start still in progress when the owner closes, and refuses later sta
     order.push("start settled");
     return result;
   });
-  const helper = await waitFor(async () => {
-    const notes = await runner.notes("deploying.jsonl");
-    expect(notes).toHaveLength(1);
-    return notes;
-  }).finally(() => computers.closeAll());
-  order.push("closeAll returned");
+  const helper = await awaitFakeDeployWait(runner, pending).finally(
+    async () => {
+      try {
+        await computers.closeAll();
+        order.push("closeAll returned");
+      } finally {
+        await Promise.allSettled([pending]);
+      }
+    },
+  );
   expect(order).toEqual(["start settled", "closeAll returned"]);
   const started = await pending;
   expect(started.ok).toBe(false);

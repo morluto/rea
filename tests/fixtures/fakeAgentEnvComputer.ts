@@ -34,7 +34,9 @@ import { onTestFinished } from "vitest";
 
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import { awaitAcknowledgement } from "./lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 
 /** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
 export const FAKE_FRAME_PNG =
@@ -732,6 +734,31 @@ export interface FakeAgentEnvRunner {
   /** Lines one JSON-lines note file holds. */
   notes(name: string): Promise<unknown[]>;
 }
+
+/** Observe the exact helper waiting at the cancellable deployment phase. */
+export const awaitFakeDeployWait = async (
+  runner: FakeAgentEnvRunner,
+  operation: Promise<unknown>,
+): Promise<{ pid: number }[]> => {
+  let observing = true;
+  const acknowledgement = waitFor(async () => {
+    if (!observing) return [];
+    return z
+      .tuple([z.object({ pid: z.int().positive() })])
+      .parse(await runner.notes("deploying.jsonl"));
+  });
+  try {
+    await awaitAcknowledgement(
+      acknowledgement,
+      operation,
+      "fake deployment wait",
+    );
+    return await acknowledgement;
+  } finally {
+    observing = false;
+    await Promise.allSettled([acknowledgement]);
+  }
+};
 
 /**
  * JSONL notes from the fake build computer. A trailing fragment without a
