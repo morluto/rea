@@ -40,7 +40,11 @@ const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
   return plan;
 };
 
-const BY_NAME = { rule: "sorted", field: "name", direction: "ascending" };
+const BY_NAME = {
+  rule: "sorted",
+  field: "name",
+  direction: "ascending",
+} as const;
 
 describe("create members a form sent empty", () => {
   it("requires only the members some recorded create filled in, and applies the others as they were sent", () => {
@@ -228,36 +232,36 @@ describe("collections kept sorted", () => {
     });
   });
 
-  it("moves each written entity in turn, against the others' values before their own writes", () => {
+  it("places writes that produce equal names in the order they were sent", () => {
     const entity = (id: string, name: string) => ({ id, fields: { name } });
-    const [a, b, c, d] = ["a", "b", "c", "d"].map((name, index) =>
-      entity(String(index + 1), name),
-    ) as [ReturnType<typeof entity>, ...ReturnType<typeof entity>[]];
+    const a = entity("1", "a");
+    const b = entity("2", "b");
+    const c = entity("3", "c");
+    const d = entity("4", "d");
+    const movedC = entity(c.id, "h");
+    const movedB = entity(b.id, "h");
     const order = resortedMembers(
-      { rule: "sorted", field: "name", direction: "ascending" },
-      [a, b!, c!, d!],
+      BY_NAME,
+      [a, b, c, d],
       [
-        { before: b!, after: entity("2", "h") },
-        { before: c!, after: entity("3", "i") },
+        { before: c, after: movedC },
+        { before: b, after: movedB },
       ],
     );
-    expect(order.map(({ fields }) => fields["name"])).toEqual([
-      "a",
-      "d",
-      "h",
-      "i",
-    ]);
+    expect(order).toEqual([a, d, movedC, movedB]);
   });
 
   it("renders a list envelope's ids of the listed entities from the state", () => {
-    const view = environmentStateViewOf(
+    const { views, writes } = environmentStateViewOf(
       timedCaptureEvidence(LISTED_ID_ROWS),
-    ).views.find((candidate) => candidate.tool === "get_tags");
-    expect(view).toMatchObject({
+    );
+    const list = views.find(({ tool }) => tool === "get_tags");
+    const create = writes.find(({ tool }) => tool === "post_tags");
+    expect(list).toMatchObject({
       shape: "list",
       listed_ids: [{ member: "all", field: "id" }],
     });
-    expect(planOf(LISTED_ID_ROWS, "post_tags")).toMatchObject({
+    expect(create).toMatchObject({
       served: true,
       insert: BY_NAME,
     });
