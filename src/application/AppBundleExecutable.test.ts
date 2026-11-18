@@ -112,7 +112,7 @@ describe("app bundle Info.plist decode budget", () => {
     );
     await writeFile(executable, "inert fixture; never executed");
 
-    const result = await resolveAppBundleExecutable(bundle);
+    const result = await resolveAppleBundleExecutable(bundle);
     expect(result).toMatchObject({
       ok: false,
       error: {

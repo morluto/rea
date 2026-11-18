@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { decodeOpenStepPropertyList } from "../domain/propertyListOpenStep.js";
 import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 
 it("resolves the declared executable from a commented OpenStep Info.plist", async () => {
@@ -31,7 +32,7 @@ it("resolves an OpenStep Info.plist with quoted XML-looking text", async () => {
   const executable = join(programs, "Fixture");
   const infoPlist = join(bundle, "Contents", "Info.plist");
   const source = `{ CFBundleExecutable = Fixture; Note = "<!DOCTYPE plist [ <!ENTITY x 'ok'> ]>"; }`;
-  expect(parseOpenStep(source)).toEqual({
+  expect(decodeOpenStepPropertyList(source)).toEqual({
     CFBundleExecutable: "Fixture",
     Note: "<!DOCTYPE plist [ <!ENTITY x 'ok'> ]>",
   });
@@ -39,7 +40,7 @@ it("resolves an OpenStep Info.plist with quoted XML-looking text", async () => {
   await writeFile(infoPlist, source);
   await writeFile(executable, "fixture - never executed");
 
-  expect(await resolveAppBundleExecutable(bundle)).toEqual({
+  expect(await resolveAppleBundleExecutable(bundle)).toEqual({
     ok: true,
     value: { executable, infoPlist },
   });
