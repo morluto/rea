@@ -56,7 +56,7 @@ describe("resolvePcapTools", () => {
     });
     expect(() =>
       resolvePcapTools({ Path: "C:\\Empty" }, "win32", () => false),
-    ).toThrow(/tshark was not found in an absolute PATH entry/u);
+    ).toThrow(expect.objectContaining({ code: "tshark_missing" }));
   });
 
   it("reports invalid PATHEXT separately from a missing tool", () => {
@@ -76,7 +76,7 @@ describe("resolvePcapTools", () => {
 
   it("fails closed when no absolute PATH entry holds the tool", () => {
     expect(() => resolvePcapTools({ PATH: "relative-only" }, "linux")).toThrow(
-      /tshark was not found in an absolute PATH entry/u,
+      expect.objectContaining({ code: "tshark_missing" }),
     );
   });
 
