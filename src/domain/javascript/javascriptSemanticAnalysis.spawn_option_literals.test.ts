@@ -48,6 +48,28 @@ it.each([
 });
 
 it.each([
+  ['cp.spawn("x", [], { stdio: `pipe` })', "pipe"],
+  ['cp.spawn("x", [], { stdio: `inherit` })', "inherit"],
+  ['cp.spawn("x", [], { stdio: `ignore` })', "ignore"],
+  ['cp.spawn("x", [], { stdio: `overlapped` })', "overlapped"],
+  ['cp.spawn("x", [], { stdio: `` })', ""],
+  ['cp.fork("x", [], { stdio: `pipe` })', "pipe"],
+  ['cp.fork("x", [], { stdio: `inherit` })', "inherit"],
+  ['cp.fork("x", [], { stdio: `ignore` })', "ignore"],
+] as const)("retains a static template stdio mode: %s", (call, mode) => {
+  expect(spawnsFor(call).map(({ stdioMode }) => stdioMode)).toEqual([mode]);
+});
+
+it.each([
+  ['cp.spawn("x", [], { stdio: `pipe-${input}` })'],
+  ['cp.spawn("x", [], { stdio: `pipe`, ...input })'],
+] as const)("keeps unresolved template stdio dynamic: %s", (call) => {
+  expect(spawnsFor(call).map(({ stdioMode }) => stdioMode)).toEqual([
+    "dynamic",
+  ]);
+});
+
+it.each([
   // A binding is not a literal, so this file leaves the answer to the runtime.
   [`const s = "bad"; cp.spawn("x", [], { stdio: s })`],
   [`cp.spawn("x", [], { stdio: ["pipe"] })`],
