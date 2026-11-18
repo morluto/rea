@@ -18,6 +18,7 @@ import { DEFAULT_CDP_COMMAND_TIMEOUT_MS } from "../domain/browserDeadline.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS } from "./PlaywrightExecutionBoundary.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   attachedScenarioLeaseKey,
   failBrowserScenarioOperation,
@@ -1745,3 +1746,47 @@ it("keeps discovered transport credentials out of projected handshake timeouts",
   expect(projected).not.toContain("fixture-user");
   expect(projected).not.toContain("fixture-password");
 });
+
+it.each([{ platform: "win32" }, { platform: "linux" }] as const)(
+  "passes the selected environment to the $platform browser launch boundary",
+  async ({ platform }) => {
+    vi.stubEnv("LANG", "ambient-language");
+    const selected = snapshotEnvironment(
+      {
+        LANG: "selected-language",
+        PATH: "/selected/bin",
+        REA_PRIVATE_VALUE: "not-a-launch-setting",
+      },
+      platform,
+    );
+    let launchedEnvironment: Record<string, string | undefined> | undefined;
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: process.execPath },
+      start_url: { url: "https://example.test" },
+      actions: [
+        { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+    });
+    await expect(
+      openPlaywrightScenarioBrowser(scenario, selected, {
+        platform,
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (_profile, options) => {
+            launchedEnvironment = options?.env;
+            throw new Error("launch boundary reached");
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+    });
+    expect(launchedEnvironment).toMatchObject({
+      LANG: "selected-language",
+      PATH: "/selected/bin",
+    });
+    expect(launchedEnvironment).not.toHaveProperty("REA_PRIVATE_VALUE");
+  },
+);
