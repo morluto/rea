@@ -189,6 +189,8 @@
 * **cli:** count the full-output envelope for TOON/YAML token counts ([a02202a](https://github.com/morluto/rea/commit/a02202aba2aea8a7289500ca3eb45acfa8778a0b)), closes [#7271](https://github.com/morluto/rea/issues/7271) [#7278](https://github.com/morluto/rea/issues/7278)
 * **cli:** describe a contract option whose description sits inside .optional() ([#11661](https://github.com/morluto/rea/issues/11661)) ([832984c](https://github.com/morluto/rea/commit/832984c2ccc77a627b0c2f6bce2093e55ba1bc6a))
 * **cli:** exit one-shot commands by draining the event loop ([054fbc4](https://github.com/morluto/rea/commit/054fbc4c2612f99781278a4ded4a372dca458567))
+* **cli:** preserve ADB extra schema in the product catalog ([#12060](https://github.com/morluto/rea/issues/12060)) ([da7982e](https://github.com/morluto/rea/commit/da7982e1052e2c48247fab118c3d152974ecb3d0))
+* **cli:** preserve JSON version reports with timing flags ([#8871](https://github.com/morluto/rea/issues/8871)) ([a42f96d](https://github.com/morluto/rea/commit/a42f96d0bd50b42812776a54d1c02062c4f733d9))
 * **cli:** record the caller's --join-path spelling in Apple IPS Evidence ([#10606](https://github.com/morluto/rea/issues/10606)) ([11c1e45](https://github.com/morluto/rea/commit/11c1e45cce80555133a352617a94a11dd22cf409))
 * **cli:** refuse csv and tsv formats on --llms, --llms-full, and --schema ([#11778](https://github.com/morluto/rea/issues/11778)) ([ab904c7](https://github.com/morluto/rea/commit/ab904c793cf07f50bc52eb25bf724ce45de886c2))
 * **cli:** refuse silent direct command-registry execution ([#11204](https://github.com/morluto/rea/issues/11204)) ([6136c6f](https://github.com/morluto/rea/commit/6136c6f3babd5cf2ada552341003829d41a06f71))
