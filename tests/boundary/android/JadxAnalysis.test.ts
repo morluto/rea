@@ -925,6 +925,17 @@ it.each([
   ).rejects.toThrow();
 });
 
+it.each([true, false])(
+  "rejects invoke coverage %s without the direct invoke site list",
+  async (exhaustive) => {
+    // The bridge always emits the list with its coverage; one without the
+    // other must not become a reference that claims coverage over no sites.
+    await expect(
+      traceWithReference({ direct_invokes_exhaustive: exhaustive }),
+    ).rejects.toThrow("Invoke coverage requires a direct invoke site list");
+  },
+);
+
 it("preserves bounded instruction coverage separately from using-node coverage", async () => {
   const result = await traceWithReference({
     direct_invokes: [invokeSite],

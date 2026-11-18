@@ -25,6 +25,7 @@ import {
 } from "../../fixtures/buildComputerMcp.js";
 import { COMPUTER_START_TIMING } from "../../../src/desktop/AgentEnvComputer.js";
 import {
+  awaitFakeDeployWait,
   FAKE_FRAME_PNG,
   startFakeComputer,
   type FakeApp,
@@ -603,16 +604,15 @@ it("stops the helper when the caller cancels a start", async () => {
     },
     { signal: controller.signal },
   );
-  const deploying = waitFor(async () => {
-    const notes = await runner.notes("deploying.jsonl");
-    expect(notes).toHaveLength(1);
-    return notes;
-  }).finally(() => controller.abort());
-  const [, helper] = await Promise.all([
-    expect(call).rejects.toThrow(),
-    deploying,
-  ]);
-  await expect.poll(() => runner.notes("interrupted.jsonl")).toEqual(helper);
+  try {
+    const helper = await awaitFakeDeployWait(runner, call);
+    controller.abort();
+    await expect(call).rejects.toThrow();
+    await expect.poll(() => runner.notes("interrupted.jsonl")).toEqual(helper);
+  } finally {
+    controller.abort();
+    await Promise.allSettled([call]);
+  }
 });
 
 /** An app whose reset keeps the computer unready for `polls` readiness polls, 500 ms apart. */

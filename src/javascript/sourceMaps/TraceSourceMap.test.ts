@@ -220,6 +220,109 @@ describe("upstream source-map point evidence", () => {
   });
 });
 
+describe("source-map section-boundary candidates", () => {
+  it.each([
+    { mappings: "AAAAA", column: 0, nested: false },
+    { mappings: "AAAAA,KAAAA", column: 5, nested: false },
+    { mappings: "AAAAA;AAAAA", column: 0, nested: true },
+  ])(
+    "retains all section-boundary candidates ($mappings, nested=$nested)",
+    ({ mappings, column, nested }) => {
+      const first = {
+        ...leaf,
+        sources: ["same.ts"],
+        sourcesContent: ["first"],
+        names: ["firstName"],
+        mappings,
+      };
+      const second = {
+        ...leaf,
+        sources: ["same.ts"],
+        sourcesContent: ["second"],
+        names: ["secondName"],
+        mappings: "AAAAA",
+      };
+      const line = nested ? 1 : 0;
+      const report = trace(
+        {
+          version: 3,
+          sections: [
+            { offset: { line: 0, column: 0 }, map: first },
+            {
+              offset: { line, column },
+              map: nested
+                ? {
+                    version: 3,
+                    sections: [
+                      {
+                        offset: { line: 0, column: 0 },
+                        map: second,
+                      },
+                    ],
+                  }
+                : second,
+            },
+          ],
+        },
+        { line: line + 1, column },
+      );
+      expect(report.lookup.matched_generated_position).toEqual({
+        line: line + 1,
+        column,
+      });
+      expect(report.matches).toMatchObject([
+        {
+          flattened_source_index: 0,
+          section_path: [0],
+          source_index: 0,
+          content: { text: "first" },
+          name: "firstName",
+        },
+        {
+          flattened_source_index: 1,
+          section_path: nested ? [1, 0] : [1],
+          source_index: 0,
+          content: { text: "second" },
+          name: "secondName",
+        },
+      ]);
+      expect(report.matches).toHaveLength(2);
+    },
+  );
+  it.each([false, true])(
+    "keeps a generated-only section-boundary candidate (first=%s)",
+    (generatedOnlyFirst) => {
+      const generated = { version: 3, sources: [], names: [], mappings: "A" };
+      const first = generatedOnlyFirst ? generated : leaf;
+      const second = generatedOnlyFirst ? leaf : generated;
+      const report = trace(
+        {
+          version: 3,
+          sections: [
+            {
+              offset: { line: 0, column: 0 },
+              map: { ...first, mappings: `K${first.mappings.slice(1)}` },
+            },
+            { offset: { line: 0, column: 5 }, map: second },
+          ],
+        },
+        { line: 1, column: 5 },
+      );
+      const mapped = {
+        state: "mapped",
+        flattened_source_index: 0,
+        section_path: [generatedOnlyFirst ? 1 : 0],
+        source_index: 0,
+      };
+      const generatedOnly = { state: "generated-only" };
+      expect(report.matches).toMatchObject(
+        generatedOnlyFirst ? [generatedOnly, mapped] : [mapped, generatedOnly],
+      );
+      expect(report.matches).toHaveLength(2);
+    },
+  );
+});
+
 describe("source-map layout admission", () => {
   it.each(["AAAAC", "g", "!", "AA", "D"])(
     "rejects malformed VLQ/components/indexes: %s",
@@ -227,6 +330,26 @@ describe("source-map layout admission", () => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
     },
   );
+  it.each([",", ",AAAA", "AAAA,,A", "AAAA,", "AAAA,;A"])(
+    "rejects empty mapping segments around commas: %s",
+    (mappings) => {
+      expect(() => trace({ ...leaf, mappings })).toThrow(
+        /empty mapping segment/u,
+      );
+    },
+  );
+  it("retains empty generated lines and generated-only mappings", () => {
+    const report = traceSourceMap(
+      JSON.stringify({ ...leaf, mappings: ";;A,CAAA;" }),
+      url,
+      { line: 3, column: 0 },
+    );
+    expect(report.lookup.matched_generated_position).toEqual({
+      line: 3,
+      column: 0,
+    });
+    expect(report.matches).toEqual([{ state: "generated-only" }]);
+  });
   it("validates regular-map source indexes after reusing its decoded rows", () => {
     expect(() => trace({ ...leaf, mappings: "ACAA" })).toThrow(/index/u);
   });
