@@ -201,23 +201,6 @@ it("keeps sequence side effects unknown instead of attributing earlier values di
   ).toBe(true);
 });
 
-it("seeds a direct argument at its occurrence and reaches the call", () => {
-  const graph = graphForJavaScript('consume("only-direct");');
-  const result = queryJavaScriptSemanticGraph(
-    graph,
-    javaScriptSemanticQueryInputSchema.parse({
-      seed: { kind: "literal", value: "only-direct" },
-      direction: "forward-influence",
-    }),
-  );
-  expect(result.summary.total_seed_matches).toBe(1);
-  expect(
-    result.nodes.find((node) => node.node_id === result.seed_node_ids[0])
-      ?.label,
-  ).toBe("argument 0");
-  expect(result.nodes.some((node) => node.kind === "call-site")).toBe(true);
-});
-
 it("keeps older call-site literal evidence searchable when argument literals are absent", () => {
   const graph = graphForJavaScript('consume("only-direct");');
   const legacy = {

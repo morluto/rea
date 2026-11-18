@@ -33,7 +33,6 @@ import {
   describeContractDocumentCommand,
   type CliDocumentProjection,
   type DocumentContract,
-  type ContractCliDocumentDescription,
   type CliContractProjection,
   describeOperationChoices,
   type CliEvidenceDeliveryChoice,
@@ -59,7 +58,6 @@ import {
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
 import {
-  cliCommands,
   contractDescriptionOperations,
   distinctOperations,
   registerCliCommand,
@@ -556,14 +554,6 @@ const commandPositionals = (
   ...description.cliPositionals,
 ];
 
-/** Commands registered on this CLI through `registerContractCommand`. */
-export const contractCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "contract" ? [source.description] : [],
-  );
-
 const commandOptions = (description: ContractCliDescription): z.ZodType => {
   const object = z.object(
     Object.fromEntries([
@@ -872,14 +862,6 @@ const commandShape = (description: ContractCliDescription) => ({
 const schemaSignature = (schema: z.ZodType): string =>
   JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
 
-/** Route descriptions of commands registered through `registerRoutedCommand`. */
-export const routedCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "routed" ? source.descriptions : [],
-  );
-
 /**
  * Register one CLI command whose input chooses the contract input it runs,
  * such as `analyze` running static JavaScript analysis on an application
@@ -1115,14 +1097,6 @@ export interface ContractDocumentContext<
    */
   readonly opening: Readonly<Record<string, unknown>>;
 }
-
-/** Commands registered on this CLI through `registerContractDocumentCommand`. */
-export const contractDocumentCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDocumentDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "document" ? [source.description] : [],
-  );
 
 /**
  * A document field the projection omits or takes as an option is refused

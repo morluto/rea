@@ -58,6 +58,14 @@ import {
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
 import {
+  inspectDwarfUnitsInputSchema,
+  dwarfUnitsSchema,
+} from "../../domain/native/dwarfUnits.js";
+import {
+  inspectElfDebugLinkInputSchema,
+  elfDebugLinkSchema,
+} from "../../domain/native/elfDebugLink.js";
+import {
   inspectNativeInitializersInputSchema,
   nativeInitializersSchema,
 } from "../../domain/native/nativeInitializers.js";
@@ -191,6 +199,47 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect ELF GNU build-id and ABI-tag notes",
         input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_dwarf_units",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_dwarf_units", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect DWARF 2 through 5 compile-unit headers and the unit DIE in one explicit local ELF, Mach-O, or PE image without executing the image or opening a disassembler. Reads .debug_info, .debug_abbrev, .debug_str, .debug_line_str, and .debug_str_offsets, including compressed ELF sections. Returns name, comp_dir, producer, language, and dwo_name with file offsets, paged by offset and limit. A unit that cannot be framed, or a declared .debug_info that was not read, gives partial coverage. Absent .debug_info applies to this file only and does not establish that a separate debug file is absent. Child DIEs, types, line tables, and location expressions are not read. A .dSYM bundle is not opened; pass the DWARF file inside it. Universal Mach-O requires architecture.",
+    inputSchema: inspectDwarfUnitsInputSchema,
+    outputSchema: evidenceResultOf(dwarfUnitsSchema),
+    examples: [
+      {
+        title: "Inspect DWARF compile units",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_elf_debug_link",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_elf_debug_link", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 image for separate debug-file linkage without executing it or opening a disassembler. Returns .gnu_debuglink file name and CRC32, .gnu_debugaltlink file name and build-id, the GNU build-id, conventional lookup path strings, and .gnu_debugdata presence, file offset, and size. An optional candidate_path verifies that one caller-selected file by debuglink CRC32 and build-id equality. The verdict is matches, does_not_match, or cannot_verify. Lookup paths are not opened. The xz MiniDebugInfo payload is not decoded. A missing section is observed absence only when section names are complete, not proof the image never carried that linkage. Reads stable regular files; malformed ELF headers and exhausted note budgets return no partial success. Portable on supported Node hosts.",
+    inputSchema: inspectElfDebugLinkInputSchema,
+    outputSchema: evidenceResultOf(elfDebugLinkSchema),
+    examples: [
+      {
+        title: "Inspect ELF separate debug-file linkage",
+        input: { path: "/artifacts/program" },
+      },
+      {
+        title: "Verify one caller-selected debug file",
+        input: {
+          path: "/artifacts/program",
+          candidate_path: "/artifacts/program.debug",
+        },
       },
     ],
   },

@@ -279,11 +279,6 @@ describe("ZIP listing coverage from the central directory", () => {
 
   it.each([
     [
-      "between listed members",
-      [member("a.txt"), member("hidden.txt", false), member("b.txt")],
-      A_ENTRY_BYTES,
-    ],
-    [
       "before the first listed member",
       [member("hidden.txt", false), member("a.txt")],
       0,
@@ -297,7 +292,7 @@ describe("ZIP listing coverage from the central directory", () => {
     "reports a local entry the central directory omits %s as unknown",
     async (_placement, members, first) => {
       const { paths, coverage } = await list(zip(members));
-      expect(paths).not.toContain("hidden.txt");
+      expect(paths).toEqual(["a.txt"]);
       expect(coverage).toEqual([unaccounted(HIDDEN_ENTRY_BYTES, 1, first)]);
     },
   );
@@ -350,7 +345,7 @@ describe("ZIP listing coverage from the central directory", () => {
     ).toEqual([unaccounted(block.length, 1, A_ENTRY_BYTES)]);
   });
 
-  it("carries the unaccounted region into the artifact inventory", async () => {
+  it("keeps an omitted local entry between listed members unknown in the artifact inventory", async () => {
     const directory = await createTestTempDirectory("rea-zip-member-region-");
     const path = join(directory, "fixture.zip");
     await writeFile(

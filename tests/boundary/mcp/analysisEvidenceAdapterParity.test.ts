@@ -12,10 +12,7 @@ import {
 } from "../../../src/cli/cliCommandRegistrations.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import type { ContractCliDescription } from "../../../src/cli/contractCliDescription.js";
-import {
-  contractCommandDescriptions,
-  routedCommandDescriptions,
-} from "../../../src/cli/contractCommand.js";
+import { registeredContractDescriptions } from "../../support/cli/commandCli.js";
 import { bindDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../../../src/contracts/artifactToolContracts.js";
@@ -161,12 +158,9 @@ const createCli = () =>
   });
 
 /** The first CLI command that runs each contract (descriptions only). */
-const inventory = createCli();
+const { commands: descriptions } = registeredContractDescriptions(createCli());
 const commands = new Map<string, ContractCliDescription>();
-for (const description of [
-  ...contractCommandDescriptions(inventory),
-  ...routedCommandDescriptions(inventory),
-])
+for (const description of descriptions)
   if (!commands.has(description.contract.name))
     commands.set(description.contract.name, description);
 

@@ -1,9 +1,8 @@
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   projectSelectedArtifactFileFailure,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   type StableArtifactSnapshot,
@@ -18,7 +17,6 @@ import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
@@ -146,20 +144,18 @@ const peCertificatesFailurePrimary = (
   input: InspectPeCertificatesInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
-    return new AnalysisUnsupportedTargetError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,
     input.path,
   );
   if (identityFailure !== undefined) return identityFailure;
+  const inputFailure = projectOwnedArtifactInputFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (inputFailure !== undefined) return inputFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof PeCertificateAsn1Failure &&
@@ -192,8 +188,6 @@ const peCertificatesFailurePrimary = (
               }),
         },
       );
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,

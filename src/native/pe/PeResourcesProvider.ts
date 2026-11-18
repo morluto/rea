@@ -1,10 +1,9 @@
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   type StableArtifactSnapshot,
@@ -21,7 +20,6 @@ import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
@@ -109,20 +107,19 @@ const peResourcesFailurePrimary = (
 ) => {
   const { cause, origin } = facts;
   const operation = "inspect_pe_resources";
-  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
-    return new AnalysisUnsupportedTargetError(
-      operation,
-      input.path,
-      cause.message,
-      { cause },
-    );
-
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     operation,
     input.path,
   );
   if (identityFailure !== undefined) return identityFailure;
+
+  const inputFailure = projectOwnedArtifactInputFailure(
+    facts,
+    operation,
+    input.path,
+  );
+  if (inputFailure !== undefined) return inputFailure;
 
   if (
     origin === "owned-or-classified" &&
@@ -166,8 +163,6 @@ const peResourcesFailurePrimary = (
         },
       );
     }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, operation);
   }
 
   const fileFailure = projectSelectedArtifactFileFailure(
