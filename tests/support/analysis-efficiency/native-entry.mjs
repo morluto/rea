@@ -189,7 +189,7 @@ export const measureNativeEntry = async ({
         ? await retainedJqMain(call, ToolFailure)
         : {};
     return {
-      artifact_sha256: info.subject?.digest.sha256,
+      artifact_sha256: info.subject?.identity.sha256,
       entry_address: address,
       containing_procedure: normalized(containing),
       procedure: n.procedure,

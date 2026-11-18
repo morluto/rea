@@ -164,7 +164,6 @@ cliTest(
     const fixture = await playwrightTraceFixture({ resources: true });
     const { client, call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
     });
     const schemas = await advertisedMcpToolSchemas(
@@ -172,10 +171,12 @@ cliTest(
       "inspect_playwright_trace",
     );
     expect(
-      schemas.ajv.validate(schemas.inputSchema, { path: fixture.path }),
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
+        path: fixture.path,
+      }),
     ).toBe(true);
     expect(
-      schemas.ajv.validate(schemas.inputSchema, {
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
         path: fixture.path,
         view: {
           kind: "playwright-trace",
@@ -470,5 +471,33 @@ cliTest(
       coverage: { total: 20, exhausted: true },
       source_coverage: { interpretation: "partial" },
     });
+  },
+);
+
+cliTest(
+  "refuses a selected page without summary delivery before opening the archive",
+  async ({ cli }) => {
+    const missing = join(process.cwd(), "missing-playwright-trace.zip");
+    const view = JSON.stringify({
+      kind: "playwright-trace",
+      collection: "streams",
+    });
+    for (const delivery of [[], ["--detail", "complete"]]) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-playwright-trace",
+          missing,
+          "--view",
+          view,
+          ...delivery,
+          "--json",
+        ],
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["view"], reason: "invalid_value" }] },
+      });
+    }
   },
 );

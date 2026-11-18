@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,6 +16,7 @@ import {
   assertRecoveryCleanup,
   recoveryFixture,
 } from "../../fixtures/javascript-recovery/provider.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it
   .skipIf(process.platform !== "linux" || process.arch !== "x64")
@@ -28,7 +33,10 @@ it
         javascriptRecovery: fixture.provider,
       },
     );
-    const client = new Client({ name: "recovery-contract", version: "1" });
+    const client = new Client(
+      { name: "recovery-contract", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -42,11 +50,16 @@ it
     const advertised = tools.tools.find(
       (tool) => tool.name === "recover_javascript_sources",
     );
-    if (advertised === undefined || advertised.outputSchema === undefined)
+    if (
+      advertised === undefined ||
+      canonicalOutputSchema(advertised.name) === undefined
+    )
       throw new Error("recovery tool must advertise both schemas");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const additional = join(fixture.root, "chunk.js");
@@ -59,7 +72,7 @@ it
     expect(ajv.validate(inputSchema, args)).toBe(true);
     const response = await client.callTool(
       { name: "recover_javascript_sources", arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const parsed = toolContract(
@@ -102,7 +115,10 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")(
         javascriptRecovery: fixture.provider,
       },
     );
-    const client = new Client({ name: "recovery-denied", version: "1" });
+    const client = new Client(
+      { name: "recovery-denied", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();

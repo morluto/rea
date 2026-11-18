@@ -28,6 +28,27 @@ const classWithMetaclass = (options: { duplicateRoot?: boolean } = {}) => {
 };
 
 describe("Objective-C class-object coverage units", () => {
+  it("propagates a host stack limit while decoding a deep protocol chain", () => {
+    const count = 5_000;
+    const bytes = Buffer.alloc(0x1000 + count * 128);
+    objcRecordBudgetMacho("protocol").copy(bytes);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 64);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    bytes.writeBigUInt64LE(base + 0x1000n, 0x6c0);
+    for (let index = 0; index < count; index++) {
+      const at = 0x1000 + index * 128;
+      bytes.writeBigUInt64LE(base + 0x980n, at + 8);
+      bytes.writeUInt32LE(72, at + 64);
+      if (index + 1 < count) {
+        bytes.writeBigUInt64LE(base + BigInt(at + 96), at + 16);
+        bytes.writeBigUInt64LE(1n, at + 96);
+        bytes.writeBigUInt64LE(base + BigInt(at + 128), at + 104);
+      }
+    }
+    expect(() =>
+      decodeAppleDispatchMetadata(bytes, count * 3, provenance),
+    ).toThrow(RangeError);
+  });
   it("counts both admitted class and metaclass records", () => {
     const result = decodeAppleDispatchMetadata(
       classWithMetaclass(),

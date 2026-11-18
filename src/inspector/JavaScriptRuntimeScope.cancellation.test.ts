@@ -86,13 +86,12 @@ import {
   startFakeV8Inspector,
 } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
 import { createNodeDiscoveryTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const fixtures: { close(): Promise<void> }[] = [];
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? (value as Record<string, unknown>) : undefined;
 
 afterEach(async () => {
   fileAccess.path = undefined;

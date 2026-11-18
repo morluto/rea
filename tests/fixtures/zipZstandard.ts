@@ -19,9 +19,10 @@ export const zstandardZipFixture = (
     readonly crc?: number;
     readonly declaredSize?: number;
     readonly compressed?: Buffer;
+    readonly name?: string;
   } = {},
 ): Buffer => {
-  const name = Buffer.from("member.txt");
+  const name = Buffer.from(options.name ?? "member.txt");
   const compressed = options.compressed ?? zstdCompressSync(content);
   const method = options.method ?? 93;
   const checksum = options.crc ?? crc32(content);

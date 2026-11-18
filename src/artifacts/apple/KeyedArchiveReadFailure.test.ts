@@ -7,16 +7,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
-import {
-  DirectoryArtifactEntryAccessDenied,
-  DirectoryArtifactReader,
-  DirectoryArtifactRootFailure,
-} from "../DirectoryArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
 import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+} from "../../resources/index.js";
 
 const archive = build({
   $archiver: "NSKeyedArchiver",

@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "./evidence.js";
@@ -51,30 +52,15 @@ describe("artifact manifest projection", () => {
 });
 
 describe("evidence bundle failure classification", () => {
-  it("tags valid-shaped bundles that fail canonical ordering", () => {
-    const records = ["first", "second"].map((label) =>
-      createEvidence(undefined, provider, {
-        operation: "observe",
-        parameters: { label },
-        result: { label },
-      }),
-    );
-    const canonical = createEvidenceBundle(records);
-    const parsed = safeParseEvidenceBundle({
-      ...canonical,
-      records: [...canonical.records].reverse(),
-    });
-    expect(parsed.ok).toBe(false);
-    if (parsed.ok) return;
-    expect(parsed.error.kind).toBe("invalid-bundle");
-    expect(parsed.error.cause).toMatchObject({
-      name: "NonCanonicalEvidenceBundleError",
-      message: "Evidence bundle sections are not canonical: records",
-    });
-  });
-
   it.each([
     ["providers", (bundle: EvidenceBundle) => ({ ...bundle, providers: [] })],
+    [
+      "records",
+      (bundle: EvidenceBundle) => ({
+        ...bundle,
+        records: [...bundle.records].reverse(),
+      }),
+    ],
     [
       "providers, records",
       (bundle: EvidenceBundle) => ({
@@ -87,7 +73,7 @@ describe("evidence bundle failure classification", () => {
     "names only the noncanonical sections (%s)",
     (sections, change) => {
       const records = ["first", "second"].map((label) =>
-        createEvidence(undefined, provider, {
+        createEvidence(unknownTarget("not-observed"), provider, {
           operation: "observe",
           parameters: { label },
           result: { label },
@@ -96,17 +82,21 @@ describe("evidence bundle failure classification", () => {
       const parsed = safeParseEvidenceBundle(
         change(createEvidenceBundle(records)),
       );
-      expect(parsed.ok).toBe(false);
-      if (parsed.ok) return;
-      expect(parsed.error.cause).toMatchObject({
-        name: "NonCanonicalEvidenceBundleError",
-        message: `Evidence bundle sections are not canonical: ${sections}`,
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: {
+          kind: "invalid-bundle",
+          cause: {
+            name: "NonCanonicalEvidenceBundleError",
+            message: `Evidence bundle sections are not canonical: ${sections}`,
+          },
+        },
       });
     },
   );
 
   it("treats only authenticated standalone Evidence as the wrong input kind", () => {
-    const record = createEvidence(undefined, provider, {
+    const record = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "observe",
       parameters: {},
       result: { observed: true },
@@ -144,7 +134,7 @@ const makeUnknown = (
         ? []
         : [{ type: "depends-on", unknown_id: dependency }],
   });
-  const mutation = createEvidence(undefined, provider, {
+  const mutation = createEvidence(unknownTarget("not-observed"), provider, {
     predicateType: "rea.residual-unknown-mutation",
     operation: "record_unknown",
     parameters: { domain: input.domain, severity: input.severity },
@@ -163,7 +153,7 @@ const makeUnknown = (
 };
 
 it("retains only linked cross-target source closure in a target snapshot", () => {
-  const leaf = createEvidence(undefined, provider, {
+  const leaf = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "source_leaf",
     parameters: {},
     result: "leaf",
@@ -401,7 +391,7 @@ describe("evidenceBundleForTarget relationship pruning", () => {
 
 describe("immutable serialization bundles", () => {
   it("authenticates sealed records while revalidating detached and malformed input", () => {
-    const evidence = createEvidence(undefined, provider, {
+    const evidence = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "health",
       parameters: {},
       result: { nested: [true] },

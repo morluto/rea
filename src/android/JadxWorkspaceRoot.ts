@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 
 /** Match the native owner's ordinary spelling only for extended local drive paths. */
@@ -144,7 +145,8 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
         15000,
         "Android workspace guardian startup timed out",
       );
-      const observation = readySchema.parse(JSON.parse(line));
+      const decoded = parseJsonWithDuplicatePolicy(line, "reject");
+      const observation = readySchema.parse(decoded.ok ? decoded.value : null);
       if (
         win32.dirname(localDrivePath(observation.path)).toLowerCase() !==
           localDrivePath(win32.resolve(parent)).toLowerCase() ||
@@ -220,7 +222,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
 }
 
 /** POSIX retains its in-process root; Windows keeps a detached native owner. */
-export const createJadxWorkspaceRoot = (): Promise<JadxWorkspaceRoot> =>
-  process.platform === "win32"
+export const createJadxWorkspaceRoot = (
+  platform: NodeJS.Platform,
+): Promise<JadxWorkspaceRoot> =>
+  platform === "win32"
     ? WindowsJadxWorkspaceRoot.create()
     : PrivateRuntimeRoot.create({ prefix: "rea-android-" });

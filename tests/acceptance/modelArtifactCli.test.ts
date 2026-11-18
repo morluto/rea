@@ -1,3 +1,5 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +25,18 @@ import {
 } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
+
+/** A malformed model header is an invalid `path` on both adapters. */
+const MALFORMED_MODEL = {
+  code: "invalid_request",
+  category: "invalid_input",
+  details: {
+    operation: "inspect_model_artifact",
+    issues: [
+      expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+    ],
+  },
+} as const;
 
 // Model queries are target-free; share immutable registration and schema setup.
 // Portable export keeps its separate post-CLI connection below.
@@ -519,12 +533,17 @@ cliTest(
     // The raw extent is outside this empty file, and that check runs before
     // the offset is converted to a host number.
     expect(offsetFailure.error).toMatchObject({
-      code: "target_unavailable",
-      category: "unsupported_target",
+      code: "invalid_request",
+      category: "invalid_input",
       details: {
-        constraint: "file_format_rejected",
-        path,
-        reason: "Declared extent is outside the file",
+        operation: "inspect_model_artifact",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `Selected artifact ${path}: Declared extent is outside the file`,
+          },
+        ],
       },
     });
   },
@@ -621,11 +640,15 @@ it("keeps generated headline keys and imported compound metadata out of compact 
     { key: `${architecture}.context_length`, value: 2048 },
   ]);
   report.metadata[0]!.value = { future: architecture };
-  const imported = createEvidence(undefined, full.provider, {
-    operation: "inspect_model_artifact",
-    parameters: full.parameters,
-    result: report,
-  });
+  const imported = createEvidence(
+    unknownTarget("not-observed"),
+    full.provider,
+    {
+      operation: "inspect_model_artifact",
+      parameters: full.parameters,
+      result: report,
+    },
+  );
   const page = await call("inspect_analysis_view", {
     source: { kind: "inline", evidence: imported },
     view: { kind: "summary" },
@@ -668,11 +691,15 @@ it("rejects noncanonical imported model indexes and duplicate identities through
   for (const corrupt of corruptions) {
     const result = structuredClone(report);
     corrupt(result);
-    const evidence = createEvidence(undefined, complete.provider, {
-      operation: "inspect_model_artifact",
-      parameters: complete.parameters,
-      result,
-    });
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      complete.provider,
+      {
+        operation: "inspect_model_artifact",
+        parameters: complete.parameters,
+        result,
+      },
+    );
     const failure = parseMcpToolError(
       await call("inspect_analysis_view", {
         source: { kind: "inline", evidence },
@@ -911,7 +938,7 @@ cliTest(
       const report = modelArtifactSchema.parse(evidence.normalized_result);
       expect(report.format).toBe(format);
       expect(report.artifact.sha256).toBeNull();
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       const complete = await call("inspect_model_artifact", {
         path,
         detail: "complete",
@@ -927,7 +954,7 @@ cliTest(
       });
       expect(hashed.isError, JSON.stringify(hashed)).not.toBe(true);
       expect(
-        parseEvidence(hashed.structuredContent).subject?.digest.sha256,
+        fileIdentity(parseEvidence(hashed.structuredContent).subject).sha256,
       ).toBe(createHash("sha256").update(fixture.bytes).digest("hex"));
       const summary = await call("inspect_model_artifact", { path });
       expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
@@ -1085,17 +1112,13 @@ cliTest(
       });
       expect(malformedCli.exitCode).toBe(1);
       expect(malformedCli.json).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
       const malformedMcp = parseMcpToolError(
         await call("inspect_model_artifact", { path: malformedPath }),
       );
       expect(malformedMcp.error).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
     }
   },
@@ -1194,17 +1217,13 @@ cliTest(
       });
       expect(cliResult.exitCode).toBe(1);
       expect(cliResult.json).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
       const mcpResult = parseMcpToolError(
         await call("inspect_model_artifact", { path }),
       );
       expect(mcpResult.error).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
     }
   },
@@ -1283,9 +1302,7 @@ cliTest(
       await call("inspect_model_artifact", { path }),
     );
     expect(malformed.error).toMatchObject({
-      code: "target_unavailable",
-      category: "unsupported_target",
-      details: { constraint: "file_format_rejected" },
+      ...MALFORMED_MODEL,
     });
   },
 );

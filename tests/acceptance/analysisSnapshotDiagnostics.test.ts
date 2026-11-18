@@ -4,7 +4,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -55,14 +55,17 @@ cliTest(
           code: "evidence_integrity_mismatch",
           category: "integrity_mismatch",
           retryable: false,
-          details: { reason: expect.stringContaining(`at ${field}:`) },
+          details: {
+            reason: expect.stringContaining(`at ${field}:`),
+            issue_path: field
+              .split(".")
+              .map((key) => (/^\d+$/u.test(key) ? Number(key) : key)),
+          },
         });
         expect(error).not.toHaveProperty("cause");
         expect(error).not.toHaveProperty("stack");
         if (field === "target")
-          expect(error.details?.reason).toMatch(
-            / at target: .+ \(2 more issues\)$/,
-          );
+          expect(error.details?.remaining_issue_count).toBe(2);
       }
       // MCP adds open-session facts; the snapshot reason must match exactly.
       expect(mcpError.details).toMatchObject(cliError.details ?? {});

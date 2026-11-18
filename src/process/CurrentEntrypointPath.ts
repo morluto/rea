@@ -1,4 +1,6 @@
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   javaScriptRuntime,
   type JavaScriptRuntime,
@@ -19,3 +21,18 @@ export const normalizeEntrypointPath = (
       : resolve(entrypoint);
 
 export const CURRENT_ENTRYPOINT_PATH = normalizeEntrypointPath(process.argv[1]);
+
+/** True when the runtime executed `moduleUrl` directly rather than importing it.
+ * A synthetic argv path that no longer resolves is not a direct run.
+ */
+export const isDirectEntrypoint = (
+  entryPath: string | undefined,
+  moduleUrl: string,
+): boolean => {
+  if (entryPath === undefined) return false;
+  try {
+    return pathToFileURL(realpathSync(entryPath)).href === moduleUrl;
+  } catch {
+    return false;
+  }
+};
