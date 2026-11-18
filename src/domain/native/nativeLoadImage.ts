@@ -127,13 +127,33 @@ export const nativeDosMzLoadImageSchema = z.strictObject({
   entry: dosLoadImageEntrySchema,
   ...dosLoadImageFacts,
 });
-/** A verified COM image has a known measured layout, so the coordinates stay. */
-export const nativeDosComVerifiedLoadImageSchema = z.strictObject({
+const comVerifiedFacts = {
   status: z.literal("verified"),
-  ...comMeasuredIdentity,
-  load_segment: integer.max(0xffff),
-  entry: dosLoadImageEntrySchema,
+  format: z.literal("dos-com"),
   ...dosLoadImageFacts,
+};
+const comVerifiedEntry = (linearAddress: "0x100" | "0x10100") =>
+  z.strictObject({
+    relative_segment: z.literal(0),
+    offset: z.literal(0x100),
+    linear_address: z.literal(linearAddress),
+  });
+/** Verified ComLoader: file at 0000:0100, no fallback record. */
+export const nativeDosComVerifiedComLoaderLoadImageSchema = z.strictObject({
+  ...comVerifiedFacts,
+  loader: z.literal("ComLoader"),
+  load_address: z.literal("0000:0100"),
+  load_segment: z.literal(0),
+  entry: comVerifiedEntry("0x100"),
+});
+/** Verified BinaryLoader fallback: file at 1000:0100 with a typed reason. */
+export const nativeDosComVerifiedBinaryLoaderLoadImageSchema = z.strictObject({
+  ...comVerifiedFacts,
+  loader: z.literal("BinaryLoader"),
+  load_address: z.literal("1000:0100"),
+  loader_fallback: comLoaderFallbackSchema,
+  load_segment: z.literal(0x1000),
+  entry: comVerifiedEntry("0x10100"),
 });
 /**
  * A COM mismatch may omit the segment and entry when the measured loader and
@@ -148,7 +168,8 @@ export const nativeDosComMismatchLoadImageSchema = z.strictObject({
 });
 export const nativeDosLoadImageSchema = z.union([
   nativeDosMzLoadImageSchema,
-  nativeDosComVerifiedLoadImageSchema,
+  nativeDosComVerifiedComLoaderLoadImageSchema,
+  nativeDosComVerifiedBinaryLoaderLoadImageSchema,
   nativeDosComMismatchLoadImageSchema,
 ]);
 export const nativeRawLoadImageSchema = z.strictObject({

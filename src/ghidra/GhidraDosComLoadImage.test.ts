@@ -280,4 +280,43 @@ describe("COM load-image field contracts", () => {
     const { entry: _entry, ...withoutEntry } = attested.value;
     expect(nativeLoadImageSchema.safeParse(withoutEntry).success).toBe(false);
   });
+  it("rejects a verified COM result that omits its loader or mixes layouts", () => {
+    const recognized = attestGhidraDosComLoadImage(
+      fixtureDosComLoaderLoadImage().bytes,
+      fixtureDosComLoaderLoadImage().sha256,
+      fixtureDosComLoaderLoadImage().observation,
+    );
+    if (
+      !recognized.ok ||
+      recognized.value.status !== "verified" ||
+      recognized.value.format !== "dos-com" ||
+      recognized.value.loader !== "ComLoader"
+    )
+      throw new Error("expected a verified ComLoader image");
+    expect(nativeLoadImageSchema.safeParse(recognized.value).success).toBe(
+      true,
+    );
+    const { loader: _loader, ...withoutLoader } = recognized.value;
+    expect(nativeLoadImageSchema.safeParse(withoutLoader).success).toBe(false);
+    expect(
+      nativeLoadImageSchema.safeParse({
+        ...recognized.value,
+        load_address: "1000:0100",
+      }).success,
+    ).toBe(false);
+    const fallback = attestGhidraDosComLoadImage(
+      fixtureDosComLoadImage().bytes,
+      fixtureDosComLoadImage().sha256,
+      fixtureDosComLoadImage().observation,
+    );
+    if (
+      !fallback.ok ||
+      fallback.value.status !== "verified" ||
+      fallback.value.format !== "dos-com" ||
+      fallback.value.loader !== "BinaryLoader"
+    )
+      throw new Error("expected a verified fallback image");
+    const { loader_fallback: _fallback, ...withoutReason } = fallback.value;
+    expect(nativeLoadImageSchema.safeParse(withoutReason).success).toBe(false);
+  });
 });

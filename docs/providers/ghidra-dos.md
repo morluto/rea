@@ -59,9 +59,14 @@ COM has no identifying header. Select its interpretation explicitly; neither the
 
 ```bash
 rea inspect /absolute/path/to/legacy.com --target-format dos-com --provider ghidra --json
-rea function /absolute/path/to/legacy.com 0x100 --target-format dos-com --provider ghidra --json
 rea inspect-native-load-image /absolute/path/to/legacy.com --target-format dos-com --provider ghidra --json
+rea function /absolute/path/to/recognized.com 0x100 --target-format dos-com --provider ghidra --json
+rea function /absolute/path/to/rejected.com 0x10100 --target-format dos-com --provider ghidra --json
 ```
+
+Use `entry.linear_address` from the load image for later lookups. A ComLoader
+import is `0x100`. A BinaryLoader fallback is `0x10100`; `0x100` is not mapped
+on that image.
 
 ```json
 {
@@ -225,7 +230,10 @@ observations rather than asserting cross-process identity of raw p-code.
 ```
 
 ```bash
-rea annotate-native-function /local/program.com 0x100 --target-format dos-com --provider ghidra --name entry --comment 'Recovered startup role' --json
+rea annotate-native-function /local/recognized.com 0x100 --target-format dos-com --provider ghidra --name entry --comment 'Recovered startup role' --json
+rea annotate-native-function /local/rejected.com 0x10100 --target-format dos-com --provider ghidra --name entry --comment 'Recovered startup role' --json
 ```
+
+`0x100` is the ComLoader entry. A fallback image is annotated at `0x10100`.
 
 The CLI returns the updated analysis before closing its isolated session. MCP edits remain visible to later reads until `close_binary`. Original bytes remain unchanged, database edits are discarded on close, and immutable analysis snapshots are invalidated after edits. This operation does not save a Ghidra project, change ABI/types/body ranges, patch instructions, or emulate a DOS runtime. Windows P0 does not admit it.
