@@ -450,14 +450,29 @@ const collectReleases = (
       context.state,
       member.object,
     );
-    const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
-      ? semanticBindingAtRead(binding, member.object, context.state).binding
-      : binding;
+    const receiver = semanticBindingAtRead(
+      binding,
+      member.object,
+      context.state,
+    );
     const knownAcquisitions = new Set<t.Node>(
       candidates
         .filter(({ builtinAuthority }) => builtinAuthority === undefined)
         .map(({ node }) => node),
     );
+    const selectedSources = [
+      ...receiver.binding.initializers,
+      ...receiver.binding.referenceInitializers,
+    ];
+    const fresh =
+      receiver.status === "ordered" &&
+      receiver.hasDefiniteInitializer &&
+      selectedSources.length > 0 &&
+      selectedSources.every(
+        ({ node, projection }) =>
+          projection.length === 0 &&
+          knownAcquisitions.has(resourceInitializer(node).value),
+      );
     const releasesFor = (acquisition: ResourceCandidate) =>
       builtinResourceReleases(acquisition.specifier, acquisition.method);
     const linked = candidates.filter(
@@ -466,7 +481,7 @@ const collectReleases = (
         (!acquisition.resultIsPromise ||
           opaqueReceiver ||
           mayReceiveFulfilledHandle(
-            receiver,
+            receiver.binding,
             acquisition,
             knownAcquisitions,
             context.state,
@@ -499,6 +514,7 @@ const collectReleases = (
           member,
           context.state,
           knownAcquisitions,
+          fresh,
           release.owner === "prototype",
         ) &&
         !release.delegates?.some((dependency) =>
@@ -508,12 +524,11 @@ const collectReleases = (
             node,
             context.state,
             knownAcquisitions,
+            fresh,
             members?.[dependency]?.owner !== "instance",
           ),
         ) &&
-        (binding.kind !== "parameter" ||
-          semanticBindingAtRead(binding, member.object, context.state)
-            .hasDefiniteInitializer) &&
+        (binding.kind !== "parameter" || receiver.hasDefiniteInitializer) &&
         holdsOnlyAcquisitions(binding, linked, context.state)
           ? "complete"
           : "partial",
@@ -529,13 +544,9 @@ const releaseMethodMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   acquisitions: ReadonlySet<t.Node>,
+  fresh: boolean,
   inherited: boolean,
 ): boolean => {
-  const initializer = binding.initializers[0];
-  const fresh =
-    binding.initializers.length === 1 &&
-    initializer !== undefined &&
-    acquisitions.has(resourceInitializer(initializer.node).value);
   const targetsAcquisition = (
     effect: JavaScriptSemanticMemberEffect,
   ): boolean => {

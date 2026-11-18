@@ -239,6 +239,29 @@ it.each([
   ).toMatchObject([{ resolution: "complete" }]);
 });
 
+it.each([
+  ["stream.close(); stream.close = () => {};", "complete"],
+  ["stream.close(); decorate(stream);", "complete"],
+  ['stream.close(); eval("stream.close = () => {}");', "complete"],
+  ["stream.close(); stream.__proto__.close = () => {};", "partial"],
+  ["stream.close = () => {}; stream.close();", "partial"],
+])(
+  "orders local placeholder acquisition and effects: %s",
+  (body, resolution) => {
+    expect(
+      releases(`
+      import { createReadStream } from "node:fs";
+      function run() {
+        let stream = null;
+        stream = createReadStream("fixture.txt");
+        ${body}
+      }
+      run(); run();
+    `),
+    ).toMatchObject([{ resolution }]);
+  },
+);
+
 it("keeps a fresh local method captured before argument evaluation complete", () => {
   expect(
     releases(`

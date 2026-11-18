@@ -645,8 +645,7 @@ export const bindingMethodMayHaveChanged = (
       fresh &&
       onInstance &&
       effect !== undefined &&
-      semanticBindingEffectFollowsRead(
-        binding,
+      semanticReadPrecedesEffectWithinActivation(
         read,
         effect,
         state.parentsByNode,
