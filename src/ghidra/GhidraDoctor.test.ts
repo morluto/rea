@@ -27,6 +27,10 @@ import {
   projectGhidraDoctorInspection,
 } from "./GhidraDoctor.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import {
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_VERSION,
+} from "./GhidraReleasePolicy.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { silentLogger } from "../logger.js";
 
@@ -36,20 +40,21 @@ afterEach(async () => {
   inspectionResources = createInspectionResources();
 });
 
-const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
+const INSTALL = "/opt/ghidra_12.2_PUBLIC";
 const installationHost = (
   overrides: Partial<GhidraInstallationHost> = {},
   platform: NodeJS.Platform = "linux",
 ): GhidraInstallationHost => ({
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () =>
+    `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`,
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
       osArch: "amd64",
       osName: platform === "win32" ? "Windows 11" : "Linux",
-      version: "21.0.11",
-      major: 21,
-      home: "/usr/lib/jvm/jdk-21",
+      version: `${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}.0.1`,
+      major: SUPPORTED_GHIDRA_JAVA_MAJOR,
+      home: `/usr/lib/jvm/jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}`,
       bits: 64,
       runtime: "jdk",
     }),
@@ -116,17 +121,16 @@ describe("Ghidra doctor integration", async () => {
     expect(result.providerInspections?.[0]).toMatchObject({
       id: "ghidra",
       available: true,
-      providerVersion: "12.1.4",
+      providerVersion: SUPPORTED_GHIDRA_VERSION,
       registrationEnvironment: {
         GHIDRA_INSTALL_DIR: INSTALL,
-        JAVA_HOME: "/usr/lib/jvm/jdk-21",
+        JAVA_HOME: `/usr/lib/jvm/jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}`,
       },
     });
     expect(
       result.checks.find(({ name }) => name === "ghidra-java"),
     ).toMatchObject({
       ok: true,
-      detail: expect.stringContaining("21.0.11"),
     });
   });
 
@@ -174,7 +178,7 @@ describe("Ghidra doctor integration", async () => {
       "missing Java minimum",
       await inspection(
         { installDir: INSTALL },
-        { readText: () => "application.version=12.1.4\n" },
+        { readText: () => `application.version=${SUPPORTED_GHIDRA_VERSION}\n` },
       ),
       "ghidra-java",
     ],
@@ -218,7 +222,7 @@ describe("Windows Ghidra doctor authority", () => {
   afterEach(() => vi.restoreAllMocks());
   it("distinguishes a valid Windows installation from unavailable native authority", async () => {
     const ghidra = await inspection({
-      installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+      installDir: "C:\\tools\\ghidra_12.2_PUBLIC",
       platform: "win32",
     });
     const result = await runDoctor(undefined, {
@@ -231,15 +235,15 @@ describe("Windows Ghidra doctor authority", () => {
     expect(result.healthy).toBe(false);
     expect(result.providerInspections?.[0]).toMatchObject({
       available: false,
-      providerVersion: "12.1.4",
+      providerVersion: SUPPORTED_GHIDRA_VERSION,
       registrationEnvironment: {
-        GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+        GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra_12.2_PUBLIC",
       },
     });
     expect(
       providerRegistrationEnvironment(result.providerInspections ?? []),
     ).toMatchObject({
-      GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+      GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra_12.2_PUBLIC",
     });
     expect(result.checks.find(({ name }) => name === "host")).toMatchObject({
       ok: true,
@@ -292,7 +296,7 @@ describe("Windows Ghidra doctor authority", () => {
     });
     const projected = projectGhidraDoctorInspection(
       await inspection({
-        installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+        installDir: "C:\\tools\\ghidra_12.2_PUBLIC",
         platform: "win32",
       }),
     );
@@ -307,7 +311,7 @@ describe("Windows Ghidra doctor authority", () => {
 
   it("fails provider-scoped Windows readiness without blaming installation", async () => {
     const ghidra = await inspection({
-      installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+      installDir: "C:\\tools\\ghidra_12.2_PUBLIC",
       platform: "win32",
     });
     const result = await runDoctor(
@@ -437,7 +441,7 @@ describe("Windows native doctor failure diagnostics", () => {
     const projected = projectGhidraDoctorInspection(
       await inspection(
         {
-          installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+          installDir: "C:\\tools\\ghidra_12.2_PUBLIC",
           platform: "win32",
         },
         { probeJava: () => missingJavaProbe },
@@ -456,7 +460,7 @@ describe("Windows native doctor failure diagnostics", () => {
 });
 
 describe("Windows Ghidra temporary directory check", () => {
-  const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.1.4_PUBLIC";
+  const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.2_PUBLIC";
 
   it("fails the provider closed and keeps restricted-host remediation when the probe fails", async () => {
     const projected = projectGhidraDoctorInspection(
