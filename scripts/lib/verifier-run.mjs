@@ -193,7 +193,15 @@ const processSnapshot = async () => {
   return posixProcessSnapshot();
 };
 
+/** @type {Promise<typeof import("../../src/process/LinuxProcessStat.js")> | undefined} */
+let linuxStatParser;
+
 const linuxProcessSnapshot = async () => {
+  // The pinned Node can strip this leaf module without a transform or loader.
+  linuxStatParser ??= import(
+    new URL("../../src/process/LinuxProcessStat.ts", import.meta.url).href
+  );
+  const { parseLinuxProcessStat } = await linuxStatParser;
   const entries = await readdir("/proc", { withFileTypes: true });
   /** @type {ProcessMember[]} */
   const members = [];
@@ -201,13 +209,16 @@ const linuxProcessSnapshot = async () => {
     if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
     try {
       const stat = await readFile(`/proc/${entry.name}/stat`, "utf8");
-      const match = /^\d+ \(.*\) (\S) (\d+) (\d+) /u.exec(stat);
-      if (match === null || match[1] === "Z") continue;
-      members.push({
-        pid: Number(entry.name),
-        parentPid: Number(match[2]),
-        processGroupId: Number(match[3]),
-      });
+      const parsed = parseLinuxProcessStat(stat);
+      if (
+        parsed === undefined ||
+        parsed.pid !== Number(entry.name) ||
+        parsed.lifecycle === "zombie" ||
+        parsed.lifecycle === "dead"
+      )
+        continue;
+      const { pid, parentPid, processGroupId } = parsed;
+      members.push({ pid, parentPid, processGroupId });
     } catch {
       // Processes can exit while /proc is being sampled.
     }
