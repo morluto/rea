@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { expect } from "vitest";
 
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { workspaceCliTest } from "../support/cli/workspaceCliFixture.js";
 
 // Only the encoder's document size and one admitted I/O completion are
@@ -74,6 +75,10 @@ workspaceCliTest.skipIf(!["linux", "darwin"].includes(process.platform)).for(
     const temporary = join(workspace.root, "temporary");
     await writeFile(target, buildManagedPeFixture());
     await mkdir(temporary);
+    let acknowledgePhase!: () => void;
+    const phaseAcknowledged = new Promise<void>((resolve) => {
+      acknowledgePhase = resolve;
+    });
     const child = processes.spawn(
       process.execPath,
       [
@@ -95,6 +100,7 @@ workspaceCliTest.skipIf(!["linux", "darwin"].includes(process.platform)).for(
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
+      if (stderr.includes(`REA_TOON_PHASE:${phase}\n`)) acknowledgePhase();
     });
     const closed = new Promise<{
       code: number | null;
@@ -104,7 +110,11 @@ workspaceCliTest.skipIf(!["linux", "darwin"].includes(process.platform)).for(
       child.once("close", (code, signal) => resolve({ code, signal }));
     });
     try {
-      await expect.poll(() => stderr).toContain(`REA_TOON_PHASE:${phase}\n`);
+      await awaitAcknowledgement(
+        phaseAcknowledged,
+        closed,
+        `TOON ${phase} phase`,
+      );
       expect(await readdir(temporary)).toHaveLength(1);
       expect(child.kill(signal)).toBe(true);
       child.stdin.end("release");
