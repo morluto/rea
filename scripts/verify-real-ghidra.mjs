@@ -187,32 +187,37 @@ await withVerifierFixture(fixtures, async () => {
         ]);
       }
     }
-    const signedRelativeSource = fileURLToPath(
-      new URL(
-        "../tests/conformance/ghidra/relative-switch-signed.S",
-        import.meta.url,
-      ),
-    );
-    for (const selectorBias of [0, 2, 10]) {
+    // Compile the assembly fixtures through the same operator-selected Clang.
+    const switchFixtures = [
+      ...[0, 2, 10].map((selectorBias) => ({
+        source: "../tests/conformance/ghidra/relative-switch-signed.S",
+        variant: `relative-signed-${selectorBias}`,
+        flags: [`-DREA_SELECTOR_BIAS=${selectorBias}`],
+      })),
+      {
+        source: "../tests/conformance/ghidra/masked-byte-switch.S",
+        variant: "masked-byte-switch",
+        flags: [],
+      },
+    ];
+    for (const { source, variant, flags } of switchFixtures) {
+      const sourceFile = fileURLToPath(new URL(source, import.meta.url));
       for (const format of [
         "elf",
         ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
       ]) {
-        const targetPath = join(
-          fixtureRoot,
-          `relative-signed-${selectorBias}-${format}.o`,
-        );
+        const targetPath = join(fixtureRoot, `${variant}-${format}.o`);
         await exec(clang, [
           ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
-          `-DREA_SELECTOR_BIAS=${selectorBias}`,
+          ...flags,
           "-c",
-          signedRelativeSource,
+          sourceFile,
           "-o",
           targetPath,
         ]);
         crossTargets.push([
           targetPath,
-          `relative-signed-${selectorBias}`,
+          variant,
           { format, architecture: "arm64" },
         ]);
       }
@@ -234,30 +239,6 @@ await withVerifierFixture(fixtures, async () => {
       "aarch64-jump-table",
       { format: "elf", architecture: "arm64" },
     ]);
-    const maskedSource = fileURLToPath(
-      new URL(
-        "../tests/conformance/ghidra/masked-byte-switch.S",
-        import.meta.url,
-      ),
-    );
-    for (const format of [
-      "elf",
-      ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
-    ]) {
-      const targetPath = join(fixtureRoot, `masked-byte-switch-${format}.o`);
-      await exec(clang, [
-        ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
-        "-c",
-        maskedSource,
-        "-o",
-        targetPath,
-      ]);
-      crossTargets.push([
-        targetPath,
-        "masked-byte-switch",
-        { format, architecture: "arm64" },
-      ]);
-    }
   } else if (crossFormat) {
     await exec(clang, [
       "--target=aarch64-linux-gnu",
