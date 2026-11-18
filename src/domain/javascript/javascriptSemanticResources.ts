@@ -1067,36 +1067,6 @@ const rejectsSocketOptionsPort = (
   if (first === undefined || t.isSpreadElement(first)) return false;
   const options = unwrapJavaScriptExpression(first).node;
   if (!t.isObjectExpression(options)) return false;
-  // Node reads a path or a socket before it validates the port, and it reads an absent
-  // member through the prototype chain, so an inherited or later-written path decides the
-  // call instead of the port. The shared reader owns both the `tls` merge and that
-  // inheritance question. Measured on Node 24.22.1:
-  //
-  //   tls.connect({ path: "/tmp/x.sock" }, { port: -1 })                -> socket
-  //   tls.connect({ port: -1 }, { path: "/tmp/x.sock" })                -> socket
-  //   Object.prototype.path = "/tmp/a.sock"; net.connect({ port: -1 })  -> socket
-  //
-  // A reader that cannot price the options leaves the existing judgement below in place.
-  const precedence = socketOptionReader(node, specifier, context.state);
-  if (precedence !== undefined) {
-    const falsy = (value: t.Node) =>
-      isNullishPlaceholder(value, context.state) ||
-      staticJavaScriptTruthiness(value) === false;
-    const inheritable = prototypeMutationMayPrecede(
-      context.state,
-      "Object",
-      node,
-    );
-    for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
-      const value = precedence(member);
-      // Only a member this reader can price decides here. `"unknown"` means an accessor or
-      // a prototype write may change it, and that case already has its own judgement below
-      // — treating it as a win would drop the rejections this predicate exists for.
-      if (value !== undefined && value !== "unknown" && !falsy(value))
-        return false;
-      if (value === undefined && inheritable) return false;
-    }
-  }
   // Only `tls` merges a later object over this one; for `net` slot 1 is an optional listener,
   // so it cannot replace the port. Measured on Node 24.22.1, `net.connect({port: -1}, {})` and
   // `net.connect({port: -1}, () => {})` both throw ERR_SOCKET_BAD_PORT.
