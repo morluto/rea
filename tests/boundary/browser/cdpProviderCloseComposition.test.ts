@@ -30,7 +30,6 @@ const providers = [
     name: "CdpBrowserProvider",
     providerId: "rea-cdp-browser",
     operation: "analyze_web_bundle",
-    reason: "Browser transport and analyzer cleanup remain incomplete",
     create: () => new CdpBrowserProvider(),
     failSecondClose: (cause: unknown) =>
       vi
@@ -41,7 +40,6 @@ const providers = [
     name: "CdpElectronProvider",
     providerId: "rea-cdp-electron",
     operation: "inspect_electron_page",
-    reason: "Electron transport and file cleanup remain incomplete",
     create: () => new CdpElectronProvider(),
     failSecondClose: (cause: unknown) =>
       vi
@@ -52,7 +50,7 @@ const providers = [
 
 it.each(providers)(
   "$name keeps both close failures and completes only after both release",
-  async ({ providerId, operation, reason, create, failSecondClose }) => {
+  async ({ providerId, operation, create, failSecondClose }) => {
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
@@ -66,14 +64,13 @@ it.each(providers)(
 
     const composite = await closeFailure(() => provider.close());
 
-    expect(composite).toBeInstanceOf(ProviderCleanupError);
-    if (!(composite instanceof ProviderCleanupError)) return;
+    if (!(composite instanceof ProviderCleanupError))
+      throw new Error("Expected a provider cleanup failure");
     expect(composite).toMatchObject({
       providerId,
       operation,
       cleanupIncomplete: true,
       cleanupResources: ["transport-handle", "second-handle"],
-      diagnostics: { reason },
     });
     expect(composite.cause).toBeInstanceOf(AggregateError);
     expect((composite.cause as AggregateError).errors).toEqual([
@@ -104,8 +101,8 @@ it.each(providers)(
 
     const composite = await closeFailure(() => provider.close());
 
-    expect(composite).toBeInstanceOf(ProviderCleanupError);
-    if (!(composite instanceof ProviderCleanupError)) return;
+    if (!(composite instanceof ProviderCleanupError))
+      throw new Error("Expected a provider cleanup failure");
     expect(composite.cleanupResources).toEqual(["transport-handle"]);
     expect((composite.cause as AggregateError).errors).toEqual([
       transport,

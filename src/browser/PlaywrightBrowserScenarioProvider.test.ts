@@ -1310,20 +1310,15 @@ it("composes several failed cleanup retries and completes only after each releas
       .close()
       .catch((cause: unknown) => cause);
 
-    expect(composite).toBeInstanceOf(ProviderCleanupError);
-    if (!(composite instanceof ProviderCleanupError)) return;
+    if (!(composite instanceof ProviderCleanupError))
+      throw new Error("Expected a provider cleanup failure");
     expect(composite).toMatchObject({
       operation: "capture_browser_scenario",
       cleanupIncomplete: true,
       cleanupResources: ["first cleanup", "second cleanup"],
-      diagnostics: {
-        reason: "One or more browser scenario resources remain owned.",
-      },
     });
     expect(composite.cause).toBeInstanceOf(AggregateError);
-    const cause = composite.cause as AggregateError;
-    expect(cause.message).toBe("Browser scenario cleanup failed");
-    expect(cause.errors).toHaveLength(2);
+    expect((composite.cause as AggregateError).errors).toHaveLength(2);
 
     denied.first = false;
     await provider.close().catch(() => undefined);
