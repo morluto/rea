@@ -1089,7 +1089,10 @@ const rejectsSocketOptionsPort = (
     );
     for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
       const value = precedence(member);
-      if (value === "unknown" || (value !== undefined && !falsy(value)))
+      // Only a member this reader can price decides here. `"unknown"` means an accessor or
+      // a prototype write may change it, and that case already has its own judgement below
+      // — treating it as a win would drop the rejections this predicate exists for.
+      if (value !== undefined && value !== "unknown" && !falsy(value))
         return false;
       if (value === undefined && inheritable) return false;
     }
@@ -1122,7 +1125,13 @@ const rejectsSocketOptionsPort = (
   // modelled here, so its presence keeps the port undecided instead of pricing the
   // first object and removing a real acquisition.
   const third = node.arguments[2];
-  if (specifier === "tls" && third !== undefined) {
+  const secondIsObject =
+    second !== undefined &&
+    !t.isSpreadElement(second) &&
+    t.isObjectExpression(unwrapJavaScriptExpression(second).node);
+  if (specifier === "tls" && third !== undefined && !secondIsObject) {
+    // A function or `undefined` in slot 1 leaves slot 2 as the copied options; slot 1 being
+    // an object already means slot 2 is the connect callback, which changes no member.
     if (t.isSpreadElement(third)) return false;
     const thirdValue = unwrapJavaScriptExpression(third).node;
     if (!isKnownNonObject(thirdValue, context)) return false;

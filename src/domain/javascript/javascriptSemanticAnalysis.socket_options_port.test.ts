@@ -322,3 +322,25 @@ it.each([
     expect(acquisitionsFor(body)).toHaveLength(1);
   },
 );
+
+/**
+ * The two narrowings the reader must not widen:
+ *
+ *   tls.connect({}, { port: -1 }, () => {})                  -> THREW (slot 2 is a callback)
+ *   tls.connect({ path: null, port: -1 }, { set side(_) {} }) -> THREW (a setter absorbs nothing)
+ *   Object.prototype.path = "/tmp/a.sock"; net.connect({ port: -1 }) -> socket
+ */
+it.each([
+  [`tls.connect({}, { port: -1 }, () => {})`],
+  [`tls.connect({ path: null, port: -1 }, { set side(_) {} })`],
+] as const)("still emits no acquisition for %s", (body) => {
+  expect(acquisitionsFor(body)).toEqual([]);
+});
+
+it("keeps the acquisition for an inherited path", () => {
+  expect(
+    acquisitionsFor(
+      `Object.prototype.path = "/tmp/a.sock"; net.connect({ port: -1 })`,
+    ),
+  ).toHaveLength(1);
+});
