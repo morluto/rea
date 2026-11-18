@@ -164,6 +164,7 @@ it("counts an unknown InstallOperation type as unknown", () => {
 
 it("reconstructs REPLACE_ZSTD payloads", () => {
   const plain = Buffer.from("zstd-partition-bytes");
+  const compressed = zstdCompressSync(plain);
   const bytes = buildAndroidOtaPayload({
     partitions: [
       {
@@ -171,7 +172,8 @@ it("reconstructs REPLACE_ZSTD payloads", () => {
         operations: [
           {
             type: 14,
-            data: zstdCompressSync(plain),
+            data: compressed,
+            dataHash: createHash("sha256").update(compressed).digest(),
             dstExtents: [{ startBlock: 0, numBlocks: 1 }],
           },
         ],
@@ -235,6 +237,7 @@ it("refuses distinct operation data past the read budget as a capacity limit", (
         typeName: "REPLACE",
         dataOffset: 0,
         dataLength: ANDROID_OTA_MAX_OPERATION_DATA_BYTES + 1,
+        dataHashHex: null,
         srcExtents: [],
         dstExtents: [{ startBlock: 0, numBlocks: 1 }],
       },
