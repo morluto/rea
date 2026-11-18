@@ -4,7 +4,10 @@ import {
   ProcessCaptureSnapshotFailure,
   snapshotRoots,
 } from "./FilesystemSnapshot.js";
-import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
+import {
+  buildCaptureResult,
+  POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+} from "./ProcessCaptureLifecycle.js";
 import { readLinuxChildren } from "./LinuxProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
@@ -364,14 +367,19 @@ it("records the PTY session-leader SIGHUP limitation on POSIX captures only", ()
       eventJournal: [],
     });
 
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(
+    /PTY session leader/iu,
+  );
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/SIGHUP/u);
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/group/iu);
   for (const posixPlatform of ["linux", "darwin"]) {
     expect(buildForPlatform(posixPlatform).limitations).toContain(
-      "The target runs as the capture PTY session leader; still-running children in its foreground process group receive terminal SIGHUP when it exits unless they leave the group or ignore SIGHUP.",
+      POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
     );
   }
-  expect(
-    buildForPlatform("win32").limitations.some((line) =>
-      line.includes("SIGHUP"),
-    ),
-  ).toBe(false);
+  const winLimitations = buildForPlatform("win32").limitations;
+  expect(winLimitations).not.toContain(
+    POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+  );
+  expect(winLimitations.some((line) => line.includes("SIGHUP"))).toBe(false);
 });
