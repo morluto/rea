@@ -415,6 +415,19 @@ it("removes credentials from POM property values", () => {
   expect(JSON.stringify(report)).not.toContain("password");
 });
 
+it("applies XML end-of-line handling to POM text", () => {
+  const report = parse(
+    "<project>\r\n  <modelVersion>4.0.0</modelVersion>\r\n  <artifactId>demo</artifactId>\r\n  <properties>\r\n    <banner>first\r\nsecond\rthird</banner>\r\n  </properties>\r\n</project>\r\n",
+  );
+  expect(report.properties).toEqual([
+    {
+      name: "banner",
+      value: "first\nsecond\nthird",
+      value_credentials_redacted: false,
+    },
+  ]);
+});
+
 it("lists properties in packaging, scope, type and classifier", () => {
   const report = parse(`<project>
   <groupId>com.example</groupId>

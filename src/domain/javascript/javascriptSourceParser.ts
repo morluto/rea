@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { isJavaScriptSourcePath } from "./javascriptArtifactFiles.js";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
 import {
   explicitJavaScriptLoaderMode,
@@ -28,16 +29,30 @@ export type JavaScriptPackageType =
   | "unspecified"
   | "unknown";
 
-const runtimeContextByProgram = new WeakMap<
+const contextByProgram = new WeakMap<
   t.Program,
-  JavaScriptRuntimeContext
+  {
+    readonly runtime: JavaScriptRuntimeContext;
+    readonly loaderCondition?: string;
+  }
 >();
 
 /** Only parser-owned facts establish module or CommonJS wrapper isolation. */
 export const javaScriptRuntimeContext = (
   program: t.Program,
 ): JavaScriptRuntimeContext =>
-  runtimeContextByProgram.get(program) ?? "unknown";
+  contextByProgram.get(program)?.runtime ?? "unknown";
+
+/** A recovered grammar does not prove which loader applies to the source. */
+export const javaScriptSourceLoaderCondition = (
+  program: t.Program,
+): string | undefined => contextByProgram.get(program)?.loaderCondition;
+
+/** A suffix-only source name has no extension in Node's module-import dispatch. */
+const isSuffixOnlySourcePath = (path: string | undefined): boolean =>
+  path !== undefined &&
+  posix.extname(path) === "" &&
+  isJavaScriptSourcePath(path);
 
 /** Runtime strictness follows parser-owned mode, not erased TypeScript syntax. */
 export const javaScriptProgramStrictness = (
@@ -102,35 +117,108 @@ const parseWithRuntimeContext = (
   source: string,
   sourcePath: string | undefined,
   options: ParserOptions,
-  packageContext?: JavaScriptPackageType,
+  observedPackageType?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
-  const file = parse(source, options);
   const filenameMode = explicitJavaScriptLoaderMode(sourcePath);
-  runtimeContextByProgram.set(
-    file.program,
-    filenameMode === "commonjs"
-      ? sourcePath?.toLowerCase().endsWith(".d.cts")
-        ? "unknown"
-        : "commonjs"
-      : filenameMode === "module"
-        ? "module"
-        : packageContext === "module" || packageContext === "commonjs"
-          ? packageContext
-          : packageContext === "unspecified" &&
-              posix.extname(sourcePath ?? "") === ".js"
-            ? file.program.sourceType === "module"
-              ? "module"
-              : "commonjs"
-            : hasCaseVariantJavaScriptLoaderSuffix(sourcePath)
-              ? "unknown"
-              : file.program.body.some((node) => t.isTSExportAssignment(node))
-                ? // CommonJS isolation does not establish strict ESM semantics.
-                  "commonjs"
-                : file.program.sourceType === "module" &&
-                    hasRuntimeModuleDeclaration(file.program)
-                  ? "module"
-                  : "unknown",
+  const packageContext = packageContextForPath(sourcePath, observedPackageType);
+  const suffixOnlySource = isSuffixOnlySourcePath(sourcePath);
+  const ambiguousHashbangPath =
+    posix.extname(sourcePath ?? "") === ".js" || suffixOnlySource;
+  // Dotfile entrypoints have no extname. Their package can explain signature
+  // preprocessing, but must not grant wrapper/module authority to ordinary data.
+  const signaturePackageContext = ambiguousHashbangPath
+    ? observedPackageType
+    : packageContext;
+  // ESM and TypeScript file loading remove the UTF-8 signature before a
+  // hashbang; JavaScript CommonJS loading does not. Preserve original indexes
+  // through Babel's origin options rather than repairing downstream ranges.
+  const compilerSource = /\.(?:jsx|ts|tsx|mts|cts)$/iu.test(sourcePath ?? "");
+  const signedHashbang = source.startsWith("\uFEFF#!");
+  const conditionalCommonJs =
+    signedHashbang &&
+    !compilerSource &&
+    (filenameMode === "commonjs" || signaturePackageContext === "commonjs");
+  const compilerCommonJsDotfile =
+    compilerSource &&
+    suffixOnlySource &&
+    signaturePackageContext === "commonjs";
+  const observedModuleDotfile =
+    suffixOnlySource && signaturePackageContext === "module";
+  const ambiguousLoader =
+    signedHashbang &&
+    ambiguousHashbangPath &&
+    (signaturePackageContext === undefined ||
+      signaturePackageContext === "unknown" ||
+      signaturePackageContext === "unspecified" ||
+      observedModuleDotfile ||
+      compilerCommonJsDotfile);
+  const loaderCondition = conditionalCommonJs
+    ? `Source in ${sourcePath ?? "<unknown>"} is recovered as CommonJS when imported through the ES module loader. Direct execution and require can reject this BOM/hashbang.`
+    : ambiguousLoader
+      ? observedModuleDotfile
+        ? `Source in ${sourcePath ?? "<unknown>"} is recovered under an ES module interpretation. Its loader invocation is unknown; direct entrypoint and module import can differ.`
+        : compilerCommonJsDotfile
+          ? `Source in ${sourcePath ?? "<unknown>"} is recovered with compiler syntax. Its loader invocation is conditional: direct CommonJS loading can reject this BOM/hashbang.`
+          : `Source in ${sourcePath ?? "<unknown>"} is recovered under a conditional loader interpretation. Its package loader mode is unknown.`
+      : undefined;
+  const hashbangSignature =
+    signedHashbang &&
+    (compilerSource ||
+      conditionalCommonJs ||
+      ambiguousLoader ||
+      filenameMode === "module" ||
+      (filenameMode === undefined && signaturePackageContext === "module"));
+  const parserOptions = { ...options };
+  if (conditionalCommonJs) {
+    parserOptions.sourceType = "commonjs";
+    delete parserOptions.allowAwaitOutsideFunction;
+    delete parserOptions.allowReturnOutsideFunction;
+    delete parserOptions.allowNewTargetOutsideFunction;
+  }
+  const file = parse(
+    hashbangSignature ? source.slice(1) : source,
+    hashbangSignature
+      ? {
+          ...parserOptions,
+          ...(observedModuleDotfile ? { sourceType: "module" as const } : {}),
+          startIndex: (options.startIndex ?? 0) + 1,
+          startColumn: (options.startColumn ?? 0) + 1,
+        }
+      : options,
   );
+  const runtime =
+    conditionalCommonJs && suffixOnlySource
+      ? "commonjs"
+      : ambiguousLoader
+        ? "unknown"
+        : filenameMode === "commonjs"
+          ? sourcePath?.toLowerCase().endsWith(".d.cts")
+            ? "unknown"
+            : "commonjs"
+          : filenameMode === "module"
+            ? "module"
+            : packageContext === "module" || packageContext === "commonjs"
+              ? packageContext
+              : packageContext === "unspecified" &&
+                  posix.extname(sourcePath ?? "") === ".js"
+                ? file.program.sourceType === "module"
+                  ? "module"
+                  : "commonjs"
+                : hasCaseVariantJavaScriptLoaderSuffix(sourcePath)
+                  ? "unknown"
+                  : file.program.body.some((node) =>
+                        t.isTSExportAssignment(node),
+                      )
+                    ? // CommonJS isolation does not establish strict ESM semantics.
+                      "commonjs"
+                    : file.program.sourceType === "module" &&
+                        hasRuntimeModuleDeclaration(file.program)
+                      ? "module"
+                      : "unknown";
+  contextByProgram.set(file.program, {
+    runtime,
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
+  });
   return file;
 };
 
@@ -242,7 +330,7 @@ export const parseRecoveredJavaScript = (
           sourceType,
           errorRecovery: true,
         },
-        packageContext,
+        observedPackageType,
       ),
       moduleOnlyErrors: [],
     };
@@ -255,7 +343,7 @@ export const parseRecoveredJavaScript = (
       sourceType: "unambiguous",
       errorRecovery: true,
     },
-    packageContext,
+    observedPackageType,
   );
   if (file.program.sourceType !== "script" || file.errors.length === 0)
     return { file, moduleOnlyErrors: [] };
@@ -267,7 +355,7 @@ export const parseRecoveredJavaScript = (
       sourceType: "script",
       errorRecovery: true,
     },
-    packageContext,
+    observedPackageType,
   );
   const scriptErrors = new Set(script.errors.map((error) => error.message));
   return {
@@ -294,10 +382,6 @@ export const parseJavaScriptSource = (
   try {
     const runtimeSourceType = runtimeSourceTypeForPath(sourcePath);
     const commonjs = runtimeSourceType === "commonjs";
-    const packageContext = packageContextForPath(
-      sourcePath,
-      observedPackageType,
-    );
     const options = {
       errorRecovery: true,
       attachComment: false,
@@ -314,10 +398,23 @@ export const parseJavaScriptSource = (
         allowReturnOutsideFunction: commonjs,
         allowNewTargetOutsideFunction: commonjs,
       },
-      packageContext,
+      observedPackageType,
     );
     // Unambiguous mode retains module-only diagnostics after choosing a script.
     // The .cjs extension establishes wrapper mode, so obtain its own diagnostics.
+    if (
+      !commonjs &&
+      file.program.sourceType === "script" &&
+      file.errors.length > 0 &&
+      javaScriptSourceLoaderCondition(file.program) !== undefined &&
+      javaScriptRuntimeContext(file.program) === "unknown"
+    )
+      return parseWithRuntimeContext(
+        source,
+        sourcePath,
+        { ...options, sourceType: "script" },
+        observedPackageType,
+      );
     return commonjs &&
       file.program.sourceType === "script" &&
       file.errors.length > 0
@@ -328,7 +425,7 @@ export const parseJavaScriptSource = (
             ...options,
             sourceType: "commonjs",
           },
-          packageContext,
+          observedPackageType,
         )
       : file;
   } catch (cause: unknown) {

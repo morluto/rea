@@ -15,21 +15,27 @@ it("joins a start still in progress when the owner closes, and refuses later sta
     {},
     { FAKE_HOLD_DEPLOY: "1" },
   );
-  onTestFinished(() => computers.closeAll());
   const order: string[] = [];
   const pending = start().then((result) => {
     order.push("start settled");
     return result;
   });
-  const helper = await awaitFakeDeployWait(runner, pending);
-  await computers.closeAll();
-  order.push("closeAll returned");
+  const helper = await awaitFakeDeployWait(runner, pending).finally(
+    async () => {
+      try {
+        await computers.closeAll();
+        order.push("closeAll returned");
+      } finally {
+        await Promise.allSettled([pending]);
+      }
+    },
+  );
   expect(order).toEqual(["start settled", "closeAll returned"]);
   const started = await pending;
   expect(started.ok).toBe(false);
   if (!started.ok) expect(started.error._tag).toBe("AnalysisCancelledError");
   // Shutdown cancelled the deploy, whose own interruption tore it down.
-  expect(await runner.notes("interrupted.jsonl")).toEqual([helper]);
+  expect(await runner.notes("interrupted.jsonl")).toEqual(helper);
   const later = await start();
   expect(later.ok).toBe(false);
   expect(await runner.notes("runs.jsonl")).toHaveLength(1);

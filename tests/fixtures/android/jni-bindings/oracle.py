@@ -76,6 +76,8 @@ class Elf:
                     self.exports[name] = symbol
         self.overlay = {}
         self.encodings = set()
+        self.packed_records = {}
+        self.packed_groups = []
         relative = {183: 1027, 62: 8, 3: 8, 40: 23}[self.machine]
         for section in self.sections:
             if section["type"] in (4, 9):
@@ -105,6 +107,43 @@ class Elf:
             elif section["type"] in (0x60000001, 0x60000002):
                 assert self.section_data(section).startswith(b"APS2")
                 self.encodings.add("APS2")
+                packed = self.section_data(section)
+                position = 4
+                def integer():
+                    nonlocal position
+                    value, shift = 0, 0
+                    while True:
+                        byte = packed[position]
+                        position += 1
+                        value |= (byte & 127) << shift
+                        shift += 7
+                        if byte < 128:
+                            return value - (1 << shift) if byte & 64 else value
+                count, address = integer(), integer()
+                addend, read = 0, 0
+                mask = (1 << (self.width * 8)) - 1
+                rela = section["type"] == 0x60000002
+                while read < count:
+                    group_offset = section["offset"] + position
+                    number, flags = integer(), integer()
+                    self.packed_groups.append({"file_offset": group_offset, "count": number, "flags": flags})
+                    delta = integer() if flags & 2 else None
+                    info = integer() if flags & 1 else None
+                    addend_delta = integer() if flags & 4 else None
+                    for index in range(number):
+                        address = (address + (delta if delta is not None else integer())) & mask
+                        entry_info = (info if info is not None else integer()) & mask
+                        if flags & 8:
+                            addend = (addend + (addend_delta if addend_delta is not None else integer())) & mask
+                        else:
+                            addend = 0
+                        kind = entry_info & (0xFFFFFFFF if self.width == 8 else 255)
+                        symbol = entry_info >> (32 if self.width == 8 else 8)
+                        self.packed_records[address] = {"file_offset": group_offset, "entry_index": index, "symbol": symbol, "encoding": "rela" if rela else "rel"}
+                        if kind == relative and symbol == 0:
+                            self.overlay[address] = (addend if rela else self.pointer(address), "APS2")
+                        read += 1
+                assert read == count and not any(packed[position:]), "Only linker zero padding may remain"
 
     def unpack(self, fmt, offset):
         return struct.unpack_from("<" + fmt, self.data, offset)
@@ -133,6 +172,10 @@ class Elf:
             location = address + (index * 3 + slot) * self.width
             resolved, encoding = self.overlay[location]
             slots.append({"address": hex(location), "file_offset": hex(self.file_offset(location)), "raw_word": hex(self.pointer(location)), "resolved_word": hex(resolved), "encoding": encoding})
+            if encoding == "APS2":
+                source = self.packed_records[location]
+                slots[-1].update({"logical_encoding": source["encoding"], "record_file_offset": source["file_offset"],
+                                  "packing": {"format": "aps2", "group_entry_index": source["entry_index"]}})
         for slot, expected in zip(slots, (name, descriptor)):
             actual = self.zero(self.data, self.file_offset(int(slot["resolved_word"], 16)))
             assert actual == mutf8(expected), (actual, expected)
@@ -148,23 +191,22 @@ def elf_oracle(path, expected, conscrypt):
     data = limited(path)
     elf = Elf(data)
     tables = []
-    if "APS2" not in elf.encodings:
-        if conscrypt:
-            assert hashlib.sha256(data).hexdigest() == "a3b78516ca2398d4ab233c71cf5c41ebb14c36ce157ebbaf1e5fd903e8220181"
-            row = elf.entry(0x2ADA68, 0, "EVP_PKEY_new_RSA", "([B[B[B[B[B[B[B[B)J")
-            assert row["function_address"] == "0xfa11c"
-            tables.append(row)
-        else:
-            for table in expected["tables"]:
-                symbol = elf.symbols[table["symbol"]]
-                section = elf.sections[symbol["section_index"]]
-                assert section["name"] == table["section"] and section["flags"] & 1
-                assert symbol["size"] == table["entries"] * 3 * elf.width
-                rows = [r for r in expected["native_declarations"] if r.get("table_symbol") == table["symbol"]]
-                by_index = {r["entry_index"]: r for r in rows}
-                for index, row in sorted(by_index.items()):
-                    tables.append(elf.entry(symbol["address"], index, row["name"], row["descriptor"], row["function_symbol"]))
-    return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "machine": elf.machine, "pointer_bytes": elf.width, "relocation_encodings": sorted(elf.encodings), "table_scope": "known source symbols/entries only; APS2 deliberately not independently decoded here", "tables": tables, "exports": {name: {**value, "address": hex(value["address"])} for name, value in sorted(elf.exports.items())}, "loads": elf.loads}
+    if conscrypt:
+        assert hashlib.sha256(data).hexdigest() == "a3b78516ca2398d4ab233c71cf5c41ebb14c36ce157ebbaf1e5fd903e8220181"
+        row = elf.entry(0x2ADA68, 0, "EVP_PKEY_new_RSA", "([B[B[B[B[B[B[B[B)J")
+        assert row["function_address"] == "0xfa11c"
+        tables.append(row)
+    else:
+        for table in expected["tables"]:
+            symbol = elf.symbols[table["symbol"]]
+            section = elf.sections[symbol["section_index"]]
+            assert section["name"] == table["section"] and section["flags"] & 1
+            assert symbol["size"] == table["entries"] * 3 * elf.width
+            rows = [r for r in expected["native_declarations"] if r.get("table_symbol") == table["symbol"]]
+            by_index = {r["entry_index"]: r for r in rows}
+            for index, row in sorted(by_index.items()):
+                tables.append(elf.entry(symbol["address"], index, row["name"], row["descriptor"], row["function_symbol"]))
+    return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "machine": elf.machine, "pointer_bytes": elf.width, "relocation_encodings": sorted(elf.encodings), "table_scope": "known source symbols/entries only", "tables": tables, "exports": {name: {**value, "address": hex(value["address"])} for name, value in sorted(elf.exports.items())}, "loads": elf.loads}
 
 
 def dex_oracle(path, expected):

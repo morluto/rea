@@ -130,6 +130,7 @@ import {
 } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
+  javaScriptSourceLoaderCondition,
   javaScriptStrictnessAt,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -328,8 +329,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     parserPartial,
     expressionNodeBudget,
   );
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const coverage = semanticCoverage(
-    parserPartial,
+    parserPartial || loaderCondition !== undefined,
     [
       ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
     ].sort(),
@@ -347,7 +349,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     coverage: derived.expressionFlowsTruncated
       ? { ...coverage, status: "partial", omittedCount: null }
       : coverage,
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
+      ...(loaderCondition === undefined ? [] : [loaderCondition]),
       ...(derived.expressionFlowsTruncated
         ? [
             "The offered semantic node capacity bounded expression dependencies; omitted influence remains unknown.",
