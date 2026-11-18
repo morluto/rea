@@ -11,6 +11,7 @@ import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
 } from "../../fixtures/android/jadx.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const INVENTORY_CLASS_COUNT = 7096;
 
@@ -72,10 +73,13 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
     { kind: "session", session },
     { androidAnalysis: provider },
   );
-  const client = new Client({
-    name: "android-search-inventory-budget",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "android-search-inventory-budget",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

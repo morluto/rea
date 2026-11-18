@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   HopperFixtureLauncher,
   startHopperFixtureClient as startClient,
 } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 describe("HopperClient progress", () => {
   it("forwards correlated Python progress before the terminal response", async () => {
@@ -27,7 +28,7 @@ describe("HopperClient progress", () => {
       },
     );
     const request = await launcher.waitForRequest("echo", "progress");
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(updates).toContainEqual(
         expect.objectContaining({ phase: "hopper_bridge", completed: 0 }),
       ),
@@ -152,7 +153,7 @@ describe("HopperClient progress", () => {
       ]),
     );
     await launcher.release(request);
-    await vi.waitFor(() => expect(client.requestActivity()).toBeNull());
+    await waitFor(() => expect(client.requestActivity()).toBeNull());
     await expect(client.callTool("echo", { alive: true })).resolves.toEqual({
       ok: true,
       value: { alive: true },

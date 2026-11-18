@@ -619,7 +619,35 @@ export async function verifyNativeTypeLayout(client, typeNames) {
     )
   )
     throw new Error("Nested union or enum layout drifted");
-  return { layout, payload, state };
+  const bitsSymbol = typeNames.find((item) =>
+    matchesSymbol(item.value, "rea_ghidra_inventory_bits"),
+  );
+  if (bitsSymbol === undefined)
+    throw new Error("Bit-field fixture symbol unavailable");
+  const bits = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    address: bitsSymbol.address,
+  });
+  const low = bits.fields.find((field) => field.name === "low");
+  if (
+    bits.kind !== "struct" ||
+    low?.bit_size !== 3 ||
+    low.bit_field?.declared_bit_size !== 3 ||
+    low.bit_field.component_type_lookup !== "not-found" ||
+    low.bit_field.base_type_lookup !== "equivalent"
+  )
+    throw new Error(`Bit-field identity unavailable: ${JSON.stringify(bits)}`);
+  const component = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    type: low.type_id,
+  });
+  const base = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    type: low.bit_field.base_type_id,
+  });
+  if (component.status !== "unavailable" || base.status !== "available")
+    throw new Error("Bit-field component or base lookup drifted");
+  return { layout, payload, state, bits, base };
 }
 
 export async function verifyRelativeSwitch(client, procedures, entrySize) {

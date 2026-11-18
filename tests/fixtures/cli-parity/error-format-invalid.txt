@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --format bogus
+exit: 1
+--- stdout
+{"ok":false,"error":{"code":"INVALID_OUTPUT_VALUE","message":"Invalid format: \"bogus\". Expected one of: toon, json, yaml, md, jsonl, csv, tsv"}}
+<end>
+--- stderr
+<end>

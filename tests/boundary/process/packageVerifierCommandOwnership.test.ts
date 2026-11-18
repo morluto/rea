@@ -129,7 +129,6 @@ const releaseDescendant = async (release: string, receipt: string) => {
 // install, native engine, or WABT behavior is simulated or claimed.
 processTest.skipIf(process.platform === "win32")(
   "joins a timed-out npm entry and its acknowledged descendant before removing the verifier root",
-  { timeout: 30_000 },
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-package-command-owner-");
     const scratch = join(root, "scratch");

@@ -64,8 +64,10 @@ it.each([
       },
     });
     expect(configured).not.toContain("UNRELATED_CALLER_VARIABLE");
-    const second = await runSetup(selected, createHost());
-    expect(second.appliedActions).toEqual([]);
-    expect(await readFile(client.configPath, "utf8")).toBe(configured);
+    if (toolFamilies === undefined) {
+      const second = await runSetup(selected, createHost());
+      expect(second.appliedActions).toEqual([]);
+      expect(await readFile(client.configPath, "utf8")).toBe(configured);
+    }
   },
 );

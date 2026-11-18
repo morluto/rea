@@ -1,7 +1,11 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import fs from "node:fs";
 import { join } from "node:path";
-import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory.js";
+import {
+  locateReferenceSourceGitDirectory,
+  ReferenceSourceGitDirectoryCancelled,
+} from "./ReferenceSourceGitDirectory.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
 
 import ignore from "ignore";
@@ -9,21 +13,24 @@ import {
   readRegularFileText,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS,
   type ReferenceSourceImportError,
   type ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
-import { rootFilesystemFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { rootFilesystemFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 /** Validated inputs ready for filesystem traversal. */
 export interface PreparedReferenceSourceImport {
@@ -63,8 +70,6 @@ const ignorePolicyCause = (cause: unknown): unknown =>
       ? cause.operationCause
       : cause;
 
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
-
 const addMarkedPatterns = (
   matcher: ReturnType<typeof ignore>,
   patterns: readonly string[],
@@ -80,11 +85,17 @@ const resolveRoot = async (
   signal?: AbortSignal,
 ): Promise<Result<string, ReferenceSourceImportError>> => {
   if (isAborted(signal))
-    return err(failure("cancelled", "Reference source import cancelled"));
+    return err({
+      ...failure("cancelled", "Reference source import cancelled"),
+      cause: signal?.reason,
+    });
   try {
     const metadata = await stat(requestedRoot);
     if (isAborted(signal))
-      return err(failure("cancelled", "Reference source import cancelled"));
+      return err({
+        ...failure("cancelled", "Reference source import cancelled"),
+        cause: signal?.reason,
+      });
     if (!metadata.isDirectory())
       return err(
         failure(
@@ -94,11 +105,12 @@ const resolveRoot = async (
       );
     const canonicalRoot = await realpath(requestedRoot);
     if (isAborted(signal))
-      return err(failure("cancelled", "Reference source import cancelled"));
+      return err({
+        ...failure("cancelled", "Reference source import cancelled"),
+        cause: signal?.reason,
+      });
     return ok(canonicalRoot);
   } catch (cause: unknown) {
-    if (isAborted(signal))
-      return err(failure("cancelled", "Reference source import cancelled"));
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",
@@ -110,6 +122,9 @@ const resolveRoot = async (
         ? {}
         : { remediationAction: rootFailure.remediationAction }),
       cause,
+      ...(signal?.aborted === true
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
     });
   }
 };
@@ -170,6 +185,12 @@ const readPolicyFile = async (
             ),
             cleanup: retry.cleanup,
             cause: primaryCause,
+            ...(signal !== undefined &&
+            isAborted(signal) &&
+            !isIgnorePolicyCancellation(primary) &&
+            operationCancellation === undefined
+              ? { secondaryCancellation: { cause: signal.reason } }
+              : {}),
           });
         }
         if (retry.outcome.kind === "failed") {
@@ -190,6 +211,9 @@ const readPolicyFile = async (
         `Reference source policy could not be read at ${policyPath}: ${errorMessage(causeValue)}`,
       ),
       cause: causeValue,
+      ...(signal?.aborted === true && !isIgnorePolicyCancellation(cause)
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
     });
   }
 };
@@ -241,14 +265,26 @@ const readIgnoreCase = async (
     );
   } catch (cause: unknown) {
     if (readFailure !== undefined) return err(readFailure);
-    if (isAborted(signal) || isIgnorePolicyCancellation(cause))
-      return err(failure("cancelled", "Reference source import cancelled"));
+    if (
+      isIgnorePolicyCancellation(cause) ||
+      cause instanceof ReferenceSourceGitDirectoryCancelled
+    )
+      return err({
+        ...failure("cancelled", "Reference source import cancelled"),
+        cause:
+          cause instanceof ReferenceSourceGitDirectoryCancelled
+            ? cause.reason
+            : ignorePolicyCause(cause),
+      });
     return err({
       ...failure(
         "io",
         `Reference source Git policy could not be read: ${errorMessage(cause)}`,
       ),
       cause,
+      ...(signal?.aborted === true
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
     });
   }
 };
@@ -372,6 +408,3 @@ export const prepareReferenceSourceImport = async (
     });
   }
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

@@ -13,7 +13,7 @@ const MIB = 1024 * 1024;
  * and per-thread runtime state. 512 MiB covers that peak with about 40%
  * margin for hosts with other processor counts or module layouts.
  */
-export const BUN_WORKER_RUNTIME_RESERVE_BYTES = 512 * MIB;
+const BUN_WORKER_RUNTIME_RESERVE_BYTES = 512 * MIB;
 
 /** Runtime facts that decide whether V8 heap flags bound a worker. */
 export interface JavaScriptWorkerHost {

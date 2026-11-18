@@ -1,10 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import {
-  TOOL_FAMILY_DEFINITIONS,
-  contractsForToolFamilies,
-  toolFamilyId,
-} from "./toolFamilies.js";
+import { TOOL_FAMILY_DEFINITIONS, toolFamilyId } from "./toolFamilies.js";
 import {
   registerToolFamilies,
   TOOL_FAMILY_IDS,
@@ -50,7 +46,7 @@ describe("tool families", () => {
   it("runs registrars in published id order", () => {
     const seen: string[] = [];
     const registrars = Object.fromEntries(
-      TOOL_FAMILY_IDS.map((id) => [
+      TOOL_FAMILY_IDS.toReversed().map((id) => [
         id,
         (): void => {
           seen.push(id);
@@ -70,24 +66,14 @@ describe("tool families", () => {
     expect([...owners.keys()].sort()).toEqual(
       TOOL_CONTRACTS.map(({ name }) => name).sort(),
     );
-  });
-
-  it("resolves each advertised tool to its owning family", () => {
-    for (const { name } of TOOL_CONTRACTS)
-      expect(TOOL_FAMILY_IDS).toContain(toolFamilyId(name));
+    for (const [name, ids] of owners)
+      expect(toolFamilyId(name), name).toBe(ids[0]);
+    for (const name of [
+      "export_web_scripts",
+      "trace_web_module_imports",
+      "trace_web_source_location",
+    ] as const)
+      expect(toolFamilyId(name)).toBe("application");
     expect(toolFamilyId("not_a_tool")).toBeUndefined();
-  });
-
-  it("projects catalog contracts from a family selection", () => {
-    expect(contractsForToolFamilies(undefined)).toEqual(TOOL_CONTRACTS);
-    expect(contractsForToolFamilies(new Set())).toEqual([]);
-    const scoped = contractsForToolFamilies(new Set(["session"]));
-    expect(scoped.length).toBeGreaterThan(0);
-    expect(scoped.length).toBeLessThan(TOOL_CONTRACTS.length);
-    expect(scoped.map(({ name }) => name)).toEqual(
-      TOOL_CONTRACTS.filter(({ name }) => toolFamilyId(name) === "session").map(
-        ({ name }) => name,
-      ),
-    );
   });
 });

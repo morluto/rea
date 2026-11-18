@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { EventEmitter } from "node:events";
 import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import pino from "pino";
@@ -6,6 +7,10 @@ import { expect, it } from "vitest";
 import { createManagedBinarySession } from "../../../src/composition/binary.js";
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
 import { createShutdown } from "../../../src/main/shutdown.js";
+import {
+  OwnedDebuggerCleanupError,
+  retainedDebuggerRemediation,
+} from "../../../src/process/ownedDebuggerCleanupError.js";
 import { registerProcessShutdown } from "../../../src/main/processShutdown.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -71,6 +76,77 @@ it("keeps shutdown output stable while logging the rejected cause at debug level
         message: "fixture transport close failed",
         code: "ECONNRESET",
       },
+    }),
+  );
+});
+
+it("names retained debuggers in stderr and every log level when shutdown ends", async () => {
+  const logs: string[] = [];
+  const output: string[] = [];
+  const requests: Array<() => void> = [];
+  const retained = new OwnedDebuggerCleanupError(
+    [new Error("detach unverified")],
+    "One or more owned GDB processes did not stop cleanly",
+    [4242],
+  );
+  const dependencies: RuntimeDependencies = {
+    env: {},
+    serve: () => {
+      throw new Error("unused fixture transport");
+    },
+    writeStderr: (text) => output.push(text),
+    setExitCode: () => undefined,
+    registerShutdown: (request) => {
+      requests.push(request);
+      return () => undefined;
+    },
+  };
+  createShutdown({
+    // Runtime owners wrap this failure before it reaches the shutdown report.
+    handle: {
+      close: () =>
+        Promise.reject(
+          new AggregateError(
+            [new AggregateError([retained], "REA provider cleanup failed")],
+            "REA server cleanup failed",
+          ),
+        ),
+    },
+    session: createManagedBinarySession(),
+    dependencies,
+    serverLogger: pino(
+      { level: "debug" },
+      { write: (line) => logs.push(line) },
+    ),
+  });
+
+  requests[0]?.();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(output).toHaveLength(2);
+  expect(output[0]).toBe(`${MCP_SHUTDOWN_FAILED}\n`);
+  expect(output[1]).toBe(`${retainedDebuggerRemediation([4242])}\n`);
+  expect(output[1]).toMatch(/\b4242\b/u);
+  const parsed = logs.map((line) => JSON.parse(line));
+  expect(parsed).toContainEqual(
+    expect.objectContaining({
+      level: 50,
+      msg: MCP_SHUTDOWN_FAILED,
+      retained_debugger_pids: [4242],
+    }),
+  );
+  expect(parsed).toContainEqual(
+    expect.objectContaining({
+      level: 20,
+      failure_cause: expect.objectContaining({
+        errors: [
+          expect.objectContaining({
+            errors: [
+              expect.objectContaining({ retained_debugger_pids: [4242] }),
+            ],
+          }),
+        ],
+      }),
     }),
   );
 });
@@ -168,7 +244,7 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
   expect(
     session.recordEvidence(
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           id: "fixture",
           name: "Shutdown fixture",
@@ -396,7 +472,7 @@ it("does not leave a provider running when a target open is queued behind shutdo
     },
   });
   expect(session.activeTarget()).toBeUndefined();
-  expect(session.activeBundleResourceRoot()).toBeUndefined();
+  expect(await session.status()).toMatchObject({ open: false });
   expect(created).toBe(closed);
 });
 

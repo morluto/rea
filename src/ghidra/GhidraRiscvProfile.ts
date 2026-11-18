@@ -22,7 +22,7 @@ export type GhidraRiscvCallingConvention =
  * The ABI and prototype of each policy REA applies after analysis.
  * `ReaGhidraRiscvCallingConvention.java` derives each prototype from the
  * pinned language's default `riscv32-fp.cspec` model, which is ilp32d;
- * docs/ghidra-riscv.md states the rules of each ABI.
+ * docs/providers/ghidra-riscv.md states the rules of each ABI.
  */
 export const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
   Record<
@@ -140,7 +140,7 @@ const ghidraRiscvIsaRefusal = (
         ", ",
       )}. Ghidra 12.1.4's generic RV32 language implements only ${[
         ...GHIDRA_RISCV32_DECODED_EXTENSIONS,
-      ].join(", ")} with p-code; see docs/ghidra-riscv.md.`;
+      ].join(", ")} with p-code; see docs/providers/ghidra-riscv.md.`;
 };
 
 /**
@@ -296,7 +296,7 @@ export const ghidraRiscvCallingConventionLimitations = (
   if (expected === undefined) return [];
   const { abi, prototype } = GHIDRA_RISCV_CALLING_CONVENTIONS[expected];
   return [
-    `RISC-V ${abi}: Ghidra's generic RV32 compiler specification models ilp32d. After analysis REA installs a program-specific \`${prototype}\` prototype, derived from the default prototype by policy ${expected} (docs/ghidra-riscv.md), and assigns it with dynamic storage to every function, external function and function definition. Thunks follow their targets.`,
+    `RISC-V ${abi}: Ghidra's generic RV32 compiler specification models ilp32d. After analysis REA installs a program-specific \`${prototype}\` prototype, derived from the default prototype by policy ${expected} (docs/providers/ghidra-riscv.md), and assigns it with dynamic storage to every function, external function and function definition. Thunks follow their targets.`,
     ...(report === undefined
       ? []
       : [

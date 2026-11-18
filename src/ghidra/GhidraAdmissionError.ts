@@ -28,6 +28,8 @@ const GHIDRA_ADMISSION_CODES = [
   "prepared_options_exceed_bound",
   "output_unobserved",
   "handshake_identity",
+  "import_identity_unavailable",
+  "import_identity_mismatch",
   "response_shape",
   "response_json",
   "seed_path_differs",

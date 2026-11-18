@@ -27,13 +27,13 @@ import {
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
-import { DestinationCaseCollisionFailure } from "../../../src/artifacts/ArtifactPaths.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
-import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { publishWebScripts } from "../../../src/application/PublishWebScripts.js";
+import { DestinationCaseCollisionFailure } from "../../../src/resources/ArtifactPaths.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
+import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../../src/domain/browserNetworkEvidence.js";
@@ -795,8 +795,7 @@ describe("captured script path validation", () => {
         {
           path: ["capture_path"],
           reason: "invalid_format",
-          message:
-            "capture_path must be an absolute filesystem path on this host.",
+          expected: "regex",
         },
       ],
     });
@@ -815,8 +814,7 @@ describe("captured script path validation", () => {
         {
           path: ["output_directory"],
           reason: "invalid_format",
-          message:
-            "output_directory must be an absolute filesystem path on this host.",
+          expected: "regex",
         },
       ],
     });

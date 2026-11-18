@@ -1,4 +1,4 @@
-export function sourceMapSummary(sourceMaps) {
+function sourceMapSummary(sourceMaps) {
   return {
     status: sourceMaps.status,
     requested: sourceMaps.requested,

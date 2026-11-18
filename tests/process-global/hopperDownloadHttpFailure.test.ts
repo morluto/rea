@@ -95,7 +95,7 @@ const vendor = (
   return { fetch };
 };
 const failed = (status: number, cancel?: () => void) => () =>
-  new Response(new ReadableStream({ ...(cancel ? { cancel } : {}) }), {
+  new Response(new ReadableStream(cancel ? { cancel } : {}), {
     status,
   });
 
@@ -385,7 +385,13 @@ it("chooses recovery by failure class: missing file, temporary service failure, 
     expect(status(transient)).toBe(status(503));
   expect(status(undefined)).toBe(status(403));
   expect(
-    hopperRequestRecovery({ url: debUrl, kind: "timeout", timeoutMs: 10_000 }),
+    hopperRequestRecovery({
+      url: debUrl,
+      kind: "timeout",
+      limit: "stalled",
+      timeoutMs: 30_000,
+      receivedBytes: 0,
+    }),
   ).toBe(unreachable);
   expect(
     new Set([status(404), status(503), status(403), unreachable]).size,

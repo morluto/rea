@@ -31,11 +31,13 @@ it("parses command names containing parentheses and retains native relation fact
     parseLinuxProcessStat(statRecord({ command: "worker ) old ) name" })),
   ).toEqual({
     pid: 42,
+    name: "worker ) old ) name",
     startTime: "987654",
     lifecycle: "non-zombie",
     parentPid: 17,
     processGroupId: 18,
     sessionId: 19,
+    kernelThread: false,
   });
 });
 
@@ -62,11 +64,13 @@ it("retains identity when Linux teardown reports unavailable group and session I
     ),
   ).toEqual({
     pid: 42,
+    name: "worker",
     startTime: "987654",
     lifecycle: "dead",
     parentPid: 0,
     processGroupId: -1,
     sessionId: -1,
+    kernelThread: false,
   });
   expect(
     parseLinuxProcessStat(statRecord({ processGroupId: "-2" })),
@@ -114,11 +118,33 @@ it.each(["invalid", "-1", "4.1", "9007199254740992"])(
   (flags) => {
     expect(parseLinuxProcessStat(statRecord({ flags }))).toEqual({
       pid: 42,
+      name: "worker",
       startTime: "987654",
       lifecycle: undefined,
       parentPid: 17,
       processGroupId: 18,
       sessionId: 19,
+      kernelThread: undefined,
     });
   },
 );
+
+it("distinguishes a kernel thread from a process sharing its flags", () => {
+  // Field 9 task_flags: PF_KTHREAD is 0x00200000; PF_EXITING stays orthogonal.
+  expect(parseLinuxProcessStat(statRecord({ flags: "2097408" }))).toMatchObject(
+    {
+      kernelThread: true,
+      lifecycle: "non-zombie",
+    },
+  );
+  expect(parseLinuxProcessStat(statRecord({ flags: "2097156" }))).toMatchObject(
+    {
+      kernelThread: true,
+      lifecycle: "exiting",
+    },
+  );
+  expect(parseLinuxProcessStat(statRecord({ flags: "4" }))).toMatchObject({
+    kernelThread: false,
+    lifecycle: "exiting",
+  });
+});

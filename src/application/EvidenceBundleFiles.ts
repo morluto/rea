@@ -1,9 +1,10 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { EvidenceBundleExportReceipt } from "../domain/investigationLifecycle.js";
 import { jsonValueValidationIssue } from "../domain/jsonValue.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { resemblesAnalysisSnapshot } from "../domain/analysisSnapshot.js";
 
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
@@ -21,25 +22,24 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   AnalysisCancelledError,
   type AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { safeParseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import {
   bufferedJsonParts,
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
-import { readJsonFile, writeTextParts } from "./JsonFiles.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { readJsonFile } from "./JsonFiles.js";
+import {
+  writeTextParts,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 
-type EvidenceReadFailure =
+type EvidenceBundleFileFailure =
   | EvidenceFileError
   | EvidenceIntegrityError
   | AnalysisResourceConstraintError
   | AnalysisCancelledError;
-type EvidenceWriteFailure =
-  | EvidenceFileError
-  | EvidenceIntegrityError
-  | AnalysisCancelledError
-  | AnalysisResourceConstraintError;
 
 /** Project a published bundle with record and residual-unknown revision counts. */
 export const evidenceBundleExportReceipt = (
@@ -58,7 +58,7 @@ export const readEvidenceBundle = (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
   operation = "import_evidence_bundle",
-): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
+): Promise<Result<EvidenceBundle, EvidenceBundleFileFailure>> =>
   readBundle(path, false, signal, resources, operation);
 
 /** Read an authenticated immutable snapshot for a subsequent session import. */
@@ -67,7 +67,7 @@ export const readImmutableEvidenceBundle = (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
   operation = "import_evidence_bundle",
-): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
+): Promise<Result<EvidenceBundle, EvidenceBundleFileFailure>> =>
   readBundle(path, true, signal, resources, operation);
 
 /** Join both comparison reads and preserve cleanup owned by either failed input. */
@@ -90,11 +90,11 @@ export const readComparisonEvidenceBundles = async (
   if (!left.ok) {
     if (!right.ok && right.error.cleanupIncomplete)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           left.error,
           right.error,
           operation,
-        ).bindCleanupDependencies([left.error, right.error]),
+        ),
       );
     return left;
   }
@@ -108,21 +108,11 @@ const readBundle = async (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
   operation = "import_evidence_bundle",
-): Promise<Result<EvidenceBundle, EvidenceReadFailure>> => {
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      }),
-    );
+): Promise<Result<EvidenceBundle, EvidenceBundleFileFailure>> => {
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok) return loaded;
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      }),
-    );
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   return authenticateEvidenceBundleValue(loaded.value, path, {
     operation,
     immutable,
@@ -134,7 +124,7 @@ export const authenticateEvidenceBundleValue = (
   value: unknown,
   path: string,
   options: { readonly operation: string; readonly immutable?: boolean },
-): Result<EvidenceBundle, EvidenceReadFailure> => {
+): Result<EvidenceBundle, EvidenceBundleFileFailure> => {
   const { operation } = options;
   const headroom = requireAuthenticationHeadroom(value, {
     operation,
@@ -154,7 +144,25 @@ export const authenticateEvidenceBundleValue = (
         new EvidenceFileError("read", "wrong-kind", {
           path: absoluteCallerPath(path),
           cause: failure.cause,
+          detectedKind: "evidence-record",
           userMessage: failure.message,
+        }),
+      );
+    if (
+      operation === "import_evidence_bundle" &&
+      typeof value === "object" &&
+      value !== null &&
+      !Object.hasOwn(value, "records") &&
+      resemblesAnalysisSnapshot(value)
+    )
+      return err(
+        new EvidenceFileError("read", "wrong-kind", {
+          path: absoluteCallerPath(path),
+          cause: failure.cause,
+          detectedKind: "analysis-snapshot",
+          related: { operations: ["open_binary", "export_evidence_bundle"] },
+          userMessage:
+            "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated. To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file to load the snapshot, and close_binary with snapshot_path to save updated state. Alternatively, supply a bundle from export_evidence_bundle.",
         }),
       );
     return err(
@@ -210,15 +218,10 @@ export const writeEvidenceBundle = async (
 ): Promise<
   Result<
     { readonly path: string; readonly bytes: number },
-    EvidenceWriteFailure
+    EvidenceBundleFileFailure
   >
 > => {
-  if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      }),
-    );
+  if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   if (!isImmutableEvidenceBundle(bundle)) {
     const issue = jsonValueValidationIssue(bundle);
     if (issue !== undefined)

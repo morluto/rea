@@ -16,6 +16,7 @@
  * state per record (up to ~11M records in a 512 MiB Zip64 file) and only a few
  * names decoded.
  */
+import { boundedList } from "../boundedList.js";
 import { type Result, err, ok } from "../result.js";
 import {
   canonicalNameHash,
@@ -54,7 +55,7 @@ export type ApkCentralDirectoryError =
  * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
  * plus one `.SF` and one block per v1 signer; thousands is already pathological.
  */
-export const MAX_V1_SIGNATURE_ENTRIES = 4096;
+const MAX_V1_SIGNATURE_ENTRIES = 4096;
 
 /**
  * v1 signers (signature block + `.SF` pairs) decoded. apksig accepts at most
@@ -63,7 +64,7 @@ export const MAX_V1_SIGNATURE_ENTRIES = 4096;
 export const MAX_V1_SIGNERS = 32;
 
 /** Duplicated central-directory names decoded for the report; the rest are counted. */
-export const MAX_DUPLICATE_NAME_SAMPLE = 5;
+const MAX_DUPLICATE_NAME_SAMPLE = 5;
 
 /** A signing-relevant central-directory entry and where its data is stored. */
 export interface ApkV1Entry {
@@ -226,9 +227,10 @@ const duplicateNames = (
   }
   const sampled = (firsts: number[]): ApkDuplicateNameSample => {
     firsts.sort((a, b) => a - b);
+    const { items, omitted } = boundedList(firsts, MAX_DUPLICATE_NAME_SAMPLE);
     return {
-      count: firsts.length,
-      sample: firsts.slice(0, MAX_DUPLICATE_NAME_SAMPLE).map((i) => {
+      count: items.length + omitted,
+      sample: items.map((i) => {
         const start = starts[i] ?? 0;
         const storedBytes = lengths[i] ?? 0;
         return {

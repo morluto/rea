@@ -35,8 +35,10 @@ describe("native module syntax observations", () => {
       "only-types",
       "mixed",
     ]);
-    expect(result.diagnostics).toContain(
-      "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
+    expect(result.diagnostics).toContainEqual(
+      expect.stringMatching(
+        /compiler options.*unavailable.*type.only.*side.effect/iu,
+      ),
     );
   });
   it("keeps JavaScript relational imports distinct from TypeScript import types", () => {
@@ -61,6 +63,34 @@ describe("native module syntax observations", () => {
       column: 7,
     });
   });
+  it.each([
+    ['"./dep.js" as const', "./dep.js"],
+    ['"./dep.js" satisfies string', "./dep.js"],
+    ['"./dep.js"!', "./dep.js"],
+    ["`./dep.js` as const", "./dep.js"],
+    ["`./${name}.js` as const", null],
+  ] as const)(
+    "retains exact import identity through erased syntax: %s",
+    (expression, specifier) => {
+      const source = `import(${expression});`;
+      const result = collectWebModuleImports(source, "main.ts");
+      expect(result.state).toBe("parsed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.imports).toEqual([
+        {
+          kind: "dynamic-import",
+          specifier,
+          expression,
+          start: { offset: 7, line: 1, column: 7 },
+          end: {
+            offset: 7 + expression.length,
+            line: 1,
+            column: 7 + expression.length,
+          },
+        },
+      ]);
+    },
+  );
   it("reports unparseable input without asserting an empty complete graph", () => {
     const result = collectWebModuleImports(
       'import "./ok.js"; function {',
@@ -183,3 +213,32 @@ describe("captured module candidates", () => {
     ]);
   });
 });
+
+it.each(["main.mjs", "main.js", "view.jsx"])(
+  "retains original expression offsets for a BOM-prefixed hashbang in %s",
+  (path) => {
+    const source =
+      '\uFEFF#!/usr/bin/env node\r\nconst face = "😀"; import "./dep.mjs"; import(`./${part}.mjs`);';
+    const result = collectWebModuleImports(source, path);
+    expect(result.state).toBe("parsed");
+    expect(result.diagnostics).toEqual(
+      path === "main.js"
+        ? [expect.stringContaining("package loader mode is unknown")]
+        : [],
+    );
+    expect(result.imports.map(({ expression }) => expression)).toEqual([
+      '"./dep.mjs"',
+      "`./${part}.mjs`",
+    ]);
+    for (const item of result.imports) {
+      expect(item.start.offset).toBe(source.indexOf(item.expression));
+      expect(source.slice(item.start.offset, item.end.offset)).toBe(
+        item.expression,
+      );
+      expect(item.start.line).toBe(2);
+      expect(item.start.column).toBe(
+        source.split("\r\n")[1]!.indexOf(item.expression),
+      );
+    }
+  },
+);

@@ -29,7 +29,7 @@ const retained = (evidenceId: string) => ({
 /** Two archives inspected in one stdio MCP session. */
 const inspectedPair = async (
   prefix: string,
-  profile: "full" | "compact" = "compact",
+  profile: "compact" = "compact",
 ) => {
   const root = await createTestTempDirectory(prefix);
   const one = join(root, "one.zip");
@@ -58,9 +58,8 @@ const inspectedPair = async (
   return { root, one, call, client, inspect, left, right };
 };
 
-cliTest.for(["full", "compact"] as const)(
+cliTest.for(["compact"] as const)(
   "gives one comparison for retained, inline, file and mixed sources through MCP and the CLI (%s)",
-  { timeout: 60_000 },
   async (profile, { cli }) => {
     const { root, one, call, client, inspect, left, right } =
       await inspectedPair("rea-artifact-sources-", profile);

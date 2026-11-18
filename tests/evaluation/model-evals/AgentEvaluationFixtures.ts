@@ -400,12 +400,12 @@ const parserClaims = (
     {
       id: "comparison_coverage",
       expectedValue: {
-        status: "complete-within-inputs",
+        status: "partial",
         paired_variants: 3,
         added: 1,
         removed: 0,
         changed: 0,
-        unknown: 0,
+        unknown: 3,
       },
       source: { ...source, select: comparisonCoverage },
     },
@@ -486,7 +486,7 @@ const managedClaims = (
               evidence.authority === source.authority &&
               evidence.confidence === source.confidence &&
               evidence.subject?.local_path === source.subject.path &&
-              evidence.subject.digest.sha256 === source.subject.sha256,
+              evidence.subject.identity.sha256 === source.subject.sha256,
           );
           if (artifacts.length !== 1) return undefined;
           const parsedArtifact = readManagedInspectionEvidence(

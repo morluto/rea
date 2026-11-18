@@ -2,7 +2,6 @@ import type * as t from "@babel/types";
 import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReference.js";
 import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import { SEMANTIC_GETTER_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 export interface GetterInvocation {
   readonly getter: t.ObjectMethod | t.ClassMethod;
@@ -71,7 +70,10 @@ export class SemanticGetterQuery {
   /** Charge retained local work and getter jobs to the same precise query. */
   reserveResult(): boolean {
     if (this.#limited) return false;
-    if (!this.#fallback && this.#visits >= SEMANTIC_GETTER_EXPANSION_LIMIT) {
+    if (
+      !this.#fallback &&
+      this.#visits >= this.state.precision.getter_expansions
+    ) {
       this.#limited = true;
       return false;
     }

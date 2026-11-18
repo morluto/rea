@@ -5,12 +5,13 @@ import {
   childNodes,
   isManifestElement,
 } from "./AndroidManifestXml.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
 import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDetails.js";
 import {
   ANDROID_COMPONENT_KINDS,
   type AndroidComponentKind,
-  type ObservedAndroidManifestComponent,
-  type ObservedAndroidManifestComponentInventory,
+  type AndroidManifestComponent,
+  type AndroidManifestComponentInventory,
 } from "../domain/android/androidManifestComponents.js";
 
 /** Bounds keep a hostile manifest from exhausting the inspection. */
@@ -35,7 +36,7 @@ const PARTIAL_LIMITATION =
 
 const unavailable = (
   limitation: string,
-): ObservedAndroidManifestComponentInventory => ({
+): AndroidManifestComponentInventory => ({
   status: "unavailable",
   items: [],
   limitations: [limitation],
@@ -149,10 +150,10 @@ const providerAuthorities = (
  */
 export const parseAndroidManifestComponents = (
   manifestText: string,
-  coverage: "complete" | "partial",
+  coverage: KnownCoverageStatus,
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
-): ObservedAndroidManifestComponentInventory => {
+): AndroidManifestComponentInventory => {
   if (coverage === "partial")
     return {
       status: "partial",
@@ -165,7 +166,7 @@ export const parseAndroidManifestComponents = (
   });
   if (!parsed.ok)
     return unavailable(
-      `The decoded manifest is not well-formed XML (${parsed.error.reason}), so its component inventory is unavailable.`,
+      `The decoded manifest is not well-formed XML (${parsed.error.failure.field ?? parsed.error.kind}), so its component inventory is unavailable.`,
     );
   const root = parsed.value.documentElement;
   if (!isManifestElement(root) || root.nodeName !== "manifest")
@@ -185,7 +186,7 @@ export const parseAndroidManifestComponents = (
   const packageNameBytes =
     packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
-  const items: ObservedAndroidManifestComponent[] = [];
+  const items: AndroidManifestComponent[] = [];
   let truncated = false;
   let applicationSeen = false;
   let unnamed = 0;
@@ -454,11 +455,18 @@ export const parseAndroidManifestComponents = (
             : null;
       const exportedNonliteral =
         declaredExported !== null && exportedLiteral === null;
+      // Android discards an activity, alias or receiver filter that declares
+      // no action, while a service keeps it. Only kept filters select the
+      // export default and the API 31 explicit-export requirement.
+      const keptFilters =
+        component.nodeName === "service"
+          ? details.filterCount > 0
+          : details.actionFilter;
       const explicitExportRequired =
         declaredExported === null &&
         targetSdkLevel !== null &&
         targetSdkLevel >= 31 &&
-        details.filterCount > 0 &&
+        keptFilters &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -466,7 +474,7 @@ export const parseAndroidManifestComponents = (
       const filteredExportUnknown =
         declaredExported === null &&
         targetSdkLevel === null &&
-        details.filterCount > 0 &&
+        keptFilters &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -491,7 +499,7 @@ export const parseAndroidManifestComponents = (
             ? null
             : component.nodeName === "provider"
               ? providerDefault
-              : details.filterCount > 0,
+              : keptFilters,
         permission,
         permission_source: effectivePermissionSource,
         intent_filter_count: details.filterCount,

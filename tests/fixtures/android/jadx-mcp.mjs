@@ -1,11 +1,25 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { JADX_BRIDGE_IDENTITY } from "../../../src/android/JadxRelease.ts";
+import { jadxBridgeIdentity } from "../../../src/android/JadxRelease.ts";
+
+const packagedBridgeVersion = () => {
+  const identity = jadxBridgeIdentity();
+  if (!identity.ok) throw new Error(identity.error);
+  return identity.value.version;
+};
 
 // An actual child MCP server exercising the production stdio/process seam.
 // It is a protocol fixture, not evidence of JADX decompiler support.
 const mode = process.env.REA_FAKE_JADX_MODE ?? "normal";
+// A worker heap too small for the bridge stops the JVM before the handshake,
+// so the retained stderr is the only heap evidence.
+if (mode === "start-heap-exhausted") {
+  process.stderr.write(
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space\n',
+  );
+  process.exit(1);
+}
 const server = new McpServer({
   name: mode === "empty-server-identity" ? "" : "rea-jadx-bridge",
   version:
@@ -13,7 +27,7 @@ const server = new McpServer({
       ? ""
       : mode === "version"
         ? "99.0.0"
-        : JADX_BRIDGE_IDENTITY.version,
+        : packagedBridgeVersion(),
 });
 const requestedCount = Number.parseInt(
   process.env.REA_FAKE_JADX_CLASS_COUNT ?? "",
@@ -138,6 +152,11 @@ register("rea_native_declarations", ({ path }) => {
       mode === "partial-native-inventory"
         ? ["Controlled unreadable second DEX member"]
         : [],
+    manifest_splits: {
+      status: "observed",
+      required_split_types: [],
+      split_required: false,
+    },
   });
 });
 register("get_app_info", () => {

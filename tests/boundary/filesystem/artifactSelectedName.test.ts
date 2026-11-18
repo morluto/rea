@@ -1,5 +1,5 @@
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
-import { readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, vi } from "vitest";
@@ -127,5 +127,60 @@ it.skipIf(process.platform === "win32")(
     if (!admitted.ok) throw admitted.error;
     expect(admitted.value.format).toBe("elf");
     expect(admitted.value.kind).toBe("executable");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "classifies a bundle's executable by its own name and keeps the bundle facts",
+  async () => {
+    const root = await createTestTempDirectory("rea-artifact-bundle-name-");
+    const bundle = join(root, "Fixture.app");
+    await mkdir(bundle);
+    const infoPlist = join(bundle, "Info.plist");
+    await writeFile(
+      infoPlist,
+      "<plist><dict><key>CFBundleExecutable</key><string>main.js</string></dict></plist>",
+    );
+    const executable = join(bundle, "main.js");
+    await writeFile(executable, "export const value = 1;\n");
+    const admitted = await parseBinaryTarget(bundle);
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value).toMatchObject({
+      path: executable,
+      kind: "artifact",
+      format: "javascript",
+      bundleInfoPlist: infoPlist,
+      artifactSelectedPath: bundle,
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the bundle facts when the executable is a script stub with a trailing archive",
+  async () => {
+    const root = await createTestTempDirectory("rea-artifact-bundle-zip-");
+    const bundle = join(root, "Fixture.app");
+    await mkdir(bundle);
+    const infoPlist = join(bundle, "Info.plist");
+    await writeFile(
+      infoPlist,
+      "<plist><dict><key>CFBundleExecutable</key><string>main</string></dict></plist>",
+    );
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("payload.txt", new TextReader("appended archive"));
+    const executable = join(bundle, "main");
+    await writeFile(
+      executable,
+      Buffer.concat([Buffer.from("#!/bin/sh\nexit 0\n"), await writer.close()]),
+    );
+    const admitted = await parseBinaryTarget(bundle);
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value).toMatchObject({
+      path: executable,
+      kind: "archive",
+      format: "zip",
+      bundleInfoPlist: infoPlist,
+      artifactSelectedPath: bundle,
+    });
   },
 );

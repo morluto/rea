@@ -90,6 +90,18 @@ export const parseMacHopperReleases = (
   return ok(retained);
 };
 
+/**
+ * The minimum macOS version the selected release declares (`deployment_target`).
+ * Undefined when the row declares none as text; the signed application's own
+ * requirement is still checked before it is copied.
+ */
+export const macHopperReleaseMinimumSystemVersion = (
+  release: MacHopperRelease,
+): string | undefined =>
+  typeof release.deployment_target === "string"
+    ? release.deployment_target
+    : undefined;
+
 /** Stable publisher identity; signing subkeys are admitted through this primary. */
 export const HOPPER_LINUX_PRIMARY_FINGERPRINT =
   "7C2D73BAFAF5B9A710A69DA1A26DF815099B1BCD";
@@ -111,6 +123,8 @@ export class HopperReleaseError extends Error {
       | "release_metadata"
       | "download"
       | "integrity"
+      /** The authenticated package's launcher differs from the feed's main_exe_hash. */
+      | "launcher_digest_mismatch"
       | "publisher_verification_failed"
       | "verification_unavailable"
       | "unsupported_hopper_build"

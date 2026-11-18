@@ -47,7 +47,7 @@ member comparison CLI still takes two assembly paths; process comparison takes
 two capture Evidence JSON paths. Check command help for the installed version.
 An input bundle grants no implicit file lookup: `evidence-file` and historical
 graph file selectors are accepted only by contracts advertising them. See the
-[CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/cli.md#import-export-and-compare-evidence).
+[CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/getting-started/cli.md#import-export-and-compare-evidence).
 
 Completed `inspect_artifact` inventory also supports a summary and
 `view: {kind: "inventory", collection: "occurrences", logical_paths: ["package.json", "main.js"]}`.
@@ -72,6 +72,14 @@ selected rows. Selecting `value` keeps its string/decoding qualifications.
 Parent Evidence ID plus source index preserves same-address
 alternatives. Follow `coverage.next_offset` only as far as the question needs;
 exhausting retained rows does not establish complete program discovery.
+
+`batch_decompile` returns every body unless you select `detail: "summary"` when
+the connected tool advertises it. Use its parent Evidence ID with
+`view: {kind: "batch-decompile", collection: "items"}` for body-free rows and
+exact `where.indices`, `addresses`, `procedure_addresses` or `statuses`. Add
+`include_pseudocode: true` for several chosen bodies, or use
+`collection: "pseudocode"` with one row's `index` to page a large body. Batch
+limitations aggregate every item, so do not attribute them to one successful row.
 
 Use `record_unknown` to track unresolved questions in the user's investigation
 and name the authority or environment still required. Supply supporting and
@@ -166,3 +174,20 @@ coverage describes selected retained rows; `summary.coverage` or `exports.covera
 still describes the source table, so an empty partial page does not prove absence.
 CLI `inspect-native-exports --detail summary --evidence_output PATH` saves the
 complete bundle for later `inspect-analysis-view --evidence-bundle PATH` requests.
+
+For an ELF load-time dependency question, `inspect_elf_dependencies` accepts
+`detail: "summary"` and retains the complete inventory. Query
+`inspect_analysis_view` with `view: {kind: "elf-dependencies", collection:
+"needed" | "versions" | "definitions" | "maxima" | "imports", names:
+["selected_name"], fields: ["name"], offset: 0, limit: 32}` and the reported
+parent Evidence ID. Collection `"maxima"` matches `names` against namespaces
+such as `GLIBC` and selects `fields` from `namespace`, `maximum`, and
+`evidence_kind`, for example `fields: ["namespace", "maximum"]`. Collection
+`"issues"` takes only `indices`, `offset`, and `limit`.
+Duplicate `DT_NEEDED` names survive; use `source_index` with the parent ID for
+stable identity. Page coverage describes selected retained rows;
+`summary.coverage` or `dependencies.coverage` still describes the source
+tables, so an empty partial page does not prove absence. CLI
+`inspect-elf-dependencies --detail summary --evidence_output PATH` saves the
+complete bundle for later `inspect-analysis-view --evidence-bundle PATH`
+requests.

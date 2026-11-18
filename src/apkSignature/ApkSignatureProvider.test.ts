@@ -20,7 +20,7 @@ import {
   withSigningBlock,
   zipWith,
 } from "../../tests/fixtures/apkSignature/v1SignatureBlock.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { apkSignatureResultSchema } from "../domain/apkSignature/apkSignatureReport.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
@@ -303,8 +303,10 @@ describe("ApkSignatureProvider v1 signers", () => {
     if (!result.ok) throw new Error(result.error.message);
     const report = apkSignatureResultSchema.parse(result.value.result);
     expect(report.posture.v1_signers_match_block_signers).toBeNull();
-    expect(result.value.limitations).toContain(
-      "v1_signers_match_block_signers is null: the v3 signer's declared rotation lineage could not be decoded, so the original certificate v1 is expected to carry is unknown.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /v3.*rotation lineage.*could not be decoded.*original certificate.*unknown/iu,
+      ),
     );
   });
 
