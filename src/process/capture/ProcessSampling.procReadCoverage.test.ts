@@ -6,13 +6,10 @@ const fixture = vi.hoisted(() => ({
   tasks: new Map<number, readonly string[]>(),
   children: new Map<string, string>(),
   holdPath: undefined as string | undefined,
-  holdStarted: false,
   holdStartedResolve: undefined as (() => void) | undefined,
-  abortObserved: false,
   abortObservedResolve: undefined as (() => void) | undefined,
   holdReaddirPath: undefined as string | undefined,
   readdirGate: undefined as Promise<void> | undefined,
-  readdirStarted: false,
   readdirStartedResolve: undefined as (() => void) | undefined,
   readdirCount: 0,
   psFailure: undefined as string | undefined,
@@ -50,7 +47,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const filename = String(path);
       if (!filename.startsWith("/proc/")) return filesystem.readdir(...args);
       if (filename === fixture.holdReaddirPath) {
-        fixture.readdirStarted = true;
         fixture.readdirCount += 1;
         fixture.readdirStartedResolve?.();
         await fixture.readdirGate;
@@ -85,7 +81,6 @@ vi.mock("../ProcessInspectionFile.js", () => ({
       throw error;
     }
     if (filename === fixture.holdPath) {
-      fixture.holdStarted = true;
       fixture.holdStartedResolve?.();
       await new Promise<never>((_resolve, reject) => {
         if (signal?.aborted) {
@@ -95,7 +90,6 @@ vi.mock("../ProcessInspectionFile.js", () => ({
         signal?.addEventListener(
           "abort",
           () => {
-            fixture.abortObserved = true;
             fixture.abortObservedResolve?.();
             reject(new ProcessOwnershipInspectionCancelled(signal?.reason));
           },
@@ -165,6 +159,7 @@ vi.mock("../ExecFileOutput.js", async (original) => ({
 }));
 
 import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
 import { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import { ProcessOwnershipInspectionCancelled } from "../ProcessInspectionCancellation.js";
@@ -203,11 +198,11 @@ const statLine = (pid: number, read: number): string => {
   return `${String(reportedPid)} (fixture-${String(pid)}) ${fields.join(" ")}`;
 };
 
-const psFixture = (): string =>
+const psFixture = (commandPrefix = "fixture-command"): string =>
   processRows
     .map(
       ({ pid, parent }) =>
-        `${String(pid)} ${String(parent)} 100 100 fixture-command-${String(pid)}`,
+        `${String(pid)} ${String(parent)} 100 100 ${commandPrefix}-${String(pid)}`,
     )
     .join("\n");
 
@@ -217,13 +212,10 @@ const setUpFixture = (): void => {
   fixture.tasks.clear();
   fixture.children.clear();
   fixture.holdPath = undefined;
-  fixture.holdStarted = false;
   fixture.holdStartedResolve = undefined;
-  fixture.abortObserved = false;
   fixture.abortObservedResolve = undefined;
   fixture.holdReaddirPath = undefined;
   fixture.readdirGate = undefined;
-  fixture.readdirStarted = false;
   fixture.readdirStartedResolve = undefined;
   fixture.readdirCount = 0;
   fixture.psFailure = undefined;
@@ -393,12 +385,7 @@ it("retains only the stable procfs root if it changes during ps fallback discove
   setUpFixture();
   fixture.failures.set("/proc/100/task/100/children", "EACCES");
   fixture.statMutations.set(100, { read: 5, start: 9999 });
-  fixture.psOutput = [
-    "100 1 100 100 ps-root-command",
-    "200 100 100 100 discovery-only-child-command",
-    "300 200 100 100 discovery-only-grandchild-command",
-    "400 100 100 100 discovery-only-sibling-command",
-  ].join("\n");
+  fixture.psOutput = psFixture("discovery-only-command");
   const { samples, stop } = await sampleThrough([100]);
   const result = await stop();
   expect(fixture.psReads).toBeGreaterThan(0);
@@ -413,12 +400,7 @@ it("rejects a ps child edge when procfs reports a different parent", async () =>
   setUpFixture();
   fixture.failures.set("/proc/100/task/100/children", "EACCES");
   fixture.statMutations.set(200, { read: 1, parent: 201 });
-  fixture.psOutput = [
-    "100 1 100 100 ps-root-command",
-    "200 100 100 100 discovery-only-child-command",
-    "300 200 100 100 discovery-only-grandchild-command",
-    "400 100 100 100 discovery-only-sibling-command",
-  ].join("\n");
+  fixture.psOutput = psFixture("discovery-only-command");
   const { samples, stop } = await sampleThrough([100, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual([100, 400]);
@@ -432,8 +414,8 @@ it("rejects a ps child edge when procfs reports a different parent", async () =>
 it("retains children from readable threads while reporting another thread's EIO", async () => {
   setUpFixture();
   fixture.tasks.set(100, ["100", "101"]);
-  fixture.children.set("100:101", "");
   fixture.failures.set("/proc/100/task/101/children", "EIO");
+  fixture.psOutput = "";
   const { samples, stop } = await sampleThrough([100, 200, 300, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
@@ -494,10 +476,13 @@ it("does not swallow an unrelated filesystem AbortError as sampler cancellation"
 });
 
 it("does not report sampler shutdown cancellation as a proc-read failure", async () => {
+  const readStarted = phaseArrival();
+  const published = deferred();
   setUpFixture();
   fixture.holdPath = "/proc/100/task/100/children";
-  const { stop } = start();
-  await waitFor(() => fixture.holdStarted);
+  fixture.holdStartedResolve = readStarted.arrive;
+  const { stop } = start(fixture.runId, published.resolve);
+  await readStarted.reached(published.promise, "held procfs child read");
   const result = await stop();
   expect(result.partial).toBe(true);
   expect(result.coverage.sampling_failures).toBe(1);
