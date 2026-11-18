@@ -904,7 +904,7 @@ describe("Ghidra platform support", () => {
     // as volatile-protected pseudocode.
     expect(await semantics("win32")).toBe("read-only-relocation-limitations");
     expect(await semantics("linux")).toBe(
-      "volatile-unapplied-relocation-blocks",
+      "volatile-unapplied-relocation-destinations",
     );
     // A caller's existing project is read-only too, so its saved results must
     // not match a profile that predates the relocation limitation.
@@ -1516,7 +1516,7 @@ describe("Ghidra client projection", () => {
       language_id: "auto-from-header",
       compiler_spec_id: "auto-default",
       producer: ghidraProducerIdentity(),
-      loader_relocation_semantics: "volatile-unapplied-relocation-blocks",
+      loader_relocation_semantics: "volatile-unapplied-relocation-destinations",
     });
 
     const result = await ghidra

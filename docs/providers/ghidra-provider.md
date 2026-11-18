@@ -372,19 +372,23 @@ genuine no-return imports keep their flags. Analysis profiles version this repai
 so snapshots produced before it are not reused. Windows P0 does not run it.
 
 Ghidra applies most loader relocations, but it cannot apply some, such as an
-ELF copy relocation into RELRO (for example musl's `stderr`). Those destinations
-keep their file bytes while the runtime loader writes another object's value.
-Before decompiling, a fresh non-Windows import marks each loaded, initialized,
-non-writable block that holds such an unapplied relocation destination volatile
-in the ephemeral database, so the decompiler cannot fold the on-disk value into
-a constant. Applied relocations such as GOT entries stay foldable, so external
-calls keep their names. Permissions and source `FileBytes` are unchanged; the
-whole block is affected because Ghidra sets volatility per block. A procedure
-that reads an unapplied destination adds a limitation naming the relocation.
-Windows P0 and existing projects (`REA_GHIDRA_PROJECT_PATH`) have no
-database-mutation authority: they add the same limitation, but their pseudocode
-may still show the file-backed value. ELF relocatable objects and core files are
-excluded. Analysis profiles version this behavior.
+ELF copy relocation into RELRO (for example musl's `stderr`) or a TLS slot that
+only the runtime loader fills. Those destinations keep their file bytes while
+the runtime loader writes another value. Before decompiling, a fresh
+non-Windows import marks each such destination in a loaded, initialized,
+non-writable block volatile in the ephemeral database, so the decompiler
+cannot fold the on-disk value into a constant. Volatility is set on the
+destination's own data item (an undefined item of the relocation's length is
+created where nothing is defined), so applied relocations in the same block,
+such as the GOT entries beside a TLS slot, stay foldable and external calls
+keep their names. Only when an instruction or a data item starting before the
+destination occupies it is the whole block marked volatile instead.
+Permissions and source `FileBytes` are unchanged. A procedure that reads an
+unapplied destination adds a limitation naming the relocation. Windows P0 and
+existing projects (`REA_GHIDRA_PROJECT_PATH`) have no database-mutation
+authority: they add the same limitation, but their pseudocode may still show
+the file-backed value. ELF relocatable objects and core files are excluded.
+Analysis profiles version this behavior.
 
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
 host-native targets (x86-64/AArch64 ELF on Linux or Mach-O on macOS), plus a native

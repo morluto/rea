@@ -77,6 +77,8 @@ import ghidra.program.model.block.CodeBlockReference;
 import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.MutabilitySettingsDefinition;
+import ghidra.program.model.data.Undefined;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.listing.Bookmark;
@@ -1062,19 +1064,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /**
      * Ghidra applies most loader relocations, but one it cannot apply (for
      * example an ELF copy relocation in RELRO, whose value comes from another
-     * object) keeps its on-disk bytes while the runtime loader supplies a
-     * different value. Mark a non-writable loaded block holding such a
-     * destination volatile before opening the decompiler so those bytes cannot
-     * be constant-propagated as if they were runtime values.
+     * object, or a TLS slot that only the dynamic loader fills) keeps its
+     * on-disk bytes while the runtime loader supplies a different value. Mark
+     * such a destination in a non-writable loaded block volatile before opening
+     * the decompiler so those bytes cannot be constant-propagated as if they
+     * were runtime values.
      *
-     * This changes only the ephemeral analysis database: source FileBytes and
-     * the original target remain untouched. MemoryBlock exposes volatility for
-     * a whole block, so the mitigation is intentionally conservative within a
-     * block while preserving its read/write/execute permissions.
+     * Volatility is set on the destination's own data item (its Mutability
+     * setting), so the rest of the block, for example the GOT entries Ghidra
+     * applied beside a TLS slot, stays foldable. Where no data item can be
+     * placed on exactly the destination, the whole block is marked volatile
+     * instead. This changes only the ephemeral analysis database: source
+     * FileBytes and the original target remain untouched, and block
+     * permissions are preserved.
      *
      * Without database-mutation authority (Windows P0 or a caller's existing
      * project) the relocations are still recorded so affected procedures carry
-     * the limitation, but no block is marked volatile.
+     * the limitation, but nothing is marked volatile.
      */
     private void protectLoaderInitializedRelocations(boolean markVolatile) throws Exception {
         String elfFileType = currentProgram.getOptions(
@@ -1084,7 +1090,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (currentProgram.getRelocationTable().isRelocatable() &&
             !elfFileType.equals("shared object")) return;
         Map<Address, LoaderInitializedRelocation> discovered = new TreeMap<>();
-        Set<MemoryBlock> blocks = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        Map<Address, MemoryBlock> blocks = new TreeMap<>();
         Iterator<Relocation> iterator = currentProgram.getRelocationTable().getRelocations();
         while (iterator.hasNext()) {
             monitor.checkCancelled();
@@ -1114,7 +1120,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     relocation.getSymbolName()
                 )
             );
-            blocks.add(block);
+            blocks.put(location, block);
         }
         if (discovered.isEmpty()) return;
         loaderInitializedRelocations.putAll(discovered);
@@ -1123,7 +1129,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int transaction = currentProgram.startTransaction("REA loader relocation semantics");
         boolean commit = false;
         try {
-            for (MemoryBlock block : blocks) {
+            Listing listing = currentProgram.getListing();
+            Set<MemoryBlock> wholeBlocks =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            for (LoaderInitializedRelocation relocation : discovered.values()) {
+                monitor.checkCancelled();
+                Data data = volatileRelocationData(listing, relocation);
+                if (data == null) wholeBlocks.add(blocks.get(relocation.address()));
+                else MutabilitySettingsDefinition.DEF.setChoice(
+                    data, MutabilitySettingsDefinition.VOLATILE);
+            }
+            for (MemoryBlock block : wholeBlocks) {
                 monitor.checkCancelled();
                 if (!block.isVolatile()) block.setVolatile(true);
             }
@@ -1132,6 +1148,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
         finally {
             currentProgram.endTransaction(transaction, commit);
         }
+    }
+
+    /**
+     * The data item that starts at this relocation destination and covers it,
+     * created as undefined bytes when nothing is defined there; null when an
+     * instruction occupies it or a data item starts before it.
+     */
+    private Data volatileRelocationData(
+            Listing listing, LoaderInitializedRelocation relocation) throws Exception {
+        Address start = relocation.address();
+        long length = relocation.lengthInAddressableUnits();
+        if (length > Integer.MAX_VALUE) return null;
+        Data existing = listing.getDefinedDataContaining(start);
+        if (existing != null)
+            return existing.getAddress().equals(start) && existing.getLength() >= length
+                ? existing
+                : null;
+        Address end = start.add(length - 1);
+        if (listing.getInstructions(new ghidra.program.model.address.AddressSet(start, end), true)
+                .hasNext())
+            return null;
+        if (listing.getDefinedData(new ghidra.program.model.address.AddressSet(start, end), true)
+                .hasNext())
+            return null;
+        return listing.createData(start, Undefined.getUndefinedDataType((int) length));
     }
 
     private LoaderInitializedRelocation loaderInitializedRelocationAt(Address address) {

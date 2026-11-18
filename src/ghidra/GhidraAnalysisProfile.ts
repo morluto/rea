@@ -63,7 +63,7 @@ const sharedAnalysisSemantics = () => ({
   producer: ghidraProducerIdentity(),
   annotation_policy: "atomic-function-entry-metadata",
 });
-const loaderRelocationSemantics = "volatile-unapplied-relocation-blocks";
+const loaderRelocationSemantics = "volatile-unapplied-relocation-destinations";
 // Read-only sessions record relocation limitations without marking blocks volatile.
 const readOnlyLoaderRelocationSemantics = "read-only-relocation-limitations";
 
