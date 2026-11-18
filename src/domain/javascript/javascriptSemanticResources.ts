@@ -1319,10 +1319,11 @@ const optionWriterPrecedesMember = (
   // visits `"0"` first and connects.
   let unknownWriter = false;
   const copiedPrototypeKeys = new Set<string>();
+  const evaluatedAccessors = new Set<t.Node>();
   for (const property of options.properties) {
     // A spread contributes data properties: its own accessors already ran.
     const spread = t.isSpreadElement(property)
-      ? spreadDataEntries(property)
+      ? spreadDataEntries(property, evaluatedAccessors)
       : {
           entries: [property] as readonly (t.ObjectProperty | t.ObjectMethod)[],
           copiesPrototypeAccessor: false,
@@ -1330,7 +1331,22 @@ const optionWriterPrecedesMember = (
     for (const entry of spread.entries) {
       const name = semanticStaticPropertyKey(entry.key, entry.computed);
       if (name === null) {
-        if (t.isObjectMethod(entry) && entry.kind === "get")
+        // The key is not statically known, so it may be `__proto__`, and a value that is not
+        // a primitive then installs a setter-bearing prototype before `port` is read.
+        // Measured on Node 24.22.1,
+        // `const key = "__proto__"; tls.connect({}, {[key]: {set port(_) {…}}, port: -1})`
+        // connects, while `{ [key]: 5, port: -1 }` throws.
+        const writesPrototype =
+          t.isObjectProperty(entry) &&
+          entry.computed &&
+          primitiveOwnKeys(
+            unwrapJavaScriptExpression(entry.value).node,
+            isNullishJavaScriptSyntax,
+          ) === null;
+        if (
+          (t.isObjectMethod(entry) && entry.kind === "get") ||
+          writesPrototype
+        )
           unknownWriter = true;
         continue;
       }
@@ -1367,7 +1383,9 @@ const optionWriterPrecedesMember = (
         (t.isObjectProperty(node) && node.shorthand) ||
         node.computed);
     if (
-      (t.isObjectMethod(node) && node.kind === "get") ||
+      (t.isObjectMethod(node) &&
+        node.kind === "get" &&
+        !evaluatedAccessors.has(node)) ||
       writesThroughPrototype
     ) {
       if (writerOrder === undefined || before(order, writerOrder))
@@ -1392,6 +1410,7 @@ const optionWriterPrecedesMember = (
  */
 const spreadDataEntries = (
   property: t.SpreadElement,
+  evaluatedAccessors: Set<t.Node>,
 ): {
   readonly entries: readonly (t.ObjectProperty | t.ObjectMethod)[];
   readonly copiesPrototypeAccessor: boolean;
@@ -1403,14 +1422,20 @@ const spreadDataEntries = (
   const entries = spread.properties.filter(
     (entry): entry is t.ObjectProperty | t.ObjectMethod => {
       if (t.isSpreadElement(entry)) return false;
-      if (!(t.isObjectMethod(entry) && entry.kind !== "method")) return true;
-      if (
-        semanticStaticPropertyKey(entry.key, entry.computed) === "__proto__"
-      ) {
-        copiesPrototypeAccessor = true;
-        return true;
+      // Every own key of the source is copied, so an accessor keeps its insertion position as
+      // a data key: redefining that name later as a getter then stays where the spread put it.
+      // Measured on Node 24.22.1,
+      // `{...{get side() { return 0; }}, port: -1, get side() { this.port = 80; }}` connects.
+      if (t.isObjectMethod(entry) && entry.kind !== "method") {
+        // The spread already ran this accessor, so the copied value is data. It keeps its
+        // position but is not a writer at the merge target.
+        evaluatedAccessors.add(entry);
+        if (
+          semanticStaticPropertyKey(entry.key, entry.computed) === "__proto__"
+        )
+          copiesPrototypeAccessor = true;
       }
-      return false;
+      return true;
     },
   );
   return { entries, copiesPrototypeAccessor };

@@ -344,3 +344,34 @@ it("keeps the acquisition for an inherited path", () => {
     ),
   ).toHaveLength(1);
 });
+
+/**
+ * Two writers that reach the merge target without a literal `__proto__` spelling:
+ *
+ *   const key = "__proto__"; tls.connect({}, { [key]: { set port(_) { this.path = "/tmp/x"; } }, port: -1 }) -> socket
+ *   tls.connect({}, { ...{ get side() { return 0; } }, port: -1, get side() { this.port = 80; return 0; } }) -> socket
+ *
+ * The first is an unknown computed key that may be `__proto__`; the second is a key whose
+ * insertion position came from the spread, so redefining it as a getter keeps it before `port`.
+ * The control keeps the guard honest: a computed key holding a primitive cannot install a
+ * prototype, so the port is still rejected.
+ */
+it.each([
+  [
+    `const key = "__proto__"; tls.connect({}, { [key]: { set port(_) { this.path = "/tmp/x"; } }, port: -1 })`,
+  ],
+  [
+    `tls.connect({}, { ...{ get side() { return 0; } }, port: -1, get side() { this.port = 80; return 0; } })`,
+  ],
+] as const)(
+  "keeps the acquisition for an indirect __proto__ writer: %s",
+  (body) => {
+    expect(acquisitionsFor(body)).toHaveLength(1);
+  },
+);
+
+it("still rejects the port behind a computed key holding a primitive", () => {
+  expect(
+    acquisitionsFor(`const key = "x"; tls.connect({}, { [key]: 5, port: -1 })`),
+  ).toEqual([]);
+});
