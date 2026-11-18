@@ -768,6 +768,53 @@ it("stops decoding a certificate payload at the ASN.1 depth budget", () => {
   );
 });
 
+// Walks definite-length DER on its own, so the fixture's depth does not depend
+// on the reader under test. The outermost value is level 0, as in the reader.
+const derDepth = (bytes: Buffer, level = 0): number => {
+  let deepest = level;
+  let at = 0;
+  while (at < bytes.length) {
+    const constructed = ((bytes[at] ?? 0) & 0x20) !== 0;
+    const first = bytes[at + 1] ?? 0;
+    const lengthBytes = first < 0x80 ? 0 : first & 0x7f;
+    const length =
+      lengthBytes === 0 ? first : bytes.readUIntBE(at + 2, lengthBytes);
+    const content = bytes.subarray(
+      at + 2 + lengthBytes,
+      at + 2 + lengthBytes + length,
+    );
+    if (constructed) deepest = Math.max(deepest, derDepth(content, level + 1));
+    at += 2 + lengthBytes + length;
+  }
+  return deepest;
+};
+
+it("builds the dual-signed fixture one level past the shared reader's default", () => {
+  // The shared reader admits level 32 by default. A shallower fixture would
+  // pass without the PE depth budget and prove nothing.
+  expect(derDepth(pkcs7DualSignedTimestampedFixture())).toBe(33);
+});
+
+it("admits ASN.1 nesting at the depth budget and refuses one level more", () => {
+  const nestedTo = (depth: number): Buffer => {
+    let node: Buffer = Buffer.from([0x05, 0x00]);
+    for (let level = 0; level < depth; level += 1) node = der(0x30, node);
+    return node;
+  };
+  expect(derDepth(nestedTo(ASN1_DEPTH_BUDGET))).toBe(ASN1_DEPTH_BUDGET);
+  expect(() => readAsn1(nestedTo(ASN1_DEPTH_BUDGET))).not.toThrow();
+  let refusal: unknown;
+  try {
+    readAsn1(nestedTo(ASN1_DEPTH_BUDGET + 1));
+  } catch (cause: unknown) {
+    refusal = cause;
+  }
+  expect(refusal).toBeInstanceOf(PeCertificateAsn1Failure);
+  expect(refusal).toMatchObject({
+    exhausted: { allowance: "asn1-depth", limit: ASN1_DEPTH_BUDGET },
+  });
+});
+
 it("rejects headers whose section table does not fit SizeOfHeaders", () => {
   const bytes = peWithoutCertificateTableFixture();
   bytes.writeUInt16LE(0xffff, 0x86);
