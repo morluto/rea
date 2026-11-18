@@ -421,7 +421,7 @@ export class ZipArtifactReader implements ArtifactReader {
 }
 
 /** Coverage of a central-directory listing, given the member region's byte account. */
-const zipListingCoverage = (
+export const zipListingCoverage = (
   account: ZipMemberRegionAccount | undefined,
 ): ArtifactReaderTraversal => {
   if (account === undefined)
@@ -481,14 +481,14 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
-      ...legacyNameLimitations(entry),
+      ...zipEntryNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
   };
 };
 
 /** Preserve source bytes when an unflagged legacy name may use another code page. */
-const legacyNameLimitations = (entry: Entry): readonly string[] => {
+export const zipEntryNameLimitations = (entry: Entry): readonly string[] => {
   if (entry.filenameUTF8 || entry.extraFieldUnicodePath?.valid === true)
     return [];
   const bytes = entry.rawFilename;
@@ -620,7 +620,7 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "format" | "unavailable"> =
   ]);
 
 /** Type a zip.js archive fault so consumers do not report it as file I/O. */
-const typedZipFailure = (
+export const typedZipFailure = (
   cause: unknown,
   compressionMethod?: number,
 ): unknown => {

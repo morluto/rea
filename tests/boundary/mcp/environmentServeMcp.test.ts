@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
+import {
+  analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
+  timedCaptureEvidence,
+} from "../../fixtures/analysisView.js";
+import { createHash } from "node:crypto";
 import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { advertisedInputDialectViolations } from "../../../src/contracts/advertisedDialect.js";
@@ -58,6 +63,60 @@ const connect = async (url: URL) => {
   await client.connect(transport);
   return client;
 };
+
+processTest.for(["different-content", "wrong-role", "matching"] as const)(
+  "admits only source-matched HAR bytes through HTTP MCP replay: %s",
+  async (mode, { processes }) => {
+    const body = { id: 1, title: "retained" };
+    const retained = Buffer.from(JSON.stringify(body));
+    const encoded = retained.toString("base64");
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: { method: "GET", url: "http://app.example/api/books/1" },
+        response: {
+          status: 200,
+          content: {
+            mimeType: "application/json",
+            encoding: "base64",
+            text:
+              mode === "different-content"
+                ? Buffer.from('{"id":2}').toString("base64")
+                : ` \t${encoded}\r\n`,
+          },
+        },
+      },
+    ]);
+    capture.records[0]!.binary_fields = [
+      {
+        pointer: "/response/content/text",
+        representation:
+          mode === "wrong-role" ? "producer-bytes" : "har-base64-content",
+        state: "retained",
+        content_base64: encoded,
+        bytes: retained.length,
+        sha256: createHash("sha256").update(retained).digest("hex"),
+      },
+    ];
+    const fixture = environmentStateServeFixture(
+      analysisViewCaptureEvidence(capture),
+    );
+    const started = await serveReplayOnly(processes, {}, fixture);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_books_by_id",
+        arguments: { id: "1" },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({
+        body: mode === "matching" ? body : null,
+        replay: { body_recorded: mode === "matching" },
+      });
+    } finally {
+      await client.close();
+    }
+  },
+);
 
 processTest(
   "replays a recorded list containing an initially deleted entity",
@@ -249,17 +308,19 @@ describe("rea environment-serve --replay-only", () => {
         });
         const exact = await client.callTool({
           name: "get_users_by_id",
-          arguments: { id: "2" },
+          arguments: { id: "3" },
         });
         expect(exact.isError).toBeFalsy();
         expect(exact.structuredContent).toMatchObject({
           status: 200,
           content_type: "application/json",
-          body: { login: "probe" },
+          body: { id: 3, login: "viewer" },
           replay: {
             exact_match: true,
             evidence_id: source.evidenceId,
-            recorded_path: "/api/users/2",
+            recorded_path: "/api/users/3",
+            recorded_query: null,
+            body_recorded: true,
             truncated: false,
           },
         });
@@ -272,7 +333,13 @@ describe("rea environment-serve --replay-only", () => {
         });
         expect(inexact.structuredContent).toMatchObject({
           body: { login: "probe" },
-          replay: { exact_match: false },
+          replay: {
+            exact_match: false,
+            recorded_path: "/api/users/2",
+            record_ordinal: source.manifest.tools.find(
+              ({ name }) => name === "get_users_by_id",
+            )!.record_ordinals[0],
+          },
         });
         const folder = await client.callTool({
           name: "get_folders_by_uid",

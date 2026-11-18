@@ -67,7 +67,7 @@ vi.mock("../../src/process/BoundedFileBytes.js", async (importOriginal) => {
 
 import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 afterEach(() => {
   writers.before = undefined;
