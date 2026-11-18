@@ -332,6 +332,26 @@ it.each([
 );
 
 it.each([
+  "stream.__proto__.destroy = () => {};",
+  "stream.constructor.prototype.destroy = () => {};",
+  "decorate(stream.__proto__);",
+])(
+  "keeps a shared prototype effect through receiver replacement: %s",
+  (effect) => {
+    expect(
+      releases(`
+      import { createReadStream } from "node:fs";
+      function run(stream) {
+        ${effect}
+        stream = createReadStream("new");
+        stream.destroy();
+      }
+    `),
+    ).toMatchObject([{ resolution: "partial" }]);
+  },
+);
+
+it.each([
   'stream.close=()=>{}; if (flag) stream=createReadStream("new");',
   'stream=createReadStream("new"); const alias=stream; alias.close=()=>{};',
 ])("keeps effects on a possible current receiver: %s", (body) => {

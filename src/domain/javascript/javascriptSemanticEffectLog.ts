@@ -596,8 +596,8 @@ export const prototypeMutationMayPrecede = (
  * prototype. Passing the method itself cannot replace its native [[Call]], and
  * the call that receives the object has already selected the method.
  * With `fresh`, each activation initializes a new instance. Writes to a
- * shared prototype can still reach later activations. `targets` keeps the
- * recorded effects that may reach the value the read selects.
+ * shared prototype can still reach later activations or replacement receivers.
+ * `targets` filters only effects confined to the selected instance.
  */
 export const bindingMethodMayHaveChanged = (
   binding: JavaScriptSemanticBindingState,
@@ -660,7 +660,7 @@ export const bindingMethodMayHaveChanged = (
   return (
     binding.memberWrites.some(
       (effect) =>
-        targets(effect) &&
+        (effect.path.length > 1 || targets(effect)) &&
         // A write changes a slot on its parent. Rebinding C.prototype
         // leaves the prototype of an already acquired receiver intact.
         (effect.path.length === 0 ||
@@ -675,7 +675,7 @@ export const bindingMethodMayHaveChanged = (
     ) ||
     binding.escapedPaths.some(
       (effect) =>
-        targets(effect) &&
+        (effect.path.length > 0 || targets(effect)) &&
         reachesReceiver(effect.path, effect.path.length, true) &&
         effect.node !== state.parentsByNode.get(read) &&
         mayPrecede(effect.node, effect.path.length === 0),
