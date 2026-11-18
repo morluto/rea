@@ -1067,6 +1067,14 @@ const rejectsTlsProtocolVersionLiteral = (
   // `{secureContext: -0, minVersion: "nope"}` throws while a real context connects.
   const context = effective("secureContext");
   if (context === "unknown") return false;
+  // Node reads an absent `secureContext` through the prototype chain, so a write to
+  // Object.prototype that may run first can supply one. Measured on Node 24.22.1,
+  // `Object.prototype.secureContext = ctx` makes `{ minVersion: "nope" }` connect.
+  if (
+    context === undefined &&
+    prototypeMutationMayPrecede(state, "Object", node)
+  )
+    return false;
   if (
     context !== undefined &&
     !isNullishPlaceholder(context, state) &&

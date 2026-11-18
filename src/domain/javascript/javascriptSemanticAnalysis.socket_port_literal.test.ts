@@ -49,6 +49,8 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   Object.prototype.socket = <stream>; tls.connect(-0n, {}) / (-0n, { port: 65536 }) -> Socket created
  *   tls.connect(-0n, { path: `/tmp/x.sock` }) -> Socket created
  *   tls.connect(NaN / -1 / -0n, { port: 443, minVersion: "nope" }) -> THREW ERR_TLS_INVALID_PROTOCOL_VERSION
+ *   Object.prototype.secureContext = <context>; tls.connect(NaN / undefined, { port: 443, minVersion: "nope" }) -> Socket created
+ *   Object.prototype.secureContext = <context>; tls.connect({ port: 443, minVersion: "nope" }) -> Socket created
  *   net.connect("")                   -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect("/tmp/x.sock")        -> Socket created (Unix socket path)
  *   net.connect({ port: 80 })         -> Socket created
@@ -400,6 +402,21 @@ it.each([
   [
     "a tls bad port with empty options and an inherited Object.prototype.socket",
     `Object.prototype.socket = p; function f() {} tls.connect(-0n, {})`,
+    "connect",
+  ],
+  [
+    "a tls protocol version Node rejects with an inherited Object.prototype.secureContext",
+    `Object.prototype.secureContext = p; function f() {} tls.connect(NaN, { port: 443, minVersion: "nope" })`,
+    "connect",
+  ],
+  [
+    "a tls protocol version Node rejects after an undefined port with an inherited Object.prototype.secureContext",
+    `Object.prototype.secureContext = p; function f() {} tls.connect(undefined, { port: 443, minVersion: "nope" })`,
+    "connect",
+  ],
+  [
+    "a tls protocol version Node rejects in the options with an inherited Object.prototype.secureContext",
+    `Object.prototype.secureContext = p; function f() {} tls.connect({ port: 443, minVersion: "nope" })`,
     "connect",
   ],
   [
