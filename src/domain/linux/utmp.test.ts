@@ -405,3 +405,66 @@ describe("utmp field widths and byte order", () => {
     expect(result.error[0]?.kind).toBe("ambiguous_format");
   });
 });
+
+describe("utmp caller-supplied bounds and wide fields", () => {
+  it("rejects a record budget that is not a record count", () => {
+    // Each of these is allowed by `number` and none is a number of records;
+    // accepting them makes the retention ceiling and `omitted` lie.
+    for (const budget of [Number.NaN, 1.5, -1, Number.POSITIVE_INFINITY]) {
+      const result = parseUtmpFile(recordBytes(glibc32, login()), {
+        source: "wtmp",
+        profile: glibc32,
+        maxRecords: budget,
+      });
+      expect(result.ok, String(budget)).toBe(false);
+      if (result.ok) continue;
+      expect(result.error).toEqual([
+        { kind: "invalid_record_budget", value: String(budget) },
+      ]);
+    }
+  });
+
+  it("still accepts the exact bounds the ceiling allows", () => {
+    for (const budget of [0, 1]) {
+      const result = parseUtmpFile(recordBytes(glibc32, login()), {
+        source: "wtmp",
+        profile: glibc32,
+        maxRecords: budget,
+      });
+      if (!result.ok) throw new Error("expected the budget to be accepted");
+      expect(result.value.records).toHaveLength(budget);
+      expect(
+        result.value.issues.filter(
+          ({ kind }) => kind === "record_budget_exceeded",
+        ),
+      ).toHaveLength(budget === 0 ? 1 : 0);
+    }
+  });
+
+  it("reports a 64-bit session that Number cannot hold exactly", () => {
+    // 2^53 + 1 is the smallest integer a double cannot represent; two records
+    // that differ here would otherwise report the same session id.
+    const bytes = recordBytes(glibc64, login());
+    new DataView(bytes.buffer).setBigInt64(336, 9_007_199_254_740_993n, true);
+    const result = parseUtmpFile(bytes, { source: "utmp", profile: glibc64 });
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.issues).toEqual([
+      {
+        kind: "imprecise_field",
+        fileOffset: 0,
+        field: "ut_session",
+        exact: "9007199254740993",
+      },
+    ]);
+    expect(result.value.records[0]?.session).toBe(9_007_199_254_740_992);
+  });
+
+  it("keeps an exact 64-bit session silent", () => {
+    const result = parseUtmpFile(recordBytes(glibc64, login()), {
+      source: "utmp",
+      profile: glibc64,
+    });
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.issues).toEqual([]);
+  });
+});

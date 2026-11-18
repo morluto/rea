@@ -87,17 +87,29 @@ Signed fields are sign-extended at their declared width: `ut_type` and the exit
 status at 16 bits, `ut_session` at its profile width, and `tv_sec` as a signed
 `time_t`, so a pre-epoch or clock-change timestamp stays negative.
 
+A 64-bit field can carry a value `Number` cannot represent — a supplied file makes
+that reachable, and rounding it would collapse two distinct records onto one
+value. The record keeps the rounded number every consumer reads and the exact
+decimal in `imprecise_field`, so the source fact is never lost silently.
+
+`maxRecords` is admitted only as a nonnegative safe integer. `NaN`, a fraction, a
+negative value and `Infinity` are all `number` but none is a record count:
+accepting them would make the retained records, `omitted`, and the
+`UTMP_RECORD_LIMIT` ceiling disagree with each other.
+
 The fixed-width string members are `__attribute_nonstring__`, so a field that
 fills its whole width is well formed without a terminator. Only malformed UTF-8
 marks a field: the readable prefix is kept, the field is named in
 `undecodedFields`, and the remaining records still decode.
 
-| Issue                      | Cause                                                               |
-| -------------------------- | ------------------------------------------------------------------- |
-| `ambiguous_format`         | The length matches more than one profile and none was stated.       |
-| `truncated_trailing_bytes` | The file ends mid-record; earlier records stay readable.            |
-| `unknown_type`             | `ut_type` has no glibc name; the numeric value is kept.             |
-| `undecoded_field`          | A fixed-width field had no terminator or was not well-formed UTF-8. |
+| Issue                      | Cause                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------- |
+| `ambiguous_format`         | The length matches more than one profile and none was stated.                 |
+| `truncated_trailing_bytes` | The file ends mid-record; earlier records stay readable.                      |
+| `unknown_type`             | `ut_type` has no glibc name; the numeric value is kept.                       |
+| `undecoded_field`          | A fixed-width field had no terminator or was not well-formed UTF-8.           |
+| `imprecise_field`          | A 64-bit field is outside `Number`'s exact range; the stored decimal is kept. |
+| `invalid_record_budget`    | `maxRecords` is not a nonnegative safe integer; the value is rejected.        |
 
 ## Bounds
 

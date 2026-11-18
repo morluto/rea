@@ -185,6 +185,18 @@ export type UtmpIssue =
       readonly kind: "undecoded_field";
       readonly fileOffset: number;
       readonly field: string;
+    }
+  | {
+      readonly kind: "imprecise_field";
+      readonly fileOffset: number;
+      readonly field: string;
+      /** The stored value in decimal, so the exact fact survives the rounding. */
+      readonly exact: string;
+    }
+  | {
+      readonly kind: "invalid_record_budget";
+      /** The rejected value as the caller supplied it, including `NaN`. */
+      readonly value: string;
     };
 
 export interface UtmpParseResult {
@@ -227,6 +239,32 @@ export const utmpFieldLayout = (profile: UtmpFormatProfile): FieldLayout => {
 /** Reinterpret an unsigned read as the signed field the record declares. */
 const signed = (value: number | bigint, bits: 16 | 32 | 64): number =>
   Number(BigInt.asIntN(bits, BigInt(value)));
+
+/**
+ * Keep a 64-bit field exact.
+ *
+ * A supplied file can carry a session id or timestamp outside Number's exact
+ * range. Rounding it silently collapses two distinct records onto one value, so
+ * the stored decimal is reported alongside the number every consumer reads.
+ */
+const exactSigned = (
+  word: number | bigint,
+  bits: 32 | 64,
+  field: string,
+  fileOffset: number,
+  issues: UtmpIssue[],
+): number => {
+  const value = BigInt.asIntN(bits, BigInt(word));
+  const asNumber = Number(value);
+  if (BigInt(asNumber) === value) return asNumber;
+  issues.push({
+    kind: "imprecise_field",
+    fileOffset,
+    field,
+    exact: value.toString(),
+  });
+  return asNumber;
+};
 
 interface DecodedField {
   readonly text: string;
@@ -307,28 +345,37 @@ const decodeRecords = (
       host: host.text,
       exitTermination: signed(reader.u16(base + EXIT_TERMINATION_OFFSET), 16),
       exitCode: signed(reader.u16(base + EXIT_CODE_OFFSET), 16),
-      session: signed(
+      session: exactSigned(
         reader.word(
           base + layout.sessionOffset,
           profile.sessionBytes === 4 ? 32 : 64,
         ),
         profile.sessionBytes === 4 ? 32 : 64,
+        "ut_session",
+        base,
+        issues,
       ),
       // `tv_sec` is a signed `time_t`, so a pre-epoch or clock-change value stays
       // negative instead of becoming a large positive one.
-      timestampSeconds: signed(
+      timestampSeconds: exactSigned(
         reader.word(
           base + layout.secondsOffset,
           profile.timeBytes === 4 ? 32 : 64,
         ),
         profile.timeBytes === 4 ? 32 : 64,
+        "ut_tv.tv_sec",
+        base,
+        issues,
       ),
-      timestampMicroseconds: signed(
+      timestampMicroseconds: exactSigned(
         reader.word(
           base + layout.microsecondsOffset,
           profile.timeBytes === 4 ? 32 : 64,
         ),
         profile.timeBytes === 4 ? 32 : 64,
+        "ut_tv.tv_usec",
+        base,
+        issues,
       ),
       addressV6: Array.from({ length: ADDRESS_V6_FIELDS }, (_, slot) => {
         const word = reader.u32(base + layout.addressOffset + slot * 4);
@@ -373,6 +420,22 @@ export const parseUtmpFile = (
     issues.push({
       kind: "ambiguous_format",
       candidates: UTMP_FORMAT_PROFILES.map((candidate) => candidate.name),
+    });
+    return { ok: false, error: issues };
+  }
+
+  // A count allowed by `number` but not by record semantics makes coverage and
+  // the retention ceiling lie: `NaN` retains nothing, `1.5` keeps two records and
+  // reports a fractional omission, `Infinity` removes the bound. Reject it instead
+  // of clamping, so the diagnostics stay truthful.
+  const requestedLimit = options.maxRecords;
+  if (
+    requestedLimit !== undefined &&
+    !(Number.isSafeInteger(requestedLimit) && requestedLimit >= 0)
+  ) {
+    issues.push({
+      kind: "invalid_record_budget",
+      value: String(requestedLimit),
     });
     return { ok: false, error: issues };
   }
