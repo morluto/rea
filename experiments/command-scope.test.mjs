@@ -162,9 +162,17 @@ test("refuses incomplete output instead of accepting a truncated result", async 
     (error) => error.reason === "output-limit",
   );
 });
-test("propagates SIGINT as cancellation without forced termination", async () => {
-  const module = new URL("./command-scope.mjs", import.meta.url).href;
-  const code = `import {withCommands} from ${JSON.stringify(module)};
+test(
+  "propagates SIGINT as cancellation without forced termination",
+  {
+    skip:
+      process.platform === "win32"
+        ? "Windows child.kill terminates without delivering SIGINT to handlers"
+        : false,
+  },
+  async () => {
+    const module = new URL("./command-scope.mjs", import.meta.url).href;
+    const code = `import {withCommands} from ${JSON.stringify(module)};
 import {OwnedCommandFailure} from './dist/process/OwnedCommand.js';
 import {isProcessOwnershipInspectionCancellation} from './dist/process/ProcessInspectionCancellation.js';
 try { await withCommands(async run => { process.stdout.write('ready\\n'); await run(process.execPath,['-e','setInterval(()=>{},1000)']); }); }
@@ -176,29 +184,30 @@ catch (error) {
   process.stdout.write(valid ? 'cancelled\\n' : String(error)+'\\n');
   process.exitCode=valid?0:1;
 }`;
-  const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
-    cwd: fileURLToPath(new URL("..", import.meta.url)),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let output = "";
-  let diagnostic = "";
-  child.stderr.on("data", (chunk) => {
-    diagnostic += chunk;
-  });
-  let signalled = false;
-  child.stdout.on("data", (chunk) => {
-    output += chunk;
-    if (!signalled && output.includes("ready")) {
-      signalled = true;
-      child.kill("SIGINT");
+    const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    let diagnostic = "";
+    child.stderr.on("data", (chunk) => {
+      diagnostic += chunk;
+    });
+    let signalled = false;
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (!signalled && output.includes("ready")) {
+        signalled = true;
+        child.kill("SIGINT");
+      }
+    });
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    try {
+      const [exit] = await once(child, "close");
+      assert.equal(exit, 0, output + diagnostic);
+      assert.match(output, /cancelled/u);
+    } finally {
+      clearTimeout(timeout);
     }
-  });
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 10_000);
-  try {
-    const [exit] = await once(child, "close");
-    assert.equal(exit, 0, output + diagnostic);
-    assert.match(output, /cancelled/u);
-  } finally {
-    clearTimeout(timeout);
-  }
-});
+  },
+);
