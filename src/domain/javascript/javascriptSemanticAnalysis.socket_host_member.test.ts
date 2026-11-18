@@ -86,6 +86,8 @@ it.each([
   ["a negated host", `net.connect({ port: 0, host: !1 })`],
   ["a loopback host", `net.connect({ port: 0, host: "localhost" })`],
   ["a template host", "net.connect({ port: 0, host: `x` })"],
+  ["a TLS template host", "tls.connect({ port: 0, host: `localhost` })"],
+  ["an interpolated host", "net.connect({ port: 0, host: `node.${domain}` })"],
   ["a String call host", `net.connect({ port: 0, host: String("127.0.0.1") })`],
   [
     "an unresolved call host",

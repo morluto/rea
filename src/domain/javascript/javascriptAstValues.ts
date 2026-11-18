@@ -168,13 +168,18 @@ export const staticJavaScriptTruthiness = (
   node: t.Node,
 ): boolean | undefined => {
   const value = unwrapJavaScriptExpression(node).node;
-  if (t.isBooleanLiteral(value)) return value.value;
-  if (t.isNullLiteral(value)) return false;
   if (t.isStringLiteral(value)) return value.value.length > 0;
   if (t.isTemplateLiteral(value)) {
     if (value.quasis.some(({ value: { cooked } }) => cooked)) return true;
     return value.expressions.length === 0 ? false : undefined;
   }
+  return nonStringTruthiness(value);
+};
+
+/** Truthiness only when unwrapped syntax also proves the value is not a string. */
+export const nonStringTruthiness = (value: t.Node): boolean | undefined => {
+  if (t.isBooleanLiteral(value)) return value.value;
+  if (t.isNullLiteral(value)) return false;
   if (t.isNumericLiteral(value))
     return value.value !== 0 && !Number.isNaN(value.value);
   // Babel exposes a BigIntLiteral value as a bigint or, in older versions, its

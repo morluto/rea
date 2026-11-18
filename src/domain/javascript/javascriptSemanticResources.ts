@@ -12,6 +12,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   readExactJavaScriptLiteral,
+  nonStringTruthiness,
   isObjectPrototypeSetter,
   primitiveOwnKeys,
   semanticStaticPropertyName,
@@ -953,11 +954,7 @@ const rejectsSecureProtocolLiteral = (
     !TLS_SECURE_PROTOCOLS.has(literal.value)
   )
     return true;
-  // A literal read exactly, including a no-substitution template, decides its own
-  // truthiness; the shared truthiness reader does not price templates.
-  const truthy = literal.found
-    ? Boolean(literal.value)
-    : staticJavaScriptTruthiness(read);
+  const truthy = staticJavaScriptTruthiness(read);
   if (truthy !== true) return false;
   return (["minVersion", "maxVersion"] as const).some((member) => {
     const version = effective(member);
@@ -1005,11 +1002,7 @@ const rejectsSocketHostMember = (
   }
   const host = effective("host");
   if (host === undefined || host === "unknown") return false;
-  // Every statically truthy shape other than a string literal is a non-string.
-  return (
-    staticJavaScriptTruthiness(host) === true &&
-    !t.isStringLiteral(unwrapJavaScriptExpression(host).node)
-  );
+  return nonStringTruthiness(unwrapJavaScriptExpression(host).node) === true;
 };
 
 /** Only `net`/`tls` sockets take a port in argument 0. */
