@@ -319,7 +319,8 @@ export const parseReferenceSourceImports = (
 
   let source: string;
   try {
-    source = decodeStrictUtf8(bytes, "strip-signature");
+    // The shared parser owns loader-specific BOM/hashbang preprocessing.
+    source = decodeStrictUtf8(bytes, "preserve");
   } catch {
     return {
       relationships: [],

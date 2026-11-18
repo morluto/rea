@@ -353,6 +353,11 @@ execute them.
 
 JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
 code unit, matching the original bytes identified by the artifact digest.
+A BOM before a hashbang is accepted for TypeScript files, explicit ES modules,
+and JavaScript in an observed module package, matching file-loader preprocessing.
+Source indexes and later-line columns still refer to the original text.
+CommonJS JavaScript with that prefix remains unparseable, as it is in Node;
+a plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
 angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
