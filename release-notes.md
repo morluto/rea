@@ -257,6 +257,7 @@
 * **elf:** preserve compiler metadata after an empty kernel builder ([a7398cc](https://github.com/morluto/rea/commit/a7398cc9eb40ee89ae46d0f72b726fbd93fa4ea7)), closes [#9942](https://github.com/morluto/rea/issues/9942) [#9950](https://github.com/morluto/rea/issues/9950)
 * **elf:** preserve Unicode separators in kernel config strings ([#11831](https://github.com/morluto/rea/issues/11831)) ([1ab2121](https://github.com/morluto/rea/commit/1ab212164c44b24dd515bc715a90bc052037a18b))
 * **elf:** recover pointers from Android APS2 relocation tables ([#12047](https://github.com/morluto/rea/issues/12047)) ([32b2020](https://github.com/morluto/rea/commit/32b20205715e4af02800ace8ac997895f140c474))
+* **elf:** require sizes for declared Android RELR tables ([#12067](https://github.com/morluto/rea/issues/12067)) ([f7849ca](https://github.com/morluto/rea/commit/f7849cad3fe3bffb207b4dc30f34394978c20297))
 * **environment:** admit the output root before creating its parents ([5e1d504](https://github.com/morluto/rea/commit/5e1d504664362649aec19c03f768d0bbf939b482))
 * **environment:** preserve HAR body source identity and scan coverage ([#11829](https://github.com/morluto/rea/issues/11829)) ([5ccb7c5](https://github.com/morluto/rea/commit/5ccb7c59c84e2297fd2c0ecb691154e410b285f2))
 * **errors:** name rea doctor only for providers it can check ([#10565](https://github.com/morluto/rea/issues/10565)) ([4aefe2d](https://github.com/morluto/rea/commit/4aefe2daec12bbf7e9e4ed7e994d92ac245dea28))
