@@ -44,6 +44,8 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   tls.connect(-0n, { port: "abc" / "99999" / "-1" / "1.5" / "  " }) -> THREW ERR_SOCKET_BAD_PORT
  *   tls.connect(-0n, { port: "443" / " 443 " / "1e2" / "0x1bb" }) -> Socket created
  *   tls.connect(!+0n) / (delete +0n) / (!!+0n), with or without { port: 443 } -> THREW TypeError (before the call)
+ *   tls.connect(65536, { path: "/x", port: +0n }) / (65536, { socket: +0n }) / (-0n, { path: +0n }) -> THREW TypeError (before the call)
+ *   tls.connect(65536, { path: "/x", port: -0n }) -> Socket created (the path wins)
  *   tls.connect(+!0n)                 -> Socket created (port 1)
  *   Object.prototype.path = "/tmp/x.sock"; tls.connect(-0n, {}) / (-0n, { port: 65536 }) -> Socket created
  *   Object.prototype.socket = <stream>; tls.connect(-0n, {}) / (-0n, { port: 65536 }) -> Socket created
@@ -188,6 +190,18 @@ it.each([
   [
     "a tls bad port replaced by a blank string port",
     `tls.connect(-0n, { port: "  " })`,
+  ],
+  [
+    "a tls bad port beside a path and a unary plus BigInt port",
+    `tls.connect(65536, { path: "/x", port: +0n })`,
+  ],
+  [
+    "a tls bad port beside a unary plus BigInt socket",
+    `tls.connect(65536, { socket: +0n })`,
+  ],
+  [
+    "a tls bad port beside a unary plus BigInt path",
+    `tls.connect(-0n, { path: +0n })`,
   ],
   ["a tls negated unary plus BigInt port", `tls.connect(!+0n)`],
   [
@@ -417,6 +431,11 @@ it.each([
   [
     "a tls protocol version Node rejects in the options with an inherited Object.prototype.secureContext",
     `Object.prototype.secureContext = p; function f() {} tls.connect({ port: 443, minVersion: "nope" })`,
+    "connect",
+  ],
+  [
+    "a tls bad port beside a path that wins over a negated BigInt port",
+    `tls.connect(65536, { path: "/x", port: -0n })`,
     "connect",
   ],
   [

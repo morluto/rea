@@ -994,8 +994,10 @@ const socketOptionReader = (
  * `{ path: true }`, `{ path: {} }`. An absent `socket` or `path` may be inherited
  * from a patched `Object.prototype`, which keeps `(-0n, {})`. A merged string is
  * validated as a port (`stringIsPort`), so `{ port: "abc" }` throws and
- * `{ port: " 443 " }` connects. An unknown merge, a spread, an accessor or a port
- * read at run time leaves the call kept.
+ * `{ port: " 443 " }` connects. A `+` on a BigInt in `socket`, `path` or `port`
+ * throws before the call, so `(65536, { path: "/x", port: +0n })` throws too. An
+ * unknown merge, a spread, an accessor or a port read at run time leaves the call
+ * kept.
  */
 const tlsPortMayBeReplaced = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -1004,6 +1006,18 @@ const tlsPortMayBeReplaced = (
   const { state } = context;
   const read = socketOptionReader(node, "tls", state, true);
   if (read === undefined) return true;
+  // A `+` on a BigInt in one of these options throws while the arguments are
+  // evaluated, before `tls.connect` runs, so no shortcut below can rescue the call.
+  for (const member of ["socket", "path", "port"] as const) {
+    const value = read(member);
+    if (
+      value !== undefined &&
+      value !== "unknown" &&
+      literalPortRejection(unwrapJavaScriptExpression(value).node, context) ===
+        "throws"
+    )
+      return false;
+  }
   // Node reads an absent `socket` or `path` through the prototype chain, so a
   // write to Object.prototype that may run first can supply one.
   const inheritable = prototypeMutationMayPrecede(state, "Object", node);
