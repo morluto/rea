@@ -479,6 +479,12 @@ it("keeps filename and module-derived anchors application-relative when a deploy
         }),
       ]),
     );
+  const base = { value: "/app", basis: "next-script-url", status: "inferred" };
+  expect(
+    Object.fromEntries(
+      result.sources.map(({ key, base_path }) => [key, base_path]),
+    ),
+  ).toEqual({ page: base, "root-runtime": null, "module-runtime": base });
   expect(result.statistics.unanchored_literals_excluded).toBe(1);
 });
 

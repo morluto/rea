@@ -73,7 +73,10 @@ import {
   indexJavaScriptElectronIdentitySteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
-import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
+import {
+  javaScriptSourceLoaderCondition,
+  type ParsedJavaScriptSource,
+} from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
@@ -99,6 +102,7 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
   refusal: AnalysisResourceConstraintError,
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   const reason = `The member-mutation phase was refused (${refusal.reason}); findings that depend on member-mutation facts were not examined.`;
@@ -107,7 +111,10 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
       parserErrors === 0
         ? { status: "complete", error_count: 0 }
         : { status: "recovered", error_count: parserErrors },
-    semantics: { unknown_findings: null, uncertainty: [] },
+    semantics: {
+      unknown_findings: null,
+      uncertainty: loaderCondition === undefined ? [] : ["conditional-loader"],
+    },
     examination: {
       status: "not-examined",
       semantic_resource_limits: [],
@@ -124,7 +131,9 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
     parse_error_count: parserErrors,
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
+      ...(loaderCondition === undefined ? [] : [loaderCondition]),
       `${reason} Absence of findings is not evidence of absence.`,
       ...(parserErrors > 0
         ? [
@@ -280,6 +289,7 @@ const finalizeStaticAnalysis = (
     ...accumulator.protocols,
     ...accumulator.appPathChanges,
   ].some(({ value }) => value.loader_authority === "candidate");
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const coverage: JavaScriptStaticCoverage = {
     syntax:
       parserErrors === 0
@@ -288,6 +298,9 @@ const finalizeStaticAnalysis = (
     semantics: {
       unknown_findings: accumulator.unknownFindings,
       uncertainty: [
+        ...(loaderCondition === undefined
+          ? []
+          : ["conditional-loader" as const]),
         ...(accumulator.unknownFindings > 0
           ? ["dynamic-findings" as const]
           : []),
@@ -316,6 +329,7 @@ const finalizeStaticAnalysis = (
     applicability: { electron: electronObserved ? "observed" : "unknown" },
   };
   const limitations = [
+    ...(loaderCondition === undefined ? [] : [loaderCondition]),
     ...(bindings.valueResourceLimits.has("alias-selections")
       ? [semanticResourceLimitReason("alias-selections", bindings.precision)]
       : []),
@@ -429,6 +443,7 @@ const finalizeStaticAnalysis = (
         accumulator.moduleRangeIndex,
       ),
     },
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations,
   };
 };

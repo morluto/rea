@@ -8,6 +8,7 @@ import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js"
 import {
   parseRecoveredJavaScript,
   parserPluginsForPath,
+  javaScriptSourceLoaderCondition,
   type JavaScriptPackageType,
 } from "./javascript/javascriptSourceParser.js";
 import {
@@ -319,7 +320,8 @@ export const parseReferenceSourceImports = (
 
   let source: string;
   try {
-    source = decodeStrictUtf8(bytes, "strip-signature");
+    // The shared parser owns loader-specific BOM/hashbang preprocessing.
+    source = decodeStrictUtf8(bytes, "preserve");
   } catch {
     return {
       relationships: [],
@@ -339,12 +341,17 @@ export const parseReferenceSourceImports = (
     source,
     packageType,
   );
+  const loaderCondition =
+    ast === undefined
+      ? undefined
+      : javaScriptSourceLoaderCondition(ast.program);
   const limitations =
     moduleOnlyErrors.length === 0
       ? []
       : [
           `Strict-mode errors apply only if this file is an ES module: ${moduleOnlyErrors.join("; ")}`,
         ];
+  if (loaderCondition !== undefined) limitations.push(loaderCondition);
   const parseFailures = reasons.map((reason) => ({
     path,
     parser: "babel",
@@ -372,7 +379,8 @@ export const parseReferenceSourceImports = (
     relationships: relationships.map((relationship) => ({
       ...relationship,
       parse_state:
-        parseFailures.length > 0 && relationship.parse_state === "parsed"
+        (parseFailures.length > 0 || loaderCondition !== undefined) &&
+        relationship.parse_state === "parsed"
           ? "partial"
           : relationship.parse_state,
     })),

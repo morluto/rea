@@ -141,8 +141,13 @@ processTest(
         arguments: { maxSize: "20", offset: "0" },
       });
       expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toHaveProperty(
+        "body",
+        INITIAL_TRASH_ROWS[0]![2],
+      );
       expect(response.structuredContent).toMatchObject({
-        body: INITIAL_TRASH_ROWS[0]![2],
+        replay: { record_ordinal: 0 },
+        state: { source: "recording", reason: "list-differs" },
       });
     } finally {
       await client.close();
@@ -155,6 +160,8 @@ processTest(
   async ({ processes }) => {
     const fixture = environmentStateServeFixture(
       timedCaptureEvidence([
+        ["GET", "/api/contacts?maxSize=2&withItems=false", [{ id: 2 }]],
+        ["GET", "/api/contacts?maxSize=3&withItems=true", [{ id: 3 }]],
         [
           "GET",
           "/api/contacts?maxSize=2&withItems=true",
