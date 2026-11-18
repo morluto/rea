@@ -396,6 +396,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
       - name: Run reverse tools tests with coverage
         run: npm run test:coverage:reverse-tools
       - name: Preflight both reverse tools mutation configurations
@@ -433,7 +435,8 @@ jobs:
       needs.changes.outputs.agentenv == 'true' ||
       needs.changes.outputs.packet_capture == 'true' ||
       needs.changes.outputs.signal_recording == 'true' ||
-      needs.changes.outputs.go_binary == 'true'
+      needs.changes.outputs.go_binary == 'true' ||
+      needs.changes.outputs.ghidra_bridge == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -480,7 +483,6 @@ jobs:
           path: |
             dist/
             skills/
-            .cache/mcp-tool-catalog.json
             .cache/ci-test-history/test-results.json
             docs/public/product-catalog.json
             docs/verification/managed-conformance-*.json
@@ -697,10 +699,10 @@ jobs:
       - name: Compute Windows native cache key
         id: windows-native-key
         env:
-          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', 'package.json') }}
+          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', '.github/actions/windows-cross-compiler/action.yml', '.github/actions/ubuntu-archive/action.yml', 'package.json') }}
         run: |
           utc_date="$(date -u +%Y-%m-%d)"
-          printf 'key=rea-windows-native-v2-%s-%s-%s-%s-%s-%s\n' \
+          printf 'key=rea-windows-native-v3-%s-%s-%s-%s-%s-%s\n' \
             "${RUNNER_OS}" "${RUNNER_ARCH}" "${ImageOS:-ubuntu}" "${ImageVersion:-rolling}" "${utc_date}" "${SOURCE_HASH}" \
             >> "${GITHUB_OUTPUT}"
       - name: Restore Windows native build outputs
@@ -714,16 +716,7 @@ jobs:
           key: ${{ steps.windows-native-key.outputs.key }}
       - name: Prepare cross compiler
         if: steps.windows-native-cache.outputs.cache-hit != 'true'
-        run: |
-          # Slow Azure archive transfers can exhaust the job before compilation.
-          # Keep the same signed packages and avoid slow HTTP mirror fallback.
-          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$source" ]; then
-              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+        uses: ./.github/actions/windows-cross-compiler
       - if: steps.windows-native-cache.outputs.cache-hit != 'true'
         run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
@@ -936,6 +929,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
       - name: Verify static CLI/MCP journeys and synthetic report conformance
         env:
           REA_READINESS_REPORT_PATH: readiness-report.json
@@ -969,11 +964,6 @@ jobs:
         with:
           save: "true"
       - run: npm ci
-      - name: Typecheck with the official Windows compiler
-        env:
-          GOMAXPROCS: "2"
-          GOMEMLIMIT: "3GiB"
-        run: npm run typecheck -- --checkers 2
       - name: Restore Windows Turbo build cache
         id: windows-build-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -981,6 +971,11 @@ jobs:
           path: .turbo/cache/
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
+      - name: Typecheck with the official Windows compiler
+        env:
+          GOMAXPROCS: "2"
+          GOMEMLIMIT: "3GiB"
+        run: node scripts/run-turbo.mjs run typecheck
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
@@ -1280,9 +1275,14 @@ jobs:
     uses: ./.github/workflows/nativeaot-fixtures.yml
 
   ghidra_bridge:
-    needs: [changes, static]
+    needs: [changes, static, build]
     if: needs.changes.outputs.ghidra_bridge == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/ghidra-bridge-sources.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   android_metadata:
     needs: [changes, static]
@@ -1339,6 +1339,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            .nvmrc
+            scripts/ci
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc

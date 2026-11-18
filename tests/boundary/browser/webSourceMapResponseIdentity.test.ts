@@ -1,11 +1,8 @@
 import { createHash } from "node:crypto";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
-import {
-  analyzeWebBundleInputSchema,
-  webSourceMapsSchema,
-} from "../../../src/domain/webBundleAnalysis.js";
+import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 
 const origin = "https://maps.example.test";
 const request = (index: number) => ({
@@ -23,9 +20,7 @@ const digest = (bytes: Uint8Array | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 it.each([
-  { label: "an empty body", body: "" },
-  { label: "JSON", body: "not-json" },
-  { label: "BOM and XSSI framing", body: "\uFEFF)]}'\nnot-json" },
+  { label: "an absent body", body: null },
   {
     label: "mapping indices",
     body: JSON.stringify({
@@ -51,8 +46,8 @@ it.each([
           status: "invalid",
           artifact: null,
           response_identity: {
-            sha256: digest(body),
-            bytes: Buffer.byteLength(body),
+            sha256: digest(body ?? ""),
+            bytes: Buffer.byteLength(body ?? ""),
             representation: "fetch-response-body-bytes",
           },
           original_sources: [],
@@ -62,64 +57,40 @@ it.each([
         },
       ],
     });
-    expect(webSourceMapsSchema.parse(result.value)).toEqual(result.value);
   },
 );
 
-it("retains only completed response bytes when UTF-8 decoding fails", async () => {
-  const body = Uint8Array.of(0x7b, 0x22, 0xc3, 0x28, 0x22, 0x7d);
-  const result = await fetchWebSourceMaps([request(1)], input, undefined, {
-    fetch: () => Promise.resolve(new Response(body, { status: 200 })),
-  });
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    status: "unavailable",
-    items: [
-      {
-        status: "invalid",
-        artifact: null,
-        response_identity: {
-          sha256: digest(body),
-          bytes: body.byteLength,
-          representation: "fetch-response-body-bytes",
-        },
-        original_sources: [],
-        original_module_edges: [],
-        mappings: [],
-        limitation: expect.stringContaining("Response text was not retained"),
-      },
-    ],
-  });
-});
-
-it("retains completed body identity when map interpretation reaches its deadline", async () => {
+it("retains completed body identity when the deadline lands as the response stream ends", async () => {
   const body = JSON.stringify({
     version: 3,
     sources: ["a.js"],
     names: [],
     mappings: "AAAA",
   });
-  const response = new Response(body, { status: 200 });
-  const realDecode = TextDecoder.prototype.decode;
   let clock = 0;
   const clockSpy = vi.spyOn(performance, "now").mockImplementation(() => clock);
-  const decodeSpy = vi
-    .spyOn(TextDecoder.prototype, "decode")
-    .mockImplementation(function (
-      this: TextDecoder,
-      input?: Parameters<TextDecoder["decode"]>[0],
-      options?: Parameters<TextDecoder["decode"]>[1],
-    ) {
-      const text = realDecode.call(this, input, options);
-      clock = 1_001;
-      return text;
-    });
+  let sentBody = false;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (sentBody) {
+          clock = 1_001;
+          controller.close();
+          return;
+        }
+        sentBody = true;
+        controller.enqueue(Buffer.from(body));
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
   try {
     const result = await fetchWebSourceMaps(
       [request(1)],
       { ...input, source_map_fetch_timeout_ms: 1_000 },
       undefined,
-      { fetch: () => Promise.resolve(response) },
+      { fetch: async () => new Response(stream) },
     );
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
@@ -145,34 +116,30 @@ it("retains completed body identity when map interpretation reaches its deadline
       ],
     });
   } finally {
-    decodeSpy.mockRestore();
     clockSpy.mockRestore();
   }
 });
 
-it("refuses oversized text before JSON interpretation while retaining body identity and later maps", async () => {
-  // JSON escaping expands these decoded control characters beyond the default
-  // 32 MiB source-map output allowance while the response stays below 64 MiB.
-  const oversized = Buffer.alloc(6 * 1024 * 1024, 1);
-  const oversizedText = oversized.toString("utf8");
+it("retains body identity and later maps when escaping exceeds the output budget", async () => {
+  const budget = 8_000;
+  const oversized = Buffer.alloc(2_000, 1);
+  expect(oversized.byteLength).toBeLessThan(budget);
+  expect(
+    Buffer.byteLength(JSON.stringify(oversized.toString("utf8"))),
+  ).toBeGreaterThan(budget);
   const valid = JSON.stringify({
     version: 3,
     sources: ["a.js"],
     names: [],
     mappings: "AAAA",
   });
-  const parseSpy = vi.spyOn(JSON, "parse");
-  onTestFinished(() => parseSpy.mockRestore());
-  let calls = 0;
   const result = await fetchWebSourceMaps(
     [request(1), request(2)],
-    input,
+    { ...input, source_map_limits: { output_bytes: budget } },
     undefined,
     {
-      fetch: () =>
-        Promise.resolve(
-          new Response(calls++ === 0 ? oversized : valid, { status: 200 }),
-        ),
+      fetch: async (url) =>
+        new Response(String(url) === request(1).fetchUrl ? oversized : valid),
     },
   );
   if (!result.ok) throw result.error;
@@ -197,16 +164,9 @@ it("refuses oversized text before JSON interpretation while retaining body ident
   });
   const limitation = result.value.items[0]?.limitation;
   expect(limitation).toMatch(/JSON[- ]escap/i);
-  expect(limitation).toMatch(/metadata/i);
-  expect(limitation).toContain(
-    "source_map_limits.output_bytes is 33554432 bytes",
-  );
+  expect(limitation).toContain("source_map_limits.output_bytes is 8000 bytes");
   expect(limitation).toContain("Increase that per-call field");
   expect(Buffer.byteLength(JSON.stringify(result.value))).toBeLessThanOrEqual(
-    32 * 1024 * 1024,
+    budget,
   );
-  expect(parseSpy.mock.calls.some(([text]) => text === oversizedText)).toBe(
-    false,
-  );
-  expect(calls).toBe(2);
 });

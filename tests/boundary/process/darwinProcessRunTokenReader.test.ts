@@ -183,9 +183,18 @@ it("reports an actionable missing Swift compiler without installing it", async (
     },
   });
   try {
-    await expect(reader.read([{ pid: 1 }])).rejects.toThrow(
-      /requires the Apple Swift compiler via xcrun/u,
+    const failure = await reader.read([{ pid: 1 }]).then(
+      () => undefined,
+      (cause: unknown) => cause,
     );
+    const normalized = normalizeCaptureFailure(failure);
+    if (!(normalized instanceof ProcessCaptureError)) throw failure;
+    expect(projectAnalysisError(normalized)).toMatchObject({
+      code: "process_capture_failed",
+      message: expect.stringMatching(
+        /requires the Apple Swift compiler via xcrun/u,
+      ),
+    });
   } finally {
     await reader.close();
   }

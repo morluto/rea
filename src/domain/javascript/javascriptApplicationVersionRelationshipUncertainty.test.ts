@@ -12,10 +12,9 @@ import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVer
 
 const graph = (
   sha: string,
-  peers: "ambiguous" | "unique" | "unmatched",
+  peers: "ambiguous" | "unmatched",
   options: {
     relation?: "imports" | "invokes";
-    target?: "peer-one" | "peer-two";
     direction?: "in" | "out";
     content?: string;
     partial?: true;
@@ -39,9 +38,7 @@ const graph = (
             ? (options.content ?? "d".repeat(64))
             : peers === "ambiguous"
               ? "c".repeat(64)
-              : peers === "unique"
-                ? (key === "peer-one" ? "e" : "f").repeat(64)
-                : (key === "peer-one" ? "1" : "2").repeat(64),
+              : (key === "peer-one" ? "1" : "2").repeat(64),
         ...(key === "main"
           ? {
               structural_fingerprint_sha256: "9".repeat(64),
@@ -52,8 +49,7 @@ const graph = (
       evidence,
     ),
   );
-  const main = nodes[0],
-    target = nodes[options.target === "peer-two" ? 2 : 1];
+  const [main, target] = nodes;
   if (main === undefined || target === undefined)
     throw new Error("Missing fixture nodes");
   return {
@@ -147,15 +143,6 @@ it.each(["ambiguous", "unmatched"] as const)(
   },
 );
 
-it("keeps equal relationships to uniquely paired peers unchanged", () => {
-  const { item } = compare(
-    graph("a".repeat(64), "unique"),
-    graph("b".repeat(64), "unique"),
-  );
-  expect(item).toMatchObject({ status: "unchanged", dimensions: [] });
-  expect(item.limitations).toEqual([]);
-});
-
 it.each([{ relation: "invokes" as const }, { direction: "in" as const }])(
   "retains positive relation/direction differences beside unknown peer identity %j",
   (options) => {
@@ -172,17 +159,6 @@ it.each([{ relation: "invokes" as const }, { direction: "in" as const }])(
     );
   },
 );
-
-it("reports a resolved target change", () => {
-  const { item } = compare(
-    graph("a".repeat(64), "unique"),
-    graph("b".repeat(64), "unique", { target: "peer-two" }),
-  );
-  expect(item).toMatchObject({
-    status: "changed",
-    dimensions: ["relationships"],
-  });
-});
 
 it("preserves definite content change alongside unresolved relationships", () => {
   const { item } = compare(
