@@ -107,6 +107,7 @@
     "third_party/pwndbg/README.md",
     "third_party/pwndbg/LICENSE.md",
     "licenses",
+    "website/public/assets/licenses/dinosaur.txt",
     "assets/rea-plugin.png",
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
