@@ -194,7 +194,8 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-gradle-cli-");
     const path = join(root, "demo-1.2.3.module");
-    await writeFile(path, gradleModuleFixture);
+    const version = "[2.17\u00a0beta,2.18)";
+    await writeFile(path, gradleModuleFixture.replace("[2.17,2.18)", version));
     const result = await cli.run({
       arguments: ["inspect-maven-gradle-metadata", path, "--json"],
     });
@@ -215,7 +216,8 @@ cliTest(
       report.dependency_management.find((row) => row.platform),
     ).toMatchObject({
       artifact_id: "jackson-databind",
-      version: "[2.17,2.18)",
+      version,
+      version_kind: "range",
       variant: "demoPlatform",
     });
   },

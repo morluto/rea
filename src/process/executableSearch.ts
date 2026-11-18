@@ -3,6 +3,7 @@ import { posix, win32 } from "node:path";
 import {
   absoluteCallerPath,
   appendCallerPath,
+  isQualifiedCallerPath,
 } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
@@ -184,9 +185,7 @@ export const windowsPathCandidates = (
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
-        const relativeEntry =
-          !win32.isAbsolute(directory) ||
-          win32.parse(directory).root.length <= 1;
+        const relativeEntry = !isQualifiedCallerPath(directory, "win32");
         if (relativeEntry && search.relativeEntries === "skip") continue;
         const workingDirectory = relativeEntry
           ? (search.cwd ?? currentDirectory())
