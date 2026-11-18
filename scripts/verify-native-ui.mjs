@@ -15,6 +15,10 @@ import {
   observeProcessStartIdentityExit,
   signalProcessWithStartIdentity,
 } from "../dist/process/ProcessOwnershipObservation.js";
+import {
+  isProcessOwnershipInspectionCancellation,
+  ProcessOwnershipInspectionCancelled,
+} from "../dist/process/ProcessInspectionCancellation.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
 import {
   VerifierFixture,
@@ -30,6 +34,7 @@ const rootFixture = await VerifierFixture.open({
   private: false,
 });
 const root = rootFixture.path;
+const FIXTURE_READY_TIMEOUT_MS = 20_000;
 const FIXTURE_EXIT_GRACE_MS = 10_000;
 const startupRecord = z.strictObject({ pid: z.int().positive() });
 const readyRecord = startupRecord.extend({ window_id: z.int().positive() });
@@ -267,6 +272,77 @@ const report = await withVerifierFixture(rootFixture, async () => {
 process.stdout.write(`${JSON.stringify(report)}\n`);
 
 /**
+ * Each stage gives the native inspection owner its own cancellation budget.
+ * Wait for admitted reads to settle so cancellation cannot orphan helper work.
+ * @template T
+ * @param {number} milliseconds
+ * @param {(scope: { signal: AbortSignal, active: () => boolean }) => Promise<T>} observe
+ * @returns {Promise<T | undefined>}
+ */
+async function beforeFixtureDeadline(milliseconds, observe) {
+  const deadline = performance.now() + milliseconds;
+  const signal = AbortSignal.timeout(milliseconds);
+  const active = () => !signal.aborted && performance.now() < deadline;
+  try {
+    const result = await observe({ signal, active });
+    return active() ? result : undefined;
+  } catch (cause) {
+    if (
+      !isProcessOwnershipInspectionCancellation(cause) ||
+      cause.reason !== signal.reason
+    )
+      throw cause;
+    return undefined;
+  }
+}
+
+/**
+ * @param {(scope: { signal: AbortSignal, active: () => boolean }) =>
+ *   Promise<{ pid: number, identity: string } | undefined>} identify
+ */
+async function stopOwnedFixture(identify) {
+  return beforeFixtureDeadline(FIXTURE_EXIT_GRACE_MS, async (scope) => {
+    const { signal, active } = scope;
+    let signaled = false;
+    while (active()) {
+      const owner = await identify(scope);
+      if (!active()) break;
+      if (owner !== undefined) {
+        const { pid, identity } = owner;
+        const exit = await observeProcessStartIdentityExit(
+          pid,
+          identity,
+          undefined,
+          signal,
+        );
+        if (!active()) break;
+        if (exit === "exited") return true;
+        if (!signaled) {
+          const outcome = await signalProcessWithStartIdentity(
+            pid,
+            identity,
+            "SIGTERM",
+            {
+              inspectionSignal: signal,
+              sendSignal: (checkedPid, action) => {
+                if (!active())
+                  throw new ProcessOwnershipInspectionCancelled(signal.reason);
+                process.kill(checkedPid, action);
+              },
+            },
+          );
+          if (!active()) break;
+          if (outcome === "gone" || outcome === "identity-changed") return true;
+          signaled = outcome === "signaled";
+        }
+      }
+      await delay(100);
+    }
+    return false;
+  });
+}
+
+/**
  * The app announces its PID before AppKit starts. A different record names
  * its ready window. Only the app with the launch's token owns the fixture.
  * @param {string} bundle
@@ -303,42 +379,29 @@ async function waitForOwnedFixture(bundle, coordinates, fixture) {
   // A final unterminated row can still be in flight.
   const records = async () =>
     (await readFile(coordinates, "utf8")).split("\n").slice(0, -1);
-  const identify = async (startup) => {
-    if (startup === undefined || owner !== undefined) return;
+  const identify = async (startup, { signal, active }) => {
+    if (startup === undefined || owner !== undefined || !active()) return;
     const { pid } = startupRecord.parse(JSON.parse(startup));
-    const identity = await observeProcessStartIdentity(pid, undefined, token);
-    if (identity?.state === "readable")
+    const identity = await observeProcessStartIdentity(
+      pid,
+      undefined,
+      token,
+      signal,
+    );
+    if (identity?.state === "readable" && active())
       owner = { pid, identity: identity.identity };
   };
 
   fixture.releaseAfter(async () => {
     if (launcherFailure !== undefined && launcher.pid === undefined) return;
-    const deadline = performance.now() + FIXTURE_EXIT_GRACE_MS;
-    let signaled = false;
-    do {
-      if (owner === undefined) await identify((await records())[0]);
-      const current = owner;
-      if (current === undefined) {
-        await delay(100);
-        continue;
-      }
-      const { pid, identity } = current;
-      if ((await observeProcessStartIdentityExit(pid, identity)) === "exited")
-        return;
-      if (!signaled) {
-        const outcome = await signalProcessWithStartIdentity(
-          pid,
-          identity,
-          "SIGTERM",
-        );
-        if (outcome === "gone" || outcome === "identity-changed") return;
-        signaled = outcome === "signaled";
-      }
-      await delay(100);
-    } while (performance.now() < deadline);
-    throw new Error(
-      `Source-owned UI fixture exit was not observed; retained ${fixture.path}`,
-    );
+    const exited = await stopOwnedFixture(async (scope) => {
+      if (owner === undefined) await identify((await records())[0], scope);
+      return owner;
+    });
+    if (!exited)
+      throw new Error(
+        `Source-owned UI fixture exit was not observed; retained ${fixture.path}`,
+      );
   });
   fixture.releaseAfter(async () => {
     // The ChildProcess handle owns the launcher, regardless of app ownership.
@@ -359,17 +422,23 @@ async function waitForOwnedFixture(bundle, coordinates, fixture) {
     }
   });
 
-  const deadline = performance.now() + 20_000;
-  while (performance.now() < deadline) {
-    if (launcherFailure !== undefined) throw launcherFailure;
-    const [startup, ready] = await records();
-    await identify(startup);
-    if (ready !== undefined) {
-      const scope = readyRecord.parse(JSON.parse(ready));
-      if (owner?.pid === scope.pid) return scope;
-    }
-    await delay(100);
-  }
+  const readyScope = await beforeFixtureDeadline(
+    FIXTURE_READY_TIMEOUT_MS,
+    async (scope) => {
+      while (scope.active()) {
+        if (launcherFailure !== undefined) throw launcherFailure;
+        const [startup, ready] = await records();
+        await identify(startup, scope);
+        if (ready !== undefined && scope.active()) {
+          const observed = readyRecord.parse(JSON.parse(ready));
+          if (owner?.pid === observed.pid) return observed;
+        }
+        await delay(100);
+      }
+      return undefined;
+    },
+  );
+  if (readyScope !== undefined) return readyScope;
   throw new Error(
     "Source-owned UI fixture failed to expose one authenticated window within 20 seconds",
   );

@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
@@ -55,7 +55,7 @@ else if (process.env.NATIVE_UI_NO_HANDSHAKE !== "1") {
 // are replaced: the compiled helper is an authored script answering as the real
 // helper does, so this covers the lane's assertions and not native capture.
 const preloadSource = `
-import { chmodSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { basename } from "node:path";
 import { promisify } from "node:util";
@@ -73,7 +73,10 @@ const compile = (args) => {
     script(output, "printf '%s\\\\n' '{\\"a\\":\\"b\\"}' '{\\"n\\":1.0}'");
   else script(output, config.helper);
 };
-const compiled = (file, args) => file === "/usr/bin/xcrun" && args.includes("-o");
+const mockedSwiftSources = new Set(config.mockedSwiftSources.map((source) => realpathSync(source)));
+const compiled = (file, args) =>
+  file === "/usr/bin/xcrun" && args.includes("-o") &&
+  args.some((source) => source.endsWith(".swift") && mockedSwiftSources.has(realpathSync(source)));
 childProcess.execFile = (file, args, ...rest) => {
   if (!compiled(file, args)) return execFile(file, args, ...rest);
   compile(args);
@@ -116,6 +119,8 @@ const runVerifier = async (
   } = {},
 ) => {
   const workspace = await createTestTempDirectory("rea-native-ui-lane-");
+  const home = join(workspace, "home");
+  await mkdir(home);
   const paths = {
     events: join(workspace, "events.jsonl"),
     release: join(workspace, "release"),
@@ -127,7 +132,24 @@ const runVerifier = async (
   await writeFile(join(workspace, "preload.mjs"), preloadSource);
   await writeFile(
     join(workspace, "config.json"),
-    JSON.stringify({ ...paths, helper }),
+    JSON.stringify({
+      ...paths,
+      helper,
+      mockedSwiftSources: [
+        fileURLToPath(
+          new URL(
+            "../../conformance/native/native-ui-children/main.swift",
+            import.meta.url,
+          ),
+        ),
+        fileURLToPath(
+          new URL("../../conformance/native/ui.swift", import.meta.url),
+        ),
+        fileURLToPath(
+          new URL("../../../bridge/native/ReaNativeUI.swift", import.meta.url),
+        ),
+      ],
+    }),
   );
   const child = spawn(
     process.execPath,
@@ -141,6 +163,9 @@ const runVerifier = async (
       env: {
         ...process.env,
         TMPDIR: workspace,
+        HOME: home,
+        XDG_CACHE_HOME: join(home, ".cache"),
+        REA_DARWIN_MODULE_CACHE_PATH: join(workspace, "swift-modules"),
         ...(options.noHandshake ? { NATIVE_UI_NO_HANDSHAKE: "1" } : {}),
         ...(options.lateStartup ? { NATIVE_UI_LATE_STARTUP: "1" } : {}),
         ...(options.exitLauncher ? { NATIVE_UI_EXIT_LAUNCHER: "1" } : {}),
