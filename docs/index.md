@@ -28,7 +28,7 @@ features:
 ## Start with one command
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Choose your agent, review the planned changes, and approve setup. Native binary
@@ -38,7 +38,7 @@ JavaScript analysis needs no native analysis engine.
 For a first result from an extracted JavaScript application or ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 See [installation and setup](getting-started/installation.md) for requirements and configuration.
