@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { attestGhidraDosComLoadImage } from "./GhidraLoadImageValues.js";
-import { fixtureDosComLoadImage } from "./GhidraLoadImage.fixture.js";
+import {
+  fixtureDosComLoadImage,
+  fixtureDosComLoaderLoadImage,
+} from "./GhidraLoadImage.fixture.js";
 import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
@@ -104,6 +107,9 @@ describe("COM independent load-image checks", () => {
         header_bytes: 0,
         module_bytes: 4,
         overlay_bytes: 0,
+        loader: "BinaryLoader",
+        load_address: "1000:0100",
+        loader_fallback: { loader: "ComLoader", reason: "recognition_score" },
         entry: {
           relative_segment: 0,
           offset: 0x100,
@@ -111,6 +117,32 @@ describe("COM independent load-image checks", () => {
         },
       },
     });
+  });
+  it("verifies a ComLoader image at 0000:0100 including the zero PSP placeholder", () => {
+    const f = fixtureDosComLoaderLoadImage();
+    const result = attestGhidraDosComLoadImage(
+      f.bytes,
+      f.sha256,
+      f.observation,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "verified",
+        format: "dos-com",
+        loader: "ComLoader",
+        load_address: "0000:0100",
+        load_segment: 0,
+        header_bytes: 0,
+        module_bytes: f.bytes.length,
+        entry: {
+          relative_segment: 0,
+          offset: 0x100,
+          linear_address: "0x100",
+        },
+      },
+    });
+    expect(result.ok && result.value).not.toHaveProperty("loader_fallback");
   });
   it.each(mutations)("retains mismatch evidence for %s", (_name, damage) => {
     const f = fixtureDosComLoadImage();

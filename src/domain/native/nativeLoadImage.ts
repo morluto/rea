@@ -95,6 +95,24 @@ export const nativeUnsupportedLoadImageSchema = z.strictObject({
 export const nativeDosLoadImageSchema = z.strictObject({
   status: z.enum(["verified", "mismatch"]),
   format: z.enum(["dos-mz", "dos-com"]),
+  /** Loader Ghidra applied. Present for DOS COM; MZ leaves it unset. */
+  loader: z.enum(["MzLoader", "ComLoader", "BinaryLoader"]).optional(),
+  /** Segment:offset where the selected loader mapped the image. */
+  load_address: z
+    .string()
+    .regex(/^[0-9a-f]{4}:[0-9a-f]{4}$/u)
+    .optional(),
+  /** Set when an admitted COM image was imported with the raw fallback. */
+  loader_fallback: z
+    .strictObject({
+      loader: z.literal("ComLoader"),
+      reason: z.enum([
+        "filename_extension",
+        "mz_signature",
+        "recognition_score",
+      ]),
+    })
+    .optional(),
   target_sha256: digest,
   load_segment: integer.max(0xffff),
   header_bytes: integer,

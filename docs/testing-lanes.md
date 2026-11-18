@@ -507,9 +507,11 @@ annotation edits are refused instead of exercising them. This lane is separate f
 verification. See [DOS analysis](providers/ghidra-dos.md).
 
 `npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,
-DOS emulator or game data. It exercises explicit admission, BinaryLoader entry
-preparation, measured register context, whole-file byte readback, source offsets,
-unmapped PSP/partial reads, actual decompilation, CLI/MCP parity and owned cleanup.
+DOS emulator or game data. It exercises explicit admission, ComLoader import at
+`0000:0100` without a caller-supplied loader or base, the raw BinaryLoader
+fallback at `1000:0100` with its typed rejection, measured register context,
+whole-file byte readback, source offsets, the zero PSP placeholder and partial
+reads, actual decompilation, CLI/MCP parity and owned cleanup.
 Both segmented-address lanes reject oversized default, explicit-space and encoded-space
 coordinates through real reads, function queries and annotation attempts. Rejected
 annotations must preserve the live function dossier; CLI and MCP must report the

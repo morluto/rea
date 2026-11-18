@@ -24,6 +24,7 @@ import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCle
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
+import { ghidraProfileComLoader } from "./GhidraComImport.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
@@ -669,7 +670,13 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { riscvCallingConvention }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
-      ...(target.format === "dos-com" ? { dosCom: true } : {}),
+      ...(target.format === "dos-com"
+        ? {
+            dosCom: {
+              loader: ghidraProfileComLoader(committedProfile.parameters),
+            },
+          }
+        : {}),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
         ? {}
         : {
