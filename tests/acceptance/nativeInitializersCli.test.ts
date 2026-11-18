@@ -5,6 +5,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   elfRelocatableCtors,
+  elf64PieInitializers,
   elf64AliasedInitializers,
   elfUnmappedInitializerTargets,
   machoArm64Initializers,
@@ -43,6 +44,35 @@ cliTest(
     expect(
       report.entries.find((entry) => entry.kind === "fini_array"),
     ).toMatchObject({ value_va: "0x120", resolution: "relr" });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest(
+  "resolves Android RELR initializer slots through the public CLI without changing source bytes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-android-relr-cli-");
+    const path = join(root, "library.so");
+    const bytes = elf64PieInitializers(0, "android");
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_entries: 7,
+    });
+    expect(
+      report.entries.find((entry) => entry.kind === "fini_array"),
+    ).toMatchObject({
+      slot_va: "0x220",
+      slot_file_offset: 0x220,
+      value_va: "0x120",
+      resolution: "relr",
+      symbol: { name: "fini_fn" },
+    });
     expect((await readFile(path)).equals(bytes)).toBe(true);
   },
 );
