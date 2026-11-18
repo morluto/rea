@@ -364,6 +364,7 @@ describe("rea environment-serve --replay-only", () => {
       const origin = new URL(started.url).origin;
       const card = await fetch(new URL(CARD_PATH, origin));
       expect(card.status).toBe(200);
+      expect(card.headers.get("content-type")).toContain("application/json");
       const text = await card.text();
       const body: unknown = JSON.parse(text);
       // Keep a readable independent golden for every description and input

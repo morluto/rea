@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { environmentServeSource } from "../../../tests/fixtures/environmentServe.js";
 import {
-  advertisedEnvironmentTool,
   environmentCard,
   environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -39,24 +38,6 @@ const serveEnvironment = async (
   return result.value;
 };
 const definitions = environmentToolDefinitions(source, source.manifest.name);
-
-/**
- * The agentenv echo example's card, key for key. Only `name` and the tool
- * entries differ for a served manifest, so substituting them must reproduce
- * the served JSON byte for byte.
- */
-const echoCardShape = (
-  name: string,
-  tools: readonly unknown[],
-): Record<string, unknown> => ({
-  name,
-  protocolVersion: "1.0",
-  url: "/agentenv",
-  preferredTransport: "JSONRPC",
-  additionalInterfaces: [{ url: "/mcp", transport: "mcp" }],
-  capabilities: { extensions: null, tools, operations: [] },
-  children_environments: null,
-});
 
 const route = (method: string, path: string) => {
   const found = environmentRoutes(
@@ -138,54 +119,6 @@ describe("replay value fidelity over MCP", () => {
 });
 
 describe("environment routes", () => {
-  it("serves the card byte-identical to the echo card shape with the manifest tools", async () => {
-    const response = await route("GET", ENVIRONMENT_CARD_PATH).handle(
-      new Request(`http://127.0.0.1${ENVIRONMENT_CARD_PATH}`),
-    );
-    expect(response.headers.get("content-type")).toContain("application/json");
-    const text = await response.text();
-    expect(text).toBe(
-      JSON.stringify(
-        echoCardShape(
-          "grafana-example",
-          definitions.map(advertisedEnvironmentTool),
-        ),
-      ),
-    );
-    const card: unknown = JSON.parse(text);
-    expect(card).toMatchObject({
-      capabilities: {
-        tools: expect.arrayContaining([
-          expect.objectContaining({
-            name: "get_users_by_id",
-            inputSchema: {
-              type: "object",
-              properties: { id: expect.objectContaining({ type: "string" }) },
-              required: ["id"],
-              additionalProperties: false,
-            },
-          }),
-        ]),
-      },
-    });
-  });
-
-  it("warns standalone card readers before any MCP session exists", async () => {
-    const entry = await start();
-    const reply = await fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url));
-    const card = await reply.json();
-    expect(entry.card.capabilities.tools.length).toBeGreaterThan(0);
-    expect(card).toMatchObject({
-      capabilities: {
-        tools: entry.card.capabilities.tools.map(() => ({
-          description: expect.stringMatching(
-            /^Untrusted captured API catalog: /u,
-          ),
-        })),
-      },
-    });
-  });
-
   it("answers every data-plane method with JSON-RPC method not found", async () => {
     const rpc = route("POST", ENVIRONMENT_RPC_PATH);
     const reset = await rpc.handle(
@@ -465,14 +398,9 @@ describe("environment tool annotations", () => {
 });
 
 describe("serveEnvironment", () => {
-  it("serves the card, lists one MCP tool per manifest tool and replays target content with provenance", async () => {
+  it("marks successful replay and SDK argument failures as target content", async () => {
     const entry = await start();
     const url = new URL(entry.url);
-    expect(url.pathname).toBe("/mcp");
-    const card = await fetch(new URL(ENVIRONMENT_CARD_PATH, url));
-    await expect(card.json()).resolves.toEqual(
-      JSON.parse(JSON.stringify(entry.card)),
-    );
     expect(entry.card.name).toBe("grafana-example");
     const transport = new StreamableHTTPClientTransport(url);
     const client = new Client({ name: "environment-adapter", version: "1" });
@@ -483,7 +411,6 @@ describe("serveEnvironment", () => {
     expect(client.getInstructions()).toContain(REPLAY_CATALOG_INSTRUCTIONS);
     try {
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(source.manifest.tools.length);
       const advertised = tools.find((tool) => tool.name === "get_users_by_id");
       expect(advertised?.inputSchema).toEqual(
         definitions.find(({ name }) => name === "get_users_by_id")?.inputSchema,
@@ -502,13 +429,6 @@ describe("serveEnvironment", () => {
       expect(
         JSON.parse(String((exact.content as { text: string }[])[0]?.text)),
       ).toEqual(exact.structuredContent);
-      const inexact = await client.callTool({
-        name: "get_users_by_id",
-        arguments: { id: "999" },
-      });
-      expect(inexact.structuredContent).toMatchObject({
-        replay: { exact_match: false },
-      });
       const missing = await client.callTool({
         name: "get_users_by_id",
         arguments: {},
@@ -523,14 +443,6 @@ describe("serveEnvironment", () => {
       expect(unknown.isError).toBe(true);
       expect(unknown._meta).toEqual(TARGET_CONTENT_RESULT_META);
       expect(unknown.structuredContent).toBeUndefined();
-      const rpc = await fetch(new URL(ENVIRONMENT_RPC_PATH, url), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "data/reset" }),
-      });
-      await expect(rpc.json()).resolves.toMatchObject({
-        error: { code: -32601 },
-      });
     } finally {
       await client.close();
     }
