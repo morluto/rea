@@ -41,7 +41,6 @@ registerHooks({
     process.execPath,
     ["--import", pathToFileURL(loader).href, "scripts/verify-real-kuna.mjs"],
     {
-      timeoutMs: 10_000,
       env: {
         PATH: process.env.PATH,
         SystemRoot: process.env.SystemRoot,
