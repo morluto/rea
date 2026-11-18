@@ -4,7 +4,9 @@ import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
   nativeUnsupportedLoadImageSchema,
-  nativeDosLoadImageSchema,
+  nativeDosMzLoadImageSchema,
+  nativeDosComVerifiedLoadImageSchema,
+  nativeDosComMismatchLoadImageSchema,
   nativeRawLoadImageSchema,
   nativeDolLoadImageSchema,
 } from "../native/nativeLoadImage.js";
@@ -121,7 +123,17 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       observations: true,
       limitations: true,
     }),
-    nativeDosLoadImageSchema.omit({
+    nativeDosMzLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComMismatchLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,

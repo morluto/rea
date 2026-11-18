@@ -92,47 +92,65 @@ export const nativeUnsupportedLoadImageSchema = z.strictObject({
   observations: nativeLoadImageObservationSchema,
   limitations: z.array(z.string().min(1)),
 });
-export const nativeDosLoadImageSchema = z.strictObject({
-  status: z.enum(["verified", "mismatch"]),
-  format: z.enum(["dos-mz", "dos-com"]),
-  /** Loader Ghidra applied. Present for DOS COM; MZ leaves it unset. */
-  loader: z.enum(["MzLoader", "ComLoader", "BinaryLoader"]).optional(),
-  /** Segment:offset of the measured import, when it is a known COM layout. */
-  load_address: z
-    .string()
-    .regex(/^[0-9a-f]{4}:[0-9a-f]{4}$/u)
-    .optional(),
-  /** Set when an admitted COM image was imported with the raw fallback. */
-  loader_fallback: z
-    .strictObject({
-      loader: z.literal("ComLoader"),
-      reason: z.enum([
-        "filename_extension",
-        "mz_signature",
-        "recognition_score",
-      ]),
-    })
-    .optional(),
+const dosLoadImageEntrySchema = z.strictObject({
+  relative_segment: integer.max(0xffff),
+  offset: integer.max(0xffff),
+  linear_address: nativeAddressObservationSchema,
+});
+const dosLoadImageFacts = {
   target_sha256: digest,
-  /**
-   * Load segment and entry describe the measured import. They are omitted when
-   * the measured loader and address are not a known COM or MZ layout.
-   */
-  load_segment: integer.max(0xffff).optional(),
   header_bytes: integer,
   module_bytes: integer,
   overlay_bytes: integer,
-  entry: z
-    .strictObject({
-      relative_segment: integer.max(0xffff),
-      offset: integer.max(0xffff),
-      linear_address: nativeAddressObservationSchema,
-    })
-    .optional(),
   observations: nativeLoadImageObservationSchema,
   checks: z.array(nativeLoadImageCheckSchema),
   limitations: z.array(z.string().min(1)),
+};
+const comLoadAddressSchema = z.string().regex(/^[0-9a-f]{4}:[0-9a-f]{4}$/u);
+const comLoaderFallbackSchema = z.strictObject({
+  loader: z.literal("ComLoader"),
+  reason: z.enum(["filename_extension", "mz_signature", "recognition_score"]),
 });
+/** Measured COM identity. Each field is present only when that fact was observed. */
+const comMeasuredIdentity = {
+  format: z.literal("dos-com"),
+  loader: z.enum(["ComLoader", "BinaryLoader"]).optional(),
+  load_address: comLoadAddressSchema.optional(),
+  loader_fallback: comLoaderFallbackSchema.optional(),
+};
+
+/** DOS MZ always names its load segment and entry. */
+export const nativeDosMzLoadImageSchema = z.strictObject({
+  status: z.enum(["verified", "mismatch"]),
+  format: z.literal("dos-mz"),
+  load_segment: integer.max(0xffff),
+  entry: dosLoadImageEntrySchema,
+  ...dosLoadImageFacts,
+});
+/** A verified COM image has a known measured layout, so the coordinates stay. */
+export const nativeDosComVerifiedLoadImageSchema = z.strictObject({
+  status: z.literal("verified"),
+  ...comMeasuredIdentity,
+  load_segment: integer.max(0xffff),
+  entry: dosLoadImageEntrySchema,
+  ...dosLoadImageFacts,
+});
+/**
+ * A COM mismatch may omit the segment and entry when the measured loader and
+ * address are not one known layout. Loader and load address stay independent.
+ */
+export const nativeDosComMismatchLoadImageSchema = z.strictObject({
+  status: z.literal("mismatch"),
+  ...comMeasuredIdentity,
+  load_segment: integer.max(0xffff).optional(),
+  entry: dosLoadImageEntrySchema.optional(),
+  ...dosLoadImageFacts,
+});
+export const nativeDosLoadImageSchema = z.union([
+  nativeDosMzLoadImageSchema,
+  nativeDosComVerifiedLoadImageSchema,
+  nativeDosComMismatchLoadImageSchema,
+]);
 export const nativeRawLoadImageSchema = z.strictObject({
   status: z.enum(["verified", "mismatch"]),
   format: z.literal("raw-binary"),

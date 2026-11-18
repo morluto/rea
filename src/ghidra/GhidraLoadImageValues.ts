@@ -419,16 +419,13 @@ export const attestGhidraDosComLoadImage = (
     nativeLoadImageSchema.parse({
       status: matched ? "verified" : "mismatch",
       format: "dos-com",
-      ...(observedLoader === null || observedLoadAddress === null
+      ...(observedLoader === null ? {} : { loader: observedLoader }),
+      ...(observedLoadAddress === null
         ? {}
-        : {
-            loader: observedLoader,
-            load_address: observedLoadAddress,
-            ...(selection.fallback === undefined ||
-            observedLoader !== "BinaryLoader"
-              ? {}
-              : { loader_fallback: selection.fallback }),
-          }),
+        : { load_address: observedLoadAddress }),
+      ...(selection.fallback === undefined || observedLoader !== "BinaryLoader"
+        ? {}
+        : { loader_fallback: selection.fallback }),
       target_sha256: targetSha256,
       ...(applied === null
         ? {}

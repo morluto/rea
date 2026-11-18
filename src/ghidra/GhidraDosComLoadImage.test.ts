@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { attestGhidraDosComLoadImage } from "./GhidraLoadImageValues.js";
 import {
+  compareDosFixture,
   fixtureDosComLoadImage,
   fixtureDosComLoaderLoadImage,
+  fixtureDosLoadImage,
 } from "./GhidraLoadImage.fixture.js";
 import {
   nativeLoadImageObservationSchema,
@@ -175,6 +177,8 @@ describe("COM independent load-image checks", () => {
     if (!result.ok || !("checks" in result.value))
       throw new Error("Expected a retained mismatch");
     expect(result.value.status).toBe("mismatch");
+    expect(result.value).toMatchObject({ loader: "BinaryLoader" });
+    expect(result.value).not.toHaveProperty("load_address");
     expect(result.value).not.toHaveProperty("load_segment");
     expect(result.value).not.toHaveProperty("entry");
     expect(
@@ -238,5 +242,42 @@ describe("COM independent load-image checks", () => {
     expect(
       attestGhidraDosComLoadImage(f.bytes, "f".repeat(64), f.observation).ok,
     ).toBe(false);
+  });
+});
+
+describe("COM load-image field contracts", () => {
+  it("keeps a measured load address when the executable format is unknown", () => {
+    const f = fixtureDosComLoadImage();
+    f.observation.executable_format = "not-a-loader";
+    const result = attestGhidraDosComLoadImage(
+      f.bytes,
+      f.sha256,
+      f.observation,
+    );
+    if (!result.ok || !("checks" in result.value))
+      throw new Error("Expected a retained mismatch");
+    expect(result.value).toMatchObject({
+      status: "mismatch",
+      load_address: "1000:0100",
+    });
+    expect(result.value).not.toHaveProperty("loader");
+    expect(result.value).not.toHaveProperty("load_segment");
+    expect(result.value).not.toHaveProperty("entry");
+  });
+  it("rejects a DOS MZ result that omits its load segment or entry", () => {
+    const f = fixtureDosLoadImage();
+    const attested = compareDosFixture(f.bytes, f.sha256, f.observation);
+    if (
+      !attested.ok ||
+      attested.value.status === "unsupported" ||
+      attested.value.format !== "dos-mz"
+    ) {
+      throw new Error(attested.ok ? "expected DOS MZ" : attested.error);
+    }
+    expect(nativeLoadImageSchema.safeParse(attested.value).success).toBe(true);
+    const { load_segment: _segment, ...withoutSegment } = attested.value;
+    expect(nativeLoadImageSchema.safeParse(withoutSegment).success).toBe(false);
+    const { entry: _entry, ...withoutEntry } = attested.value;
+    expect(nativeLoadImageSchema.safeParse(withoutEntry).success).toBe(false);
   });
 });
