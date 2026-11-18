@@ -87,6 +87,11 @@ export const collectJavaScriptSemanticResources = (
         candidate.specifier,
         context,
       ) &&
+        !rejectsSocketOptionsPort(
+          candidate.node,
+          candidate.specifier,
+          context,
+        ) &&
         !rejectsTlsProtocolVersionLiteral(
           candidate.node,
           candidate.specifier,
@@ -673,6 +678,98 @@ const rejectsSocketLiteralArguments = (
     return (
       number !== undefined &&
       (!Number.isInteger(number) || number < 0 || number > 65535)
+    );
+  }
+  return false;
+};
+
+/**
+ * Whether an options object carries a port Node rejects before creating a socket.
+ *
+ * `net` and `tls` read the same port member whether it arrives in the first options object,
+ * a later TLS options object, or the third TLS argument when the second argument is not an
+ * object. A Unix `path` (or TLS `socket`) wins before the port is validated. Keep an unresolved
+ * member undecided: accessors, dynamic spreads and constructors may change the value while Node
+ * copies the options.
+ */
+const rejectsSocketOptionsPort = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const effective = socketOptionReader(node, specifier, context.state);
+  if (effective === undefined) return false;
+  const falsy = (value: t.Node): boolean =>
+    isNullishPlaceholder(value, context.state) ||
+    staticJavaScriptTruthiness(value) === false;
+  const inheritable = prototypeMutationMayPrecede(
+    context.state,
+    "Object",
+    node,
+  );
+  for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
+    const value = effective(member);
+    if (value === "unknown") return false;
+    if (value !== undefined && !falsy(value)) return false;
+    if (value === undefined && inheritable) return false;
+  }
+  const port = effective("port");
+  if (port === undefined || port === "unknown") return false;
+  return rejectsSocketOptionsPortValue(port, context);
+};
+
+/** Node coerces an options `port` member, unlike a positional string path. */
+const rejectsSocketOptionsPortValue = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const unwrapped = unwrapJavaScriptExpression(value).node;
+  if (t.isStringLiteral(unwrapped)) {
+    if (unwrapped.value.trim().length === 0) return true;
+    const port = Number(unwrapped.value);
+    return !Number.isInteger(port) || port < 0 || port > 65535;
+  }
+  if (t.isTemplateLiteral(unwrapped) && unwrapped.expressions.length === 0) {
+    const cooked = unwrapped.quasis[0]?.value.cooked;
+    if (cooked === null || cooked === undefined || cooked.trim().length === 0)
+      return true;
+    const port = Number(cooked);
+    return !Number.isInteger(port) || port < 0 || port > 65535;
+  }
+  if (
+    isNullishPlaceholder(unwrapped, context.state) ||
+    t.isBigIntLiteral(unwrapped) ||
+    t.isBooleanLiteral(unwrapped) ||
+    t.isObjectExpression(unwrapped) ||
+    t.isArrayExpression(unwrapped) ||
+    t.isRegExpLiteral(unwrapped) ||
+    t.isFunctionExpression(unwrapped) ||
+    t.isArrowFunctionExpression(unwrapped) ||
+    t.isClassExpression(unwrapped) ||
+    t.isNewExpression(unwrapped)
+  )
+    return true;
+  if (
+    t.isIdentifier(unwrapped) &&
+    (unwrapped.name === "NaN" || unwrapped.name === "Infinity") &&
+    isUnmodifiedGlobalReference(unwrapped, context.state, unwrapped.name)
+  )
+    return true;
+  if (t.isNumericLiteral(unwrapped))
+    return (
+      !Number.isInteger(unwrapped.value) ||
+      unwrapped.value < 0 ||
+      unwrapped.value > 65535
+    );
+  if (t.isUnaryExpression(unwrapped)) {
+    if (unwrapped.operator === "!" || unwrapped.operator === "delete")
+      return true;
+    const number = unaryOperandNumber(unwrapped, context, 0);
+    return (
+      number === undefined ||
+      !Number.isInteger(number) ||
+      number < 0 ||
+      number > 65535
     );
   }
   return false;

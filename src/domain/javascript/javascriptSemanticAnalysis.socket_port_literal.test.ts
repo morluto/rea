@@ -65,3 +65,48 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+
+it.each([
+  [
+    "a Unix path before a bad net port",
+    `net.connect({ path: "/tmp/x.sock", port: -1 })`,
+  ],
+  [
+    "an inherited Unix path",
+    `Object.prototype.path = "/tmp/x.sock"; net.connect({ port: -1 })`,
+  ],
+  ["a later TLS port override", `tls.connect({ port: -1 }, { port: 443 })`],
+  [
+    "a third TLS options argument",
+    `tls.connect({ port: -1 }, undefined, { port: 443 })`,
+  ],
+  [
+    "a later TLS Unix path",
+    `tls.connect({ port: -1 }, { path: "/tmp/x.sock" })`,
+  ],
+  [
+    "a constructed TLS options object",
+    `tls.connect({ port: -1 }, new Object({ port: 443 }))`,
+  ],
+  ["a valid numeric string port", `net.connect({ port: "8080" })`],
+] as const)(
+  "keeps the socket acquisition when options make the port irrelevant or valid: %s",
+  (_name, call) => {
+    expect(socketAcquisitionsFor(call)).toHaveLength(1);
+  },
+);
+
+it.each([
+  ["a bad net options port", `net.connect({ port: -1 })`],
+  ["a bad TLS options port", `tls.connect({ port: -1 })`],
+  ["a bad overridden TLS port", `tls.connect({ port: 443 }, { port: -1 })`],
+  [
+    "a bad third TLS options port",
+    `tls.connect({ port: -1 }, undefined, { port: -1 })`,
+  ],
+  ["a nonnumeric options port", `net.connect({ port: "x" })`],
+  ["a null options port", `net.connect({ port: null })`],
+  ["a bad port with a null path", `net.connect({ path: null, port: -1 })`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
