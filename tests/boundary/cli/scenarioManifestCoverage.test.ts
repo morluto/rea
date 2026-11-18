@@ -3,7 +3,10 @@ import { expect, it } from "vitest";
 
 import { registerAnalysisViewCommands } from "../../../src/cli/analysisViewCommands.js";
 import { sanitizeBrowserUrl } from "../../../src/domain/browserObservation.js";
-import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
+import {
+  browserScenarioCaptureSchema,
+  type BrowserScenarioCapture,
+} from "../../../src/domain/browserScenarioCapture.js";
 import { silentLogger } from "../../../src/logger.js";
 import {
   scenarioCaptureEvidence,
@@ -17,6 +20,42 @@ const unusableUrls = [
   "not a url",
   "https:example.test/api/items",
 ];
+
+const projectManifest = async (capture: BrowserScenarioCapture) => {
+  const cli = createCommandCli();
+  registerAnalysisViewCommands(cli, silentLogger);
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve(
+    [
+      "inspect-analysis-view",
+      JSON.stringify({
+        source: { kind: "inline", evidence: scenarioCaptureEvidence(capture) },
+        view: { kind: "environment-manifest" },
+      }),
+      "--json",
+    ],
+    {
+      env: {},
+      stdout: (text) => {
+        stdout += text;
+      },
+      exit: (code) => {
+        exitCode = code;
+      },
+    },
+  );
+  expect(exitCode, stdout).toBe(0);
+  return (
+    JSON.parse(stdout) as {
+      normalized_result: {
+        records: { ordinal: number }[];
+        tools: unknown[];
+        limitations: string[];
+      };
+    }
+  ).normalized_result;
+};
 
 const manifest = async (
   urls: readonly string[],
@@ -49,51 +88,16 @@ const manifest = async (
       }),
     },
   });
-  const cli = createCommandCli();
-  registerAnalysisViewCommands(cli, silentLogger);
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve(
-    [
-      "inspect-analysis-view",
-      JSON.stringify({
-        source: { kind: "inline", evidence: scenarioCaptureEvidence(capture) },
-        view: { kind: "environment-manifest" },
-      }),
-      "--json",
-    ],
-    {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: (code) => {
-        exitCode = code;
-      },
-    },
-  );
-  expect(exitCode).toBe(0);
-  return (
-    JSON.parse(stdout) as {
-      normalized_result: {
-        records: { ordinal: number }[];
-        limitations: string[];
-      };
-    }
-  ).normalized_result;
+  return projectManifest(capture);
 };
 
-it.each(
-  unusableUrls.flatMap((url) =>
-    (["absent", "redacted"] as const).map((body) => ({ url, body })),
-  ),
-)(
-  "excludes $url from scenario $body body-retention coverage through the CLI handler",
-  async ({ url, body }) => {
-    const result = await manifest([url], body);
+it.each(["absent", "redacted"] as const)(
+  "omits scenario %s body-retention coverage when no request line is usable",
+  async (body) => {
+    const result = await manifest(unusableUrls, body);
     expect(result.records).toEqual([]);
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
+    expect(result.limitations).toContain(
+      `${String(unusableUrls.length)} retained records without a usable request line are not represented in the manifest.`,
     );
     expect(
       result.limitations.filter((limitation) =>
@@ -144,38 +148,7 @@ it("does not derive a tool from conflicting header-only MIME evidence through th
         })),
       },
     ]);
-    const cli = createCommandCli();
-    registerAnalysisViewCommands(cli, silentLogger);
-    let stdout = "";
-    let exitCode = 0;
-    await cli.serve(
-      [
-        "inspect-analysis-view",
-        JSON.stringify({
-          source: {
-            kind: "inline",
-            evidence: scenarioCaptureEvidence(capture),
-          },
-          view: { kind: "environment-manifest" },
-        }),
-        "--json",
-      ],
-      {
-        env: {},
-        stdout: (text) => {
-          stdout += text;
-        },
-        exit: (code) => {
-          exitCode = code;
-        },
-      },
-    );
-    expect(exitCode, stdout).toBe(0);
-    const result = (
-      JSON.parse(stdout) as {
-        normalized_result: { tools: unknown[] };
-      }
-    ).normalized_result;
+    const result = await projectManifest(capture);
     expect(result.tools, JSON.stringify(values)).toHaveLength(
       values.every((value) => value === "application/json") ? 1 : 0,
     );
