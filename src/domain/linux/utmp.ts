@@ -283,12 +283,14 @@ const exactSigned = (
   return asNumber;
 };
 
-interface DecodedField {
-  readonly text: string;
-  readonly decoded: boolean;
-  /** Every byte of the field up to its terminator, as lowercase hex. */
-  readonly hex: string;
-}
+type DecodedField =
+  | { readonly text: string; readonly decoded: true }
+  | {
+      readonly text: string;
+      readonly decoded: false;
+      /** The field's bytes up to its terminator, built only when they are bad. */
+      readonly hex: string;
+    };
 
 /** A fixed-width member whose bytes were not well-formed UTF-8. */
 export interface UndecodedField {
@@ -314,9 +316,8 @@ const decodeFixedWidth = (
   // its whole width is well formed without a terminator; only malformed UTF-8
   // makes it unreadable.
   const used = end === -1 ? raw : raw.subarray(0, end);
-  const hex = Buffer.from(used).toString("hex");
   if (isStrictUtf8(used))
-    return { text: decodeStrictUtf8(used, "preserve"), decoded: true, hex };
+    return { text: decodeStrictUtf8(used, "preserve"), decoded: true };
   // Malformed bytes: keep the longest valid prefix and mark the field, so one bad
   // byte cannot abort the file or discard the records decoded before it.
   let prefix = used.length;
@@ -327,7 +328,9 @@ const decodeFixedWidth = (
         ? ""
         : decodeStrictUtf8(used.subarray(0, prefix), "preserve"),
     decoded: false,
-    hex,
+    // Only a malformed field needs its bytes kept, so the encoding cost stays off
+    // the path every valid record takes.
+    hex: used.toString("hex"),
   };
 };
 
@@ -414,9 +417,9 @@ const decodeRecords = (
         const word = reader.u32(base + layout.addressOffset + slot * 4);
         return profile.addressSigned ? signed(word, 32) : word;
       }),
-      undecodedFields: fields
-        .filter(([, decoded]) => !decoded.decoded)
-        .map(([field, decoded]) => ({ field, hex: decoded.hex })),
+      undecodedFields: fields.flatMap(([field, decoded]) =>
+        decoded.decoded ? [] : [{ field, hex: decoded.hex }],
+      ),
     });
   }
 
