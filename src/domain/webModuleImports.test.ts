@@ -213,3 +213,25 @@ describe("captured module candidates", () => {
     ]);
   });
 });
+
+it("retains original expression offsets for a BOM-prefixed module hashbang", () => {
+  const source =
+    '\uFEFF#!/usr/bin/env node\r\nconst face = "😀"; import "./dep.mjs"; import(`./${part}.mjs`);';
+  const result = collectWebModuleImports(source, "main.mjs");
+  expect(result.state).toBe("parsed");
+  expect(result.diagnostics).toEqual([]);
+  expect(result.imports.map(({ expression }) => expression)).toEqual([
+    '"./dep.mjs"',
+    "`./${part}.mjs`",
+  ]);
+  for (const item of result.imports) {
+    expect(item.start.offset).toBe(source.indexOf(item.expression));
+    expect(source.slice(item.start.offset, item.end.offset)).toBe(
+      item.expression,
+    );
+    expect(item.start.line).toBe(2);
+    expect(item.start.column).toBe(
+      source.split("\r\n")[1]!.indexOf(item.expression),
+    );
+  }
+});

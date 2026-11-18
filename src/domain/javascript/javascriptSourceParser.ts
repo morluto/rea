@@ -104,8 +104,26 @@ const parseWithRuntimeContext = (
   options: ParserOptions,
   packageContext?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
-  const file = parse(source, options);
   const filenameMode = explicitJavaScriptLoaderMode(sourcePath);
+  // ESM and TypeScript file loading remove the UTF-8 signature before a
+  // hashbang; JavaScript CommonJS loading does not. Preserve original indexes
+  // through Babel's origin options rather than repairing downstream ranges.
+  const typeScriptFile = /\.(?:ts|tsx|mts|cts)$/iu.test(sourcePath ?? "");
+  const hashbangSignature =
+    source.startsWith("\uFEFF#!") &&
+    (typeScriptFile ||
+      filenameMode === "module" ||
+      (filenameMode === undefined && packageContext === "module"));
+  const file = parse(
+    hashbangSignature ? source.slice(1) : source,
+    hashbangSignature
+      ? {
+          ...options,
+          startIndex: (options.startIndex ?? 0) + 1,
+          startColumn: (options.startColumn ?? 0) + 1,
+        }
+      : options,
+  );
   runtimeContextByProgram.set(
     file.program,
     filenameMode === "commonjs"
