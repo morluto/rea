@@ -70,7 +70,10 @@ it("retains only declared package metadata despite inherited host fields", () =>
   }
   expect(absentMain).toBeUndefined();
   expect(undeclaredModule).toBeUndefined();
-  expect(absent).toMatchObject({ status: "included", nextDependency: "unproven" });
+  expect(absent).toMatchObject({
+    status: "included",
+    nextDependency: "unproven",
+  });
   expect(declared).toMatchObject({
     status: "included",
     nextDependency: "declared",

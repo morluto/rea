@@ -410,7 +410,11 @@ it("anchors based and unbased constants while preserving original paths and depl
   expect(result.sources).toMatchObject(
     [plannerUrl, reportsUrl].map((url) => ({
       url,
-      base_path: { value: "/app", basis: "next-script-url", status: "inferred" },
+      base_path: {
+        value: "/app",
+        basis: "next-script-url",
+        status: "inferred",
+      },
     })),
   );
   const [planner, reports] = result.sources;
