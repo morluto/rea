@@ -4,6 +4,8 @@ import { BinaryReader } from "./binaryContainer.js";
 export const ZIP_EOCD_BYTES = 22;
 export const ZIP_MAX_COMMENT_BYTES = 0xffff;
 
+const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+
 export interface ZipEndOfCentralDirectory {
   /** Relative to the supplied byte window, which ends at the archive's end. */
   readonly offset: number;
@@ -24,25 +26,23 @@ export interface ZipEndOfCentralDirectory {
 export function* zipEndOfCentralDirectoryCandidates(
   bytes: Uint8Array,
 ): Generator<ZipEndOfCentralDirectory> {
-  const reader = new BinaryReader(
-    Buffer.isBuffer(bytes)
-      ? bytes
-      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-    true,
-    "zip",
-  );
+  const buffer = Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(buffer, true, "zip");
   const earliest = Math.max(
     0,
-    bytes.byteLength - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES,
+    buffer.length - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES,
   );
   for (
-    let offset = bytes.byteLength - ZIP_EOCD_BYTES;
-    offset >= earliest;
-    offset--
+    let searchFrom = buffer.length - ZIP_EOCD_BYTES;
+    searchFrom >= earliest;
   ) {
-    if (bytes[offset] !== 0x50 || reader.u32(offset) !== 0x06054b50) continue;
+    const offset = buffer.lastIndexOf(EOCD_SIGNATURE, searchFrom);
+    if (offset < earliest) break;
+    searchFrom = offset - 1;
     const commentLength = reader.u16(offset + 20);
-    if (offset + ZIP_EOCD_BYTES + commentLength !== bytes.byteLength) continue;
+    if (offset + ZIP_EOCD_BYTES + commentLength !== buffer.length) continue;
     yield {
       offset,
       disk: reader.u16(offset + 4),

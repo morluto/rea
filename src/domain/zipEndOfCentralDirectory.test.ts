@@ -32,6 +32,14 @@ it("preserves raw disk/count/Zip64 sentinel declarations from a nonzero byte win
   view.setUint32(16, 0xffffffff, true);
   const before = Buffer.from(backing);
   const candidates = [...zipEndOfCentralDirectoryCandidates(window)];
+  const uint8Window = new Uint8Array(
+    backing.buffer,
+    backing.byteOffset + 7,
+    37,
+  );
+  expect([...zipEndOfCentralDirectoryCandidates(uint8Window)]).toEqual(
+    candidates,
+  );
   expect(backing.equals(before)).toBe(true);
   backing.fill(0);
   expect(candidates).toEqual([
@@ -49,12 +57,14 @@ it("preserves raw disk/count/Zip64 sentinel declarations from a nonzero byte win
 });
 
 it("observes every exact-ending candidate latest first without resolving ambiguity", () => {
-  const bytes = Buffer.alloc(CLASSIC_END_RECORD_BYTES * 2);
-  record(bytes, 0, CLASSIC_END_RECORD_BYTES);
-  record(bytes, CLASSIC_END_RECORD_BYTES, 0);
+  const bytes = Buffer.alloc(CLASSIC_END_RECORD_BYTES * 3);
+  record(bytes, 0, CLASSIC_END_RECORD_BYTES * 2);
+  // Decoy EOCD signature inside the outer comment whose declared comment does not end the archive.
+  record(bytes, CLASSIC_END_RECORD_BYTES, 1);
+  record(bytes, CLASSIC_END_RECORD_BYTES * 2, 0);
   expect(
     [...zipEndOfCentralDirectoryCandidates(bytes)].map(({ offset }) => offset),
-  ).toEqual([CLASSIC_END_RECORD_BYTES, 0]);
+  ).toEqual([CLASSIC_END_RECORD_BYTES * 2, 0]);
 });
 
 it("includes the oldest candidate permitted by the maximum ZIP comment", () => {
@@ -62,6 +72,9 @@ it("includes the oldest candidate permitted by the maximum ZIP comment", () => {
     CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES + 9,
     0xa5,
   );
+  record(bytes, 8, MAXIMUM_COMMENT_BYTES);
+  expect([...zipEndOfCentralDirectoryCandidates(bytes)]).toEqual([]);
+  bytes.fill(0xa5);
   record(bytes, 9, MAXIMUM_COMMENT_BYTES);
   expect(
     [...zipEndOfCentralDirectoryCandidates(bytes)].map(
@@ -91,4 +104,7 @@ it("does not promote short records or non-ending EOCD-like bytes to candidates",
       bytes.subarray(0, CLASSIC_END_RECORD_BYTES),
     ),
   ]).toEqual([]);
+  const withoutSignature = Buffer.alloc(CLASSIC_END_RECORD_BYTES);
+  withoutSignature.writeUInt16LE(1, 19);
+  expect([...zipEndOfCentralDirectoryCandidates(withoutSignature)]).toEqual([]);
 });
