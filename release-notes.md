@@ -749,6 +749,7 @@
 * **artifacts:** assert named integrity checks for lipo, asset catalog and dylib changes ([#11140](https://github.com/morluto/rea/issues/11140)) ([e22569f](https://github.com/morluto/rea/commit/e22569f9960a570b42c4b89e6260443c6a453c94))
 * **artifacts:** compare ASAR block-integrity limitations with their owning constant ([#11061](https://github.com/morluto/rea/issues/11061)) ([3bbdec3](https://github.com/morluto/rea/commit/3bbdec3fc8e8f51e0118e8a2d0a95f829c087264))
 * **artifacts:** consolidate encrypted PCK comparisons ([#12014](https://github.com/morluto/rea/issues/12014)) ([43b4d91](https://github.com/morluto/rea/commit/43b4d91c370d8fa5257eceb0b3f83f286f089d0f))
+* **artifacts:** consolidate installed extraction selection coverage ([#12053](https://github.com/morluto/rea/issues/12053)) ([06193cc](https://github.com/morluto/rea/commit/06193cc04b041ada4daa854d61b7dd4450c14392))
 * **artifacts:** distinguish Godot PCK capacity guards ([#12013](https://github.com/morluto/rea/issues/12013)) ([80ed81f](https://github.com/morluto/rea/commit/80ed81fb3dbedceef5513771d77c9a1e25440a69))
 * **artifacts:** expect the named integrity check on MCP ASAR integrity errors ([#11244](https://github.com/morluto/rea/issues/11244)) ([e0f7172](https://github.com/morluto/rea/commit/e0f71725e4355ca402d8525888cacff9cb5e2de2))
 * **artifacts:** fit the buffered member case to Windows stream buffers ([3986bf9](https://github.com/morluto/rea/commit/3986bf9f8e5477baf92de3cddae69360d377dd0d))
