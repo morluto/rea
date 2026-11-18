@@ -17,7 +17,7 @@ import {
   parserPluginsForPath,
 } from "./javascriptSourceParser.js";
 
-it.each(["main.js", ".js", ".mjs"])(
+it.each(["main.js", ".js", ".mjs", ".cjs", ".JS", ".MJS"])(
   "retains the unknown loader condition without inventing syntax errors for %s",
   (path) => {
     const source = '\uFEFF#!/usr/bin/env node\nimport "./dep.mjs";';
@@ -50,7 +50,11 @@ it.each(["main.js", ".js", ".mjs"])(
         },
       ]);
       expect(result.limitations).toContainEqual(
-        expect.stringContaining("only if Node loads it as an ES module"),
+        expect.stringContaining(
+          path.startsWith(".")
+            ? "loader invocation is unknown"
+            : "only if Node loads it as an ES module",
+        ),
       );
     }
   },
