@@ -61,7 +61,7 @@ msgstr "Leer el artículo"
 #: website/public/blog/index.html:232
 msgctxt "page:blog/index.html"
 msgid "By N0zoM1z0 · 10 October 2026"
-msgstr "Por N0zoM1z0 * 10 octubre 2026"
+msgstr "Por N0zoM1z0 · 10 octubre 2026"
 
 #. {ph0}: <span aria-hidden="true">
 #. {ph1}: </span>
@@ -241,7 +241,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Blog{ph3} / Reconstrucción Touhou"
 #: website/public/blog/touhou-reconstruction/index.html:205
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Essay · Touhou reconstruction"
-msgstr "Ensayo * Reconstrucción de Touhou"
+msgstr "Ensayo · Reconstrucción de Touhou"
 
 #: website/public/blog/touhou-reconstruction/index.html:206
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -251,7 +251,7 @@ msgstr "La revolución industrial en ingeniería inversa."
 #: website/public/blog/touhou-reconstruction/index.html:207
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "By N0zoM1z0 · 10 October 2026"
-msgstr "Por N0zoM1z0 * 10 octubre 2026"
+msgstr "Por N0zoM1z0 · 10 octubre 2026"
 
 #: website/public/blog/touhou-reconstruction/index.html:209
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -334,7 +334,7 @@ msgstr "Cómo se compone la experiencia"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}Human direction{ph1} · Goal and acceptance criteria"
-msgstr "{ph0}Dirección humana{ph1} * Objetivo y criterios de aceptación"
+msgstr "{ph0}Dirección humana{ph1} · Objetivo y criterios de aceptación"
 
 #: website/public/blog/touhou-reconstruction/index.html:332
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -416,7 +416,7 @@ msgstr "Reutilización"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}Pass{ph1} · Keep the result and its evidence"
-msgstr "{ph0}Pase{ph1} * Conservar el resultado y su evidencia"
+msgstr "{ph0}Pase{ph1} · Conservar el resultado y su evidencia"
 
 #: website/public/blog/touhou-reconstruction/index.html:365
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -446,7 +446,7 @@ msgstr "{ph0}Agosto de 2026{ph1}"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}TH08: the continuation{ph1}"
-msgstr "{ph0} TH08: la continuación{ph1}"
+msgstr "{ph0}TH08: la continuación{ph1}"
 
 #. {ph0}: <a href="#different-approaches">
 #. {ph1}: </a>
@@ -462,7 +462,7 @@ msgstr "{ph0}Dos enfoques{ph1}"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}TH095: compounding{ph1}"
-msgstr "{ph0} TH095: composición{ph1}"
+msgstr "{ph0}TH095: composición{ph1}"
 
 #. {ph0}: <a href="#th04">
 #. {ph1}: </a>
@@ -470,7 +470,7 @@ msgstr "{ph0} TH095: composición{ph1}"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}TH04: across architectures{ph1}"
-msgstr "{ph0} TH04: entre arquitecturas{ph1}"
+msgstr "{ph0}TH04: entre arquitecturas{ph1}"
 
 #. {ph0}: <a href="#semantic-reconstruction">
 #. {ph1}: </a>
@@ -590,8 +590,8 @@ msgid ""
 "substantial foundation. It came with knowledge of the build and a history of"
 " contributions that I preserved in the continuation."
 msgstr ""
-"{ph0} TH08 {ph1}, Noche Imperecedera, comenzó como una continuación de {ph2}"
-" Reconstrucción de GensokyoClub{ph3}. Su fuente pública me dio una base "
+"{ph0}TH08{ph1}, Noche Imperecedera, comenzó como una continuación de "
+"{ph2}Reconstrucción de GensokyoClub{ph3}. Su fuente pública me dio una base "
 "sustancial. Vino con el conocimiento de la construcción y una historia de "
 "contribuciones que conservé en la continuación."
 
@@ -664,9 +664,8 @@ msgid ""
 "An oracle is software someone wrote. TH08 gave me a clear reminder of how "
 "much can depend on that software."
 msgstr ""
-"Una referencia de verificación (oracle)es un software que alguien escribió."
-"  TH08 me dio un claro recordatorio de cuánto puede depender de ese "
-"software."
+"Una referencia de verificación (oracle)es un software que alguien escribió. "
+"TH08 me dio un claro recordatorio de cuánto puede depender de ese software."
 
 #. {ph0}: <code>0.0</code>
 #. {ph1}: <code>128.0</code>
@@ -973,7 +972,7 @@ msgid ""
 msgstr ""
 "Fuente: GensokyoClub ' s {ph0}Aviso léame{ph1}, revisado el 10 de octubre de"
 " 2026, y su {ph2}política de contribuciones{ph3}. La cita es un extracto "
-"abreviado.  TH08 ' s {ph4}créditos y procedencia{ph5} registre el límite de "
+"abreviado. TH08 ' s {ph4}créditos y procedencia{ph5} registre el límite de "
 "continuación."
 
 #: website/public/blog/touhou-reconstruction/index.html:626
@@ -992,9 +991,9 @@ msgid ""
 "functions in the ledger. We still had to learn the game. But we already knew"
 " much more about how to begin a reconstruction and how to keep it moving."
 msgstr ""
-"{ph0} TH095 {ph1}, Dispara la bala, hizo que el valor de esa experiencia "
-"fuera mucho más fácil de ver. Su repositorio comenzó el 29 de agosto con "
-"cero funciones de juego confirmadas en el libro mayor. Todavía teníamos que "
+"{ph0}TH095{ph1}, Dispara la bala, hizo que el valor de esa experiencia fuera"
+" mucho más fácil de ver. Su repositorio comenzó el 29 de agosto con cero "
+"funciones de juego confirmadas en el libro mayor. Todavía teníamos que "
 "aprender el juego. Pero ya sabíamos mucho más sobre cómo comenzar una "
 "reconstrucción y cómo mantenerla en marcha."
 
@@ -1112,11 +1111,11 @@ msgid ""
 "Windows games. Existing {ph2}ReC98 work{ph3} gave us valuable knowledge and "
 "source material here too."
 msgstr ""
-"{ph0} TH04 {ph1}, Lotus Land Story, llevó este trabajo a la era PC-98 DOS. "
-"El objetivo ahora era un entorno de 16 bits con cuatro programas "
-"cooperantes. Comprender su comportamiento de hardware requirió evidencia "
-"diferente de los juegos Windows. Existentes {ph2}Trabajo ReC98{ph3} también "
-"nos dio valiosos conocimientos y material de origen aquí."
+"{ph0}TH04{ph1}, Lotus Land Story, llevó este trabajo a la era PC-98 DOS. El "
+"objetivo ahora era un entorno de 16 bits con cuatro programas cooperantes. "
+"Comprender su comportamiento de hardware requirió evidencia diferente de los"
+" juegos Windows. Existentes {ph2}Trabajo ReC98{ph3} también nos dio valiosos"
+" conocimientos y material de origen aquí."
 
 #: website/public/blog/touhou-reconstruction/index.html:693
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1390,7 +1389,7 @@ msgid ""
 "original-platform build first, so semantic work can use it as a reference "
 "before porting begins."
 msgstr ""
-"Aprendimos este orden a través de los proyectos.  TH08 ya tenía puertos "
+"Aprendimos este orden a través de los proyectos. TH08 ya tenía puertos "
 "reproducibles antes de algunas de sus auditorías históricas posteriores de "
 "la plataforma. Eso hizo que ciertos defectos fueran más difíciles de ver. El"
 " {ph0}Flujo de trabajo actual de la fábrica{ph1} coloca la compilación de la"
@@ -1676,8 +1675,8 @@ msgid ""
 "ledger{ph5}, {ph6}24 August Linux port{ph7}, {ph8}26 August Web "
 "edition{ph9}, and {ph10}30 August 64-bit Linux release{ph11}."
 msgstr ""
-"{ph0} TH08 :{ph1} {ph2}Continuación del 13 de agosto{ph3}, {ph4}Libro mayor "
-"de fuentes del 19 de agosto{ph5}, {ph6}24 de agosto Puerto Linux{ph7}, "
+"{ph0}TH08:{ph1} {ph2}Continuación del 13 de agosto{ph3}, {ph4}Libro mayor de"
+" fuentes del 19 de agosto{ph5}, {ph6}24 de agosto Puerto Linux{ph7}, "
 "{ph8}Edición web del 26 de agosto{ph9}, y {ph10}Lanzamiento de Linux de 64 "
 "bits el 30 de agosto{ph11}."
 
@@ -1711,10 +1710,10 @@ msgid ""
 " ledger{ph5}, {ph6}8 September comparisons{ph7}, {ph8}9 September "
 "linkage{ph9}, and {ph10}10 September playable-build record{ph11}."
 msgstr ""
-"{ph0} TH095 :{ph1} {ph2}Libro mayor inicial del 29 de agosto{ph3}, "
-"{ph4}Libro mayor de fuentes del 7 de septiembre{ph5}, {ph6}Comparaciones del"
-" 8 de septiembre{ph7}, {ph8}Vinculación del 9 de septiembre{ph9}, y {ph10}10"
-" de septiembre jugable-registro de compilación{ph11}."
+"{ph0}TH095:{ph1} {ph2}Libro mayor inicial del 29 de agosto{ph3}, {ph4}Libro "
+"mayor de fuentes del 7 de septiembre{ph5}, {ph6}Comparaciones del 8 de "
+"septiembre{ph7}, {ph8}Vinculación del 9 de septiembre{ph9}, y {ph10}10 de "
+"septiembre jugable-registro de compilación{ph11}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -1730,7 +1729,7 @@ msgid ""
 "reconstruction, the maintainer's complete Normal-route testing and the "
 "current 64-bit phase."
 msgstr ""
-"{ph0} TH04 :{ph1} {ph2}Traspaso del 10 de octubre{ph3} registra la "
+"{ph0}TH04:{ph1} {ph2}Traspaso del 10 de octubre{ph3} registra la "
 "reconstrucción de DOS en funcionamiento, la prueba completa de ruta normal "
 "del mantenedor y la fase actual de 64 bits."
 
@@ -1754,7 +1753,7 @@ msgid ""
 "bug{ph3}, {ph4}the source and comparison fix{ph5}, and {ph6}the full "
 "floating-literal audit{ph7}."
 msgstr ""
-"{ph0} Corrección de referencia de verificación TH08 (oracle) :{ph1} {ph2}el "
+"{ph0}Corrección de referencia de verificación TH08 (oracle) :{ph1} {ph2}el "
 "error de recopilación automática reportado{ph3}, {ph4}la corrección de "
 "origen y comparación{ph5}, y {ph6}la auditoría constante completa de coma "
 "flotante{ph7}."
@@ -1776,9 +1775,8 @@ msgid ""
 "{ph0}Semantic reconstruction:{ph1} {ph2}TH08's readability playbook{ph3} and"
 " {ph4}the Factory's phase order and two validation paths{ph5}."
 msgstr ""
-"{ph0}Reconstrucción semántica:{ph1} {ph2} Libro de jugadas de legibilidad de"
-" TH08{ph3} y {ph4}orden de fase de la fábrica y dos rutas de "
-"validación{ph5}."
+"{ph0}Reconstrucción semántica:{ph1} {ph2}Libro de jugadas de legibilidad de "
+"TH08{ph3} y {ph4}orden de fase de la fábrica y dos rutas de validación{ph5}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -1842,8 +1840,8 @@ msgid ""
 "AI agents, and how knowledge compounds across TH08, TH095 and PC-98 TH04."
 msgstr ""
 "N0zoM1z0 reflexiona sobre la ingeniería inversa manual, la reconstrucción de"
-" Touhou con agentes de IA y cómo el conocimiento se compone en TH08 , TH095 "
-"y PC-98 TH04 ."
+" Touhou con agentes de IA y cómo el conocimiento se compone en TH08, TH095 y"
+" PC-98 TH04."
 
 #: website/public/blog/touhou-reconstruction/index.html:357
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1903,9 +1901,8 @@ msgid ""
 "this mini-game with {ph2}adjustable speed.{ph3}"
 msgstr ""
 "Para recrear la aceleración del juego, primero encuentra la regla que "
-"controla su velocidad. {ph0} REA devolvió el script en ejecución;{ph1} "
-"usamos su regla para construir este minijuego con {ph2}velocidad "
-"ajustable.{ph3}"
+"controla su velocidad. {ph0}REA devolvió el script en ejecución;{ph1} usamos"
+" su regla para construir este minijuego con {ph2}velocidad ajustable.{ph3}"
 
 #: website/public/examples/dino-lab/index.html:216
 #: website/public/examples/dino-lab/index.html:215
@@ -2030,7 +2027,7 @@ msgid ""
 "function:"
 msgstr ""
 "Inspeccionamos {ph0}edición de navegador derivada de Chromium de wayou{ph1} "
-"con REA . Devolvió lo cargado {ph2}, incluyendo esta rama en la función de "
+"con REA. Devolvió lo cargado {ph2}, incluyendo esta rama en la función de "
 "actualización del juego:"
 
 #. {ph0}: <code>SPEED: 6</code>
@@ -2140,7 +2137,7 @@ msgstr "Pruebe el análisis usted mismo"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Set up REA{ph1} with your coding agent."
-msgstr "{ph0}Configurar REA {ph1} con su agente de codificación."
+msgstr "{ph0}Configurar REA{ph1} con su agente de codificación."
 
 #. {ph0}: <a href="../../guides/browser/#prepare" >
 #. {ph1}: </a >
@@ -2221,8 +2218,8 @@ msgid ""
 "150."
 msgstr ""
 "Fuente: {ph0}código de velocidad inspeccionado{ph1}, Autores Chromium. "
-"{ph2}Derechos de autor y licencia BSD{ph3}.  REA 4.1.0 inspeccionó la "
-"edición HTTP en ejecución en Chrome 150."
+"{ph2}Derechos de autor y licencia BSD{ph3}. REA 4.1.0 inspeccionó la edición"
+" HTTP en ejecución en Chrome 150."
 
 #: website/public/examples/dino-lab/index.html:6
 msgctxt "page:examples/dino-lab/index.html"
@@ -2335,12 +2332,12 @@ msgstr "Configuración y actualizaciones"
 #: website/public/faq/index.html:224
 msgctxt "page:faq/index.html"
 msgid "How do I install REA?"
-msgstr "¿Cómo instalo REA ?"
+msgstr "¿Cómo instalo REA?"
 
 #: website/public/faq/index.html:232
 msgctxt "page:faq/index.html"
 msgid "Terminal · agent setup"
-msgstr "Terminal * configuración del agente"
+msgstr "Terminal · configuración del agente"
 
 #: website/public/faq/index.html:233 website/public/faq/index.html:274
 #: website/public/faq/index.html:292 website/public/faq/index.html:376
@@ -2370,7 +2367,7 @@ msgstr ""
 #: website/public/faq/index.html:253
 msgctxt "page:faq/index.html"
 msgid "Which coding agents can use REA?"
-msgstr "¿Qué agentes de codificación pueden usar REA ?"
+msgstr "¿Qué agentes de codificación pueden usar REA?"
 
 #: website/public/faq/index.html:254
 msgctxt "page:faq/index.html"
@@ -2381,9 +2378,9 @@ msgid ""
 " Grok Bot's connector is added from its chat."
 msgstr ""
 "Cualquier agente que admita servidores MCP locales. La configuración incluye"
-" escritorio Claude Code , Claude, Codex , Cursor , Gemini CLI , Windsurf , "
-"Devin , OpenCode , Antigravity , GitHub Copilot CLI , Command Code , Grok "
-"Build , OMP y VS Code . El conector de Grok Bot se agrega desde su chat."
+" escritorio Claude Code, Claude, Codex, Cursor, Gemini CLI, Windsurf, Devin,"
+" OpenCode, Antigravity, GitHub Copilot CLI, Command Code, Grok Build, OMP y "
+"VS Code. El conector de Grok Bot se agrega desde su chat."
 
 #. {ph0}: <a href="../get-started/#agent">
 #. {ph1}: </a>
@@ -2396,7 +2393,7 @@ msgstr "{ph0}Conecte a su agente de codificación{ph1}."
 #: website/public/faq/index.html:266
 msgctxt "page:faq/index.html"
 msgid "How do I update REA?"
-msgstr "¿Cómo actualizo REA ?"
+msgstr "¿Cómo actualizo REA?"
 
 #: website/public/faq/index.html:267
 msgctxt "page:faq/index.html"
@@ -2405,12 +2402,12 @@ msgid ""
 "npm:"
 msgstr ""
 "REA se publica con frecuencia, incluidas correcciones de errores. Si instaló"
-" el CLI con npm :"
+" el CLI con npm:"
 
 #: website/public/faq/index.html:273
 msgctxt "page:faq/index.html"
 msgid "Terminal · installed CLI"
-msgstr "Terminal * instalado CLI"
+msgstr "Terminal · instalado CLI"
 
 #. {ph0}: <code>npx</code>
 #: website/public/faq/index.html:285
@@ -2426,7 +2423,7 @@ msgstr ""
 #: website/public/faq/index.html:291
 msgctxt "page:faq/index.html"
 msgid "Terminal · refresh agent setup"
-msgstr "Terminal * actualizar la configuración del agente"
+msgstr "Terminal · actualizar la configuración del agente"
 
 # Reviewed for readable setup and analysis terminology.
 #. {ph0}: <code>npx -y rea-agents@latest</code>
@@ -2458,8 +2455,8 @@ msgid ""
 "setup{ph1} to connect the MCP server and install the matching skill, then "
 "restart your agent so it can call the tools."
 msgstr ""
-"La habilidad le da instrucciones de investigación a su agente. Corre {ph0} "
-"Configuración de REA{ph1} para conectar el servidor MCP e instalar la "
+"La habilidad le da instrucciones de investigación a su agente. Corre "
+"{ph0}Configuración de REA{ph1} para conectar el servidor MCP e instalar la "
 "habilidad correspondiente, reinicie su agente para que pueda llamar a las "
 "herramientas."
 
@@ -2471,7 +2468,7 @@ msgstr "Análisis"
 #: website/public/faq/index.html:328
 msgctxt "page:faq/index.html"
 msgid "What can I analyze with REA?"
-msgstr "¿Qué puedo analizar con REA ?"
+msgstr "¿Qué puedo analizar con REA?"
 
 #: website/public/faq/index.html:329
 msgctxt "page:faq/index.html"
@@ -2499,8 +2496,8 @@ msgid ""
 "{ph0}JavaScript and Electron apps{ph1}: modules, imports, IPC and source "
 "locations."
 msgstr ""
-"{ph0} Aplicaciones JavaScript y Electron{ph1}: módulos, importaciones, IPC y"
-" ubicaciones de origen."
+"{ph0}Aplicaciones JavaScript y Electron{ph1}: módulos, importaciones, IPC y "
+"ubicaciones de origen."
 
 #. {ph0}: <a href="../guides/browser/">
 #. {ph1}: </a>
@@ -2529,7 +2526,7 @@ msgstr ""
 #: website/public/faq/index.html:354
 msgctxt "page:faq/index.html"
 msgid "Do I need Hopper, Ghidra or IDA?"
-msgstr "¿Necesito Hopper, Ghidra o IDA ?"
+msgstr "¿Necesito Hopper, Ghidra o IDA?"
 
 #: website/public/faq/index.html:355
 msgctxt "page:faq/index.html"
@@ -2574,7 +2571,7 @@ msgstr ""
 #: website/public/faq/index.html:375
 msgctxt "page:faq/index.html"
 msgid "Terminal · static application analysis"
-msgstr "Terminal * análisis estático de aplicaciones"
+msgstr "Terminal · análisis estático de aplicaciones"
 
 #. {ph0}: <a href="../get-started/#terminal">
 #. {ph1}: </a>
@@ -2586,7 +2583,7 @@ msgid ""
 " the CLI{ph1} for installation options."
 msgstr ""
 "Reemplace la ruta con una carpeta de aplicación extraída o un archivo ASAR. "
-"{ph0}Utilice el CLI {ph1} para opciones de instalación."
+"{ph0}Utilice el CLI{ph1} para opciones de instalación."
 
 # Reviewed for readable setup and analysis terminology.
 #: website/public/faq/index.html:395
@@ -2619,7 +2616,7 @@ msgid ""
 "checker{ph3} show how that process works."
 msgstr ""
 "Su agente usa estos hallazgos para explicar el comportamiento o escribir y "
-"probar una implementación. El {ph0} Cálculo de DX-Ball{ph1} y "
+"probar una implementación. El {ph0}Cálculo de DX-Ball{ph1} y "
 "{ph2}Comprobador de banderas CTF{ph3} muestre cómo funciona ese proceso."
 
 #: website/public/faq/index.html:412
@@ -2681,12 +2678,12 @@ msgid ""
 " {ph0}; for Codex:"
 msgstr ""
 "Reinicie o vuelva a conectar su agente después de la configuración. "
-"Verifique su registro REA con {ph0}; para Codex :"
+"Verifique su registro REA con {ph0}; para Codex:"
 
 #: website/public/faq/index.html:462
 msgctxt "page:faq/index.html"
 msgid "Terminal · check one client"
-msgstr "Terminal * compruebe un cliente"
+msgstr "Terminal · compruebe un cliente"
 
 #. {ph0}: <code>codex</code>
 #. {ph1}: <code>claude_code</code>
@@ -2705,7 +2702,7 @@ msgstr ""
 #: website/public/faq/index.html:482
 msgctxt "page:faq/index.html"
 msgid "Terminal · repair one client's setup"
-msgstr "Terminal * reparar la configuración de un cliente"
+msgstr "Terminal · reparar la configuración de un cliente"
 
 #. {ph0}: <a href="../get-started/#help">
 #. {ph1}: </a>
@@ -2736,7 +2733,7 @@ msgid ""
 "run choice of demo mode or license activation before unattended analysis. "
 "{ph0}See native provider setup{ph1}."
 msgstr ""
-"REA inicia Hopper cuando una operación lo necesita. En macOS , complete la "
+"REA inicia Hopper cuando una operación lo necesita. En macOS, complete la "
 "opción de primera ejecución de modo de demostración o activación de licencia"
 " antes del análisis desatendido. {ph0}Consulte configuración de proveedor "
 "nativo{ph1}."
@@ -2755,8 +2752,8 @@ msgid ""
 "{ph0}Update REA{ph1}, restart your agent and retry the same task. A recent "
 "release may already fix the problem."
 msgstr ""
-"{ph0}Actualización REA {ph1}, reinicie su agente y vuelva a intentar la "
-"misma tarea. Es posible que una versión reciente ya solucione el problema."
+"{ph0}Actualización REA{ph1}, reinicie su agente y vuelva a intentar la misma"
+" tarea. Es posible que una versión reciente ya solucione el problema."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/issues/new/choose" >
 #. {ph1}: </a >
@@ -3031,7 +3028,7 @@ msgid ""
 msgstr ""
 "El ejemplo es una aplicación Electron de seis archivos con un {ph0}Notas de "
 "exportación{ph1} botón. Su agente puede inspeccionar su código sin instalar "
-"ni iniciar Electron ."
+"ni iniciar Electron."
 
 #: website/public/first-investigation/index.html:314
 msgctxt "page:first-investigation/index.html"
@@ -3291,7 +3288,7 @@ msgstr "{ph0}Inicio{ph1} / Empezar"
 #: website/public/get-started/index.html:202
 msgctxt "page:get-started/index.html"
 msgid "Set up REA."
-msgstr "Configure REA ."
+msgstr "Configure REA."
 
 #: website/public/get-started/index.html:267
 msgctxt "page:get-started/index.html"
@@ -3383,7 +3380,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Use the CLI{ph1}"
-msgstr "{ph0}Utilice el CLI {ph1}"
+msgstr "{ph0}Utilice el CLI{ph1}"
 
 #. {ph0}: <a href="#help">
 #. {ph1}: </a>
@@ -3428,7 +3425,7 @@ msgid ""
 "{ph0}Windows:{ph1} open the Start menu, type {ph2}PowerShell{ph3} and press "
 "Enter."
 msgstr ""
-"{ph0} Windows :{ph1} abra el menú Inicio, escriba {ph2}PowerShell{ph3} y "
+"{ph0}Windows:{ph1} abra el menú Inicio, escriba {ph2}PowerShell{ph3} y "
 "presione Entrar."
 
 #. {ph0}: <strong>
@@ -3472,7 +3469,7 @@ msgid ""
 "Paste a command with {ph0} {ph1} (macOS: {ph2} {ph3}; Linux terminals: {ph4}"
 " {ph5} {ph6}), then press Enter."
 msgstr ""
-"Pegue un comando con {ph0} {ph1} ( macOS : {ph2} {ph3}; Terminales Linux: "
+"Pegue un comando con {ph0} {ph1} (macOS: {ph2} {ph3}; Terminales Linux: "
 "{ph4} {ph5} {ph6}), luego presione Entrar."
 
 #: website/public/get-started/index.html:864
@@ -3482,7 +3479,7 @@ msgid ""
 "and the matching investigation skill, keeping a backup of existing "
 "configuration. It asks before applying the changes."
 msgstr ""
-"Elija su cliente y revise el plan de configuración.  REA agrega su conexión "
+"Elija su cliente y revise el plan de configuración. REA agrega su conexión "
 "MCP y la habilidad de investigación correspondiente, manteniendo una copia "
 "de seguridad de la configuración existente. Pregunta antes de aplicar los "
 "cambios."
@@ -3505,8 +3502,8 @@ msgid ""
 "macOS press {ph2} {ph3}; on Windows, also quit from the tray icon if there "
 "is one."
 msgstr ""
-"{ph0}Aplicaciones de escritorio{ph1} (Escritorio Claude, Cursor , Windsurf ,"
-" VS Code): salga de la aplicación por completo y luego ábrala nuevamente. "
+"{ph0}Aplicaciones de escritorio{ph1} (Escritorio Claude, Cursor, Windsurf, "
+"VS Code): salga de la aplicación por completo y luego ábrala nuevamente. "
 "Cerrar la ventana no es suficiente. En prensa macOS {ph2} {ph3}; en Windows,"
 " también salga del icono de la bandeja, si lo hay."
 
@@ -3519,8 +3516,8 @@ msgid ""
 "{ph0}Terminal agents{ph1} (Claude Code, Codex, Gemini CLI): exit the session"
 " and start it again."
 msgstr ""
-"{ph0}Agentes terminales{ph1} ( Claude Code, Codex, Gemini CLI ): salga de la"
-" sesión y vuelva a iniciarla."
+"{ph0}Agentes terminales{ph1} (Claude Code, Codex, Gemini CLI ): salga de la "
+"sesión y vuelva a iniciarla."
 
 #: website/public/get-started/index.html:990
 msgctxt "page:get-started/index.html"
@@ -3538,7 +3535,7 @@ msgid ""
 "{ph0}Windows:{ph1} in File Explorer, right-click the folder and choose "
 "{ph2}Copy as path{ph3}. On Windows 10, hold Shift while right-clicking."
 msgstr ""
-"{ph0} Windows :{ph1} en el Explorador de archivos, haga clic con el botón "
+"{ph0}Windows:{ph1} en el Explorador de archivos, haga clic con el botón "
 "derecho en la carpeta y elija {ph2}Copiar como ruta{ph3}. En Windows 10, "
 "mantenga presionada la tecla Mayús mientras hace clic con el botón derecho."
 
@@ -3624,7 +3621,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Windows:{ph1} {ph2}"
-msgstr "{ph0} Windows :{ph1} {ph2}"
+msgstr "{ph0}Windows:{ph1} {ph2}"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3639,7 +3636,7 @@ msgid ""
 "{ph0}macOS:{ph1} {ph2} (right-click the app and choose {ph3}Show Package "
 "Contents{ph4})"
 msgstr ""
-"{ph0} macOS :{ph1} {ph2} (haga clic con el botón derecho en la aplicación y "
+"{ph0}macOS:{ph1} {ph2} (haga clic con el botón derecho en la aplicación y "
 "elija {ph3}Mostrar Contenido del Paquete{ph4})"
 
 #. {ph0}: <strong>
@@ -3649,7 +3646,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux:{ph1} often {ph2}"
-msgstr "{ph0} Linux :{ph1} a menudo {ph2}"
+msgstr "{ph0}Linux:{ph1} a menudo {ph2}"
 
 #. {ph0}: <code>app.asar</code>
 #: website/public/get-started/index.html:1643
@@ -3727,9 +3724,9 @@ msgid ""
 "Connect Hopper on macOS or Linux. Run the setup command above; it detects an"
 " existing installation or offers an installation plan for your approval."
 msgstr ""
-"Conecte Hopper en macOS o Linux . Ejecute el comando de instalación "
-"anterior; detecta una instalación existente u ofrece un plan de instalación "
-"para su aprobación."
+"Conecte Hopper en macOS o Linux. Ejecute el comando de instalación anterior;"
+" detecta una instalación existente u ofrece un plan de instalación para su "
+"aprobación."
 
 #: website/public/get-started/index.html:1725
 msgctxt "page:get-started/index.html"
@@ -3750,7 +3747,7 @@ msgid ""
 "{ph0}; for Codex:"
 msgstr ""
 "Reinicie o vuelva a conectar el cliente después de la configuración. "
-"Compruebe su conexión REA con {ph0}; para Codex :"
+"Compruebe su conexión REA con {ph0}; para Codex:"
 
 #: website/public/get-started/index.html:1739
 msgctxt "page:get-started/index.html"
@@ -3760,7 +3757,7 @@ msgstr "Si un proveedor necesita atención"
 #: website/public/get-started/index.html:1740
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
-msgstr "Verifique el proveedor que está usando. Para Ghidra :"
+msgstr "Verifique el proveedor que está usando. Para Ghidra:"
 
 #: website/public/get-started/index.html:1743
 msgctxt "page:get-started/index.html"
@@ -3783,7 +3780,7 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "{ph0}REA FAQ{ph1}{ph2}Quick answers on updates, agents and analysis.{ph3}"
 msgstr ""
-"{ph0} Preguntas FRECUENTES SOBRE REA{ph1}{ph2}Respuestas rápidas sobre "
+"{ph0}Preguntas FRECUENTES SOBRE REA{ph1}{ph2}Respuestas rápidas sobre "
 "actualizaciones, agentes y análisis.{ph3}"
 
 #. {ph0}: <a href="../guides/">
@@ -3811,7 +3808,7 @@ msgid ""
 "{ph0}GitHub issues{ph1}{ph2}Report a problem with the command and "
 "diagnostics.{ph3}"
 msgstr ""
-"{ph0} Problemas de GitHub{ph1}{ph2}Informe de un problema con el comando y "
+"{ph0}Problemas de GitHub{ph1}{ph2}Informe de un problema con el comando y "
 "los diagnósticos.{ph3}"
 
 #. {ph0}: <a href="https://discord.gg/GkcryMnJDM">
@@ -3825,7 +3822,7 @@ msgid ""
 "{ph0}REA community{ph1}{ph2}Questions, investigations and work in "
 "progress.{ph3}"
 msgstr ""
-"{ph0} Comunidad REA{ph1}{ph2}Preguntas, investigaciones y trabajo en "
+"{ph0}Comunidad REA{ph1}{ph2}Preguntas, investigaciones y trabajo en "
 "progreso.{ph3}"
 
 #: website/public/get-started/index.html:6
@@ -3970,7 +3967,7 @@ msgstr "{ph0}Pregúntele a su agente{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Capture from CLI{ph1}"
-msgstr "{ph0}Captura desde CLI {ph1}"
+msgstr "{ph0}Captura desde CLI{ph1}"
 
 #. {ph0}: <a href="#result">
 #. {ph1}: </a>
@@ -4000,7 +3997,7 @@ msgid ""
 msgstr ""
 "El {ph0}Ejemplo de navegador de notas{ph1} tiene un {ph2}Notas de "
 "exportación{ph3} botón. Al hacer clic en él, se carga {ph4}, formatea las "
-"dos notas como CSV e inicia una descarga ."
+"dos notas como CSV e inicia una descarga."
 
 #: website/public/guides/browser/index.html:233
 msgctxt "page:guides/browser/index.html"
@@ -4020,7 +4017,7 @@ msgid ""
 "{ph0}01 · You{ph1}{ph2}Click Export notes{ph3}{ph4}Perform the action in "
 "your browser while the capture is running.{ph5}"
 msgstr ""
-"{ph0}01 * Tú{ph1}{ph2}Haga clic en Exportar notas{ph3}{ph4}Realice la acción"
+"{ph0}01 · Tú{ph1}{ph2}Haga clic en Exportar notas{ph3}{ph4}Realice la acción"
 " en su navegador mientras se ejecuta la captura.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -4036,7 +4033,7 @@ msgid ""
 "{ph0}02 · REA{ph1}{ph2}Record the request{ph3}{ph4}Capture the request URL, "
 "response status and JSON structure from the selected page.{ph5}"
 msgstr ""
-"{ph0}02 * REA {ph1}{ph2}Registre la solicitud{ph3}{ph4}Capture la URL de la "
+"{ph0}02 · REA{ph1}{ph2}Registre la solicitud{ph3}{ph4}Capture la URL de la "
 "solicitud, el estado de la respuesta y la estructura JSON de la página "
 "seleccionada.{ph5}"
 
@@ -4055,7 +4052,7 @@ msgid ""
 "{ph0}03 · Your agent{ph1}{ph2}Read the export code{ph3}{ph4}Connect the "
 "observed request to {ph5} in {ph6}.{ph7}"
 msgstr ""
-"{ph0}03 * Su agente{ph1}{ph2}Lea el código de exportación{ph3}{ph4}Conecte "
+"{ph0}03 · Su agente{ph1}{ph2}Lea el código de exportación{ph3}{ph4}Conecte "
 "la solicitud observada a {ph5} en {ph6}.{ph7}"
 
 #: website/public/guides/browser/index.html:264
@@ -4075,7 +4072,7 @@ msgid ""
 "debugging port. On Linux:"
 msgstr ""
 "Abra el ejemplo de Hosted Notes con un perfil de navegador independiente y "
-"un puerto de depuración local. En Linux :"
+"un puerto de depuración local. En Linux:"
 
 #: website/public/guides/browser/index.html:277
 msgctxt "page:guides/browser/index.html"
@@ -4097,7 +4094,7 @@ msgid ""
 "Use your installed browser's executable path on macOS or Windows. You can "
 "replace the page URL with another page you want to inspect."
 msgstr ""
-"Utilice la ruta ejecutable de su navegador instalado en macOS o Windows . "
+"Utilice la ruta ejecutable de su navegador instalado en macOS o Windows. "
 "Puede reemplazar la URL de la página con otra página que desee inspeccionar."
 
 #: website/public/guides/browser/index.html:297
@@ -4263,7 +4260,7 @@ msgstr "Iniciador de la solicitud"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} · script"
-msgstr "{ph0} * guión"
+msgstr "{ph0} · guión"
 
 #: website/public/guides/browser/index.html:416
 msgctxt "page:guides/browser/index.html"
@@ -4492,7 +4489,7 @@ msgstr "Guía JavaScript y Electron"
 msgctxt "page:guides/index.html"
 msgid "For a larger packaged app, follow {ph0}Notion's clipboard bridge{ph1}."
 msgstr ""
-"Para obtener una aplicación empaquetada más grande, siga {ph0} Puente del "
+"Para obtener una aplicación empaquetada más grande, siga {ph0}Puente del "
 "portapapeles de Notion{ph1}."
 
 #: website/public/guides/index.html:258
@@ -4558,7 +4555,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Guías{ph3} / JavaScript y Electron"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "Trace an Electron{ph0}CSV export."
-msgstr "Rastrear un Electron {ph0} Exportación CSV."
+msgstr "Rastrear un Electron{ph0}Exportación CSV."
 
 #: website/public/guides/javascript/index.html:206
 msgctxt "page:guides/javascript/index.html"
@@ -4631,7 +4628,7 @@ msgid ""
 msgstr ""
 "Esta guía utiliza una pequeña aplicación Electron. Haciendo clic {ph0}Notas "
 "de exportación{ph1} llama a una API en la página, cruza al proceso principal"
-" y escribe un CSV . El comportamiento se distribuye en varios archivos."
+" y escribe un CSV. El comportamiento se distribuye en varios archivos."
 
 #: website/public/guides/javascript/index.html:232
 msgctxt "page:guides/javascript/index.html"
@@ -4725,7 +4722,7 @@ msgid ""
 "{ph0}Connect your agent to REA{ph1} and give it the app directory or ASAR "
 "file:"
 msgstr ""
-"{ph0}Conecte a su agente a REA {ph1} y asígnele el directorio de la "
+"{ph0}Conecte a su agente a REA{ph1} y asígnele el directorio de la "
 "aplicación o el archivo ASAR:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
@@ -4961,8 +4958,8 @@ msgid ""
 "result."
 msgstr ""
 "Rastree una exportación de Notes CSV a través de una API de renderizador, "
-"precarga y controlador IPC con REA . Incluye archivos de ejemplo "
-"descargables y un resultado de análisis verificado."
+"precarga y controlador IPC con REA. Incluye archivos de ejemplo descargables"
+" y un resultado de análisis verificado."
 
 #: website/public/guides/javascript/index.html:212
 msgctxt "page:guides/javascript/index.html"
@@ -5094,8 +5091,8 @@ msgid ""
 " way to investigate the missing arithmetic."
 msgstr ""
 "La función de inicio, {ph0}, tiene un resultado corto del descompilador: una"
-" llamada a {ph1}.  REA también devuelve sus instrucciones y llamadas, que le"
-" dan al agente una forma de investigar la aritmética faltante."
+" llamada a {ph1}. REA también devuelve sus instrucciones y llamadas, que le "
+"dan al agente una forma de investigar la aritmética faltante."
 
 #: website/public/guides/native/index.html:235
 msgctxt "page:guides/native/index.html"
@@ -5184,7 +5181,7 @@ msgid ""
 "{ph0}01 · Instructions{ph1}{ph2}An integer input{ph3}{ph4}A stack read "
 "supplies the value used by the floating-point instructions.{ph5}"
 msgstr ""
-"{ph0}01 * Instrucciones{ph1}{ph2}Una entrada entera{ph3}{ph4}Una lectura de "
+"{ph0}01 · Instrucciones{ph1}{ph2}Una entrada entera{ph3}{ph4}Una lectura de "
 "pila proporciona el valor utilizado por las instrucciones de coma "
 "flotante.{ph5}"
 
@@ -5202,7 +5199,7 @@ msgid ""
 "{ph0}02 · Caller{ph1}{ph2}A screen coordinate{ph3}{ph4}The brick-hit caller "
 "passes {ph5}.{ph6}"
 msgstr ""
-"{ph0}02 * Llamador{ph1}{ph2}Una coordenada de pantalla{ph3}{ph4}El llamador "
+"{ph0}02 · Llamador{ph1}{ph2}Una coordenada de pantalla{ph3}{ph4}El llamador "
 "golpeado por un ladrillo pasa {ph5}.{ph6}"
 
 #. {ph0}: <span class="flow-label">
@@ -5220,7 +5217,7 @@ msgid ""
 "{ph0}03 · Data bytes{ph1}{ph2}The numeric constants{ph3}{ph4}Referenced "
 "bytes decode to {ph5}, {ph6} and a scale value.{ph7}"
 msgstr ""
-"{ph0}03 * Bytes de datos{ph1}{ph2}Las constantes "
+"{ph0}03 · Bytes de datos{ph1}{ph2}Las constantes "
 "numéricas{ph3}{ph4}Decodificación de bytes referenciados a {ph5}, {ph6} y un"
 " valor de escala.{ph7}"
 
@@ -5272,7 +5269,7 @@ msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
 "an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
 msgstr ""
-"{ph0} Ghidra {ph1} ( macOS o Linux; experimental en Windows): gratis, pero "
+"{ph0}Ghidra{ph1} (macOS o Linux; experimental en Windows): gratis, pero "
 "necesita un Ghidra 12.1 existente.x instalación y un JDK 21 de 64 bits o más"
 " reciente."
 
@@ -5331,8 +5328,8 @@ msgid ""
 "same kind of question about another small Windows program you have."
 msgstr ""
 "Mensaje de ejemplo. Proporcione a su agente la ruta al ejecutable local de "
-"DX-Ball 1.07.  REA no incluye DX-Ball, así que use su propia copia o haga el"
-" mismo tipo de pregunta sobre otro pequeño programa Windows que tenga."
+"DX-Ball 1.07. REA no incluye DX-Ball, así que use su propia copia o haga el "
+"mismo tipo de pregunta sobre otro pequeño programa Windows que tenga."
 
 #: website/public/guides/native/index.html:371
 msgctxt "page:guides/native/index.html"
@@ -5350,7 +5347,7 @@ msgid ""
 "{ph0}Windows:{ph1} in File Explorer, right-click the file and choose "
 "{ph2}Copy as path{ph3}. On Windows 10, hold Shift while right-clicking."
 msgstr ""
-"{ph0} Windows :{ph1} en el Explorador de archivos, haga clic con el botón "
+"{ph0}Windows:{ph1} en el Explorador de archivos, haga clic con el botón "
 "derecho en el archivo y elija {ph2}Copiar como ruta{ph3}. En Windows 10, "
 "mantenga presionada la tecla Mayús mientras hace clic con el botón derecho."
 
@@ -5365,7 +5362,7 @@ msgid ""
 "{ph0}macOS:{ph1} in Finder, right-click the file, hold Option and choose "
 "{ph2}Copy \"…\" as Pathname{ph3}."
 msgstr ""
-"{ph0} macOS :{ph1} en Finder, haga clic con el botón derecho en el archivo, "
+"{ph0}macOS:{ph1} en Finder, haga clic con el botón derecho en el archivo, "
 "mantenga presionada la opción y elija {ph2}Copie \"\"\" como nombre de "
 "ruta{ph3}."
 
@@ -5487,7 +5484,7 @@ msgid ""
 msgstr ""
 "{ph0}Conecte un proveedor de análisis de programas de código máquina{ph1}, "
 "luego proporcione a su agente un ejecutable o biblioteca local y una función"
-" para investigar .  Las preguntas iniciales útiles incluyen \"¿ Cómo se "
+" para investigar. Las preguntas iniciales útiles incluyen \"¿ Cómo se "
 "analiza este archivo?\"o\" ¿Qué función maneja esta acción de menú?”"
 
 #: website/public/guides/native/index.html:471
@@ -5590,7 +5587,7 @@ msgstr "Configurar REA"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Set up REA{ph1}"
-msgstr "{ph0}Configurar REA {ph1}"
+msgstr "{ph0}Configurar REA{ph1}"
 
 #. {ph0}: <a href="#dinosaur">
 #. {ph1}: </a>
@@ -5614,7 +5611,7 @@ msgstr "{ph0}Calculadora{ph1}"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Try REA{ph1}"
-msgstr "{ph0}Prueba REA {ph1}"
+msgstr "{ph0}Prueba REA{ph1}"
 
 #. {ph0}: <a href="#analyze">
 #. {ph1}: </a>
@@ -5705,12 +5702,12 @@ msgstr "{ph0}03{ph1} Recuperar la regla"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Original x64 · selected instructions{ph1} {ph2}{ph3}"
-msgstr "{ph0}Original x64 * instrucciones seleccionadas{ph1} {ph2}{ph3}"
+msgstr "{ph0}Original x64 · instrucciones seleccionadas{ph1} {ph2}{ph3}"
 
 #: website/public/index.html:457
 msgctxt "page:index.html"
 msgid "01 · Which branch?"
-msgstr "01 * ¿Qué sucursal?"
+msgstr "01 · ¿Qué sucursal?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5770,7 +5767,7 @@ msgstr "Divide"
 #: website/public/index.html:499
 msgctxt "page:index.html"
 msgid "03 · What is the rule?"
-msgstr "03 * ¿Cuál es la regla?"
+msgstr "03 · ¿Cuál es la regla?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5820,12 +5817,12 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Calculator"
 msgstr ""
-"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ejemplo de indicador * Calculadora"
+"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ejemplo de indicador · Calculadora"
 
 #: website/public/index.html:556
 msgctxt "page:index.html"
 msgid "Example answer · based on the findings"
-msgstr "Respuesta de ejemplo * basada en los hallazgos"
+msgstr "Respuesta de ejemplo · basada en los hallazgos"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5860,7 +5857,7 @@ msgstr "Qué rama se aplica, qué calcula y cómo reconstruirla."
 #: website/public/index.html:603
 msgctxt "page:index.html"
 msgid "Example 01 · Chrome’s dinosaur game"
-msgstr "Ejemplo 01 * Juego de dinosaurios de Chrome"
+msgstr "Ejemplo 01 · Juego de dinosaurios de Chrome"
 
 #: website/public/index.html:604
 msgctxt "page:index.html"
@@ -5955,7 +5952,7 @@ msgid ""
 "{ph0}01 · REA{ph1}{ph2}Read the running game’s script{ph3}{ph4}Return its "
 "actual code and settings to the agent.{ph5}"
 msgstr ""
-"{ph0}01 * REA {ph1}{ph2}Lee el guión del juego de carrera{ph3}{ph4}Devuelva "
+"{ph0}01 · REA{ph1}{ph2}Lee el guión del juego de carrera{ph3}{ph4}Devuelva "
 "su código y configuración reales al agente.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -5971,7 +5968,7 @@ msgid ""
 "{ph0}02 · Your agent{ph1}{ph2}Rebuild the rule, add a control{ph3}{ph4}Use "
 "the recovered acceleration in a small game with a speed slider.{ph5}"
 msgstr ""
-"{ph0}02 * Su agente{ph1}{ph2}Vuelva a generar la regla, agregue un "
+"{ph0}02 · Su agente{ph1}{ph2}Vuelva a generar la regla, agregue un "
 "control{ph3}{ph4}Usa la aceleración recuperada en un juego pequeño con un "
 "control deslizante de velocidad.{ph5}"
 
@@ -5988,7 +5985,7 @@ msgid ""
 "{ph0}03 · You{ph1}{ph2}Change the speed and play{ph3}{ph4}Try the original "
 "acceleration, then choose your own pace.{ph5}"
 msgstr ""
-"{ph0}03 * Tú{ph1}{ph2}Cambia la velocidad y juega{ph3}{ph4}Prueba la "
+"{ph0}03 · Tú{ph1}{ph2}Cambia la velocidad y juega{ph3}{ph4}Prueba la "
 "aceleración original y luego elige tu propio ritmo.{ph5}"
 
 #: website/public/index.html:724
@@ -6063,13 +6060,13 @@ msgctxt "page:index.html"
 msgid ""
 "{ph0}Inspected speed code{ph1} · {ph2}Chromium Authors · BSD license{ph3}"
 msgstr ""
-"{ph0}Código de velocidad inspeccionado{ph1} · {ph2} Chromium Autores * "
+"{ph0}Código de velocidad inspeccionado{ph1} · {ph2}Chromium Autores * "
 "Licencia BSD{ph3}"
 
 #: website/public/index.html:827
 msgctxt "page:index.html"
 msgid "Example 02 · Windows Calculator"
-msgstr "Ejemplo 02 * Calculadora Windows"
+msgstr "Ejemplo 02 · Calculadora Windows"
 
 #: website/public/index.html:828
 msgctxt "page:index.html"
@@ -6165,8 +6162,8 @@ msgid ""
 "code{ph3}{ph4}The function checks the operator and uses the constant "
 "{ph5}.{ph6}"
 msgstr ""
-"{ph0}02 * REA lee la biblioteca{ph1}{ph2}Devuelve el código del controlador "
-"% {ph3}{ph4}La función verifica el operador y usa la constante {ph5}.{ph6}"
+"{ph0}02 · REA lee la biblioteca{ph1}{ph2}Devuelve el código del controlador "
+"%{ph3}{ph4}La función verifica el operador y usa la constante {ph5}.{ph6}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -6182,7 +6179,7 @@ msgid ""
 "rules{ph3}{ph4}Crosscheck the branch with Microsoft’s source, then try + and"
 " × above.{ph5}"
 msgstr ""
-"{ph0}03 * Su agente lo interpreta{ph1}{ph2}Explicar y reproducir las "
+"{ph0}03 · Su agente lo interpreta{ph1}{ph2}Explicar y reproducir las "
 "reglas{ph3}{ph4}Verifique la sucursal con la fuente de Microsoft, luego "
 "intente + y × arriba.{ph5}"
 
@@ -6307,7 +6304,7 @@ msgid ""
 msgstr ""
 "Realice ingeniería inversa de aplicaciones, archivos binarios y "
 "comportamiento del navegador con su agente de codificación. Siga guías "
-"claras y pruebe ejemplos interactivos con REA ."
+"claras y pruebe ejemplos interactivos con REA."
 
 #: website/public/index.html:227
 msgctxt "page:index.html"
@@ -6376,7 +6373,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / Android"
 #: website/public/showcase/aegis/index.html:205
 msgctxt "page:showcase/aegis/index.html"
 msgid "Case study · Aegis Authenticator"
-msgstr "Caso práctico * Autenticador Aegis"
+msgstr "Caso práctico · Autenticador Aegis"
 
 #. {ph0}: <br />
 #: website/public/showcase/aegis/index.html:206
@@ -6399,7 +6396,7 @@ msgstr ""
 #: website/public/showcase/aegis/index.html:212
 msgctxt "page:showcase/aegis/index.html"
 msgid "Aegis 3.4.3 · Android · Official release APK · 6.9 MB"
-msgstr "Aegis 3.4.3 * Android * Versión oficial APK * 6.9 MB"
+msgstr "Aegis 3.4.3 · Android · Versión oficial APK · 6.9 MB"
 
 #: website/public/showcase/aegis/index.html:215
 msgctxt "page:showcase/aegis/index.html"
@@ -6425,8 +6422,8 @@ msgid ""
 "methods{ph3}{ph4}REA searches the package and traces the code used by the "
 "display and copy actions.{ph5}"
 msgstr ""
-"{ph0}01 * Localice la función{ph1}{ph2}3.077 clases → generación de "
-"métodos{ph3}{ph4} REA busca en el paquete y rastrea el código utilizado por "
+"{ph0}01 · Localice la función{ph1}{ph2}3.077 clases → generación de "
+"métodos{ph3}{ph4}REA busca en el paquete y rastrea el código utilizado por "
 "las acciones de visualización y copia.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -6443,8 +6440,8 @@ msgid ""
 "digits{ph3}{ph4}REA returns the methods and defaults. The agent explains how"
 " they fit together.{ph5}"
 msgstr ""
-"{ph0}02 * Leer el cálculo{ph1}{ph2}Hora + clave de cuenta → seis "
-"dígitos{ph3}{ph4} REA devuelve los métodos y valores predeterminados. El "
+"{ph0}02 · Leer el cálculo{ph1}{ph2}Hora + clave de cuenta → seis "
+"dígitos{ph3}{ph4}REA devuelve los métodos y valores predeterminados. El "
 "agente explica cómo encajan.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -6461,7 +6458,7 @@ msgid ""
 "code.{ph3}{ph4}A new browser demo reproduces the rule and checks it against "
 "public reference cases.{ph5}"
 msgstr ""
-"{ph0}03 * Reconstruir y comprobar{ph1}{ph2}Cambia el reloj. Mira el "
+"{ph0}03 · Reconstruir y comprobar{ph1}{ph2}Cambia el reloj. Mira el "
 "código.{ph3}{ph4}Una nueva demostración del navegador reproduce la regla y "
 "la compara con casos de referencia pública.{ph5}"
 
@@ -6492,7 +6489,7 @@ msgstr "{ph0}Pruebe el generador de código{ph1}"
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}Find the code with REA{ph1}"
-msgstr "{ph0}Encuentra el código con REA {ph1}"
+msgstr "{ph0}Encuentra el código con REA{ph1}"
 
 #. {ph0}: <a href="#calculation">
 #. {ph1}: </a>
@@ -6678,7 +6675,7 @@ msgid ""
 "the calculation recovered from the APK."
 msgstr ""
 "La clave es fija, pública {ph0}Datos de prueba RFC 6238{ph1}. La "
-"demostración implementa el cálculo recuperado del APK ."
+"demostración implementa el cálculo recuperado del APK."
 
 #: website/public/showcase/aegis/index.html:391
 msgctxt "page:showcase/aegis/index.html"
@@ -6708,8 +6705,8 @@ msgid ""
 "and imported accounts. TOTP means a time-based one-time password."
 msgstr ""
 "{ph0} es el candidato de cálculo; los otros dos se refieren a la barra de "
-"progreso y las cuentas importadas.  TOTP significa una contraseña de un solo"
-" uso basada en el tiempo."
+"progreso y las cuentas importadas. TOTP significa una contraseña de un solo "
+"uso basada en el tiempo."
 
 #: website/public/showcase/aegis/index.html:435
 msgctxt "page:showcase/aegis/index.html"
@@ -6835,7 +6832,7 @@ msgid ""
 " right panel is an explanatory summary. {ph0}Aegis code is GPL-3.0.{ph1}"
 msgstr ""
 "Extractos de varios métodos inspeccionados, con envoltura de línea para "
-"mostrar. El panel de la derecha es un resumen explicativo. {ph0} El código "
+"mostrar. El panel de la derecha es un resumen explicativo. {ph0}El código "
 "Aegis es GPL-3.0.{ph1}"
 
 #: website/public/showcase/aegis/index.html:598
@@ -6854,8 +6851,8 @@ msgid ""
 "The released APK puts {ph0} in {ph1}. REA follows the call from {ph2} and "
 "returns this body; the original source calls the helper {ph3}."
 msgstr ""
-"El APK lanzado pone {ph0} en {ph1}.  REA sigue la llamada de {ph2} y "
-"devuelve este cuerpo; la fuente original llama al ayudante {ph3}."
+"El APK lanzado pone {ph0} en {ph1}. REA sigue la llamada de {ph2} y devuelve"
+" este cuerpo; la fuente original llama al ayudante {ph3}."
 
 #: website/public/showcase/aegis/index.html:621
 msgctxt "page:showcase/aegis/index.html"
@@ -6981,7 +6978,7 @@ msgstr ""
 #: website/public/showcase/aegis/index.html:742
 msgctxt "page:showcase/aegis/index.html"
 msgid "Point REA at the provider file and inspect the APK:"
-msgstr "Apunte REA al archivo del proveedor e inspeccione el APK :"
+msgstr "Apunte REA al archivo del proveedor e inspeccione el APK:"
 
 #: website/public/showcase/aegis/index.html:745
 msgctxt "page:showcase/aegis/index.html"
@@ -6997,7 +6994,7 @@ msgid ""
 "add {ph0} to the REA server's environment and reconnect it."
 msgstr ""
 "Su agente puede continuar a través del REA de CLI utilizando el mensaje "
-"anterior. Para MCP , agregue {ph0} al entorno del servidor REA y vuelva a "
+"anterior. Para MCP, agregue {ph0} al entorno del servidor REA y vuelva a "
 "conectarlo."
 
 #. {ph0}: <strong >
@@ -7149,7 +7146,7 @@ msgstr ""
 msgctxt "page:showcase/ctf/index.html"
 msgid "masked squares flag checker · Easy · Linux x86-64"
 msgstr ""
-"comprobador de banderas de cuadrados enmascarados * Fácil * Linux x86-64"
+"comprobador de banderas de cuadrados enmascarados · Fácil · Linux x86-64"
 
 #: website/public/showcase/ctf/index.html:214
 msgctxt "page:showcase/ctf/index.html"
@@ -7175,8 +7172,8 @@ msgid ""
 "finds the prompt, its references and the code that accepts or rejects an "
 "input.{ph5}"
 msgstr ""
-"{ph0}01 * Encuentra el cheque{ph1}{ph2}Cadenas → funciones de "
-"comprobación{ph3}{ph4} REA encuentra el indicador, sus referencias y el "
+"{ph0}01 · Encuentra el cheque{ph1}{ph2}Cadenas → funciones de "
+"comprobación{ph3}{ph4}REA encuentra el indicador, sus referencias y el "
 "código que acepta o rechaza una entrada.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -7193,8 +7190,8 @@ msgid ""
 "returns the instructions and data behind each check. The agent turns them "
 "into equations.{ph5}"
 msgstr ""
-"{ph0}02 * Extraer las reglas{ph1}{ph2}36 caracteres · 26 sumas{ph3}{ph4} REA"
-" devuelve las instrucciones y los datos detrás de cada comprobación. El "
+"{ph0}02 * Extraer las reglas{ph1}{ph2}36 caracteres · 26 sumas{ph3}{ph4}REA "
+"devuelve las instrucciones y los datos detrás de cada comprobación. El "
 "agente los convierte en ecuaciones.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -7211,9 +7208,9 @@ msgid ""
 " script solves the equations. REA captures the original program accepting "
 "the result.{ph5}"
 msgstr ""
-"{ph0}03 * Resuelve y corre{ph1}{ph2}Bandera recuperada → "
-"¡Correcto!{ph3}{ph4}Un script de Python resuelve las ecuaciones.  REA "
-"captura el programa original aceptando el resultado.{ph5}"
+"{ph0}03 · Resuelve y corre{ph1}{ph2}Bandera recuperada → "
+"¡Correcto!{ph3}{ph4}Un script de Python resuelve las ecuaciones. REA captura"
+" el programa original aceptando el resultado.{ph5}"
 
 #: website/public/showcase/ctf/index.html:249
 msgctxt "page:showcase/ctf/index.html"
@@ -7492,12 +7489,12 @@ msgstr "{ph0}05{ph1} Comparar"
 #: website/public/showcase/ctf/index.html:500
 msgctxt "page:showcase/ctf/index.html"
 msgid "REA · selected original instructions"
-msgstr "REA * instrucciones originales seleccionadas"
+msgstr "REA · instrucciones originales seleccionadas"
 
 #: website/public/showcase/ctf/index.html:524
 msgctxt "page:showcase/ctf/index.html"
 msgid "Readable C · one-check summary"
-msgstr "Resumen legible de C * one-check"
+msgstr "Resumen legible de C · one-check"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -7506,7 +7503,7 @@ msgstr "Resumen legible de C * one-check"
 #, python-brace-format
 msgctxt "page:showcase/ctf/index.html"
 msgid "{ph0}01 · Start at zero.{ph1} {ph2} holds the running sum."
-msgstr "{ph0}01 * Comience en cero.{ph1} {ph2} contiene la suma corriente."
+msgstr "{ph0}01 · Comience en cero.{ph1} {ph2} contiene la suma corriente."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -7517,7 +7514,7 @@ msgid ""
 "{ph0}02 · Check the mask cell.{ph1} A zero value skips the character; a "
 "nonzero value includes it."
 msgstr ""
-"{ph0}02 * Compruebe la celda de la máscara.{ph1} Un valor cero omite el "
+"{ph0}02 · Compruebe la celda de la máscara.{ph1} Un valor cero omite el "
 "carácter; un valor distinto de cero lo incluye."
 
 #. {ph0}: <strong>
@@ -7529,7 +7526,7 @@ msgid ""
 "{ph0}03 · Add a character code.{ph1} The input's integer at the same offset "
 "is added to the sum."
 msgstr ""
-"{ph0}03 * Agregue un código de carácter.{ph1} El entero de la entrada en el "
+"{ph0}03 · Agregue un código de carácter.{ph1} El entero de la entrada en el "
 "mismo desplazamiento se agrega a la suma."
 
 #. {ph0}: <strong>
@@ -7541,7 +7538,7 @@ msgid ""
 "{ph0}04 · Move to the next cell.{ph1} The original loop advances four bytes "
 "per integer and visits six rows of six cells."
 msgstr ""
-"{ph0}04 * Pasar a la siguiente celda.{ph1} El bucle original avanza cuatro "
+"{ph0}04 · Pasar a la siguiente celda.{ph1} El bucle original avanza cuatro "
 "bytes por entero y visita seis filas de seis celdas."
 
 #. {ph0}: <strong>
@@ -7555,7 +7552,7 @@ msgid ""
 "{ph0}05 · Compare with the stored target.{ph1} The caller receives the sum "
 "in {ph2}. A mismatch jumps to {ph3}."
 msgstr ""
-"{ph0}05 * Comparar con el objetivo almacenado.{ph1} La persona que llama "
+"{ph0}05 · Comparar con el objetivo almacenado.{ph1} La persona que llama "
 "recibe la suma en {ph2}. Un desajuste salta a {ph3}."
 
 #: website/public/showcase/ctf/index.html:577
@@ -7588,7 +7585,7 @@ msgstr ""
 #: website/public/showcase/ctf/index.html:594
 msgctxt "page:showcase/ctf/index.html"
 msgid "Python · solver excerpt"
-msgstr "Extracto de Python * solver"
+msgstr "Extracto de Python · solver"
 
 #. {ph0}: <code>DUCTF{…}</code>
 #: website/public/showcase/ctf/index.html:622
@@ -7662,7 +7659,7 @@ msgstr "Mostrar el indicador recuperado y la salida capturada"
 #: website/public/showcase/ctf/index.html:668
 msgctxt "page:showcase/ctf/index.html"
 msgid "REA · original program output"
-msgstr "REA * salida del programa original"
+msgstr "REA · salida del programa original"
 
 #: website/public/showcase/ctf/index.html:669
 msgctxt "page:showcase/ctf/index.html"
@@ -7726,7 +7723,7 @@ msgid ""
 "flag{ph3} · {ph4}REA evidence notes{ph5}"
 msgstr ""
 "{ph0}Compare con la fuente de los organizadores{ph1} · {ph2}Metadatos de "
-"desafío y bandera{ph3} · {ph4} Notas de evidencia REA{ph5}"
+"desafío y bandera{ph3} · {ph4}Notas de evidencia REA{ph5}"
 
 #: website/public/showcase/ctf/index.html:724
 msgctxt "page:showcase/ctf/index.html"
@@ -7745,7 +7742,7 @@ msgstr ""
 #: website/public/showcase/ctf/index.html:741
 msgctxt "page:showcase/ctf/index.html"
 msgid "Terminal · solve and run"
-msgstr "Terminal * resuelve y ejecuta"
+msgstr "Terminal · resuelve y ejecuta"
 
 #. {ph0}: <code>z3-solver</code>
 #: website/public/showcase/ctf/index.html:758
@@ -7867,14 +7864,14 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / DX-Ball"
 #: website/public/showcase/dx-ball/index.html:204
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Case study · DX-Ball 1.07"
-msgstr "Estudio de caso * DX-Ball 1.07"
+msgstr "Estudio de caso · DX-Ball 1.07"
 
 #. {ph0}: <br />
 #: website/public/showcase/dx-ball/index.html:205
 #, python-brace-format
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Rebuilding DX-Ball{ph0}from its executable."
-msgstr "Reconstruyendo DX-Ball {ph0}desde su ejecutable."
+msgstr "Reconstruyendo DX-Ball{ph0}desde su ejecutable."
 
 #: website/public/showcase/dx-ball/index.html:206
 msgctxt "page:showcase/dx-ball/index.html"
@@ -7882,13 +7879,13 @@ msgid ""
 "The goal is a maintainable C version of the 1996 Windows game. REA helps the"
 " agent inspect the original, one function at a time."
 msgstr ""
-"El objetivo es una versión C mantenible del juego Windows de 1996.  REA "
-"ayuda al agente a inspeccionar el original, una función a la vez."
+"El objetivo es una versión C mantenible del juego Windows de 1996. REA ayuda"
+" al agente a inspeccionar el original, una función a la vez."
 
 #: website/public/showcase/dx-ball/index.html:210
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Windows i386 · C · REA"
-msgstr "Windows i386 * C * REA"
+msgstr "Windows i386 · C · REA"
 
 #. {ph0}: <a href="../../assets/figures/dx-ball-sound-pan-investigation.svg" >
 #. {ph1}: </a >
@@ -8236,7 +8233,7 @@ msgid ""
 "through REA establishes the screen-coordinate meaning of the C parameter "
 "{ph4}."
 msgstr ""
-"{ph0}01 * Lea la entrada.{ph1} La vista de instrucciones en el resultado de "
+"{ph0}01 · Lea la entrada.{ph1} La vista de instrucciones en el resultado de "
 "la función REA dice {ph2} y usos {ph3} para cargar el entero. Seguir a su "
 "llamador a través de REA establece el significado de la coordenada de "
 "pantalla del parámetro C {ph4}."
@@ -8254,7 +8251,7 @@ msgid ""
 "{ph0}02 · Multiply by 1.5625.{ph1} {ph2} reads the double at {ph3}. The "
 "bytes returned by REA's {ph4} decode to {ph5}; the C uses the same constant."
 msgstr ""
-"{ph0}02 * Multiplica por 1.5625.{ph1} {ph2} lee el doble en {ph3}. Los bytes"
+"{ph0}02 · Multiplica por 1.5625.{ph1} {ph2} lee el doble en {ph3}. Los bytes"
 " devueltos por REA {ph4} decodificar a {ph5}; la C usa la misma constante."
 
 #. {ph0}: <strong>
@@ -8271,7 +8268,7 @@ msgid ""
 "result decodes to {ph4}, shifting the calculation's center to screen "
 "coordinate {ph5}."
 msgstr ""
-"{ph0}03 * Resta 500.0.{ph1} {ph2} lee el doble en {ph3}.  El resultado de "
+"{ph0}03 · Resta 500.0.{ph1} {ph2} lee el doble en {ph3}. El resultado de "
 "bytes de REA se decodifica en {ph4}, cambiando el centro del cálculo a "
 "coordenadas de pantalla {ph5}."
 
@@ -8289,8 +8286,8 @@ msgid ""
 "global is named {ph4} in the maintained source. REA's second byte read "
 "establishes its initial value of {ph5}."
 msgstr ""
-"{ph0}04 * Aplique la báscula almacenada.{ph1} El segundo {ph2} lecturas "
-"{ph3}. Ese global se llama {ph4} en la fuente mantenida.  La lectura del "
+"{ph0}04 · Aplique la báscula almacenada.{ph1} El segundo {ph2} lecturas "
+"{ph3}. Ese global se llama {ph4} en la fuente mantenida. La lectura del "
 "segundo byte de REA establece su valor inicial de {ph5}."
 
 #. {ph0}: <strong>
@@ -8306,7 +8303,7 @@ msgid ""
 "identified in REA's callee results. The C casts the result to {ph4}; "
 "original-x86 comparisons check the returned value."
 msgstr ""
-"{ph0}05 * Devuelve un número entero.{ph1} La llamada al {ph2} alcances "
+"{ph0}05 · Devuelve un número entero.{ph1} La llamada al {ph2} alcances "
 "{ph3}, identificado en los resultados de llamadas de REA. La C arroja el "
 "resultado a {ph4}; original-las comparaciones x86 verifican el valor "
 "devuelto."
@@ -8330,7 +8327,7 @@ msgstr "Montaje completo y pruebas de apoyo"
 #: website/public/showcase/dx-ball/index.html:579
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "REA result · 0x406400–0x40643e"
-msgstr "REA resultado * 0x406400-0x40643e"
+msgstr "REA resultado · 0x406400-0x40643e"
 
 #: website/public/showcase/dx-ball/index.html:613
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8534,7 +8531,7 @@ msgid ""
 "{ph0}DX-Ball repository{ph1}{ph2}Current source, progress and local "
 "setup.{ph3}"
 msgstr ""
-"{ph0} Repositorio DX-Ball{ph1}{ph2}Fuente actual, progreso y configuración "
+"{ph0}Repositorio DX-Ball{ph1}{ph2}Fuente actual, progreso y configuración "
 "local.{ph3}"
 
 #. {ph0}: <a href="../../guides/native/">
@@ -8548,8 +8545,8 @@ msgid ""
 "{ph0}REA analysis workflow{ph1}{ph2}Follow the calculation, then use the "
 "same approach with your own binary.{ph3}"
 msgstr ""
-"{ph0} Flujo de trabajo de análisis REA{ph1}{ph2}Siga el cálculo, luego use "
-"el mismo enfoque con su propio binario.{ph3}"
+"{ph0}Flujo de trabajo de análisis REA{ph1}{ph2}Siga el cálculo, luego use el"
+" mismo enfoque con su propio binario.{ph3}"
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/dx-
 #. ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/ENTITIES_OWNER.md"
@@ -8599,7 +8596,7 @@ msgid ""
 "checked independently against the original x86 in 3,205 cases and by VC4.0 "
 "compiler replay matching 63 bytes."
 msgstr ""
-"DXBALL.La función EXE 0x00406400 se inspecciona con REA . Una persona que "
+"DXBALL.La función EXE 0x00406400 se inspecciona con REA. Una persona que "
 "llama al golpe de ladrillo suministra 20 más 30 veces tile_x. Las "
 "instrucciones cargan x, multiplican por 1.5625, restan 500.0, aplican "
 "pan_scale y devuelven un número entero. El C mantenido se verifica de forma "
@@ -8681,7 +8678,7 @@ msgstr ""
 #: website/public/showcase/index.html:210
 msgctxt "page:showcase/index.html"
 msgid "Android · APK analysis"
-msgstr "Análisis de Android * APK"
+msgstr "Análisis de Android · APK"
 
 #: website/public/showcase/index.html:212
 msgctxt "page:showcase/index.html"
@@ -8707,7 +8704,7 @@ msgstr "Lea el caso práctico de Android"
 #: website/public/showcase/index.html:228
 msgctxt "page:showcase/index.html"
 msgid "CTF · Native analysis"
-msgstr "CTF * Análisis de programas de código máquina"
+msgstr "CTF · Análisis de programas de código máquina"
 
 #: website/public/showcase/index.html:230
 msgctxt "page:showcase/index.html"
@@ -8721,7 +8718,7 @@ msgid ""
 "functions, turn masks and sums into equations, then verify the solved flag "
 "with the original program."
 msgstr ""
-"Inspeccione un desafío fácil de DownUnderCTF con REA . Encuentre sus "
+"Inspeccione un desafío fácil de DownUnderCTF con REA. Encuentre sus "
 "funciones de verificación, convierta máscaras y sumas en ecuaciones, luego "
 "verifique el indicador resuelto con el programa original."
 
@@ -8748,7 +8745,7 @@ msgid ""
 "function, checked against the original behavior and all 63 compiled bytes."
 msgstr ""
 "Recupere un cálculo de la posición del sonido izquierdo/derecho de un juego "
-"Windows de 1996.  Las instrucciones de REA ,las referencias de las personas "
+"Windows de 1996. Las instrucciones de REA ,las referencias de las personas "
 "que llaman y las constantes numéricas conducen a una pequeña función C, "
 "comprobada con el comportamiento original y los 63 bytes compilados."
 
@@ -8760,7 +8757,7 @@ msgstr "Lea el caso práctico de DX-Ball"
 #: website/public/showcase/index.html:265
 msgctxt "page:showcase/index.html"
 msgid "Electron · Feature tracing"
-msgstr "Electron * Rastreo de funciones"
+msgstr "Electron · Rastreo de funciones"
 
 #: website/public/showcase/index.html:267
 msgctxt "page:showcase/index.html"
@@ -8775,7 +8772,7 @@ msgid ""
 "rich block data connected to a copy."
 msgstr ""
 "Rastree una API orientada a la página a través del Notion empaquetado de "
-"JavaScript . Siga sus envoltorios IPC hasta el portapapeles del sistema, "
+"JavaScript. Siga sus envoltorios IPC hasta el portapapeles del sistema, "
 "luego vea cómo un pequeño marcador HTML mantiene los datos enriquecidos del "
 "bloque conectados a una copia."
 
@@ -8801,7 +8798,7 @@ msgid ""
 "divide and coordinate operations to readable C++, then see how they produce "
 "a ring aimed at the player."
 msgstr ""
-"Inspeccione el ayudante de ángulo original de 16 bits con REA . Haga "
+"Inspeccione el ayudante de ángulo original de 16 bits con REA. Haga "
 "coincidir sus operaciones de multiplicación, división y coordinación con C++"
 " legible, luego vea cómo producen un anillo dirigido al jugador."
 
@@ -8868,7 +8865,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / Notion"
 #: website/public/showcase/notion/index.html:204
 msgctxt "page:showcase/notion/index.html"
 msgid "Case study · Electron"
-msgstr "Estudio de caso * Electron"
+msgstr "Estudio de caso · Electron"
 
 #. {ph0}: <br />
 #: website/public/showcase/notion/index.html:205
@@ -8911,7 +8908,7 @@ msgid ""
 "{ph0}01 · Page-facing API{ph1} {ph2}{ph3}{ph4} {ph5}The preload exposes a "
 "callable method.{ph6}"
 msgstr ""
-"{ph0}01 * API orientada a páginas{ph1} {ph2}{ph3}{ph4} {ph5}La precarga "
+"{ph0}01 · API orientada a páginas{ph1} {ph2}{ph3}{ph4} {ph5}La precarga "
 "expone un método invocable.{ph6}"
 
 #. {ph0}: <span class="flow-label">
@@ -8928,7 +8925,7 @@ msgid ""
 "{ph0}02 · Preload wrapper{ph1} {ph2}{ph3}{ph4} {ph5}The wrapper sends the "
 "channel and arguments.{ph6}"
 msgstr ""
-"{ph0}02 * Envoltura de precarga{ph1} {ph2}{ph3}{ph4} {ph5}El contenedor "
+"{ph0}02 · Envoltura de precarga{ph1} {ph2}{ph3}{ph4} {ph5}El contenedor "
 "envía el canal y los argumentos.{ph6}"
 
 #. {ph0}: <span class="flow-label">
@@ -8945,7 +8942,7 @@ msgid ""
 "{ph0}03 · Main-process handler{ph1} {ph2}{ph3}{ph4} {ph5}The receiver checks"
 " which page sent it.{ph6}"
 msgstr ""
-"{ph0}03 * Controlador de procesos principales{ph1} {ph2}{ph3}{ph4} {ph5}El "
+"{ph0}03 · Controlador de procesos principales{ph1} {ph2}{ph3}{ph4} {ph5}El "
 "receptor verifica qué página lo envió.{ph6}"
 
 #. {ph0}: <span class="flow-label">
@@ -8962,7 +8959,7 @@ msgid ""
 "{ph0}04 · System clipboard{ph1} {ph2}{ph3}{ph4} {ph5}Electron writes the "
 "supplied text and HTML.{ph6}"
 msgstr ""
-"{ph0}04 * Portapapeles del sistema{ph1} {ph2}{ph3}{ph4} {ph5} Electron "
+"{ph0}04 · Portapapeles del sistema{ph1} {ph2}{ph3}{ph4} {ph5}Electron "
 "escribe el texto y HTML suministrados.{ph6}"
 
 #. {ph0}: <code class="notion-channel">notion:clipboard:write</code>
@@ -9138,7 +9135,7 @@ msgid ""
 "Simplified from the packaged JavaScript, with readable variable names. "
 "Unrelated members are omitted."
 msgstr ""
-"Simplificado a partir del JavaScript empaquetado , con nombres de variables "
+"Simplificado a partir del JavaScript empaquetado, con nombres de variables "
 "legibles. Se omiten los miembros no relacionados."
 
 #: website/public/showcase/notion/index.html:346
@@ -9415,7 +9412,7 @@ msgid ""
 "{ph0}JavaScript application guide{ph1}{ph2}Follow a small Electron "
 "application's export feature.{ph3}"
 msgstr ""
-"{ph0} Guía de aplicación de JavaScript{ph1}{ph2}Siga la función de "
+"{ph0}Guía de aplicación de JavaScript{ph1}{ph2}Siga la función de "
 "exportación de una pequeña aplicación Electron.{ph3}"
 
 #. {ph0}: <a href="../dx-ball/">
@@ -9429,7 +9426,7 @@ msgid ""
 "{ph0}DX-Ball reconstruction{ph1}{ph2}Follow native instructions to a checked"
 " C function.{ph3}"
 msgstr ""
-"{ph0} Reconstrucción DX-Ball{ph1}{ph2}Siga las instrucciones nativas de una "
+"{ph0}Reconstrucción DX-Ball{ph1}{ph2}Siga las instrucciones nativas de una "
 "función C marcada.{ph3}"
 
 #: website/public/showcase/notion/index.html:6
@@ -9511,7 +9508,7 @@ msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / TH04"
 #: website/public/showcase/th04/index.html:204
 msgctxt "page:showcase/th04/index.html"
 msgid "Case study · Touhou 4: Lotus Land Story"
-msgstr "Estudio de caso * Touhou 4: Historia de Lotus Land"
+msgstr "Estudio de caso · Touhou 4: Historia de Lotus Land"
 
 #. {ph0}: <br />
 #: website/public/showcase/th04/index.html:205
@@ -9558,7 +9555,7 @@ msgid ""
 "{ph0}01 · Original game{ph1}{ph2}MAIN.EXE{ph3}{ph4}The PC-98 executable and "
 "its bullet-angle helper.{ph5}"
 msgstr ""
-"{ph0}01 * Juego original{ph1}{ph2}PRINCIPAL.EXE{ph3}{ph4}El ejecutable PC-98"
+"{ph0}01 · Juego original{ph1}{ph2}PRINCIPAL.EXE{ph3}{ph4}El ejecutable PC-98"
 " y su ayudante de ángulo de bala.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -9575,7 +9572,7 @@ msgid ""
 "references{ph3}{ph4}Verify the loaded DOS code and read the angle "
 "calculation from the executable.{ph5}"
 msgstr ""
-"{ph0}02 * Inspeccionar con REA {ph1}{ph2}Instrucciones + "
+"{ph0}02 · Inspeccionar con REA{ph1}{ph2}Instrucciones + "
 "referencias{ph3}{ph4}Verifique el código DOS cargado y lea el cálculo del "
 "ángulo del ejecutable.{ph5}"
 
@@ -9592,7 +9589,7 @@ msgid ""
 "{ph0}03 · Read the C++{ph1}{ph2}Space → aim → rotate{ph3}{ph4}Connect each "
 "operation to the maintained reconstruction.{ph5}"
 msgstr ""
-"{ph0}03 * Leer el C++{ph1}{ph2}Espacio → apuntar → rotar{ph3}{ph4}Conecte "
+"{ph0}03 · Leer el C++{ph1}{ph2}Espacio → apuntar → rotar{ph3}{ph4}Conecte "
 "cada operación a la reconstrucción mantenida.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -9609,7 +9606,7 @@ msgid ""
 "compiler checks cover the bullet-generation code that contains this "
 "helper.{ph5}"
 msgstr ""
-"{ph0}04 * Verifique la fuente{ph1}{ph2}2.139 bytes coincidentes{ph3}{ph4}Las"
+"{ph0}04 · Verifique la fuente{ph1}{ph2}2.139 bytes coincidentes{ph3}{ph4}Las"
 " comprobaciones grabadas del compilador cubren el código de generación de "
 "viñetas que contiene este ayudante.{ph5}"
 
@@ -9765,7 +9762,7 @@ msgstr "La plantilla de cocción en la fuente recuperada"
 #: website/public/showcase/th04/index.html:338
 msgctxt "page:showcase/th04/index.html"
 msgid "Elly's ring attack · source excerpt"
-msgstr "Ataque anular de Elly * extracto de la fuente"
+msgstr "Ataque anular de Elly · extracto de la fuente"
 
 #. {ph0}: <a
 #. href="https://github.com/N0zoM1z0/th04/blob/0d72e9801a5c14c10384efcbb6734ceccb74ee63/src/main/boss/elly_phase_ring16.cpp#L26"
@@ -9796,8 +9793,8 @@ msgid ""
 " result explain the pattern."
 msgstr ""
 "Inspeccionamos {ph0}, la función que establece la velocidad y el ángulo de "
-"cada bala.  REA devuelve sus instrucciones, pseudocódigo y referencias. Tres"
-" partes de ese resultado explican el patrón."
+"cada bala. REA devuelve sus instrucciones, pseudocódigo y referencias. Tres "
+"partes de ese resultado explican el patrón."
 
 #: website/public/showcase/th04/index.html:373
 msgctxt "page:showcase/th04/index.html"
@@ -9910,7 +9907,7 @@ msgstr "{ph0}05{ph1} Tienda"
 #: website/public/showcase/th04/index.html:515
 msgctxt "page:showcase/th04/index.html"
 msgid "REA · original 16-bit instructions"
-msgstr "REA * instrucciones originales de 16 bits"
+msgstr "REA · instrucciones originales de 16 bits"
 
 #: website/public/showcase/th04/index.html:549
 msgctxt "page:showcase/th04/index.html"
@@ -9927,7 +9924,7 @@ msgid ""
 "{ph0}01 · Read the bullet index.{ph1} The stack argument is loaded into "
 "{ph2}. In a 16-bullet ring, this member index runs from 0 through 15."
 msgstr ""
-"{ph0}01 * Lea el índice de viñetas.{ph1} El argumento de la pila se carga en"
+"{ph0}01 · Lea el índice de viñetas.{ph1} El argumento de la pila se carga en"
 " {ph2}. En un anillo de 16 balas, este índice de miembros va de 0 a 15."
 
 #. {ph0}: <strong>
@@ -9942,7 +9939,7 @@ msgid ""
 "256. The count is zero-extended into a word, then {ph3} divides the product "
 "by that count. For count 16, each index advances 16 angle units."
 msgstr ""
-"{ph0}02 * Espacie las direcciones alrededor de una vuelta completa · {ph1} "
+"{ph0}02 · Espacie las direcciones alrededor de una vuelta completa ·{ph1} "
 "{ph2} multiplica por 256. El conteo es cero, extendido a una palabra, luego "
 "{ph3} divide el producto por ese conteo. Para el conteo 16, cada índice "
 "avanza 16 unidades de ángulo."
@@ -9958,7 +9955,7 @@ msgid ""
 "minus-origin coordinates. The direction helper returns an angle in {ph2}; "
 "adding it turns the whole ring toward the player."
 msgstr ""
-"{ph0}03 * Agregue la dirección del jugador.{ph1} Las dos restas forman "
+"{ph0}03 · Agregue la dirección del jugador.{ph1} Las dos restas forman "
 "coordenadas jugador-menos-origen. El ayudante de dirección devuelve un "
 "ángulo en {ph2}; agregarlo gira todo el anillo hacia el jugador."
 
@@ -9973,7 +9970,7 @@ msgid ""
 "Elly's initial template sets it to zero; other patterns can use the same "
 "helper with a rotation."
 msgstr ""
-"{ph0}04 * Añadir la rotación del patrón.{ph1} {ph2} agrega el ángulo de la "
+"{ph0}04 · Añadir la rotación del patrón.{ph1} {ph2} agrega el ángulo de la "
 "plantilla. La plantilla inicial de Elly la establece en cero; otros patrones"
 " pueden usar el mismo ayudante con una rotación."
 
@@ -9989,7 +9986,7 @@ msgid ""
 " does. The surrounding source also converts this angle and speed into "
 "velocity."
 msgstr ""
-"{ph0}05 * Mantenga el ángulo final en un byte.{ph1} La tienda escribe {ph2} "
+"{ph0}05 · Mantenga el ángulo final en un byte.{ph1} La tienda escribe {ph2} "
 "al campo de ángulo de generación. Los valores se ajustan después de 255, tal"
 " como lo hace la conversión de bytes sin signo. La fuente circundante "
 "también convierte este ángulo y velocidad en velocidad."
@@ -10139,7 +10136,7 @@ msgstr "Inspección de código grabado"
 #: website/public/showcase/th04/index.html:717
 msgctxt "page:showcase/th04/index.html"
 msgid "REA 4.1.0 · 7 October 2026"
-msgstr "REA 4.1.0 * 7 de octubre de 2026"
+msgstr "REA 4.1.0 · 7 de octubre de 2026"
 
 #: website/public/showcase/th04/index.html:722
 msgctxt "page:showcase/th04/index.html"
@@ -10281,7 +10278,7 @@ msgid ""
 "recovered C++ to see how a ring of bullets is spaced and aimed at the "
 "player."
 msgstr ""
-"Inspeccione el código DOS original de 16 bits de TH04 con REA . Siga el "
+"Inspeccione el código DOS original de 16 bits de TH04 con REA. Siga el "
 "ensamblado y el C ++ recuperado para ver cómo se separa un anillo de balas y"
 " se apunta al jugador."
 
@@ -10689,7 +10686,7 @@ msgid ""
 "analysis adapters, returns evidence, and supports follow-up questions as "
 "your agent explains, implements and tests."
 msgstr ""
-"Haga una pregunta sobre un objetivo local.  REA inspecciona y rastrea a "
+"Haga una pregunta sobre un objetivo local. REA inspecciona y rastrea a "
 "través de adaptadores de análisis locales, devuelve evidencia y admite "
 "preguntas de seguimiento a medida que su agente explica, implementa y "
 "prueba."
@@ -11020,7 +11017,7 @@ msgstr "Síguenos en X"
 #: website/public/examples/dino-lab/index.html:313
 msgctxt "page:examples/dino-lab/index.html"
 msgid "REA · selected script source"
-msgstr "REA * fuente de script seleccionada"
+msgstr "REA · fuente de script seleccionada"
 
 #: website/public/first-investigation/index.html:381
 msgctxt "page:first-investigation/index.html"
@@ -11095,17 +11092,17 @@ msgstr "REA resultado · resumen.extracto de ipc"
 #: website/public/guides/native/index.html:394
 msgctxt "page:guides/native/index.html"
 msgid "REA instruction excerpt · 0x406409"
-msgstr "Extracto de instrucciones REA * 0x406409"
+msgstr "Extracto de instrucciones REA · 0x406409"
 
 #: website/public/guides/native/index.html:408
 msgctxt "page:guides/native/index.html"
 msgid "REA caller excerpt · 0x411f5b"
-msgstr "Extracto de la persona que llama REA * 0x411f5b"
+msgstr "Extracto de la persona que llama REA · 0x411f5b"
 
 #: website/public/guides/native/index.html:422
 msgctxt "page:guides/native/index.html"
 msgid "REA byte results · interpreted as little-endian doubles"
-msgstr "Resultados de bytes REA * interpretados como dobles little-endian"
+msgstr "Resultados de bytes REA · interpretados como dobles little-endian"
 
 #: website/public/guides/native/index.html:439
 msgctxt "page:guides/native/index.html"
@@ -11130,12 +11127,12 @@ msgstr "Resumen legible del controlador %"
 #: website/public/index.html:1002
 msgctxt "page:index.html"
 msgid "REA · selected original instructions"
-msgstr "REA * instrucciones originales seleccionadas"
+msgstr "REA · instrucciones originales seleccionadas"
 
 #: website/public/index.html:1013
 msgctxt "page:index.html"
 msgid "Operator IDs · Microsoft’s source"
-msgstr "ID de operador * Fuente de Microsoft"
+msgstr "ID de operador · Fuente de Microsoft"
 
 #: website/public/showcase/aegis/index.html:406
 #: website/public/showcase/aegis/index.html:438
@@ -11146,27 +11143,27 @@ msgstr "Agente → REA"
 #: website/public/showcase/aegis/index.html:416
 msgctxt "page:showcase/aegis/index.html"
 msgid "REA → agent · selected results"
-msgstr "REA → agente * resultados seleccionados"
+msgstr "REA → agente · resultados seleccionados"
 
 #: website/public/showcase/aegis/index.html:452
 msgctxt "page:showcase/aegis/index.html"
 msgid "REA → agent · methods and callers"
-msgstr "REA → agente * métodos y llamadores"
+msgstr "REA → agente · métodos y llamadores"
 
 #: website/public/showcase/aegis/index.html:522
 msgctxt "page:showcase/aegis/index.html"
 msgid "REA · selected decompiled Java"
-msgstr "REA * Java descompilado seleccionado"
+msgstr "REA · Java descompilado seleccionado"
 
 #: website/public/showcase/aegis/index.html:552
 msgctxt "page:showcase/aegis/index.html"
 msgid "Readable summary · agent's interpretation"
-msgstr "Resumen legible * interpretación del agente"
+msgstr "Resumen legible · interpretación del agente"
 
 #: website/public/showcase/aegis/index.html:607
 msgctxt "page:showcase/aegis/index.html"
 msgid "REA · generateOTP, complete body"
-msgstr "REA * generateOTP, cuerpo completo"
+msgstr "REA · generateOTP, cuerpo completo"
 
 #: website/public/showcase/aegis/index.html:732
 msgctxt "page:showcase/aegis/index.html"
@@ -11187,27 +11184,27 @@ msgstr "Agente → REA"
 #: website/public/showcase/ctf/index.html:325
 msgctxt "page:showcase/ctf/index.html"
 msgid "REA → agent · selected results"
-msgstr "REA → agente * resultados seleccionados"
+msgstr "REA → agente · resultados seleccionados"
 
 #: website/public/showcase/ctf/index.html:357
 msgctxt "page:showcase/ctf/index.html"
 msgid "REA → agent · selected instructions"
-msgstr "REA → agente * instrucciones seleccionadas"
+msgstr "REA → agente · instrucciones seleccionadas"
 
 #: website/public/showcase/ctf/index.html:420
 msgctxt "page:showcase/ctf/index.html"
 msgid "Agent → REA · read_bytes"
-msgstr "Agente → REA * read_bytes"
+msgstr "Agente → REA · read_bytes"
 
 #: website/public/showcase/ctf/index.html:427
 msgctxt "page:showcase/ctf/index.html"
 msgid "REA → agent · seventh entries"
-msgstr "REA → agente * séptima entradas"
+msgstr "REA → agente · séptima entradas"
 
 #: website/public/showcase/ctf/index.html:695
 msgctxt "page:showcase/ctf/index.html"
 msgid "Original executable · SHA-256"
-msgstr "Ejecutable original * SHA-256"
+msgstr "Ejecutable original · SHA-256"
 
 #: website/public/showcase/ctf/index.html:731
 msgctxt "page:showcase/ctf/index.html"
@@ -11222,7 +11219,7 @@ msgstr "Descargar solver"
 #: website/public/showcase/dx-ball/index.html:336
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "REA result · pseudocode excerpt"
-msgstr "REA resultado * extracto de pseudocódigo"
+msgstr "REA resultado · extracto de pseudocódigo"
 
 #. {ph0}: <code>analyze_function</code>
 #: website/public/showcase/dx-ball/index.html:359
@@ -11230,7 +11227,7 @@ msgstr "REA resultado * extracto de pseudocódigo"
 #, python-brace-format
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Agent → REA · {ph0}"
-msgstr "Agente → REA  · {ph0}"
+msgstr "Agente → REA · {ph0}"
 
 #: website/public/showcase/dx-ball/index.html:365
 msgctxt "page:showcase/dx-ball/index.html"
@@ -11240,19 +11237,19 @@ msgstr "REA → extracto de instrucciones del agente ·"
 #: website/public/showcase/dx-ball/index.html:389
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "REA → agent · caller excerpt"
-msgstr "REA → extracto del agente * llamante"
+msgstr "REA → extracto del agente · llamante"
 
 #. {ph0}: <code>read_bytes</code>
 #: website/public/showcase/dx-ball/index.html:407
 #, python-brace-format
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Agent → REA · two {ph0} requests"
-msgstr "Agente → REA * dos {ph0} solicitudes"
+msgstr "Agente → REA · dos {ph0} solicitudes"
 
 #: website/public/showcase/dx-ball/index.html:417
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "REA byte results · decoded as doubles"
-msgstr "Resultados de bytes REA * decodificados como dobles"
+msgstr "Resultados de bytes REA · decodificados como dobles"
 
 #: website/public/showcase/dx-ball/index.html:770
 msgctxt "page:showcase/dx-ball/index.html"
@@ -11402,14 +11399,14 @@ msgstr "Agente → REA"
 #: website/public/showcase/th04/index.html:385
 msgctxt "page:showcase/th04/index.html"
 msgid "REA → agent · selected fields"
-msgstr "REA → agente * campos seleccionados"
+msgstr "REA → agente · campos seleccionados"
 
 #. {ph0}: <code>analyze_function</code>
 #: website/public/showcase/th04/index.html:404
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "Agent → REA · {ph0}"
-msgstr "Agente → REA  · {ph0}"
+msgstr "Agente → REA · {ph0}"
 
 #: website/public/showcase/th04/index.html:410
 msgctxt "page:showcase/th04/index.html"
@@ -11429,7 +11426,7 @@ msgstr "Correspondiente C ++ mantenido"
 #: website/public/showcase/th04/index.html:620
 msgctxt "page:showcase/th04/index.html"
 msgid "Ring macro · TH04 branch, excerpt"
-msgstr "Macro de anillo * Rama TH04, extracto"
+msgstr "Macro de anillo · Rama TH04, extracto"
 
 #: website/public/showcase/th04/index.html:630
 msgctxt "page:showcase/th04/index.html"
@@ -11561,7 +11558,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Reconstruction · {ph0}"
-msgstr "Reconstrucción * {ph0}"
+msgstr "Reconstrucción · {ph0}"
 
 #. {ph0}: <span translate="no">Node.js</span>
 #: website/public/faq/index.html:225
@@ -11653,7 +11650,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0} · lines 8–12"
-msgstr "{ph0} * líneas 8-12"
+msgstr "{ph0} · líneas 8-12"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -11696,8 +11693,8 @@ msgid ""
 "You'll need {ph0} 22 (22.23.4+), 24 (24.22.1+) or 26+ (>=26.12.1). npm comes"
 " with {ph1}."
 msgstr ""
-"Necesitarás {ph0} 22 (22.23.4+), 24 (24.22.1+) o 26+ (>=26.12.1).  npm viene"
-" con {ph1}."
+"Necesitarás {ph0} 22 (22.23.4+), 24 (24.22.1+) o 26+ (>=26.12.1). npm viene "
+"con {ph1}."
 
 #. {ph0}: <span translate="no">Node.js</span>
 #: website/public/get-started/index.html:264
@@ -11725,7 +11722,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} · example source excerpt"
-msgstr "{ph0} * extracto de fuente de ejemplo"
+msgstr "{ph0} · extracto de fuente de ejemplo"
 
 #. {ph0}: <a href="../../examples/notes-web/">
 #. {ph1}: </a>
@@ -11752,7 +11749,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0} · example source"
-msgstr "{ph0} * fuente de ejemplo"
+msgstr "{ph0} · fuente de ejemplo"
 
 #. {ph0}: <code>notes-example</code>
 #. {ph1}: <span translate="no">Node.js</span>
@@ -11803,7 +11800,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "REA · loaded {ph0} · selected lines"
-msgstr "REA * cargado {ph0} * líneas seleccionadas"
+msgstr "REA · cargado {ph0} · líneas seleccionadas"
 
 #. {ph0}: <span class="flow-label" >
 #. {ph1}: <span translate="no">calc.exe</span>
@@ -11849,28 +11846,28 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "tab_browser_view/{ph0} · API member"
-msgstr "tab_browser_view/{ph0} * Miembro API"
+msgstr "tab_browser_view/{ph0} · Miembro API"
 
 #. {ph0}: <span translate="no">preload.js</span>
 #: website/public/showcase/notion/index.html:378
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "tab_browser_view/{ph0} · IPC helper"
-msgstr "tab_browser_view/{ph0} * Ayudante de IPC"
+msgstr "tab_browser_view/{ph0} · Ayudante de IPC"
 
 #. {ph0}: <span translate="no">index.js</span>
 #: website/public/showcase/notion/index.html:409
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "main/{ph0} · handler helper"
-msgstr "principal/{ph0} * ayudante del manejador"
+msgstr "principal/{ph0} · ayudante del manejador"
 
 #. {ph0}: <span translate="no">index.js</span>
 #: website/public/showcase/notion/index.html:437
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "main/{ph0} · clipboard receiver"
-msgstr "principal/{ph0} * receptor del portapapeles"
+msgstr "principal/{ph0} · receptor del portapapeles"
 
 #: website/public/assets/theme.js:52
 msgctxt "runtime"
@@ -13307,7 +13304,7 @@ msgstr "Estudios de caso de REA."
 #: website/public/index.html:1058
 msgctxt "page:index.html"
 msgid "Android · APK analysis"
-msgstr "Análisis de Android * APK"
+msgstr "Análisis de Android · APK"
 
 #: website/public/index.html:1059
 msgctxt "page:index.html"
@@ -13322,7 +13319,7 @@ msgstr "Lea el caso práctico de Android"
 #: website/public/index.html:1069
 msgctxt "page:index.html"
 msgid "Electron · Feature tracing"
-msgstr "Electron * Rastreo de funciones"
+msgstr "Electron · Rastreo de funciones"
 
 #: website/public/index.html:1070
 msgctxt "page:index.html"
@@ -13744,7 +13741,7 @@ msgid ""
 msgstr ""
 "El ejemplo es una aplicación Electron de seis archivos con un {ph0}Notas de "
 "exportación{ph1} botón. Su agente puede inspeccionar su código sin instalar "
-"ni iniciar Electron ."
+"ni iniciar Electron."
 
 #: website/public/get-started/index.html:927
 msgctxt "page:get-started/index.html"
@@ -14761,7 +14758,7 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Website"
 msgstr ""
-"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ejemplo de solicitud * Sitio web"
+"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ejemplo de solicitud · Sitio web"
 
 #: website/public/index.html:1236
 msgctxt "page:index.html"
@@ -14782,7 +14779,7 @@ msgctxt "page:index.html"
 msgid ""
 "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Game reconstruction"
 msgstr ""
-"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Mensaje de ejemplo * Reconstrucción "
+"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Mensaje de ejemplo · Reconstrucción "
 "del juego"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
