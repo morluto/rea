@@ -42,7 +42,12 @@ const scenario = (
   options: {
     readonly mode?: "launch" | "connect";
     readonly captures?: readonly (
-      "screenshot" | "dom" | "accessibility" | "url" | "history" | "storage"
+      | "screenshot"
+      | "dom"
+      | "accessibility"
+      | "url"
+      | "history"
+      | "storage"
     )[];
     readonly events?: readonly (
       | "console"
