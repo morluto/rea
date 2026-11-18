@@ -134,6 +134,17 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
                     self.assertEqual(report["status"], "ok")
                     self.assertEqual(report["endpoint"], f"repos/example/project/contents/README.md?ref={ref}")
 
+    def test_raw_github_urls_require_a_file(self):
+        ref = "a" * 40
+        directory = "scripts"
+        response = [{"name": "test-website.py", "type": "file"}]
+        with patch.object(AUDIT, "github_api", return_value=response) as api:
+            raw = AUDIT.audit_url((f"https://raw.githubusercontent.com/example/project/{ref}/{directory}", ["fixture.html"]))
+            tree = AUDIT.audit_url((f"https://github.com/example/project/tree/{ref}/{directory}", ["fixture.html"]))
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(raw["status"], "broken")
+        self.assertEqual(tree["status"], "ok")
+
     def test_missing_contents_and_unavailable_github_probes_remain_distinct(self):
         cases = (
             (ValueError("gh: Not Found (HTTP 404)"), "broken"),

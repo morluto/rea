@@ -70,6 +70,8 @@ def audit_url(item):
             if endpoint is None:
                 return dict(result, status="unknown", reason="GitHub UI route; check in a browser")
             data = github_api(endpoint)
+            if url.hostname == "raw.githubusercontent.com" and isinstance(data, list):
+                return dict(result, status="broken", reason="Raw GitHub URL points to a directory")
             parts = url.path.strip("/").split("/")
             if len(parts) >= 6 and parts[2:4] == ["releases", "download"]:
                 if unquote(parts[5]) not in [asset["name"] for asset in data.get("assets", [])]:
