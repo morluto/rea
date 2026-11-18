@@ -1137,7 +1137,16 @@ complete observation.
   implementations with a `category`. A category whose class reference is null,
   or is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
   metadata symbol of another module's Swift class, keeps a null class, and
-  `objc_properties_categories` coverage names that reference. Swift
+  `objc_properties_categories` coverage names that reference. A category's
+  class property list (`@property (class)`), present when the image info
+  declares it, is not decoded: the category is partial with
+  `category_class_properties_not_decoded` and coverage names the list field.
+  A field bound to another image's symbol counts as a present list. When that
+  field or the image info cannot be read, the image info is too short to hold
+  its flags, or the field is zero while its pointer fixups are unknown, the
+  category keeps its decoded facts and is partial with
+  `category_class_properties_unreadable`.
+  Swift
   field-offset globals that are only
   initialized at runtime stay unresolved. Generic, resilient, async and
   coroutine tables, and inherited overrides, have explicit unsupported or
