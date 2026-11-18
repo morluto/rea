@@ -34,8 +34,9 @@ def run_bundle(*args, **kwargs):
 # when it calls FileIO.readall. The fixed helper reads the descriptor directly.
 # Windows exercises the registered handlers with an in-process signal because
 # Popen.send_signal cannot deliver an external POSIX SIGTERM on that platform.
-SIGNAL_DRIVER = '''import os, runpy, signal, sys
-helper, signum, bundle = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+SIGNAL_DRIVER = '''import os, runpy, signal, sys, threading
+helper, signum, bundle, trigger = sys.argv[1:]
+signum = int(signum)
 stdin_fd = sys.stdin.fileno()
 raw = sys.stdin.buffer.raw
 original_readall = raw.readall
@@ -60,15 +61,29 @@ def read(fd, size):
         acknowledge()
     return original_read(fd, size)
 
-raw.readall = readall
-os.read = read
+original_wait = threading.Event.wait
+
+def wait_with_signal(event, timeout=None):
+    # Thread.start waits without a timeout. Intercept the main thread's bounded EOF wait.
+    if timeout is not None and threading.current_thread() is threading.main_thread():
+        threading.Event.wait = original_wait
+        with event._cond:
+            os.write(sys.stderr.fileno(), b"wait-lock-held\\n")
+            signal.raise_signal(signum)
+    return original_wait(event, timeout)
+
+if trigger == "wait-lock":
+    threading.Event.wait = wait_with_signal
+else:
+    raw.readall = readall
+    os.read = read
 sys.argv = [helper, bundle]
 runpy.run_path(helper, run_name="__main__")
 '''
 
 
 class ComputerHelperTests(unittest.TestCase):
-    def run_helper(self, shutdown="eof", remaining=False, no_computer=False):
+    def run_helper(self, shutdown="eof", remaining=False, no_computer=False, *, hold_wait_lock=False):
         with tempfile.TemporaryDirectory(prefix="rea-helper-") as folder:
             root = Path(folder)
             package = root / "agent_env"
@@ -90,7 +105,9 @@ class ComputerHelperTests(unittest.TestCase):
             if signum is not None:
                 wrapper = root / "drive-helper-signal.py"
                 wrapper.write_text(SIGNAL_DRIVER)
-                arguments = [*interpreter, str(wrapper), str(HELPER), str(int(signum)), str(root)]
+                trigger = "wait-lock" if hold_wait_lock else "read-entry"
+                arguments = [*interpreter, str(wrapper), str(HELPER), str(int(signum)),
+                             str(root), trigger]
             child = subprocess.Popen(arguments, env=env, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             # Bound readiness too: communicate() would close stdin and hide this regression.
@@ -111,8 +128,9 @@ class ComputerHelperTests(unittest.TestCase):
                         self.assertFalse(down.exists(), "data must not stand in for EOF")
                     child.stdin.close()
                 else:
-                    self.assertEqual(child.stderr.readline().rstrip(b"\r\n"), b"stdin-reader-ready")
-                    if os.name != "nt":
+                    marker = b"wait-lock-held" if hold_wait_lock else b"stdin-reader-ready"
+                    self.assertEqual(child.stderr.readline().rstrip(b"\r\n"), marker)
+                    if not hold_wait_lock and os.name != "nt":
                         child.send_signal(signum)
                 child.wait(timeout=10)
                 stderr = child.stderr.read().decode("utf-8")
@@ -145,6 +163,9 @@ class ComputerHelperTests(unittest.TestCase):
 
     def test_sigint_retains_failed_teardown(self):
         self.run_helper("SIGINT", remaining=True)
+
+    def test_signal_while_wait_holds_eof_event_lock(self):
+        self.run_helper("SIGTERM", hold_wait_lock=True)
 
     def test_eof_retains_failed_teardown(self):
         self.run_helper(remaining=True)
