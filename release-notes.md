@@ -812,6 +812,7 @@
 * **environment:** consolidate data-plane ordering proofs ([#11929](https://github.com/morluto/rea/issues/11929)) ([a4a5772](https://github.com/morluto/rea/commit/a4a57727e96e9c3aae203bf67f641489e0aecba9))
 * **environment:** consolidate document write refusals ([#11958](https://github.com/morluto/rea/issues/11958)) ([5e83c1e](https://github.com/morluto/rea/commit/5e83c1ef7c634b71a400a43611ad267f2cca15eb))
 * **environment:** consolidate export publication receipts ([#11945](https://github.com/morluto/rea/issues/11945)) ([e6e4215](https://github.com/morluto/rea/commit/e6e42152279ee4bc82160f924b365bd4bf97c1f7))
+* **environment:** consolidate later-read and trash replay coverage ([#11971](https://github.com/morluto/rea/issues/11971)) ([6efd976](https://github.com/morluto/rea/commit/6efd976ec058acdc0cc94a9fa1f3cc129ccef958))
 * **environment:** consolidate linked write spellings ([#11957](https://github.com/morluto/rea/issues/11957)) ([9bd17e8](https://github.com/morluto/rea/commit/9bd17e8673debe9acad0e83284003a4981d55acb))
 * **environment:** consolidate list query contracts ([#11916](https://github.com/morluto/rea/issues/11916)) ([d72dfb8](https://github.com/morluto/rea/commit/d72dfb8c69376c14a0fcc386dc3f7d639b4abc97))
 * **environment:** consolidate long query alias coverage ([#11938](https://github.com/morluto/rea/issues/11938)) ([aac23cb](https://github.com/morluto/rea/commit/aac23cb4b1097a23ece047e555635e82e6633a4f))
