@@ -87,6 +87,11 @@ export interface NativeSectionDirectory {
   readonly elf_os_abi: number | null;
   readonly flags: number;
   readonly section_names_limitation?: string;
+  /** Raw COFF symbol table declarations, present only for PE. */
+  readonly pe_symbol_table?: {
+    readonly offset: number;
+    readonly count: number;
+  };
   readonly programs: readonly ElfProgramDeclaration[];
   readonly sections: readonly NativeSection[];
 }
@@ -377,6 +382,8 @@ export function* readPeSectionDirectory(
     optionalHeaderSize: optionalSize,
     machine,
     characteristics,
+    symbolTableOffset,
+    symbolCount,
   } = parsedCoff.value;
   const optional = readPeOptionalHeaderStructure(
     yield request(fileSize, BigInt(pe + 24), BigInt(optionalSize)),
@@ -429,6 +436,7 @@ export function* readPeSectionDirectory(
   }
   return {
     format: "pe",
+    pe_symbol_table: { offset: symbolTableOffset, count: symbolCount },
     elf_os_abi: null,
     bits,
     little: true,
@@ -456,6 +464,10 @@ export const readElfDirectoryFromBuffer = (
   bytes: Buffer,
 ): ElfSectionDirectory =>
   driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
+
+/** Resolve ELF table declarations, including extended counts in section zero, from these bytes. */
+export const readElfTableDeclarationsFromBuffer = (bytes: Buffer) =>
+  driveFromBuffer(bytes, readElfTableDeclarations(bytes, bytes.length));
 
 /** Reject a program or section payload the declared tables place outside these bytes. */
 export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {

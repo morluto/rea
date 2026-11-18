@@ -1020,11 +1020,13 @@ it("requires complete local history when sizing the upstream search", async () =
   );
 });
 
-const releasePatchFixture = async () => {
+const releasePatchFixture = async (outsideProject = false) => {
   const root = await createTestTempDirectory("rea-release-git-patch-");
   const project = join(root, "project space Ω");
-  const dependencyPath = "node_modules/release dependency space Ω";
-  const directory = join(project, dependencyPath);
+  const dependencies = join(project, "node_modules");
+  const directory = outsideProject
+    ? join(root, "release dependency space Ω")
+    : join(dependencies, "release-please");
   const upstreamDirectory = dirname(
     require.resolve("release-please/package.json"),
   );
@@ -1040,7 +1042,10 @@ const releasePatchFixture = async () => {
     return member;
   });
   await mkdir(dirname(patchPath), { recursive: true });
+  await mkdir(dependencies, { recursive: true });
   await mkdir(directory, { recursive: true });
+  if (outsideProject)
+    await symlink(directory, join(dependencies, "release-please"), "junction");
   await writeFile(join(project, "package.json"), '{"type":"module"}');
   await writeFile(patchPath, patch);
   await copyScriptsWithImports(
@@ -1051,7 +1056,7 @@ const releasePatchFixture = async () => {
   for (const dependency of ["semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),
-      join(project, "node_modules", dependency),
+      join(dependencies, dependency),
       "junction",
     );
   for (const member of ["package.json", ...members]) {
@@ -1065,17 +1070,17 @@ const releasePatchFixture = async () => {
     GIT_CONFIG_VALUE_0: "true",
   };
   const git = (...args: string[]) =>
-    execute("git", args, { cwd: project, env: environment });
+    execute("git", args, { cwd: directory, env: environment });
   // Installation owns the patched dependency. Reverse only the private copy
   // to obtain the exact upstream input for the fresh-application control.
-  await git("apply", "--reverse", "--directory", dependencyPath, patchPath);
+  await git("apply", "--reverse", patchPath);
   const apply = () =>
     execute(
       process.execPath,
       [
         "--input-type=module",
         "-e",
-        `import { applyReleasePleasePatch } from ${JSON.stringify(pathToFileURL(join(project, "scripts/lib/release-proposal.mjs")).href)}; await applyReleasePleasePatch(${JSON.stringify(directory)});`,
+        `import { applyReleasePleasePatch } from ${JSON.stringify(pathToFileURL(join(project, "scripts/lib/release-proposal.mjs")).href)}; await applyReleasePleasePatch();`,
       ],
       { cwd: project, env: environment, timeout: 10_000 },
     );
@@ -1083,27 +1088,26 @@ const releasePatchFixture = async () => {
     Promise.all(
       members.map((member) => readFile(join(directory, member), "utf8")),
     );
-  return { directory, apply, contents, git, dependencyPath, patchPath };
+  return { directory, apply, contents, git, patchPath };
 };
 
-it("applies the private dependency patch with protected Git paths and is idempotent", async () => {
-  const fixture = await releasePatchFixture();
-  const original = await fixture.contents();
-  await fixture.apply();
-  const patched = await fixture.contents();
-  expect(patched).not.toEqual(original);
-  expect(patched.join("\n")).toContain("const rootOnlyNode =");
-  await fixture.git(
-    "apply",
-    "--check",
-    "--reverse",
-    "--directory",
-    fixture.dependencyPath,
-    fixture.patchPath,
-  );
-  await fixture.apply();
-  expect(await fixture.contents()).toEqual(patched);
-});
+it.each([
+  { location: "inside the checkout", outsideProject: false },
+  { location: "outside the checkout", outsideProject: true },
+])(
+  "applies the private dependency patch $location and is idempotent",
+  async ({ outsideProject }) => {
+    const fixture = await releasePatchFixture(outsideProject);
+    const original = await fixture.contents();
+    await fixture.apply();
+    const patched = await fixture.contents();
+    expect(patched).not.toEqual(original);
+    expect(patched.join("\n")).toContain("const rootOnlyNode =");
+    await fixture.git("apply", "--check", "--reverse", fixture.patchPath);
+    await fixture.apply();
+    expect(await fixture.contents()).toEqual(patched);
+  },
+);
 
 it("rejects a different dependency version before patching", async () => {
   const fixture = await createTestTempDirectory("rea-release-patch-");

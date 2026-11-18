@@ -40,6 +40,64 @@ const sqlite = Buffer.concat([
   Buffer.alloc(84),
 ]);
 
+it("reads and checks BOM-signed UTF-16 project files in either byte order", async () => {
+  const name = "settings.xml";
+  const text = `<?xml version="1.0" encoding="UTF-16"?>
+<project title="Café 🎨">${" ".repeat(4200)}</project>`;
+  const little = Buffer.from(`\ufeff${text}`, "utf16le");
+  const big = Buffer.from(little).swap16();
+  const files = [
+    { name, bytes: little },
+    { name, bytes: big },
+    { name, bytes: gzipSync(big, { level: 0 }) },
+    {
+      name: "project.zip",
+      bytes: zipArchive([{ name, data: little, method: 0 }]),
+    },
+    { name, bytes: Buffer.from([0xff, 0xfe, 0x00, 0xd8]) },
+    { name, bytes: Buffer.from(text, "utf16le") },
+    { name, bytes: Buffer.from("\ufeffa\0b", "utf16le") },
+    {
+      name: "settings.json",
+      bytes: Buffer.from('\ufeff{"zoom":1.5}', "utf16le"),
+    },
+  ];
+  await expectSameFileViews(files);
+  const views = await Promise.all(files.map(typescriptFileView));
+  expect(views.map(({ format }) => format)).toEqual([
+    "xml",
+    "xml",
+    "xml",
+    "zip",
+    "binary",
+    "binary",
+    "binary",
+    "json",
+  ]);
+  expect(views[3]?.view).toMatchObject({
+    entries: [{ name, format: "xml", view: views[0]?.view }],
+  });
+  expect(views[7]?.view).toEqual({ zoom: 1.5 });
+  const outcomes = await expectSameCheckResults(
+    name,
+    [
+      {
+        id: "project-title",
+        kind: "value_equals",
+        file: name,
+        pointer: "/root/attributes/title",
+        value: "Café 🎨",
+      },
+    ],
+    files.slice(0, 3),
+  );
+  expect(outcomes.map(([outcome]) => outcome?.passed)).toEqual([
+    true,
+    true,
+    true,
+  ]);
+});
+
 describe("gzip files in the exported module", () => {
   it("reads a compressed drawing as the view of the drawing inside, and grades it alike", async () => {
     const files = await posters();

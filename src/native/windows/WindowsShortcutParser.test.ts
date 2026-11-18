@@ -406,6 +406,26 @@ it("treats any TerminalSize below 4 as the ExtraData terminal", async () => {
   }
 });
 
+it("reports bytes appended after the ExtraData TerminalBlock", async () => {
+  const link = powershellHiddenIconSpoofShortcut();
+  const report = await parse(
+    Buffer.concat([link, Buffer.from("PK\x03\x04appended", "latin1")]),
+  );
+  expect(report.extra_data.terminal_offset).toBe(link.length - 4);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: link.length,
+  });
+  expect(report.issues).toEqual([
+    {
+      code: "malformed_structure",
+      offset: link.length,
+      message:
+        "12 byte(s) follow the ExtraData TerminalBlock and are not part of the Shell Link",
+    },
+  ]);
+});
+
 it("derives target facts from a stored environment target alone", async () => {
   const report = await parse(
     windowsShortcutBytes({

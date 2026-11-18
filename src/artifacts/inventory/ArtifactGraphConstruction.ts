@@ -38,7 +38,10 @@ import {
   classifyFatContainerEvidence,
   readFatContainerHeader,
 } from "../../domain/apple/machoContainer.js";
-import { readNativeHeaderFormat } from "../../domain/binaryTarget.js";
+import {
+  parsePeRecordStructure,
+  readNativeHeaderFormat,
+} from "../../domain/binaryTarget.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -607,7 +610,8 @@ export const classifyArtifactBytes = (
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
 ): ArtifactNode["format"] => {
-  const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
+    evidence;
   // A refused claim falls through: a header-only iNES region, for example,
   // has the signature but not the declared cartridge extent, so it stays a
   // file instead of becoming another container. A claim that needs more
@@ -650,14 +654,20 @@ export const classifyArtifactBytes = (
     if (windowsHeader.state === "candidate") return "unknown";
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
-      if (
-        windowsHeader.signature === "PE" &&
-        windowsOffset >= 64 &&
-        (windowsOffset <= prefix.length - 4 ||
-          (mzWindowsHeaderSignature?.offset === windowsOffset &&
-            mzWindowsHeaderSignature.bytes.length >= 4))
-      )
-        return "pe";
+      if (windowsHeader.signature === "PE" && windowsOffset >= 64) {
+        const inline =
+          windowsOffset < prefix.length
+            ? prefix.subarray(windowsOffset)
+            : undefined;
+        const observed =
+          mzWindowsHeaderRecord?.offset === windowsOffset
+            ? mzWindowsHeaderRecord.bytes
+            : undefined;
+        const record =
+          (observed?.length ?? 0) > (inline?.length ?? 0) ? observed : inline;
+        if (record !== undefined && parsePeRecordStructure(record).ok)
+          return "pe";
+      }
       return "unknown";
     }
     if (mzEvidence.dos.ok) return "dos-mz";

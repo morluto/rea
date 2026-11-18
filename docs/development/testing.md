@@ -127,8 +127,7 @@ TypeScript versions.
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
 The build also records `dist/mcp-catalog.json` (compact inputs) from the
 canonical SDK registrations and binds it to the runtime with its SHA-256
-digest. These are
-runtime artifacts, separate from the test catalog below. Default target-free
+digest. Default target-free
 MCP startup serves its schemas without constructing analysis validators;
 the first tool or guided-workflow request materializes the canonical runtime
 on that same SDK server. Explicit compact/full input selections preserve
@@ -142,12 +141,9 @@ Turbo's strict task environment preserves caller-selected `GOMAXPROCS`,
 checks. These execution controls do not change artifact content, so changing
 their values retains cache reuse. They control individual runtimes; monitor
 the complete process family separately when enforcing a total memory budget.
-`npm run test:prepare` also generates the MCP contract test catalog, product
-catalog, and portable managed evidence used by the complete suite. Focused
-tests prepare those extra outputs only when their selected files consume them.
-The MCP test catalog is JSON in `.cache/mcp-tool-catalog.json`; the tracked
-test loader supplies its types without making generation a source-check
-prerequisite. Run `npm run mcp-catalog:generate` to refresh it independently.
+`npm run test:prepare` also generates the product catalog and portable managed
+evidence used by the complete suite. Focused tests prepare those extra outputs
+only when their selected files consume them.
 Documentation generation and managed conformance run through their separate
 `docs:generate` and `evidence:generate` task graphs.
 
@@ -617,8 +613,8 @@ affected consumer.
 Every provider capability that `src/composition/capabilityDeclarations.ts`
 binds to a provider needs an entry in
 `tests/conformance/providerCapabilityCases.ts`. The entry is either a
-CLI, MCP or acceptance test that names one of the capability's operations, or an
-exemption that states why no such case exists.
+CLI, MCP or acceptance test that exercises one of the capability's operations,
+or an exemption that states why no such case exists.
 `tests/conformance/providerCapabilityConformance.test.ts` iterates the
 declarations, so a new capability fails the suite until it has one.
 
@@ -866,6 +862,12 @@ For changes to resource acquisition, readiness, cancellation, or cleanup, select
 the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
+
+To assert that a POSIX process or process group has stopped, use
+`processHasStopped` or `processGroupHasStopped` from
+`tests/support/process/observePosixProcess.ts`, not signal 0. Signal 0 still
+reaches a zombie, and an orphan stays one wherever PID 1 does not reap it, as in
+a container started without an init process.
 
 | Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1182,7 +1184,9 @@ Source and built blobs have separate labels to prevent merge collisions.
 Each test job emits a blob report; the merge job produces JUnit and JSON diagnostics, a module timing
 report, plus aggregate coverage during full qualification. It retains available
 reports even when a shard fails, uploads available diagnostics, and writes the
-slowest files to the workflow summary. Partial reports are marked diagnostic
+slowest files to the workflow summary. When a merged run fails, the summary
+and job log also list up to 20 reported failed test files and the count of
+unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
 Only a successful complete merge on the default branch publishes shard history,

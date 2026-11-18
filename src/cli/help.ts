@@ -78,15 +78,26 @@ const typeName = (field: z.ZodType): string => {
 
 /** A shown default; empty arrays and a `false` boolean default are not shown. */
 const shownDefault = (field: z.ZodType, type: string): unknown => {
+  const metadata = field.meta();
   const value =
-    field instanceof z.ZodDefault
-      ? (field.def.defaultValue as unknown)
-      : field instanceof z.ZodOptional
-        ? shownDefault(field.unwrap() as z.ZodType, type)
-        : undefined;
+    metadata !== undefined && Object.hasOwn(metadata, "default")
+      ? metadata.default
+      : field instanceof z.ZodDefault
+        ? (field.def.defaultValue as unknown)
+        : field instanceof z.ZodOptional
+          ? shownDefault(field.unwrap() as z.ZodType, type)
+          : undefined;
   if (Array.isArray(value) && value.length === 0) return undefined;
   if (type === "boolean" && value === false) return undefined;
   return value;
+};
+
+const fieldDescription = (field: z.ZodType, type = typeName(field)): string => {
+  const defaultValue = shownDefault(field, type);
+  const description = field.description ?? "";
+  return defaultValue === undefined
+    ? description
+    : `${description} (default: ${String(defaultValue)})`;
 };
 
 const optionRows = (
@@ -99,15 +110,7 @@ const optionRows = (
       const short = alias?.[key];
       const value = type === "boolean" ? "" : ` <${type}>`;
       const label = `--${optionFlagName(key)}${short === undefined ? "" : `, -${short}`}${value}`;
-      const defaultValue = shownDefault(field, type);
-      const description = field.description ?? "";
-      return {
-        label,
-        description:
-          defaultValue === undefined
-            ? description
-            : `${description} (default: ${String(defaultValue)})`,
-      };
+      return { label, description: fieldDescription(field, type) };
     },
   );
 
@@ -144,6 +147,7 @@ const globalOptionRows = ({ formats, root }: GlobalOptionsHelp): Row[] =>
     },
     { label: `--format <${formats.join("|")}>`, description: "Output format" },
     { label: "--help", description: "Show help" },
+    { label: "--json", description: "Shorthand for --format json" },
     {
       label: "--llms, --llms-full",
       description: "Print LLM-readable manifest",
@@ -200,7 +204,7 @@ export const formatCommandHelp = (name: string, help: CommandHelp): string => {
     (help.args?.shape ?? {}) as Readonly<Record<string, z.ZodType>>,
   ).map(([key, field]) => ({
     label: key,
-    description: field.description ?? "",
+    description: fieldDescription(field),
   }));
   if (args.length > 0) lines.push("", "Arguments:", ...alignedRows(args));
   const options =
