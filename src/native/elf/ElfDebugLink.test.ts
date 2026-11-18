@@ -10,7 +10,7 @@ import {
   elfDebugLinkSchema,
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
-import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
+import { elfNote, gnuBuildIdNote } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import {
@@ -261,6 +261,24 @@ it("fails the note entry budget instead of returning a partial build-id", () => 
       inputFor({ max_entries: 1 }),
     ),
   ).toThrow(ParseFailureError);
+});
+
+it("reads the build-id beside glibc's SystemTap probe notes by default", () => {
+  const probes = Array.from({ length: 79 }, () =>
+    elfNote("stapsdt", 3, Buffer.alloc(40)),
+  );
+  const report = parse(
+    elfDebugLinkFixture({
+      notes: Buffer.concat([
+        gnuBuildIdNote(FIXTURE_BUILD_ID_HEX, true),
+        ...probes,
+      ]),
+    }),
+  );
+  expect(report.build_id).toMatchObject({
+    status: "observed",
+    hex: FIXTURE_BUILD_ID_HEX,
+  });
 });
 
 it("preserves parent-directory segments and omits a slash name", () => {

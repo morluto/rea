@@ -447,7 +447,6 @@ const redirectCases = [
     ] as const
   ).map(([name, status]) => ({
     name,
-    invalidStatus: true,
     response: (origin: string) => ({ url: `${origin}/prior`, status }),
     expected: (origin: string) => ({
       url: `${origin}/prior`,
@@ -529,73 +528,58 @@ const redirectCases = [
   },
 ];
 
-it.each(redirectCases)(
-  "preserves scoped redirect response facts with $name",
-  async (testCase) => {
-    const { response, expected } = testCase;
-    const { browser, observation } = await observeDuringClockSampling(
-      (command, origin) => {
-        if (command.method !== "Performance.getMetrics") return undefined;
-        return [
-          {
-            method: "Network.requestWillBeSent",
-            sessionId: command.sessionId,
-            params: {
-              requestId: "redirect-context",
-              timestamp: 21,
-              type: "Document",
-              frameId: "frame-main",
-              request: { url: `${origin}/next`, method: "GET" },
-              redirectResponse: {
-                ...response(origin),
-                headers: { Authorization: "discard-redirect-header" },
-              },
-            },
+it("retains scoped redirect response facts for each request", async () => {
+  const { browser, observation } = await observeDuringClockSampling(
+    (command, origin) => {
+      if (command.method !== "Performance.getMetrics") return undefined;
+      return redirectCases.map(({ name, response }, index) => ({
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: name,
+          timestamp: 21 + index,
+          type: "Document",
+          frameId: "frame-main",
+          request: { url: `${origin}/next`, method: "GET" },
+          redirectResponse: {
+            ...response(origin),
+            headers: { Authorization: "discard-redirect-header" },
           },
-        ];
-      },
-    );
-    expect(observation.timeline).toContainEqual(
-      expect.objectContaining({
-        type: "redirect",
-        request_id: "redirect-context",
-        redirect_response: expected(browser.allowedOrigin),
-      }),
-    );
-    if (
-      expected(browser.allowedOrigin).scope === null ||
-      "invalidStatus" in testCase
-    )
-      expect(observation.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason: "invalid_protocol_value",
-        }),
-      );
-    else
-      expect(observation.completeness.excluded).not.toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason: "invalid_protocol_value",
-        }),
-      );
-    const scope = expected(browser.allowedOrigin).scope;
-    if (scope === "outside_policy" || scope === "unsupported") {
-      expect(observation.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason:
-            scope === "outside_policy"
-              ? "disallowed_origin"
-              : "unsupported_url",
-        }),
-      );
-      expect(observation.completeness.policy_filtered_sections).toContain(
-        "timeline",
-      );
-    }
-    const serialized = JSON.stringify(observation);
-    expect(serialized).not.toContain("discard-redirect-");
-    expect(serialized).not.toContain("outside.invalid");
-  },
-);
+        },
+      }));
+    },
+  );
+
+  expect(observation.window.end_reason).toBe("window_elapsed");
+  expect(
+    observation.timeline
+      .filter(({ type }) => type === "redirect")
+      .map(({ request_id, redirect_response }) => ({
+        request_id,
+        redirect_response,
+      })),
+  ).toEqual(
+    redirectCases.map(({ name, expected }) => ({
+      request_id: name,
+      redirect_response: expected(browser.allowedOrigin),
+    })),
+  );
+
+  const timelineExclusions = observation.completeness.excluded.filter(
+    ({ section }) => section === "timeline",
+  );
+  expect(timelineExclusions).toHaveLength(3);
+  expect(timelineExclusions).toEqual(
+    expect.arrayContaining([
+      { section: "timeline", reason: "invalid_protocol_value", count: 7 },
+      { section: "timeline", reason: "disallowed_origin", count: 1 },
+      { section: "timeline", reason: "unsupported_url", count: 1 },
+    ]),
+  );
+  expect(observation.completeness.policy_filtered_sections).toContain(
+    "timeline",
+  );
+  const serialized = JSON.stringify(observation);
+  expect(serialized).not.toContain("discard-redirect-");
+  expect(serialized).not.toContain("outside.invalid");
+});

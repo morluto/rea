@@ -716,6 +716,8 @@ describe("CLI update root alias", () => {
 describe("version report requests", () => {
   it.each([
     [["--version", "--format=toon"], "toon"],
+    [["--version", "--json", "--", "--no-timings"], undefined],
+    [["--version", "--json", "--filter-output", "--no-timings"], undefined],
     // A command keeps its own --version option.
     [["providers", "--version", "--json"], undefined],
     [["--version", "1", "--json"], undefined],
