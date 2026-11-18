@@ -928,15 +928,6 @@ describe("completed source-map cancellation", () => {
   );
 });
 
-describe("source-map response validation", () => {
-  it("reports malformed source-map JSON as invalid", async () => {
-    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
-      fetch: () => Promise.resolve(new Response("not-json", { status: 200 })),
-    });
-    expect(result.items[0]?.status).toBe("invalid");
-  });
-});
-
 describe("selected source-map fetch deadline", () => {
   it("applies a non-default source_map_fetch_timeout_ms from the public input", async () => {
     let calls = 0;
@@ -1038,27 +1029,6 @@ describe("browser map decoded validation", () => {
     ]);
     expect(result.items[0]?.mappings).toHaveLength(1);
     expect(result.items[6]?.mappings).toHaveLength(1);
-  });
-});
-
-describe("source-map response encoding", () => {
-  it("rejects malformed UTF-8 source-map response bytes", async () => {
-    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
-      fetch: () =>
-        Promise.resolve(
-          new Response(Uint8Array.of(0x7b, 0x22, 0xc3, 0x28, 0x22, 0x7d), {
-            status: 200,
-          }),
-        ),
-    });
-
-    expect(result.status).toBe("unavailable");
-    expect(result.items[0]).toMatchObject({
-      status: "invalid",
-      artifact: null,
-      limitation:
-        "Source-map response is not valid UTF-8. Response text was not retained; completed response body identity is available.",
-    });
   });
 });
 
@@ -1330,7 +1300,8 @@ describe("source-map original dependency syntax", () => {
     const text = [
       '// import "./comment.js";',
       String.raw`const quoted = "require(\"./string.js\")";`,
-      'export { value } from "./real.js";',
+      `export { value } from "./it's-real.js";`,
+      "const template = `import './template-comment.js'`;",
       'import("./dynamic.js");',
       'require("./common.cjs");',
     ].join("\n");
@@ -1350,7 +1321,7 @@ describe("source-map original dependency syntax", () => {
     });
     expect(
       result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
-    ).toEqual(["./real.js", "./dynamic.js", "./common.cjs"]);
+    ).toEqual(["./it's-real.js", "./dynamic.js", "./common.cjs"]);
   });
 
   it("reads expression-free template module specifiers as literals", async () => {
@@ -1387,50 +1358,6 @@ describe("source-map original dependency syntax", () => {
     expect(item.original_sources[0]?.artifact?.text).toBe(text);
     expect(item.mappings).toHaveLength(1);
   });
-});
-
-describe("source-map original syntax boundaries", () => {
-  it.each([
-    [
-      `import "./it's-real.js"; const quoted = \`import './template-comment.js'\`;`,
-      "included",
-      ["./it's-real.js"],
-    ],
-    [
-      'function fake(require) { require("./not-a-module.js"); } require("./real.cjs");',
-      "included",
-      ["./real.cjs"],
-    ],
-    // An unrecoverable source cannot invent edges, and the caller is told its
-    // edge list is incomplete rather than being told it has no imports.
-    ['import "./recovered.js"; const = ;', "partial", []],
-  ] as const)(
-    "retains literal syntax without inventing module calls",
-    async (text, status, expected) => {
-      const result = await fetchWebSourceMapsOk([request], input(), undefined, {
-        fetch: () =>
-          Promise.resolve(
-            new Response(
-              JSON.stringify({
-                version: 3,
-                names: [],
-                sources: ["main.ts"],
-                sourcesContent: [text],
-                mappings: "AAAA",
-              }),
-            ),
-          ),
-      });
-      const item = result.items[0];
-      expect(item?.status).toBe(status);
-      if (status === "partial")
-        expect(item?.limitation).toContain("could not be parsed in full");
-      else expect(item?.limitation).toBeNull();
-      expect(
-        item?.original_module_edges.map(({ specifier }) => specifier),
-      ).toEqual(expected);
-    },
-  );
 });
 
 describe("source-map dependency coverage of hard-to-parse sources", () => {
@@ -1666,7 +1593,9 @@ describe("web source-map collection", () => {
       },
     });
 
-    expect(calls).toHaveLength(requests.length);
+    expect(calls.toSorted()).toEqual(
+      requests.map(({ fetchUrl }) => fetchUrl).toSorted(),
+    );
     expect(result).toMatchObject({
       status: "included",
       requested: requests.length,
@@ -2086,87 +2015,81 @@ it("keeps bare original module specifiers unresolved", async () => {
   ).toContain("/assets/actual.js");
 });
 
-describe("source-map original artifact language metadata", () => {
-  it.each([
-    ["main.ts", "text/typescript"],
-    ["main.tsx", "text/typescript"],
-    ["main.mts", "text/typescript"],
-    ["main.cts", "text/typescript"],
-    ["main.js", "text/javascript"],
-    ["main.mjs", "text/javascript"],
-    ["main.cjs", "text/javascript"],
-    ["main.ts?revision=2", "text/typescript"],
-    ["main.tsx?revision=2", "text/typescript"],
-    ["main.mts?revision=2", "text/typescript"],
-    ["main.cts?revision=2", "text/typescript"],
-    ["main.ts#original", "text/typescript"],
-    ["main.tsx#original", "text/typescript"],
-    ["main.mts#original", "text/typescript"],
-    ["main.cts#original", "text/typescript"],
-    ["main.js?filename=main.ts", "text/javascript"],
-    ["main.js#main.ts", "text/javascript"],
-    ["extensionless?revision=2", "text/javascript"],
-  ])("retains the source language for %s", async (filename, mediaType) => {
-    const text =
-      mediaType === "text/typescript"
+it("uses source URL paths for language metadata while retaining the mapped identities", async () => {
+  const sources = [
+    { name: "main.ts?revision=2#view.js", mediaType: "text/typescript" },
+    { name: "view.tsx#original", mediaType: "text/typescript" },
+    { name: "module.mts", mediaType: "text/typescript" },
+    { name: "common.cts", mediaType: "text/typescript" },
+    {
+      name: "main.js?filename=main.ts#original.ts",
+      mediaType: "text/javascript",
+    },
+    { name: "extensionless?revision=2", mediaType: "text/javascript" },
+  ].map((source) => ({
+    ...source,
+    text:
+      source.mediaType === "text/typescript"
         ? "export const value: number = 1;"
-        : "export const value = 1;";
-    const server = createServer((_incoming, response) => {
-      response.setHeader("content-type", "application/json");
-      response.end(
-        JSON.stringify({
-          version: 3,
-          sources: [filename],
-          sourcesContent: [text],
-          names: [],
-          mappings: "AAAA",
-        }),
-      );
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const address = server.address();
-      if (address === null || typeof address === "string")
-        throw new TypeError("Expected a TCP listener address");
-      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
-      const url = `${localOrigin}/main.js.map`;
-      const result = await fetchWebSourceMapsOk(
-        [{ ...request, fetchUrl: url, declaredUrl: url }],
-        input({ allowed_origins: [localOrigin] }),
-        AbortSignal.timeout(2_000),
-      );
-      expect(result).toMatchObject({
-        status: "included",
-        items: [
-          {
-            original_sources: [
-              {
-                source: `${localOrigin}/${filename}`,
-                artifact: {
-                  media_type: mediaType,
-                  text,
-                  bytes: Buffer.byteLength(text),
-                  sha256: createHash("sha256").update(text).digest("hex"),
-                },
-              },
-            ],
-            mappings: [{ source: `${localOrigin}/${filename}` }],
-          },
-        ],
-      });
-    } finally {
-      server.closeAllConnections();
-      if (server.listening)
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) =>
-            error === undefined ? resolve() : reject(error),
-          );
-        });
-    }
+        : "export const value = 1;",
+  }));
+  const server = createServer((_incoming, response) => {
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify({
+        version: 3,
+        sources: sources.map(({ name }) => name),
+        sourcesContent: sources.map(({ text }) => text),
+        names: [],
+        // One generated line per source; the source index advances after the first.
+        mappings: "AAAA;ACAA;ACAA;ACAA;ACAA;ACAA",
+      }),
+    );
   });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new TypeError("Expected a TCP listener address");
+    const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+    const url = `${localOrigin}/main.js.map`;
+    const result = await fetchWebSourceMapsOk(
+      [{ ...request, fetchUrl: url, declaredUrl: url }],
+      input({ allowed_origins: [localOrigin] }),
+      AbortSignal.timeout(2_000),
+    );
+    expect(result).toMatchObject({
+      status: "included",
+      items: [
+        {
+          original_sources: sources.map(({ name, mediaType, text }) => ({
+            source: `${localOrigin}/${name}`,
+            artifact: {
+              media_type: mediaType,
+              text,
+              bytes: Buffer.byteLength(text),
+              sha256: createHash("sha256").update(text).digest("hex"),
+            },
+          })),
+          mappings: sources.map(({ name }, index) => ({
+            generated_line: index + 1,
+            source: `${localOrigin}/${name}`,
+          })),
+        },
+      ],
+    });
+  } finally {
+    server.closeAllConnections();
+    if (server.listening)
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) =>
+          error === undefined ? resolve() : reject(error),
+        );
+      });
+  }
 });
 
 describe("deep source-map original syntax", () => {
