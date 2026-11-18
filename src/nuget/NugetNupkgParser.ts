@@ -220,7 +220,7 @@ const opcManifestTargets = (
 ): OpcManifestTarget[] => {
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
-    lineEndings: "preserve",
+    lineEndings: "normalize",
   });
   if (!parsed.ok) {
     limitations.push(
@@ -336,9 +336,11 @@ const parseNuspecDocument = (
     repository: null,
     dependency_groups: [],
   };
+  // NuGet reads the .nuspec with XDocument, which applies XML 1.0 end-of-line
+  // handling, so a description packed with CRLF reads with LF line breaks.
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
-    lineEndings: "preserve",
+    lineEndings: "normalize",
   });
   if (!parsed.ok) {
     limitations.push(

@@ -664,6 +664,21 @@ it("fails when the entry budget is exhausted", () => {
   ).toThrow(ParseFailureError);
 });
 
+it("reads a glibc-sized note table with the default entry budget", () => {
+  // Ubuntu's libc.so.6 has 79 SystemTap probe notes beside its build-id, ABI
+  // tag and GNU property notes; this table has the first two and the probes.
+  const probes = Array.from({ length: 79 }, () =>
+    elfNote("stapsdt", 3, Buffer.alloc(40)),
+  );
+  const report = parse(
+    elfNoteFixture({
+      ownership: "section",
+      notes: Buffer.concat([gnuBuildIdNote(), gnuAbiTagNote(), ...probes]),
+    }),
+  );
+  expect(report.entries).toHaveLength(81);
+});
+
 it("keeps unsafe table offsets ahead of unsupported extended numbering", () => {
   const bytes = elfExtendedSectionCountFixture();
   bytes.writeBigUInt64LE(0xffffffffffffffffn, 32);

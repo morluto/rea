@@ -227,6 +227,29 @@ describe("ZIP listing coverage against the member region", () => {
     });
   });
 
+  it("accounts for a 32-bit data descriptor after a ZIP64 directory record", async () => {
+    const first = member("a.txt");
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc32(first.data), 4);
+    descriptor.writeUInt32LE(first.data.length, 8);
+    descriptor.writeUInt32LE(first.data.length, 12);
+    const bytes = Buffer.concat([localEntry(first), descriptor]);
+    const record = {
+      offset: 0,
+      compressedSize: first.data.length,
+      uncompressedSize: first.data.length,
+      crc32: crc32(first.data),
+      zip64: true,
+      dataDescriptor: true,
+    };
+    expect(
+      await accountZipMemberRegion([record], bytes.length, async (at, length) =>
+        bytes.subarray(at, at + length),
+      ),
+    ).toMatchObject({ unaccountedBytes: 0, unaccountedRanges: 0 });
+  });
+
   it("accounts for an AE-2 data descriptor whose directory reports no CRC", async () => {
     const first = member("a.txt");
     const local = localEntry(first);
@@ -275,6 +298,44 @@ describe("ZIP listing coverage from the central directory", () => {
     await writer.add("a.txt", new TextReader("a".repeat(500)));
     await writer.add("b.txt", new TextReader("b"));
     expect((await list(await writer.close())).coverage).toEqual([complete]);
+  });
+
+  it("declares complete coverage for MSIX-style 64-bit data descriptors without ZIP64 fields", async () => {
+    // MSIX and APPX packages: sizes deferred to a signed descriptor with
+    // 8-byte sizes, and no ZIP64 extra field in either header. An empty
+    // member's zero sizes also match the first 16 bytes as a 32-bit layout.
+    const empty = { ...member("Assets/empty.txt"), data: Buffer.alloc(0) };
+    const last = { ...empty, name: "last.txt" };
+    const members = [member("AppxManifest.xml"), empty, member("a.png"), last];
+    const locals: Buffer[] = [];
+    const records: Buffer[] = [];
+    let offset = 0;
+    for (const item of members) {
+      const local = localEntry(item);
+      local.writeUInt16LE(0x0008, 6);
+      local.fill(0, 14, 26);
+      const descriptor = Buffer.alloc(24);
+      descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(crc32(item.data), 4);
+      descriptor.writeBigUInt64LE(BigInt(item.data.length), 8);
+      descriptor.writeBigUInt64LE(BigInt(item.data.length), 16);
+      const record = centralRecord(item, offset);
+      record.writeUInt16LE(0x0008, 8);
+      locals.push(local, descriptor);
+      records.push(record);
+      offset += local.length + descriptor.length;
+    }
+    const directory = Buffer.concat(records);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(records.length, 8);
+    end.writeUInt16LE(records.length, 10);
+    end.writeUInt32LE(directory.length, 12);
+    end.writeUInt32LE(offset, 16);
+    expect(await list(Buffer.concat([...locals, directory, end]))).toEqual({
+      paths: members.map(({ name }) => name),
+      coverage: [complete],
+    });
   });
 
   it.each([

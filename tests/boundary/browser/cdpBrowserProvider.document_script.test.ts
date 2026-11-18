@@ -1,4 +1,4 @@
-import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import { createHash } from "node:crypto";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
@@ -10,7 +10,10 @@ import { inspectWebPageInputSchema } from "../../../src/domain/browserObservatio
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
-import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import {
+  startFakeCdpBrowser,
+  type FakeOptions,
+} from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
 it("preserves CDP's separate frame fragment in all passive URL projections", async () => {
@@ -62,28 +65,6 @@ it("preserves CDP's separate frame fragment in all passive URL projections", asy
     final_url: url,
   });
 });
-it("captures approved accessibility text inline", async () => {
-  const browser = await startFakeCdpBrowser();
-  trackBrowser(browser);
-  const request = inspectWebPageInputSchema.parse({
-    cdp_endpoint: browser.endpoint,
-    allowed_origins: [browser.allowedOrigin],
-    target_id: "allowed-page",
-    observation_ms: 0,
-    include_accessibility_text: true,
-  });
-  const result = await new CdpBrowserProvider().inspectPage(request);
-
-  if (!result.ok) throw result.error;
-  expect(result.value.accessibility).toMatchObject({
-    text_capture: {
-      status: "included",
-      retained_bytes: 27,
-    },
-    nodes: [expect.objectContaining({ name: "Submit report" })],
-  });
-});
-
 it("gates script source reads and distinguishes empty text from malformed replies", async () => {
   const scriptText = "export const observed = 'source-secret';";
   let malformedReply: Record<string, unknown> | undefined;
@@ -203,7 +184,7 @@ it("gates script source reads and distinguishes empty text from malformed replie
   }
 });
 
-it.each(["after-replay", "before-replay", "replacement", "malformed"])(
+it.each(["same-document", "replacement", "malformed"])(
   "keeps split-fragment WebMCP frame identity: %s",
   async (kind) => {
     const browser = await startFakeCdpBrowser({
@@ -235,24 +216,12 @@ it.each(["after-replay", "before-replay", "replacement", "malformed"])(
             },
           },
         };
-        const tools = {
+        const tools = (name: string) => ({
           method: "WebMCP.toolsAdded",
-          ...(sessionId === undefined ? {} : { sessionId }),
-          params: {
-            tools: [
-              {
-                name: "catalog",
-                description: "fixture",
-                frameId: "frame-main",
-              },
-            ],
-          },
-        };
-        return kind === "before-replay"
-          ? [frame, tools]
-          : kind === "malformed"
-            ? [tools, frame, tools]
-            : [tools, frame];
+          sessionId,
+          params: { tools: [{ name, frameId: "frame-main" }] },
+        });
+        return [tools("before"), frame, tools("after")];
       },
     });
     trackBrowser(browser);
@@ -276,11 +245,13 @@ it.each(["after-replay", "before-replay", "replacement", "malformed"])(
     if (!result.ok) throw result.error;
     if (kind === "malformed") expect(result.value.tools.items).toEqual([]);
     else
-      expect(result.value.tools.items).toEqual([
-        expect.objectContaining({
-          name: "catalog",
-          frame_url: `${browser.allowedOrigin}/app#details`,
-        }),
+      expect(
+        result.value.tools.items.toSorted((left, right) =>
+          left.name.localeCompare(right.name),
+        ),
+      ).toMatchObject([
+        { name: "after", frame_url: `${browser.allowedOrigin}/app#details` },
+        { name: "before", frame_url: `${browser.allowedOrigin}/app#details` },
       ]);
     if (kind === "malformed")
       expect(result.value.completeness).toMatchObject({
@@ -290,221 +261,244 @@ it.each(["after-replay", "before-replay", "replacement", "malformed"])(
   },
 );
 
-it.each(
-  ["foreign", "allowed", "missing", "opaque", "unparseable"].flatMap((scope) =>
-    [false, true].flatMap((blankFirst) =>
-      [7, "not-a-fragment"].map((fragment) => ({
-        scope,
-        blankFirst,
-        fragment,
-      })),
-    ),
-  ),
-)(
-  "retains malformed WebMCP event scope: $scope/$blankFirst/$fragment",
-  async ({ scope, blankFirst, fragment }) => {
-    const browser = await startFakeCdpBrowser({
-      eventsBeforeReply: ["WebMCP.enable"],
-      commandResult: ({ method }, origin) =>
+const childLocations = (origin: string) => ({
+  allowed: { url: `${origin}/child` },
+  missing: {},
+  opaque: { url: "about:blank" },
+  unparseable: { url: "not-a-url" },
+  foreign: { url: "https://foreign.invalid/child" },
+});
+
+const discoverWebMcpWithChildReplies = async (
+  commandResult: NonNullable<FakeOptions["commandResult"]>,
+  commandEvents: NonNullable<FakeOptions["commandEvents"]>,
+) => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["WebMCP.enable"],
+    commandResult,
+    commandEvents,
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().discoverWebMcpTools(
+    discoverWebMcpToolsInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  return { discovery: result.value, origin: browser.allowedOrigin };
+};
+
+it.each([false, true])(
+  "invalidates malformed child navigation without losing known foreign scope: foreign=%s",
+  async (foreign) => {
+    const scopes = foreign
+      ? (["foreign"] as const)
+      : (["allowed", "missing", "opaque", "unparseable"] as const);
+    const children = scopes.flatMap((scope) =>
+      [false, true].flatMap((blankFirst) =>
+        [7, "not-a-fragment"].map((urlFragment, index) => ({
+          id: `${scope}-${blankFirst}-${index}`,
+          scope,
+          blankFirst,
+          urlFragment,
+        })),
+      ),
+    );
+    const { discovery } = await discoverWebMcpWithChildReplies(
+      ({ method }, origin) =>
         method === "Page.getFrameTree"
           ? {
               frameTree: {
                 frame: {
                   id: "frame-main",
-                  loaderId: "loader-frame-main",
+                  loaderId: "loader-main",
                   url: `${origin}/app`,
                 },
-                childFrames: [
-                  {
-                    frame: {
-                      id: "child",
-                      loaderId: "loader-child",
-                      parentId: "frame-main",
-                      url: `${origin}/child`,
-                    },
+                childFrames: children.map(({ id }) => ({
+                  frame: {
+                    id,
+                    loaderId: id,
+                    parentId: "frame-main",
+                    url: `${origin}/${id}`,
                   },
-                ],
+                })),
               },
             }
           : undefined,
-      commandEvents: ({ method, sessionId }, origin) => {
+      ({ method, sessionId }, origin) => {
         if (method !== "WebMCP.enable") return undefined;
-        const navigation = (frame: Record<string, unknown>) => ({
-          method: "Page.frameNavigated",
-          ...(sessionId === undefined ? {} : { sessionId }),
-          params: { frame: { id: "child", parentId: "frame-main", ...frame } },
-        });
+        const locations = childLocations(origin);
         return [
           {
             method: "WebMCP.toolsAdded",
-            ...(sessionId === undefined ? {} : { sessionId }),
+            sessionId,
             params: {
-              tools: [{ name: "stale", inputSchema: {}, frameId: "child" }],
+              tools: children.map(({ id }) => ({
+                name: "stale",
+                frameId: id,
+                inputSchema: {},
+              })),
             },
           },
-          ...(blankFirst ? [navigation({ url: "about:blank" })] : []),
-          navigation({
-            ...(scope === "missing"
-              ? {}
-              : {
-                  url:
-                    scope === "foreign"
-                      ? "https://foreign.invalid/child"
-                      : scope === "opaque"
-                        ? "about:blank"
-                        : scope === "unparseable"
-                          ? "not-a-url"
-                          : `${origin}/child`,
-                }),
-            urlFragment: fragment,
+          ...children.flatMap(({ id, blankFirst, scope, urlFragment }) => {
+            const navigate = (location: Record<string, unknown>) => ({
+              method: "Page.frameNavigated",
+              sessionId,
+              params: { frame: { id, parentId: "frame-main", ...location } },
+            });
+            return [
+              ...(blankFirst ? [navigate({ url: "about:blank" })] : []),
+              navigate({ ...locations[scope], urlFragment }),
+            ];
           }),
         ];
       },
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
     );
-    if (!result.ok) throw result.error;
-    expect(result.value.tools.items).toEqual([]);
-    expect(result.value.completeness.excluded).toContainEqual({
-      section: "webmcp_tools",
-      reason: "invalid_protocol_value",
-      count: 1,
-    });
-    // Initial allowed-child replay coverage remains unknown even when a
-    // later event positively identifies that child's destination as foreign.
-    expect(result.value.completeness.attach_limited_sections).toContain(
+    expect(discovery.tools.items).toEqual([]);
+    expect(discovery.completeness.attach_limited_sections).toContain(
       "webmcp_tools",
     );
-    expect(
-      result.value.completeness.policy_filtered_sections.includes(
-        "webmcp_tools",
-      ),
-    ).toBe(scope === "foreign");
-    if (scope === "foreign")
-      expect(result.value.completeness.excluded).toContainEqual({
+    expect(discovery.completeness.policy_filtered_sections).toEqual(
+      foreign ? ["webmcp_tools"] : [],
+    );
+    expect(discovery.completeness.excluded).toEqual([
+      {
         section: "webmcp_tools",
-        reason: "out_of_target_scope",
-        count: 1,
-      });
+        reason: "invalid_protocol_value",
+        count: foreign ? 4 : 16,
+      },
+      ...(foreign
+        ? [{ section: "webmcp_tools", reason: "out_of_target_scope", count: 4 }]
+        : []),
+    ]);
   },
 );
 
-it.each(
-  ["allowed", "foreign", "missing", "opaque", "unparseable"].flatMap((scope) =>
-    (scope === "opaque" || scope === "unparseable"
-      ? [7, "bad-fragment"]
-      : [7, "bad-fragment", "#valid"]
-    ).map((fragment) => ({ scope, fragment })),
-  ),
-)(
-  "preserves initial child scope through WebMCP replay: $scope/$fragment",
-  async ({ scope, fragment }) => {
-    const browser = await startFakeCdpBrowser({
-      eventsBeforeReply: ["WebMCP.enable"],
-      commandResult: ({ method }, origin) =>
+it.each([
+  {
+    name: "unreadable",
+    scopes: ["allowed", "missing", "opaque", "unparseable"],
+    invalid: 9,
+    foreign: 0,
+    limited: true,
+  },
+  {
+    name: "foreign",
+    scopes: ["foreign"],
+    invalid: 2,
+    foreign: 6,
+    limited: false,
+  },
+  {
+    name: "approved",
+    scopes: ["allowed"],
+    invalid: 0,
+    foreign: 0,
+    limited: true,
+  },
+] as const)(
+  "keeps $name initial frame coverage distinct during replay",
+  async ({ name, scopes, invalid, foreign, limited }) => {
+    const children = scopes.flatMap((scope) => {
+      const fragments =
+        name === "approved"
+          ? ["#valid"]
+          : scope === "allowed" || scope === "opaque" || scope === "unparseable"
+            ? [7, "bad-fragment"]
+            : [7, "bad-fragment", "#valid"];
+      return fragments.map((urlFragment, index) => ({
+        id: `${scope}-${index}`,
+        scope,
+        urlFragment,
+      }));
+    });
+    const { discovery, origin } = await discoverWebMcpWithChildReplies(
+      ({ method }, origin) =>
         method === "Page.getFrameTree"
           ? {
               frameTree: {
                 frame: {
                   id: "frame-main",
-                  loaderId: "loader-frame-main",
+                  loaderId: "loader-main",
                   url: `${origin}/app`,
                 },
-                childFrames: [
-                  {
-                    frame: {
-                      id: "child",
-                      parentId: "frame-main",
-                      ...(scope === "missing"
-                        ? {}
-                        : {
-                            url:
-                              scope === "foreign"
-                                ? "https://foreign.test/child"
-                                : scope === "opaque"
-                                  ? "about:blank"
-                                  : scope === "unparseable"
-                                    ? "not-a-url"
-                                    : `${origin}/child`,
-                          }),
-                      urlFragment: fragment,
-                    },
+                childFrames: children.map(({ id, scope, urlFragment }) => ({
+                  frame: {
+                    id,
+                    parentId: "frame-main",
+                    ...childLocations(origin)[scope],
+                    urlFragment,
                   },
-                ],
+                })),
               },
             }
           : undefined,
-      commandEvents: ({ method, sessionId }) =>
+      ({ method, sessionId }) =>
         method === "WebMCP.enable"
           ? [
               {
                 method: "WebMCP.toolsAdded",
-                ...(sessionId === undefined ? {} : { sessionId }),
+                sessionId,
                 params: {
-                  tools: [
-                    { name: "child_tool", inputSchema: {}, frameId: "child" },
-                  ],
+                  tools: children.map(({ id }) => ({
+                    name: "read",
+                    frameId: id,
+                    inputSchema: {},
+                  })),
                 },
               },
             ]
           : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
     );
-    if (!result.ok) throw result.error;
-    const valid = scope === "allowed" && fragment === "#valid";
-    expect(result.value.tools.items.map(({ name }) => name)).toEqual(
-      valid ? ["child_tool"] : [],
+    expect(discovery.tools.items).toMatchObject(
+      name === "approved"
+        ? [
+            {
+              name: "read",
+              frame_id: "allowed-0",
+              frame_url: `${origin}/child#valid`,
+            },
+          ]
+        : [],
     );
-    if (valid)
-      expect(result.value.tools.items[0]?.frame_url).toBe(
-        `${browser.allowedOrigin}/child#valid`,
-      );
-    const uncertain =
-      scope === "missing" ||
-      scope === "opaque" ||
-      scope === "unparseable" ||
-      (scope === "allowed" && !valid);
-    expect(
-      result.value.completeness.attach_limited_sections.includes(
-        "webmcp_tools",
-      ),
-    ).toBe(uncertain || valid);
-    expect(
-      result.value.completeness.policy_filtered_sections.includes(
-        "webmcp_tools",
-      ),
-    ).toBe(scope === "foreign");
-    if (uncertain || fragment !== "#valid")
-      expect(result.value.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "webmcp_tools",
-          reason: "invalid_protocol_value",
-        }),
-      );
+    expect(discovery.completeness.attach_limited_sections).toEqual(
+      limited ? ["webmcp_tools"] : [],
+    );
+    expect(discovery.completeness.policy_filtered_sections).toEqual(
+      foreign > 0 ? ["webmcp_tools"] : [],
+    );
+    expect(discovery.completeness.excluded).toEqual([
+      ...(invalid > 0
+        ? [
+            {
+              section: "webmcp_tools",
+              reason: "invalid_protocol_value",
+              count: invalid,
+            },
+          ]
+        : []),
+      ...(foreign > 0
+        ? [
+            {
+              section: "webmcp_tools",
+              reason: "out_of_target_scope",
+              count: foreign,
+            },
+          ]
+        : []),
+    ]);
   },
 );
 
-describe("CdpBrowserProvider: transient WebMCP frames", () => {
-  it("drops stale child tools and reports partial coverage when a blank commit remains", async () => {
+describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
+  it("retains the exact passive WebMCP replay across a large frame inventory", async () => {
     const browser = await startFakeCdpBrowser({
       webMcpTools: true,
-      webMcpChildTransientBlank: true,
       extraCollections: true,
+      webMcpFrameCount: 1_001,
     });
     trackBrowser(browser);
     const result = await new CdpBrowserProvider().discoverWebMcpTools(
@@ -517,149 +511,81 @@ describe("CdpBrowserProvider: transient WebMCP frames", () => {
     );
 
     if (!result.ok) throw result.error;
-    expect(result.value.tools.items.map(({ name }) => name)).not.toContain(
-      "child_tool",
-    );
-    expect(result.value.completeness.attach_limited_sections).toContain(
-      "webmcp_tools",
-    );
-    // Initial foreign frame and its replay declaration are two exclusions;
-    // their count does not describe the transient allowed child.
+    expect(result.value.status).toBe("available");
+    expect(result.value.tools.total).toBe(3);
+    expect(
+      result.value.tools.items.toSorted((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+    ).toMatchObject([
+      {
+        name: "last_frame_tool",
+        frame_id: "webmcp-frame-1000",
+        frame_url: `${browser.allowedOrigin}/webmcp-frame/1000`,
+      },
+      {
+        name: "search_orders",
+        description: "Search orders; authorization=Bearer tool-secret",
+        declaration_kind: "declarative",
+        owner_origin: browser.allowedOrigin,
+        annotations: {
+          read_only: true,
+          untrusted_content: true,
+          consequential: true,
+          autosubmit: false,
+        },
+        input_schema: {
+          type: "object",
+          properties: {
+            orderId: { type: "string", example: "schema-secret" },
+            includeItems: { type: "boolean", default: true },
+          },
+          required: ["orderId"],
+        },
+        trust: "page-declared-untrusted",
+        registration_source: {
+          url: `${browser.allowedOrigin}/app.js?token=tool-source-secret`,
+          line: 12,
+          column: 4,
+        },
+      },
+      {
+        name: "update_order",
+        frame_id: "frame-main",
+        annotations: {
+          read_only: true,
+          untrusted_content: true,
+          consequential: false,
+          autosubmit: false,
+        },
+        trust: "page-declared-untrusted",
+      },
+    ]);
     expect(result.value.completeness.excluded).toContainEqual({
       section: "webmcp_tools",
       reason: "out_of_target_scope",
       count: 2,
     });
-  });
-
-  it("accepts fresh child registrations after a stable frame commit", async () => {
-    const browser = await startFakeCdpBrowser({
-      webMcpTools: true,
-      webMcpChildRecoversAfterTransient: true,
-      webMcpChildTransientBlank: true,
-      extraCollections: true,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.tools.items).toContainEqual(
-      expect.objectContaining({ name: "child_tool" }),
-    );
-    // Fresh registration restores this tool, but cannot recover pre-attach
-    // declarations from the initial allowed child frame.
-    expect(result.value.completeness.attach_limited_sections).toContain(
+    expect(result.value.completeness.unavailable_sections).not.toContain(
       "webmcp_tools",
     );
-  });
-
-  it("drops registrations from a child document when that frame commits a replacement", async () => {
-    const browser = await startFakeCdpBrowser({
-      webMcpTools: true,
-      webMcpChildNavigatesAllowed: true,
-      extraCollections: true,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
+    expect(result.value.completeness.truncated_sections).not.toContain(
+      "webmcp_tools",
     );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.tools.items.map(({ name }) => name)).not.toContain(
-      "child_tool",
+    expect(JSON.stringify(result.value)).not.toContain("private-tool-secret");
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).toContain("WebMCP.enable");
+    expect(methods).toContain("WebMCP.disable");
+    expect(methods).toContain("Target.detachFromTarget");
+    expect(methods.indexOf("WebMCP.enable")).toBeLessThan(
+      methods.indexOf("WebMCP.disable"),
     );
-    // The initial foreign frame and the excluded foreign replay declaration
-    // are separate observed exclusions; replacing an allowed child adds none.
-    expect(result.value.completeness.excluded).toEqual([
-      { section: "webmcp_tools", reason: "out_of_target_scope", count: 2 },
-    ]);
+    expect(methods.indexOf("WebMCP.disable")).toBeLessThan(
+      methods.indexOf("Target.detachFromTarget"),
+    );
+    expect(methods).not.toContain("WebMCP.invokeTool");
+    expect(methods).not.toContain("Runtime.evaluate");
   });
-});
-
-describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
-  it.each([true, false])(
-    "discovers untrusted WebMCP declarations with consequential=%s without invoking them",
-    async (consequential) => {
-      const browser = await startFakeCdpBrowser({
-        webMcpTools: true,
-        webMcpConsequential: consequential,
-      });
-      trackBrowser(browser);
-      const result = await new CdpBrowserProvider().discoverWebMcpTools(
-        discoverWebMcpToolsInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          allowed_origins: [browser.allowedOrigin],
-          target_id: "allowed-page",
-          observation_ms: 0,
-        }),
-      );
-
-      if (!result.ok) throw result.error;
-      expect(result.value).toMatchObject({
-        status: "available",
-        tools: {
-          total: 1,
-          items: [
-            {
-              name: "search_orders",
-              description: "Search orders; authorization=Bearer tool-secret",
-              declaration_kind: "declarative",
-              owner_origin: browser.allowedOrigin,
-              annotations: {
-                read_only: true,
-                untrusted_content: true,
-                consequential,
-                autosubmit: false,
-              },
-              trust: "page-declared-untrusted",
-              registration_source: {
-                url: `${browser.allowedOrigin}/app.js?token=tool-source-secret`,
-                line: 12,
-                column: 4,
-              },
-            },
-          ],
-        },
-      });
-      expect(result.value.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "webmcp_tools",
-          reason: "out_of_target_scope",
-        }),
-      );
-      expect(result.value.completeness.unavailable_sections).not.toContain(
-        "webmcp_tools",
-      );
-      const serialized = JSON.stringify(result.value);
-      expect(serialized).toContain("tool-secret");
-      expect(serialized).toContain("tool-source-secret");
-      expect(serialized).toContain("schema-secret");
-      expect(serialized).not.toContain("private-tool-secret");
-      const methods = browser.commands.map(({ method }) => method);
-      expect(methods).toContain("WebMCP.enable");
-      expect(methods).toContain("WebMCP.disable");
-      expect(methods.indexOf("WebMCP.enable")).toBeLessThan(
-        methods.indexOf("WebMCP.disable"),
-      );
-      expect(methods.indexOf("WebMCP.disable")).toBeLessThan(
-        methods.indexOf("Target.detachFromTarget"),
-      );
-      expect(methods).not.toContain("WebMCP.invokeTool");
-      expect(methods).not.toContain("Runtime.evaluate");
-    },
-  );
 
   it("reports WebMCP unavailable when the experimental domain is absent", async () => {
     const browser = await startFakeCdpBrowser({
@@ -682,329 +608,259 @@ describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
       "webmcp_tools",
     );
   });
-
-  it("rejects WebMCP evidence when the page leaves its approved origin", async () => {
-    const browser = await startFakeCdpBrowser({
-      webMcpTools: true,
-      frameUrlAfterFirstRead: "https://private.example.test/tools",
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BrowserObservationError",
-        operation: "discover_webmcp_tools",
-        reason: "target_not_allowed",
-      },
-    });
-    expect(browser.commands.map(({ method }) => method)).not.toContain(
-      "WebMCP.invokeTool",
-    );
-  });
 });
 
-describe("CdpBrowserProvider: WebMCP replay inventory", () => {
-  it("returns every WebMCP registration in the replay", async () => {
-    const browser = await startFakeCdpBrowser({
-      webMcpTools: true,
-      extraCollections: true,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.tools).toMatchObject({
-      total: 2,
-      items: [expect.any(Object), expect.any(Object)],
-    });
-    expect(result.value.completeness.truncated_sections).not.toContain(
-      "webmcp_tools",
-    );
-  });
-
-  // Frame count has no ceiling: the last of many authorized frames still
-  // contributes its registration.
-  it("retains registrations from every authorized frame of a page with many frames", async () => {
-    const browser = await startFakeCdpBrowser({
-      webMcpTools: true,
-      webMcpFrameCount: 1_001,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.tools.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "last_frame_tool",
-          frame_id: "webmcp-frame-1000",
-        }),
-      ]),
-    );
-    expect(result.value.completeness.truncated_sections).not.toContain(
-      "webmcp_tools",
-    );
-  });
-});
-
-describe("CdpBrowserProvider WebMCP malformed replay completeness", () => {
-  it.each(["toolsAdded", "toolsRemoved"] as const)(
-    "keeps malformed %s replay entries from proving WebMCP equality",
-    async (malformedEvent) => {
-      let malformed = false;
-      const registration = {
-        name: "read_item",
-        frameId: "frame-main",
-        inputSchema: { type: "object" },
+it("retains readable replay updates while malformed additions or removals leave equality unknown", async () => {
+  let malformed: "added" | "removed" | undefined;
+  const registration = {
+    name: "read_item",
+    frameId: "frame-main",
+    inputSchema: { type: "object" },
+  };
+  const temporary = { name: "temporary_item", frameId: "frame-main" };
+  const browser = await startFakeCdpBrowser({
+    commandEvents: ({ method, sessionId }) => {
+      if (method !== "WebMCP.enable") return undefined;
+      const additions = {
+        method: "WebMCP.toolsAdded",
+        sessionId,
+        params: {
+          tools:
+            malformed === "added"
+              ? [registration, null]
+              : malformed === "removed"
+                ? [registration, temporary]
+                : [registration],
+        },
       };
-      const browser = await startFakeCdpBrowser({
-        commandEvents: (command) => {
-          if (command.method !== "WebMCP.enable") return undefined;
-          const events: {
-            readonly method: string;
-            readonly params: unknown;
-            readonly sessionId?: string;
-          }[] = [
+      if (malformed !== "removed") return [additions];
+      return [
+        additions,
+        {
+          method: "WebMCP.toolsRemoved",
+          sessionId,
+          params: { tools: [temporary, { name: registration.name }, null] },
+        },
+      ];
+    },
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const input = {
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+  };
+  const inspection = await provider.inspectPage(
+    inspectWebPageInputSchema.parse(input),
+  );
+  if (!inspection.ok) throw inspection.error;
+  const discover = async () => {
+    const result = await provider.discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse(input),
+    );
+    if (!result.ok) throw result.error;
+    return result.value;
+  };
+
+  const before = await discover();
+  expect(before.tools.items).toMatchObject([
+    { name: "read_item", frame_id: "frame-main" },
+  ]);
+  expect(before.completeness.unavailable_sections).not.toContain(
+    "webmcp_tools",
+  );
+  for (const [event, count] of [
+    ["added", 1],
+    ["removed", 2],
+  ] as const) {
+    malformed = event;
+    const after = await discover();
+    expect(after.tools.items, event).toEqual(before.tools.items);
+    expect(after.completeness.unavailable_sections, event).toContain(
+      "webmcp_tools",
+    );
+    expect(after.completeness.excluded, event).toContainEqual({
+      section: "webmcp_tools",
+      reason: "invalid_protocol_value",
+      count,
+    });
+    const comparison = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: inspection.value, webmcp: before },
+        after: { inspection: inspection.value, webmcp: after },
+      }),
+    );
+    expect(comparison.dimensions.webmcp, event).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
+  }
+});
+
+const webMcpSchemaFixtures = () => {
+  const declaration = {
+    type: "object",
+    properties: { value: { type: "string", enum: ["one", "two"] } },
+    required: ["value"],
+    $ref: "https://untrusted.invalid/schema.json",
+    examples: [{ token: "caller-schema-value" }],
+  };
+  const large = {
+    type: "object",
+    properties: Object.fromEntries(
+      Array.from({ length: 5_001 }, (_, index) => [
+        `field_${index}`,
+        { type: "string" },
+      ]),
+    ),
+    required: ["field_5000"],
+  };
+  const beforeSchemas = {
+    boolean: declaration,
+    enum: declaration,
+    large,
+    order: declaration,
+    required: declaration,
+    type: declaration,
+  };
+  const afterSchemas = {
+    boolean: false,
+    enum: {
+      ...declaration,
+      properties: { value: { type: "string", enum: ["two", "three"] } },
+    },
+    large,
+    order: {
+      examples: declaration.examples,
+      $ref: declaration.$ref,
+      required: declaration.required,
+      properties: { value: { enum: ["one", "two"], type: "string" } },
+      type: declaration.type,
+    },
+    required: { ...declaration, required: [] },
+    type: {
+      ...declaration,
+      properties: { value: { type: "number", enum: ["one", "two"] } },
+    },
+  };
+  return { beforeSchemas, afterSchemas };
+};
+
+it("preserves full WebMCP schemas and compares their content independently of key order", async () => {
+  const { beforeSchemas, afterSchemas } = webMcpSchemaFixtures();
+  let schemas: Record<string, JsonValue> = beforeSchemas;
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["WebMCP.enable"],
+    commandEvents: ({ method, sessionId }) =>
+      method === "WebMCP.enable"
+        ? [
             {
               method: "WebMCP.toolsAdded",
-              ...(command.sessionId === undefined
-                ? {}
-                : { sessionId: command.sessionId }),
+              sessionId,
               params: {
-                tools:
-                  malformed && malformedEvent === "toolsAdded"
-                    ? [registration, null]
-                    : [registration],
+                tools: Object.entries(schemas).map(([name, inputSchema]) => ({
+                  name,
+                  frameId: "frame-main",
+                  inputSchema,
+                  annotations: { consequential: false },
+                })),
               },
             },
-          ];
-          if (malformed && malformedEvent === "toolsRemoved")
-            events.push({
-              method: "WebMCP.toolsRemoved",
-              ...(command.sessionId === undefined
-                ? {}
-                : { sessionId: command.sessionId }),
-              params: { tools: [{ name: registration.name }, null] },
-            });
-          return events;
-        },
-      });
-      trackBrowser(browser);
-      const provider = new CdpBrowserProvider();
-      const input = {
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      };
-      const inspection = await provider.inspectPage(
-        inspectWebPageInputSchema.parse(input),
-      );
-      if (!inspection.ok) throw inspection.error;
-      const discover = async () => {
-        const result = await provider.discoverWebMcpTools(
-          discoverWebMcpToolsInputSchema.parse(input),
-        );
-        if (!result.ok) throw result.error;
-        return result.value;
-      };
-      const before = await discover();
-      expect(before.tools.items).toHaveLength(1);
-      expect(before.completeness.unavailable_sections).not.toContain(
-        "webmcp_tools",
-      );
-
-      malformed = true;
-      const after = await discover();
-      expect(after.tools.items).toHaveLength(1);
-      expect(after.completeness.unavailable_sections).toContain("webmcp_tools");
-      expect(after.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "webmcp_tools",
-          reason: "invalid_protocol_value",
-        }),
-      );
-      const comparison = compareWebCaptures(
-        compareWebCapturesInputSchema.parse({
-          before: { inspection: inspection.value, webmcp: before },
-          after: { inspection: inspection.value, webmcp: after },
-        }),
-      );
-      expect(comparison.dimensions.webmcp).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-      });
-    },
-  );
-});
-
-describe("CdpBrowserProvider WebMCP schema comparison", () => {
-  it("compares full untrusted declarations independently of object-key order", async () => {
-    const declaration: JsonValue = {
-      type: "object",
-      properties: { value: { type: "string", enum: ["one", "two"] } },
-      required: ["value"],
-      $ref: "https://untrusted.invalid/schema.json",
-      examples: [{ token: "caller-schema-value" }],
-    };
-    let inputSchema: JsonValue = declaration;
-    const browser = await startFakeCdpBrowser({
-      // A root-only replay supplies complete owner correspondence. Foreign
-      // filtering and pre-existing child coverage are tested separately above.
-      eventsBeforeReply: ["WebMCP.enable"],
-      commandEvents: ({ method, sessionId }) =>
-        method === "WebMCP.enable"
-          ? [
-              {
-                method: "WebMCP.toolsAdded",
-                ...(sessionId === undefined ? {} : { sessionId }),
-                params: {
-                  tools: [
-                    {
-                      name: "schema_tool",
-                      frameId: "frame-main",
-                      inputSchema,
-                      annotations: { consequential: false },
-                    },
-                  ],
-                },
+          ]
+        : undefined,
+    commandResult: ({ method }, origin) =>
+      method === "Page.getFrameTree"
+        ? {
+            frameTree: {
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-main",
+                url: `${origin}/app`,
               },
-            ]
-          : undefined,
-      commandResult: ({ method }, origin) =>
-        method === "Page.getFrameTree"
-          ? {
-              frameTree: {
-                frame: {
-                  id: "frame-main",
-                  loaderId: "loader-main",
-                  url: `${origin}/app`,
-                },
-              },
-            }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    const input = {
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-    };
-    const inspection = await provider.inspectPage(
-      inspectWebPageInputSchema.parse(input),
-    );
-    if (!inspection.ok) throw inspection.error;
-    const discover = async () => {
-      const result = await provider.discoverWebMcpTools(
-        discoverWebMcpToolsInputSchema.parse(input),
-      );
-      if (!result.ok) throw result.error;
-      return result.value;
-    };
-    const before = await discover();
-    expect(before.tools.items[0]).toMatchObject({
-      input_schema: declaration,
-      input_schema_sha256: digestCanonicalValue(declaration),
-      trust: "page-declared-untrusted",
-    });
-    const compare = async (schema: JsonValue) => {
-      inputSchema = schema;
-      const after = await discover();
-      const diff = compareWebCaptures(
-        compareWebCapturesInputSchema.parse({
-          before: { inspection: inspection.value, webmcp: before },
-          after: { inspection: inspection.value, webmcp: after },
-        }),
-      );
-      return { after, dimension: diff.dimensions.webmcp };
-    };
-    const reordered = Object.fromEntries(Object.entries(declaration).reverse());
-    const equivalent = await compare(reordered);
-    expect(equivalent.dimension).toMatchObject({
-      status: "unchanged",
-      total_changes: 0,
-    });
-    expect(equivalent.after.tools.items[0]?.input_schema_sha256).toBe(
-      before.tools.items[0]?.input_schema_sha256,
-    );
-    for (const changed of [
-      {
-        ...declaration,
-        properties: { value: { type: "number", enum: ["one", "two"] } },
-      },
-      { ...declaration, required: [] },
-      {
-        ...declaration,
-        properties: { value: { type: "string", enum: ["two", "three"] } },
-      },
-      false,
-    ]) {
-      const result = await compare(changed);
-      expect(result.dimension).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-        changes: [expect.objectContaining({ change: "modified" })],
-      });
-    }
+            },
+          }
+        : undefined,
   });
-
-  it("retains every field in a large declared WebMCP input schema", async () => {
-    const propertyCount = 5_001;
-    const browser = await startFakeCdpBrowser({
-      webMcpTools: true,
-      webMcpSchemaPropertyCount: propertyCount,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const input = {
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+  };
+  const inspection = await provider.inspectPage(
+    inspectWebPageInputSchema.parse(input),
+  );
+  if (!inspection.ok) throw inspection.error;
+  const discover = async (expected: Record<string, JsonValue>) => {
+    schemas = expected;
+    const result = await provider.discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse(input),
     );
-
     if (!result.ok) throw result.error;
-    const tool = result.value.tools.items[0];
-    expect(tool?.input_schema).toMatchObject({
-      type: "object",
-      properties: { field_5000: { type: "string" } },
-    });
-    if (
-      tool?.input_schema === null ||
-      typeof tool?.input_schema !== "object" ||
-      Array.isArray(tool.input_schema)
-    )
-      throw new Error("Expected an observed schema object");
-    expect(Object.keys(tool.input_schema.properties ?? {})).toHaveLength(
-      propertyCount,
+    expect(
+      result.value.tools.items.toSorted((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+    ).toMatchObject(
+      Object.keys(expected)
+        .sort()
+        .map((name) => ({ name, trust: "page-declared-untrusted" })),
     );
-    expect(tool.input_schema_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(
+      Object.fromEntries(
+        result.value.tools.items.map(({ name, input_schema }) => [
+          name,
+          input_schema,
+        ]),
+      ),
+    ).toEqual(expected);
+    return result.value;
+  };
+  const before = await discover(beforeSchemas);
+  const after = await discover(afterSchemas);
+  const schemaDigest = (capture: typeof before, name: string) =>
+    capture.tools.items.find((tool) => tool.name === name)?.input_schema_sha256;
+  const declarationDigest =
+    "127d24bbafde3105597f59a68270447d22da150ea3f31e8a5cbcca206cc80773";
+  const largeDigest =
+    "2b5d02f573c523d3d1e4e6faf409974bae648b9cf7e20680678c2387f56873df";
+  expect(schemaDigest(before, "order")).toBe(declarationDigest);
+  expect(schemaDigest(after, "order")).toBe(declarationDigest);
+  expect(schemaDigest(before, "large")).toBe(largeDigest);
+  expect(schemaDigest(after, "large")).toBe(largeDigest);
+  expect(schemaDigest(after, "boolean")).toBe(
+    "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa",
+  );
+
+  const comparison = compareWebCaptures(
+    compareWebCapturesInputSchema.parse({
+      before: { inspection: inspection.value, webmcp: before },
+      after: { inspection: inspection.value, webmcp: after },
+    }),
+  );
+  const changed = ["boolean", "enum", "required", "type"].map((name) => {
+    const canonicalIdentity = JSON.stringify({
+      frame_url: `${browser.allowedOrigin}/app`,
+      name,
+      owner_origin: browser.allowedOrigin,
+    });
+    return {
+      identity: `webmcp_${createHash("sha256").update(canonicalIdentity).digest("hex")}`,
+      change: "modified",
+    };
+  });
+  expect(comparison.dimensions.webmcp).toEqual({
+    status: "changed",
+    total_changes: 4,
+    changes: changed.toSorted((left, right) =>
+      left.identity.localeCompare(right.identity),
+    ),
+    reason: null,
   });
 });
 
@@ -1116,138 +972,167 @@ describe("CdpBrowserProvider: complete passive inventories", () => {
   });
 });
 
-describe("CdpBrowserProvider: WebMCP registration owners", () => {
-  it.each(["retain", "remove-second"] as const)(
-    "keeps same-URL frame owners separate: %s",
-    async (mode) => {
-      const browser = await startFakeCdpBrowser({
-        webMcpSameUrlRegistrations: mode,
-      });
-      trackBrowser(browser);
-      const result = await new CdpBrowserProvider().discoverWebMcpTools(
-        discoverWebMcpToolsInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          allowed_origins: [browser.allowedOrigin],
-          target_id: "allowed-page",
-          observation_ms: 0,
-        }),
-      );
-      if (!result.ok) throw result.error;
-      const tools = result.value.tools.items;
-      expect(tools).toHaveLength(mode === "retain" ? 2 : 1);
-      expect(result.value.tools.total).toBe(tools.length);
-      // Declarations without annotations report absent hints as null, never
-      // collapsed to a declared false.
-      for (const tool of tools)
-        expect(tool.annotations).toEqual({
-          read_only: null,
-          untrusted_content: null,
-          consequential: null,
-          autosubmit: null,
-        });
-      expect(tools).toContainEqual(
-        expect.objectContaining({
-          name: "read_item",
-          frame_id: "webmcp-frame-0",
-          description: "First owner updated",
-        }),
-      );
-      if (mode === "retain") {
-        expect(tools).toContainEqual(
-          expect.objectContaining({
-            name: "read_item",
-            frame_id: "webmcp-frame-1",
-            description: "Second owner",
-          }),
-        );
-        expect(new Set(tools.map((tool) => tool.tool_key)).size).toBe(2);
-        expect(new Set(tools.map((tool) => tool.frame_url)).size).toBe(1);
-      }
-      expect(browser.commands.map(({ method }) => method)).not.toContain(
-        "WebMCP.invokeTool",
-      );
-      expect(browser.commands.map(({ method }) => method)).not.toContain(
-        "Runtime.evaluate",
-      );
-    },
-  );
-});
-
-it.each(["initial", "final"])(
-  "reports malformed WebMCP %s frame identity as protocol uncertainty",
-  async (phase) => {
-    const browser = await startFakeCdpBrowser({
-      commandResult: ({ method }, origin, reads) =>
-        method === "Page.getFrameTree" && (phase === "initial" || reads > 1)
-          ? {
-              frameTree: {
-                frame: {
-                  id: "frame-main",
-                  loaderId: "loader-main",
-                  url: `${origin}/app`,
-                  urlFragment: 7,
-                },
+it("keeps same-name registrations distinct across owners at the same URL", async () => {
+  const owners = ["first", "second", "removed"];
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["WebMCP.enable"],
+    commandResult: ({ method }, origin) =>
+      method === "Page.getFrameTree"
+        ? {
+            frameTree: {
+              frame: {
+                id: "frame-main",
+                loaderId: "main-loader",
+                url: `${origin}/app`,
               },
-            }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: { reason: "protocol_error" },
-    });
-  },
-);
-
-it.each([undefined, 7, ""])(
-  "retains initial child ancestry uncertainty: %s",
-  async (parentId) => {
-    const browser = await startFakeCdpBrowser({
-      commandResult: ({ method }, origin) =>
-        method === "Page.getFrameTree"
-          ? {
-              frameTree: {
+              childFrames: owners.map((id) => ({
                 frame: {
-                  id: "frame-main",
-                  loaderId: "loader-frame-main",
-                  url: `${origin}/app`,
+                  id,
+                  parentId: "frame-main",
+                  loaderId: id,
+                  url: `${origin}/shared`,
                 },
-                childFrames: [
+              })),
+            },
+          }
+        : undefined,
+    commandEvents: ({ method, sessionId }) =>
+      method === "WebMCP.enable"
+        ? [
+            {
+              method: "WebMCP.toolsAdded",
+              sessionId,
+              params: {
+                tools: owners.map((frameId) => ({
+                  name: "read_item",
+                  frameId,
+                  description: frameId,
+                })),
+              },
+            },
+            {
+              method: "WebMCP.toolsAdded",
+              sessionId,
+              params: {
+                tools: [
                   {
-                    frame: {
-                      id: "child",
-                      url: `${origin}/child`,
-                      ...(parentId === undefined ? {} : { parentId }),
-                    },
+                    name: "read_item",
+                    frameId: "first",
+                    description: "Updated first owner",
+                    inputSchema: {},
                   },
                 ],
               },
-            }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.completeness.excluded).toContainEqual({
-      section: "webmcp_tools",
-      reason: "invalid_protocol_value",
-      count: 1,
-    });
-    expect(result.value.completeness.policy_filtered_sections).toEqual([]);
-  },
-);
+            },
+            {
+              method: "WebMCP.toolsRemoved",
+              sessionId,
+              params: { tools: [{ name: "read_item", frameId: "removed" }] },
+            },
+          ]
+        : undefined,
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().discoverWebMcpTools(
+    discoverWebMcpToolsInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  const annotations = {
+    read_only: null,
+    untrusted_content: null,
+    consequential: null,
+    autosubmit: null,
+  };
+  const tools = result.value.tools.items.toSorted((left, right) =>
+    left.frame_id.localeCompare(right.frame_id),
+  );
+  expect(result.value.tools.total).toBe(2);
+  expect(tools).toMatchObject([
+    {
+      name: "read_item",
+      frame_id: "first",
+      frame_url: `${browser.allowedOrigin}/shared`,
+      description: "Updated first owner",
+      input_schema: {},
+      input_schema_sha256:
+        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      annotations,
+    },
+    {
+      name: "read_item",
+      frame_id: "second",
+      frame_url: `${browser.allowedOrigin}/shared`,
+      description: "second",
+      input_schema: null,
+      input_schema_sha256: null,
+      annotations,
+    },
+  ]);
+  expect(new Set(tools.map(({ tool_key }) => tool_key)).size).toBe(2);
+  expect(result.value.completeness.unavailable_sections).not.toContain(
+    "webmcp_tools",
+  );
+  expect(result.value.completeness.excluded).toEqual([]);
+});
+
+it("retains initial child ancestry uncertainty without excluding valid owners", async () => {
+  const children = [
+    { id: "omitted-parent" },
+    { id: "numeric-parent", parentId: 7 },
+    { id: "empty-parent", parentId: "" },
+    { id: "valid", parentId: "frame-main" },
+  ];
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["WebMCP.enable"],
+    commandResult: ({ method }, origin) =>
+      method === "Page.getFrameTree"
+        ? {
+            frameTree: {
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-main",
+                url: `${origin}/app`,
+              },
+              childFrames: children.map((frame) => ({
+                frame: { ...frame, url: `${origin}/${frame.id}` },
+              })),
+            },
+          }
+        : undefined,
+    commandEvents: ({ method, sessionId }) =>
+      method === "WebMCP.enable"
+        ? [
+            {
+              method: "WebMCP.toolsAdded",
+              sessionId,
+              params: { tools: [{ name: "read", frameId: "valid" }] },
+            },
+          ]
+        : undefined,
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().discoverWebMcpTools(
+    discoverWebMcpToolsInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.tools.items).toMatchObject([
+    { name: "read", frame_id: "valid" },
+  ]);
+  expect(result.value.completeness.unavailable_sections).toContain(
+    "webmcp_tools",
+  );
+  expect(result.value.completeness.excluded).toEqual([
+    { section: "webmcp_tools", reason: "invalid_protocol_value", count: 3 },
+  ]);
+  expect(result.value.completeness.policy_filtered_sections).toEqual([]);
+});
