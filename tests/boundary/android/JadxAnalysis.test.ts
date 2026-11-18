@@ -15,6 +15,7 @@ import {
   type AndroidMappingSource,
 } from "../../../src/domain/android/androidMapping.js";
 import { parseProguardMapping } from "../../../src/domain/android/proguardMapping.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 
 const summary = {
   full_name: "fixture.Target",
@@ -1223,4 +1224,46 @@ it("refuses inner class raw names that do not align with display names", async (
       obfuscatedTools({ ...obfuscatedSummary, inner_class_raw_names: [] }),
     ),
   ).rejects.toMatchObject({ _tag: "AnalysisOutputError" });
+});
+
+it("reports inspect_android_method get_method_body failure as an unavailable body", async () => {
+  const tools: JadxToolPort = {
+    listClasses: () => Promise.reject(new Error("unexpected")),
+    text: () => Promise.reject(new Error("unexpected")),
+    json: (name) => {
+      if (name === "get_class_summary") return Promise.resolve(summary);
+      if (name === "get_method_body")
+        return Promise.reject(
+          new ProviderAdapterError("jadx", "inspect_android_method", {
+            diagnostics: {
+              upstream_operation: "get_method_body",
+              reason:
+                "Disassembly could not establish one selected method: choose(String): void",
+            },
+          }),
+        );
+      return Promise.reject(new Error(`unexpected json call: ${name}`));
+    },
+  };
+
+  const result = androidResultSchemas.inspect_android_method.parse(
+    await analyzeJadxRequest(
+      tools,
+      {
+        operation: "inspect_android_method",
+        input: {
+          path: "/fixture.apk",
+          class_name: "fixture.Target",
+          method_name: "choose",
+          overload_index: 0,
+        },
+      },
+      { loaded: {} as never, engine },
+    ),
+  );
+
+  expect(result.body_status).toBe("not_available");
+  expect(result.markers).toContain("disassembly_failed");
+  expect(result.representation).toBe("smali");
+  expect(result.source.text).toBe("");
 });

@@ -12,6 +12,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
 import type { AndroidJniLibraries } from "./AndroidJniLibraries.js";
@@ -413,14 +414,47 @@ const inspectMethod = async (
       "overload_index",
       `Index ${index} is outside the ${candidates.length} matching overloads.`,
     );
-  const body = jadxMethodSchema.parse(
-    await tools.json("get_method_body", {
-      class_name: request.input.class_name,
-      method_name: request.input.method_name,
-      overload_index: index,
-      smali_fallback: true,
-    }),
-  );
+  let body: z.infer<typeof jadxMethodSchema>;
+  try {
+    body = jadxMethodSchema.parse(
+      await tools.json("get_method_body", {
+        class_name: request.input.class_name,
+        method_name: request.input.method_name,
+        overload_index: index,
+        smali_fallback: true,
+      }),
+    );
+  } catch (cause) {
+    if (
+      cause instanceof ProviderAdapterError &&
+      cause.diagnostics?.upstream_operation === "get_method_body"
+    ) {
+      return androidResultSchemas.inspect_android_method.parse({
+        engine,
+        class_name: summary.full_name,
+        method: selected,
+        overload_count: candidates.length,
+        representation: "smali",
+        body_status: "not_available",
+        fell_back: false,
+        markers: ["disassembly_failed"],
+        source: {
+          status: "complete",
+          text: "",
+          reported_total_bytes: 0,
+        },
+        ...mappingOf(mapping, () => [
+          classQuery(summary),
+          ...methodQueries(summary).filter(
+            (method) =>
+              method.name === selected.name &&
+              method.overload_index === selected.overload_index,
+          ),
+        ]),
+      });
+    }
+    throw cause;
+  }
   if (
     body.class_name !== summary.full_name ||
     body.method_name !== request.input.method_name ||
