@@ -52,7 +52,7 @@ the verified Ghidra 12.2 and JDK 25 build.
 | `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                                                  | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.2, and full JDK 25            |
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O                  | Clang with AArch64 target support, Ghidra 12.2, and full JDK 25           |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                               | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites       |
-| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                   | Ghidra 12.1.4, full JDK 21, and the matching native artifact              |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                   | Ghidra 12.2, full JDK 25, and the matching native artifact                |
 | `npm run verify:ghidra:dol`                | Any supported Ghidra host; source-owned PowerPC GameCube DOL fixture built from a linker script (never executed) | Clang with PowerPC target, LLD, GNU readelf, Ghidra 12.2, and full JDK 25 |
 
 The optional Swift lane compiles a source-owned fixture and checks modern and
@@ -516,7 +516,7 @@ runtime or PC-98 device execution.
 `npm run verify:ghidra:6502` uses `ca65` and `ld65` to build the source-owned
 NMOS 6502 fixture from `tests/conformance/ghidra/6502.s` and `6502.cfg`. Set
 `REA_CA65` and `REA_LD65` for non-PATH installations (tested with cc65 `V2.19`).
-With an installed Ghidra 12.1.4 and full JDK, it verifies real CLI/stdio MCP
+With the verified Ghidra 12.2 and full JDK 25, it verifies real CLI/stdio MCP
 mapping parity, exact source bytes, functions, a direct call reference,
 decompilation, 16-bit overflow rejection without replacing the active session,
 and runtime cleanup. Windows additionally requires the matching native addon;
@@ -525,7 +525,7 @@ retained Job Object, as in the other Windows lanes.
 
 `npm run verify:ghidra:m68k` needs no assembler: its 22-byte big-endian 68000
 fixture is source-owned annotated hex in the verifier, loaded at `0x1000`. With
-an installed Ghidra 12.1.4 and full JDK on Linux or macOS, it verifies the
+the verified Ghidra 12.2 and full JDK 25 on Linux or macOS, it verifies the
 `68000:BE:32:default` BinaryLoader import, real CLI/stdio MCP load-image parity,
 exact source bytes, both functions, the `bsr.b` call reference, decompilation
 through address and file offset, rejection of a misaligned entry and of a mapping
@@ -661,7 +661,7 @@ sigrok verifier establishes the actual-tool observation. Edits to verifier entry
 workflows run static checks and the Linux suite. Website changes run website
 checks. Provider workflow changes validate the workflow and run that provider's
 verifier. Changes under `bridge/ghidra/` also select the `ghidra_bridge` lane,
-which compiles the packaged bridge sources against the pinned Ghidra 12.1.4
+which compiles the packaged bridge sources against the pinned Ghidra 12.2
 jars with `npm run verify:ghidra:bridge-sources`. That compile step never
 launches Ghidra or imports a target, so a missing import fails the PR instead
 of every Ghidra session. The launcher, compiler and package checks share named required source
