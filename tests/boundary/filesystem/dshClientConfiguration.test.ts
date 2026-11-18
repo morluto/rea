@@ -903,7 +903,9 @@ describe("DeepSeek Harness tool call timeout", () => {
       advisory: expect.stringContaining("toolCallTimeoutMs = 450000 ms"),
     });
   });
+});
 
+describe("DeepSeek Harness tool call timeout repair", () => {
   it("repairs a registration without a tool timeout", async () => {
     const { home, client } = await harnessClient();
     await writeFile(
