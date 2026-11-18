@@ -227,6 +227,26 @@ describe("source-map layout admission", () => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
     },
   );
+  it.each([",", ",AAAA", "AAAA,,A", "AAAA,", "AAAA,;A"])(
+    "rejects empty mapping segments around commas: %s",
+    (mappings) => {
+      expect(() => trace({ ...leaf, mappings })).toThrow(
+        /empty mapping segment/u,
+      );
+    },
+  );
+  it("retains empty generated lines and generated-only mappings", () => {
+    const report = traceSourceMap(
+      JSON.stringify({ ...leaf, mappings: ";;A,CAAA;" }),
+      url,
+      { line: 3, column: 0 },
+    );
+    expect(report.lookup.matched_generated_position).toEqual({
+      line: 3,
+      column: 0,
+    });
+    expect(report.matches).toEqual([{ state: "generated-only" }]);
+  });
   it("validates regular-map source indexes after reusing its decoded rows", () => {
     expect(() => trace({ ...leaf, mappings: "ACAA" })).toThrow(/index/u);
   });
