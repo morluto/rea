@@ -660,7 +660,7 @@ export const bindingMethodMayHaveChanged = (
     state,
     "reference",
   ))
-    if (mayPrecede(effect, true)) return true;
+    if (mayPrecede(effect, !inherited)) return true;
   const shadowedWrite = (path: JavaScriptSemanticPropertyPath): boolean =>
     definingPrototypeDepth !== undefined &&
     path.length - 1 > definingPrototypeDepth &&
@@ -683,14 +683,17 @@ export const bindingMethodMayHaveChanged = (
                 ))))) &&
         mayPrecede(effect.node, effect.path.length <= 1),
     ) ||
-    binding.escapedPaths.some(
-      (effect) =>
+    binding.escapedPaths.some((effect) => {
+      // An opaque caller handed an instance can still reach its shared prototype.
+      const instanceOnly = effect.path.length === 0 && !inherited;
+      return (
         !(isolatedNativeCloses && effect.path.length === 0) &&
-        (effect.path.length > 0 || targets(effect)) &&
+        (!instanceOnly || targets(effect)) &&
         reachesReceiver(effect.path, effect.path.length, true) &&
         effect.node !== state.parentsByNode.get(read) &&
-        mayPrecede(effect.node, effect.path.length === 0),
-    )
+        mayPrecede(effect.node, instanceOnly)
+      );
+    })
   );
 };
 

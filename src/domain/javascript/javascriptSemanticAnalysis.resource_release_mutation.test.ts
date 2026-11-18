@@ -305,18 +305,14 @@ it("retains shared module escapes after collecting resource receiver paths", () 
   ).toMatchObject([{ resolution: "complete" }]);
 });
 
-it.each([
-  "stream.close = () => {};",
-  "decorate(stream);",
-  'eval("stream.close = () => {}");',
-])("keeps a fresh local release before %s complete", (effect) => {
+it("keeps a fresh local release before an instance write complete", () => {
   expect(
     releases(`
     import { createReadStream } from "node:fs";
     function run() {
       const stream = createReadStream("fixture.txt");
       stream.close();
-      ${effect}
+      stream.close = () => {};
     }
   `),
   ).toMatchObject([{ resolution: "complete" }]);
@@ -324,8 +320,8 @@ it.each([
 
 it.each([
   ["stream.close(); stream.close = () => {};", "complete"],
-  ["stream.close(); decorate(stream);", "complete"],
-  ['stream.close(); eval("stream.close = () => {}");', "complete"],
+  ["stream.close(); decorate(stream);", "partial"],
+  ['stream.close(); eval("stream.__proto__.close = () => {}");', "partial"],
   ["stream.close(); stream.__proto__.close = () => {};", "partial"],
   ["stream.close = () => {}; stream.close();", "partial"],
 ])(
@@ -400,7 +396,6 @@ it("retains prior mutations and persistent receiver effects", () => {
 
 it.each([
   'stream.close=()=>{}; stream=createReadStream("new");',
-  'decorate(stream); stream=createReadStream("new");',
   'const old=stream; old.close=()=>{}; stream=createReadStream("new");',
   'const old=stream; stream=createReadStream("new"); old.close=()=>{};',
 ])(
@@ -418,6 +413,8 @@ it.each([
   "stream.__proto__.destroy = () => {};",
   "stream.constructor.prototype.destroy = () => {};",
   "decorate(stream.__proto__);",
+  "Object.getPrototypeOf(stream).destroy = () => {};",
+  "decorate(stream);",
 ])(
   "keeps a shared prototype effect through receiver replacement: %s",
   (effect) => {
