@@ -21,6 +21,11 @@ NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?
 WHITESPACE_RUN = re.compile(r"[ \t\r\n]+")
 
 
+def _trim(text: str) -> str:
+    """ECMAScript String.trim(), as REA uses for numeral and saved-time recognition."""
+    return text.strip("\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff")
+
+
 def _shown(value) -> str:
     text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return text if len(text) <= 200 else text[:200] + "…"
@@ -44,12 +49,15 @@ def _same(actual, expected) -> bool:
 ${PYTHON_POINTER}
 
 def _number(value):
-    """A number, or a numeral string read as one; None for anything else, a boolean, or a numeral past the doubles."""
+    """A number, or a whitespace-trimmed numeral; None for anything else, a boolean, or a numeral past the doubles."""
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return value
-    if not isinstance(value, str) or not NUMERAL.fullmatch(value):
+    if not isinstance(value, str):
+        return None
+    value = _trim(value)
+    if not NUMERAL.fullmatch(value):
         return None
     number = float(value)
     return number if math.isfinite(number) else None
@@ -195,7 +203,7 @@ def _near(at: str, found, expected, tolerance, join: bool):
     """A value compared within a tolerance: numbers, and numeral strings, by their difference. An element's text is
     joined only when join says the view is XML."""
     read = _element_text(found) if join else found
-    number = _number(read.strip() if isinstance(read, str) else read)
+    number = _number(read)
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"
