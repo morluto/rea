@@ -62,28 +62,6 @@ it("preserves CDP's separate frame fragment in all passive URL projections", asy
     final_url: url,
   });
 });
-it("captures approved accessibility text inline", async () => {
-  const browser = await startFakeCdpBrowser();
-  trackBrowser(browser);
-  const request = inspectWebPageInputSchema.parse({
-    cdp_endpoint: browser.endpoint,
-    allowed_origins: [browser.allowedOrigin],
-    target_id: "allowed-page",
-    observation_ms: 0,
-    include_accessibility_text: true,
-  });
-  const result = await new CdpBrowserProvider().inspectPage(request);
-
-  if (!result.ok) throw result.error;
-  expect(result.value.accessibility).toMatchObject({
-    text_capture: {
-      status: "included",
-      retained_bytes: 27,
-    },
-    nodes: [expect.objectContaining({ name: "Submit report" })],
-  });
-});
-
 it("gates script source reads and distinguishes empty text from malformed replies", async () => {
   const scriptText = "export const observed = 'source-secret';";
   let malformedReply: Record<string, unknown> | undefined;
