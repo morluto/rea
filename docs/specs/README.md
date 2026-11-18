@@ -22,6 +22,7 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Core WebAssembly interface comparison (#2356)](2356-wasm-interface-comparison/spec.md) ([plan](2356-wasm-interface-comparison/plan.md), [tasks](2356-wasm-interface-comparison/tasks.md), [verification](2356-wasm-interface-comparison/verification.md))
 - [Inspect APK signature schemes (v1–v3.1)](apk-signature/spec.md)
 - [Documentation organization](documentation/organization/spec.md) ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md), [verification](documentation/organization/verification.md))
+- [auditd log inspection](linux/auditd-log/spec.md) ([plan](linux/auditd-log/plan.md), [tasks](linux/auditd-log/tasks.md))
 - [Android boot and vendor_boot images](firmware/android-boot-image/spec.md) ([plan](firmware/android-boot-image/plan.md), [tasks](firmware/android-boot-image/tasks.md))
 - [V8 cached-data compilation boundaries](javascript/v8-cached-data/spec.md) ([plan](javascript/v8-cached-data/plan.md), [tasks](javascript/v8-cached-data/tasks.md))
 - [Android `.note.android.ident` ELF note decoding](native/android-elf-ident-note/spec.md) ([plan](native/android-elf-ident-note/plan.md), [tasks](native/android-elf-ident-note/tasks.md))

@@ -83,6 +83,7 @@ export const liveBinaryTargetSummaryVariants = [
       "dfuse",
       "fit",
       "ntfs-mft",
+      "auditd-log",
     ]),
     architecture: z.null(),
   }),

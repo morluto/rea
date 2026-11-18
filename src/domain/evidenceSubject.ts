@@ -55,6 +55,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "esp-flash-image",
   "fit",
   "ntfs-mft",
+  "auditd-log",
 ]);
 
 /** Format-owned architecture declarations shared by Evidence and persisted executions. */

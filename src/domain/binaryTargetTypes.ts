@@ -326,7 +326,8 @@ export type BinaryTarget =
           | "uf2"
           | "dfuse"
           | "fit"
-          | "ntfs-mft";
+          | "ntfs-mft"
+          | "auditd-log";
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
@@ -385,6 +386,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "esp-flash-image": "archive",
   fit: "archive",
   "ntfs-mft": "archive",
+  "auditd-log": "archive",
   plist: "artifact",
   javascript: "artifact",
   "source-map": "artifact",
