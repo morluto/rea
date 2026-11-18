@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Okul Otomasyonu</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main>
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brandMark">L</span>
+          <div>
+            <strong>Okul Otomasyonu</strong>
+            <small>Özel eğitim çalışma alanı</small>
+          </div>
+        </div>
+        <nav aria-label="Ana bölümler">
+          <button class="tab active" data-tab="dashboard"><span>⌂</span> Genel bakış</button>
+          <button class="tab" data-tab="import"><span>⇧</span> İçe aktarma</button>
+          <button class="tab" data-tab="students"><span>◎</span> Öğrenciler</button>
+          <button class="tab" data-tab="classes"><span>▦</span> Derslik ve planlama</button>
+          <button class="tab" data-tab="attendance"><span>✓</span> Yoklama ve seanslar</button>
+          <button class="tab" data-tab="bep"><span>◎</span> BEP ve EK-4</button>
+        </nav>
+        <div class="localBadge">
+          <span class="dot"></span>
+          Yerel çalışma modu
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header>
+          <div>
+            <p class="eyebrow" id="pageEyebrow">Özel eğitim otomasyonu</p>
+            <h1 id="pageTitle">Genel bakış</h1>
+          </div>
+          <span id="dataStatus" class="status">Örnek veri</span>
+        </header>
+
+      <section id="dashboard" class="panel active">
+        <div id="summaryCards" class="summaryGrid"></div>
+        <div class="dashboardGrid">
+          <div class="card">
+            <div class="cardHeading">
+              <h2>Bugünün çalışmaları</h2>
+              <span>18 Kasım</span>
+            </div>
+            <div id="todaySessions" class="sessionRows"></div>
+          </div>
+          <div class="card">
+            <div class="cardHeading">
+              <h2>Hızlı işlemler</h2>
+            </div>
+            <div class="quickActions">
+              <button data-go-tab="import">Öğrenci aktarımı</button>
+              <button data-go-tab="classes">Planlama oluştur</button>
+              <button data-go-tab="attendance">Yoklama kaydet</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="import" class="panel">
+        <h2>Öğrenci içe aktarma</h2>
+        <p class="hint">MEBBİS veya diğer kaynaklardan alınmış yetkili CSV dosyasını önizleyip onaylayın.</p>
+        <label class="fileButton">
+          CSV dosyası seç
+          <input id="csvFile" type="file" accept=".csv,text/csv" />
+        </label>
+        <div id="preview" class="preview"></div>
+      </section>
+
+      <section id="students" class="panel">
+        <h2>Öğrenciler</h2>
+        <div id="studentList" class="cards"></div>
+      </section>
+
+      <section id="classes" class="panel">
+        <h2>Sınıf ve ders eşleme</h2>
+        <div class="grid">
+          <form id="classForm" class="card">
+            <h3>Sınıf oluştur</h3>
+            <input name="name" placeholder="Sınıf adı" required />
+            <input name="level" placeholder="Düzey" />
+            <button type="submit">Sınıf ekle</button>
+          </form>
+          <form id="courseForm" class="card">
+            <h3>Ders oluştur</h3>
+            <input name="name" placeholder="Ders adı" required />
+            <input name="code" placeholder="Ders kodu" />
+            <button type="submit">Ders ekle</button>
+          </form>
+        </div>
+        <div class="grid">
+          <form id="enrollForm" class="card">
+            <h3>Öğrenciyi sınıfa ata</h3>
+            <select name="classId" required></select>
+            <select name="studentId" required></select>
+            <button type="submit">Ata</button>
+          </form>
+          <div class="card">
+            <h3>Tanımlı kayıtlar</h3>
+            <div id="classList"></div>
+            <div id="courseList"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="attendance" class="panel">
+        <h2>Yoklama</h2>
+        <form id="sessionForm" class="card inline">
+          <select name="classId" required></select>
+          <select name="courseId"></select>
+          <input name="sessionDate" type="date" required />
+          <input name="note" placeholder="Not" />
+          <button type="submit">Oturum aç</button>
+        </form>
+        <div id="sessionList" class="cards"></div>
+        <div id="attendanceEditor"></div>
+      </section>
+
+      <section id="bep" class="panel">
+        <h2>BEP ve Performans Kayıtları</h2>
+        <div class="grid">
+          <form id="bepPeriodForm" class="card">
+            <h3>BEP dönemi aç</h3>
+            <select name="studentId" required></select>
+            <input name="periodName" placeholder="Dönem adı" value="2026-2027 Dönemi" required />
+            <input name="startDate" type="date" required />
+            <input name="endDate" type="date" required />
+            <button type="submit">Dönem oluştur</button>
+          </form>
+          <form id="bepTargetForm" class="card">
+            <h3>Hedef tanımla</h3>
+            <select name="periodId" required></select>
+            <input name="title" placeholder="Hedef adı" required />
+            <input name="behavior" placeholder="Beklenen davranış" />
+            <input name="criterion" placeholder="Ölçüt" />
+            <button type="submit">Hedef ekle</button>
+          </form>
+        </div>
+        <div class="grid">
+          <form id="performanceForm" class="card">
+            <h3>EK-4 performans kaydı</h3>
+            <select name="periodId" required></select>
+            <input name="recordDate" type="date" required />
+            <select name="result" required>
+              <option>Başardı</option>
+              <option>Geliştirilmeli</option>
+              <option>Yapılmadı</option>
+            </select>
+            <input name="note" placeholder="Kayıt açıklaması" />
+            <button type="submit">Performansı kaydet</button>
+          </form>
+          <div class="card">
+            <h3>Son BEP kayıtları</h3>
+            <div id="bepList"></div>
+          </div>
+        </div>
+      </section>
+      </div>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

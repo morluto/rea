@@ -1,0 +1,155 @@
+:root {
+  font-family: Inter, "Segoe UI", sans-serif;
+  color: #241a2e;
+  background: #f7f3fa;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; }
+
+main {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  background: #f7f3fa;
+}
+
+.sidebar {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px;
+  background: #28152f;
+  color: white;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; margin: 0 8px 28px; }
+.brandMark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: #a56ab8;
+  font-size: 22px;
+  font-weight: 800;
+}
+.brand small { display: block; margin-top: 3px; color: #d7cbdc; }
+
+.sidebar nav { display: flex; flex-direction: column; gap: 6px; }
+.sidebar .tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: transparent;
+  color: #e4dce8;
+  text-align: left;
+}
+.sidebar .tab span { width: 18px; text-align: center; }
+.sidebar .tab.active { background: #704287; color: white; }
+.localBadge { margin-top: auto; padding: 10px; color: #d7cbdc; font-size: 12px; }
+.dot { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #69c79a; }
+
+.workspace { min-width: 0; padding: 28px 32px 48px; }
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #5b2674, #8d58a8);
+  color: white;
+}
+
+h1, h2, h3, p { margin-top: 0; }
+.eyebrow { margin-bottom: 4px; opacity: 0.75; }
+.status { padding: 8px 12px; border: 1px solid #ffffff66; border-radius: 999px; font-size: 13px; }
+
+.panel { display: none; }
+.panel.active { display: block; }
+.hint { color: #726579; }
+
+.fileButton, button {
+  display: inline-block;
+  border: 0;
+  border-radius: 9px;
+  padding: 10px 14px;
+  background: #704287;
+  color: white;
+  cursor: pointer;
+}
+
+.fileButton input { display: none; }
+.preview, .cards, #classList, #courseList { margin-top: 16px; }
+
+.card, table {
+  background: white;
+  border: 1px solid #e5ddea;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 18px #44245508;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+input, select {
+  width: 100%;
+  margin: 6px 0;
+  padding: 10px;
+  border: 1px solid #d8cede;
+  border-radius: 8px;
+  background: white;
+}
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 9px; border-bottom: 1px solid #eee8f1; }
+.warning { color: #9b3c35; }
+.match { color: #9b3c35; font-size: 13px; }
+.inline { display: grid; grid-template-columns: 1fr 1fr 150px 1fr auto; gap: 8px; align-items: center; }
+.session { cursor: pointer; margin-bottom: 8px; }
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0;
+}
+.summaryCard {
+  padding: 18px;
+  border: 1px solid #e5ddea;
+  border-radius: 12px;
+  background: white;
+}
+.summaryCard span { display: block; color: #806f88; font-size: 13px; }
+.summaryCard strong { display: block; margin-top: 7px; font-size: 28px; color: #4a3557; }
+.dashboardGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, .5fr);
+  gap: 16px;
+}
+.cardHeading { display: flex; justify-content: space-between; align-items: center; }
+.cardHeading span { color: #806f88; font-size: 13px; }
+.sessionRows { display: grid; gap: 8px; }
+.quickActions { display: grid; gap: 8px; }
+.quickActions button { width: 100%; }
+
+@media (max-width: 700px) {
+  main { grid-template-columns: 1fr; }
+  .sidebar { min-height: auto; }
+  .sidebar nav { flex-direction: row; overflow-x: auto; }
+  .sidebar .tab { width: auto; white-space: nowrap; }
+  .workspace { padding: 20px 16px 40px; }
+  .grid, .inline, .dashboardGrid, .summaryGrid { grid-template-columns: 1fr; }
+  header { align-items: flex-start; }
+  .status { display: none; }
+}

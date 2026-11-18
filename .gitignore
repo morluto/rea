@@ -47,6 +47,8 @@ docs/.vitepress/dist/
 # OS
 .DS_Store
 Thumbs.db
+apps/lila-automation/lila.sqlite
+apps/lila-automation/lila.sqlite-*
 
 # Local reference sources and analysis artifacts
 /_reference/
