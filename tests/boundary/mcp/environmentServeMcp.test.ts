@@ -308,17 +308,19 @@ describe("rea environment-serve --replay-only", () => {
         });
         const exact = await client.callTool({
           name: "get_users_by_id",
-          arguments: { id: "2" },
+          arguments: { id: "3" },
         });
         expect(exact.isError).toBeFalsy();
         expect(exact.structuredContent).toMatchObject({
           status: 200,
           content_type: "application/json",
-          body: { login: "probe" },
+          body: { id: 3, login: "viewer" },
           replay: {
             exact_match: true,
             evidence_id: source.evidenceId,
-            recorded_path: "/api/users/2",
+            recorded_path: "/api/users/3",
+            recorded_query: null,
+            body_recorded: true,
             truncated: false,
           },
         });
@@ -331,7 +333,13 @@ describe("rea environment-serve --replay-only", () => {
         });
         expect(inexact.structuredContent).toMatchObject({
           body: { login: "probe" },
-          replay: { exact_match: false },
+          replay: {
+            exact_match: false,
+            recorded_path: "/api/users/2",
+            record_ordinal: source.manifest.tools.find(
+              ({ name }) => name === "get_users_by_id",
+            )!.record_ordinals[0],
+          },
         });
         const folder = await client.callTool({
           name: "get_folders_by_uid",
