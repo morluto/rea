@@ -429,8 +429,11 @@ and their relocation sources. JNI exports follow the
 failed escaping does not acquire an invented export match. Tables require
 NUL-terminated [Modified UTF-8 strings](https://docs.oracle.com/en/java/javase/21/docs/specs/jni/types.html#modified-utf-8-strings),
 valid descriptors and executable load mappings. REL, RELA and RELR retain
-separate provenance; unsupported packed relocations and unresolved pointer
-spans stay explicit unknowns.
+separate provenance. Android APS2-compressed REL/RELA records keep their logical
+`encoding` and add `packing: { format: "aps2", group_entry_index: ... }`;
+`record_file_offset` identifies the shared group header and the index identifies
+the member within it. APS1 and unresolved pointer spans stay explicit unknowns.
+APS2 uses the [shared ELF decode-work allowance](../native/native-initializers.md#paging-and-limits).
 
 A static `JNINativeMethod` entry names no class. Attribute it uniquely only
 when exactly one declaration in the complete recorded native inventory has

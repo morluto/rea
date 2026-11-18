@@ -1,5 +1,33 @@
 # Static JNI fixture built with the Android NDK
 
+## Portable APS2 compatibility witness
+
+`aps2.c` is a separate freestanding layout witness with four local
+`JNINativeMethod`-shaped entries, three entries depending on an undefined
+external function, and a constructor. It has no JNI runtime or registration
+calls. GCC emits 32/64-bit x86 objects; LLD links ordinary, APS2-only and mixed
+APS2/standard-RELR variants. No multilib C runtime is needed. None of the
+produced shared objects is loaded or executed.
+
+After building REA, run with GCC and an LLD supporting Android packing
+(qualified with GCC 14.2 and LLD 19.1.7 on Linux):
+
+```sh
+python3 tests/fixtures/android/jni-bindings/verify-aps2.py --lld /path/to/ld.lld
+```
+
+The independent Python ELF oracle checks source symbols and exact name,
+descriptor, slot and function bytes. The witness requires actual grouped
+offsets and zero-addend groups from LLD, compares group/member provenance,
+keeps the three external-function dependencies unknown, and verifies the
+constructor through the public CLI. It also runs the existing library
+qualification checker over all six libraries (24 known entries) and verifies
+source digests remain unchanged. Temporary objects and libraries are removed.
+`--runtime-root /path/to/checkout` selects another built runtime for a baseline.
+This qualifies x86 wire formats; the full NDK/APK workflow below is separate.
+
+## Android NDK fixture
+
 This fixture contains genuine Java `native` declarations, javac-generated JNI
 headers, `Java_*` exports and actual `JNI_OnLoad`/`RegisterNatives` source. Its
 DEX-only APK containers have no Android manifest, resources or signature. They
@@ -59,29 +87,28 @@ the resulting DEX `ACC_NATIVE` flags and exact names/prototypes. It then compile
 two libraries for each of arm64-v8a, armeabi-v7a, x86_64 and x86, with three packing
 variants. All subprocess arguments and tool versions are recorded in the output.
 
-| APK variant               | Observed table relocation encoding                     | Required interpretation                                                              |
-| ------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `jni-ordinary-static.apk` | AArch64/x86-64 RELA; ARM/i686 REL implicit addends     | Every source-known candidate and exact slot value survives                           |
-| `jni-relr-static.apk`     | Standard DT_RELR with encoded bitmaps on all four ABIs | Same facts, with RELR source evidence                                                |
-| `jni-aps2-static.apk`     | Android packed APS2 REL/RELA on all four ABIs          | Explicit unsupported/partial table coverage; preserve independently readable exports |
+| APK variant               | Observed table relocation encoding                     | Required interpretation                                           |
+| ------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------- |
+| `jni-ordinary-static.apk` | AArch64/x86-64 RELA; ARM/i686 REL implicit addends     | Every source-known candidate and exact slot value survives        |
+| `jni-relr-static.apk`     | Standard DT_RELR with encoded bitmaps on all four ABIs | Same facts, with RELR source evidence                             |
+| `jni-aps2-static.apk`     | Android packed APS2 REL/RELA on all four ABIs          | Same source-known candidates, with packed group/member provenance |
 
-Ordinary and RELR source expectations have, across four ABIs, 32 matched,
+Ordinary, RELR and APS2 source expectations have, across four ABIs, 32 matched,
 12 ambiguous and four unmatched bindings. These are source-known outcomes.
 The report's matched status establishes observed candidate presence; separate
 partial coverage does not promise complete uniqueness. A source-known unmatched
 method can remain unknown when GLOB_DAT or NOBITS handling leaves incomplete
-coverage. APS2's `expected_methods` retains source-known export facts and marks
-unrecovered table declarations unknown. The report must retain readable export
-candidates and must not claim that an undecoded table is absent.
+coverage. The report must retain readable export candidates and keep unresolved
+symbolic table pointers unknown rather than treating them as absent.
 
 ## Independent evidence and limits
 
 `oracle.py` imports no REA parser. For these small generated artifacts it reads
 known ELF symbols and source-specified table slots, applies standard relative
-REL/RELA/RELR records, checks the exact Modified UTF-8 bytes, and requires each
+REL/RELA/RELR and APS2 records, checks the exact Modified UTF-8 bytes, and requires each
 function pointer to equal the compiled function symbol inside executable PT_LOAD.
 It is a known-slot oracle, not a general JNI table discovery implementation.
-It deliberately does not decode APS2. The separate official `llvm-readelf`
+The separate official `llvm-readelf`
 transcripts establish actual sections, symbols, relocation tags and GNU_RELRO.
 
 Generated `full-expectations.json` contains every ABI/library digest, export and
