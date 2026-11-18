@@ -1267,13 +1267,28 @@ const optionWriterPrecedesMember = (
     { readonly node: t.ObjectProperty | t.ObjectMethod }
   >();
   let position = 0;
+  // A getter whose key is not statically known can land anywhere in `OwnPropertyKeys`,
+  // so it may precede the member: `const key = 0; {get [key]() { this.port = 80 }, port: -1}`
+  // visits `"0"` first and connects.
+  let unknownWriter = false;
+  const copiedPrototypeKeys = new Set<string>();
   for (const property of options.properties) {
-    // A spread contributes plain data properties: its own accessors already ran.
-    const entries: readonly (t.ObjectProperty | t.ObjectMethod)[] =
-      t.isSpreadElement(property) ? spreadDataEntries(property) : [property];
-    for (const entry of entries) {
+    // A spread contributes data properties: its own accessors already ran.
+    const spread = t.isSpreadElement(property)
+      ? spreadDataEntries(property)
+      : {
+          entries: [property] as readonly (t.ObjectProperty | t.ObjectMethod)[],
+          copiesPrototypeAccessor: false,
+        };
+    for (const entry of spread.entries) {
       const name = semanticStaticPropertyKey(entry.key, entry.computed);
-      if (name === null) continue;
+      if (name === null) {
+        if (t.isObjectMethod(entry) && entry.kind === "get")
+          unknownWriter = true;
+        continue;
+      }
+      if (spread.copiesPrototypeAccessor && name === "__proto__")
+        copiedPrototypeKeys.add(name);
       if (!firstInsertion.has(name)) firstInsertion.set(name, position);
       lastDescriptor.set(name, { node: entry });
       position += 1;
@@ -1301,7 +1316,9 @@ const optionWriterPrecedesMember = (
     const order = orderOf(name);
     const writesThroughPrototype =
       name === "__proto__" &&
-      ((t.isObjectProperty(node) && node.shorthand) || node.computed);
+      (copiedPrototypeKeys.has(name) ||
+        (t.isObjectProperty(node) && node.shorthand) ||
+        node.computed);
     if (
       (t.isObjectMethod(node) && node.kind === "get") ||
       writesThroughPrototype
@@ -1311,23 +1328,45 @@ const optionWriterPrecedesMember = (
     }
     if (name === member) memberOrder = order;
   }
+  if (unknownWriter) return true;
   return (
     writerOrder !== undefined &&
     (memberOrder === undefined || before(writerOrder, memberOrder))
   );
 };
 
-/** The plain data entries a spread contributes, its own accessors already evaluated. */
+/**
+ * The data entries a spread contributes, plus the `__proto__` accessors it copies.
+ *
+ * A spread reads its source's own keys and creates data properties on the result, so the
+ * source's accessors have already run. A `__proto__` accessor is the exception the caller
+ * needs to know about: the copy is an own data key named `__proto__`, which sets the merge
+ * target's prototype when it is written there.
+ */
 const spreadDataEntries = (
   property: t.SpreadElement,
-): readonly (t.ObjectProperty | t.ObjectMethod)[] => {
+): {
+  readonly entries: readonly (t.ObjectProperty | t.ObjectMethod)[];
+  readonly copiesPrototypeAccessor: boolean;
+} => {
   const spread = unwrapJavaScriptExpression(property.argument).node;
-  if (!t.isObjectExpression(spread)) return [];
-  return spread.properties.filter(
-    (entry): entry is t.ObjectProperty | t.ObjectMethod =>
-      !t.isSpreadElement(entry) &&
-      !(t.isObjectMethod(entry) && entry.kind !== "method"),
+  if (!t.isObjectExpression(spread))
+    return { entries: [], copiesPrototypeAccessor: false };
+  let copiesPrototypeAccessor = false;
+  const entries = spread.properties.filter(
+    (entry): entry is t.ObjectProperty | t.ObjectMethod => {
+      if (t.isSpreadElement(entry)) return false;
+      if (!(t.isObjectMethod(entry) && entry.kind !== "method")) return true;
+      if (
+        semanticStaticPropertyKey(entry.key, entry.computed) === "__proto__"
+      ) {
+        copiesPrototypeAccessor = true;
+        return true;
+      }
+      return false;
+    },
   );
+  return { entries, copiesPrototypeAccessor };
 };
 
 /** Whether an object literal copies an own `__proto__` key rather than setting its own prototype. */

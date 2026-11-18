@@ -277,3 +277,28 @@ it("keeps the acquisition when a later spread may supply the merged options", ()
     ),
   ).toHaveLength(1);
 });
+
+/**
+ * A getter whose key is not statically known can land before `port` in
+ * `OwnPropertyKeys`, so it may rewrite the port first:
+ *
+ *   const key = 0; tls.connect({}, { get [key]() { this.port = 80; }, port: -1 })  -> connects
+ *
+ * A spread evaluates its source's own accessors and copies the results as data, so a
+ * source getter named `__proto__` reaches the merge target as a plain data key and
+ * installs its prototype there:
+ *
+ *   tls.connect({}, { ...{get __proto__() { return {set port(_) { this.path = "/tmp/x" }; }}; }, port: -1 }) -> connects
+ */
+it.each([
+  [
+    "an unknown computed getter key",
+    `const key = 0; tls.connect({}, { get [key]() { this.port = 80; }, port: -1 })`,
+  ],
+  [
+    "a spread accessor that copies a __proto__ data key",
+    `tls.connect({}, { ...{ get __proto__() { return { set port(_) { this.path = "/tmp/x"; } }; } }, port: -1 })`,
+  ],
+] as const)("keeps the acquisition when %s may write first", (_name, body) => {
+  expect(acquisitionsFor(body)).toHaveLength(1);
+});
