@@ -802,6 +802,7 @@
 * **environment:** bound create explanation by request-body reads instead of elapsed time ([#11657](https://github.com/morluto/rea/issues/11657)) ([9901e8d](https://github.com/morluto/rea/commit/9901e8dfcd7684d2bb5b025fe668f32b4c941297))
 * **environment:** check coverage diagnostics without repeating projection ([#11900](https://github.com/morluto/rea/issues/11900)) ([14b15ba](https://github.com/morluto/rea/commit/14b15ba8a5de5c7ebfb8a8d6da4a73c6e69751c3))
 * **environment:** consolidate bounded path description coverage ([#11936](https://github.com/morluto/rea/issues/11936)) ([49a6101](https://github.com/morluto/rea/commit/49a610199f072b66b170cd7217ed1e44d7235784))
+* **environment:** consolidate build report checks ([#11948](https://github.com/morluto/rea/issues/11948)) ([a85f228](https://github.com/morluto/rea/commit/a85f228198f090ecb5dee6e4a7921d8cbeeaf6a5))
 * **environment:** consolidate captured write completion checks ([#11905](https://github.com/morluto/rea/issues/11905)) ([7973afd](https://github.com/morluto/rea/commit/7973afdfaa872efdb49fde70bbc703a9d729a005))
 * **environment:** consolidate clock parsing and formatting checks ([#11902](https://github.com/morluto/rea/issues/11902)) ([f687b68](https://github.com/morluto/rea/commit/f687b68d12658267c77b1ce30b4461301e20a2f7))
 * **environment:** consolidate compare chronology probes ([#11940](https://github.com/morluto/rea/issues/11940)) ([52ceaaf](https://github.com/morluto/rea/commit/52ceaafe64f0bb5d8e1398d7f7807a7b2d6aefcd))
