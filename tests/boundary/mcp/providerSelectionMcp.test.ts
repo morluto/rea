@@ -176,9 +176,14 @@ it.skipIf(process.platform === "win32")(
     const open = (path: string) =>
       call("open_binary", { path, format: "dos-com" });
     const current = async () => structured(await call("binary_session")).result;
-    const observation = async () =>
+    const observation = async (document?: string) =>
       parseEvidence(
-        structured(await call("address_name", { address: "0x100" })),
+        structured(
+          await call("address_name", {
+            address: "0x100",
+            ...(document === undefined ? {} : { document }),
+          }),
+        ),
       );
 
     const selected = (path: string) => ({
@@ -254,6 +259,35 @@ it.skipIf(process.platform === "win32")(
     expect(await current()).not.toHaveProperty("caller_input_path");
     expect(await observation()).not.toHaveProperty("caller_input_path");
     expect(starts).toEqual(["alpha"]);
+
+    expect((await open(firstAlias)).isError).not.toBe(true);
+    const seeded = await observation(canonical);
+    expect(seeded.caller_input_path).toBe(firstAlias);
+    const snapshotPath = join(directory, "analysis.json");
+    expect(
+      structured(await call("close_binary", { snapshot_path: snapshotPath }))
+        .result,
+    ).toMatchObject({ primitive_entries: 1 });
+    expect(
+      structured(
+        await call("open_binary", {
+          path: secondAlias,
+          format: "dos-com",
+          snapshot_path: snapshotPath,
+        }),
+      ).result,
+    ).toMatchObject(selected(secondAlias));
+    const replay = await observation(canonical);
+    expect(replay).toMatchObject({
+      caller_input_path: secondAlias,
+      subject: seeded.subject,
+      normalized_result: seeded.normalized_result,
+    });
+    expect(replay.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      ]),
+    );
   },
 );
 

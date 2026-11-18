@@ -1261,10 +1261,12 @@ discovery does not probe a version solely to populate this fact.
 
 `open_binary` and `binary_session` report the inspected file in `path` and its
 SHA-256. When the selected spelling differs, `caller_input_path` carries that
-spelling verbatim. Reopening the same target through another alias refreshes
-this selection while retaining a live analysis engine. Use the canonical
-`path` for an explicit provider `document` selector when that provider
-identifies its document by path.
+spelling verbatim. An alias that changes only this spelling, such as a second
+POSIX symlink to the same executable, refreshes the selection and can reuse the
+live analysis engine. Reuse still requires the same provider profile, source
+admission path, and artifact selection and companions. Use the canonical `path`
+for an explicit provider `document` selector when that provider identifies its
+document by path.
 
 Inline provider Evidence for that file includes the current `caller_input_path`
 when the selection differs from the canonical path. The alias is outside the
