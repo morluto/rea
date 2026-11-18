@@ -809,6 +809,7 @@
 * **environment:** consolidate compare chronology probes ([#11940](https://github.com/morluto/rea/issues/11940)) ([52ceaaf](https://github.com/morluto/rea/commit/52ceaafe64f0bb5d8e1398d7f7807a7b2d6aefcd))
 * **environment:** consolidate composed value comparisons ([#11942](https://github.com/morluto/rea/issues/11942)) ([36dfc69](https://github.com/morluto/rea/commit/36dfc69248e8b6061dd0f3abc3f5a8b17ea8b5ce))
 * **environment:** consolidate data-plane ordering proofs ([#11929](https://github.com/morluto/rea/issues/11929)) ([a4a5772](https://github.com/morluto/rea/commit/a4a57727e96e9c3aae203bf67f641489e0aecba9))
+* **environment:** consolidate document write refusals ([#11958](https://github.com/morluto/rea/issues/11958)) ([5e83c1e](https://github.com/morluto/rea/commit/5e83c1ef7c634b71a400a43611ad267f2cca15eb))
 * **environment:** consolidate export publication receipts ([#11945](https://github.com/morluto/rea/issues/11945)) ([e6e4215](https://github.com/morluto/rea/commit/e6e42152279ee4bc82160f924b365bd4bf97c1f7))
 * **environment:** consolidate linked write spellings ([#11957](https://github.com/morluto/rea/issues/11957)) ([9bd17e8](https://github.com/morluto/rea/commit/9bd17e8673debe9acad0e83284003a4981d55acb))
 * **environment:** consolidate list query contracts ([#11916](https://github.com/morluto/rea/issues/11916)) ([d72dfb8](https://github.com/morluto/rea/commit/d72dfb8c69376c14a0fcc386dc3f7d639b4abc97))
