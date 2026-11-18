@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
-import { importVerifierSource } from "./verifier-source-loader.mjs";
 
 /**
  * @typedef {{
@@ -198,9 +197,9 @@ const processSnapshot = async () => {
 let linuxStatParser;
 
 const linuxProcessSnapshot = async () => {
-  linuxStatParser ??= importVerifierSource(
-    new URL("../../src/process/LinuxProcessStat.ts", import.meta.url).href,
-    import.meta.url,
+  // The pinned Node can strip this leaf module without a transform or loader.
+  linuxStatParser ??= import(
+    new URL("../../src/process/LinuxProcessStat.ts", import.meta.url).href
   );
   const { parseLinuxProcessStat } = await linuxStatParser;
   const entries = await readdir("/proc", { withFileTypes: true });
