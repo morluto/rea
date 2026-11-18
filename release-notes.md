@@ -232,6 +232,7 @@
 * **decompile:** derive the body-coverage caveat from retained records ([9d082b1](https://github.com/morluto/rea/commit/9d082b144a7a6a87bd1229a0500af13ab01f70e5)), closes [#8351](https://github.com/morluto/rea/issues/8351)
 * **decompile:** keep each successful batch item's own limitations ([9d2a57f](https://github.com/morluto/rea/commit/9d2a57fd8d9c02346f98f4ddbd62c494b61eabbc)), closes [#8350](https://github.com/morluto/rea/issues/8350)
 * **decompile:** keep the provider's null-pseudocode reason on inline failures ([c9f33aa](https://github.com/morluto/rea/commit/c9f33aaa826e80301e316844c2dbc8fb2970cf10))
+* **decompile:** repair a torn journal on Windows before resuming ([#10527](https://github.com/morluto/rea/issues/10527)) ([204056f](https://github.com/morluto/rea/commit/204056f21ad0e91d30a8949974889712840b6ac7))
 * **desktop:** admit a build witness folder by the record's own rule ([0ffde0c](https://github.com/morluto/rea/commit/0ffde0cd0923e37901c55a78c8b5fd1f124ae68b))
 * **desktop:** admit build export folders before running the in-computer export ([#11307](https://github.com/morluto/rea/issues/11307)) ([3fb17d7](https://github.com/morluto/rea/commit/3fb17d72a902bfea57cf44a8585f3408504bfc74))
 * **desktop:** align exported task whitespace interpretation ([#11947](https://github.com/morluto/rea/issues/11947)) ([a7c4ee8](https://github.com/morluto/rea/commit/a7c4ee8394c62c67fdd5738c1a3009c1be7319b8))
