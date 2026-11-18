@@ -368,3 +368,54 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains conditional loader evidence on worker references through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-bom-worker-");
+    const source =
+      '\uFEFF#!/usr/bin/env node\nnew Worker(new URL("./worker.js", import.meta.url));\nnavigator.serviceWorker.register(new URL("./worker.js", import.meta.url));';
+    await writeFixtureFiles(root, {
+      "main.js": source,
+      "worker.js": "export {};",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const workerIds = new Set(
+      graph.nodes
+        .filter(({ kind }) => kind === "worker" || kind === "service-worker")
+        .map(({ node_id }) => node_id),
+    );
+    const workers = graph.nodes.filter(({ node_id }) => workerIds.has(node_id));
+    expect(workers.map(({ kind }) => kind).sort()).toEqual([
+      "service-worker",
+      "worker",
+    ]);
+    const loads = graph.edges.filter(
+      ({ relation, target_node_id }) =>
+        relation === "loads" && workerIds.has(target_node_id),
+    );
+    const mappings = graph.edges.filter(
+      ({ relation, source_node_id }) =>
+        relation === "maps_to" && workerIds.has(source_node_id),
+    );
+    expect(loads).toHaveLength(2);
+    expect(mappings).toHaveLength(2);
+    for (const { evidence } of [
+      ...workers.flatMap(({ observations }) => observations),
+      ...loads,
+      ...mappings,
+    ]) {
+      expect(evidence).toMatchObject({
+        confidence: "medium",
+        coverage: { status: "partial" },
+        artifact: {
+          available: true,
+          sha256: createHash("sha256").update(source).digest("hex"),
+        },
+        limitations: expect.arrayContaining([
+          expect.stringContaining("package loader mode is unknown"),
+        ]),
+      });
+    }
+  },
+);

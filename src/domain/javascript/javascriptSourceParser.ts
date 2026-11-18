@@ -138,17 +138,19 @@ const parseWithRuntimeContext = (
     signedHashbang &&
     !compilerSource &&
     (filenameMode === "commonjs" || signaturePackageContext === "commonjs");
-  const conditionalModule =
+  const observedModuleDotfile =
+    suffixOnlySource && signaturePackageContext === "module";
+  const ambiguousLoader =
     signedHashbang &&
     ambiguousHashbangPath &&
     (signaturePackageContext === undefined ||
       signaturePackageContext === "unknown" ||
-      (!suffixOnlySource && signaturePackageContext === "unspecified") ||
-      (suffixOnlySource && signaturePackageContext === "module"));
+      signaturePackageContext === "unspecified" ||
+      observedModuleDotfile);
   const loaderCondition = conditionalCommonJs
     ? `Source in ${sourcePath ?? "<unknown>"} is recovered as CommonJS when imported through the ES module loader. Direct execution and require can reject this BOM/hashbang.`
-    : conditionalModule
-      ? suffixOnlySource
+    : ambiguousLoader
+      ? observedModuleDotfile
         ? `Source in ${sourcePath ?? "<unknown>"} is recovered under an ES module interpretation. Its loader invocation is unknown; direct entrypoint and module import can differ.`
         : `Source in ${sourcePath ?? "<unknown>"} is recovered under a conditional loader interpretation. Its package loader mode is unknown.`
       : undefined;
@@ -156,7 +158,7 @@ const parseWithRuntimeContext = (
     signedHashbang &&
     (compilerSource ||
       conditionalCommonJs ||
-      conditionalModule ||
+      ambiguousLoader ||
       filenameMode === "module" ||
       (filenameMode === undefined && signaturePackageContext === "module"));
   const parserOptions = { ...options };
@@ -171,9 +173,7 @@ const parseWithRuntimeContext = (
     hashbangSignature
       ? {
           ...parserOptions,
-          ...(conditionalModule && suffixOnlySource
-            ? { sourceType: "module" as const }
-            : {}),
+          ...(observedModuleDotfile ? { sourceType: "module" as const } : {}),
           startIndex: (options.startIndex ?? 0) + 1,
           startColumn: (options.startColumn ?? 0) + 1,
         }
@@ -182,7 +182,7 @@ const parseWithRuntimeContext = (
   const runtime =
     conditionalCommonJs && suffixOnlySource
       ? "commonjs"
-      : conditionalModule
+      : ambiguousLoader
         ? "unknown"
         : filenameMode === "commonjs"
           ? sourcePath?.toLowerCase().endsWith(".d.cts")
