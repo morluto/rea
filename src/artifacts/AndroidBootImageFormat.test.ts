@@ -626,7 +626,7 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
-    tail: null,
+    tail: image.subarray(image.length - 64),
   });
   expect(bare).toMatchObject({
     ok: true,
@@ -639,7 +639,7 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
-    tail: null,
+    tail: short.subarray(short.length - 64),
   });
   expect(shortFooter.ok).toBe(true);
   if (!shortFooter.ok) return;
