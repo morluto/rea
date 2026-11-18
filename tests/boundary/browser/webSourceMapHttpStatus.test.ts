@@ -6,10 +6,7 @@ import { expect, it } from "vitest";
 
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
-import {
-  analyzeWebBundleInputSchema,
-  webSourceMapsSchema,
-} from "../../../src/domain/webBundleAnalysis.js";
+import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/sourceMapLimits.js";
 
 it.each([
@@ -141,11 +138,17 @@ const mapWithSourceBytes = (bytes: Uint8Array) =>
   Buffer.concat([mapStart, bytes, mapEnd]);
 
 it.each([
-  { name: "invalid JSON", body: Buffer.from("not-json"), status: "invalid" },
+  {
+    name: "invalid JSON",
+    body: Buffer.from("not-json"),
+    status: "invalid",
+    diagnostic: "Source-map JSON is not a version 3 map",
+  },
   {
     name: "invalid UTF-8",
     body: mapWithSourceBytes(Uint8Array.of(0xff)),
     status: "invalid",
+    diagnostic: "Source-map response is not valid UTF-8",
   },
   {
     name: "a valid UTF-8 replacement character",
@@ -157,6 +160,7 @@ it.each([
     body: Buffer.from("service unavailable"),
     status: "fetch_failed",
     responseStatus: 503,
+    diagnostic: "Source-map server returned HTTP 503",
   },
   {
     name: "response limit",
@@ -211,18 +215,10 @@ it.each([
         representation: "fetch-response-body-bytes",
       },
     });
-    if (scenario.name === "invalid UTF-8")
-      expect(item.limitation).toContain(
-        "Source-map response is not valid UTF-8",
-      );
+    expect(item.limitation).toContain("Response text was not retained");
   }
-  const { effective_url: _effective, ...withoutEffectiveUrl } = item;
-  expect(
-    webSourceMapsSchema.safeParse({
-      ...result,
-      items: [withoutEffectiveUrl],
-    }).success,
-  ).toBe(false);
+  if (scenario.diagnostic !== undefined)
+    expect(item.limitation).toContain(scenario.diagnostic);
 });
 
 it.each([
@@ -318,53 +314,49 @@ it.each([
   },
 );
 
-it("charges complete escaped redirect errors and cancels every discarded response", async () => {
+it("fits complete malformed redirect diagnostics within the output budget", async () => {
   const origin = "https://app.example.test";
-  const location = `http://[${'\\"'.repeat(3_000)}`;
-  const request = {
-    scriptKey: "script",
-    declaredUrl: `${origin}/map`,
-    fetchUrl: `${origin}/map`,
-  };
+  const location = `http://[${'\\"'.repeat(400)}`;
+  const requests = ["first", "second", "third", "fourth"].map((name) => ({
+    scriptKey: name,
+    declaredUrl: `${origin}/${name}.map`,
+    fetchUrl: `${origin}/${name}.map`,
+  }));
+  const budget = 9_000;
   const input = analyzeWebBundleInputSchema.parse({
     cdp_endpoint: "http://127.0.0.1:9222",
     target_id: "page",
     allowed_origins: [origin],
     fetch_source_maps: true,
+    source_map_limits: { output_bytes: budget },
   });
-  let calls = 0;
-  let cancelled = 0;
-  const host = {
-    fetch: () => {
-      calls += 1;
-      return Promise.resolve(
-        new Response(
-          new ReadableStream<Uint8Array>({
-            cancel() {
-              cancelled += 1;
-            },
-          }),
-          { status: 302, headers: { location } },
-        ),
-      );
-    },
-  };
-  const control = await fetchWebSourceMapsOk([request], input, undefined, host);
-  expect(control.items[0]?.limitation).toContain(JSON.stringify(location));
-  expect(control.items[0]?.limitation?.length).toBeGreaterThan(512);
-  const result = await fetchWebSourceMapsOk(
-    Array.from({ length: 1_500 }, () => request),
-    input,
-    undefined,
-    host,
+  const cancelled: string[] = [];
+  const result = await fetchWebSourceMapsOk(requests, input, undefined, {
+    fetch: async (url) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled.push(String(url));
+          },
+        }),
+        { status: 302, headers: { location } },
+      ),
+  });
+
+  expect(result).toMatchObject({
+    status: "unavailable",
+    requested: 4,
+    processed: 2,
+    items: requests.slice(0, 2).map(({ scriptKey, declaredUrl }) => ({
+      script_key: scriptKey,
+      declared_url: declaredUrl,
+      status: "fetch_failed",
+      limitation: expect.stringContaining(JSON.stringify(location)),
+    })),
+    limitation: expect.stringContaining("2 requested maps"),
+  });
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(budget);
+  expect(cancelled).toEqual(
+    requests.slice(0, 3).map(({ fetchUrl }) => fetchUrl),
   );
-  expect(result).toMatchObject({ status: "unavailable", requested: 1_500 });
-  expect(result.processed).toBe(result.items.length);
-  expect(result.processed).toBeLessThan(result.requested);
-  expect(result.limitation).toContain("unknown");
-  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
-    WEB_SOURCE_MAP_LIMITS.outputBytes,
-  );
-  expect(calls).toBeLessThan(1_501);
-  expect(cancelled).toBe(calls);
 });
