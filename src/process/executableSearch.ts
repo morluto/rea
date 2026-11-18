@@ -12,7 +12,10 @@ import { snapshotEnvironment } from "./snapshotEnvironment.js";
 export interface PathSearchCandidate {
   /** The absolute file the launch would execute from this entry. */
   readonly path: string;
-  /** An empty or relative PATH entry, which depends on the working directory. */
+  /**
+   * An empty or relative PATH entry, or on Windows a rooted entry without a
+   * drive (`\tools`), which depends on the working directory or its drive.
+   */
   readonly relativeEntry: boolean;
 }
 
@@ -119,11 +122,11 @@ export interface WindowsPathSearchFailure {
  * The files Windows' PATH/PATHEXT search tries for commands, in order: a
  * path-qualified command (`C:\Python\python`, `.venv\Scripts\python`) only at
  * its own location, resolved against `cwd`, and never on PATH; then for each
- * PATH entry (relative ones resolve against `cwd`, or against this process's
- * directory, read only when such an entry is reached and skipped once
- * removed, unless `relativeEntries` is `skip`), each bare command with every
- * PATHEXT extension,
- * or as written when it already names an extension. Only `.com` and `.exe`
+ * PATH entry, each bare command with every PATHEXT extension, or as written
+ * when it already names an extension. A PATH entry that depends on the working
+ * directory is marked `relativeEntry` and resolved against `cwd` or the current
+ * working directory. With `relativeEntries: "skip"`, the search omits those
+ * entries before reading the working directory. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
  * PATHEXT entry fails a search that would append extensions; a command that
@@ -172,7 +175,7 @@ export const windowsPathCandidates = (
   return ok({
     *[Symbol.iterator]() {
       for (const name of located) {
-        const workingDirectory = win32.isAbsolute(name)
+        const workingDirectory = isQualifiedCallerPath(name, "win32")
           ? name
           : (search.cwd ?? currentDirectory());
         if (workingDirectory === undefined) continue;
