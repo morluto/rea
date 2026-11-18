@@ -182,6 +182,7 @@
 * **ci:** synchronize build computer cancellation tests ([8412ce7](https://github.com/morluto/rea/commit/8412ce74ffc3b232be661140f4884677dd0c7eae))
 * **ci:** use project deadlines for doctor and Kuna verifier tests ([2b25627](https://github.com/morluto/rea/commit/2b2562769d85db8291988de29fc3475cadaa6e53))
 * **ci:** use the official Ubuntu archive for binary layout fixtures ([#11904](https://github.com/morluto/rea/issues/11904)) ([bfc6a8c](https://github.com/morluto/rea/commit/bfc6a8cdd9bca2769feb569929f954689cc118a0))
+* **cli:** admit activity extras with the runtime contract ([#10289](https://github.com/morluto/rea/issues/10289)) ([fceb469](https://github.com/morluto/rea/commit/fceb4693fc6c7ba0999806beab182a12f8fe6128))
 * **cli:** advertise parsed JSON documents in --schema ([d734e64](https://github.com/morluto/rea/commit/d734e6424df5fed42399dc22b759a1c9962c01f2))
 * **cli:** advertise the decimal token grammar on integer arguments ([884b683](https://github.com/morluto/rea/commit/884b683a94be222538aad84eb7993f62fda9aca7)), closes [#9344](https://github.com/morluto/rea/issues/9344)
 * **cli:** count the full-output envelope for TOON/YAML token counts ([a02202a](https://github.com/morluto/rea/commit/a02202aba2aea8a7289500ca3eb45acfa8778a0b)), closes [#7271](https://github.com/morluto/rea/issues/7271) [#7278](https://github.com/morluto/rea/issues/7278)
