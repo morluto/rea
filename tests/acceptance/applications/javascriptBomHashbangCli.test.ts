@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
@@ -119,6 +120,29 @@ cliTest.runIf(process.platform !== "win32")(
     const output = await cli.run({
       arguments: ["import-reference-source", root, "--json"],
     });
+    const subtree = join(root, "esm", "src");
+    await writeFixtureFiles(subtree, {
+      "main.js": '\uFEFF#!/usr/bin/env node\nimport "./dep.mjs";',
+      "dep.mjs": "export const marker=42;",
+    });
+    const narrowed = await cli.run({
+      arguments: ["import-reference-source", subtree, "--json"],
+    });
+    expect(narrowed.exitCode, narrowed.stderr).toBe(0);
+    const partial = historicalSourceGraphSchema.parse(narrowed.json);
+    expect(partial.parse_failures).toEqual([]);
+    expect(partial.relationships).toContainEqual(
+      expect.objectContaining({
+        from_path: "main.js",
+        to: "dep.mjs",
+        kind: "imports",
+        parse_state: "partial",
+        resolution: "internal",
+      }),
+    );
+    expect(partial.limitations).toContainEqual(
+      expect.stringContaining("only if Node loads it as an ES module"),
+    );
     expect(output.exitCode, output.stderr).toBe(0);
     const graph = historicalSourceGraphSchema.parse(output.json);
     expect(
