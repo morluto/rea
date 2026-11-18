@@ -1067,6 +1067,33 @@ const rejectsSocketOptionsPort = (
   if (first === undefined || t.isSpreadElement(first)) return false;
   const options = unwrapJavaScriptExpression(first).node;
   if (!t.isObjectExpression(options)) return false;
+  // Node reads a path or a socket before it validates the port, and it reads an absent
+  // member through the prototype chain, so an inherited or later-written path decides the
+  // call instead of the port. The shared reader owns both the `tls` merge and that
+  // inheritance question. Measured on Node 24.22.1:
+  //
+  //   tls.connect({ path: "/tmp/x.sock" }, { port: -1 })                -> socket
+  //   tls.connect({ port: -1 }, { path: "/tmp/x.sock" })                -> socket
+  //   Object.prototype.path = "/tmp/a.sock"; net.connect({ port: -1 })  -> socket
+  //
+  // A reader that cannot price the options leaves the existing judgement below in place.
+  const precedence = socketOptionReader(node, specifier, context.state);
+  if (precedence !== undefined) {
+    const falsy = (value: t.Node) =>
+      isNullishPlaceholder(value, context.state) ||
+      staticJavaScriptTruthiness(value) === false;
+    const inheritable = prototypeMutationMayPrecede(
+      context.state,
+      "Object",
+      node,
+    );
+    for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
+      const value = precedence(member);
+      if (value === "unknown" || (value !== undefined && !falsy(value)))
+        return false;
+      if (value === undefined && inheritable) return false;
+    }
+  }
   // Only `tls` merges a later object over this one; for `net` slot 1 is an optional listener,
   // so it cannot replace the port. Measured on Node 24.22.1, `net.connect({port: -1}, {})` and
   // `net.connect({port: -1}, () => {})` both throw ERR_SOCKET_BAD_PORT.
@@ -1089,6 +1116,17 @@ const rejectsSocketOptionsPort = (
   // `const args = [{ port: 443 }]; tls.connect({ port: -1 }, ...args)` connects.
   if (specifier === "tls" && second !== undefined && t.isSpreadElement(second))
     return false;
+  // `tls` copies the third argument into the options when the second is not an object,
+  // so it can carry the effective port: measured on Node 24.22.1,
+  // `tls.connect({ port: -1 }, undefined, { port: 443 })` connects. That copy is not
+  // modelled here, so its presence keeps the port undecided instead of pricing the
+  // first object and removing a real acquisition.
+  const third = node.arguments[2];
+  if (specifier === "tls" && third !== undefined) {
+    if (t.isSpreadElement(third)) return false;
+    const thirdValue = unwrapJavaScriptExpression(third).node;
+    if (!isKnownNonObject(thirdValue, context)) return false;
+  }
   if (
     specifier === "tls" &&
     second !== undefined &&

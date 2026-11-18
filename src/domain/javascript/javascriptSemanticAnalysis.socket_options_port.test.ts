@@ -300,3 +300,25 @@ it.each([
 ] as const)("keeps the acquisition when %s may write first", (_name, body) => {
   expect(acquisitionsFor(body)).toHaveLength(1);
 });
+
+/**
+ * Node reads `path` and `socket` before it validates `port`, so a Unix socket keeps the
+ * acquisition even when the options carry a port it would reject. `tls` also copies a third
+ * argument into the options when the second is not an object. Measured on Node 24.22.1:
+ *
+ *   tls.connect({ path: "/tmp/x.sock" }, { port: -1 })   -> socket
+ *   tls.connect({ port: -1 }, { path: "/tmp/x.sock" })   -> socket
+ *   tls.connect({ port: -1 }, undefined, { port: 443 })  -> socket
+ *   Object.prototype.path = "/tmp/a.sock"; net.connect({ port: -1 }) -> socket
+ */
+it.each([
+  [`tls.connect({ path: "/tmp/x.sock" }, { port: -1 })`],
+  [`tls.connect({ port: -1 }, { path: "/tmp/x.sock" })`],
+  [`tls.connect({ port: -1 }, undefined, { port: 443 })`],
+  [`Object.prototype.path = "/tmp/a.sock"; net.connect({ port: -1 })`],
+] as const)(
+  "keeps the acquisition when a path or a later option wins: %s",
+  (body) => {
+    expect(acquisitionsFor(body)).toHaveLength(1);
+  },
+);
