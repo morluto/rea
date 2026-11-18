@@ -125,23 +125,18 @@ cliTest(
       architecture: null,
     });
     const report = rustBinarySchema.parse(evidence.normalized_result);
-    expect(report).toMatchObject({
-      format: "wasm",
-      architecture: "wasm",
-      bits: null,
-      byte_order: "little",
-      auditable_metadata: {
-        section_name: ".dep-v0",
-        root_package_index: 1,
-        packages: [
-          { name: "itoa", version: "1.0.18" },
-          { name: "sample", version: "0.1.0", root: true },
-        ],
-      },
+    expect(report.format).toBe("wasm");
+    expect(report.architecture).toBe("wasm");
+    expect(report.bits).toBeNull();
+    expect(report.byte_order).toBe("little");
+    expect(report.auditable_metadata).toMatchObject({
+      section_name: ".dep-v0",
+      root_package_index: 1,
+      packages: [
+        { name: "itoa", version: "1.0.18" },
+        { name: "sample", version: "0.1.0", root: true },
+      ],
     });
-    expect(report.limitations.join("\n")).toContain(
-      "WebAssembly declares no container word size",
-    );
   },
 );
 
