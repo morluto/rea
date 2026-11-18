@@ -651,9 +651,11 @@ export async function verifyNativeTypeLayout(client, typeNames) {
 }
 
 /**
- * Oracle for masked-byte-switch.S. Ghidra 12.2 issue #10154 leaves this
- * `and #0xff` byte-offset branch unrecovered. A recovered switch fails the
- * lane so the exact-build limitation can be removed with the fix.
+ * Oracle for masked-byte-switch.S. The masked table has 256 readable bytes,
+ * the full `and #0xff` range. Ghidra 12.2 issue #10154 still leaves that
+ * branch unrecovered. The compare-bounded switch in the same object must
+ * recover, so a truncated table cannot explain the miss. A recovered masked
+ * switch fails the lane so the limitation can be removed with the fix.
  */
 export async function verifyMaskedByteSwitch(client) {
   const names = await inventoryCall(client, "list_names", {
@@ -682,10 +684,34 @@ export async function verifyMaskedByteSwitch(client) {
     throw new Error(
       `Masked byte switch did not keep the unrecovered jump table: ${pseudocode}`,
     );
+  const bounded = requireProcedure(names, "rea_bounded_byte_switch");
+  const boundedDossier = await functionCall(client, "analyze_function", {
+    procedure: bounded.address,
+  });
+  const boundedTable = boundedDossier.native_api?.jump_tables.find((item) =>
+    item.data_sources.some(
+      (source) => source.entry_size_bytes === 1 && source.entry_count === 4,
+    ),
+  );
+  if (boundedTable === undefined)
+    throw new Error(
+      `Compare-bounded byte switch did not recover: ${JSON.stringify(boundedDossier.native_api)}`,
+    );
+  for (let value = 0; value < 4; value += 1) {
+    const mapping = boundedTable.mappings.find(
+      (item) => item.case_value === value,
+    );
+    if (mapping === undefined || mapping.confidence !== "high")
+      throw new Error(
+        `Compare-bounded case ${value} was not verified: ${JSON.stringify(boundedTable)}`,
+      );
+  }
   return {
     address: procedure.address,
     jump_tables: tables.length,
     unrecovered: true,
+    bounded_address: bounded.address,
+    bounded_cases: boundedTable.mappings.length,
   };
 }
 

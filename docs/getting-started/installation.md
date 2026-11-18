@@ -1206,8 +1206,8 @@ detect this shape. Every admitted session also records `ghidra-10154`.
 is open: an AArch64 byte-offset switch bounded only by `and #0xff` loses its
 jump table and the function body stops at the indirect branch. The report's
 example is an optimized Swift enum switch. REA reproduced that instruction
-shape on 12.2 with an AArch64 ELF object; compare-bounded byte tables in the
-AArch64 jump-table lane still recover. The issue has no fix commit and no
+shape on 12.2 with an AArch64 ELF object whose table has 256 readable bytes.
+A compare-bounded byte switch in that same object still recovers. The issue has no fix commit and no
 milestone, so the record stays on `12.2.1` and every other admitted build
 until a release is known to clear it.
 

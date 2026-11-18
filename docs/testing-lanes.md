@@ -61,8 +61,9 @@ dSYM companion. It checks unfiltered, structs, and literal-name filters,
 same-address alias evidence, deduplication, and explicit unresolved categories.
 It does not add a Swift prerequisite to the host C fixture lane. It does not
 compile the AArch64 `and #0xff` byte-offset switch from Ghidra #10154.
-`npm run verify:ghidra:aarch64-jump-table` assembles that shape and expects
-Ghidra 12.2 to leave the jump table unrecovered.
+`npm run verify:ghidra:aarch64-jump-table` assembles that shape with 256
+readable table bytes and expects Ghidra 12.2 to leave that jump table
+unrecovered. A compare-bounded byte switch in the same object must recover.
 
 The host lane also verifies namespaced C++ ABI symbols and annotation identity.
 That facet requires Ghidra's matching `demangler_gnu_v2_41` native component in
