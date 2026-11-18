@@ -26,6 +26,7 @@ import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
+import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
@@ -634,11 +635,13 @@ checkCounted(
 
 // Turning a completed result into a cancellation after cleanup is the
 // finalization precedence that runOwned owns (src/providers/runOwned.ts).
+// Negated checks (`!outcome.ok && signal?.aborted`) inspect a failed primary
+// to attach a secondary cancellation and are excluded.
 checkCounted(
   "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
   "completed-abort-reclassification",
   files,
-  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  completedAbortReclassificationCount,
   ["src/providers/runOwned.ts"],
 );
 
