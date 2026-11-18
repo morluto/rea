@@ -756,6 +756,7 @@
 * **artifacts:** expect the named integrity check on MCP ASAR integrity errors ([#11244](https://github.com/morluto/rea/issues/11244)) ([e0f7172](https://github.com/morluto/rea/commit/e0f71725e4355ca402d8525888cacff9cb5e2de2))
 * **artifacts:** fit the buffered member case to Windows stream buffers ([3986bf9](https://github.com/morluto/rea/commit/3986bf9f8e5477baf92de3cddae69360d377dd0d))
 * **artifacts:** shrink PCK stream lifecycle fixtures ([#12017](https://github.com/morluto/rea/issues/12017)) ([2243aaf](https://github.com/morluto/rea/commit/2243aaf25e2d5997a9faff4d7878488aa860f962))
+* **artifacts:** verify encrypted PCK extraction refusal ([#12054](https://github.com/morluto/rea/issues/12054)) ([5d54447](https://github.com/morluto/rea/commit/5d54447d63e5359fdd3d7c76b14d90a4c03cff89))
 * assert elapsed time where a deadline guarded complexity ([d3efeb0](https://github.com/morluto/rea/commit/d3efeb0c36702a2692b44611875a9fcd56d68b05))
 * assert held-drain, projection, VFS-limit and solve-stop outcomes instead of arbitrary elapsed bounds ([#10979](https://github.com/morluto/rea/issues/10979)) ([7ed68aa](https://github.com/morluto/rea/commit/7ed68aac9390043f44b21074f3f25415def46b1a))
 * **audit:** let header reads pass before packaged probe failure ([b8b4155](https://github.com/morluto/rea/commit/b8b4155ba8ea71dc74157ef18613cc28958f43a1)), closes [#10443](https://github.com/morluto/rea/issues/10443)
