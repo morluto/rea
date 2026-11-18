@@ -6,6 +6,10 @@ import {
   espImage,
 } from "../../tests/fixtures/espImage.js";
 import { recognizeArtifactFormat } from "./artifactFormatRecognition.js";
+import {
+  fullAndroidOtaPayload,
+  v1AndroidOtaPayload,
+} from "./firmware/androidOtaPayload.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
@@ -39,6 +43,12 @@ it.each([
     bytes: esp8266Image(),
     format: "esp-image",
     reason: ESP8266_REFUSAL,
+  },
+  {
+    label: "an Android OTA payload v1 header",
+    bytes: v1AndroidOtaPayload(),
+    format: "android-ota-payload",
+    reason: expect.stringContaining("major version 1"),
   },
 ])("refuses $label in one place", (row) => {
   expect(recognize(row.bytes)).toEqual({
@@ -84,4 +94,20 @@ it("decides an ESP flash layout before the bootloader image it begins with", () 
 
 it("leaves bytes no recognizer claims to the native and named-format routes", () => {
   expect(recognize(Buffer.from("plain text content\n"))).toBeUndefined();
+  expect(recognize(Buffer.from("ANDROID"))).toBeUndefined();
+});
+
+it("recognizes Android boot and vendor boot image prefixes", () => {
+  for (const magic of ["ANDROID!", "VNDRBOOT"])
+    expect(recognize(Buffer.from(magic))).toMatchObject({
+      state: "recognized",
+      format: "android-boot-image",
+    });
+});
+
+it("recognizes a CrAU v2 payload after the uImage magic check", () => {
+  expect(recognize(fullAndroidOtaPayload())).toMatchObject({
+    state: "recognized",
+    format: "android-ota-payload",
+  });
 });

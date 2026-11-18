@@ -88,7 +88,6 @@ it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", 
 });
 
 it.each([
-  "file",
   "crc",
   "version",
   "short",

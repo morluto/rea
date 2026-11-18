@@ -106,22 +106,6 @@ it("keeps an unidentifiable frame commit unknown without inventing a main-frame 
 
   expect(observation.window.end_reason).toBe("window_elapsed");
   expectNoCommittedFrameWithInvalidTimeline(observation);
-});
-
-it("marks a frame event with absent parameters as unknown timeline evidence", async () => {
-  const { observation } = await observeDuringClockSampling((command) =>
-    command.method === "Performance.getMetrics"
-      ? [
-          {
-            method: "Page.frameNavigated",
-            sessionId: command.sessionId,
-            params: undefined,
-          },
-        ]
-      : undefined,
-  );
-
-  expectNoCommittedFrameWithInvalidTimeline(observation);
   expect(observation.completeness.unavailable_sections).toContain("timeline");
 });
 

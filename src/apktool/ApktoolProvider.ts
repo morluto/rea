@@ -180,7 +180,8 @@ const runApktool = async (
       },
       signal === undefined ? {} : { signal },
     );
-    return ok({ stdout: output.stdout.text, stderr: output.stderr.text });
+    const { stdout, stderr } = capturedProviderOutput(output);
+    return ok({ stdout, stderr });
   } catch (cause) {
     return err(
       commands.retainFailure(

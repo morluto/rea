@@ -80,7 +80,7 @@ describe("native export stable filesystem boundary", () => {
           expect(result.error).toMatchObject({
             _tag: "AnalysisResourceConstraintError",
             resource: "capacity",
-            reportedLimits: { boundary: "structure", maximum: 16777216 },
+            reportedLimits: { boundary: "retained_text", maximum: 16777216 },
             retryable: false,
             fixedAllowance: {
               name: "The native export retained-text allowance",
@@ -295,7 +295,7 @@ describe("native export entry allowance", () => {
         expect(result.error).toMatchObject({
           _tag: "AnalysisResourceConstraintError",
           resource: "capacity",
-          reportedLimits: { boundary: "structure", maximum: 262144 },
+          reportedLimits: { boundary: "rows", maximum: 262144 },
           retryable: false,
           fixedAllowance: {
             name: "The native export inventory allowance",

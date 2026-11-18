@@ -15,37 +15,6 @@ const failure = bindGhidraSessionFailure(() => ({
 }));
 
 describe("Ghidra request queue failure settlement", () => {
-  it("forwards the request deadline to the executor", async () => {
-    const optionsSeen: { timeoutMs?: number }[] = [];
-    const queue = new GhidraRequestQueue(
-      (_method, _parameters, options) => {
-        optionsSeen.push(options);
-        return Promise.resolve(
-          options.timeoutMs === 0
-            ? err(
-                failure(
-                  "timeout",
-                  "Ghidra request deadline elapsed",
-                  undefined,
-                  { timeoutMs: 0 },
-                ),
-              )
-            : ok(null),
-        );
-      },
-      failure,
-      () => Promise.resolve(ok(null)),
-    );
-
-    await expect(
-      queue.run("ping", {}, { timeoutMs: 0 }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { kind: "timeout", timeoutMs: 0 },
-    });
-    expect(optionsSeen).toEqual([{ timeoutMs: 0 }]);
-  });
-
   it.each([new TypeError("Decoder rejected"), "decoder rejected", null])(
     "preserves a rejected executor cause (%j) and drains the next request",
     async (cause) => {

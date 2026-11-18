@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -53,7 +53,15 @@ describe("directory traversal of a parent wider than call arguments allow", () =
   beforeAll(async () => {
     workspace = await createTestWorkspace("rea-wide-directory-");
     root = await workspace.mkdir("tree");
-    for (const name of childNames()) mkdirSync(join(root, name));
+    const names = childNames();
+    const batchSize = 64;
+    for (let offset = 0; offset < names.length; offset += batchSize) {
+      await Promise.all(
+        names
+          .slice(offset, offset + batchSize)
+          .map((name) => mkdir(join(root, name))),
+      );
+    }
   });
   afterAll(async () => {
     if (workspace !== undefined) await removeTestWorkspace(workspace.root);

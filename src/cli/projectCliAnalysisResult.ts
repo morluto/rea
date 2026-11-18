@@ -3,12 +3,31 @@ import type { z } from "zod";
 import { recordedControlSchemas } from "../domain/analysisSettingDefinitions.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import {
+  cliCommandForOperation,
+  type CliCommandEntry,
+  type CliCommandOperation,
+} from "./commandRegistry.js";
 
 interface CliInputFieldBinding {
   readonly operation: string;
   readonly fields: Readonly<Record<string, string>>;
   /** Each contract field, or `field.member`, the command takes as a flag. */
   readonly flags: Readonly<Record<string, string>>;
+  /**
+   * Operations the selected command route runs, including its session-target
+   * opener and Evidence-target source. When supplied, recovery flags fall back
+   * across these operations when an error omits `details.operation` or names
+   * its opener.
+   */
+  readonly operations?: readonly CliCommandOperation[] | undefined;
+}
+
+export interface CliCommandOutputProjectionContext {
+  readonly operations: readonly CliCommandOperation[];
+  readonly commands: readonly CliCommandEntry[];
+  readonly cliName?: string | undefined;
+  readonly recordedCommands?: Readonly<Record<string, string>> | undefined;
 }
 
 /** Flatten a finalized outcome only when returning the command's JSON output. */
@@ -20,6 +39,20 @@ export const isObject = (
   value: JsonValue | undefined,
 ): value is Record<string, JsonValue> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+
+const orderedOperations = (
+  operations: readonly CliCommandOperation[],
+  errorOperation: JsonValue | undefined,
+): readonly CliCommandOperation[] => {
+  if (typeof errorOperation !== "string" || operations.length <= 1)
+    return operations;
+  const matching = operations.filter(({ name }) => name === errorOperation);
+  if (matching.length === 0) return operations;
+  return [
+    ...matching,
+    ...operations.filter(({ name }) => name !== errorOperation),
+  ];
+};
 
 /**
  * Name a contract command's input fields by their CLI spelling in its
@@ -36,10 +69,23 @@ export const projectCliInputFields = <Output>(
   binding: CliInputFieldBinding,
 ): Output => {
   const error = output as JsonValue;
-  if (!isObject(error) || !isObject(error.details)) return output;
+  if (
+    !isObject(error) ||
+    typeof error.code !== "string" ||
+    !isObject(error.details)
+  )
+    return output;
+  const operations =
+    binding.operations === undefined
+      ? [{ name: binding.operation, flags: binding.flags }]
+      : orderedOperations(binding.operations, error.details.operation);
   const issues = renamedIssues(error, error.details, binding);
-  const limit = flaggedLimit(error.details.limit, binding);
-  const relatedFlags = relatedCliFlags(error.details, binding);
+  const limit = flaggedLimit(error.details.limit, operations);
+  const relatedFlags =
+    binding.operations === undefined &&
+    error.details.operation !== binding.operation
+      ? undefined
+      : relatedCliFlagsFromOperations(error.details, operations);
   if (issues === undefined && limit === undefined && relatedFlags === undefined)
     return output;
   return {
@@ -56,26 +102,130 @@ export const projectCliInputFields = <Output>(
 };
 
 /**
- * The option of each field this command's failure names for its recovery,
- * keyed by contract field, or undefined when it takes none of them. Fields
- * of another operation are that command's to render.
+ * Render `cli_flag`, `related_cli_flags`, and `related_cli_commands` on any
+ * CLI command's error output from its registered operations and the CLI's
+ * command registry. Preserves existing route-specific bindings and untouched
+ * references.
  */
-const relatedCliFlags = (
-  details: Record<string, JsonValue>,
-  binding: CliInputFieldBinding,
-): Record<string, JsonValue> | undefined => {
+export const projectCliCommandOutput = <Output>(
+  output: Output,
+  context: CliCommandOutputProjectionContext,
+): Output => {
+  const candidate = output as JsonValue;
+  if (!isObject(candidate)) return output;
+  if (typeof candidate.code === "string" && isObject(candidate.details))
+    return projectErrorRecord(candidate, context) as Output;
   if (
-    details.operation !== binding.operation ||
-    !Array.isArray(details.related_parameters)
+    isObject(candidate.error) &&
+    typeof candidate.error.code === "string" &&
+    isObject(candidate.error.details)
+  ) {
+    const nested = projectErrorRecord(candidate.error, context);
+    return nested === candidate.error
+      ? output
+      : ({ ...candidate, error: nested } as Output);
+  }
+  return output;
+};
+
+const projectErrorRecord = (
+  error: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> => {
+  const { details } = error;
+  if (!isObject(details)) return error;
+  const operations = orderedOperations(context.operations, details.operation);
+  const limit =
+    isObject(details.limit) && Object.hasOwn(details.limit, "cli_flag")
+      ? undefined
+      : flaggedLimit(details.limit, operations);
+  const relatedFlags = Object.hasOwn(details, "related_cli_flags")
+    ? undefined
+    : relatedCliFlagsFromOperations(details, operations);
+  const relatedCommands = Object.hasOwn(details, "related_cli_commands")
+    ? undefined
+    : relatedCliCommands(details, context);
+  const secondaryFailures = projectedSecondaryFailures(
+    details.secondary_failures,
+    context,
+  );
+  if (
+    limit === undefined &&
+    relatedFlags === undefined &&
+    relatedCommands === undefined &&
+    secondaryFailures === undefined
   )
+    return error;
+  return {
+    ...error,
+    details: {
+      ...details,
+      ...(limit === undefined ? {} : { limit }),
+      ...(relatedFlags === undefined
+        ? {}
+        : { related_cli_flags: relatedFlags }),
+      ...(relatedCommands === undefined
+        ? {}
+        : { related_cli_commands: relatedCommands }),
+      ...(secondaryFailures === undefined
+        ? {}
+        : { secondary_failures: secondaryFailures }),
+    },
+  };
+};
+
+const projectedSecondaryFailures = (
+  secondary: JsonValue | undefined,
+  context: CliCommandOutputProjectionContext,
+): JsonValue[] | undefined => {
+  if (!Array.isArray(secondary) || secondary.length === 0) return undefined;
+  let changed = false;
+  const mapped = secondary.map((item) => {
+    if (!isObject(item) || typeof item.code !== "string") return item;
+    const next = projectErrorRecord(item, context);
+    if (next !== item) changed = true;
+    return next;
+  });
+  return changed ? mapped : undefined;
+};
+
+/**
+ * The option of each field a failure names for its recovery, keyed by contract
+ * field, or undefined when the command takes none of them.
+ */
+const relatedCliFlagsFromOperations = (
+  details: Record<string, JsonValue>,
+  operations: readonly CliCommandOperation[],
+): Record<string, JsonValue> | undefined => {
+  if (!Array.isArray(details.related_parameters) || operations.length === 0)
     return undefined;
   const flags: Record<string, JsonValue> = {};
   for (const parameter of details.related_parameters) {
     if (typeof parameter !== "string") continue;
-    const flag = cliFlagFor(parameter, binding);
+    const flag = cliFlagForOperations(parameter, operations);
     if (flag !== undefined) flags[parameter] = flag;
   }
   return Object.keys(flags).length === 0 ? undefined : flags;
+};
+
+const relatedCliCommands = (
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  if (!Array.isArray(details.related_operations)) return undefined;
+  const cliName = context.cliName ?? "rea";
+  const commands: Record<string, JsonValue> = {};
+  for (const operation of details.related_operations) {
+    if (typeof operation !== "string") continue;
+    const command = cliCommandForOperation(
+      operation,
+      context.commands,
+      cliName,
+      context.recordedCommands,
+    );
+    if (command !== undefined) commands[operation] = command;
+  }
+  return Object.keys(commands).length === 0 ? undefined : commands;
 };
 
 /** Issue paths renamed to CLI keys, or undefined when none changes. */
@@ -128,13 +278,29 @@ const limitParameter = (limit: JsonValue | undefined): string | undefined =>
  * parameter path names the flag: a flattened member option, else the option
  * of the whole field (such as `--producer-limits` JSON).
  */
-const cliFlagFor = (
+const cliFlagForFlags = (
   parameter: string,
-  binding: CliInputFieldBinding,
+  flags: Readonly<Record<string, string>>,
 ): string | undefined => {
   const segments = parameter.split(".");
   for (let length = segments.length; length > 0; length -= 1) {
-    const flag = binding.flags[segments.slice(0, length).join(".")];
+    const flag = flags[segments.slice(0, length).join(".")];
+    if (flag !== undefined) return flag;
+  }
+  return undefined;
+};
+
+const cliFlagFor = (
+  parameter: string,
+  binding: Pick<CliInputFieldBinding, "flags">,
+): string | undefined => cliFlagForFlags(parameter, binding.flags);
+
+const cliFlagForOperations = (
+  parameter: string,
+  operations: readonly CliCommandOperation[],
+): string | undefined => {
+  for (const operation of operations) {
+    const flag = cliFlagForFlags(parameter, operation.flags);
     if (flag !== undefined) return flag;
   }
   return undefined;
@@ -143,11 +309,13 @@ const cliFlagFor = (
 /** The reported per-call control with the flag that sets it. */
 const flaggedLimit = (
   limit: JsonValue | undefined,
-  binding: CliInputFieldBinding,
+  operations: readonly CliCommandOperation[],
 ): Record<string, JsonValue> | undefined => {
   const parameter = limitParameter(limit);
   const flag =
-    parameter === undefined ? undefined : cliFlagFor(parameter, binding);
+    parameter === undefined
+      ? undefined
+      : cliFlagForOperations(parameter, operations);
   return flag === undefined || !isObject(limit)
     ? undefined
     : { ...limit, cli_flag: flag };
