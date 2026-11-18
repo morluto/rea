@@ -1,5 +1,10 @@
 /** Inert RV32/RV64 ELF with RELA constructors and a RELR finalizer. */
-export const riscvInitializers = (bits: 32 | 64): Buffer => {
+export const riscvInitializers = (
+  bits: 32 | 64,
+  {
+    definedSymbolIsTls = false,
+  }: { readonly definedSymbolIsTls?: boolean } = {},
+): Buffer => {
   const bytes = Buffer.alloc(0xc00);
   const word = bits / 8;
   const wide = bits === 64;
@@ -81,7 +86,8 @@ export const riscvInitializers = (bits: 32 | 64): Buffer => {
   for (let index = 1; index <= 2; index += 1) {
     const at = 0x600 + index * symbolSize;
     bytes.writeUInt32LE(index === 1 ? 1 : 12, at);
-    bytes[at + (wide ? 4 : 12)] = 0x12;
+    bytes[at + (wide ? 4 : 12)] =
+      index === 1 && definedSymbolIsTls ? 0x16 : 0x12;
     bytes.writeUInt16LE(index === 1 ? 1 : 0, at + (wide ? 6 : 14));
     put(at + (wide ? 8 : 4), index === 1 ? 0x100 : 0);
   }
