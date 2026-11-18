@@ -3011,7 +3011,7 @@ msgid ""
 "connected? Continue below."
 msgstr ""
 "Revisa el plan, aprueba la configuración y después reinicia tu agente. ¿Ya "
-"está conectado? Continúa abajo."
+"lo tienes conectado? Continúa abajo."
 
 #: website/public/first-investigation/index.html:278
 msgctxt "page:first-investigation/index.html"
