@@ -18,7 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
@@ -26,6 +26,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processTest } from "../../support/process/processFixture.js";
 
 import {
   createSystemProcessOwnershipHost,
@@ -47,6 +48,73 @@ import { electronActiveObservationInputSchema } from "../../../src/domain/javasc
 
 const execFileAsync = promisify(execFile);
 const onDarwin = process.platform === "darwin";
+
+processTest
+  .skipIf(process.platform === "win32")
+  .for(["writable", "blocked", "closed-stderr"] as const)(
+  "preserves process exit status during Darwin helper cleanup (%s)",
+  async (mode, { processes, skip }) => {
+    if (mode !== "writable" && process.getuid?.() === 0)
+      skip("Root can remove entries from a read-only directory");
+    const directory = await createTestTempDirectory("rea-darwin-exit-cleanup-");
+    const compiler = join(directory, "fixture-xcrun");
+    await writeFile(
+      compiler,
+      '#!/usr/bin/env node\nconst { writeFileSync } = process.getBuiltinModule("node:fs");\nwriteFileSync(process.argv.at(-1), "fixture helper");\n',
+      { mode: 0o755 },
+    );
+    const readerModule = new URL(
+      "../../../src/process/DarwinProcessRunTokenReader.ts",
+      import.meta.url,
+    );
+    const probe = `
+import { chmodSync, closeSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { createDarwinProcessRunTokenReader } from ${JSON.stringify(readerModule.href)};
+const [directory, compiler, mode] = process.argv.slice(1);
+const reader = createDarwinProcessRunTokenReader({ compiler: { kind: "xcrun", executable: compiler } });
+await reader.prepare();
+const roots = readdirSync(directory).filter((name) => name.startsWith("rea-process-token-"));
+if (roots.length !== 1) throw new Error("Expected one per-run helper root");
+const root = join(directory, roots[0]);
+if (mode !== "writable") chmodSync(root, 0o500);
+process.stdout.write(root);
+if (mode === "closed-stderr") closeSync(2);
+`;
+    try {
+      const result = await processes.run(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "--eval",
+          probe,
+          directory,
+          compiler,
+          mode,
+        ],
+        { env: { ...process.env, TMPDIR: directory } },
+      );
+      const root = result.stdout;
+      expect(dirname(root)).toBe(directory);
+      expect(result.exitCode, result.stderr).toBe(0);
+      if (mode === "writable")
+        await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+      else await expect(access(root)).resolves.toBeUndefined();
+      if (mode === "blocked") {
+        expect(result.stderr.trimEnd().split("\n")).toHaveLength(1);
+        expect(result.stderr).toContain(
+          `could not remove the Darwin ownership helper root ${root} at exit`,
+        );
+      } else expect(result.stderr).toBe("");
+    } finally {
+      for (const entry of await readdir(directory, { withFileTypes: true }))
+        if (entry.isDirectory() && entry.name.startsWith("rea-process-token-"))
+          await chmod(join(directory, entry.name), 0o700);
+    }
+  },
+);
 
 // Readiness files are polled by another process; expose only complete JSON.
 const publishFixtureStateSource = `

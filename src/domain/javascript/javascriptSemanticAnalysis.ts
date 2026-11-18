@@ -133,6 +133,7 @@ import {
   javaScriptSourceLoaderCondition,
   javaScriptStrictnessAt,
   parseJavaScriptSource,
+  recoveredJavaScriptSyntaxErrorCount,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
 
@@ -311,7 +312,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   });
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
-  const parserPartial = file.errors.length > 0;
+  const parserPartial = recoveredJavaScriptSyntaxErrorCount(file.errors) > 0;
   const bindings = immutableSemanticBindings(state);
   yield;
   const callables = collectSemanticReturns(state, parserPartial);

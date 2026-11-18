@@ -217,21 +217,38 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
   },
 );
 
-it("preserves native absence and optional historical omission without inventing mapping facts", () => {
-  const { mapping: _mapping, ...native } = methodReport();
-  const facts = {
-    ...native,
-    body_status: "not_available",
+it.each([
+  {
     markers: ["native_method"],
     source: { status: "complete", text: "", reported_total_bytes: 0 },
-  };
-  const { parent } = fixture("inspect_android_method", facts);
-  const result = projectAnalysisView(parent, { kind: "summary" });
-  if (!result.ok) throw result.error;
-  const view = androidMethodSummaryViewResultSchema.parse(result.value);
-  expect(view.summary).toEqual(facts);
-  expect(Object.hasOwn(view.summary, "mapping")).toBe(false);
-});
+  },
+  {
+    representation: null,
+    body_unavailable_reason:
+      "Selected method disassembly is incomplete: update()V",
+    markers: ["disassembly_failed"],
+    source: null,
+  },
+])(
+  "preserves method absence with $markers and historical omission of mapping",
+  (absence) => {
+    const { mapping: _mapping, ...method } = methodReport();
+    const facts = {
+      ...method,
+      body_status: "not_available",
+      fell_back: false,
+      ...absence,
+    };
+    const { parent } = fixture("inspect_android_method", facts);
+    const result = projectAnalysisView(parent, { kind: "summary" });
+    if (!result.ok) throw result.error;
+    const view = androidMethodSummaryViewResultSchema.parse(result.value);
+    expect(view.summary).toEqual(facts);
+    expect(Object.hasOwn(view.summary, "mapping")).toBe(false);
+    if (absence.source === null)
+      expect(view.unknowns).toContain(absence.body_unavailable_reason);
+  },
+);
 
 it.each(["inspect_android_class", "inspect_android_method"] as const)(
   "rejects malformed historical %s facts with a typed source error",

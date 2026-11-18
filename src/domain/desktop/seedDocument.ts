@@ -1,11 +1,7 @@
 import { posix } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  desktopArgumentIndex,
-  execTakesFiles,
-  unwrapDesktopCommand,
-} from "./desktopEntry.js";
+import { execTakesFiles, unwrapDesktopCommand } from "./desktopEntry.js";
 
 /** What the exported app opens at launch. */
 export type LaunchDocument =
@@ -179,7 +175,7 @@ export const openSeedDocument = (
     return retargetValue(argument);
   };
   const command = unwrapDesktopCommand(argv);
-  const firstArgument = desktopArgumentIndex(argv);
+  const firstArgument = command.argumentIndex;
   const retargetEnvValue = (argument: string) => {
     if (!/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argument)) return argument;
     const split = argument.indexOf("=");

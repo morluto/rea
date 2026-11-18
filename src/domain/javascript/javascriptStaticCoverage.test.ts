@@ -160,6 +160,30 @@ it("retains typed examination limits alongside successfully parsed source", () =
   });
 });
 
+it("keeps a CommonJS wrapper redeclaration out of recovered-syntax coverage", () => {
+  const source =
+    "const require={main:{require(){}}};require.main.require('../shared/window.cjs');";
+  const file = parseJavaScriptSource(source, "a/main.cjs");
+  expect(file).not.toBeNull();
+  expect(file!.errors).toEqual([
+    expect.objectContaining({
+      reasonCode: "CommonJsWrapperLexicalDeclaration",
+    }),
+  ]);
+  const result = analyzeParsedJavaScriptStaticSource(source, file!);
+  expect(result.parse_status).toBe("complete");
+  expect(result.parse_error_count).toBe(0);
+  expect(result.references).toEqual([]);
+  expect(result.analysis_coverage).toMatchObject({
+    syntax: { status: "complete", error_count: 0 },
+    semantics: {
+      unknown_findings: 0,
+      uncertainty: ["commonjs-wrapper-redeclaration"],
+    },
+    examination: { status: "complete" },
+  });
+});
+
 it("preserves the legacy summary responsibility without relabeling independent limitations", () => {
   const base = analyzeJavaScriptStaticSource(
     "export const value = 1;",

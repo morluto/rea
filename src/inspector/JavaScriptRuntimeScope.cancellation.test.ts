@@ -81,7 +81,10 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { listElectronTargetsInputSchema } from "../domain/javascript/electronObservation.js";
 import { V8InspectorProvider } from "./V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
-import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
+import {
+  nodeDiscoveryTargetUrl,
+  startFakeV8Inspector,
+} from "../../tests/fixtures/inspector/fakeV8Inspector.js";
 import { createNodeDiscoveryTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { isRecord } from "../kernel/isRecord.js";
 
@@ -118,8 +121,8 @@ it("stops Inspector target authorization after the current stat settles", async 
   await writeFile(extraPath, "// second inert target file\n");
   fileAccess.extraPath = extraPath;
   const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(path).href,
-    additionalTargets: [{ url: pathToFileURL(extraPath).href }],
+    targetUrl: nodeDiscoveryTargetUrl(path),
+    additionalTargets: [{ url: nodeDiscoveryTargetUrl(extraPath) }],
     additionalTargetCount: 1,
   });
   fixtures.push(fake);

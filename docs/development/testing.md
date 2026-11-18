@@ -863,6 +863,12 @@ the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
 
+To assert that a POSIX process or process group has stopped, use
+`processHasStopped` or `processGroupHasStopped` from
+`tests/support/process/observePosixProcess.ts`, not signal 0. Signal 0 still
+reaches a zombie, and an orphan stays one wherever PID 1 does not reap it, as in
+a container started without an init process.
+
 | Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                                                             |
@@ -1178,7 +1184,9 @@ Source and built blobs have separate labels to prevent merge collisions.
 Each test job emits a blob report; the merge job produces JUnit and JSON diagnostics, a module timing
 report, plus aggregate coverage during full qualification. It retains available
 reports even when a shard fails, uploads available diagnostics, and writes the
-slowest files to the workflow summary. Partial reports are marked diagnostic
+slowest files to the workflow summary. When a merged run fails, the summary
+and job log also list up to 20 reported failed test files and the count of
+unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
 Only a successful complete merge on the default branch publishes shard history,
