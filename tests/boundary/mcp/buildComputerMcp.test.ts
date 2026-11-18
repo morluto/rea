@@ -7,7 +7,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
@@ -25,6 +24,7 @@ import {
 } from "../../fixtures/buildComputerMcp.js";
 import { COMPUTER_START_TIMING } from "../../../src/desktop/AgentEnvComputer.js";
 import {
+  awaitFakeDeployWait,
   FAKE_FRAME_PNG,
   type FakeApp,
   type FakeComputer,
@@ -591,7 +591,7 @@ it("stops the helper when the caller cancels a start", async () => {
   const { runner } = await fakes();
   const client = await connect({
     ...runner.environment,
-    FAKE_DEPLOY_SECONDS: "30",
+    FAKE_HOLD_DEPLOY: "1",
   });
   const controller = new AbortController();
   const call = client.callTool(
@@ -601,14 +601,12 @@ it("stops the helper when the caller cancels a start", async () => {
     },
     { signal: controller.signal },
   );
-  while ((await runner.notes("runs.jsonl")).length === 0) await delay(50);
+  const helper = await awaitFakeDeployWait(runner, call);
   controller.abort();
   await expect(call).rejects.toThrow();
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await runner.notes("interrupted.jsonl")).length > 0) break;
-    await delay(50);
-  }
-  expect(await runner.notes("interrupted.jsonl")).toHaveLength(1);
+  await waitFor(async () =>
+    expect(await runner.notes("interrupted.jsonl")).toEqual([helper]),
+  );
 });
 
 /** An app whose reset keeps the computer unready for `polls` readiness polls, 500 ms apart. */
