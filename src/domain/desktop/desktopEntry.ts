@@ -15,14 +15,14 @@ export interface DesktopEntry {
 }
 
 const GROUP = /^\[(?<name>[^\]]+)\]$/u;
-const ENTRY = /^(?<key>[A-Za-z0-9-]+)\s*=\s*(?<value>.*)$/u;
+// Only LF separates records; Unicode line/paragraph separators are value data.
+const ENTRY = /^(?<key>[A-Za-z0-9-]+)[ \t]*=[ \t]*(?<value>.*)$/su;
 const VALUE_ESCAPES: Readonly<Record<string, string>> = {
   s: " ",
   n: "\n",
   t: "\t",
   r: "\r",
   "\\": "\\",
-  ";": "\\;",
 };
 
 /** Undo the escapes the desktop entry format allows in string values. */
@@ -69,13 +69,25 @@ export const escapeDesktopEntryValue = (value: string): string => {
   return escaped;
 };
 
-const listValue = (value: string | undefined): readonly string[] =>
-  value === undefined
-    ? []
-    : value
-        .split(/(?<!\\);/u)
-        .map((part) => part.replaceAll("\\;", ";"))
-        .filter((part) => part.length > 0);
+/** Decode list separators and escapes together, before either loses its meaning. */
+const listValue = (value: string | undefined): readonly string[] => {
+  if (value === undefined) return [];
+  const entries: string[] = [];
+  let entry = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value.charAt(index);
+    const next = value.charAt(index + 1);
+    if (character === "\\" && next.length > 0) {
+      entry += next === ";" ? ";" : (VALUE_ESCAPES[next] ?? `\\${next}`);
+      index += 1;
+    } else if (character === ";") {
+      entries.push(entry);
+      entry = "";
+    } else entry += character;
+  }
+  if (entry.length > 0) entries.push(entry);
+  return entries;
+};
 
 /** Read the main group of a freedesktop desktop entry, ignoring localized keys. */
 export const parseDesktopEntry = (
@@ -101,13 +113,14 @@ export const parseDesktopEntry = (
       // Keep the existing enum/boolean token treatment before value unescaping.
       values.set(
         key,
-        unescapeValue(
-          key === "Type" || key === "Terminal" ? value.trimEnd() : value,
-        ),
+        key === "Type" || key === "Terminal" ? value.trimEnd() : value,
       );
   }
   if (!found) return err("missing_desktop_entry_group");
-  const field = (key: string) => values.get(key) ?? null;
+  const field = (key: string) => {
+    const value = values.get(key);
+    return value === undefined ? null : unescapeValue(value);
+  };
   return ok({
     type: field("Type"),
     name: field("Name"),
@@ -118,7 +131,7 @@ export const parseDesktopEntry = (
     startup_wm_class: field("StartupWMClass"),
     categories: listValue(values.get("Categories")),
     mime_types: listValue(values.get("MimeType")),
-    terminal: values.get("Terminal") === "true",
+    terminal: field("Terminal") === "true",
   });
 };
 
@@ -254,6 +267,8 @@ export type DesktopCommandWrapper = {
   readonly program: string;
   /** Variables an `env` prefix sets; its `PATH` is the one that finds the program. */
   readonly environment: Readonly<Record<string, string>>;
+  /** First argument of the application, after the program or flatpak's app id. */
+  readonly argumentIndex: number;
 } & (
   | {
       readonly kind: "direct";
@@ -314,17 +329,25 @@ const FLATPAK_RUN_VALUE_OPTIONS: ReadonlySet<string> = new Set([
  * The application id a `flatpak run` argument list names: its first operand,
  * after options and their values, without a `/arch/branch` ref suffix.
  */
-const flatpakApplicationId = (arguments_: readonly string[]): string | null => {
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const token = arguments_[index] ?? "";
-    if (token === "--") return arguments_[index + 1]?.split("/")[0] || null;
-    if (!token.startsWith("-")) return token.split("/")[0] || null;
+const flatpakApplication = (argv: readonly string[], start: number) => {
+  for (let index = start; index < argv.length; index += 1) {
+    const token = argv[index] ?? "";
+    if (token === "--")
+      return {
+        application_id: argv[index + 1]?.split("/")[0] || null,
+        argumentIndex: Math.min(index + 2, argv.length),
+      };
+    if (!token.startsWith("-"))
+      return {
+        application_id: token.split("/")[0] || null,
+        argumentIndex: index + 1,
+      };
     if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
   }
-  return null;
+  return { application_id: null, argumentIndex: argv.length };
 };
 
-/** Apply `env NAME=value` prefixes and recognise `flatpak run` launchers. */
+/** Apply `env [--] NAME=value` prefixes and recognise `flatpak run` launchers. */
 export const unwrapDesktopCommand = (
   argv: readonly string[],
 ): DesktopCommandWrapper => {
@@ -333,6 +356,9 @@ export const unwrapDesktopCommand = (
   const environment: Record<string, string> = Object.create(null);
   if (argv[0]?.split("/").at(-1) === "env") {
     index = 1;
+    // Only the option terminator before the first operand belongs to env;
+    // a later `--` can name the command or belong to the application.
+    if (argv[index] === "--") index += 1;
     while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) {
       const assignment = argv[index] ?? "";
       const split = assignment.indexOf("=");
@@ -346,27 +372,13 @@ export const unwrapDesktopCommand = (
       kind: "flatpak",
       program,
       environment,
-      application_id: flatpakApplicationId(argv.slice(index + 2)),
+      ...flatpakApplication(argv, index + 2),
     };
-  return { kind: "direct", program, environment, index };
-};
-
-/** The first argument after an `env` prefix, the program, and a `flatpak run` id. */
-export const desktopArgumentIndex = (argv: readonly string[]): number => {
-  const command = unwrapDesktopCommand(argv);
-  if (command.kind === "direct") return command.index + 1;
-  let index = 0;
-  if (argv[0]?.split("/").at(-1) === "env") {
-    index = 1;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) index += 1;
-  }
-  index += 1;
-  if (argv[index] === "run") index += 1;
-  for (; index < argv.length; index += 1) {
-    const token = argv[index] ?? "";
-    if (token === "--") return Math.min(index + 2, argv.length);
-    if (!token.startsWith("-")) return index + 1;
-    if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
-  }
-  return argv.length;
+  return {
+    kind: "direct",
+    program,
+    environment,
+    index,
+    argumentIndex: index + 1,
+  };
 };

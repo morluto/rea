@@ -1,10 +1,18 @@
+import { EventEmitter } from "node:events";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { MachoCommandNamesLimitError } from "./MachoCommandNames.js";
+import {
+  NativeCommandFailure,
+  XcrunCommandRunner,
+} from "../providers/NativeCommandRunner.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import { err } from "../domain/result.js";
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { MachoCommandNamesLimitError } from "../domain/apple/machoCommandNames.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
@@ -80,7 +88,7 @@ it.each(
     expect(result.error.partialObservation).toMatchObject({
       operation,
       parameters: { native_command_timeout_ms: 5000 },
-      subject: { local_path: path, digest: { sha256: target.sha256 } },
+      subject: { local_path: path, identity: { sha256: target.sha256 } },
       normalized_result: { provenance: expect.any(Array) },
       locations: expect.any(Array),
     });
@@ -186,16 +194,18 @@ it.each(
     } else {
       expect(result.error.partialObservation).toMatchObject({
         operation,
-        subject: { local_path: path, digest: { sha256: target.sha256 } },
+        subject: { local_path: path, identity: { sha256: target.sha256 } },
         normalized_result: { provenance: expect.any(Array) },
       });
     }
     expect((await client.close()).ok).toBe(true);
   },
 );
-vi.mock("./MachoCommandNames.js", async (importOriginal) => {
+vi.mock("../domain/apple/machoCommandNames.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("./MachoCommandNames.js")>();
+    await importOriginal<
+      typeof import("../domain/apple/machoCommandNames.js")
+    >();
   return {
     ...actual,
     readMachoCommandNames: (
@@ -458,7 +468,7 @@ it.each([
   ["truncated fixed fields", "Mach-O fixed command fields are truncated", 1],
   ["invalid string offset", "Mach-O command string offset is invalid", 2],
 ] as const)(
-  "reports malformed binary %s as output failure with its reason",
+  "reports malformed binary %s as invalid input with its reason",
   async (_case, reason, mode) => {
     const { machoImage, dylibCommand, LC } =
       await import("../artifacts/apple/MachoImage.fixture.js");
@@ -481,12 +491,181 @@ it.each([
     try {
       const result = await client.execute("inspect_macho", {});
       if (result.ok) throw new Error("Expected malformed input refusal");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
-        details: { operation: "inspect_macho", reason },
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        operation: "inspect_macho",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `Selected artifact ${path}: ${reason}`,
+          },
+        ],
       });
     } finally {
       await client.close();
     }
+  },
+);
+
+it.each(
+  (["inspect_macho", "list_architectures"] as const).flatMap((operation) => [
+    ...[false, true].flatMap((cancelDuringClose) =>
+      [false, true].map((failDescriptorClose) => ({
+        operation,
+        cancelDuringClose,
+        failDescriptorClose,
+        changeTarget: false,
+      })),
+    ),
+    {
+      operation,
+      cancelDuringClose: false,
+      failDescriptorClose: false,
+      changeTarget: true,
+    },
+  ]),
+)(
+  "keeps $operation command cleanup live through finalization (cancel: $cancelDuringClose, failed close: $failDescriptorClose, changed target: $changeTarget)",
+  async ({
+    operation,
+    cancelDuringClose,
+    failDescriptorClose,
+    changeTarget,
+  }) => {
+    const root = await createTestTempDirectory("rea-macho-command-owner-");
+    const path = join(root, "fixture.macho");
+    await writeFile(path, inspectionImage());
+    const target = await nativeMachoTargetForFile(path);
+    // The exited event handle and cleanup callback are inert; no process starts.
+    const process = Object.assign(new EventEmitter(), {
+      exitCode: 1,
+      signalCode: null,
+      stdout: null,
+      stderr: null,
+      kill: () => {
+        throw new Error("Exited fixture must not be signalled");
+      },
+    });
+    let mayClean = false;
+    let cleanupAttempts = 0;
+    const owner = new ProviderProcessSupervisor({
+      process,
+      ownsProcessLifetime: true,
+      cleanup: async () => {
+        cleanupAttempts++;
+        return mayClean
+          ? { cleaned: true, signaled: false }
+          : { cleaned: false, reason: "worker remains owned" };
+      },
+    });
+    process.emit("close", 1, null);
+    const physical = new Error("physical command read failure");
+    const failure = new NativeCommandFailure(
+      "lipo",
+      "io",
+      1,
+      { cause: physical, cleanupOwner: owner },
+      {
+        stdout: "partial native output",
+        stderr: "read failed",
+        stdoutBytes: 21,
+        stderrBytes: 11,
+        exitCode: 1,
+        signal: null,
+        truncated: false,
+      },
+      "worker remains owned",
+      ["native-command-process"],
+    );
+    const runner = new XcrunCommandRunner({}, async () => {
+      if (changeTarget) await writeFile(path, "changed Mach-O source bytes");
+      return err(failure);
+    });
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+      target,
+    );
+    const controller = new AbortController();
+    const reason = { request: "cancel during descriptor close" };
+    let descriptorCloseFails = failDescriptorClose;
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const original = prototype.stat;
+    const stat = vi
+      .spyOn(prototype, "stat")
+      .mockImplementationOnce(async function (
+        this: FileHandle,
+        ...args: Parameters<FileHandle["stat"]>
+      ) {
+        const close = this.close.bind(this);
+        this.close = async () => {
+          if (cancelDuringClose) controller.abort(reason);
+          if (descriptorCloseFails) throw new Error("descriptor remains owned");
+          await close();
+        };
+        return Reflect.apply(original, this, args);
+      });
+    onTestFinished(async () => {
+      stat.mockRestore();
+      descriptorCloseFails = false;
+      mayClean = true;
+      expect((await client.close()).ok).toBe(true);
+    });
+    const result = await client.execute(
+      operation,
+      {},
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected command failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
+    const primary = primaryAnalysisError(result.error);
+    if (changeTarget) {
+      expect(primary._tag).toBe("AnalysisArtifactChangedError");
+      expect(primary.diagnostics).toMatchObject({
+        previous_error: {
+          details: {
+            captured_output: {
+              stdout: "partial native output",
+              stderr: "read failed",
+            },
+          },
+        },
+      });
+    } else {
+      expect(primary.cause).toBeInstanceOf(NativeCommandFailure);
+      if (!(primary.cause instanceof NativeCommandFailure))
+        throw new Error("Expected the runner's physical command failure");
+      expect(primary.cause.cause).toBe(failure);
+      expect(primary.capturedOutput).toMatchObject({
+        stdout: "partial native output",
+        stderr: "read failed",
+      });
+    }
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources.toSorted()).toEqual(
+      [...(failDescriptorClose ? [path] : []), "native-command-process"].sort(),
+    );
+    expect(primary.secondaryFailures).toEqual(
+      cancelDuringClose
+        ? [
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          ]
+        : [],
+    );
+    descriptorCloseFails = false;
+    const blocked = await client.close();
+    expect(blocked.ok).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["native-command-process"]);
+    expect(cleanupAttempts).toBe(1);
+    mayClean = true;
+    expect((await client.close()).ok).toBe(true);
+    expect(cleanupAttempts).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
   },
 );

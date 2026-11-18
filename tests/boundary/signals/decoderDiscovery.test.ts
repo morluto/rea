@@ -1,6 +1,14 @@
 import { expect, it } from "vitest";
+import { fixedAllowanceOptions } from "../../../src/domain/fixedAllowanceRemediation.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../../src/domain/parseFailureAnalysisError.js";
 import { inspectSignalDecodersInputSchema } from "../../../src/domain/signals/signalDecoders.js";
-import { parseDecoderDiscovery } from "../../../src/signals/parseDecoderDiscovery.js";
+import {
+  DECODER_CATALOG_FORMAT,
+  parseDecoderDiscovery,
+} from "../../../src/signals/parseDecoderDiscovery.js";
 
 it("rejects malformed catalogs and the wrong decoder identity", () => {
   for (const text of [
@@ -39,10 +47,30 @@ it("keeps help line ordinals, blank lines and literal special characters through
 });
 
 it("bounds line expansion before constructing help records", () => {
-  expect(() =>
+  let thrown: unknown;
+  try {
     parseDecoderDiscovery(
       "ID: uart\n" + "\n".repeat(65536),
       inspectSignalDecodersInputSchema.parse({ decoder: "uart" }),
+    );
+  } catch (cause) {
+    thrown = cause;
+  }
+  expect(isParseLimit(thrown, DECODER_CATALOG_FORMAT)).toBe(true);
+  if (!isParseLimit(thrown, DECODER_CATALOG_FORMAT))
+    throw new Error("Expected decoder catalog parse limit");
+  expect(
+    parseLimitConstraint(
+      "inspect_signal_decoders",
+      "memory",
+      thrown,
+      fixedAllowanceOptions(
+        "The sigrok decoder-discovery line allowance",
+        "capture",
+      ),
     ),
-  ).toThrow("representation budget");
+  ).toMatchObject({
+    reason: expect.stringContaining("representation budget"),
+    reportedLimits: { boundary: "line_budget", maximum: 65536 },
+  });
 });

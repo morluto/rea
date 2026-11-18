@@ -1,5 +1,9 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import {
+  parseEvidenceBundle,
+  createEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -15,14 +19,14 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import type {
-  AnalysisProvider,
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+import {
+  createAnalysisExecution,
+  type AnalysisProvider,
+  type CapabilityDescriptor,
+  type ProviderIdentity,
+} from "../../../src/ports/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
   readAnalysisSnapshot,
@@ -30,10 +34,10 @@ import {
 } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import {
   createEvidence,
+  evidenceSubject,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
-import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
 import {
@@ -150,6 +154,7 @@ const expectSourceSnapshotRetained = (snapshot: AnalysisSnapshot) => {
 
 interface SnapshotProviderTrace {
   readonly starts: string[];
+  readonly sources: Map<string, Evidence>;
   readonly queries: Array<{
     readonly operation: string;
     readonly parameters: Readonly<Record<string, unknown>>;
@@ -256,25 +261,24 @@ const makeProvider = (
               `Unmodeled snapshot provider operation: ${operation}`,
             );
           const result = results[operation];
+          const source = options.sourceEvidence
+            ? createEvidence(target, profile.provider, {
+                operation: "health",
+                parameters: {},
+                result: "fixture source",
+                ...(options.sourceMissingLink
+                  ? { evidenceLinks: [`ev_${"0".repeat(64)}`] }
+                  : {}),
+              })
+            : undefined;
+          if (source !== undefined)
+            trace.sources.set(source.evidence_id, source);
           return ok(
             createAnalysisExecution(result, profile.provider, {
               analysisProfile: profile,
               rawResult: result,
               limitations: options.limitations ?? [],
-              ...(options.sourceEvidence
-                ? {
-                    sourceEvidence: [
-                      createEvidence(target, profile.provider, {
-                        operation: "health",
-                        parameters: {},
-                        result: "fixture source",
-                        ...(options.sourceMissingLink
-                          ? { evidenceLinks: [`ev_${"0".repeat(64)}`] }
-                          : {}),
-                      }),
-                    ],
-                  }
-                : {}),
+              ...(source === undefined ? {} : { sourceEvidence: [source] }),
             }),
           );
         },
@@ -293,6 +297,7 @@ const createSnapshotReplayFixture = async (
   const snapshotPath = join(directory, snapshotRelativePath);
   await writeFile(path, "fixture");
   const starts: string[] = [];
+  const sources = new Map<string, Evidence>();
   const queries: SnapshotProviderTrace["queries"] = [];
   const resolutions: string[] = [];
 
@@ -300,13 +305,14 @@ const createSnapshotReplayFixture = async (
     path,
     snapshotPath,
     starts,
+    sources,
     get calls() {
       return queries.map(({ operation }) => operation);
     },
     queries,
     resolutions,
     createProvider(options: SnapshotProviderOptions = {}): AnalysisProvider {
-      return makeProvider({ starts, queries, resolutions }, options);
+      return makeProvider({ starts, sources, queries, resolutions }, options);
     },
     dependencies(provider: AnalysisProvider): DirectAnalysisDependencies {
       return {
@@ -379,7 +385,7 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
         parameters,
         options,
       );
-      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error(JSON.stringify(first.error));
       const second = await runDirectAnalysis(
         dependencies,
         fixture.path,
@@ -394,6 +400,12 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
       expect(saved.value.entries).toMatchObject([
         { operation: "procedure_pseudo_code", parameters },
       ]);
+      expect(first.value.caller_input_path).toBe(fixture.path);
+      expect(
+        saved.value.evidence_bundle.records.filter(
+          ({ operation }) => operation === "procedure_pseudo_code",
+        ),
+      ).toEqual([first.value]);
     },
   );
 
@@ -504,11 +516,11 @@ const withAlternateWorkflowProfile = (
   const result = current.normalized_result;
   const subject = {
     path,
-    sha256: snapshot.target.sha256,
-    format: snapshot.target.format,
-    ...(snapshot.target.architecture === null
+    sha256: snapshot.target.identity.sha256,
+    format: snapshot.target.identity.format,
+    ...(snapshot.target.identity.architecture === null
       ? {}
-      : { architecture: snapshot.target.architecture }),
+      : { architecture: snapshot.target.identity.architecture }),
   };
   const alternateEvidence = createEvidence(subject, REA_WORKFLOW_PROVIDER, {
     operation: current.operation,
@@ -532,7 +544,7 @@ const withAlternateWorkflowProfile = (
       analysisProfile: alternateProfile,
       limitations: current.limitations,
       locations: current.locations,
-      subject,
+      subject: alternateEvidence.subject,
     },
   });
   return {
@@ -554,7 +566,7 @@ const withEarlierHistoricalEvidence = (
     createEvidence(
       {
         path,
-        sha256: snapshot.target.sha256,
+        sha256: snapshot.target.identity.sha256,
         format: "analysis-database",
       },
       REA_WORKFLOW_PROVIDER,
@@ -602,11 +614,15 @@ describe("snapshot output cleanup lifecycle", () => {
               ["fixture provider"],
               {},
               {
-                partialObservation: createEvidence(undefined, IDENTITY, {
-                  operation: "health",
-                  parameters: {},
-                  result: "cleanup facts",
-                }),
+                partialObservation: createEvidence(
+                  unknownTarget("not-observed"),
+                  IDENTITY,
+                  {
+                    operation: "health",
+                    parameters: {},
+                    result: "cleanup facts",
+                  },
+                ),
               },
             )
           : new AnalysisCancelledError("close_binary");
@@ -714,7 +730,7 @@ describe("snapshot output cleanup lifecycle", () => {
         if (!saved.ok) throw saved.error;
         const loaded = await readAnalysisSnapshot(path);
         if (!loaded.ok) throw loaded.error;
-        expect(loaded.value.target.sha256).toBe(opened.value.sha256);
+        expect(loaded.value.target.identity.sha256).toBe(opened.value.sha256);
       }
     } finally {
       const closed = await session.close();
@@ -1075,7 +1091,7 @@ describe("Ghidra composed workflow runtime-budget admission", () => {
 });
 
 describe("binary overview snapshot replay", () => {
-  it("replays the identical binary overview without provider startup or calls", async () => {
+  it("replays bound overviews without provider work and recomposes unbound history", async () => {
     const fixture = await createSnapshotReplayFixture("rea-workflow-snapshot-");
     const provider = fixture.createProvider();
     const dependencies = fixture.dependencies(provider);
@@ -1159,6 +1175,47 @@ describe("binary overview snapshot replay", () => {
         (record) => record.evidence_id === firstEvidence.evidence_id,
       )?.caller_input_path,
     ).toBe(fixture.path);
+
+    // Historical observations remain importable data without a replay binding.
+    // Retain the primitive entries and one current-profile historical overview,
+    // but omit its workflow entry and the bound current overview record.
+    const historicalOnly = withEarlierHistoricalEvidence(
+      loaded.value,
+      fixture.path,
+      current,
+    );
+    const unboundPath = join(dirname(fixture.snapshotPath), "unbound.json");
+    const unboundWritten = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(
+        {
+          ...historicalOnly,
+          workflow_entries: [],
+          evidence_bundle: createEvidenceBundle(
+            historicalOnly.evidence_bundle.records.filter(
+              (record) => record.evidence_id !== current.evidence_id,
+            ),
+          ),
+        },
+        unboundPath,
+        false,
+        resources,
+      ),
+    );
+    if (!unboundWritten.ok) throw unboundWritten.error;
+    const recomposed = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "binary_overview",
+        {},
+        { snapshotPath: unboundPath },
+      ).then(projectCliAnalysisResult),
+    );
+    expect(recomposed.operation).toBe("binary_overview");
+    expect(recomposed.normalized_result).toEqual(
+      firstEvidence.normalized_result,
+    );
+    expect(recomposed.caller_input_path).toBe(fixture.path);
   });
 });
 
@@ -1488,8 +1545,10 @@ describe("snapshot replay provider identity", () => {
       details: {
         binding_mismatch: {
           target: {
-            snapshot: { sha256: firstSnapshot.value.target.sha256 },
-            selected: { sha256: expect.any(String) },
+            snapshot: {
+              identity: { sha256: firstSnapshot.value.target.identity.sha256 },
+            },
+            selected: { identity: { sha256: expect.any(String) } },
           },
           profile_comparison: "not_compared",
         },
@@ -1722,7 +1781,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
             analysisProfile: mixedProfile,
             limitations: [],
             locations: [],
-            subject: null,
+            subject: evidenceSubject(unknownTarget("not-observed")),
           },
         }),
       ],
@@ -1771,20 +1830,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
                     originalWorkflow.execution.relationship_coverage,
                 }),
             locations: originalWorkflow.execution.locations,
-            subject:
-              originalWorkflow.execution.subject === null
-                ? null
-                : {
-                    path: originalWorkflow.execution.subject.path,
-                    sha256: originalWorkflow.execution.subject.sha256,
-                    format: originalWorkflow.execution.subject.format,
-                    ...(originalWorkflow.execution.subject.architecture === null
-                      ? {}
-                      : {
-                          architecture:
-                            originalWorkflow.execution.subject.architecture,
-                        }),
-                  },
+            subject: originalWorkflow.execution.subject,
           },
         }),
       ],
@@ -2009,8 +2055,8 @@ it.each([true, false])(
     const historical = createEvidence(
       {
         path: fixture.path,
-        sha256: saved.value.target.sha256,
-        format: saved.value.target.format,
+        sha256: saved.value.target.identity.sha256,
+        format: saved.value.target.identity.format,
       },
       evidence.provider,
       {
@@ -2118,7 +2164,6 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
     "replayed-evidence.json",
   );
   await publishCliAnalysisEvidence(replayed, {
-    providerId: IDENTITY.id,
     operation: "procedure_pseudo_code",
     signal: new AbortController().signal,
     detail: "complete",
@@ -2180,7 +2225,6 @@ it("preserves captured sources when a transitive source is missing", async () =>
   expect(result.sourceEvidence).toHaveLength(1);
   const outputPath = join(dirname(fixture.snapshotPath), "missing-source.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "procedure_pseudo_code",
     signal: new AbortController().signal,
     detail: "complete",
@@ -2235,7 +2279,6 @@ it("retains completed function sources when cancellation arrives as execution re
   expect(result.ok).toBe(false);
   const outputPath = join(dirname(fixture.snapshotPath), "cancelled.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "analyze_function",
     signal: controller.signal,
     detail: "complete",
@@ -2279,9 +2322,10 @@ it("publishes captured function sources when completed parent admission fails", 
     { includeEvidenceSources: true },
   );
   expect(result.ok).toBe(false);
+  const sourceIds = [...fixture.sources.keys()];
+  expect(sourceIds).toHaveLength(1);
   const outputPath = join(dirname(fixture.snapshotPath), "refused.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "analyze_function",
     signal: new AbortController().signal,
     detail: "complete",
@@ -2299,8 +2343,9 @@ it("publishes captured function sources when completed parent admission fails", 
     (record) => record.operation === "analyze_function",
   );
   expect(parent).toBeDefined();
+  expect(parent?.evidence_links).toEqual(sourceIds);
   expect(bundle.records.map((record) => record.evidence_id).sort()).toEqual(
-    [parent!.evidence_id, ...parent!.evidence_links].sort(),
+    [parent!.evidence_id, ...sourceIds].sort(),
   );
 });
 

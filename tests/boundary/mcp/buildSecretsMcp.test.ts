@@ -12,7 +12,6 @@ import { gzipSync } from "node:zlib";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
-import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
 import {
@@ -35,7 +34,7 @@ import {
 import type { FakeApp } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AgentEnvComputer } from "../../../src/desktop/AgentEnvComputer.js";
 import { DesktopBuildSecrets } from "../../../src/application/desktop/DesktopBuildSecrets.js";
 
@@ -142,7 +141,7 @@ const lines = (...text: string[]) => ({
 
 /** A bundle folder holding TASK as the export writes it for the app. */
 const taskBundle = async (app: string) => {
-  const parsed = parseDesktopTask(TASK, isPortableBundleName);
+  const parsed = parseDesktopTask(TASK);
   if (!parsed.ok) throw new Error(parsed.error);
   const bundle = await bundleFolder();
   const verifier = join(
@@ -525,14 +524,7 @@ it.each([
     computer_id: first,
     name: "end",
   });
-  let entered = () => {};
-  const acknowledged = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const captureOutputRead = phaseGate();
   const original = AgentEnvComputer.prototype.homeFiles;
   const spy = vi
     .spyOn(AgentEnvComputer.prototype, "homeFiles")
@@ -553,8 +545,7 @@ it.each([
           ),
         )
       ) {
-        entered();
-        await gate;
+        await captureOutputRead.hold();
       }
       return original.call(this, paths, bytes, signal);
     });
@@ -571,8 +562,7 @@ it.each([
         (phase === "draft-command" || phase === "draft-failure") &&
         argv.some((arg) => arg.includes("describe-desktop-application-task"))
       ) {
-        entered();
-        await gate;
+        await captureOutputRead.hold();
         if (phase === "draft-failure") throw new Error(VALUE.slice(0, 10));
       }
       return originalExec.call(this, argv, timeout, signal);
@@ -581,12 +571,12 @@ it.each([
     computer_id: first,
   });
   try {
-    await awaitAcknowledgement(acknowledged, stopping, "capture output read");
+    await captureOutputRead.reached(stopping, "capture output read");
     expect(await secrets.resolve("master")).toEqual({
       ok: true,
       value: VALUE,
     });
-    release();
+    captureOutputRead.release();
     const stopped = await stopping;
     expect(stopped.structuredContent).toMatchObject({
       draft: null,
@@ -602,7 +592,7 @@ it.each([
       expect(JSON.stringify(stopped)).not.toContain(VALUE.slice(0, 10));
     }
   } finally {
-    release();
+    captureOutputRead.release();
     await Promise.allSettled([stopping]);
     spy.mockRestore();
     execSpy.mockRestore();

@@ -44,6 +44,9 @@ file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`),
 auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
 notes keep `core` null.
 
+An `NT_FILE` descriptor with nonzero bytes after its declared filenames
+retains its raw note evidence and leaves `core` null.
+
 Linux `CORE` decoding requires System V/unspecified (0) or GNU/Linux (3)
 OSABI with ABI version zero. An unspecified OSABI alone does not establish
 Linux origin. An explicitly different OSABI or ABI version leaves `core` null
@@ -69,7 +72,8 @@ the image never carried notes in another container or overlay.
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
-32 note entries are examined by default across every table. Retained note
+128 note entries are examined by default across every table (256 maximum), which
+admits distribution glibc builds and their SystemTap probe notes. Retained note
 names, section names, GNU descriptor text, core dump string representations, and Android ident strings share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together

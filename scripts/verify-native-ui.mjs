@@ -1,7 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -10,17 +9,27 @@ import { observeNativeUi } from "../dist/native/NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "../dist/native/NativeUiOutputBudget.js";
 import { artifactMcpResult, withArtifactMcp } from "./lib/artifact-e2e.mjs";
 import { observeProcessStartIdentity } from "../dist/process/ProcessOwnershipObservation.js";
+import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-if (process.platform !== "darwin")
+if (HOST_PLATFORM.platform !== "darwin")
   throw new Error(
     "Native UI verification requires macOS, an interactive desktop and Xcode command-line tools",
   );
-const root = await mkdtemp(join(tmpdir(), "rea-ui-fixture-"));
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-ui-fixture-",
+  private: false,
+});
+const root = rootFixture.path;
 let child;
 let childExit;
 let fixturePid;
 let fixtureIdentity;
 let report;
+// `open -W` exits only after the app exits, so its own exit is the proof that
+// the fixture no longer runs from the root. Without it the root is retained.
+let retainedRoot;
+const FIXTURE_EXIT_GRACE_MS = 10_000;
 try {
   const childRetrievalTest = join(root, "child-retrieval-test");
   await promisify(execFile)("/usr/bin/xcrun", [
@@ -288,10 +297,41 @@ try {
       }
     }
   }
-  if (child !== undefined && child.exitCode === null) {
-    child.kill("SIGTERM");
-    await childExit;
+  const fixtureExited =
+    child === undefined || (await openExitedWithFixture(child, childExit));
+  if (fixtureExited) await rootFixture.release();
+  else {
+    // The app may have been reparented away from `open`; stopping `open`
+    // does not prove the fixture exited, so its root stays in place.
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      await childExit;
+    }
+    retainedRoot = root;
+    process.stderr.write(
+      `Source-owned UI fixture exit was not observed; retained ${root}\n`,
+    );
   }
-  await rm(root, { recursive: true, force: true });
 }
+if (retainedRoot !== undefined)
+  throw new Error(
+    `Source-owned UI fixture exit was not observed; retained ${retainedRoot}`,
+  );
 process.stdout.write(`${JSON.stringify(report)}\n`);
+
+// `open -W` exits on its own only after the app exits (or never launched it).
+// A signaled `open`, or none within the grace period, leaves the app unproven.
+async function openExitedWithFixture(launcher, exit) {
+  if (launcher.exitCode === null && launcher.signalCode === null) {
+    let timer;
+    const exited = await Promise.race([
+      exit.then(() => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), FIXTURE_EXIT_GRACE_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!exited) return false;
+  }
+  return launcher.exitCode !== null && launcher.signalCode === null;
+}

@@ -2,8 +2,8 @@ import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisRes
 import { executeComposedWorkflow } from "../../../src/application/WorkflowEvidence.js";
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { ok } from "../../../src/domain/result.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { expect, it } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { composedWorkflowFixture } from "../../fixtures/composedWorkflowEvidence.js";
@@ -176,12 +176,10 @@ it.each([false, true])(
 );
 
 it("deduplicates repeated and nested consumed records without linking unrelated concurrent work", async () => {
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const summaryExecution = phaseGate();
   const fixture = await composedWorkflowFixture({
     beforeSummary: async () => {
-      entered.resolve();
-      await release.promise;
+      await summaryExecution.hold();
     },
   });
   await fixture.open();
@@ -200,8 +198,8 @@ it("deduplicates repeated and nested consumed records without linking unrelated 
       return nested.ok ? ok(nested.value.result) : nested;
     },
   );
-  await entered.promise;
   try {
+    await summaryExecution.reached(overview, "summary execution");
     const other = await executeComposedWorkflow(
       fixture.session,
       async (observed) => {
@@ -213,7 +211,7 @@ it("deduplicates repeated and nested consumed records without linking unrelated 
       },
     );
     if (!other.ok) throw other.error;
-    release.resolve();
+    summaryExecution.release();
     const result = await overview;
     if (!result.ok) throw result.error;
     const atomic = fixture.session
@@ -234,7 +232,7 @@ it("deduplicates repeated and nested consumed records without linking unrelated 
       ),
     ).toHaveLength(1);
   } finally {
-    release.resolve();
+    summaryExecution.release();
     await overview;
   }
 });

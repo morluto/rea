@@ -16,6 +16,11 @@ import {
   CHECK_CASES,
   CHECK_VIEWS,
 } from "../../../src/domain/desktop/appTaskChecks.fixture.js";
+import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
+import {
+  draftOf,
+  statePath,
+} from "../../../src/domain/desktop/appTaskDraft.fixture.js";
 import { SETTLE_TIMING } from "../../../src/domain/desktop/appSettle.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
 import {
@@ -148,7 +153,8 @@ async def run():
             verify_task = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
             await verify_task
         except (RuntimeError, asyncio.CancelledError) as error:
-            first_error = str(error) + " ".join(getattr(error, "__notes__", ()))
+            first_error = type(error).__name__ + ": " + str(error) + " ".join(getattr(error, "__notes__", ()))
+            answers.update(scenario.get("retry_answers") or {})
         if scenario.get("reload_verifier"):
             module = load_verifier()
     if scenario.get("parallel_retry"):
@@ -157,11 +163,17 @@ async def run():
         second = asyncio.create_task(other.verify("http://mcp", "http://computer:8080"))
         results, _ = await asyncio.gather(first, second)
         return results, first_error
+    if scenario.get("report_failure"):
+        try:
+            await module.verify("http://mcp", "http://computer:8080")
+        except BaseException as error:
+            return [], first_error or str(error) + " ".join(getattr(error, "__notes__", ()))
+        raise AssertionError("the controlled reader failure did not occur")
     results = await module.verify("http://mcp", "http://computer:8080")
     return results, first_error
 
 results, first_error = asyncio.run(run())
-print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs, "first_error": first_error}))
+print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs, "first_error": first_error, "pending_readers": len(module._PENDING_READERS) if hasattr(module, "_PENDING_READERS") else 0}))
 `;
 
 type VerifierOutput = {
@@ -170,6 +182,7 @@ type VerifierOutput = {
   reads: number[];
   ended: number;
   first_error: string | null;
+  pending_readers: number;
   results: {
     id: string;
     result: boolean;
@@ -187,6 +200,7 @@ const runVerifier = async (
   computer: {
     readonly readers?: readonly DesktopTaskReader[];
     readonly answers?: Readonly<Record<string, unknown>>;
+    readonly retryAnswers?: Readonly<Record<string, unknown>>;
     readonly exec?: boolean;
     readonly cleanupFailures?: number;
     readonly retry?: boolean;
@@ -194,6 +208,7 @@ const runVerifier = async (
     readonly reloadVerifier?: boolean;
     readonly concurrent?: boolean;
     readonly parallelRetry?: boolean;
+    readonly reportFailure?: boolean;
   } = {},
 ): Promise<VerifierOutput> => {
   const folder = await createTestTempDirectory("desktop-task-python-");
@@ -225,6 +240,7 @@ const runVerifier = async (
         saves,
         durations,
         answers: computer.answers,
+        retry_answers: computer.retryAnswers,
         exec: computer.exec ?? true,
         cleanup_failures: computer.cleanupFailures,
         retry: computer.retry,
@@ -232,6 +248,7 @@ const runVerifier = async (
         reload_verifier: computer.reloadVerifier,
         concurrent: computer.concurrent,
         parallel_retry: computer.parallelRetry,
+        report_failure: computer.reportFailure,
       }),
       encoding: "utf8",
     }),
@@ -284,6 +301,107 @@ it("evaluates every kind of file check without computer-exec as REA does", async
   expect(output.results.map(({ description }) => description)).toEqual(
     typescript.map(({ description }) => description),
   );
+});
+
+it.each([
+  ["", true],
+  [" \t\r\n", true],
+  ["\ufeff", true],
+  ["\u0085", false],
+  ["\u001c", false],
+  ["\u2003", true],
+  ["\u200b", false],
+] as const)(
+  "grades numeric padding %j with the same trimming as REA",
+  async (padding, expected) => {
+    const file = "Documents/measurement.json";
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "measurement",
+        kind: "value_equals",
+        file,
+        pointer: "/value",
+        value: 5,
+        tolerance: 0,
+      },
+    ];
+    const views = {
+      [file]: {
+        format: "json" as const,
+        view: { value: `${padding}5${padding}` },
+        truncated: false,
+      },
+    };
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(expected);
+    const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+    expect(output.results.map(({ result }) => result)).toEqual([expected]);
+  },
+);
+
+it.each([
+  ["\ufeff", true],
+  ["\u0085", false],
+] as const)(
+  "uses the same saved-time padding %j when resolving XML selectors",
+  async (padding, expected) => {
+    const file = "Documents/records.xml";
+    const view = xmlView(
+      `<rows><row><label>Alpha<saved>${padding}2026-11-13T10:00:00Z${padding}</saved></label><value>done</value></row></rows>`,
+    );
+    if (view === undefined) throw new Error("Expected XML fixture");
+    const views = {
+      [file]: { format: "xml" as const, view, truncated: false },
+    };
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "row",
+        kind: "value_equals",
+        file,
+        pointer:
+          "/root/children/[>label=Alpha]/children/[name=value]/children/0",
+        value: "done",
+      },
+    ];
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(expected);
+    const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+    expect(output.results.map(({ result }) => result)).toEqual([expected]);
+  },
+);
+
+it("decodes JSON pointer escapes once in the exported verifier", async () => {
+  const checks: DesktopTaskCheck[] = [
+    {
+      id: "tilde",
+      kind: "value_equals",
+      file: "settings.json",
+      pointer: "/~01",
+      value: "literal",
+    },
+    {
+      id: "slash",
+      kind: "value_equals",
+      file: "settings.json",
+      pointer: "/~1",
+      value: "slash",
+    },
+  ];
+  const views = {
+    "settings.json": {
+      format: "json" as const,
+      view: { "~1": "literal", "/": "slash" },
+      truncated: false,
+    },
+  };
+  const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+  const expected = evaluateTaskChecks(checks, new Map(Object.entries(views)));
+  expect(output.results.map(({ id, result }) => [id, result])).toEqual(
+    expected.map(({ id, passed }) => [id, passed]),
+  );
+  expect(output.results.map(({ result }) => result)).toEqual([true, true]);
 });
 
 it("grades an app that saves seconds after the agent stops on what it saved", async () => {
@@ -584,6 +702,25 @@ it("keeps cleanup owned when verification is cancelled during final cleanup", as
   expect(cleanups).toHaveLength(2);
 });
 
+it("retains reader failure when cancellation interrupts its final cleanup", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: { [READERS[0]!.id]: "not a reader answer" },
+    retryAnswers: ANSWERS,
+    cancelCleanup: true,
+    retry: true,
+    reloadVerifier: true,
+  });
+  expect(output.first_error).toMatch(/^CancelledError:/u);
+  expect(output.first_error).toContain("reader runner did not answer");
+  expect(output.first_error).toContain("Reader cleanup remains owned");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(2);
+  expect(output.pending_readers).toBe(0);
+});
+
 it("does not adopt another active verifier's reader lease", async () => {
   const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
     readers: [READERS[0]!],
@@ -636,3 +773,122 @@ it.each([
     ).rejects.toThrow(message);
   },
 );
+
+it.each([
+  { transport: false, pending: 0 },
+  { transport: true, pending: 1 },
+])(
+  "preserves completed views and absence when a later reader fails (transport: $transport)",
+  async ({ transport, pending }) => {
+    const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+      readers: [READERS[0]!, READERS[3]!, READERS[2]!],
+      answers: {
+        layers: ANSWERS.layers,
+        gone: ANSWERS.gone,
+        ...(transport ? {} : { broken: "broken runner answer" }),
+      },
+      reportFailure: true,
+    });
+    expect(output.first_error).toContain("broken");
+    const facts =
+      /completed reader views: (.*); completed reader absent: (.*)$/u.exec(
+        output.first_error ?? "",
+      );
+    expect(facts).not.toBeNull();
+    expect(JSON.parse(facts![1]!)).toEqual({
+      layers: (ANSWERS.layers as { view: unknown }).view,
+    });
+    expect(JSON.parse(facts![2]!)).toEqual(["gone"]);
+    expect(output.pending_readers).toBe(pending);
+  },
+);
+
+it.each([false, true])(
+  "keeps a malformed reader answer primary alongside cleanup and retry (retry: %s)",
+  async (retry) => {
+    const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+      readers: [READERS[2]!],
+      answers: { broken: "invalid runner payload" },
+      cleanupFailures: 1,
+      reportFailure: true,
+      retry,
+    });
+    expect(output.first_error).toContain("did not answer for broken");
+    expect(output.first_error).toContain("invalid runner payload");
+    expect(output.first_error).toContain("permission denied");
+    expect(output.first_error).toContain("/tmp/rea-reader-");
+    expect(output.pending_readers).toBe(retry ? 0 : 1);
+    if (retry) {
+      const cleanups = output.execs.filter(({ request_id }) =>
+        String(request_id).startsWith("rea-reader-cleanup-"),
+      );
+      expect(cleanups).toHaveLength(3);
+      const lease = (entry: Record<string, unknown>) =>
+        JSON.parse((entry.argv as string[])[4]!);
+      expect(lease(cleanups[1]!)).toEqual(lease(cleanups[0]!));
+      expect(lease(cleanups[2]!)).not.toEqual(lease(cleanups[0]!));
+    }
+  },
+);
+
+it("keeps distinct JSON kind/name tuples addressable after regenerated ids and reordering", async () => {
+  const file = "Documents/records.json";
+  const records = (done: boolean) => [
+    {
+      uid: "812403bed9f511f19fc4edd4f1920549",
+      format: "A\0B",
+      name: "C",
+      done,
+    },
+    {
+      uid: "84f27625d9f511f188ededd4f1920549",
+      format: "A",
+      name: "B\0C",
+      done: false,
+    },
+  ];
+  const before = records(false),
+    after = records(true);
+  const [draft] = draftOf({
+    [file]: statePath("document", "json", before, after),
+  });
+  if (draft === undefined) throw new Error("Expected a changed file");
+  const checks = draft.suggested.map((check, index) => ({
+    ...check,
+    id: `c${String(index)}`,
+  }));
+  const saved = after.toReversed().map((record, index) => ({
+    ...record,
+    uid: `${String(index).repeat(32)}`,
+  }));
+  const views = (view: typeof after) => ({
+    [file]: { format: "json", view, truncated: false },
+  });
+  const original = await runVerifier(checks, [[0, views(after)]], [], {
+    exec: false,
+  });
+  expect(original.results.length).toBeGreaterThan(0);
+  expect(original.results.every(({ result }) => result)).toBe(true);
+  const repeated = await runVerifier(checks, [[0, views(saved)]], [], {
+    exec: false,
+  });
+  expect(repeated.results.every(({ result }) => result)).toBe(true);
+  expect(
+    evaluateTaskChecks(checks, new Map([[file, views(saved)[file]]])).every(
+      ({ passed }) => passed,
+    ),
+  ).toBe(true);
+  const wrong = saved.map((record) => ({
+    ...record,
+    done: record.format === "A",
+  }));
+  const refused = await runVerifier(checks, [[0, views(wrong)]], [], {
+    exec: false,
+  });
+  expect(refused.results.some(({ result }) => !result)).toBe(true);
+  expect(
+    evaluateTaskChecks(checks, new Map([[file, views(wrong)[file]]])).some(
+      ({ passed }) => !passed,
+    ),
+  ).toBe(true);
+});

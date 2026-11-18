@@ -5,6 +5,7 @@ import {
 } from "../../../src/domain/desktop/desktopViewPolicy.js";
 import {
   execFileSync,
+  spawnSync,
   type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
@@ -29,11 +30,12 @@ import {
 import {
   detectStateFormat,
   keyfileView,
-  isJsonText,
-  jsonView,
+  textSyntaxFormat,
   textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
 import { safeParseJson } from "../../../src/domain/safeJson.js";
+import { withheldSettings } from "../../../src/domain/desktop/appWithheld.js";
+import { withheldSettingsClass } from "../../../src/domain/desktop/appExportWithheld.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** Keep the exported Python helpers out of the host command-line size limit. */
@@ -212,31 +214,29 @@ it("seeds each file the bundle lists in SEED_MODES with that mode, as a lock who
     "[s]\n",
   );
   await writeFile(join(root, "seed", "run.sh"), "#!/bin/sh\n");
+  const work = "work.txt";
+  const home = join(root, "home");
+  await writeFile(join(root, "seed", work), utf16("/home/ada/project\n", "be"));
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
 SEED_HOME = "/home/ada"
-TEXT_SEEDS = frozenset()
+TEXT_SEEDS = frozenset(["work.txt"])
 SEED_MODES = {".config/notes/secret.ini": 0o600, "run.sh": 0o755}
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 _seed_home(Path(sys.argv[2]))
 `;
 
-  execFileSync("python3", [
-    "-I",
-    "-B",
-    "-c",
-    program,
-    root,
-    join(root, "home"),
-  ]);
+  execFileSync("python3", ["-I", "-B", "-c", program, root, home]);
 
   const mode = async (path: string) =>
     (await stat(join(root, "home", path))).mode & 0o777;
   expect(await mode(".config/notes/secret.ini")).toBe(0o600);
   expect(await mode("run.sh")).toBe(0o755);
+  const restored = await readFile(join(home, work));
+  expect(restored.equals(utf16(`${home}/project\n`, "be"))).toBe(true);
 });
 
 it.each([true, false])(
@@ -536,7 +536,7 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
   const python = pythonJson(texts);
 
   texts.forEach((text, index) => {
-    const typescript = jsonView(text);
+    const typescript = textualView("json", new TextEncoder().encode(text));
     const verdict = python[index];
     expect(verdict?.error === undefined).toBe(typescript.ok);
     if (typescript.ok) expect(verdict?.view).toEqual(typescript.value);
@@ -730,7 +730,9 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
   ) as { syntax: boolean[]; built: boolean[] };
 
   const parsed = texts.map((text) => safeParseJson(text).ok);
-  expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
+  expect(
+    texts.map((text) => textSyntaxFormat("fixture.json", text) === "json"),
+  ).toEqual(parsed);
   expect(python.syntax).toEqual(parsed);
   expect(python.built).toEqual(parsed);
   expect(parsed.filter(Boolean)).toHaveLength(10);
@@ -763,7 +765,7 @@ print(json.dumps({"deep": deep, "peak": peak, "edge": _deeper_than(nested, 501),
   expect(result.peak).toBeLessThan(1024 * 1024);
 });
 
-it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does", () => {
+it("keeps special SQLite numbers distinct from text in exported table views", () => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -772,12 +774,33 @@ it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does",
       "-I",
       "-B",
       "-c",
-      `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_cell(v, "utf-8") for v in (math.inf, -math.inf, -0.0, 0.0, 1.5)]))`,
+      `${imports}${PYTHON_HELPERS}
+with sqlite3.connect(":memory:") as db:
+    db.execute("create table cells(value)")
+    db.executemany("insert into cells values(?)", [(v,) for v in (math.inf, -math.inf, "Infinity", "-Infinity", "-0", 9007199254740993, "9007199254740993")])
+    print(json.dumps({"table": _table(db, "cells", [], "utf-8"), "reals": [_cell(v, "utf-8") for v in (-0.0, 0.0, 1.5)]}))
+`,
     ],
     { encoding: "utf8" },
   );
 
-  expect(JSON.parse(cells)).toEqual(["Infinity", "-Infinity", "-0", 0, 1.5]);
+  expect(JSON.parse(cells)).toEqual({
+    table: {
+      columns: ["value"],
+      primary_key: [],
+      rows: [
+        [{ real: "Infinity" }],
+        [{ real: "-Infinity" }],
+        ["Infinity"],
+        ["-Infinity"],
+        ["-0"],
+        [{ integer: "9007199254740993" }],
+        ["9007199254740993"],
+      ],
+      truncated: false,
+    },
+    reals: [{ real: "-0" }, 0, 1.5],
+  });
 });
 
 it("keeps the same keyfile whitespace as the retained state view", async () => {
@@ -804,3 +827,54 @@ print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["
   );
   expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });
+
+const hasPydantic2 =
+  spawnSync(
+    process.platform === "win32" ? "python" : "python3",
+    [
+      "-I",
+      "-c",
+      "import pydantic; assert int(pydantic.__version__.split('.')[0]) >= 2",
+    ],
+    { stdio: "ignore", timeout: 10_000 },
+  ).status === 0;
+
+it.skipIf(!hasPydantic2)(
+  "restores withheld files with Pydantic-reserved names",
+  async () => {
+    const home = await createTestTempDirectory("rea-pydantic-withheld-");
+    const files = ["model_extra", "model_fields_set", "file_model_extra"];
+    const withheld = withheldSettings("fixture", files);
+    const imports = PYTHON_IMPORTS.split("\n")
+      .filter((line) => !line.includes("agentenv_protocol"))
+      .join("\n");
+    const program = `
+${imports}
+from pydantic import BaseModel, SecretStr, create_model
+class ComputerAppEnvironment:
+    Settings = BaseModel
+class Exported:
+${withheldSettingsClass(withheld)}
+${PYTHON_HELPERS}
+settings = Exported.Settings(**{name: "YQ==" for name in json.loads(sys.argv[2])})
+_write_withheld(Path(sys.argv[1]), settings, json.loads(sys.argv[3]))
+`;
+    execPython(
+      [
+        "-B",
+        "-c",
+        program,
+        home,
+        JSON.stringify(withheld.map(({ setting }) => setting)),
+        JSON.stringify(
+          Object.fromEntries(
+            withheld.map(({ setting, file }) => [setting, file]),
+          ),
+        ),
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    for (const file of files)
+      expect(await readFile(join(home, file), "utf8")).toBe("a");
+  },
+);

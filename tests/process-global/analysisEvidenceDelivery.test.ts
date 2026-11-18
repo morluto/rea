@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ it("publishes CLI Evidence without re-authenticating the complete graph", async 
   const root = await createTestTempDirectory("rea-cli-evidence-");
   const destination = join(root, "bundle.json");
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "fixture",
@@ -30,7 +31,6 @@ it("publishes CLI Evidence without re-authenticating the complete graph", async 
   );
 
   const output = await publishCliAnalysisEvidence(ok(evidence), {
-    providerId: "fixture",
     operation: "fixture",
     signal: new AbortController().signal,
     detail: "complete",
@@ -50,7 +50,7 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
   const root = await createTestTempDirectory("rea-cli-mutable-evidence-");
   const destination = join(root, "bundle.json");
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "fixture",
@@ -60,7 +60,7 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
     { immutable: true },
   );
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "source-fixture",
@@ -71,7 +71,6 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
   const mutableSource = JSON.parse(JSON.stringify(source)) as typeof source;
 
   const output = await publishCliAnalysisEvidence(ok(evidence), {
-    providerId: "fixture",
     operation: "fixture",
     signal: new AbortController().signal,
     detail: "complete",
@@ -79,5 +78,9 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
     sourceEvidence: [mutableSource],
   });
 
-  expect(output).toMatchObject({ code: "resource_constraint" });
+  // The refused publication keeps the completed parent's facts.
+  expect(output).toMatchObject({
+    code: "resource_constraint",
+    details: { partial_observation: { evidence_id: evidence.evidence_id } },
+  });
 });

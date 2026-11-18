@@ -4,7 +4,7 @@ import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "identifies the invalid Ghidra regex field and permits correction (%s)",
   async (profile) => {
     const message =

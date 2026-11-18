@@ -1,3 +1,4 @@
+import { createTestArtifactResourceScope } from "../fixtures/artifactResourceScope.js";
 import { EventEmitter } from "node:events";
 import { expect, it, vi } from "vitest";
 
@@ -68,7 +69,10 @@ it.each([false, true])(
         providerVersion: "test",
         profileDigest: "b".repeat(64),
       },
-      { signal: controller.signal },
+      {
+        resourceScope: createTestArtifactResourceScope(),
+        signal: controller.signal,
+      },
     );
     const launch = result.ok
       ? result.value

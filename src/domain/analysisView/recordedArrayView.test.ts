@@ -1,12 +1,12 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../targetIdentity.js";
 import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const nested = (levels: number): JsonValue => {
   let value: JsonValue = "leaf";
@@ -26,7 +26,7 @@ const parent = (
   sealedResult: true,
   provider: { id: "fixture", name: "Fixture", version: "1" },
   artifact: null,
-  subject: null,
+  subject: UNKNOWN_EVIDENCE_SUBJECT,
   parameters,
   limitations: [],
 });
@@ -47,7 +47,7 @@ it("omits parent parameters that would exceed Evidence depth by one level", () =
   // leaf at depth 1000 there, and one level deeper under normalized_result.
   const parameters = nested(MAX_JSON_DEPTH - 1);
   const admitted = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "xrefs",
@@ -67,7 +67,7 @@ it("omits parent parameters that would exceed Evidence depth by one level", () =
   expect(projected.value.limitations.join("\n")).toContain("JSON depth");
   expect(() =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "view", name: "View", version: "1" },
       {
         operation: "inspect_analysis_view",

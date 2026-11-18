@@ -17,11 +17,11 @@ Mourinho, Mario Candeias and Rogerio Bravo, Instituto Politécnico de Beja,
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The binary inputs
 were downloaded only for local verification and are not committed to REA.
 
-| File | Bytes | SHA-256 |
-| --- | ---: | --- |
-| `system.MFT` | 34,816 | `c2cff41973b12243fe63900cdc2b02bbd0479350b44fc652437e1fcb17ead403` |
-| `entry_45647_hard_links` | 1,024 | `8e673f39a5491131bc3654f58dac91c2e02605063fc284988efce8d2bf6a9869` |
-| `entry_95063_usn_journal` | 1,024 | `16d563481f772390bca608842fb6a8a40eb96e54794effb480ccb939116fcaf2` |
+| File                      |  Bytes | SHA-256                                                            |
+| ------------------------- | -----: | ------------------------------------------------------------------ |
+| `system.MFT`              | 34,816 | `c2cff41973b12243fe63900cdc2b02bbd0479350b44fc652437e1fcb17ead403` |
+| `entry_45647_hard_links`  |  1,024 | `8e673f39a5491131bc3654f58dac91c2e02605063fc284988efce8d2bf6a9869` |
+| `entry_95063_usn_journal` |  1,024 | `16d563481f772390bca608842fb6a8a40eb96e54794effb480ccb939116fcaf2` |
 
 ## Executed checks and observations
 
@@ -63,14 +63,14 @@ heap cap and warm filesystem caches. One trial per variant includes startup,
 acquisition, hashing and Evidence serialization. CPU covers the child process
 family; RSS/PSS peaks are sampled every 20 ms and exclude the Python observer.
 
-| Whole workflow | Before | Default summary after |
-| --- | ---: | ---: |
-| CLI calls | 2 | 2 |
-| Proxy tokens, including command text, schema and result | 24,582 | 8,086 |
-| Elapsed time, ms | 6,646 | 6,090 |
-| Process-family CPU time, ms | 5,765 | 5,346 |
-| Sampled peak family RSS, KiB | 251,740 | 246,428 |
-| Sampled peak family PSS, KiB | 248,075 | 242,844 |
+| Whole workflow                                          |  Before | Default summary after |
+| ------------------------------------------------------- | ------: | --------------------: |
+| CLI calls                                               |       2 |                     2 |
+| Proxy tokens, including command text, schema and result |  24,582 |                 8,086 |
+| Elapsed time, ms                                        |   6,646 |                 6,090 |
+| Process-family CPU time, ms                             |   5,765 |                 5,346 |
+| Sampled peak family RSS, KiB                            | 251,740 |               246,428 |
+| Sampled peak family PSS, KiB                            | 248,075 |               242,844 |
 
 Proxy tokens use `tiktoken` 0.12.0 `o200k_base`; they are not measured agent
 billing or reasoning tokens. Tool transport wrappers, model latency and warm
@@ -84,7 +84,6 @@ than the original 57,946 bytes. An additional validation call with
 `--mftRecordLimit=32` reproduced the entire baseline normalized result exactly.
 That full-detail workflow, including its schema query, uses 24,662 proxy tokens;
 its CPU and memory were not measured separately.
-
 
 ## Integration with scoped acquisition reuse
 
@@ -113,7 +112,6 @@ regression verifies actual names/attributes alongside the limitation text;
 reader coverage still reports corrupt fixups independently. No consumer-side
 wording override was introduced.
 
-
 ## Paired-volume fixture verification
 
 Executed the packaged REA CLI and production stdio MCP server at
@@ -128,11 +126,11 @@ not committed to REA. The fixture's original acquisition process and Windows
 version were not independently authenticated; this is paired volume-fixture
 verification, not a claim of verified production forensic provenance.
 
-| Input | Bytes | SHA-256 |
-| --- | ---: | --- |
-| Published compressed volume | 1,234,746 | `c44f83257be7a8e0ff1aecb61fe82b362c44256808da216d8824ea735576af5a` |
-| Extracted logical `$MFT` | 262,144 | `3a0f1a9c5bfa7d1d011eb1b391fddd40d5773a1cf89d7223165fd8516fb34d76` |
-| Extracted logical `$UsnJrnl:$J` | 21,376 | `39bd88d262fc71e3d45b69bb559268191f76051a63f42415f60bc6357881b56a` |
+| Input                           |     Bytes | SHA-256                                                            |
+| ------------------------------- | --------: | ------------------------------------------------------------------ |
+| Published compressed volume     | 1,234,746 | `c44f83257be7a8e0ff1aecb61fe82b362c44256808da216d8824ea735576af5a` |
+| Extracted logical `$MFT`        |   262,144 | `3a0f1a9c5bfa7d1d011eb1b391fddd40d5773a1cf89d7223165fd8516fb34d76` |
+| Extracted logical `$UsnJrnl:$J` |    21,376 | `39bd88d262fc71e3d45b69bb559268191f76051a63f42415f60bc6357881b56a` |
 
 ### Independent extraction and oracle
 
@@ -187,7 +185,6 @@ Windows-host behavior, authenticated forensic acquisition provenance, real
 V3/V4 captures, extension-list assembly or nonresident payload recovery. Those
 limits remain explicit alongside the existing synthesized boundary regressions.
 
-
 ## Acquired extension metadata verification
 
 At `b76b9716192db1f2bbfdcbb093bb01c29a7e8d10`, the MFT owner additionally resolves
@@ -203,10 +200,10 @@ records' fixups and decoded their `local` / `linked` filenames and source facts.
 The byte-level fixture defines the expected ownership relationship. This is
 synthesized extension coverage, not a real extension capture.
 
-| Source-built input | Bytes | SHA-256 |
-| --- | ---: | --- |
-| MFT pair | 2,048 | `b512f7b270679dd5107b76c2787c6ca137b667bae1d3921ea1a0117fb94b5723` |
-| V2 journal | 64 | `d4356fd78b1407d4e3fe1bf9ef4b55ef4552936334d5bc744db1531a31987b60` |
+| Source-built input | Bytes | SHA-256                                                            |
+| ------------------ | ----: | ------------------------------------------------------------------ |
+| MFT pair           | 2,048 | `b512f7b270679dd5107b76c2787c6ca137b667bae1d3921ea1a0117fb94b5723` |
+| V2 journal         |    64 | `d4356fd78b1407d4e3fe1bf9ef4b55ef4552936334d5bc744db1531a31987b60` |
 
 An 11-file focused run passed 121 tests. Nineteen new domain cases cover exact
 identity and attribute selection, reused sequences, missing/wrong owners,

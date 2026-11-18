@@ -1,4 +1,5 @@
 import { expect, it, onTestFinished } from "vitest";
+import { phaseGate, type PhaseGate } from "../../support/lifecycleHarness.js";
 
 import {
   createAnalysisExecution,
@@ -7,7 +8,7 @@ import {
   type AnalysisProvider,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -17,17 +18,12 @@ import {
   AnalysisTimeoutError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import {
-  inferredUnavailabilityReason,
-  runtimeFailureReason,
-} from "../../../src/application/binary/SessionRuntimeAvailability.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createBinarySessionTargets,
@@ -38,8 +34,7 @@ import {
 
 it("restores MCP tool availability after cancelling a target switch", async () => {
   const [first, second] = await createBinarySessionTargets();
-  const closing = createDeferred<void>();
-  const release = createDeferred<void>();
+  const providerClose = phaseGate();
   const cancellationObserved = createDeferred<void>();
   const provider = createCacheProvider([]);
   const resolveProfile = provider.resolveAnalysisProfile;
@@ -62,8 +57,7 @@ it("restores MCP tool availability after cancelling a target switch", async () =
       close: async () => {
         state.closed += 1;
         if (firstClient) {
-          closing.resolve();
-          await release.promise;
+          await providerClose.hold();
         }
         return ok(null);
       },
@@ -122,10 +116,10 @@ it("restores MCP tool availability after cancelling a target switch", async () =
       { signal: controller.signal },
     );
     const cancelled = expect(switching).rejects.toThrow();
-    await closing.promise;
+    await providerClose.reached(switching, "provider close");
     controller.abort();
     await cancellationObserved.promise;
-    release.resolve();
+    providerClose.release();
     await cancelled;
 
     // Cancellation ends the client's wait before the server restores its session.
@@ -165,7 +159,7 @@ it("restores MCP tool availability after cancelling a target switch", async () =
     ]);
   } finally {
     controller.abort();
-    release.resolve();
+    providerClose.release();
     await close();
   }
 });
@@ -368,32 +362,24 @@ const liveCapability = (
 
 const adapterFailure = (provider: ProviderIdentity, operation: string) =>
   Promise.resolve(err(new ProviderAdapterError(provider.id, operation)));
-const recordedReason = (failure: AnalysisError): string => {
-  const reason = runtimeFailureReason(failure);
-  if (reason === undefined) throw new Error(`${failure._tag} is not recorded`);
-  return reason;
-};
-// Compare remediation with its owning formatters; the facts are their inputs.
 const observedFailure = (operation: string, provider: string = FIXTURE.id) =>
-  recordedReason(new ProviderAdapterError(provider, operation));
+  expect.stringContaining(
+    `Provider ${provider} adapter failed during ${operation}`,
+  );
 const inferredFailure = (operation: string, provider: string = FIXTURE.id) =>
-  inferredUnavailabilityReason(provider, {
-    operation,
-    reason: observedFailure(operation, provider),
-  });
+  expect.stringContaining(
+    `Inferred from the ${operation} failure (ProviderAdapterError: Provider ${provider} adapter failed during ${operation}). Retry after repairing the provider; a later successful ${provider} request clears this.`,
+  );
 const refusal = (operation: string, reason: string) =>
-  recordedReason(
-    new AnalysisCapabilityUnavailableError(FIXTURE.id, operation, reason),
+  expect.stringContaining(
+    `Provider ${FIXTURE.id} cannot execute ${operation}: ${reason}`,
   );
 
 /** Hold provider replies; release and join every launched call. */
 const heldCalls = (
   client: Awaited<ReturnType<typeof createApplicationMcpHarness>>["client"],
 ) => {
-  const held = new Map<
-    string,
-    { readonly reply: Promise<Reply>; readonly received: () => void }
-  >();
+  const held = new Map<string, PhaseGate<void, Reply>>();
   const launched: {
     readonly release: (reply: Reply) => void;
     readonly response: Promise<unknown>;
@@ -404,18 +390,16 @@ const heldCalls = (
       const entry = held.get(operation);
       if (entry === undefined) return undefined;
       held.delete(operation);
-      entry.received();
-      return entry.reply;
+      return entry.hold();
     },
     dispatch: async (name: string, arguments_: Record<string, unknown>) => {
-      const reply = createDeferred<Reply>();
-      const received = createDeferred<void>();
-      held.set(name, { reply: reply.promise, received: received.resolve });
+      const reply = phaseGate<void, Reply>();
+      held.set(name, reply);
       const response = client.callTool({ name, arguments: arguments_ });
-      launched.push({ release: reply.resolve, response });
-      await awaitAcknowledgement(received.promise, response, name);
+      launched.push({ release: reply.release, response });
+      await reply.reached(response, name);
       return {
-        release: reply.resolve,
+        release: reply.release,
         isError: async () => (await response).isError === true,
       };
     },

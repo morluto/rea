@@ -4,60 +4,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import {
-  artifactInventoryResultSchema,
-  type ArtifactInventoryResult,
-} from "../../src/domain/artifactGraph.js";
-import {
-  artifactGraphDigest,
-  artifactManifestId,
-} from "../../src/domain/artifactIdentity.js";
+import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseArtifactInventoryEvidence } from "../../src/domain/artifactInventoryEvidence.js";
-import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
+import { historicalInventoryEvidence } from "../fixtures/artifactEvidence.js";
 import { connectArtifactComparisonMcp } from "../fixtures/artifactComparisonMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-
-const historicalInventory = (source: Evidence): Evidence => {
-  const inventory = artifactInventoryResultSchema.parse(
-    source.normalized_result,
-  );
-  const occurrences = inventory.occurrences.map(
-    ({ unpacked: _unpacked, ...occurrence }) => occurrence,
-  );
-  const graphSha256 = artifactGraphDigest({
-    nodes: inventory.nodes,
-    occurrences,
-    edges: inventory.edges,
-    contradictions: inventory.integrity_contradictions,
-  });
-  const historical: ArtifactInventoryResult = {
-    ...inventory,
-    occurrences,
-    manifest: {
-      ...inventory.manifest,
-      graph_sha256: graphSha256,
-      manifest_id: artifactManifestId(
-        inventory.manifest.root_artifact_id,
-        graphSha256,
-      ),
-    },
-  };
-  return createEvidence(
-    {
-      path: source.subject!.local_path,
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
-    source.provider,
-    {
-      operation: "inventory_artifact",
-      parameters: {},
-      result: historical,
-      confidence: "derived",
-      authority: "shipped-artifact",
-    },
-  );
-};
 
 it("compares ASAR companion declarations from public MCP inventories and preserves historical unknowns", async () => {
   const root = await createTestTempDirectory("rea-asar-unpacked-comparison-");
@@ -117,7 +68,10 @@ it("compares ASAR companion declarations from public MCP inventories and preserv
 
   // Model an authenticated pre-field snapshot with its original graph commitment,
   // rather than editing a current Evidence payload without updating its identity.
-  const historical = historicalInventory(packed);
+  const historical = historicalInventoryEvidence(
+    packed,
+    ({ unpacked: _unpacked, ...occurrence }) => occurrence,
+  );
   const historicalParsed = parseArtifactInventoryEvidence(historical);
   expect(
     historicalParsed.inventory.occurrences.map(

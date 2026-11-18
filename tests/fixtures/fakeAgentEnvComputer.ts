@@ -34,7 +34,9 @@ import { onTestFinished } from "vitest";
 
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import { awaitAcknowledgement } from "./lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 
 /** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
 export const FAKE_FRAME_PNG =
@@ -658,7 +660,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 import types
 
 STATE = os.environ["FAKE_STATE"]
@@ -705,7 +706,9 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     os.system("echo a build writing to stdout")
     print("agentenv writing to stdout")
     on_progress("deploying the computer")
-    time.sleep(float(os.environ.get("FAKE_DEPLOY_SECONDS", "0")))
+    if os.environ.get("FAKE_HOLD_DEPLOY"):
+        _note("deploying.jsonl", {"pid": os.getpid()})
+        signal.pause()
     signal.signal(signal.SIGTERM, previous)
     chatter = int(os.environ.get("FAKE_CHATTER_BYTES", "0"))
     for line in range(chatter // 80):
@@ -732,15 +735,70 @@ export interface FakeAgentEnvRunner {
   notes(name: string): Promise<unknown[]>;
 }
 
-export const fakeAgentEnvRunner = async (
-  computer: Pick<FakeComputer, "url" | "token">,
-): Promise<FakeAgentEnvRunner> => {
-  const state = await createTestTempDirectory("fake-agentenv-");
-  const python = execFileSync(
+/** Observe the exact helper waiting at the cancellable deployment phase. */
+export const awaitFakeDeployWait = async (
+  runner: FakeAgentEnvRunner,
+  operation: Promise<unknown>,
+): Promise<{ pid: number }[]> => {
+  let observing = true;
+  const acknowledgement = waitFor(async () => {
+    if (!observing) return [];
+    return z
+      .tuple([z.object({ pid: z.int().positive() })])
+      .parse(await runner.notes("deploying.jsonl"));
+  });
+  try {
+    await awaitAcknowledgement(
+      acknowledgement,
+      operation,
+      "fake deployment wait",
+    );
+    return await acknowledgement;
+  } finally {
+    observing = false;
+    await Promise.allSettled([acknowledgement]);
+  }
+};
+
+/**
+ * JSONL notes from the fake build computer. A trailing fragment without a
+ * newline is still being appended. Every newline-terminated line is a record
+ * and must parse.
+ */
+export const parseAgentEnvNotes = (text: string): unknown[] => {
+  if (text.length === 0) return [];
+  const terminated = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (terminated) lines.pop();
+  const records: unknown[] = [];
+  for (const [index, line] of lines.entries()) {
+    try {
+      records.push(JSON.parse(line) as unknown);
+    } catch (error) {
+      if (!terminated && index === lines.length - 1) break;
+      throw error;
+    }
+  }
+  return records;
+};
+
+let cachedPython3Executable: string | undefined;
+
+/** Resolve the host's python3 interpreter once per test worker. */
+export const resolvePython3Executable = (): string => {
+  cachedPython3Executable ??= execFileSync(
     "python3",
     ["-c", "import sys; print(sys.executable)"],
     { encoding: "utf8" },
   ).trim();
+  return cachedPython3Executable;
+};
+
+export const fakeAgentEnvRunner = async (
+  computer: Pick<FakeComputer, "url" | "token">,
+): Promise<FakeAgentEnvRunner> => {
+  const state = await createTestTempDirectory("fake-agentenv-");
+  const python = resolvePython3Executable();
   await mkdir(join(state, "site", "agent_env"), { recursive: true });
   const runner = join(state, "agent-env");
   await writeFile(
@@ -769,10 +827,7 @@ export const fakeAgentEnvRunner = async (
       } catch {
         return [];
       }
-      return (await readFile(path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as unknown);
+      return parseAgentEnvNotes(await readFile(path, "utf8"));
     },
   };
 };

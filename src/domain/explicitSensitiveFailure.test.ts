@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
 import {
   AnalysisAccessDeniedError,
@@ -17,6 +18,7 @@ import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "./analysisErrorBase.js";
 import { createEvidence } from "./evidence.js";
 import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const context = {
   diagnostics: {
@@ -55,7 +57,7 @@ it.each([
   new ProviderAdapterError("provider", "inspect", context),
 ])("preserves sanitized common context for $._tag", (error) => {
   const observation = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Owner facts", version: "1" },
     {
       operation: "inspect",
@@ -182,7 +184,7 @@ it("redacts cleanup primaries and mirrors the source error's live status", () =>
     "private-marker",
   );
 
-  original.resolveCleanup();
+  releaseOwnedCleanup(original);
   expect(redacted.cleanupIncomplete).toBe(false);
   const resolved = resolvedAnalysisError(redacted);
   expect(JSON.stringify(projectAnalysisError(resolved))).not.toContain(
@@ -196,6 +198,49 @@ it("redacts cleanup primaries and mirrors the source error's live status", () =>
       },
     ],
   });
+});
+
+it("retains sanitized finalization failures and their independent cleanup status", () => {
+  const primary = new AnalysisInputError("inspect_web_network_capture", {
+    userMessage: "declared-marker capture is invalid",
+  });
+  const reason = new Error("cancelled during reply finalization");
+  const cancellation = new AnalysisCancelledError(
+    "inspect_web_network_capture",
+    { cause: reason, diagnostics: { note: "declared-marker finalization" } },
+  );
+  const cleanup = new ProviderCleanupError(
+    "har",
+    ["/tmp/declared-marker-runtime"],
+    { reason: "declared-marker runtime close failed" },
+    { operation: "inspect_web_network_capture" },
+  );
+  primary.retainSecondaryFailure(cancellation);
+  primary.retainSecondaryFailure(cleanup);
+
+  const redacted = redactExplicitFailure(primary, ["declared-marker"]);
+  const [retainedCancellation, retainedCleanup] = redacted.secondaryFailures;
+  expect(retainedCancellation).toBeInstanceOf(AnalysisCancelledError);
+  expect(retainedCancellation?.cause).toBe(reason);
+  expect(retainedCleanup).toBeInstanceOf(ProviderCleanupError);
+  expect(retainedCleanup?.cleanupIncomplete).toBe(true);
+  expect(redacted.cleanupIncomplete).toBe(false);
+  const projected = projectAnalysisError(redacted);
+  expect(projected.code).toBe("invalid_request");
+  expect(projected.details?.secondary_failures).toMatchObject([
+    {
+      code: "cancelled",
+      details: { diagnostics: { note: "[REDACTED] finalization" } },
+    },
+    {
+      code: "cleanup_incomplete",
+      details: { resources: ["/tmp/[REDACTED]-runtime"] },
+    },
+  ]);
+  expect(JSON.stringify(projected)).not.toContain("declared-marker");
+  releaseOwnedCleanup(cleanup);
+  expect(retainedCleanup?.cleanupIncomplete).toBe(false);
+  expect(redacted.cleanupIncomplete).toBe(false);
 });
 
 it("keeps a named timeout control through explicit-value redaction", () => {
@@ -248,6 +293,41 @@ it("preserves a retryable capability failure through explicit-value redaction", 
   expect(projectAnalysisError(result).retryable).toBe(true);
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("private");
 });
+
+it.each([
+  ["file-size", false],
+  ["memory", undefined],
+] as const)(
+  "preserves %s resource refusal retryability through redaction",
+  (resource, retryable) => {
+    const source = new AnalysisResourceConstraintError(
+      "inspect_pe_resources",
+      resource,
+      "Selected artifact exceeds 64 bytes",
+      { max_file_bytes: 64 },
+      retryable === undefined ? {} : { retryable },
+    );
+    expect(redactExplicitFailure(source, ["secret"])).toMatchObject({
+      retryable,
+    });
+  },
+);
+
+it.each([false, true])(
+  "preserves whether a transport refusal sent its request (%s) through redaction",
+  (requestSent) => {
+    const source = new AnalysisResourceConstraintError(
+      "cutter_command",
+      "transport",
+      "Cutter request exceeds its frame limit",
+      { max_request_bytes: 8192 },
+      { requestSent },
+    );
+    expect(redactExplicitFailure(source, ["secret"])).toMatchObject({
+      requestSent,
+    });
+  },
+);
 
 it("coarsens format issue pointers without creating replacement coordinates", () => {
   const error = new AnalysisInputError(
@@ -352,6 +432,6 @@ it("preserves completed publication and live cleanup while excluding marked file
   expect(projected.details).not.toHaveProperty("path");
   expect(projected.details).not.toHaveProperty("published_path");
   expect(JSON.stringify(projected)).not.toContain("private-marker");
-  original.resolveCleanup();
+  releaseOwnedCleanup(original);
   expect(redacted.cleanupIncomplete).toBe(false);
 });

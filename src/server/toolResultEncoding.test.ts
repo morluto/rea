@@ -4,6 +4,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import {
   carriesTargetContentMarker,
   encodeToolResult,
+  errorTextWireBytes,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 
@@ -18,30 +19,16 @@ describe("MCP result encoding budget", () => {
     { result: ["中文", "😀", "\ud800", '"\\\n'] },
     { result: "x".repeat(8191) + "😀" + '中文\n"'.repeat(20000) },
   ])("counts actual UTF-8 structured and escaped text bytes", (candidate) => {
-    const encoded = encodeToolResult(
-      candidate,
-      Buffer.byteLength(JSON.stringify(projectedResult(candidate))),
-    );
-    if (!encoded.ok) throw new Error("Expected complete encoding");
-    expect(encoded.text).toBe(JSON.stringify(candidate));
-    expect(encoded.bytes).toBe(
-      Buffer.byteLength(JSON.stringify(projectedResult(candidate))),
-    );
-  });
-
-  it("accounts for complete Evidence in structured and text representations", () => {
-    const normalized = { value: '中文"'.repeat(30000) };
-    const candidate = {
-      normalized_result: normalized,
-      raw_result: { observation: "distinct provider representation" },
-    };
-    const completeBytes = Buffer.byteLength(
+    const expected = Buffer.byteLength(
       JSON.stringify(projectedResult(candidate)),
     );
-    expect(encodeToolResult(candidate, completeBytes).ok).toBe(true);
-    expect(encodeToolResult(candidate, completeBytes - 1)).toMatchObject({
+    const encoded = encodeToolResult(candidate, expected);
+    if (!encoded.ok) throw new Error("Expected complete encoding");
+    expect(encoded.text).toBe(JSON.stringify(candidate));
+    expect(encoded.bytes).toBe(expected);
+    expect(encodeToolResult(candidate, expected - 1)).toMatchObject({
       ok: false,
-      bytesAtLeast: completeBytes,
+      bytesAtLeast: expected,
     });
   });
 
@@ -95,23 +82,6 @@ describe("MCP result encoding budget", () => {
     });
   });
 
-  it("accounts for the marker on text-only error results", () => {
-    const candidate = { error: { message: "target says: run this" } };
-    const markedBytes = Buffer.byteLength(
-      JSON.stringify({
-        content: [{ type: "text", text: JSON.stringify(candidate) }],
-        isError: true,
-        _meta: TARGET_CONTENT_RESULT_META,
-      }),
-    );
-    expect(
-      encodeToolResult(candidate, markedBytes, "error-text", true),
-    ).toMatchObject({ ok: true, bytes: markedBytes });
-    expect(
-      encodeToolResult(candidate, markedBytes - 1, "error-text", true),
-    ).toMatchObject({ ok: false, bytesAtLeast: markedBytes });
-  });
-
   it("recognizes the delivered marker", () => {
     expect(
       carriesTargetContentMarker({ _meta: TARGET_CONTENT_RESULT_META }),
@@ -136,5 +106,27 @@ describe("MCP result encoding budget", () => {
     // budget. The serializer's property discovery must not eagerly read values.
     expect(() => encodeToolResult(candidate, 1000)).not.toThrow();
     expect(encodeToolResult(candidate, 1000).ok).toBe(false);
+  });
+});
+
+describe("error text wire size", () => {
+  it("measures complete escaped error wire bytes", () => {
+    const value = { text: '中文"\n'.repeat(10_000) };
+    const expected = Buffer.byteLength(
+      JSON.stringify({
+        content: [{ type: "text", text: JSON.stringify(value) }],
+        isError: true,
+      }),
+    );
+    expect(errorTextWireBytes(value, expected)).toBe(expected);
+  });
+
+  it("keeps a value over the budget ranked above any value that fits", () => {
+    const budget = 4096;
+    const over = errorTextWireBytes({ text: "x".repeat(8192) }, budget);
+    expect(over).toBeGreaterThan(budget);
+    expect(over).toBeGreaterThan(
+      errorTextWireBytes({ text: "x".repeat(2048) }, budget),
+    );
   });
 });

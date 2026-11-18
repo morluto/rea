@@ -16,6 +16,8 @@ import {
   parseXmlDocument,
 } from "../xmlDocument.js";
 import { expatXmlName } from "./expatXmlNames.js";
+import { decodeStateUtf16 } from "./stateTextEncoding.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -88,11 +90,14 @@ const isKeyfile = (text: string): boolean => {
   return group;
 };
 
-/** Decode bytes as UTF-8 text, or undefined for binary content. */
+/** Decode UTF-8 and BOM-marked UTF-16, or return undefined for binary content. */
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
+  const utf16 = decodeStateUtf16(bytes);
+  if (utf16 !== undefined)
+    return utf16.text.includes("\0") ? undefined : utf16.text;
   if (bytes.subarray(0, 8192).includes(0)) return undefined;
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return undefined;
   }
@@ -196,7 +201,7 @@ const jsonScalar = (scan: JsonScan, string: boolean): boolean => {
  * a time without building the value: it holds a byte per open container, so
  * text too large to parse into a view is still told apart from other text.
  */
-export const isJsonText = (text: string): boolean => {
+const isJsonText = (text: string): boolean => {
   const scan: JsonScan = {
     expect: "value",
     empty: false,
@@ -382,9 +387,9 @@ export const deeperThan = (root: JsonValue, limit: number): boolean => {
 };
 
 /** A JSON file's value, refused when a number would be rounded or it nests too deeply. */
-export const jsonView = (
+const jsonView = (
   text: string,
-  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+  policy: DesktopViewPolicy,
 ): Result<JsonValue, string> => {
   let rounded = false;
   const parsed = safeParseJson(text, (_key, value, context) => {
@@ -392,7 +397,7 @@ export const jsonView = (
       rounded = true;
     return value;
   });
-  if (!parsed.ok) return err(parsed.error);
+  if (!parsed.ok) return parsed;
   if (rounded)
     return err(
       "a number in it cannot be read exactly, such as an integer above 2^53",
@@ -565,7 +570,7 @@ export const xmlView = (
 /** Formats read from a file's bytes alone, without a tool or worker. */
 export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";
 
-/** Whether a format is one of the text formats, read as UTF-8. */
+/** Whether a format is one of the text formats. */
 export const isTextualFormat = (
   format: string | null,
 ): format is TextualStateFormat =>

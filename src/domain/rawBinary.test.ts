@@ -5,7 +5,6 @@ import {
   admitRawBinary,
   parseRawBinaryEntryPoint,
   rawBinarySelectionError,
-  validateRawBinaryLength,
 } from "./rawBinary.js";
 
 describe("headerless format hints", () => {
@@ -97,7 +96,6 @@ describe("raw-binary admission", () => {
     });
   });
   it("rejects an empty file as a target refusal while naming the extent", () => {
-    expect(validateRawBinaryLength(0).ok).toBe(false);
     const result = admitRawBinary({
       architecture: "x86",
       entryPoint: "0x1000",
@@ -139,7 +137,11 @@ describe("raw-binary admission", () => {
         ).toEqual({
           ok: false,
           error: {
-            reason: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned`,
+            reason: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned${
+              architecture === "arm" && entryPoint !== "0x8000002"
+                ? "; an odd address can be a Thumb function pointer with bit 0 set, but raw-binary arm decodes ARM state only, so a Thumb entry is unsupported and the entry was not adjusted"
+                : ""
+            }`,
             constraint: "load_selection_rejected",
           },
         });

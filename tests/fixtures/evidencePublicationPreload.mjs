@@ -65,6 +65,11 @@ const deliverAndObserve = async () => {
 const remove = fs.rmdir;
 fs.rmdir = async (...arguments_) => {
   if (cleanupFailures > 0 && owned(arguments_[0])) {
+    if (
+      cleanupFailures === input.cleanup_failures &&
+      input.signal === undefined
+    )
+      writeFileSync(input.marker, JSON.stringify({ cleanup_failure: "EBUSY" }));
     cleanupFailures -= 1;
     throw Object.assign(new Error("injected staging cleanup failure"), {
       code: "EBUSY",
