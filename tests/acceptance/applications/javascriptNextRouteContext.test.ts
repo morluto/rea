@@ -69,7 +69,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     });
     expect(
       inventory?.sources.find(
-        ({ key }) => key === "node_modules/ordinary/app/dependency-only/page.js",
+        ({ key }) =>
+          key === "node_modules/ordinary/app/dependency-only/page.js",
       )?.next_app_context,
     ).toMatchObject({
       kind: "unknown",

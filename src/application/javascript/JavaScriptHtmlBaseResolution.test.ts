@@ -80,15 +80,12 @@ describe("HTML base href dot segments", () => {
     ["a/.", "renderer/a/app.js"],
     ["a/..", "renderer/app.js"],
     ["..", "app.js"],
-  ])(
-    "resolves %s against the document directory",
-    (base, expected) => {
-      expect(resolve("app.js", base)).toMatchObject({
-        resolution_status: "resolved",
-        resolved_path: expected,
-      });
-    },
-  );
+  ])("resolves %s against the document directory", (base, expected) => {
+    expect(resolve("app.js", base)).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: expected,
+    });
+  });
   it.each([
     ["app.js/", "/assets/", "assets/app.js"],
     ["app.js/.", "/assets/", "assets/app.js"],
@@ -154,16 +151,13 @@ describe("HTML reference URL text", () => {
     ["app.js", "%61/", "renderer/a/app.js"],
     ["app.js", " /%61ssets/ ", "assets/app.js"],
     ["/%61ssets/app.js", "", "assets/app.js"],
-  ])(
-    "resolves %j against base %j",
-    (declared, base, expected) => {
-      expect(resolve(declared, base)).toMatchObject({
-        declared_path: declared,
-        resolution_status: "resolved",
-        resolved_path: expected,
-      });
-    },
-  );
+  ])("resolves %j against base %j", (declared, base, expected) => {
+    expect(resolve(declared, base)).toMatchObject({
+      declared_path: declared,
+      resolution_status: "resolved",
+      resolved_path: expected,
+    });
+  });
   it("keeps a literal percent sign that starts no escape", () => {
     expect(resolve("100%.js", "")).toMatchObject({
       resolution_status: "not-found",
