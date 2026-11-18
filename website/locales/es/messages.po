@@ -2580,7 +2580,8 @@ msgid ""
 " the CLI{ph1} for installation options."
 msgstr ""
 "Sustituye la ruta por la de una carpeta de aplicación extraída o un archivo "
-"ASAR. Consulta {ph0}Usa la CLI{ph1} para ver las opciones de instalación."
+"ASAR. Consulta {ph0}cómo usar la CLI{ph1} para ver las opciones de "
+"instalación."
 
 # Reviewed for readable setup and analysis terminology.
 #: website/public/faq/index.html:395
@@ -10298,7 +10299,7 @@ msgctxt "page:showcase/th04/index.html"
 msgid ""
 "TH04 fixed and aimed bullet rings; scroll horizontally on smaller screens"
 msgstr ""
-"Anillos de balas fijo y dirigido de TH04; desplázate en horizontal en "
+"Anillo de balas fijo y anillo dirigido de TH04; desplázate en horizontal en "
 "pantallas pequeñas"
 
 #: website/public/showcase/th04/index.html:317
