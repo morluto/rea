@@ -116,7 +116,7 @@ the same user, which a forensic record cannot do.
 | Issue                      | Cause                                                                         |
 | -------------------------- | ----------------------------------------------------------------------------- |
 | `ambiguous_format`         | The length matches more than one profile and none was stated.                 |
-| `truncated_trailing_bytes` | The file ends mid-record; earlier records stay readable.                      |
+| `truncated_trailing_bytes` | The file ends mid-record; a tail holding every modeled field still decodes.   |
 | `unknown_type`             | `ut_type` has no glibc name; the numeric value is kept.                       |
 | `undecoded_field`          | A fixed-width field was not well-formed UTF-8; the prefix is kept.            |
 | `imprecise_field`          | A 64-bit field is outside `Number`'s exact range; the stored decimal is kept. |

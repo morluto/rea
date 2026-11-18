@@ -582,3 +582,42 @@ describe("utmp option validation before decoding", () => {
     ]);
   });
 });
+
+describe("utmp truncated tails", () => {
+  it("decodes a tail that still carries every modeled field", () => {
+    // A 400-byte record cut to 384 bytes has lost only `__glibc_reserved` and the
+    // struct padding: the session, both time words and all four address words end
+    // at 376. Dropping the record would lose the last login.
+    const truncated = recordBytes(glibc64, login()).subarray(0, 384);
+    const result = parseUtmpFile(truncated, {
+      source: "wtmp",
+      profile: glibc64,
+    });
+    if (!result.ok) throw new Error("expected the tail to decode");
+    expect(result.value.records).toHaveLength(1);
+    expect(result.value.records[0]).toMatchObject({
+      fileOffset: 0,
+      user: "analyst",
+      session: 12,
+      timestampSeconds: 1_700_000_000,
+    });
+    expect(result.value.issues).toEqual([
+      { kind: "truncated_trailing_bytes", fileOffset: 0, bytes: 384 },
+    ]);
+  });
+
+  it("still drops a tail that stops before the last modeled field", () => {
+    // 375 bytes leaves the fourth address word incomplete, so there is no whole
+    // set of modeled fields to report.
+    const tooShort = recordBytes(glibc64, login()).subarray(0, 375);
+    const result = parseUtmpFile(tooShort, {
+      source: "wtmp",
+      profile: glibc64,
+    });
+    if (!result.ok) throw new Error("expected a parsed, empty result");
+    expect(result.value.records).toEqual([]);
+    expect(result.value.issues).toEqual([
+      { kind: "truncated_trailing_bytes", fileOffset: 0, bytes: 375 },
+    ]);
+  });
+});

@@ -496,8 +496,14 @@ export const parseUtmpFile = (
   const reader = new BinaryReader(bytes, little, UTMP_FORMAT);
   const layout = utmpFieldLayout(profile);
   const whole = Math.floor(input.byteLength / profile.recordBytes);
+  const remainder = input.byteLength - whole * profile.recordBytes;
+  // A truncated tail can still carry every modeled field: the reserved words and
+  // the struct padding sit at the end. Decoding it keeps the final login instead of
+  // dropping it over bytes `UtmpRecord` never exposes.
+  const modeledExtent = layout.addressOffset + ADDRESS_V6_FIELDS * 4;
+  const decodable = remainder >= modeledExtent ? whole + 1 : whole;
   const limit = options.maxRecords ?? UTMP_RECORD_LIMIT;
-  const examined = Math.min(whole, limit);
+  const examined = Math.min(decodable, limit);
   const records = decodeRecords(
     bytes,
     reader,
@@ -507,14 +513,13 @@ export const parseUtmpFile = (
     issues,
   );
 
-  if (whole > examined)
+  if (decodable > examined)
     issues.push({
       kind: "record_budget_exceeded",
       limit,
-      omitted: whole - examined,
+      omitted: decodable - examined,
     });
 
-  const remainder = input.byteLength - whole * profile.recordBytes;
   if (remainder > 0)
     issues.push({
       kind: "truncated_trailing_bytes",
