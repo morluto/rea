@@ -385,7 +385,7 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
         parameters,
         options,
       );
-      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error(JSON.stringify(first.error));
       const second = await runDirectAnalysis(
         dependencies,
         fixture.path,
@@ -400,6 +400,12 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
       expect(saved.value.entries).toMatchObject([
         { operation: "procedure_pseudo_code", parameters },
       ]);
+      expect(first.value.caller_input_path).toBe(fixture.path);
+      expect(
+        saved.value.evidence_bundle.records.filter(
+          ({ operation }) => operation === "procedure_pseudo_code",
+        ),
+      ).toEqual([first.value]);
     },
   );
 

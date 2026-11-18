@@ -1,11 +1,9 @@
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, sep } from "node:path";
+import { isAbsolute, sep } from "node:path";
 
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../../filesystem/callerPath.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { posixPathCandidates } from "../executableSearch.js";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import {
@@ -85,20 +83,19 @@ const resolveExecutable = async (
 ): Promise<string> => {
   // Match Node's Unix default search path when PATH is absent. An empty
   // PATH is different: its empty component selects the working directory.
-  const directories = (searchPath ?? "/usr/bin:/bin")
-    .split(delimiter)
-    .map((directory) =>
-      directory === ""
-        ? workingDirectory
-        : absoluteCallerPath(directory, { cwd: workingDirectory }),
-    );
   const explicit =
     isAbsolute(command) ||
     command.includes("/") ||
     (sep === "\\" && command.includes("\\"));
   const candidates = explicit
     ? [absoluteCallerPath(command, { cwd: workingDirectory })]
-    : directories.map((directory) => appendCallerPath(directory, command));
+    : Array.from(
+        posixPathCandidates(command, searchPath ?? "/usr/bin:/bin", {
+          relativeEntries: "resolve",
+          workingDirectory,
+        }),
+        ({ path }) => path,
+      );
   const failures: string[] = [];
   for (const candidate of candidates) {
     let metadata;

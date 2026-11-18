@@ -40,6 +40,7 @@ export const summaryStepSchema = z.strictObject({
     sequence_end: countSchema,
   }),
   sections: stepSectionsSchema,
+  // lifecycle-state: how far the step capture got (browserScenarioCompletenessSchema status); sections names missing and truncated sections.
   completeness: z.enum(["complete", "incomplete", "truncated"]),
 });
 

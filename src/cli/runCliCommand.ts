@@ -17,8 +17,11 @@ import {
   type CliCommandFailure,
 } from "./argumentErrors.js";
 import { parseCliArgv } from "./argvParser.js";
-import { cliCommand } from "./commandRegistry.js";
+import { cliCommand, cliCommands } from "./commandRegistry.js";
 import { withCliEvidencePublication } from "./cliEvidencePublication.js";
+import { rebindLoggedCliFailure } from "../cliLogging.js";
+import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "../recordedCliCommandRegistrations.js";
+import { projectCliCommandOutput } from "./projectCliAnalysisResult.js";
 import {
   cliResultControls,
   withCliResultControls,
@@ -122,10 +125,17 @@ export const runCliCommand = async (
     }
     await withCliEvidencePublication(() =>
       withCliResultControls(async () => {
-        const value = await entry.definition.run({
+        const rawValue = await entry.definition.run({
           ...parsed.value,
           formatExplicit: controls.formatExplicit,
         });
+        const value = projectCliCommandOutput(rawValue, {
+          operations: entry.operations,
+          commands: cliCommands(cli),
+          cliName: cli.name,
+          recordedCommands: RECORDED_CLI_COMMAND_REGISTRATIONS,
+        });
+        rebindLoggedCliFailure(rawValue, value);
         if (!output.handled)
           await output.write(value, {
             command: entry.name,

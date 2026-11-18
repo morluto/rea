@@ -113,6 +113,7 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import {
   inspectSourceMap,
   inspectSourceMapSourceContent,
@@ -1528,12 +1529,12 @@ const scriptHoldsMap = (
     !isScriptTarget(state, member.location)
   )
     return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(sourceMapJsonText(text));
-  } catch {
-    return false;
-  }
+  const decoded = parseJsonWithDuplicatePolicy(
+    sourceMapJsonText(text),
+    "last-wins",
+  );
+  if (!decoded.ok) return false;
+  const parsed = decoded.value;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     return false;
   return (

@@ -3,6 +3,7 @@ import { posix, win32 } from "node:path";
 import {
   absoluteCallerPath,
   appendCallerPath,
+  isQualifiedCallerPath,
 } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
@@ -111,10 +112,6 @@ const windowsPathEntries = (value: string): readonly string[] => {
 /** Image extensions Windows starts directly; anything else needs a host such as cmd.exe. */
 const WINDOWS_IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([".com", ".exe"]);
 
-/** A rooted path without a drive still depends on the working directory. */
-const hasIndependentWindowsRoot = (path: string): boolean =>
-  win32.isAbsolute(path) && win32.parse(path).root.length > 1;
-
 /** A PATHEXT entry that is not a filename extension, so the search is unknown. */
 export interface WindowsPathSearchFailure {
   readonly kind: "invalid_extension";
@@ -174,7 +171,7 @@ export const windowsPathCandidates = (
   return ok({
     *[Symbol.iterator]() {
       for (const name of located) {
-        const workingDirectory = hasIndependentWindowsRoot(name)
+        const workingDirectory = isQualifiedCallerPath(name, "win32")
           ? name
           : (search.cwd ?? currentDirectory());
         if (workingDirectory === undefined) continue;
@@ -187,7 +184,7 @@ export const windowsPathCandidates = (
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
-        const relativeEntry = !hasIndependentWindowsRoot(directory);
+        const relativeEntry = !isQualifiedCallerPath(directory, "win32");
         const workingDirectory = relativeEntry
           ? (search.cwd ?? currentDirectory())
           : directory;
