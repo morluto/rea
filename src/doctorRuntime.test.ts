@@ -5,6 +5,7 @@ import { expect, it as test, vi } from "vitest";
 import { withVerifierCleanup } from "../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../tests/fixtures/lifecycleAcknowledgement.js";
 
+import { FirmwareDoctor } from "./firmware/FirmwareDoctor.js";
 import {
   createSystemDoctorHost,
   selectedProviderSettings,
@@ -16,6 +17,7 @@ import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js
 import { writeJadxJarInventory } from "../tests/fixtures/android/jadxJar.js";
 import * as privateDisplay from "./hopper/LinuxPrivateDisplayProbe.js";
 import * as pythonRuntime from "./application/LinuxHopperPython.js";
+import * as kunaDoctor from "./kuna/KunaDoctor.js";
 import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
@@ -437,6 +439,25 @@ const it = test.skipIf(process.platform === "win32");
 
 it("exposes jadx through the doctor provider selector", () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("jadx");
+  expect(DOCTOR_PROVIDER_IDS).toContain("binwalk");
+  expect(DOCTOR_PROVIDER_IDS).toContain("unblob");
+});
+
+it("keeps firmware diagnostics out of setup's engine selection", async () => {
+  const host = createSystemDoctorHost({}, undefined, undefined, {
+    firmware: false,
+  });
+  try {
+    const inspections = await host.providerInspections?.([]);
+    expect(inspections?.map(({ id }) => id)).toEqual([
+      "ghidra",
+      "ida",
+      "jadx",
+      "kuna",
+    ]);
+  } finally {
+    await host.close?.();
+  }
 });
 
 it("carries a validated REA_JADX_MCP_JAR into the provider registration environment", async () => {
@@ -466,31 +487,48 @@ it("omits REA_JADX_MCP_JAR from the provider registration environment when it is
   expect(environment).not.toHaveProperty("REA_JADX_MCP_JAR");
 });
 
-it("shares one parsed IDA registration between timeout-budget and doctor projections", async () => {
-  const root = await createTestTempDirectory("rea-ida-registration-fact-");
-  const registration = join(root, "registration.json");
-  await writeFile(
-    registration,
-    JSON.stringify({ command: "fixture", protocol: "native", timeoutMs: 3210 }),
-  );
-  const host = createSystemDoctorHost({ REA_IDA_MCP_CONFIG: registration });
-  try {
-    expect(
-      await host.resolveProviderRequestBudget?.("ida", {
-        REA_IDA_MCP_CONFIG: registration,
+it.each(["budget-first", "readiness-first"] as const)(
+  "shares one parsed IDA registration between timeout-budget and doctor projections (%s)",
+  async (order) => {
+    const root = await createTestTempDirectory("rea-ida-registration-fact-");
+    const registration = join(root, "registration.json");
+    await writeFile(
+      registration,
+      JSON.stringify({
+        command: "fixture",
+        protocol: "native",
+        timeoutMs: 3210,
       }),
-    ).toEqual(ok(3210));
-    await writeFile(registration, "not JSON anymore");
-    const inspections = await host.providerInspections?.([]);
-    expect(inspections?.find(({ id }) => id === "ida")).toMatchObject({
-      configured: true,
-      available: true,
-      checks: [{ name: "registration", ok: true }],
-    });
-  } finally {
-    await host.close?.();
-  }
-});
+    );
+    const host = createSystemDoctorHost({ REA_IDA_MCP_CONFIG: registration });
+    const checkBudget = async () => {
+      expect(
+        await host.resolveProviderRequestBudget?.("ida", {
+          REA_IDA_MCP_CONFIG: registration,
+        }),
+      ).toEqual(ok(3210));
+    };
+    const checkReadiness = async () => {
+      const inspections = await host.providerInspections?.([]);
+      expect(inspections?.find(({ id }) => id === "ida")).toMatchObject({
+        configured: true,
+        available: true,
+        checks: [{ name: "registration", ok: true }],
+      });
+    };
+    try {
+      const [first, second] =
+        order === "budget-first"
+          ? ([checkBudget, checkReadiness] as const)
+          : ([checkReadiness, checkBudget] as const);
+      await first();
+      await writeFile(registration, "not JSON anymore");
+      await second();
+    } finally {
+      await host.close?.();
+    }
+  },
+);
 
 it("carries a validated REA_KUNA_COMMAND into the provider registration environment", async () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("kuna");
@@ -545,6 +583,102 @@ const createFakeJdk = async (root: string): Promise<string> => {
   return javaHome;
 };
 
+test.each([false, true])(
+  "retains failed firmware cleanup through host closure after cancellation=%s",
+  async (cancelled) => {
+    const controller = new AbortController();
+    const reason = new Error("cancel firmware inspection");
+    const inspect = vi
+      .spyOn(FirmwareDoctor.prototype, "inspect")
+      .mockImplementation(async function (this: FirmwareDoctor) {
+        if (cancelled) {
+          controller.abort(reason);
+          throw new AnalysisCancelledError("doctor", { cause: reason });
+        }
+        return [];
+      });
+    const pending = vi
+      .spyOn(FirmwareDoctor.prototype, "hasPendingCleanup", "get")
+      .mockReturnValue(true);
+    const close = vi
+      .spyOn(FirmwareDoctor.prototype, "close")
+      .mockResolvedValueOnce("controlled firmware cleanup failure")
+      .mockResolvedValue(undefined);
+    const host = createSystemDoctorHost({}, controller.signal);
+    try {
+      if (cancelled)
+        await expect(host.providerInspections?.([])).rejects.toMatchObject({
+          cause: reason,
+        });
+      else await host.providerInspections?.([]);
+      expect(inspect).toHaveBeenCalledTimes(1);
+      expect(close).not.toHaveBeenCalled();
+      await expect(host.close?.()).rejects.toMatchObject({
+        cleanupResources: ["firmware-doctor"],
+      });
+      expect(await host.close?.()).toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(2);
+    } finally {
+      await host.close?.();
+      inspect.mockRestore();
+      pending.mockRestore();
+      close.mockRestore();
+    }
+  },
+);
+
+test.each([false, true])(
+  "admits firmware only after earlier provider cleanup succeeds: %s",
+  async (cleanupSucceeds) => {
+    let denied = !cleanupSucceeds;
+    const events: string[] = [];
+    const close = vi.fn(async () => {
+      events.push("kuna-cleanup");
+      if (denied) throw new Error("controlled Kuna cleanup refusal");
+    });
+    const kuna = vi
+      .spyOn(kunaDoctor, "inspectKunaProvider")
+      .mockImplementation(
+        async (_environment, _platform, { resourceScope }) => {
+          resourceScope.retain({ close }, "kuna-retained-child");
+          return {
+            id: "kuna",
+            configured: true,
+            available: false,
+            providerVersion: null,
+            registrationEnvironment: {},
+            checks: [],
+          };
+        },
+      );
+    const firmware = vi
+      .spyOn(FirmwareDoctor.prototype, "inspect")
+      .mockImplementation(async () => {
+        events.push("firmware-inspect");
+        return [];
+      });
+    const host = createSystemDoctorHost({});
+    try {
+      if (cleanupSucceeds) {
+        await host.providerInspections?.([]);
+        expect(events).toEqual(["kuna-cleanup", "firmware-inspect"]);
+      } else {
+        await expect(host.providerInspections?.([])).rejects.toMatchObject({
+          cleanupIncomplete: true,
+          cleanupResources: ["kuna-retained-child"],
+        });
+        expect(firmware).not.toHaveBeenCalled();
+        expect(events).toEqual(["kuna-cleanup"]);
+      }
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      denied = false;
+      await host.close?.();
+      kuna.mockRestore();
+      firmware.mockRestore();
+    }
+  },
+);
 const opencodeRegistration = (
   home: string,
   environment: Readonly<Record<string, string>>,
@@ -581,6 +715,134 @@ test("probes the selected client's registration environment instead of the termi
     );
     expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
   } finally {
+    await host.close?.();
+  }
+});
+
+test("shares one selected registration snapshot across groups and refreshes the next call", async () => {
+  const home = await createTestTempDirectory(
+    "rea-doctor-registration-snapshot-",
+  );
+  await opencodeRegistration(home, { GHIDRA_INSTALL_DIR: "/selected/ghidra" });
+  const read = vi.spyOn(
+    configurationFiles,
+    "readEffectiveClientRegistrationConfiguration",
+  );
+  const observed: Readonly<NodeJS.ProcessEnv>[] = [];
+  const inspect = vi
+    .spyOn(FirmwareDoctor.prototype, "inspect")
+    .mockImplementation(async function (this: FirmwareDoctor) {
+      observed.push(this.environment);
+      return [
+        {
+          id: "binwalk",
+          configured: this.environment.REA_BINWALK_COMMAND !== undefined,
+          available: false,
+          providerVersion: null,
+          registrationEnvironment: {},
+          checks: [],
+        },
+      ];
+    });
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    const first = await host.providerInspections?.(["opencode"]);
+    expect(first?.find(({ id }) => id === "ghidra")?.configured).toBe(true);
+    expect(first?.find(({ id }) => id === "binwalk")?.configured).toBe(false);
+    expect(read).toHaveBeenCalledTimes(1);
+    await opencodeRegistration(home, {
+      REA_BINWALK_COMMAND: "/selected/binwalk",
+    });
+    const second = await host.providerInspections?.(["opencode"]);
+    expect(second?.find(({ id }) => id === "ghidra")?.configured).toBe(false);
+    expect(second?.find(({ id }) => id === "binwalk")?.configured).toBe(true);
+    expect(observed[1]?.REA_BINWALK_COMMAND).toBe("/selected/binwalk");
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    inspect.mockRestore();
+    read.mockRestore();
+    await host.close?.();
+  }
+});
+
+test
+  .skipIf(process.platform !== "linux")
+  .each([
+    "REA_BINWALK_COMMAND",
+    "REA_FIRMWARE_PRLIMIT_COMMAND",
+    "REA_PROCESS_TABLE_MAX_BYTES",
+  ])(
+  "keeps the selected client's unresolved %s out of firmware probes",
+  async (setting) => {
+    const home = await createTestTempDirectory(
+      "rea-doctor-firmware-expression-",
+    );
+    await mkdir(join(home, ".dsh"), { recursive: true });
+    await writeFile(
+      join(home, ".dsh/cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        `          ${setting}: !!js caller.value`,
+        "",
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost({
+      HOME: home,
+      REA_BINWALK_COMMAND: "/terminal/binwalk",
+    });
+    try {
+      const inspections = await host.providerInspections?.(["dsh"]);
+      expect(inspections?.find(({ id }) => id === "binwalk")).toMatchObject({
+        configured: setting === "REA_BINWALK_COMMAND" ? null : true,
+        available: null,
+        checks: [
+          {
+            code: "registration_environment_unknown",
+            classification: "unknown",
+          },
+        ],
+      });
+      expect(inspections?.find(({ id }) => id === "unblob")).toMatchObject({
+        configured: false,
+        available: false,
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+test("keeps selected-client admission cancellation typed with its original reason", async () => {
+  const controller = new AbortController();
+  const reason = { request: "cancel before reading registration" };
+  controller.abort(reason);
+  const read = vi.spyOn(
+    configurationFiles,
+    "readEffectiveClientRegistrationConfiguration",
+  );
+  const host = createSystemDoctorHost({}, controller.signal);
+  try {
+    await expect(
+      host.providerInspections?.(["opencode"]),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+      diagnostics: {
+        provider_inspections: [],
+        provider_inspection_groups: { completed: 0, total: 2 },
+      },
+    });
+    expect(read).not.toHaveBeenCalled();
+  } finally {
+    read.mockRestore();
     await host.close?.();
   }
 });

@@ -14,6 +14,7 @@ import {
   ArtifactReaderFailure,
   AnalysisCleanupLease,
   ArtifactResourceScope,
+  ArtifactResourceRetryFailure,
 } from "../resources/index.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
@@ -653,6 +654,12 @@ const launcherInstallation = async (
     : posix.dirname(resolved);
 };
 
+type SystemDoctorProviderInspection = (
+  resourceScope: RetainedResourceScope,
+  signal: AbortSignal,
+  clients: readonly string[],
+) => Promise<readonly DoctorProviderInspection[]>;
+
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
   readonly signal?: AbortSignal;
@@ -660,11 +667,14 @@ export interface SystemDoctorHostOptions {
   readonly architecture?: NodeJS.Architecture;
   readonly environment?: NodeJS.ProcessEnv;
   readonly execFileOutput?: typeof execFileOutput;
-  readonly providerInspections?: (
-    resourceScope: RetainedResourceScope,
-    signal: AbortSignal,
+  /** Ordered groups pass the shared cleanup gate between provider inspections. */
+  readonly providerInspections?:
+    | SystemDoctorProviderInspection
+    | readonly SystemDoctorProviderInspection[];
+  /** Construct fresh ordered groups for each selected-client inspection. */
+  readonly providerInspectionGroups?: (
     clients: readonly string[],
-  ) => Promise<readonly DoctorProviderInspection[]>;
+  ) => readonly SystemDoctorProviderInspection[];
   readonly resolveProviderRequestBudget?: (
     provider: Parameters<ProviderRequestBudgetResolver>[0],
     environment: Parameters<ProviderRequestBudgetResolver>[1],
@@ -770,6 +780,12 @@ export const systemDoctorHost = (
       }),
     run: (operation) => resources.track(operation),
   };
+  const providerInspectionGroups =
+    options.providerInspections === undefined
+      ? undefined
+      : typeof options.providerInspections === "function"
+        ? [options.providerInspections]
+        : options.providerInspections;
   const resolveProviderRequestBudget =
     options.resolveProviderRequestBudget === undefined
       ? undefined
@@ -887,17 +903,84 @@ export const systemDoctorHost = (
     },
     manualHopperPaths: () =>
       readMacHopperRenamedLauncherCandidates(homeDirectory),
-    ...(options.providerInspections === undefined
+    ...(providerInspectionGroups === undefined &&
+    options.providerInspectionGroups === undefined
       ? {}
       : {
-          providerInspections: (clients) =>
-            resources.track(() =>
-              options.providerInspections!(
-                resourceScope,
-                inspectionSignal,
-                clients,
-              ),
-            ),
+          providerInspections: async (clients) => {
+            const groups =
+              options.providerInspectionGroups?.(clients) ??
+              providerInspectionGroups ??
+              [];
+            const inspections: DoctorProviderInspection[] = [];
+            let completedGroups = 0;
+            let admitted = false;
+            try {
+              await runInChildResourceScope(
+                resources,
+                "provider-inspections",
+                async (providerResources) => {
+                  const providerScope: RetainedResourceScope = {
+                    retain: (owner, resource) =>
+                      providerResources.retain({
+                        kind: "lease",
+                        resource,
+                        lease: AnalysisCleanupLease.forCloseOwner(
+                          owner,
+                          resource,
+                        ),
+                      }),
+                    // A group's sibling probes must not drain each other's owners.
+                    run: (operation) => providerResources.track(operation),
+                  };
+                  for (const inspect of groups) {
+                    admitted = false;
+                    // Drain only this invocation's provider owners between groups;
+                    // concurrent host facts have independent cleanup scopes.
+                    inspections.push(
+                      ...(await providerResources.run(() => {
+                        if (controller.signal.aborted)
+                          throw cancelledBy("doctor", inspectionSignal);
+                        admitted = true;
+                        return inspect(
+                          providerScope,
+                          inspectionSignal,
+                          clients,
+                        );
+                      })),
+                    );
+                    completedGroups++;
+                  }
+                },
+              );
+            } catch (cause: unknown) {
+              const failure =
+                cause instanceof ArtifactResourceRetryFailure
+                  ? doctorResourceCleanupFailure(cause)
+                  : !admitted &&
+                      controller.signal.aborted &&
+                      cause instanceof ArtifactReaderFailure
+                    ? cancelledBy("doctor", inspectionSignal)
+                    : cause;
+              if (failure instanceof AnalysisError) {
+                const partial = failure.diagnostics?.provider_inspections;
+                failure.retainDiagnostics({
+                  provider_inspections: [
+                    ...inspections.map((inspection) =>
+                      jsonValueSchema.parse(inspection),
+                    ),
+                    ...(Array.isArray(partial) ? partial : []),
+                  ],
+                  provider_inspection_groups: {
+                    completed: completedGroups,
+                    total: groups.length,
+                  },
+                });
+              }
+              throw failure;
+            }
+            return inspections;
+          },
         }),
     ...(resolveProviderRequestBudget === undefined
       ? {}
@@ -953,18 +1036,7 @@ export const systemDoctorHost = (
         await resources.close();
         return undefined;
       } catch (cause: unknown) {
-        const observation = ArtifactReaderFailure.cleanupObservation(
-          cause,
-          "doctor resources",
-        );
-        const failure = new ProviderCleanupError(
-          "rea",
-          observation.resources,
-          { reason: observation.reason },
-          { cause, operation: "doctor" },
-        );
-        bindArtifactFileCleanup(cause, failure);
-        throw failure;
+        throw doctorResourceCleanupFailure(cause);
       }
     },
     clientRegistrations: (
@@ -1019,6 +1091,21 @@ export const systemDoctorHost = (
             }),
           ),
       };
+};
+
+const doctorResourceCleanupFailure = (cause: unknown): ProviderCleanupError => {
+  const observation = ArtifactReaderFailure.cleanupObservation(
+    cause,
+    "doctor resources",
+  );
+  const failure = new ProviderCleanupError(
+    "rea",
+    observation.resources,
+    { reason: observation.reason },
+    { cause, operation: "doctor" },
+  );
+  bindArtifactFileCleanup(cause, failure);
+  return failure;
 };
 
 const readMacosVersion = async (

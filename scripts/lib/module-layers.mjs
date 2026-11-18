@@ -286,6 +286,7 @@ export const ENTRY_FILES = Object.freeze(
       evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
       firmware: [
         "FirmwareCommand.ts",
+        "FirmwareDoctor.ts",
         "FirmwareProvider.ts",
         "FirmwareProviderIdentities.ts",
         "devicetree/DevicetreeProvider.ts",

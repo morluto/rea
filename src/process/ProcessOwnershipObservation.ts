@@ -1,3 +1,8 @@
+import {
+  DEFAULT_PROCESS_TABLE_MAX_BYTES,
+  parseProcessTableMaxBytes,
+  PROCESS_TABLE_MAX_BYTES_SETTING,
+} from "../config/processTableOutputBudget.js";
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
@@ -36,6 +41,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import {
+  execFileFailureCapturedOutput,
   execFileOutput,
   execFileOutputFailure,
   spawnCapacityExhausted,
@@ -1194,8 +1200,14 @@ export const createSystemProcessOwnershipHost = (
     readonly compileTimeoutMs?: number;
     /** Fixed Linux `ps` locations checked before PATH; tests model a host without them. */
     readonly linuxPsLocations?: readonly string[];
+    /** Subprocess output execution seam for testing process listing failures. */
+    readonly execFileOutput?: typeof execFileOutput;
   } = {},
 ): ProcessOwnershipHost => {
+  const processTableBudget = parseProcessTableMaxBytes(
+    hostEnvironment[PROCESS_TABLE_MAX_BYTES_SETTING],
+  );
+  const runExecFileOutput = options.execFileOutput ?? execFileOutput;
   const selectPs = () =>
     resolveSystemPs(
       platform,
@@ -1238,14 +1250,16 @@ export const createSystemProcessOwnershipHost = (
         })
       : undefined;
   const listProcessesWith = async (ps: SystemPs, signal?: AbortSignal) => {
+    if (!processTableBudget.ok) throw processTableBudget.error;
     let stdout: string;
     try {
-      ({ stdout } = await execFileOutput(
+      ({ stdout } = await runExecFileOutput(
         ps.command,
         PROCESS_INVENTORY_PS_ARGUMENTS,
         {
           env: hostEnvironment,
           stopSignal: "SIGTERM",
+          maxBuffer: processTableBudget.value,
           ...(signal === undefined ? {} : { signal }),
         },
       ));
@@ -1547,6 +1561,8 @@ export const createSystemProcessOwnershipHost = (
       ? []
       : await listProcessesWith(await selectPs(), signal);
   const safeListProcesses = async (signal?: AbortSignal) => {
+    // Configuration refusal is not an unavailable process-table observation.
+    if (!processTableBudget.ok) throw processTableBudget.error;
     const ps = await selectPs();
     try {
       return await listProcessesWith(ps, signal);
@@ -1570,6 +1586,9 @@ export const createSystemProcessOwnershipHost = (
         throw new LinuxOwnedProcessPrerequisiteError(cause, {
           missing: systemCode === "ENOENT",
           systemCode,
+          maximumBytes: processTableBudget.ok
+            ? processTableBudget.value
+            : undefined,
           ps,
         });
       throw new ProcessAdmissionError(
@@ -1852,6 +1871,7 @@ export const LINUX_PROCESS_OWNERSHIP_REMEDIATION = `Install your distribution's 
 export interface LinuxOwnedProcessPrerequisiteOptions {
   readonly missing?: boolean;
   readonly systemCode?: string | undefined;
+  readonly maximumBytes?: number | undefined;
   /** The `ps` that failed, recorded in the diagnostics and reason. */
   readonly ps?: SystemPs;
 }
@@ -1859,6 +1879,7 @@ export interface LinuxOwnedProcessPrerequisiteOptions {
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
   readonly systemCode: string | undefined;
+  readonly outputLimitBytes: number | undefined;
   readonly admissionCode: string | undefined;
 
   constructor(
@@ -1872,6 +1893,11 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
             systemCode: optionsOrSystemCode,
           }
         : optionsOrSystemCode;
+    const failure = execFileOutputFailure(cause);
+    const outputLimitBytes =
+      failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        ? (options.maximumBytes ?? DEFAULT_PROCESS_TABLE_MAX_BYTES)
+        : undefined;
     const admissionCode =
       cause instanceof ProcessAdmissionError ? cause.code : undefined;
     const rawCode =
@@ -1891,27 +1917,41 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
     const ran =
       options.ps === undefined ? "" : ` (ran ${describeSystemPs(options.ps)})`;
     const reason =
-      admissionCode !== undefined || isMissing
-        ? `Linux process ownership inspection requires a procps-compatible ps before launching a child: ${errorMessage(cause)}${ran}`
-        : resolvedCode !== undefined
-          ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}${ran}`
-          : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}${ran}`;
+      outputLimitBytes !== undefined
+        ? `Linux process ownership inspection is unknown because ps exceeded the ${String(outputLimitBytes)}-byte per-stream output allowance; the incomplete process table was not used${ran}. Raise ${PROCESS_TABLE_MAX_BYTES_SETTING} in REA's launch environment if needed and restart REA; a larger allowance can retain more memory.`
+        : admissionCode !== undefined || isMissing
+          ? `Linux process ownership inspection requires a procps-compatible ps before launching a child: ${errorMessage(cause)}${ran}`
+          : resolvedCode !== undefined
+            ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}${ran}`
+            : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}${ran}`;
     const remediation =
-      admissionCode !== undefined
-        ? processOwnershipAdmissionRecovery(admissionCode, "linux")
-        : isMissing
-          ? LINUX_PROCESS_OWNERSHIP_REMEDIATION
-          : processOwnershipAdmissionRecovery(
-              "baseline_unavailable",
-              "linux",
-              resolvedCode,
-            );
+      outputLimitBytes !== undefined
+        ? `Raise ${PROCESS_TABLE_MAX_BYTES_SETTING} in REA's launch environment if needed and restart REA; a larger allowance can retain more memory.`
+        : admissionCode !== undefined
+          ? processOwnershipAdmissionRecovery(admissionCode, "linux")
+          : isMissing
+            ? LINUX_PROCESS_OWNERSHIP_REMEDIATION
+            : processOwnershipAdmissionRecovery(
+                "baseline_unavailable",
+                "linux",
+                resolvedCode,
+              );
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
       remediationAction: remediation,
+      ...(failure === undefined
+        ? {}
+        : { capturedOutput: execFileFailureCapturedOutput(failure) }),
       diagnostics: {
         boundary: "process-ownership",
+        ...(outputLimitBytes === undefined
+          ? {}
+          : {
+              prerequisite: "ps",
+              reason: "output_limit",
+              max_output_bytes_per_stream: outputLimitBytes,
+            }),
         ...(admissionCode === undefined
           ? {}
           : { admission_code: admissionCode }),
@@ -1921,6 +1961,7 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
           : { ps_command: options.ps.command, ps_source: options.ps.source }),
       },
     });
+    this.outputLimitBytes = outputLimitBytes;
     this.systemCode = resolvedCode;
     this.admissionCode = admissionCode;
   }
@@ -1962,9 +2003,10 @@ export const processOwnershipAdmissionRecovery = (
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (
   signal?: AbortSignal,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<void> => {
   assertProcessOwnershipInspectionActive(signal);
-  await systemProcessOwnershipHost.prepare?.(signal);
+  await host.prepare?.(signal);
   assertProcessOwnershipInspectionActive(signal);
 };
 

@@ -1,3 +1,5 @@
+import { AnalysisError } from "./domain/analysisErrorBase.js";
+import { jsonValueSchema } from "./domain/jsonValue.js";
 import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
 import { systemDoctorHost, type DoctorHost } from "./application/Doctor.js";
 import type {
@@ -25,6 +27,11 @@ import {
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
+import {
+  FIRMWARE_DOCTOR_SETTINGS,
+  FirmwareDoctor,
+} from "./firmware/FirmwareDoctor.js";
+import { FIRMWARE_TOOL_REQUIREMENTS } from "./contracts/firmware/firmwareToolRequirements.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import {
@@ -72,7 +79,7 @@ const selectedRegistrationEnvironment = async (
   const [selected] = clients;
   // Only an unambiguous selection can stand for the terminal's environment.
   if (selected === undefined || clients.length !== 1) return undefined;
-  signal.throwIfAborted();
+  if (signal.aborted) throw cancelledBy("doctor", signal);
   const home = homeDirectoryFromEnvironment(processEnvironment, platform);
   const client = (
     await resolveSupportedClients(home, platform, processEnvironment)
@@ -184,6 +191,7 @@ const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
   ida: IDA_DOCTOR_SETTINGS,
   jadx: JADX_DOCTOR_SETTINGS,
   kuna: KUNA_DOCTOR_SETTINGS,
+  ...FIRMWARE_DOCTOR_SETTINGS,
 };
 
 /**
@@ -201,6 +209,14 @@ export const settingAffectsProbe = (
   const read = (key: string) =>
     environment[platform === "win32" ? key.toUpperCase() : key];
   switch (id) {
+    case "binwalk":
+    case "unblob": {
+      const command = FIRMWARE_TOOL_REQUIREMENTS[id].commandEnvironment;
+      return (
+        name === command ||
+        (platform === "linux" && read(command) !== undefined)
+      );
+    }
     case "jadx":
       // Java comes from JAVA_HOME when it is explicit; only then is PATH unused.
       return name !== "PATH" || read("JAVA_HOME") === undefined;
@@ -260,6 +276,8 @@ const unresolvedProvider = (
     ida: "REA_IDA_MCP_CONFIG",
     jadx: "REA_JADX_MCP_JAR",
     kuna: "REA_KUNA_COMMAND",
+    binwalk: FIRMWARE_TOOL_REQUIREMENTS.binwalk.commandEnvironment,
+    unblob: FIRMWARE_TOOL_REQUIREMENTS.unblob.commandEnvironment,
   };
   const configurationKey = configurationKeys[id];
   const unknownConfiguration =
@@ -326,23 +344,21 @@ export const createSystemDoctorHost = (
   signal?: AbortSignal,
   /** The host diagnosed; tests select another host's client layout. */
   host: HostPlatform = HOST_PLATFORM,
+  options: { readonly firmware?: boolean } = {},
 ): DoctorHost => {
   const { platform } = host;
-  const registrationReads = new WeakMap<
-    RetainedResourceScope,
-    Map<string, ReturnType<typeof readIdaConfiguration>>
+  // The parsed fact belongs to this doctor host, not a particular probe scope.
+  // Budget and readiness projections share it even with isolated cleanup owners.
+  const registrationReads = new Map<
+    string,
+    ReturnType<typeof readIdaConfiguration>
   >();
   const readRegistration = (
     path: string,
     resourceScope: RetainedResourceScope,
     inspectionSignal: AbortSignal,
   ) => {
-    let byPath = registrationReads.get(resourceScope);
-    if (byPath === undefined) {
-      byPath = new Map();
-      registrationReads.set(resourceScope, byPath);
-    }
-    let registration = byPath.get(path);
+    let registration = registrationReads.get(path);
     if (registration === undefined) {
       registration = withProbeResourceScope(resourceScope, path, (probeScope) =>
         readIdaConfiguration(path, {
@@ -350,7 +366,7 @@ export const createSystemDoctorHost = (
           signal: inspectionSignal,
         }),
       );
-      byPath.set(path, registration);
+      registrationReads.set(path, registration);
     }
     return registration;
   };
@@ -380,100 +396,181 @@ export const createSystemDoctorHost = (
       // parser-owned error when IDA itself was explicitly selected.
       return analysisProvider === "ida" ? registration : ok(undefined);
     },
-    providerInspections: async (
-      resourceScope: RetainedResourceScope,
-      inspectionSignal: AbortSignal,
-      clients: readonly string[],
-    ) => {
-      const selected = await withProbeResourceScope(
-        resourceScope,
-        "selected-registration",
-        (probeScope) =>
-          selectedRegistrationEnvironment(
-            clients,
-            environment,
-            probeScope,
-            inspectionSignal,
-            platform,
-          ),
-      );
-      const inspectionEnvironment = selectedProviderSettings(
-        selected,
-        environment,
-        platform,
-      );
-      const ghidraUnresolved = unresolvedProvider(
-        "ghidra",
-        selected,
-        inspectionEnvironment,
-        platform,
-      );
-      const idaUnresolved = unresolvedProvider(
-        "ida",
-        selected,
-        inspectionEnvironment,
-        platform,
-      );
-      const jadxUnresolved = unresolvedProvider(
-        "jadx",
-        selected,
-        inspectionEnvironment,
-        platform,
-      );
-      const kunaUnresolved = unresolvedProvider(
-        "kuna",
-        selected,
-        inspectionEnvironment,
-        platform,
-      );
-      return await settleConcurrent([
-        ghidraUnresolved !== undefined
-          ? Promise.resolve(ghidraUnresolved)
-          : withProbeResourceScope(
-              resourceScope,
-              "ghidra-doctor",
-              (probeScope) =>
-                inspectSystemGhidraProvider(
-                  inspectionEnvironment,
-                  probeScope,
-                  inspectionSignal,
-                ),
-            ),
-        idaUnresolved !== undefined
-          ? Promise.resolve(idaUnresolved)
-          : withProbeResourceScope(resourceScope, "ida-doctor", (probeScope) =>
-              inspectIdaRegistration(
-                inspectionEnvironment.REA_IDA_MCP_CONFIG,
+    providerInspectionGroups: (clients) => {
+      let selected: SelectedRegistrationEnvironment | undefined;
+      let inspectionEnvironment: Readonly<NodeJS.ProcessEnv> = environment;
+      return [
+        async (resourceScope, inspectionSignal) => {
+          selected = await withProbeResourceScope(
+            resourceScope,
+            "selected-registration",
+            (probeScope) =>
+              selectedRegistrationEnvironment(
+                clients,
+                environment,
                 probeScope,
                 inspectionSignal,
-                inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
-                  ? undefined
-                  : readRegistration(
-                      inspectionEnvironment.REA_IDA_MCP_CONFIG,
-                      resourceScope,
+                platform,
+              ),
+          );
+          inspectionEnvironment = selectedProviderSettings(
+            selected,
+            environment,
+            platform,
+          );
+          const ghidraUnresolved = unresolvedProvider(
+            "ghidra",
+            selected,
+            inspectionEnvironment,
+            platform,
+          );
+          const idaUnresolved = unresolvedProvider(
+            "ida",
+            selected,
+            inspectionEnvironment,
+            platform,
+          );
+          const jadxUnresolved = unresolvedProvider(
+            "jadx",
+            selected,
+            inspectionEnvironment,
+            platform,
+          );
+          const kunaUnresolved = unresolvedProvider(
+            "kuna",
+            selected,
+            inspectionEnvironment,
+            platform,
+          );
+          const completed: Array<DoctorProviderInspection | undefined> = [];
+          const probes = [
+            ghidraUnresolved !== undefined
+              ? Promise.resolve(ghidraUnresolved)
+              : withProbeResourceScope(
+                  resourceScope,
+                  "ghidra-doctor",
+                  (probeScope) =>
+                    inspectSystemGhidraProvider(
+                      inspectionEnvironment,
+                      probeScope,
                       inspectionSignal,
                     ),
-              ),
-            ),
-        jadxUnresolved !== undefined
-          ? Promise.resolve(jadxUnresolved)
-          : withProbeResourceScope(resourceScope, "jadx-doctor", (probeScope) =>
-              inspectJadxProvider(
-                inspectionEnvironment,
-                probeScope,
-                host,
-                inspectionSignal,
-              ),
-            ),
-        kunaUnresolved !== undefined
-          ? Promise.resolve(kunaUnresolved)
-          : withProbeResourceScope(resourceScope, "kuna-doctor", (probeScope) =>
-              inspectKunaProvider(inspectionEnvironment, platform, {
-                resourceScope: probeScope,
-                signal: inspectionSignal,
+                ),
+            idaUnresolved !== undefined
+              ? Promise.resolve(idaUnresolved)
+              : withProbeResourceScope(
+                  resourceScope,
+                  "ida-doctor",
+                  (probeScope) =>
+                    inspectIdaRegistration(
+                      inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                      probeScope,
+                      inspectionSignal,
+                      inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
+                        ? undefined
+                        : readRegistration(
+                            inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                            resourceScope,
+                            inspectionSignal,
+                          ),
+                    ),
+                ),
+            jadxUnresolved !== undefined
+              ? Promise.resolve(jadxUnresolved)
+              : withProbeResourceScope(
+                  resourceScope,
+                  "jadx-doctor",
+                  (probeScope) =>
+                    inspectJadxProvider(
+                      inspectionEnvironment,
+                      probeScope,
+                      host,
+                      inspectionSignal,
+                    ),
+                ),
+            kunaUnresolved !== undefined
+              ? Promise.resolve(kunaUnresolved)
+              : withProbeResourceScope(
+                  resourceScope,
+                  "kuna-doctor",
+                  (probeScope) =>
+                    inspectKunaProvider(inspectionEnvironment, platform, {
+                      resourceScope: probeScope,
+                      signal: inspectionSignal,
+                    }),
+                ),
+          ];
+          try {
+            return await settleConcurrent(
+              probes.map(async (probe, index) => {
+                const inspection = await probe;
+                completed[index] = inspection;
+                return inspection;
               }),
-            ),
-      ]);
+            );
+          } catch (cause: unknown) {
+            if (cause instanceof AnalysisError)
+              cause.retainDiagnostics({
+                provider_inspections: completed.flatMap((inspection) =>
+                  inspection === undefined
+                    ? []
+                    : [jsonValueSchema.parse(inspection)],
+                ),
+              });
+            throw cause;
+          }
+        },
+        ...(options.firmware === false
+          ? []
+          : [
+              async (
+                resourceScope: RetainedResourceScope,
+                inspectionSignal: AbortSignal,
+              ) => {
+                const binwalk = unresolvedProvider(
+                  "binwalk",
+                  selected,
+                  inspectionEnvironment,
+                  platform,
+                );
+                const unblob = unresolvedProvider(
+                  "unblob",
+                  selected,
+                  inspectionEnvironment,
+                  platform,
+                );
+                const firmware = new FirmwareDoctor(
+                  inspectionEnvironment,
+                  platform,
+                  {},
+                  inspectionSignal,
+                );
+                try {
+                  return await firmware.inspect({
+                    ...(binwalk === undefined ? {} : { binwalk }),
+                    ...(unblob === undefined ? {} : { unblob }),
+                  });
+                } finally {
+                  if (firmware.hasPendingCleanup)
+                    resourceScope.retain(
+                      {
+                        async close() {
+                          const reason = await firmware.close();
+                          if (reason !== undefined)
+                            throw new ProviderCleanupError(
+                              "firmware",
+                              ["firmware-doctor"],
+                              { reason },
+                              { operation: "doctor" },
+                            );
+                        },
+                      },
+                      "firmware-doctor",
+                    );
+                }
+              },
+            ]),
+      ];
     },
     desktopBuildFacts: readDesktopBuildFacts,
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
