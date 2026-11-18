@@ -3,6 +3,7 @@ import { posix, win32 } from "node:path";
 import {
   absoluteCallerPath,
   appendCallerPath,
+  isQualifiedCallerPath,
 } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
@@ -11,7 +12,10 @@ import { snapshotEnvironment } from "./snapshotEnvironment.js";
 export interface PathSearchCandidate {
   /** The absolute file the launch would execute from this entry. */
   readonly path: string;
-  /** An empty or relative PATH entry, which depends on the working directory. */
+  /**
+   * An empty or relative PATH entry, or on Windows a rooted entry without a
+   * drive (`\tools`), which depends on the working directory or its drive.
+   */
   readonly relativeEntry: boolean;
 }
 
@@ -118,9 +122,10 @@ export interface WindowsPathSearchFailure {
  * The files Windows' PATH/PATHEXT search tries for commands, in order: a
  * path-qualified command (`C:\Python\python`, `.venv\Scripts\python`) only at
  * its own location, resolved against `cwd`, and never on PATH; then for each
- * PATH entry (relative ones resolve against `cwd`, or against this process's
- * directory, read only when such an entry is reached and skipped once
- * removed), each bare command with every PATHEXT extension,
+ * PATH entry (relative ones, including a rooted entry without a drive such as
+ * `\tools`, resolve against `cwd`, or against this process's directory, read
+ * only when such an entry is reached and skipped once removed; they are
+ * marked `relativeEntry`), each bare command with every PATHEXT extension,
  * or as written when it already names an extension. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
@@ -166,7 +171,7 @@ export const windowsPathCandidates = (
   return ok({
     *[Symbol.iterator]() {
       for (const name of located) {
-        const workingDirectory = win32.isAbsolute(name)
+        const workingDirectory = isQualifiedCallerPath(name, "win32")
           ? name
           : (search.cwd ?? currentDirectory());
         if (workingDirectory === undefined) continue;
@@ -179,14 +184,15 @@ export const windowsPathCandidates = (
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
-        const workingDirectory = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/u.test(directory)
-          ? directory
-          : (search.cwd ?? currentDirectory());
+        const relativeEntry = !isQualifiedCallerPath(directory, "win32");
+        const workingDirectory = relativeEntry
+          ? (search.cwd ?? currentDirectory())
+          : directory;
         if (workingDirectory === undefined) continue;
         for (const name of names)
           yield {
             path: win32.resolve(workingDirectory, directory, name),
-            relativeEntry: !win32.isAbsolute(directory),
+            relativeEntry,
           };
       }
     },
