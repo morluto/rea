@@ -171,9 +171,10 @@ refusal comes before the file is hashed, so it keeps no partial Evidence. A
 finished report above the limit is refused after hashing and keeps the hashed
 source identity only. There is no partial success.
 
-`region-too-large` and `too-many-entries` report resource `file-size` with
-`maximum_region_bytes` and `maximum_entries`. `paths-too-large` reports
-resource `transport` with `maximum_output_bytes` and
+Each limit refusal reports one `reported_limits` entry as `boundary` and
+`maximum`. `region-too-large` and `too-many-entries` report resource
+`file-size` with boundary `maximum_region_bytes` or `maximum_entries`.
+`paths-too-large` reports resource `transport` with boundary
 `maximum_path_utf16_units`, because path text is report text.
 
 The 256 MiB region limit is shared: the index, the path hash index and the full
