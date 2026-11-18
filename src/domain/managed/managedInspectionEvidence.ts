@@ -1,4 +1,4 @@
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
@@ -53,22 +53,47 @@ export const readManagedInspectionEvidence = <
       ]),
     );
   }
-  const payload = readEvidencePayload(schema, evidence.normalized_result);
+  const payload = readEvidencePayload(schema, evidence.normalized_result, {
+    within: ["normalized_result"],
+  });
   if (!payload.ok) return payload;
   const result = payload.value;
   const artifactSha256 = result.artifact.sha256;
-  const subjectSha256 = evidence.subject?.digest.sha256;
+  const subjectSha256 = evidenceFileTarget(evidence)?.sha256;
   if (subjectSha256 !== undefined && artifactSha256 !== subjectSha256)
     return err(
       integrityFailure(
         `Managed Evidence ${operation} (${evidence.evidence_id}) subject SHA-256 ${subjectSha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
       ),
     );
+  const scope = validateManagedTokenScope(
+    result,
+    operation,
+    evidence.evidence_id,
+  );
+  if (!scope.ok) return scope;
+  return ok({ evidence, result });
+};
+
+/** Bind recorded token scope to the artifact and module that gave it meaning. */
+export const validateManagedTokenScope = (
+  result: {
+    readonly artifact: { readonly sha256: string };
+    readonly identity_scope?: {
+      readonly requires_artifact_sha256: string;
+      readonly requires_mvid: string | null;
+    };
+    readonly module?: { readonly mvid: string | null } | null;
+  },
+  operation: string,
+  evidenceId: string,
+): Result<void, EvidenceIntegrityError> => {
+  const artifactSha256 = result.artifact.sha256;
   const scope = result.identity_scope;
   if (scope !== undefined && scope.requires_artifact_sha256 !== artifactSha256)
     return err(
       integrityFailure(
-        `Managed Evidence ${operation} (${evidence.evidence_id}) token scope SHA-256 ${scope.requires_artifact_sha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
+        `Managed Evidence ${operation} (${evidenceId}) token scope SHA-256 ${scope.requires_artifact_sha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
       ),
     );
   const moduleMvid = result.module?.mvid ?? null;
@@ -79,10 +104,10 @@ export const readManagedInspectionEvidence = <
   )
     return err(
       integrityFailure(
-        `Managed Evidence ${operation} (${evidence.evidence_id}) token scope MVID ${String(scopedMvid)} does not match module MVID ${String(moduleMvid)}`,
+        `Managed Evidence ${operation} (${evidenceId}) token scope MVID ${String(scopedMvid)} does not match module MVID ${String(moduleMvid)}`,
       ),
     );
-  return ok({ evidence, result });
+  return ok(undefined);
 };
 
 const integrityFailure = (message: string): EvidenceIntegrityError =>

@@ -2,7 +2,7 @@ import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   adbRequestSchema,
   adbDeviceListObservationSchema,

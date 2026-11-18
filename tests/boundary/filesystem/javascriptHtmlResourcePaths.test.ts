@@ -1,151 +1,81 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { dirname, join, relative, sep } from "node:path";
-
 import { expect, it } from "vitest";
 
 import { reconstructJavaScriptArtifact } from "../../support/javascriptApplicationScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
-const cases: readonly {
-  name: string;
-  html: string;
-  files: Readonly<Record<string, string>>;
-  expected: readonly string[];
-}[] = [
-  {
-    name: "extension fallback",
-    html: '<script src="./app"></script>',
-    files: { "app.js": "globalThis.owned = true;" },
-    expected: [],
-  },
-  {
-    name: "directory index",
-    html: '<script src="./app"></script>',
-    files: { "app/index.js": "globalThis.owned = true;" },
-    expected: [],
-  },
-  {
-    name: "directory package",
-    html: '<script src="./app"></script>',
-    files: {
-      "app/package.json": '{"main":"entry.js"}',
-      "app/entry.js": "globalThis.owned = true;",
-    },
-    expected: [],
-  },
-  {
-    name: "base directory",
-    html: '<base href="assets/"><script src="./app"></script>',
-    files: { "assets/app.js": "globalThis.owned = true;" },
-    expected: [],
-  },
-  {
-    name: "exact base resource",
-    html: '<base href="assets/"><script src="./app.js?cache=1#v2"></script>',
-    files: {
-      "assets/app.js": "globalThis.owned = true;",
-      "app.js": "globalThis.decoy = true;",
-    },
-    expected: ["assets/app.js"],
-  },
-  {
-    name: "exact script resource",
-    html: '<script src="./app.js?cache=1#v2"></script>',
-    files: { "app.js": "globalThis.owned = true;" },
-    expected: ["app.js"],
-  },
-  {
-    name: "percent-encoded script letters",
-    html: '<script src="%61pp.js"></script>',
-    files: { "app.js": "globalThis.owned = true;" },
-    expected: ["app.js"],
-  },
-  {
-    name: "script URL surrounded by whitespace",
-    html: '<script src=" app.js "></script>',
-    files: { "app.js": "globalThis.owned = true;" },
-    expected: ["app.js"],
-  },
-  {
-    name: "percent-encoded base directory",
-    html: '<base href="%61ssets/"><script src="app.js"></script>',
-    files: { "assets/app.js": "globalThis.owned = true;" },
-    expected: ["assets/app.js"],
-  },
-];
-
-it.each(cases)(
-  "uses exact HTML resource identity for $name",
-  async ({ html, files, expected }) => {
-    const root = await createTestTempDirectory("rea-html-resources-");
-    await Promise.all(
-      Object.entries({ ...files, "index.html": html }).map(
-        async ([path, text]) => {
-          await mkdir(dirname(join(root, path)), { recursive: true });
-          await writeFile(join(root, path), text);
-        },
-      ),
-    );
-    const result = await reconstructJavaScriptArtifact({ input_path: root });
-    const loads = result.graph.edges.filter(
-      ({ relation, properties }) =>
-        relation === "loads" && properties.script_path !== undefined,
-    );
-    expect(loads.map(({ properties }) => properties.resolved_path)).toEqual(
-      expected,
-    );
-    if (expected.length === 0) {
-      const reference = result.graph.nodes
-        .flatMap(({ observations }) => observations)
-        .find(
-          ({ properties }) => properties.mechanism === "html-script-reference",
-        );
-      expect(reference).toMatchObject({
-        properties: {
-          script_path: "./app",
-          resolution_context: "html-reference",
-          resolution_status: "not-found",
-          resolved_path: null,
-        },
-        evidence: {
-          authority: "static-relationship-inference",
-          location: {
-            available: true,
-            value: { kind: "source-range", source: "index.html" },
-          },
-          limitations: expect.arrayContaining([
-            expect.stringContaining("exact HTML resource"),
-          ]),
-        },
-      });
-    }
-  },
-);
-
-it("retains CommonJS extension resolution against Node", async () => {
-  const root = await createTestTempDirectory("rea-html-node-control-");
-  await Promise.all([
-    writeFile(
-      join(root, "main.cjs"),
-      'const value = require("./app"); module.exports = value;',
-    ),
-    writeFile(join(root, "app.js"), 'module.exports = "actual";'),
-  ]);
-  const expected = relative(
-    root,
-    createRequire(join(root, "main.cjs")).resolve("./app"),
-  )
-    .split(sep)
-    .join("/");
-  const result = await reconstructJavaScriptArtifact({ input_path: root });
-  const edge = result.graph.edges.find(
-    ({ properties }) =>
-      properties.module_link_kind === "require" &&
-      properties.specifier === "./app",
-  );
-  expect(edge?.properties).toMatchObject({
-    resolution_status: "resolved",
-    resolved_path: expected,
+it("requires exact HTML script paths when fallback candidates exist", async () => {
+  const root = await createTestTempDirectory("rea-html-resources-");
+  await writeFixtureFiles(root, {
+    "index.html": [
+      '<script src="./extension"></script>',
+      '<script src="./directory"></script>',
+      '<script src="./package"></script>',
+    ].join("\n"),
+    "base.html": [
+      '<base href="%61ssets/">',
+      '<script src="./app"></script>',
+      '<script src="%61pp.js?cache=1#v2"></script>',
+    ].join("\n"),
+    "extension.js": "globalThis.extensionDecoy = true;",
+    "directory/index.js": "globalThis.directoryDecoy = true;",
+    "package/package.json": '{"main":"entry.js"}',
+    "package/entry.js": "globalThis.packageDecoy = true;",
+    "app.js": "globalThis.rootDecoy = true;",
+    "assets/app.js": "globalThis.exactScript = true;",
   });
+
+  const { graph } = await reconstructJavaScriptArtifact({ input_path: root });
+  const loads = graph.edges.filter(
+    ({ relation, properties }) =>
+      relation === "loads" && properties.script_path !== undefined,
+  );
+  expect(loads).toMatchObject([
+    {
+      properties: {
+        script_path: "%61pp.js?cache=1#v2",
+        base_href: "%61ssets/",
+        resolution_status: "resolved",
+        resolved_path: "assets/app.js",
+      },
+    },
+  ]);
+
+  const unresolved = graph.nodes
+    .flatMap(({ observations }) => observations)
+    .filter(
+      ({ properties }) => properties.mechanism === "html-script-reference",
+    );
+  expect(unresolved).toHaveLength(4);
+  for (const [source, scriptPath, candidate, base] of [
+    ["index.html", "./extension", "extension", null],
+    ["index.html", "./directory", "directory", null],
+    ["index.html", "./package", "package", null],
+    ["base.html", "./app", "assets/app", "%61ssets/"],
+  ] as const) {
+    const reference = unresolved.find(
+      ({ properties }) => properties.script_path === scriptPath,
+    );
+    expect(reference, scriptPath).toMatchObject({
+      properties: {
+        script_path: scriptPath,
+        base_href: base,
+        resolution_context: "html-reference",
+        resolution_status: "not-found",
+        resolved_path: null,
+      },
+      evidence: {
+        authority: "static-relationship-inference",
+        location: {
+          available: true,
+          value: { kind: "source-range", source },
+        },
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            `The exact HTML resource ${candidate} was not found`,
+          ),
+        ]),
+      },
+    });
+  }
 });

@@ -1,12 +1,16 @@
 import { setImmediate } from "node:timers/promises";
 
-import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  artifactReaderLimitFailure,
+} from "../../resources/index.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
+import { hostRangeErrorKind } from "../../domain/parseFailure.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Node `SeaBlob::kMagic` from `src/node_sea.h` (v24). */
 const NODE_SEA_MAGIC = 0x143da20;
@@ -231,11 +235,9 @@ class BlobCursor {
     const raw = this.#demand(length);
     let text: string;
     try {
-      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        raw,
-      );
+      text = strictUtf8Decoder("preserve").decode(raw);
     } catch (cause: unknown) {
-      if (cause instanceof RangeError)
+      if (hostRangeErrorKind(cause) === "host-capacity")
         throw new ArtifactReaderFailure(
           "limit",
           "Node SEA UTF-8 text exceeds this runtime's string or memory capacity. Admission budgets do not raise runtime representation limits or reserve host memory.",

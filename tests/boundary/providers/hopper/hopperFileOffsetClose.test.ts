@@ -25,6 +25,7 @@ import { silentLogger } from "../../../../src/logger.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperProvider } from "../../../../src/hopper/HopperProvider.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 const state = vi.hoisted(() => ({
   path: "",
@@ -288,7 +289,7 @@ it("clears a combined Hopper close only after the descriptor and session release
     ]);
     expect(call).toHaveBeenCalledTimes(1);
 
-    session.resolveCleanup();
+    releaseOwnedCleanup(session);
     expect(session.cleanupIncomplete).toBe(false);
     expect(combined.error.cleanupIncomplete).toBe(true);
     expect(combined.error.cleanupResources).toEqual([state.path]);

@@ -102,43 +102,46 @@ if (args.includes("--version")) {
     });
     const hash = (value) => ({ __typename__: "HashReport", sha256: value });
     const childTask = task(child, depth, "gzip-id");
+    const nestedUnknownRecords = (childSize, digest) => [
+      {
+        task: childTask,
+        reports: [
+          stat(child, childSize),
+          hash(digest),
+          {
+            __typename__: "UnknownChunkReport",
+            id: "unknown-id",
+            start_offset: 0,
+            end_offset: content.length,
+            size: content.length,
+          },
+        ],
+        subtasks: [],
+      },
+      {
+        task: task(input, 0, ""),
+        reports: [
+          stat(input, bytes.length),
+          hash(sha256),
+          {
+            __typename__: "ChunkReport",
+            id: "gzip-id",
+            start_offset: 0,
+            end_offset: bytes.length,
+            size: bytes.length,
+            handler_name: "gzip",
+            is_encrypted: false,
+            extraction_reports: [],
+          },
+        ],
+        subtasks: [childTask],
+      },
+    ];
     if (mode === "nested-unknown") {
-      const nestedUnknownRecords = [
-        {
-          task: childTask,
-          reports: [
-            stat(child, content.length),
-            hash(childHash),
-            {
-              __typename__: "UnknownChunkReport",
-              id: "unknown-id",
-              start_offset: 0,
-              end_offset: content.length,
-              size: content.length,
-            },
-          ],
-          subtasks: [],
-        },
-        {
-          task: task(input, 0, ""),
-          reports: [
-            stat(input, bytes.length),
-            hash(sha256),
-            {
-              __typename__: "ChunkReport",
-              id: "gzip-id",
-              start_offset: 0,
-              end_offset: bytes.length,
-              size: bytes.length,
-              handler_name: "gzip",
-              is_encrypted: false,
-              extraction_reports: [],
-            },
-          ],
-          subtasks: [childTask],
-        },
-      ];
-      await writeFile(reportPath, JSON.stringify(nestedUnknownRecords));
+      await writeFile(
+        reportPath,
+        JSON.stringify(nestedUnknownRecords(content.length, childHash)),
+      );
     }
     if (mode === "nested-unknown-oversized") {
       // The child exceeds the firmware input limit, so a fresh run cannot
@@ -165,42 +168,10 @@ if (args.includes("--version")) {
         await source.close();
       }
       const oversizedHash = oversizedDigest.digest("hex");
-      const nestedUnknownRecords = [
-        {
-          task: childTask,
-          reports: [
-            stat(child, oversized),
-            hash(oversizedHash),
-            {
-              __typename__: "UnknownChunkReport",
-              id: "unknown-id",
-              start_offset: 0,
-              end_offset: content.length,
-              size: content.length,
-            },
-          ],
-          subtasks: [],
-        },
-        {
-          task: task(input, 0, ""),
-          reports: [
-            stat(input, bytes.length),
-            hash(sha256),
-            {
-              __typename__: "ChunkReport",
-              id: "gzip-id",
-              start_offset: 0,
-              end_offset: bytes.length,
-              size: bytes.length,
-              handler_name: "gzip",
-              is_encrypted: false,
-              extraction_reports: [],
-            },
-          ],
-          subtasks: [childTask],
-        },
-      ];
-      await writeFile(reportPath, JSON.stringify(nestedUnknownRecords));
+      await writeFile(
+        reportPath,
+        JSON.stringify(nestedUnknownRecords(oversized, oversizedHash)),
+      );
     }
     if (mode === "depth-orphan") {
       // A depth-limited directory with nothing published under it cannot

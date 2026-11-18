@@ -2,10 +2,8 @@ import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import type { ErlangBeam } from "../erlang/beam.js";
 import type { ModelArtifact } from "../model/modelArtifact.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const parent = (
   operation: string,
@@ -99,7 +97,7 @@ const model: ModelArtifact = {
   coverage: {
     header: "complete",
     tensor_data: "not-interpreted",
-    array_values: "preview",
+    array_values: "partial",
     tensor_ranges: "partial",
     storage_sizes: "partial",
   },

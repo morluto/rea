@@ -9,10 +9,11 @@ import {
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -22,9 +23,9 @@ import {
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -46,9 +47,12 @@ import {
   kunaChildEnvironment,
   kunaInstallationFailureDiagnostics,
   type KunaInstallation,
+  type KunaResourceScope,
 } from "./KunaInstallation.js";
 import type { KunaDeadline } from "./KunaConfiguration.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * `kuna functions --json` costs ~210 bytes per function; this admits about
@@ -62,7 +66,7 @@ export type KunaProcessLauncher = (
 ) => Promise<SpawnedOwnedProviderProcess>;
 
 /** One bounded Kuna run inside a private workspace. */
-export interface KunaCommandRequest {
+interface KunaCommandRequest {
   readonly installation: KunaInstallation;
   readonly arguments: readonly string[];
   /** Private directory used as the working and temporary directory. */
@@ -90,7 +94,7 @@ export interface KunaCommandRequest {
  * stopped, so it may still write into the workspace, which therefore stays
  * with the caller's cleanup owner.
  */
-export type KunaCommandOutcome =
+type KunaCommandOutcome =
   | { readonly kind: "ok"; readonly snapshot: ProviderProcessSnapshot }
   | {
       readonly kind: "failed";
@@ -105,9 +109,6 @@ export type KunaCommandOutcome =
       readonly owner: ProviderProcessSupervisor | undefined;
     };
 
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /** Preserve the operation's typed failure while attaching descriptor cleanup. */
 export const kunaFileCleanupError = (
   failure: RegularFileCleanupFailure,
@@ -116,18 +117,17 @@ export const kunaFileCleanupError = (
   const diagnostics = kunaInstallationFailureDiagnostics(failure);
   const cancellation = regularFileCancellation(failure);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
+    return cancelledBy(operation, carriedReason(cancellation.reason), {
       diagnostics,
       cleanup: {
-        reason: message(failure.cleanupCause),
+        reason: errorMessage(failure.cleanupCause),
         resources: [failure.path],
       },
     });
   const cleanup = new ProviderCleanupError(
     KUNA_PROVIDER_ID,
     [failure.path],
-    { reason: message(failure.cleanupCause), ...diagnostics },
+    { reason: errorMessage(failure.cleanupCause), ...diagnostics },
     { cause: failure, operation },
   );
   if (failure.outcome.kind === "completed") return cleanup;
@@ -138,31 +138,59 @@ export const kunaFileCleanupError = (
       : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
           cause: primaryCause,
           diagnostics,
-          userMessage: `Kuna ${operation} failed: ${message(primaryCause)}`,
+          userMessage: `Kuna ${operation} failed: ${errorMessage(primaryCause)}`,
         });
-  return analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  const composed = analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  // The installation facts stay where every other outcome reports them, not
+  // only inside the composed primary and cleanup reports.
+  return diagnostics === undefined
+    ? composed
+    : composed.retainDiagnostics(diagnostics);
 };
 
 /** Preserve the exact retryable resources when an inspection admission retries them. */
-export const kunaRetainedResourceCleanupError = (
-  cause: unknown,
+const kunaRetainedResourceCleanupError = (
+  cause: ArtifactReaderFailure,
   operation: string,
-): AnalysisError | undefined => {
-  if (
-    !(cause instanceof ArtifactReaderFailure) ||
-    cause.cleanupLeases === undefined ||
-    cause.cleanupLeases.length === 0
-  )
+): ProviderCleanupError | undefined => {
+  if (cause.cleanupLeases === undefined || cause.cleanupLeases.length === 0)
     return undefined;
   const cleanup = new ProviderCleanupError(
     KUNA_PROVIDER_ID,
     cause.cleanup?.resources ?? [],
-    { reason: message(cause) },
+    { reason: errorMessage(cause) },
     { cause, operation },
   );
   bindArtifactFileCleanup(cause, cleanup);
   return cleanup;
 };
+
+/**
+ * The Kuna installation inspection's failures, read in one order: an
+ * admission's retained cleanup, the inspection's cancellation, then a file
+ * whose descriptor cleanup failed. What else a cause means belongs to the
+ * caller's `unclassified`.
+ */
+export const kunaInstallationDialect = (
+  operation: string,
+  resources: KunaResourceScope,
+  unclassified: ProviderFailureDialect["unclassified"],
+): ProviderFailureDialect => ({
+  providerId: KUNA_PROVIDER_ID,
+  operation,
+  recognise: (cause) => {
+    if (cause instanceof ArtifactReaderFailure) {
+      const retained = kunaRetainedResourceCleanupError(cause, operation);
+      if (retained !== undefined) return retained;
+    }
+    if (!(cause instanceof RegularFileCleanupFailure))
+      return resources.installationCancellationError(cause, operation);
+    const error = kunaFileCleanupError(cause, operation);
+    resources.bindFailure(cause, error);
+    return error;
+  },
+  unclassified,
+});
 
 /** File metadata that, unchanged, lets a verified digest stand without re-hashing. */
 const verifiedExecutables = new Map<
@@ -246,12 +274,10 @@ export const runKunaCommand = async (
         cause instanceof AnalysisError
           ? cause
           : cancellation !== undefined
-            ? new AnalysisCancelledError(request.operation, {
-                cause: cancellation.reason,
-              })
+            ? cancelledBy(request.operation, carriedReason(cancellation.reason))
             : new ProviderAdapterError(KUNA_PROVIDER_ID, request.operation, {
                 cause,
-                userMessage: `Cannot verify ${installation.executable}: ${message(cause)}`,
+                userMessage: `Cannot verify ${installation.executable}: ${errorMessage(cause)}`,
               }),
     };
   }
@@ -309,7 +335,7 @@ export interface KunaInputPrefix {
 }
 
 /** A copy's SHA-256 and size, and the leading bytes kept from the same stream. */
-export interface KunaCopiedInput {
+interface KunaCopiedInput {
   readonly sha256: string;
   readonly bytes: number;
   /** Empty unless a prefix was requested; the digest covers these exact bytes. */
@@ -339,11 +365,7 @@ const copyIO = async <Value>(
   try {
     return await operation();
   } catch (cause: unknown) {
-    throw new ArtifactReaderFailure(
-      "io",
-      cause instanceof Error ? cause.message : String(cause),
-      { cause },
-    );
+    throw new ArtifactReaderFailure("io", errorMessage(cause), { cause });
   }
 };
 
@@ -478,7 +500,7 @@ const commandFailure = (
       kind: "failed",
       error: new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
         cause,
-        userMessage: `Cannot run ${request.installation.executable}: ${message(cause)}`,
+        userMessage: `Cannot run ${request.installation.executable}: ${errorMessage(cause)}`,
       }),
     };
   const capturedOutput = capturedKunaOutput(cause.snapshot, cause.reason);
@@ -488,10 +510,11 @@ const commandFailure = (
   };
   let primary: AnalysisError;
   if (cause.reason === "cancelled")
-    primary = new AnalysisCancelledError(operation, {
-      ...details,
-      cause: cause.cancellation?.reason,
-    });
+    primary = cancelledBy(
+      operation,
+      carriedReason(cause.cancellation?.reason),
+      capturedOutput === undefined ? undefined : { capturedOutput },
+    );
   else if (cause.reason === "timeout") {
     const { setting, ms } = request.deadline;
     const analysisSetting =

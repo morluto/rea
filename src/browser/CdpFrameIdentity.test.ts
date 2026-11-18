@@ -1,29 +1,32 @@
 import { describe, expect, it } from "vitest";
-import {
-  selectCdpFrameIdentity,
-  cdpFrameEventFacts,
-} from "./CdpFrameIdentity.js";
+import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
+import { receiveCdpEvent, type CdpEvent } from "./CdpConnection.js";
+import { cdpFrameEvent } from "./protocol/CdpEvents.js";
+
+/** Frame facts as the connection's registered event schema parses them. */
+const cdpFrameEventFacts = (event: CdpEvent) => {
+  const frame = cdpFrameEvent(receiveCdpEvent(event));
+  if (frame === undefined)
+    throw new Error(`${event.method} is not a frame event`);
+  return frame.facts;
+};
 
 describe("CDP frame identity ownership", () => {
-  it.each([
-    ["missing", {}],
-    ["null", { frame: null }],
-    ["non-object", { frame: "frame" }],
-  ])("does not infer a root from a %s frame object", (_label, params) => {
-    expect(
-      selectCdpFrameIdentity(
-        cdpFrameEventFacts({ method: "Page.frameNavigated", params }),
-        "selected-main",
-      ),
-    ).toMatchObject({
-      applicability: "applicable",
-      selection: "unknown",
-      isRootReplacement: false,
-      identityIssue: "missing_frame",
-      parentRelation: "unknown",
-      parentId: null,
-      parentIssue: null,
-    });
+  it("keeps missing or malformed frame objects from becoming root evidence", () => {
+    for (const params of [{}, { frame: null }, { frame: "frame" }]) {
+      expect(
+        selectCdpFrameIdentity(
+          cdpFrameEventFacts({ method: "Page.frameNavigated", params }),
+          "selected-main",
+        ),
+      ).toMatchObject({
+        selection: "unknown",
+        frameId: null,
+        identityIssue: "missing_frame",
+        parentRelation: "unknown",
+        isRootReplacement: false,
+      });
+    }
   });
 
   it("recognizes a valid frame with no parent property as a root", () => {

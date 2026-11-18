@@ -23,7 +23,7 @@ const archivePathSchema = z
   .string()
   .max(255)
   .regex(
-    /^[A-Za-z0-9_+@-][A-Za-z0-9._+@-]*(?:\/[A-Za-z0-9_+@-][A-Za-z0-9._+@-]*)*$/u,
+    /^[A-Za-z0-9_+@\x2d][A-Za-z0-9._+@\x2d]*(?:\/[A-Za-z0-9_+@\x2d][A-Za-z0-9._+@\x2d]*)*$/u,
   );
 
 /** The fields every download names: where it is, its SHA-256 and the one architecture it runs on. */
@@ -65,7 +65,7 @@ export const tarballFields = {
 
 const desktopEntryId = z
   .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._\x2d]*$/u)
   .max(255)
   .transform((id) => id.replace(/\.desktop$/u, ""));
 

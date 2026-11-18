@@ -21,9 +21,9 @@ import { err, ok } from "../../../../src/domain/result.js";
 
 import { HopperReleaseError } from "../../../../src/application/HopperReleaseFeed.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { selectLinuxPrivateDisplayStrategy } from "../../../../src/hopper/LinuxPrivateDisplayProbe.js";
@@ -648,6 +648,37 @@ it.skipIf(process.platform !== "linux")(
     expect(selectPrivateDisplay).not.toHaveBeenCalled();
   },
 );
+
+it("refuses a Linux demo launch when no launcher verification was supplied", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-publisher-unconfigured-",
+  );
+  const targetPath = join(directory, "target");
+  await writeFile(targetPath, "fixture target");
+  const selectPrivateDisplay = vi.fn(readyDirectDisplay);
+  const launcher = new HopperApplicationLauncher(
+    { ...options("/unused/Hopper"), targetPath },
+    { platform: "linux", selectPrivateDisplay },
+  );
+  const result = await launcher.launch({
+    directory,
+    socketPath: join(directory, "bridge.sock"),
+    token: "fixture-token",
+    runId: randomUUID(),
+  });
+  if (result.ok) throw new Error("Unverified launcher started");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "provider_unavailable",
+    details: {
+      stage: "launch",
+      launch_rejection: {
+        boundary: "publisher_verification",
+        reason: "verification_unavailable",
+      },
+    },
+  });
+  expect(selectPrivateDisplay).not.toHaveBeenCalled();
+});
 
 it.skipIf(process.platform !== "linux")(
   "asks the demo helper to shut down orderly so its X lock is removed",

@@ -1,13 +1,5 @@
-/** Distinguish corrupt recognized IPS files from unsupported bug types. */
-export class AppleIpsFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-  ) {
-    super(message);
-    this.name = "AppleIpsFormatFailure";
-  }
-}
+/** The ParseFailure format of an Apple DiagnosticReports `.ips` crash report. */
+export const APPLE_IPS_FORMAT = "apple-ips";
 
 /** Caller-selected budgets that bound IPS row expansion. */
 export type AppleIpsSelectedBoundary =

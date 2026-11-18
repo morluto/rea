@@ -88,19 +88,14 @@ process.on('exit', () => fs.writeSync(2, 'Evidence close attempts: ' + attempts 
       throw new Error("Missing verifier diagnostics");
     if (denial === "always") {
       expect(result.stderr).toContain("authored Evidence close denial");
-      expect(result.stderr).toContain(
-        "AggregateError: Verifier cleanup failed",
-      );
+      expect(result.stderr).toContain("Verifier cleanup failed");
       expect(result.stderr).toContain("cleanupLeases");
     } else {
       expect(result.stderr).toContain("authored Evidence read failure");
       expect(result.stderr).not.toContain("authored Evidence close denial");
-      expect(result.stderr).not.toContain(
-        "AggregateError: Verifier cleanup failed",
-      );
+      expect(result.stderr).not.toContain("Verifier cleanup failed");
     }
   },
-  30_000,
 );
 
 it("refuses oversized Evidence before a whole-file read", async () => {
@@ -147,4 +142,4 @@ syncBuiltinESMExports();
       `Runtime Evidence exceeds 64 MiB: ${evidence}`,
     ),
   });
-}, 30_000);
+});

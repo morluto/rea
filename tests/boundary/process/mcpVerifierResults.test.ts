@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
@@ -43,6 +44,19 @@ interface VerifierResults {
   readonly expandProviderOutput: (providers: unknown) => {
     readonly analysis_provider_candidates: unknown;
   };
+  readonly requireEvidenceProvider: (
+    result: unknown,
+    operation: string,
+    providerId: string,
+  ) => void;
+  readonly requireWorkflowEvidenceProvider: (
+    result: unknown,
+    operation: string,
+    expected: {
+      readonly workflowProviderId: string;
+      readonly upstreamProviderId: string;
+    },
+  ) => void;
 }
 
 // The verifier helper imports the compiled contracts, so this runs after build.
@@ -108,7 +122,7 @@ it("requires candidate capabilities in CLI provider output", async () => {
 const retainedBundle = (value = 7) =>
   createEvidenceBundle([
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",
@@ -434,6 +448,77 @@ it("requires canonical complete tool errors before inspecting their diagnostic f
   );
 });
 
+it("requires concrete and composed provider provenance in Evidence text", async () => {
+  const { requireEvidenceProvider, requireWorkflowEvidenceProvider } =
+    await verifierResults();
+  const versioned = { id: "hopper", version: "5.0" };
+  const concrete = {
+    provider: { id: "hopper" },
+    analysis_profile: { provider: versioned },
+  };
+  expect(() =>
+    requireEvidenceProvider(textReply(concrete), "list_procedures", "hopper"),
+  ).not.toThrow();
+  for (const value of [
+    null,
+    { ...concrete, provider: { id: "ghidra" } },
+    { ...concrete, analysis_profile: { provider: { id: "hopper" } } },
+    {
+      ...concrete,
+      analysis_profile: { provider: { ...versioned, version: null } },
+    },
+  ])
+    expect(() =>
+      requireEvidenceProvider(textReply(value), "list_procedures", "hopper"),
+    ).toThrow("list_procedures omitted its concrete provider provenance");
+  const workflow = {
+    provider: { id: "rea-workflow" },
+    analysis_profile: {
+      provider: { id: "rea-workflow" },
+      parameters: { upstream_analysis_profile: { provider: versioned } },
+    },
+  };
+  const expected = {
+    workflowProviderId: "rea-workflow",
+    upstreamProviderId: "hopper",
+  };
+  expect(() =>
+    requireWorkflowEvidenceProvider(
+      textReply(workflow),
+      "binary_overview",
+      expected,
+    ),
+  ).not.toThrow();
+  for (const value of [
+    concrete,
+    {
+      ...workflow,
+      analysis_profile: {
+        ...workflow.analysis_profile,
+        parameters: {
+          upstream_analysis_profile: { provider: { id: "hopper" } },
+        },
+      },
+    },
+    {
+      ...workflow,
+      analysis_profile: {
+        ...workflow.analysis_profile,
+        provider: { id: "hopper" },
+      },
+    },
+  ])
+    expect(() =>
+      requireWorkflowEvidenceProvider(
+        textReply(value),
+        "binary_overview",
+        expected,
+      ),
+    ).toThrow(
+      "binary_overview omitted its composed workflow or upstream provenance",
+    );
+});
+
 it.each(["transport disagreement", "malformed normalized result"])(
   "admits complete Wasm Evidence at the interface verifier boundary: %s",
   async (scenario) => {
@@ -538,7 +623,7 @@ it("preserves raw extraction manifest extensions for separate Evidence authentic
     limitations: [],
   };
   const evidenceFor = (result: unknown) =>
-    createEvidence(undefined, inventoryEvidence.provider, {
+    createEvidence(unknownTarget("not-observed"), inventoryEvidence.provider, {
       operation: "extract_artifact",
       parameters: {},
       result,

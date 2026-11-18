@@ -11,6 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { beforeAll, expect, it, vi } from "vitest";
 import {
   OwnedCommandFailure,
+  OwnedCommandStdoutBytes,
   runOwnedCommand,
 } from "../../../src/process/OwnedCommand.js";
 import {
@@ -361,6 +362,28 @@ it("streams stdout beyond the diagnostic budget into a sink and returns after it
     stdout: { text: "", bytes: 0 },
     stderr: { text: "diagnostic" },
   });
+});
+
+it("collects exact stdout bytes within their limit", async () => {
+  const stdout = new OwnedCommandStdoutBytes();
+  await runOwnedCommand(
+    command("process.stdout.write(Buffer.from([0xff, 0x00, 0x41]))"),
+    { timeoutMs: 2_000, diagnosticBytes: 1024, stdout, maxStdoutBytes: 3 },
+  );
+  expect([...stdout.bytes]).toEqual([0xff, 0x00, 0x41]);
+});
+
+it("stops a command whose stdout exceeds its byte limit as an output-limit failure", async () => {
+  const stdout = new OwnedCommandStdoutBytes();
+  const failure = await runOwnedCommand(
+    command(
+      'process.stdout.write("a".repeat(64 * 1024)); setInterval(() => {}, 1000)',
+    ),
+    { timeoutMs: 10_000, diagnosticBytes: 1024, stdout, maxStdoutBytes: 4 },
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(OwnedCommandFailure);
+  expect(failure).toMatchObject({ reason: "output-limit" });
+  expect(stdout.bytes.toString()).toBe("aaaa");
 });
 
 it("destroys a sink still finishing when the command deadline elapses", async () => {

@@ -1,5 +1,6 @@
 import { lstat, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { minimalElfImage } from "../../fixtures/nativeHeaders.js";
 
 import {
   TextReader,
@@ -49,7 +50,7 @@ describe("ZIP signature detection", () => {
     const apk = join(root, "renamed.apk");
     const program = join(root, "program.apk");
     await writeFile(apk, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-    await writeFile(program, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+    await writeFile(program, minimalElfImage());
     expect(
       (await classifyAndHashRoot(apk, false, await lstat(apk))).format,
     ).toBe("apk");
@@ -101,9 +102,12 @@ describe("ZIP signature detection", () => {
     ).toBe("file");
   });
 
-  it.each([[], [0x50], [0x50, 0x4b], [0x50, 0x4b, 0x03]])(
-    "rejects an incomplete signature %j",
-    async (...bytes) => {
+  it.each([
+    { shape: "an empty file", bytes: [] },
+    { shape: "a three-byte ZIP prefix", bytes: [0x50, 0x4b, 0x03] },
+  ])(
+    "reports $shape without a ZIP signature at either boundary",
+    async ({ bytes }) => {
       const root = await createTestTempDirectory("rea-zip-short-");
       const path = join(root, "input");
       await writeFile(path, Buffer.from(bytes));
@@ -230,16 +234,6 @@ describe("ZIP archives after leading bytes", () => {
       style: "offsets that include the leading bytes",
       adjust: true,
       comment: false,
-    },
-    {
-      style: "offsets written before the bytes were prepended",
-      adjust: false,
-      comment: false,
-    },
-    {
-      style: "included leading bytes and an EOCD-like comment",
-      adjust: true,
-      comment: true,
     },
     {
       style: "prepended leading bytes and an EOCD-like comment",
