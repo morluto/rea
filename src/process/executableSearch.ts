@@ -122,11 +122,11 @@ export interface WindowsPathSearchFailure {
  * The files Windows' PATH/PATHEXT search tries for commands, in order: a
  * path-qualified command (`C:\Python\python`, `.venv\Scripts\python`) only at
  * its own location, resolved against `cwd`, and never on PATH; then for each
- * PATH entry (relative ones, including a rooted entry without a drive such as
- * `\tools`, resolve against `cwd`, or against this process's directory, read
- * only when such an entry is reached and skipped once removed; they are
- * marked `relativeEntry`), each bare command with every PATHEXT extension,
- * or as written when it already names an extension. Only `.com` and `.exe`
+ * PATH entry, each bare command with every PATHEXT extension, or as written
+ * when it already names an extension. A PATH entry that depends on the working
+ * directory is marked `relativeEntry` and resolved against `cwd` or the current
+ * working directory. With `relativeEntries: "skip"`, the search omits those
+ * entries before reading the working directory. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
  * PATHEXT entry fails a search that would append extensions; a command that
@@ -136,7 +136,11 @@ export interface WindowsPathSearchFailure {
 export const windowsPathCandidates = (
   commands: string | readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
-  search: { readonly cwd?: string; readonly allowBatch?: boolean } = {},
+  search: {
+    readonly cwd?: string;
+    readonly allowBatch?: boolean;
+    readonly relativeEntries?: "skip";
+  } = {},
 ): Result<Iterable<PathSearchCandidate>, WindowsPathSearchFailure> => {
   const selected = snapshotEnvironment(environment, "win32");
   const listed = typeof commands === "string" ? [commands] : commands;
@@ -185,6 +189,7 @@ export const windowsPathCandidates = (
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
         const relativeEntry = !isQualifiedCallerPath(directory, "win32");
+        if (relativeEntry && search.relativeEntries === "skip") continue;
         const workingDirectory = relativeEntry
           ? (search.cwd ?? currentDirectory())
           : directory;
