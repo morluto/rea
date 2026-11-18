@@ -1907,7 +1907,7 @@ describe("path values of creates read under another path", () => {
     ).toMatchObject({ code: "invalid_request" });
   });
 
-  it("fills a linked create's path field with the decoded value, whichever spelling the call uses", () => {
+  it("creates in the recorded linked collection for escaped and plain path values", () => {
     const note = (id: number, title: string) => ({
       id,
       title,
@@ -1920,27 +1920,35 @@ describe("path values of creates read under another path", () => {
     ];
     const other = { id: 2001, title: "Other", project: "my org2" };
     const project = "/api/projects/my%20org1";
-    for (const spelling of ["my%20org1", "my org1"]) {
-      // A second project makes the project segment a path parameter.
-      const notes = servedFrom([
-        ["GET", "/api/projects/my%20org2/notes", [other]],
-        ["GET", "/api/projects/my%20org2/notes/2001", other],
-        ["GET", `${project}/notes`, [alpha, beta]],
-        ["GET", `${project}/notes/1001`, alpha],
-        ["GET", `${project}/notes/1002`, beta],
-        ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
-        ["GET", `${project}/notes/1003`, gamma],
-        ["GET", `${project}/notes`, [alpha, beta, gamma]],
-        ["POST", "/api/projects/my%20org2/publish", { ok: true }, 200, {}],
-      ]);
-      notes.answer("post_projects_publish_by_project_id", {
-        project_id: spelling,
-        body: { title: "Delta" },
-      });
+    // A second project makes the project segment a path parameter.
+    const notes = servedFrom([
+      ["GET", "/api/projects/my%20org2/notes", [other]],
+      ["GET", "/api/projects/my%20org2/notes/2001", other],
+      ["GET", `${project}/notes`, [alpha, beta]],
+      ["GET", `${project}/notes/1001`, alpha],
+      ["GET", `${project}/notes/1002`, beta],
+      ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", `${project}/notes/1003`, gamma],
+      ["GET", `${project}/notes`, [alpha, beta, gamma]],
+      ["POST", "/api/projects/my%20org2/publish", { ok: true }, 200, {}],
+    ]);
+    for (const [index, spelling] of ["my%20org1", "my org1"].entries()) {
+      expect(
+        notes.answer("post_projects_publish_by_project_id", {
+          project_id: spelling,
+          body: { title: "Delta" },
+        }),
+        spelling,
+      ).toMatchObject({ status: 201 });
       const created = notes.store
         .snapshot()
         .rea_state.entities.filter((entity) => entity.fields.title === "Delta");
-      expect(created).toMatchObject([{ fields: { project: "my org1" } }]);
+      expect(created, spelling).toHaveLength(index + 1);
+      for (const entity of created)
+        expect(entity, spelling).toMatchObject({
+          collection: `${project}/notes`,
+          fields: { project: "my org1" },
+        });
     }
   });
 
@@ -1977,36 +1985,6 @@ describe("path values of creates read under another path", () => {
     expect(
       notes.state.writes.get("post_projects_publish_by_project_id"),
     ).toMatchObject({ served: true, contradicted_by: null });
-  });
-
-  it("takes a linked create's recorded path value in either spelling, as other state-backed calls do", () => {
-    const note = (id: number, title: string) => ({ id, title });
-    const [alpha, beta, gamma] = [
-      note(1001, "Alpha"),
-      note(1002, "Beta"),
-      note(1003, "Gamma"),
-    ];
-    const project = "/api/projects/my%20org1";
-    const other = note(2001, "Other");
-    // A second project makes the project segment a path parameter.
-    const notes = servedFrom([
-      ["GET", "/api/projects/my%20org2/notes", [other]],
-      ["GET", "/api/projects/my%20org2/notes/2001", other],
-      ["GET", `${project}/notes`, [alpha, beta]],
-      ["GET", `${project}/notes/1001`, alpha],
-      ["GET", `${project}/notes/1002`, beta],
-      ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
-      ["GET", `${project}/notes/1003`, gamma],
-      ["GET", `${project}/notes`, [alpha, beta, gamma]],
-      ["POST", "/api/projects/my%20org2/publish", { ok: true }, 200, {}],
-    ]);
-    for (const spelling of ["my%20org1", "my org1"])
-      expect(
-        notes.answer("post_projects_publish_by_project_id", {
-          project_id: spelling,
-          body: { title: "Delta" },
-        }),
-      ).toMatchObject({ status: 201 });
   });
 });
 
