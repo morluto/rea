@@ -825,6 +825,7 @@
 * **environment:** distinguish write cutoffs from record ordering ([#11908](https://github.com/morluto/rea/issues/11908)) ([c5d197b](https://github.com/morluto/rea/commit/c5d197b1b4e3adeaad8d6e15c9becddab5843217))
 * **environment:** isolate manifest identifier spelling cases ([#11901](https://github.com/morluto/rea/issues/11901)) ([16fb48f](https://github.com/morluto/rea/commit/16fb48f9b72072c97d77b4e827ef8fe768083147))
 * **environment:** isolate manifest pointer admission ([#11915](https://github.com/morluto/rea/issues/11915)) ([5cdd7d5](https://github.com/morluto/rea/commit/5cdd7d54bf253586307b422cbf5ee0cf842c6327))
+* **environment:** prove linked read retention budget ([#11959](https://github.com/morluto/rea/issues/11959)) ([61f7484](https://github.com/morluto/rea/commit/61f7484d1ff6f7863d6a9e4b300b40902aa05ab0))
 * **environment:** prove natural key competition ([#11950](https://github.com/morluto/rea/issues/11950)) ([f9b9302](https://github.com/morluto/rea/commit/f9b93021a215aa412c1e0ca8cb2378a5fb6cb9f5))
 * **environment:** prove replay selection precedence ([#11912](https://github.com/morluto/rea/issues/11912)) ([9e7db13](https://github.com/morluto/rea/commit/9e7db13005874a073f012ba409bd8e87d64ea643))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
