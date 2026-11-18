@@ -220,6 +220,7 @@
 * **desktop:** ignore relative XDG bases in capture inventory ([4b5d00b](https://github.com/morluto/rea/commit/4b5d00bebd02f1f67e62b9b5cbc4432cce7322c7))
 * **desktop:** keep denied path probes unknown instead of absent ([d68383f](https://github.com/morluto/rea/commit/d68383f98d885e409912b816af2e8380fcfc37c8))
 * **desktop:** keep the advertised apt suite pattern valid in v-mode ([fee2677](https://github.com/morluto/rea/commit/fee267759d19be81bad8ccc39354328d70115e5e)), closes [#10389](https://github.com/morluto/rea/issues/10389)
+* **desktop:** point the packing blocker at the moved guide ([#10255](https://github.com/morluto/rea/issues/10255)) ([002716a](https://github.com/morluto/rea/commit/002716a99879d1170696847a478036d9c3a79990))
 * **desktop:** preserve literal directories in ELF origin expansion ([#10215](https://github.com/morluto/rea/issues/10215)) ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
 * **desktop:** preserve multiline apt-config locations ([#10241](https://github.com/morluto/rea/issues/10241)) ([0f5ac9d](https://github.com/morluto/rea/commit/0f5ac9d5f3d750e017456fa5e9b9f955f497a8b1))
 * **desktop:** preserve own JSON keys in task grading ([#10331](https://github.com/morluto/rea/issues/10331)) ([cd96c5e](https://github.com/morluto/rea/commit/cd96c5e9ebc96b1ac03f384f83eb55ba8580e433))
@@ -261,6 +262,7 @@
 * **gpu:** report malformed GPU containers as invalid_format ([#10644](https://github.com/morluto/rea/issues/10644)) ([3080a63](https://github.com/morluto/rea/commit/3080a63729a476de1061dee5f13672cb9f949409))
 * **gpu:** report malformed GPU containers as invalid_format through the shared parse-failure mapping ([3080a63](https://github.com/morluto/rea/commit/3080a63729a476de1061dee5f13672cb9f949409))
 * **guards:** refuse a counted-baseline file that is not in its written order ([#11150](https://github.com/morluto/rea/issues/11150)) ([2c7c59e](https://github.com/morluto/rea/commit/2c7c59e14ebcae81b2d2e7245819451d7acdbf35))
+* **har:** preserve failed Playwright requests with unavailable timings ([#11758](https://github.com/morluto/rea/issues/11758)) ([bb6e307](https://github.com/morluto/rea/commit/bb6e307de5c5fbdca8ccc9425e68ca3841485492))
 * **hopper:** name the failing fields when a bridge reply misses its contract ([#10713](https://github.com/morluto/rea/issues/10713)) ([cd5ea9a](https://github.com/morluto/rea/commit/cd5ea9a9fb34107fb8f86d9bea59d59ba17c7fea))
 * **hopper:** name the unconfirmed shutdown step in retained cleanup ([#10594](https://github.com/morluto/rea/issues/10594)) ([e939cd0](https://github.com/morluto/rea/commit/e939cd04feae51ed4670f3068c8a32e0038ef8e2))
 * **hopper:** type the Apple Events authorization denial ([fd97d09](https://github.com/morluto/rea/commit/fd97d0926c6ecd6a97075d587fb8669fac3b29cd))
@@ -342,6 +344,7 @@
 * **native:** scale the NativeAOT work budget with the admitted image ([c8d5413](https://github.com/morluto/rea/commit/c8d5413d0fe54c5f8236e1cb8f61ad462d08fd1d)), closes [#4445](https://github.com/morluto/rea/issues/4445) [#4559](https://github.com/morluto/rea/issues/4559)
 * **native:** select same-family universal slices by subtype name ([d5dd0b6](https://github.com/morluto/rea/commit/d5dd0b6fd9849aad7ac3349f2b783661e0a40e9c))
 * **navigation:** offer available instruction observations ([#10307](https://github.com/morluto/rea/issues/10307)) ([15a2de7](https://github.com/morluto/rea/commit/15a2de737c3401f9ef1e22290fa1b8a1ac3fead9))
+* **nuget:** read packaging parts and dependency groups as NuGet does ([#11845](https://github.com/morluto/rea/issues/11845)) ([9c1e98f](https://github.com/morluto/rea/commit/9c1e98f1cdc7452347ba816f0bb5c943f5abe144))
 * **packaging:** include the linked dinosaur notice ([#11793](https://github.com/morluto/rea/issues/11793)) ([aaacdc0](https://github.com/morluto/rea/commit/aaacdc0ef7128def5e08f3d992ca5e0f6444f15d))
 * **parsers:** keep each ParseFailure constructor's kind in its return type ([#10746](https://github.com/morluto/rea/issues/10746)) ([59cd555](https://github.com/morluto/rea/commit/59cd5552c109ddaaac31b95cc3e4651db6dedf68))
 * **parsers:** stop reading every RangeError as a format failure ([#10602](https://github.com/morluto/rea/issues/10602)) ([89640a4](https://github.com/morluto/rea/commit/89640a446a48fb047bea8aa430170c730177c184))
@@ -429,6 +432,7 @@
 * **web:** merge wide script analysis results without call spreads ([2032b5a](https://github.com/morluto/rea/commit/2032b5a819a90d37836822afaece0eaabfc702b0)), closes [#10445](https://github.com/morluto/rea/issues/10445) [#10446](https://github.com/morluto/rea/issues/10446)
 * **windows:** keep pre-epoch shortcut times in their millisecond ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
 * **windows:** preserve pre-epoch shortcut timestamp milliseconds ([#10305](https://github.com/morluto/rea/issues/10305)) ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
+* **windows:** report bytes appended after a Shell Link TerminalBlock ([#11745](https://github.com/morluto/rea/issues/11745)) ([ce9635b](https://github.com/morluto/rea/commit/ce9635bcb410416dc7960abf75e003f727c9f261))
 * **zip:** account 64-bit data descriptors that MSIX packages write ([#11733](https://github.com/morluto/rea/issues/11733)) ([43aaa9f](https://github.com/morluto/rea/commit/43aaa9f1903cd11826fd261794b5514da0bb6162))
 
 
