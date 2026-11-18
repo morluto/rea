@@ -2620,6 +2620,8 @@ export class AdbProvider {
                   limitations: completed.limitations,
                   locations: completed.locations,
                   confidence: "observed",
+                  authority:
+                    completed.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
                 },
               ),
             );
