@@ -427,6 +427,7 @@
 * **process:** keep provider waits bounded by the absolute deadline ([#11967](https://github.com/morluto/rea/issues/11967)) ([c338e54](https://github.com/morluto/rea/commit/c338e54c33213ca8dd157d30fbc922b65a04c49b))
 * **process:** keep the Darwin helper exit cleanup from crashing the host ([#11714](https://github.com/morluto/rea/issues/11714)) ([ec17f39](https://github.com/morluto/rea/commit/ec17f39e82c27fce3302603df57f1470e1058272))
 * **process:** keep the Darwin helper's exit cleanup from crashing the host ([ec17f39](https://github.com/morluto/rea/commit/ec17f39e82c27fce3302603df57f1470e1058272))
+* **process:** name the fields a located divergence compared ([#11813](https://github.com/morluto/rea/issues/11813)) ([1e0f334](https://github.com/morluto/rea/commit/1e0f3348a79c008f6779c1d0900a24acbfe8c39d))
 * **process:** relay a start abort missed during listener registration and expect owner-closed Rizin starts ([#11200](https://github.com/morluto/rea/issues/11200)) ([4c5f5a3](https://github.com/morluto/rea/commit/4c5f5a333897c94959c85a21b2f6f52bf8cd8cd4))
 * **process:** require a drive or UNC root for selected Windows tools ([#11786](https://github.com/morluto/rea/issues/11786)) ([23adfc6](https://github.com/morluto/rea/commit/23adfc610f277d87630375991da08d5efaafb4f4))
 * **process:** resolve Windows root-relative commands on the selected drive ([#11763](https://github.com/morluto/rea/issues/11763)) ([5aa1fc5](https://github.com/morluto/rea/commit/5aa1fc5737f93fca84c998ef7842b8ae0d23b5c2))
