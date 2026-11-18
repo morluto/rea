@@ -226,47 +226,7 @@ describe("replayEnvironmentTool selection", () => {
     ).toMatchObject({ exchange: { ordinal: 901 }, exact: false });
   });
 
-  it("replays the record whose path segments equal the supplied parameters as an exact match", () => {
-    const result = replay("get_users_by_id", { id: "2" });
-    expect(result).toMatchObject({
-      status: 200,
-      content_type: "application/json",
-      body: { id: 2, login: "probe" },
-      replay: {
-        evidence_id: source.evidenceId,
-        exact_match: true,
-        recorded_path: "/api/users/2",
-        recorded_query: null,
-        body_recorded: true,
-        truncated: false,
-      },
-    });
-    expect(replay("get_users_by_id", { id: "3" })).toMatchObject({
-      body: { login: "viewer" },
-      replay: { exact_match: true, recorded_path: "/api/users/3" },
-    });
-    expect(
-      replay("get_folders_by_uid", { uid: "general" }).replay,
-    ).toMatchObject({
-      exact_match: true,
-      recorded_path: "/api/folders/general",
-    });
-  });
-
-  it("falls back to the tool's first record, flagged inexact, when no record matches", () => {
-    const users = tool("get_users_by_id");
-    const result = replay("get_users_by_id", { id: "999" });
-    expect(result.replay).toMatchObject({
-      record_ordinal: users.record_ordinals[0],
-      exact_match: false,
-      recorded_path: "/api/users/2",
-    });
-    expect(result.body).toMatchObject({ login: "probe" });
-    // Omitted parameters cannot mismatch: a call without arguments is exact on the first record.
-    expect(replay("get_users_by_id", {}).replay.exact_match).toBe(true);
-  });
-
-  it("matches query values after path segments and reports the recorded query", () => {
+  it("reports the recorded query for fully specified, partial and inexact calls", () => {
     const both = replay("get_search", { query: "probe", type: "dash-db" });
     expect(both.replay).toMatchObject({
       exact_match: true,
@@ -334,43 +294,43 @@ describe("replay selection precedence", () => {
   });
 
   it("prefers path matches over query matches and keeps manifest order on ties", () => {
-    const search = tool("get_search");
-    const [first, second] = search.record_ordinals;
-    if (first === undefined || second === undefined)
-      throw new Error("Fixture search tool must cite two records");
+    const users = {
+      ...tool("get_users_by_id"),
+      query_parameter_names: ["mode"],
+      record_ordinals: [902, 901],
+    };
+    const exchange = (
+      ordinal: number,
+      id: string,
+      mode: string,
+    ): RecordedExchange => ({
+      ordinal,
+      path: `/api/users/${id}`,
+      query: `?mode=${mode}`,
+      status: 200,
+      contentType: null,
+      bodyText: null,
+    });
     const exchanges = new Map<number, RecordedExchange>([
-      [
-        first,
-        {
-          ordinal: first,
-          path: "/api/search",
-          query: "?type=a",
-          status: 200,
-          contentType: null,
-          bodyText: null,
-        },
-      ],
-      [
-        second,
-        {
-          ordinal: second,
-          path: "/api/search",
-          query: "?type=a",
-          status: 200,
-          contentType: null,
-          bodyText: null,
-        },
-      ],
+      [901, exchange(901, "2", "a")],
+      [902, exchange(902, "3", "b")],
     ]);
     expect(
-      selectReplayExchange(search, exchanges, { type: "a" }),
-    ).toMatchObject({ exchange: { ordinal: first }, exact: true });
-    expect(
-      selectReplayExchange(search, new Map(), { type: "a" }),
-    ).toBeUndefined();
+      selectReplayExchange(users, exchanges, { id: "2", mode: "b" }),
+    ).toMatchObject({ exchange: { ordinal: 901 }, exact: false });
+    expect(selectReplayExchange(users, exchanges, { mode: "a" })).toMatchObject(
+      { exchange: { ordinal: 901 }, exact: true },
+    );
+    expect(selectReplayExchange(users, exchanges, {})).toMatchObject({
+      exchange: { ordinal: 902 },
+      exact: true,
+    });
+  });
+
+  it("refuses a tool whose manifest cites no retained exchange", () => {
     const refused = replayEnvironmentTool(
       { ...source, exchanges: new Map() },
-      search,
+      tool("get_search"),
       {},
     );
     if (refused.ok) throw new Error("Expected a refusal without records");

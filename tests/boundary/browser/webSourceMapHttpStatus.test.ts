@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 
@@ -134,61 +135,95 @@ it("keeps the declared URL and reports malformed redirect Location evidence", as
   expect(result.items[0]?.limitation).toContain("http://[invalid");
 });
 
-it.each(["invalid JSON", "invalid UTF-8", "HTTP failure", "response limit"])(
-  "retains a redirected response URL for %s",
-  async (failure) => {
-    const origin = "https://app.example.test";
-    const declaredUrl = `${origin}/declared.map`;
-    const fetchedUrl = `${origin}/maps/current.map?token=source-value#fragment`;
-    const result = await fetchWebSourceMapsOk(
-      [{ scriptKey: "script", declaredUrl, fetchUrl: declaredUrl }],
-      analyzeWebBundleInputSchema.parse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        target_id: "page",
-        allowed_origins: [origin],
-        fetch_source_maps: true,
-        ...(failure === "response limit"
-          ? { source_map_limits: { fetch_bytes: 1 } }
-          : {}),
-      }),
-      undefined,
-      {
-        fetch: (url) =>
-          Promise.resolve(
-            String(url) === declaredUrl
-              ? new Response(null, {
-                  status: 302,
-                  headers: { location: fetchedUrl },
-                })
-              : new Response(
-                  failure === "invalid UTF-8"
-                    ? Uint8Array.from([0xff])
-                    : "not-json",
-                  { status: failure === "HTTP failure" ? 503 : 200 },
-                ),
-          ),
-      },
-    );
-    expect(result.items[0]).toMatchObject({
-      declared_url: declaredUrl,
-      effective_url: fetchedUrl,
-      status:
-        failure === "invalid JSON" || failure === "invalid UTF-8"
-          ? "invalid"
-          : "fetch_failed",
-      artifact: null,
-    });
-    const item = result.items[0];
-    if (item === undefined) throw new Error("Expected a fetched map result");
-    const { effective_url: _effective, ...withoutEffectiveUrl } = item;
-    expect(
-      webSourceMapsSchema.safeParse({
-        ...result,
-        items: [withoutEffectiveUrl],
-      }).success,
-    ).toBe(false);
+const mapStart = Buffer.from('{"version":3,"names":[],"sources":["source');
+const mapEnd = Buffer.from('.ts"],"mappings":"AAAA"}');
+const mapWithSourceBytes = (bytes: Uint8Array) =>
+  Buffer.concat([mapStart, bytes, mapEnd]);
+
+it.each([
+  { name: "invalid JSON", body: Buffer.from("not-json"), status: "invalid" },
+  {
+    name: "invalid UTF-8",
+    body: mapWithSourceBytes(Uint8Array.of(0xff)),
+    status: "invalid",
   },
-);
+  {
+    name: "a valid UTF-8 replacement character",
+    body: mapWithSourceBytes(Buffer.from("�")),
+    status: "included",
+  },
+  {
+    name: "HTTP failure",
+    body: Buffer.from("service unavailable"),
+    status: "fetch_failed",
+    responseStatus: 503,
+  },
+  {
+    name: "response limit",
+    body: mapWithSourceBytes(Buffer.from("name")),
+    status: "fetch_failed",
+    fetchBytes: 1,
+  },
+])("retains a redirected response URL for $name", async (scenario) => {
+  const origin = "https://app.example.test";
+  const declaredUrl = `${origin}/declared.map`;
+  const fetchedUrl = `${origin}/maps/current.map?token=source-value#fragment`;
+  const result = await fetchWebSourceMapsOk(
+    [{ scriptKey: "script", declaredUrl, fetchUrl: declaredUrl }],
+    analyzeWebBundleInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page",
+      allowed_origins: [origin],
+      fetch_source_maps: true,
+      ...(scenario.fetchBytes === undefined
+        ? {}
+        : { source_map_limits: { fetch_bytes: scenario.fetchBytes } }),
+    }),
+    undefined,
+    {
+      fetch: async (url) =>
+        String(url) === declaredUrl
+          ? new Response(null, {
+              status: 302,
+              headers: { location: fetchedUrl },
+            })
+          : new Response(scenario.body, {
+              status: scenario.responseStatus ?? 200,
+            }),
+    },
+  );
+  const item = result.items[0];
+  if (item === undefined) throw new Error("Expected a fetched map result");
+  expect(item).toMatchObject({
+    declared_url: declaredUrl,
+    effective_url: fetchedUrl,
+    status: scenario.status,
+    artifact:
+      scenario.status === "included"
+        ? expect.objectContaining({ text: scenario.body.toString("utf8") })
+        : null,
+  });
+  if (scenario.status === "invalid") {
+    expect(item).toMatchObject({
+      response_identity: {
+        bytes: scenario.body.byteLength,
+        sha256: createHash("sha256").update(scenario.body).digest("hex"),
+        representation: "fetch-response-body-bytes",
+      },
+    });
+    if (scenario.name === "invalid UTF-8")
+      expect(item.limitation).toContain(
+        "Source-map response is not valid UTF-8",
+      );
+  }
+  const { effective_url: _effective, ...withoutEffectiveUrl } = item;
+  expect(
+    webSourceMapsSchema.safeParse({
+      ...result,
+      items: [withoutEffectiveUrl],
+    }).success,
+  ).toBe(false);
+});
 
 it.each([
   { cancellationFails: false, reason: null, abortDuringCleanup: false },
