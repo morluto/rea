@@ -814,6 +814,7 @@
 * **environment:** consolidate data-plane ordering proofs ([#11929](https://github.com/morluto/rea/issues/11929)) ([a4a5772](https://github.com/morluto/rea/commit/a4a57727e96e9c3aae203bf67f641489e0aecba9))
 * **environment:** consolidate document write refusals ([#11958](https://github.com/morluto/rea/issues/11958)) ([5e83c1e](https://github.com/morluto/rea/commit/5e83c1ef7c634b71a400a43611ad267f2cca15eb))
 * **environment:** consolidate export publication receipts ([#11945](https://github.com/morluto/rea/issues/11945)) ([e6e4215](https://github.com/morluto/rea/commit/e6e42152279ee4bc82160f924b365bd4bf97c1f7))
+* **environment:** consolidate form plan and serving checks ([#11982](https://github.com/morluto/rea/issues/11982)) ([d09590d](https://github.com/morluto/rea/commit/d09590dcdb22cb63a917bbbde3812c2c60bb3016))
 * **environment:** consolidate generated task coverage ([#11981](https://github.com/morluto/rea/issues/11981)) ([ddb7112](https://github.com/morluto/rea/commit/ddb711270d4d5b6e2349cc90367dd64c30a4d61b))
 * **environment:** consolidate held slug coverage ([#11974](https://github.com/morluto/rea/issues/11974)) ([4995018](https://github.com/morluto/rea/commit/4995018d3a492aa6627929e1d45ea35c95170970))
 * **environment:** consolidate item write coverage ([#11980](https://github.com/morluto/rea/issues/11980)) ([222122f](https://github.com/morluto/rea/commit/222122fb79baf7762ceca6e9eba32eeed1e73824))
