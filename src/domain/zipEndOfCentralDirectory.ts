@@ -1,3 +1,5 @@
+import { BinaryReader } from "./binaryContainer.js";
+
 /** Classic ZIP EOCD fixed record and its format-defined comment limit. */
 export const ZIP_EOCD_BYTES = 22;
 export const ZIP_MAX_COMMENT_BYTES = 0xffff;
@@ -22,7 +24,13 @@ export interface ZipEndOfCentralDirectory {
 export function* zipEndOfCentralDirectoryCandidates(
   bytes: Uint8Array,
 ): Generator<ZipEndOfCentralDirectory> {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
   const earliest = Math.max(
     0,
     bytes.byteLength - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES,
@@ -32,17 +40,17 @@ export function* zipEndOfCentralDirectoryCandidates(
     offset >= earliest;
     offset--
   ) {
-    if (view.getUint32(offset, true) !== 0x06054b50) continue;
-    const commentLength = view.getUint16(offset + 20, true);
+    if (reader.u32(offset) !== 0x06054b50) continue;
+    const commentLength = reader.u16(offset + 20);
     if (offset + ZIP_EOCD_BYTES + commentLength !== bytes.byteLength) continue;
     yield {
       offset,
-      disk: view.getUint16(offset + 4, true),
-      directoryDisk: view.getUint16(offset + 6, true),
-      entriesOnDisk: view.getUint16(offset + 8, true),
-      totalEntries: view.getUint16(offset + 10, true),
-      directorySize: view.getUint32(offset + 12, true),
-      directoryOffset: view.getUint32(offset + 16, true),
+      disk: reader.u16(offset + 4),
+      directoryDisk: reader.u16(offset + 6),
+      entriesOnDisk: reader.u16(offset + 8),
+      totalEntries: reader.u16(offset + 10),
+      directorySize: reader.u32(offset + 12),
+      directoryOffset: reader.u32(offset + 16),
       commentLength,
     };
   }
