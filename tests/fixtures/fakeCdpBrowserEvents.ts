@@ -271,7 +271,6 @@ const emitSessionTimeline = (
         : `http://127.0.0.1:${String(port)}/redirected?token=redirect-secret`;
     event(socket, "Network.requestWillBeSent", command.sessionId, {
       requestId: "document-request",
-      type: options.sessionRedirectResourceType,
       frameId: "frame-main",
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
@@ -300,17 +299,6 @@ const emitSessionTimeline = (
       name: "networkIdle",
       timestamp: 15,
     });
-    for (
-      let index = 0;
-      index < (options.sessionTimelineEventCount ?? 0);
-      index += 1
-    )
-      event(socket, "Page.lifecycleEvent", command.sessionId, {
-        frameId: "frame-main",
-        loaderId: "loader-reload",
-        name: `lifecycle-${String(index)}`,
-        timestamp: 16 + index,
-      });
     if (options.sessionTimeline === "target_detached")
       event(socket, "Target.detachedFromTarget", undefined, {
         sessionId: command.sessionId,

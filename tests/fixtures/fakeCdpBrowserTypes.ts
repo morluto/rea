@@ -110,8 +110,6 @@ export interface FakeOptions {
     | "outside_policy"
     | "target_detached"
     | "target_crashed";
-  readonly sessionTimelineEventCount?: number;
-  readonly sessionRedirectResourceType?: "Document" | "Fetch" | "Script";
   readonly closeAfterMethod?: string;
   readonly sensitiveShapes?: boolean;
   /** Deliver a console argument the protocol spells as `{ type: "object", subtype: "null" }`. */
