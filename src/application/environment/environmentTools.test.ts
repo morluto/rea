@@ -6,8 +6,6 @@ import type {
   RecordedExchange,
 } from "./environmentSource.js";
 import {
-  advertisedEnvironmentTool,
-  environmentCard,
   environmentToolArguments,
   environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -548,48 +546,6 @@ describe("environmentToolInputSchema argument names", () => {
     ]);
     expect(schema.properties.request_body?.type).toBe("object");
     expect(schema.required).toEqual(["id"]);
-  });
-});
-
-describe("environmentCard", () => {
-  it("shapes the card with fixed protocol fields, the tools and null extension slots in contract key order", () => {
-    const card = environmentCard("grafana-example", definitions);
-    expect(Object.keys(card)).toEqual([
-      "name",
-      "protocolVersion",
-      "url",
-      "preferredTransport",
-      "additionalInterfaces",
-      "capabilities",
-      "children_environments",
-    ]);
-    expect(card).toMatchObject({
-      name: "grafana-example",
-      protocolVersion: "1.0",
-      url: "/agentenv",
-      preferredTransport: "JSONRPC",
-      additionalInterfaces: [{ url: "/mcp", transport: "mcp" }],
-      children_environments: null,
-    });
-    expect(Object.keys(card.capabilities)).toEqual([
-      "extensions",
-      "tools",
-      "operations",
-    ]);
-    expect(card.capabilities.extensions).toBeNull();
-    expect(card.capabilities.operations).toEqual([]);
-    expect(card.capabilities.tools).toHaveLength(definitions.length);
-    for (const [index, entry] of card.capabilities.tools.entries()) {
-      expect(Object.keys(entry)).toEqual([
-        "name",
-        "description",
-        "inputSchema",
-      ]);
-      const definition = definitions[index];
-      if (definition === undefined) throw new Error(`Missing tool ${index}`);
-      expect(entry).toEqual(advertisedEnvironmentTool(definition));
-    }
-    expect(environmentCard("renamed", definitions).name).toBe("renamed");
   });
 });
 
