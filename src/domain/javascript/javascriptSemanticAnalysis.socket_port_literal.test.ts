@@ -40,6 +40,15 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   tls.connect(65536, { socket, port: 65536 }) / (-0n, { path: "/x", port: 65536 }) -> Socket created
  *   tls.connect(-0n, { socket: null, port: 65536 }) / (-0n, { path: "", port: 65536 }) -> THREW
  *   tls.connect(-0n, { socket: false }) / (-0n, { path: 0 }) -> THREW ERR_INVALID_ARG_TYPE
+ *   tls.connect(-0n, { socket: true / 1 }) / (-0n, { path: true / 1 / {} }) -> THREW, even beside port 443
+ *   tls.connect(-0n, { port: "abc" / "99999" / "-1" / "1.5" / "  " }) -> THREW ERR_SOCKET_BAD_PORT
+ *   tls.connect(-0n, { port: "443" / " 443 " / "1e2" / "0x1bb" }) -> Socket created
+ *   tls.connect(!+0n) / (delete +0n) / (!!+0n), with or without { port: 443 } -> THREW TypeError (before the call)
+ *   tls.connect(+!0n)                 -> Socket created (port 1)
+ *   Object.prototype.path = "/tmp/x.sock"; tls.connect(-0n, {}) / (-0n, { port: 65536 }) -> Socket created
+ *   Object.prototype.socket = <stream>; tls.connect(-0n, {}) / (-0n, { port: 65536 }) -> Socket created
+ *   tls.connect(-0n, { path: `/tmp/x.sock` }) -> Socket created
+ *   tls.connect(NaN / -1 / -0n, { port: 443, minVersion: "nope" }) -> THREW ERR_TLS_INVALID_PROTOCOL_VERSION
  *   net.connect("")                   -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect("/tmp/x.sock")        -> Socket created (Unix socket path)
  *   net.connect({ port: 80 })         -> Socket created
@@ -143,6 +152,67 @@ it.each([
     `tls.connect(-0n, { path: "", port: 65536 })`,
   ],
   ["a tls bad port beside a zero path", `tls.connect(-0n, { path: 0 })`],
+  [
+    "a tls bad port beside a boolean socket",
+    `tls.connect(-0n, { socket: true })`,
+  ],
+  [
+    "a tls bad port beside a boolean socket and a valid port",
+    `tls.connect(-0n, { socket: true, port: 443 })`,
+  ],
+  ["a tls bad port beside a numeric socket", `tls.connect(-0n, { socket: 1 })`],
+  ["a tls bad port beside a boolean path", `tls.connect(-0n, { path: true })`],
+  [
+    "a tls bad port beside a numeric path and a valid port",
+    `tls.connect(-0n, { path: 1, port: 443 })`,
+  ],
+  ["a tls bad port beside an object path", `tls.connect(-0n, { path: {} })`],
+  [
+    "a tls bad port replaced by a non-numeric string port",
+    `tls.connect(-0n, { port: "abc" })`,
+  ],
+  [
+    "a tls bad port replaced by a string port above the range",
+    `tls.connect(-0n, { port: "99999" })`,
+  ],
+  [
+    "a tls bad port replaced by a negative string port",
+    `tls.connect(-0n, { port: "-1" })`,
+  ],
+  [
+    "a tls bad port replaced by a fractional string port",
+    `tls.connect(-0n, { port: "1.5" })`,
+  ],
+  [
+    "a tls bad port replaced by a blank string port",
+    `tls.connect(-0n, { port: "  " })`,
+  ],
+  ["a tls negated unary plus BigInt port", `tls.connect(!+0n)`],
+  [
+    "a tls negated unary plus BigInt port with options",
+    `tls.connect(!+0n, { port: 443 })`,
+  ],
+  [
+    "a tls deleted unary plus BigInt port with options",
+    `tls.connect(delete +0n, { port: 443 })`,
+  ],
+  [
+    "a tls doubly negated unary plus BigInt port with options",
+    `tls.connect(!!+0n, { port: 443 })`,
+  ],
+  ["a net negated unary plus BigInt port", `net.connect(!+0n)`],
+  [
+    "a tls NaN port with a protocol version Node rejects",
+    `tls.connect(NaN, { port: 443, minVersion: "nope" })`,
+  ],
+  [
+    "a tls negative port with a protocol version Node rejects",
+    `tls.connect(-1, { port: 443, minVersion: "nope" })`,
+  ],
+  [
+    "a tls negated BigInt port with a protocol version Node rejects",
+    `tls.connect(-0n, { port: 443, minVersion: "nope" })`,
+  ],
   ["a net negated BigInt port with options", `net.connect(-0n, { port: 443 })`],
   ["a boolean port", `net.connect(true)`],
   ["a null port", `net.connect(null)`],
@@ -290,6 +360,51 @@ it.each([
   [
     "a tls bad port replaced by a computed socket",
     `tls.connect(-0n, { socket: p, port: 65536 })`,
+    "connect",
+  ],
+  [
+    "a tls bad port replaced by a string port with spaces",
+    `tls.connect(-0n, { port: " 443 " })`,
+    "connect",
+  ],
+  [
+    "a tls bad port replaced by an exponent string port",
+    `tls.connect(-0n, { port: "1e2" })`,
+    "connect",
+  ],
+  [
+    "a tls bad port replaced by a hexadecimal string port",
+    `tls.connect(-0n, { port: "0x1bb" })`,
+    "connect",
+  ],
+  [
+    "a tls negated BigInt port beside a template literal path",
+    "tls.connect(-0n, { path: `/tmp/x.sock` })",
+    "connect",
+  ],
+  [
+    "a tls negated BigInt port beside a computed path",
+    `tls.connect(-0n, { path: p })`,
+    "connect",
+  ],
+  [
+    "a tls bad port with an inherited Object.prototype.path",
+    `Object.prototype.path = "/tmp/x.sock"; function f() {} tls.connect(-0n, { port: 65536 })`,
+    "connect",
+  ],
+  [
+    "a tls bad port with empty options and an inherited Object.prototype.path",
+    `Object.prototype.path = "/tmp/x.sock"; function f() {} tls.connect(-0n, {})`,
+    "connect",
+  ],
+  [
+    "a tls bad port with empty options and an inherited Object.prototype.socket",
+    `Object.prototype.socket = p; function f() {} tls.connect(-0n, {})`,
+    "connect",
+  ],
+  [
+    "a tls unary plus on a boolean, which is port one",
+    `tls.connect(+!0n)`,
     "connect",
   ],
   ["a tls port", `tls.connect(80)`, "connect"],

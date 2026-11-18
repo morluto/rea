@@ -646,6 +646,93 @@ const bigIntUnaryChain = (
 };
 
 /**
+ * Whether `!` or `delete` wraps a unary `+` on a BigInt, such as `!+0n`,
+ * `delete +0n` or `!!+0n`. The operand is evaluated first, so the `TypeError`
+ * is thrown before the call. `!` and `delete` yield a boolean, so a `+` outside
+ * them (`+!0n`) does not throw.
+ */
+const wrappedPlusBigInt = (value: t.Node, depth: number): boolean => {
+  if (
+    depth > 8 ||
+    !t.isUnaryExpression(value) ||
+    (value.operator !== "!" && value.operator !== "delete")
+  )
+    return false;
+  const operand = unwrapJavaScriptExpression(value.argument).node;
+  return (
+    bigIntUnaryChain(operand, depth + 1)?.plus === true ||
+    wrappedPlusBigInt(operand, depth + 1)
+  );
+};
+
+/**
+ * Whether a string is accepted as a port once `tls` has merged it over the first
+ * argument. Node's `validatePort` rejects a blank string and any string that does
+ * not read as an integer from 0 to 65535. Measured on Node 24.22.1, `"443"`,
+ * `" 443 "`, `"1e2"` and `"0x1bb"` connect, while `"abc"`, `"-1"`, `"1.5"`,
+ * `"65536"`, `"  "` and `""` throw `ERR_SOCKET_BAD_PORT`.
+ */
+const stringIsPort = (text: string): boolean => {
+  if (text.trim().length === 0) return false;
+  const number = Number(text);
+  return Number.isInteger(number) && number >= 0 && number <= 65535;
+};
+
+/**
+ * Whether a literal `socket` or `path` option has the wrong type, so a truthy one
+ * throws instead of connecting whatever the port is. `socket` must be a stream
+ * and `path` must be a string. Measured on Node 24.22.1, `{ socket: true }`,
+ * `{ socket: 1 }`, `{ path: true }`, `{ path: 1 }` and `{ path: {} }` throw, with
+ * or without a valid port beside them. Only literals are decided: any other
+ * value may be a stream or a string at run time.
+ */
+const socketOrPathHasWrongType = (
+  member: "socket" | "path",
+  value: t.Node,
+): boolean => {
+  const read = unwrapJavaScriptExpression(value).node;
+  if (
+    t.isBooleanLiteral(read) ||
+    t.isNumericLiteral(read) ||
+    t.isBigIntLiteral(read)
+  )
+    return true;
+  if (member === "socket") return t.isStringLiteral(read);
+  return (
+    t.isObjectExpression(read) ||
+    t.isArrayExpression(read) ||
+    isFunctionValuedSyntax(read)
+  );
+};
+
+/**
+ * Whether argument 0 is certainly a primitive and never an options object: a
+ * literal, the result of any unary operator, or an unshadowed `NaN`, `Infinity`
+ * or `undefined`. Node then reads the options from argument 1 or 2.
+ */
+const firstArgumentIsPrimitive = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return false;
+  const value = unwrapJavaScriptExpression(first as t.Node).node;
+  return (
+    t.isStringLiteral(value) ||
+    t.isNumericLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isNullLiteral(value) ||
+    t.isUnaryExpression(value) ||
+    (t.isIdentifier(value) &&
+      (value.name === "NaN" ||
+        value.name === "Infinity" ||
+        value.name === "undefined") &&
+      isUnmodifiedGlobalReference(value, state, value.name))
+  );
+};
+
+/**
  * How a literal port argument fails, when it can only fail. `"throws"` means the
  * expression itself throws while the call's arguments are evaluated, so nothing
  * can rescue it (`+0n` is a TypeError). `"bad"` means Node rejects the value as a
@@ -680,7 +767,10 @@ const literalPortRejection = (
   // Numeric unary operators are judged by their result: `-0` is port zero, and
   // `~(-1.5)` is zero too.
   if (t.isUnaryExpression(value)) {
-    if (value.operator === "!" || value.operator === "delete") return "bad";
+    // `!` and `delete` yield a boolean, which is not a port, unless their
+    // operand throws first (`!+0n`).
+    if (value.operator === "!" || value.operator === "delete")
+      return wrappedPlusBigInt(value, 0) ? "throws" : "bad";
     // `+0n` throws a TypeError while the arguments are evaluated, before the
     // call. `-0n` and `~0n` are BigInts that Node rejects as a port.
     const bigInt = bigIntUnaryChain(value, 0);
@@ -900,8 +990,12 @@ const socketOptionReader = (
  * still connects: `(-0n, { socket })`, `(-0n, { path: "/x" })` and
  * `(65536, { socket, port: 65536 })` create a socket, while a falsy one does not
  * (`(-0n, { socket: null, port: 65536 })`, `(-0n, { path: "", port: 65536 })`).
- * An unknown merge, a spread, an accessor or a port read at run time leaves the
- * call kept.
+ * A truthy one of the wrong type throws whatever else is there: `{ socket: true }`,
+ * `{ path: true }`, `{ path: {} }`. An absent `socket` or `path` may be inherited
+ * from a patched `Object.prototype`, which keeps `(-0n, {})`. A merged string is
+ * validated as a port (`stringIsPort`), so `{ port: "abc" }` throws and
+ * `{ port: " 443 " }` connects. An unknown merge, a spread, an accessor or a port
+ * read at run time leaves the call kept.
  */
 const tlsPortMayBeReplaced = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -910,24 +1004,33 @@ const tlsPortMayBeReplaced = (
   const { state } = context;
   const read = socketOptionReader(node, "tls", state, true);
   if (read === undefined) return true;
+  // Node reads an absent `socket` or `path` through the prototype chain, so a
+  // write to Object.prototype that may run first can supply one.
+  const inheritable = prototypeMutationMayPrecede(state, "Object", node);
   for (const member of ["socket", "path"] as const) {
     const value = read(member);
     if (value === "unknown") return true;
+    if (value === undefined) {
+      if (inheritable) return true;
+      continue;
+    }
     if (
-      value !== undefined &&
-      !isNullishPlaceholder(value, state) &&
-      staticJavaScriptTruthiness(value) !== false
+      isNullishPlaceholder(value, state) ||
+      staticJavaScriptTruthiness(value) === false
     )
-      return true;
+      continue;
+    // A truthy `socket` or `path` is used instead of the port. One of the wrong
+    // type throws, so it rescues nothing.
+    return !socketOrPathHasWrongType(member, value);
   }
   const port = read("port");
   if (port === undefined) return false;
   if (port === "unknown") return true;
   const replacement = unwrapJavaScriptExpression(port).node;
-  return (
-    !isNullishPlaceholder(replacement, state) &&
-    literalPortRejection(replacement, context) === undefined
-  );
+  if (isNullishPlaceholder(replacement, state)) return false;
+  // `tls` validates a merged string as a port, not as a Unix socket path.
+  if (t.isStringLiteral(replacement)) return stringIsPort(replacement.value);
+  return literalPortRejection(replacement, context) === undefined;
 };
 
 /**
@@ -952,7 +1055,12 @@ const rejectsTlsProtocolVersionLiteral = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (specifier !== "tls") return false;
-  const effective = socketOptionReader(node, specifier, state);
+  const effective = socketOptionReader(
+    node,
+    specifier,
+    state,
+    firstArgumentIsPrimitive(node, state),
+  );
   if (effective === undefined) return false;
   // A truthy context means Node never parses the members at all. The shared owner
   // already treats `-0` as falsy. Measured on Node 24.22.1,
