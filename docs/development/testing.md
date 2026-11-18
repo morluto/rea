@@ -1178,7 +1178,9 @@ Source and built blobs have separate labels to prevent merge collisions.
 Each test job emits a blob report; the merge job produces JUnit and JSON diagnostics, a module timing
 report, plus aggregate coverage during full qualification. It retains available
 reports even when a shard fails, uploads available diagnostics, and writes the
-slowest files to the workflow summary. Partial reports are marked diagnostic
+slowest files to the workflow summary. When a merged run fails, the summary
+and job log also list up to 20 reported failed test files and the count of
+unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
 Only a successful complete merge on the default branch publishes shard history,
