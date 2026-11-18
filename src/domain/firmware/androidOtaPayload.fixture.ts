@@ -19,6 +19,7 @@ export interface AndroidOtaOperationFixture {
   readonly data?: Uint8Array;
   readonly dataOffset?: number;
   readonly dataLength?: number;
+  readonly dataHash?: Uint8Array;
   readonly dstExtents?: readonly AndroidOtaExtentFixture[];
   readonly srcExtents?: readonly AndroidOtaExtentFixture[];
 }
@@ -183,6 +184,8 @@ const encodeOperation = (
     encodeExtent(writer, extent);
     writer.join();
   }
+  if (operation.dataHash !== undefined)
+    writer.tag(8, WireType.LengthDelimited).bytes(operation.dataHash);
 };
 
 const encodePartition = (
