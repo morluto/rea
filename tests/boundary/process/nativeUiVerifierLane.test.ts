@@ -30,9 +30,11 @@ ${standInPrelude}
 record("launcher");
 const args = process.argv.slice(2);
 const coordinates = args[args.indexOf("--stdout") + 1];
+const token = args[args.indexOf("--env") + 1].split("=")[1];
 spawn(process.execPath, [new URL("./fixture.mjs", import.meta.url).pathname], {
   detached: true,
   stdio: ["ignore", openSync(coordinates, "a"), "ignore"],
+  env: { ...process.env, REA_PROCESS_RUN_ID: token },
 }).once("exit", () => process.exit(0));
 if (process.env.NATIVE_UI_EXIT_LAUNCHER === "1") process.exit(0);
 `;
@@ -41,8 +43,12 @@ const fixtureSource = `
 import { writeSync } from "node:fs";
 ${standInPrelude}
 record("fixture");
-if (process.env.NATIVE_UI_NO_HANDSHAKE !== "1")
+const sendStartup = () => writeSync(1, JSON.stringify({ pid: process.pid }) + "\\n");
+if (process.env.NATIVE_UI_LATE_STARTUP === "1") setTimeout(sendStartup, 20_300);
+else if (process.env.NATIVE_UI_NO_HANDSHAKE !== "1") {
+  sendStartup();
   writeSync(1, JSON.stringify({ pid: process.pid, window_id: 7 }) + "\\n");
+}
 `;
 
 // Runs the actual verifier and observation mapping. Only the compiler and launcher
@@ -105,6 +111,7 @@ const runVerifier = async (
   flags: readonly string[],
   options: {
     readonly noHandshake?: boolean;
+    readonly lateStartup?: boolean;
     readonly exitLauncher?: boolean;
   } = {},
 ) => {
@@ -135,6 +142,7 @@ const runVerifier = async (
         ...process.env,
         TMPDIR: workspace,
         ...(options.noHandshake ? { NATIVE_UI_NO_HANDSHAKE: "1" } : {}),
+        ...(options.lateStartup ? { NATIVE_UI_LATE_STARTUP: "1" } : {}),
         ...(options.exitLauncher ? { NATIVE_UI_EXIT_LAUNCHER: "1" } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -179,7 +187,7 @@ const runVerifier = async (
     code,
     stdout,
     stderr,
-    fixtureLive: !(await untilGone(fixture?.pid ?? -1)),
+    fixtureLive: await isLive(fixture?.pid ?? -1),
     roots: (await readdir(workspace)).filter((name) =>
       name.startsWith("rea-ui-fixture-"),
     ),
@@ -204,6 +212,24 @@ macosIt(
     );
     expect(result.fixtureLive).toBe(true);
     expect(result.roots).toHaveLength(1);
+  },
+);
+
+macosIt(
+  "takes ownership during cleanup when the startup record arrives after the window deadline",
+  { timeout: 45_000 },
+  async () => {
+    const result = await runVerifier(
+      answersChangedBytes,
+      ["--allow-permission-denial"],
+      { lateStartup: true, exitLauncher: true },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "Source-owned UI fixture failed to expose one authenticated window",
+    );
+    expect(result.fixtureLive).toBe(false);
+    expect(result.roots).toEqual([]);
   },
 );
 
