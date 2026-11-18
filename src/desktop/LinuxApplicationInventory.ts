@@ -395,9 +395,14 @@ export const inspectLinuxApplication = async (
   // An `env` prefix's assignments are what the program sees: its PATH finds
   // the program and its XDG folders hold the program's state.
   const environment = { ...request.environment, ...wrapper.environment };
+  // Linux execvp searches its default system path when env explicitly unsets PATH.
+  const lookupEnvironment =
+    environment.PATH === undefined && Object.hasOwn(wrapper.environment, "PATH")
+      ? { ...environment, PATH: "/bin:/usr/bin" }
+      : environment;
   const found = await resolveProgram(
     wrapper.program,
-    environment,
+    lookupEnvironment,
     workingDirectory,
   );
   if (found === undefined)

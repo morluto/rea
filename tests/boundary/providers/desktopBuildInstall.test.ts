@@ -139,32 +139,35 @@ describe("download install scripts", () => {
     expect(failed?.stderr).toContain("drawio.desktop");
   });
 
-  it("keeps an env prefix and its assignments when it points the AppImage's entry at AppRun", async () => {
-    const root = await stage("rea-appimage-env-");
-    const image = join(root, "env/vendor/app.AppImage");
-    await writeFile(
-      image,
-      STUB_APPIMAGE.replace(
-        "'Exec=drawio %U'",
-        "'Exec=env QT_QPA_PLATFORM=xcb \"GTK_THEME=Adwaita dark\" drawio %U'",
-      ),
-    );
-    await chmod(image, 0o755);
-    await runDownloadInstall(
-      renderBuildBundle(appImageRequest("drawio"), localPayload),
-      root,
-    );
+  it.each(["env", "env -u GTK_THEME --unset=QT_QPA_PLATFORM --"])(
+    "keeps the %s prefix when it points the AppImage's entry at AppRun",
+    async (prefix) => {
+      const root = await stage("rea-appimage-env-");
+      const image = join(root, "env/vendor/app.AppImage");
+      await writeFile(
+        image,
+        STUB_APPIMAGE.replace(
+          "'Exec=drawio %U'",
+          `'Exec=${prefix} QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" drawio %U'`,
+        ),
+      );
+      await chmod(image, 0o755);
+      await runDownloadInstall(
+        renderBuildBundle(appImageRequest("drawio"), localPayload),
+        root,
+      );
 
-    const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
-    expect(
-      await readFile(
-        join(root, "local-share/applications/drawio.desktop"),
-        "utf8",
-      ),
-    ).toContain(
-      `\nExec=env QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" ${appRun} %U\n`,
-    );
-  });
+      const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+      expect(
+        await readFile(
+          join(root, "local-share/applications/drawio.desktop"),
+          "utf8",
+        ),
+      ).toContain(
+        `\nExec=${prefix} QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" ${appRun} %U\n`,
+      );
+    },
+  );
 
   it("points an Exec spaced around its = at AppRun and drops a spaced TryExec, as the desktop entry parser reads them", async () => {
     const root = await stage("rea-appimage-spaced-");

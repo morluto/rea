@@ -41,11 +41,14 @@ requires, so a relative value leaves the home default in use instead of
 naming a folder under the working directory. The entry's `Exec` line is
 expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
-entry's `Path` or the home directory. When the line starts with
-`env NAME=value`, the program is found on the `PATH` those assignments set,
-with an empty or relative entry read from the folder the application runs
-in, and their XDG folders name the state directories. Otherwise the program is
-looked up on the host's `PATH` in the order the launch searches it, and one
+entry's `Path` or the home directory. A leading `env` can set variables with
+`NAME=value` and remove inherited values with `-u NAME` or `--unset=NAME`.
+Later assignments can restore a removed variable. The resulting `PATH`
+finds the program, and the resulting XDG variables select its state
+directories. Removing an XDG variable restores its home default. On Linux,
+explicitly removing `PATH` uses the system lookup path `/bin:/usr/bin`.
+An empty or relative `PATH` entry is read from the application's working
+directory. Without a `PATH` change, a program
 found only through a relative or empty entry is refused, since the exported
 computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is

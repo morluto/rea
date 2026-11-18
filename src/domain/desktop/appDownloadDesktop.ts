@@ -59,6 +59,23 @@ def program_span(raw):
     index = 0
     if tokens and tokens[0][0].split("/")[-1] == "env":
         index = 1
+        while index < len(tokens):
+            option = tokens[index][0]
+            if option == "--":
+                index += 1
+                break
+            if option in ("-u", "--unset"):
+                index += 1
+                name = tokens[index][0] if index < len(tokens) else ""
+            elif option.startswith("--unset="):
+                name = option[len("--unset="):]
+            elif option.startswith("-u"):
+                name = option[2:]
+            else:
+                break
+            if not name or "=" in name:
+                raise ValueError("invalid env unset operand in desktop Exec")
+            index += 1
         while index < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[index][0]):
             index += 1
     if index >= len(tokens) or not tokens[index][0]:

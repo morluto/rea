@@ -665,6 +665,68 @@ const inventoryOf = async (
 };
 
 describe.skipIf(process.platform === "win32")(
+  "desktop env unset options",
+  () => {
+    it.each([
+      ["-u XDG_CONFIG_HOME", ".config"],
+      ["--unset=XDG_CONFIG_HOME -- XDG_CONFIG_HOME=$HOME/restored", "restored"],
+    ])(
+      "uses the effective configuration root after env %s",
+      async (prefix, root) => {
+        const installed = await fixture();
+        const { home, bin, environment } = installed;
+        const argvPrefix = prefix.replace("$HOME", home);
+        await writeFile(
+          join(
+            environment.XDG_DATA_DIRS,
+            "applications/org.example.notes.desktop",
+          ),
+          `[Desktop Entry]\nType=Application\nName=Notes\nExec=/usr/bin/env ${argvPrefix} notes-app -- -u\n`,
+        );
+        const inventory = await inventoryOf("org.example.notes", {
+          ...installed,
+          environment: {
+            ...environment,
+            XDG_CONFIG_HOME: join(home, "ambient"),
+          },
+        });
+        expect(inventory.executable.path).toBe(join(bin, "notes-app"));
+        expect(inventory.argv).toEqual([
+          "/usr/bin/env",
+          ...argvPrefix.split(" "),
+          "notes-app",
+          "--",
+          "-u",
+        ]);
+        const paths = inventory.state_directories.map((entry) => entry.path);
+        expect(paths).toContain(join(home, root, "notes"));
+        expect(paths).not.toContain(join(home, "ambient/notes"));
+      },
+    );
+
+    it.skipIf(process.platform !== "linux")(
+      "uses the Linux default program search path when env removes PATH",
+      async () => {
+        const installed = await fixture();
+        const { bin, environment } = installed;
+        await writeFile(join(bin, "true"), "#!/bin/sh\nexit 2\n");
+        await chmod(join(bin, "true"), 0o755);
+        await writeFile(
+          join(
+            environment.XDG_DATA_DIRS,
+            "applications/org.example.notes.desktop",
+          ),
+          "[Desktop Entry]\nType=Application\nName=Notes\nExec=env -uPATH true\n",
+        );
+        const inventory = await inventoryOf("org.example.notes", installed);
+        expect(inventory.executable.path).toBe("/bin/true");
+        expect(inventory.argv).toEqual(["env", "-uPATH", "true"]);
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
   "inspectLinuxApplication state and environment",
   () => {
     it("finds the program on the PATH an env prefix sets, not the host's", async () => {

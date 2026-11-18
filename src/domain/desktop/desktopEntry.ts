@@ -265,8 +265,8 @@ export const expandDesktopExec = (
 export type DesktopCommandWrapper = {
   /** The program `env` runs, or the first argument when there is no `env`. */
   readonly program: string;
-  /** Variables an `env` prefix sets; its `PATH` is the one that finds the program. */
-  readonly environment: Readonly<Record<string, string>>;
+  /** Changes made by the env prefix. An own undefined value removes a variable. */
+  readonly environment: Readonly<Record<string, string | undefined>>;
 } & (
   | {
       readonly kind: "direct";
@@ -337,22 +337,45 @@ const flatpakApplicationId = (arguments_: readonly string[]): string | null => {
   return null;
 };
 
-/** Apply `env NAME=value` prefixes and recognise `flatpak run` launchers. */
+const desktopEnvPrefix = (argv: readonly string[]) => {
+  const environment: Record<string, string | undefined> = Object.create(null);
+  if (argv[0]?.split("/").at(-1) !== "env") return { index: 0, environment };
+
+  let index = 1;
+  while (index < argv.length) {
+    const option = argv[index]!;
+    if (option === "--") {
+      index += 1;
+      break;
+    }
+    const separate = option === "-u" || option === "--unset";
+    const name = separate
+      ? argv[index + 1]
+      : option.startsWith("--unset=")
+        ? option.slice("--unset=".length)
+        : option.startsWith("-u")
+          ? option.slice(2)
+          : undefined;
+    if (name === undefined && !separate) break;
+    if (!name || name.includes("=")) return { index: argv.length, environment };
+    environment[name] = undefined;
+    index += separate ? 2 : 1;
+  }
+  // GNU env applies options before assignment operands, so an assignment can
+  // restore a variable removed by an earlier -u.
+  for (; /^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? ""); index += 1) {
+    const assignment = argv[index]!;
+    const split = assignment.indexOf("=");
+    environment[assignment.slice(0, split)] = assignment.slice(split + 1);
+  }
+  return { index, environment };
+};
+
+/** Apply env assignments and unsets, and recognise flatpak run launchers. */
 export const unwrapDesktopCommand = (
   argv: readonly string[],
 ): DesktopCommandWrapper => {
-  let index = 0;
-  // No prototype, so an assignment such as `__proto__=x` stays a variable.
-  const environment: Record<string, string> = Object.create(null);
-  if (argv[0]?.split("/").at(-1) === "env") {
-    index = 1;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) {
-      const assignment = argv[index] ?? "";
-      const split = assignment.indexOf("=");
-      environment[assignment.slice(0, split)] = assignment.slice(split + 1);
-      index += 1;
-    }
-  }
+  const { index, environment } = desktopEnvPrefix(argv);
   const program = argv[index] ?? "";
   if (program.split("/").at(-1) === "flatpak" && argv[index + 1] === "run")
     return {
@@ -368,11 +391,7 @@ export const unwrapDesktopCommand = (
 export const desktopArgumentIndex = (argv: readonly string[]): number => {
   const command = unwrapDesktopCommand(argv);
   if (command.kind === "direct") return command.index + 1;
-  let index = 0;
-  if (argv[0]?.split("/").at(-1) === "env") {
-    index = 1;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) index += 1;
-  }
+  let { index } = desktopEnvPrefix(argv);
   index += 1;
   if (argv[index] === "run") index += 1;
   for (; index < argv.length; index += 1) {
