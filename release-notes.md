@@ -219,6 +219,7 @@
 * **contracts:** omit widened regex disjunctions ([#11781](https://github.com/morluto/rea/issues/11781)) ([c1c9783](https://github.com/morluto/rea/commit/c1c9783a9e9256df31604be13edded9cbc4d3ef5))
 * **contracts:** refuse empty address and procedure selectors in the contracts ([#10753](https://github.com/morluto/rea/issues/10753)) ([104b1a3](https://github.com/morluto/rea/commit/104b1a35b4b3d137cf3e5a3a45c63d37b6f390e8))
 * **contracts:** remove the duplicate advertisedOutputJsonSchema declaration ([#11057](https://github.com/morluto/rea/issues/11057)) ([1151763](https://github.com/morluto/rea/commit/1151763582a6923a9bf76895c37b8e76ef584c69))
+* **cutter:** explain empty discovery when Cutter 2.5.0 rejects the plugin ([#10310](https://github.com/morluto/rea/issues/10310)) ([cb8096d](https://github.com/morluto/rea/commit/cb8096d522166d2d2deb0c930360a053426406c6))
 * **cutter:** report undeclared output truncation and document generation as unknown ([#10726](https://github.com/morluto/rea/issues/10726)) ([52d6725](https://github.com/morluto/rea/commit/52d6725d6355a2d21de5ffa3f8f1dfb830a19c9f))
 * **debuggers:** keep stopped Rizin and GDB sessions explainable ([ee339e5](https://github.com/morluto/rea/commit/ee339e5db500ce1ea4ae5f43310e19d3de50d65e)), closes [#8024](https://github.com/morluto/rea/issues/8024)
 * **decompile:** derive the body-coverage caveat from retained records ([9d082b1](https://github.com/morluto/rea/commit/9d082b144a7a6a87bd1229a0500af13ab01f70e5)), closes [#8351](https://github.com/morluto/rea/issues/8351)
@@ -352,6 +353,7 @@
 * **native:** list Swift types recorded in __swift5_types2 ([#11721](https://github.com/morluto/rea/issues/11721)) ([1868d04](https://github.com/morluto/rea/commit/1868d04ef92eb4679318d930d90509041339eb3a))
 * **native:** name chained imports from the binary's import table ([4bdd6d1](https://github.com/morluto/rea/commit/4bdd6d10c98896571d089c7d9ee62dbad2c7aeab))
 * **native:** name the exhausted native export allowance by its units ([8e5e23c](https://github.com/morluto/rea/commit/8e5e23c21ebf9a7834db38c13adc2a7aac3adf85)), closes [#7628](https://github.com/morluto/rea/issues/7628) [#7754](https://github.com/morluto/rea/issues/7754)
+* **native:** name the unsupported Thumb mode for an odd raw ARM entry ([#10683](https://github.com/morluto/rea/issues/10683)) ([090c227](https://github.com/morluto/rea/commit/090c22720b7e1d4d97132f9ddd71a57f00772b1c))
 * **native:** record breakpoint hits LLDB reports as exceptions and keep coverage partial for unattributed stops ([#11276](https://github.com/morluto/rea/issues/11276)) ([8f86835](https://github.com/morluto/rea/commit/8f8683544efc1b1dc338e6cdb216d2259d8f73df))
 * **native:** report a signature inspection defect as an adapter failure ([#11069](https://github.com/morluto/rea/issues/11069)) ([ecab89f](https://github.com/morluto/rea/commit/ecab89f3e6e956dacf7759de7382748e81bd0f85))
 * **native:** report a target-selected plist against the target, not the unsent path input ([#10798](https://github.com/morluto/rea/issues/10798)) ([8977840](https://github.com/morluto/rea/commit/897784042aeffea784999865c2e1b997577c7522))
@@ -754,6 +756,7 @@
 * **views:** give complete-within-view coverage only the returned count ([#11132](https://github.com/morluto/rea/issues/11132)) ([4bd578c](https://github.com/morluto/rea/commit/4bd578cc0801e3f12771da666877cdc8963b2992))
 * **wasm:** leave WABT cancellation to the shared owners ([#10796](https://github.com/morluto/rea/issues/10796)) ([b87b318](https://github.com/morluto/rea/commit/b87b318ae7e0ee69d204d8777b36c152702abbe2))
 * **wasm:** report WABT failure output through the captured-output owner ([#11443](https://github.com/morluto/rea/issues/11443)) ([204bd2b](https://github.com/morluto/rea/commit/204bd2bb49f199763b7b3287f3448f7fda136413))
+* **zip:** read EOCD and trailing archive fields via BinaryReader ([#11918](https://github.com/morluto/rea/issues/11918)) ([afd277d](https://github.com/morluto/rea/commit/afd277dabc3b0a17eb9042453d8cb12b7d374100))
 
 
 ### Documentation
@@ -944,6 +947,7 @@
 * **inspector:** consolidate runtime observation coverage ([1592b7f](https://github.com/morluto/rea/commit/1592b7f2c0c6588471350c06ba40731498240c78))
 * **inspector:** keep the cancellation fixture out of underscored temp roots ([f35b6a7](https://github.com/morluto/rea/commit/f35b6a75b31fa36acde9ee6b86db4961a2b52211)), closes [#9996](https://github.com/morluto/rea/issues/9996) [#10118](https://github.com/morluto/rea/issues/10118)
 * **inspector:** keep the sibling Node discovery fixtures out of underscored roots ([583bb47](https://github.com/morluto/rea/commit/583bb477c16eefefbefb0c7ee2144096aca61b29))
+* **inspector:** spell Node discovery targets as Node reports them ([#10663](https://github.com/morluto/rea/issues/10663)) ([93bf4df](https://github.com/morluto/rea/commit/93bf4df3e437af37cee47a8db6f6f14bc5886279))
 * **javascript:** bound member-path propagation by alias states instead of elapsed time ([#11635](https://github.com/morluto/rea/issues/11635)) ([f86b83c](https://github.com/morluto/rea/commit/f86b83ccd7bb7ef9db4ec1a180b2072e36fac503)), closes [#10513](https://github.com/morluto/rea/issues/10513)
 * **javascript:** consolidate artifact graph and resolution coverage ([1ff7be8](https://github.com/morluto/rea/commit/1ff7be8c70a02a22f150822fffe952778d72abb9))
 * **javascript:** consolidate fingerprint and semantic analysis coverage ([1881bbb](https://github.com/morluto/rea/commit/1881bbb55b9e23d53eaed5797a426b7fad6ed160))
