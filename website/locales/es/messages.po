@@ -368,7 +368,7 @@ msgstr "Referencia de validación"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Test against a{ph0}concrete reference."
-msgstr "Prueba contra a{ph0}referencia concreta."
+msgstr "Prueba contra una{ph0}referencia concreta."
 
 #: website/public/blog/touhou-reconstruction/index.html:342
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -385,7 +385,7 @@ msgstr "Memoria de trabajo"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Code, evidence,{ph0}checks and lessons."
-msgstr "Código, evidencia,{ph0}cheques y lecciones."
+msgstr "Código, evidencia,{ph0}comprobaciones y lecciones."
 
 #. {ph0}: <br />
 #. {ph1}: <strong>
@@ -425,7 +425,7 @@ msgid ""
 "fixing the checks when we discover a gap."
 msgstr ""
 "Cada proyecto deja al siguiente con un mejor punto de partida. Eso incluye "
-"arreglar los cheques cuando descubrimos una brecha."
+"corregir las comprobaciones cuando descubrimos una laguna."
 
 #: website/public/blog/touhou-reconstruction/index.html:372
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -524,11 +524,12 @@ msgid ""
 "experience behind this article. The method can be useful elsewhere, but each"
 " field needs to establish what it can check against a reliable reference."
 msgstr ""
-"La mayor parte de mi trabajo de RE es en juegos. Los reconstruyo para que su"
-" comportamiento pueda entenderse y eventualmente llevarse a un puerto de "
-"software o un mod. Esa es la experiencia detrás de este artículo. El método "
-"puede ser útil en otros lugares, pero cada campo necesita establecer qué "
-"puede verificar con una referencia confiable."
+"La mayor parte de mi trabajo de ingeniería inversa es con juegos. Los "
+"reconstruyo para que su comportamiento pueda entenderse y, con el tiempo, "
+"llevarse a un port (una adaptación a otra plataforma) o a un mod. Esa es la "
+"experiencia detrás de este artículo. El método puede ser útil en otros "
+"ámbitos, pero cada campo necesita establecer qué puede verificar con una "
+"referencia fiable."
 
 #: website/public/blog/touhou-reconstruction/index.html:403
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -614,9 +615,10 @@ msgid ""
 "eleven days after the continuation began. A Web edition followed. The native"
 " Linux 64-bit release arrived on 30 August."
 msgstr ""
-"Un puerto de reconstrucción Linux jugable se comprometió el 24 de agosto, "
-"aproximadamente once días después de que comenzara la continuación. Siguió "
-"una edición web. La versión nativa Linux de 64 bits llegó el 30 de agosto."
+"Un port jugable de la reconstrucción para Linux se incorporó al repositorio "
+"el 24 de agosto, unos once días después de que empezara la continuación. Le "
+"siguió una edición web. La versión nativa para Linux de 64 bits llegó el 30 "
+"de agosto."
 
 #: website/public/blog/touhou-reconstruction/index.html:445
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -677,10 +679,10 @@ msgid ""
 "auto-collection. The reconstructed source checked player power against "
 "{ph0}. The original used {ph1}, the maximum-power threshold."
 msgstr ""
-"En septiembre, un error reportado por un puerto de conmutador descendente "
-"condujo de nuevo a la recopilación automática de elementos. La fuente "
-"reconstruida verificó la potencia del jugador contra {ph0}. El original "
-"usado {ph1}, el umbral de potencia máxima."
+"En septiembre, un error notificado por un port derivado para Switch llevó de"
+" nuevo a la recogida automática de objetos. El código fuente reconstruido "
+"comparaba la potencia del jugador con {ph0}. El original usaba {ph1}, el "
+"umbral de potencia máxima."
 
 #: website/public/blog/touhou-reconstruction/index.html:471
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -729,9 +731,10 @@ msgid ""
 "at the original's {ph0} while the source still said {ph1}. The instruction "
 "bytes matched. The source meant something different."
 msgstr ""
-"Eso dejó un agujero en el cheque. Podría apuntar la instrucción reconstruida"
-" a la del original {ph0} mientras que la fuente todavía dijo {ph1}. Los "
-"bytes de instrucción coincidieron. La fuente significaba algo diferente."
+"Eso dejó un hueco en la comprobación. La instrucción reconstruida podía "
+"apuntar al {ph0} del original mientras el código fuente seguía diciendo "
+"{ph1}. Los bytes de la instrucción coincidían. El código fuente significaba "
+"otra cosa."
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/th08/pull/11" >
 #. {ph1}: </a >
@@ -746,11 +749,11 @@ msgid ""
 "examined 1,548 floating-literal references. It found another twelve "
 "incorrect references across five accepted functions."
 msgstr ""
-"El {ph0}Corrección del 2 de septiembre{ph1} corrigió la fuente e hizo que la"
-" comparación verificara los bytes reales de la constante referenciada. A "
-"{ph2}auditoría más amplia{ph3} luego examinó 1.548 referencias constantes de"
-" coma flotante. Encontró otras doce referencias incorrectas en cinco "
-"funciones aceptadas."
+"La {ph0}corrección del 2 de septiembre{ph1} corrigió el código fuente e hizo"
+" que la comparación verificara los bytes reales de la constante "
+"referenciada. Una {ph2}auditoría más amplia{ph3} examinó después 1.548 "
+"referencias a literales de coma flotante. Encontró otras doce referencias "
+"incorrectas en cinco funciones aceptadas."
 
 #: website/public/blog/touhou-reconstruction/index.html:508
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -848,8 +851,8 @@ msgid ""
 "The rise of grifters (AI decompilations and ports) in this space taking from"
 " our work paints a bad image for future decompilation efforts…"
 msgstr ""
-"El aumento de estafadores (descompilaciones y puertos de IA) en este espacio"
-" que se aleja de nuestro trabajo pinta una mala imagen para futuros "
+"El auge de los oportunistas (descompilaciones y ports hechos con IA) que en "
+"este ámbito se aprovechan de nuestro trabajo da mala imagen a los futuros "
 "esfuerzos de descompilación…"
 
 #: website/public/blog/touhou-reconstruction/index.html:560
@@ -1059,10 +1062,11 @@ msgid ""
 " correction with the code helps later projects avoid inheriting the old "
 "check's blind spot."
 msgstr ""
-"El error constante de coma flotante también pertenece a esa memoria. Explica"
-" por qué verificar una referencia también requiere verificar los datos "
-"detrás de ella. Mantener esa corrección con el código ayuda a que los "
-"proyectos posteriores eviten heredar el punto ciego del cheque anterior."
+"El error de los literales de coma flotante también pertenece a esa memoria. "
+"Explica por qué verificar una referencia también requiere verificar los "
+"datos detrás de ella. Mantener esa corrección con el código ayuda a que los "
+"proyectos posteriores eviten heredar el punto ciego de la comprobación "
+"anterior."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -1125,10 +1129,10 @@ msgid ""
 "work is a native 64-bit port. Establishing a working DOS version first gives"
 " that port a reference."
 msgstr ""
-"La reconstrucción de DOS ahora está funcionando. En mis pruebas manuales, "
-"jugué rutas normales completas a través de sus finales y verifiqué las "
-"salvaciones. El trabajo actual es un puerto nativo de 64 bits. Establecer "
-"una versión de DOS que funcione primero le da a ese puerto una referencia."
+"La reconstrucción para DOS ya funciona. En mis pruebas manuales, jugué rutas"
+" completas en dificultad Normal hasta sus finales y comprobé las partidas "
+"guardadas. El trabajo actual es un port nativo de 64 bits. Tener primero una"
+" versión de DOS que funciona da a ese port una referencia."
 
 #: website/public/blog/touhou-reconstruction/index.html:699
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1177,9 +1181,9 @@ msgid ""
 "behavior already recovered on DOS. The knowledge from reconstruction gives "
 "the port something to build on."
 msgstr ""
-"Para el puerto de 64 bits, ahora podemos examinar la nueva implementación "
-"con el comportamiento ya recuperado en DOS. El conocimiento de la "
-"reconstrucción le da al puerto algo sobre lo que construir."
+"Para el port de 64 bits, ahora podemos contrastar la nueva implementación "
+"con el comportamiento ya recuperado en DOS. El conocimiento obtenido con la "
+"reconstrucción da al port una base sobre la que construir."
 
 #. {ph0}: <a
 #. href="https://github.com/N0zoM1z0/th04/blob/bb9faca54e2eb3c0d6c757c75d59ac29d2cd5e93/docs/RE_HANDOFF.md"
@@ -1194,8 +1198,8 @@ msgid ""
 "Project state as of 10 October 2026: {ph0}DOS reconstruction and manual "
 "testing{ph1} · {ph2}64-bit port{ph3}. The port remains in development."
 msgstr ""
-"Estado del proyecto al 10 de octubre de 2026: {ph0}Reconstrucción de DOS y "
-"pruebas manuales{ph1} · {ph2}puerto de 64 bits{ph3}. El puerto permanece en "
+"Estado del proyecto a 10 de octubre de 2026: {ph0}reconstrucción para DOS y "
+"pruebas manuales{ph1} · {ph2}port de 64 bits{ph3}. El port sigue en "
 "desarrollo."
 
 #: website/public/blog/touhou-reconstruction/index.html:737
@@ -1253,11 +1257,11 @@ msgid ""
 "To move the behavior safely, we need to recover the relationship behind the "
 "old memory access."
 msgstr ""
-"Esto se vuelve especialmente importante para un puerto de software. Una "
-"dirección absoluta me dice dónde vivía algo en el antiguo ejecutable. Le da "
-"a una implementación de 64 bits poca ayuda para decidir qué objeto debería "
-"poseer ese estado. Para mover el comportamiento de manera segura, "
-"necesitamos recuperar la relación detrás del antiguo acceso a la memoria."
+"Esto cobra especial importancia en un port. Una dirección absoluta me dice "
+"dónde vivía algo en el ejecutable antiguo. A una implementación de 64 bits "
+"le ayuda poco a decidir qué objeto debería ser dueño de ese estado. Para "
+"trasladar el comportamiento con seguridad, necesitamos recuperar la relación"
+" que hay detrás del antiguo acceso a memoria."
 
 #: website/public/blog/touhou-reconstruction/index.html:763
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1323,10 +1327,10 @@ msgid ""
 "environment, such as a native 64-bit build. The reconstructed original-"
 "platform game remains a reference for comparing how the port behaves."
 msgstr ""
-"{ph0}Haz el puerto moderno.{ph1} Mueva el comportamiento establecido al "
-"nuevo entorno, como una compilación nativa de 64 bits. El juego de "
-"plataformas original reconstruido sigue siendo una referencia para comparar "
-"cómo se comporta el puerto."
+"{ph0}Haz el port moderno.{ph1} Lleva el comportamiento establecido al nuevo "
+"entorno, como una compilación nativa de 64 bits. El juego reconstruido para "
+"la plataforma original sigue siendo una referencia para comparar cómo se "
+"comporta el port."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -1340,10 +1344,10 @@ msgid ""
 "reconstructed program still builds and behaves correctly along the paths we "
 "exercise."
 msgstr ""
-"La construcción jugable de la segunda etapa se convierte en un {ph0}segunda "
-"referencia de verificación (oracle){ph1} durante la tercera. La primera "
+"La construcción jugable de la segunda etapa se convierte en una {ph0}segunda"
+" referencia de verificación (oracle){ph1} durante la tercera. La primera "
 "referencia de verificación (oracle) verifica si nuestra fuente modificada "
-"aún reproduce el código y los datos originales relevantes. El segundo "
+"aún reproduce el código y los datos originales relevantes. La segunda "
 "verifica que el programa reconstruido aún se construya y se comporte "
 "correctamente a lo largo de las rutas que ejercitamos."
 
@@ -1389,12 +1393,12 @@ msgid ""
 "original-platform build first, so semantic work can use it as a reference "
 "before porting begins."
 msgstr ""
-"Aprendimos este orden a través de los proyectos. TH08 ya tenía puertos "
-"reproducibles antes de algunas de sus auditorías históricas posteriores de "
-"la plataforma. Eso hizo que ciertos defectos fueran más difíciles de ver. El"
-" {ph0}Flujo de trabajo actual de la fábrica{ph1} coloca la compilación de la"
-" plataforma original en primer lugar, de modo que el trabajo semántico pueda"
-" usarla como referencia antes de que comience la migración."
+"Aprendimos este orden a través de los proyectos. TH08 ya tenía ports "
+"jugables antes de algunas de sus auditorías históricas posteriores de la "
+"plataforma. Eso hizo que ciertos defectos fueran más difíciles de ver. El "
+"{ph0}flujo de trabajo actual de la Fábrica{ph1} coloca la compilación de la "
+"plataforma original en primer lugar, de modo que el trabajo semántico pueda "
+"usarla como referencia antes de que comience la migración."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -1406,8 +1410,8 @@ msgid ""
 "makes the recovered knowledge usable.{ph1} A port can then build on both."
 msgstr ""
 "{ph0}La reconstrucción exacta nos da una referencia. La reconstrucción "
-"semántica hace utilizable el conocimiento recuperado.{ph1} Entonces, un "
-"puerto puede basarse en ambos."
+"semántica hace utilizable el conocimiento recuperado.{ph1} Un port puede "
+"apoyarse después en ambas."
 
 #: website/public/blog/touhou-reconstruction/index.html:837
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1553,7 +1557,7 @@ msgid ""
 "projects a shared way to carry their checks and lessons forward. Work on one"
 " game can improve the starting conditions for another."
 msgstr ""
-"El {ph0}Fábrica de Reconstrucción de Touhou{ph1} surgió de esa necesidad. "
+"La {ph0}Fábrica de Reconstrucción de Touhou{ph1} surgió de esa necesidad. "
 "Brinda a los proyectos una forma compartida de llevar adelante sus controles"
 " y lecciones. Trabajar en un juego puede mejorar las condiciones iniciales "
 "de otro."
@@ -1596,12 +1600,11 @@ msgid ""
 " explore a mod. The effort put into understanding the game can keep paying "
 "off after the first version runs."
 msgstr ""
-"Ahora puedo ver una manera de mantener ese proyecto en marcha a través de "
-"repetidas investigaciones. Obtener una reconstrucción funcional hace que un "
-"puerto de software sea más práctico. Recuperar semántica legible hace que "
-"sea más fácil para otra persona explorar un mod. El esfuerzo realizado para "
-"comprender el juego puede seguir dando sus frutos después de que se ejecute "
-"la primera versión."
+"Ahora veo una manera de mantener en marcha un proyecto así a lo largo de "
+"investigaciones repetidas. Tener una reconstrucción que funciona hace más "
+"viable un port. Recuperar una semántica legible facilita que otra persona "
+"explore un mod. El esfuerzo dedicado a entender el juego puede seguir dando "
+"frutos después de que la primera versión funcione."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -1675,10 +1678,10 @@ msgid ""
 "ledger{ph5}, {ph6}24 August Linux port{ph7}, {ph8}26 August Web "
 "edition{ph9}, and {ph10}30 August 64-bit Linux release{ph11}."
 msgstr ""
-"{ph0}TH08:{ph1} {ph2}Continuación del 13 de agosto{ph3}, {ph4}Libro mayor de"
-" fuentes del 19 de agosto{ph5}, {ph6}24 de agosto Puerto Linux{ph7}, "
-"{ph8}Edición web del 26 de agosto{ph9}, y {ph10}Lanzamiento de Linux de 64 "
-"bits el 30 de agosto{ph11}."
+"{ph0}TH08:{ph1} {ph2}continuación del 13 de agosto{ph3}, {ph4}registro del "
+"código fuente del 19 de agosto{ph5}, {ph6}port para Linux del 24 de "
+"agosto{ph7}, {ph8}edición web del 26 de agosto{ph9} y {ph10}versión para "
+"Linux de 64 bits del 30 de agosto{ph11}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -2366,7 +2369,7 @@ msgstr ""
 #: website/public/faq/index.html:253
 msgctxt "page:faq/index.html"
 msgid "Which coding agents can use REA?"
-msgstr "¿Qué agentes de codificación pueden usar REA?"
+msgstr "¿Qué agentes de programación pueden usar REA?"
 
 #: website/public/faq/index.html:254
 msgctxt "page:faq/index.html"
@@ -2387,7 +2390,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:faq/index.html"
 msgid "{ph0}Connect your coding agent{ph1}."
-msgstr "{ph0}Conecte a su agente de codificación{ph1}."
+msgstr "{ph0}Conecte a su agente de programación{ph1}."
 
 #: website/public/faq/index.html:266
 msgctxt "page:faq/index.html"
@@ -2556,7 +2559,7 @@ msgstr ""
 #: website/public/faq/index.html:368
 msgctxt "page:faq/index.html"
 msgid "Can I use REA without a coding agent?"
-msgstr "¿Puedo usar REA sin un agente de codificación?"
+msgstr "¿Puedo usar REA sin un agente de programación?"
 
 #: website/public/faq/index.html:369
 msgctxt "page:faq/index.html"
@@ -2615,8 +2618,8 @@ msgid ""
 "checker{ph3} show how that process works."
 msgstr ""
 "Su agente usa estos hallazgos para explicar el comportamiento o escribir y "
-"probar una implementación. El {ph0}Cálculo de DX-Ball{ph1} y "
-"{ph2}Comprobador de banderas CTF{ph3} muestre cómo funciona ese proceso."
+"probar una implementación. El {ph0}cálculo de DX-Ball{ph1} y el "
+"{ph2}comprobador de banderas de CTF{ph3} muestran cómo funciona ese proceso."
 
 #: website/public/faq/index.html:412
 msgctxt "page:faq/index.html"
@@ -2644,7 +2647,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:faq/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #. {ph0}: <a href="../guides/">
 #. {ph1}: </a>
@@ -2655,8 +2658,8 @@ msgid ""
 "Replace the path with your target. The {ph0}guides{ph1} provide prompts for "
 "native, Electron and browser examples."
 msgstr ""
-"Reemplaza el camino con tu objetivo. El {ph0}guías{ph1} proporcione "
-"indicaciones para ejemplos nativos, Electron y del navegador."
+"Sustituye la ruta por la de tu objetivo. Las {ph0}guías{ph1} ofrecen prompts"
+" para ejemplos nativos, de Electron y de navegador."
 
 #: website/public/faq/index.html:452
 msgctxt "page:faq/index.html"
@@ -2807,8 +2810,8 @@ msgid ""
 "the investigation."
 msgstr ""
 "¿Tiene un ejemplo útil de REA? Nos encantaría verlo. Comparta el objetivo, "
-"su pregunta, los hallazgos y cómo los verificó en un {ph0}cuestión{ph1} o "
-"{ph2}solicitud de extracción{ph3}. Extractos de códigos cortos y figuras "
+"su pregunta, los hallazgos y cómo los verificó en una {ph0}incidencia{ph1} o"
+" una {ph2}pull request{ph3}. Los fragmentos breves de código y las figuras "
 "ayudan a otros a seguir la investigación."
 
 #. {ph0}: <a href="https://discord.gg/GkcryMnJDM">
@@ -2821,7 +2824,7 @@ msgid ""
 "welcome too. You can also discuss an example in the {ph0}community{ph1}."
 msgstr ""
 "Los informes de errores, solicitudes de funciones, documentación y mejoras "
-"de código también son bienvenidos. También puede analizar un ejemplo en el "
+"de código también son bienvenidos. También puede comentar un ejemplo en la "
 "{ph0}comunidad{ph1}."
 
 #: website/public/faq/index.html:6
@@ -2838,7 +2841,7 @@ msgid ""
 "coding agents, troubleshooting and sharing examples."
 msgstr ""
 "Respuestas a preguntas comunes sobre REA: instalación, actualizaciones, "
-"herramientas de análisis, agentes de codificación, solución de problemas y "
+"herramientas de análisis, agentes de programación, solución de problemas y "
 "ejemplos para compartir."
 
 #: website/public/faq/index.html:206
@@ -3991,9 +3994,9 @@ msgid ""
 "Clicking it loads {ph4}, formats the two notes as CSV, and starts a "
 "download."
 msgstr ""
-"El {ph0}Ejemplo de navegador de notas{ph1} tiene un {ph2}Notas de "
-"exportación{ph3} botón. Al hacer clic en él, se carga {ph4}, formatea las "
-"dos notas como CSV e inicia una descarga."
+"El {ph0}ejemplo de notas para el navegador{ph1} tiene un botón {ph2}Export "
+"notes{ph3}. Al hacer clic en él, se carga {ph4}, se da formato CSV a las dos"
+" notas y se inicia una descarga."
 
 #: website/public/guides/browser/index.html:233
 msgctxt "page:guides/browser/index.html"
@@ -4119,7 +4122,7 @@ msgstr "Pídale a su agente que vea una acción"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -4146,7 +4149,7 @@ msgid ""
 "Example prompt. Give your agent the debugging endpoint, {ph0}, and the page "
 "URL. Let it start the capture before you click."
 msgstr ""
-"Mensaje de ejemplo. Proporcione a su agente el punto final de depuración, "
+"Mensaje de ejemplo. Proporcione a su agente el endpoint de depuración, "
 "{ph0}, y la URL de la página. Deje que inicie la captura antes de hacer "
 "clic."
 
@@ -4322,8 +4325,8 @@ msgid ""
 "For an installed JavaScript or Electron app, continue with the "
 "{ph0}application workflow{ph1} to follow files and process boundaries."
 msgstr ""
-"Para una aplicación JavaScript o Electron instalada, continúe con la "
-"{ph0}flujo de trabajo de la aplicación{ph1} para seguir los límites de "
+"Para una aplicación JavaScript o Electron instalada, continúe con el "
+"{ph0}flujo de trabajo de aplicaciones{ph1} para seguir los límites de "
 "archivos y procesos."
 
 #: website/public/guides/browser/index.html:6
@@ -4369,7 +4372,7 @@ msgstr "Copiar buscar la página"
 #: website/public/guides/browser/index.html:363
 msgctxt "page:guides/browser/index.html"
 msgid "Copy capture the next ten seconds"
-msgstr "Copia captura los siguientes diez segundos"
+msgstr "Copiar el prompt de captura de los próximos diez segundos"
 
 #: website/public/guides/browser/index.html:428
 msgctxt "page:guides/browser/index.html"
@@ -4421,7 +4424,7 @@ msgstr "Configurar REA"
 #: website/public/guides/index.html:213
 msgctxt "page:guides/index.html"
 msgid "Connect your coding agent or use REA from the terminal."
-msgstr "Conecte su agente de codificación o use REA desde la terminal."
+msgstr "Conecte su agente de programación o use REA desde la terminal."
 
 #: website/public/guides/index.html:214
 msgctxt "page:guides/index.html"
@@ -4733,7 +4736,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/guides/javascript/index.html:284
 #: website/public/guides/javascript/index.html:441
@@ -4884,8 +4887,8 @@ msgid ""
 "Follow {ph0} to its handler. Which inputs reach the CSV writer, and what "
 "happens if writing the file fails?"
 msgstr ""
-"Sigue {ph0} a su manejador. ¿Qué entradas llegan al escritor CSV y qué "
-"sucede si falla la escritura del archivo?"
+"Sigue {ph0} hasta su controlador. ¿Qué entradas llegan al escritor CSV y qué"
+" sucede si falla la escritura del archivo?"
 
 #: website/public/guides/javascript/index.html:474
 msgctxt "page:guides/javascript/index.html"
@@ -4938,8 +4941,8 @@ msgid ""
 "{ph0}Follow a native function{ph1}{ph2}Continue into a binary when a feature"
 " depends on native code.{ph3}"
 msgstr ""
-"{ph0}Sigue una función nativa{ph1}{ph2}Continúe en binario cuando una "
-"característica dependa del código nativo.{ph3}"
+"{ph0}Sigue una función nativa{ph1}{ph2}Continúa en un binario cuando una "
+"función dependa de código nativo.{ph3}"
 
 #: website/public/guides/javascript/index.html:6
 msgctxt "page:guides/javascript/index.html"
@@ -5291,7 +5294,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/guides/native/index.html:347
 #: website/public/guides/native/index.html:478
@@ -6365,7 +6368,7 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Showcases{ph3} / Android"
-msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / Android"
+msgstr "{ph0}Inicio{ph1} / {ph2}Casos prácticos{ph3} / Android"
 
 #: website/public/showcase/aegis/index.html:205
 msgctxt "page:showcase/aegis/index.html"
@@ -6541,7 +6544,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/showcase/aegis/index.html:276
 #: website/public/showcase/aegis/index.html:746
@@ -7113,7 +7116,7 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:showcase/ctf/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Showcases{ph3} / CTF"
-msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / CTF"
+msgstr "{ph0}Inicio{ph1} / {ph2}Casos prácticos{ph3} / CTF"
 
 #: website/public/showcase/ctf/index.html:204
 msgctxt "page:showcase/ctf/index.html"
@@ -7169,9 +7172,9 @@ msgid ""
 "finds the prompt, its references and the code that accepts or rejects an "
 "input.{ph5}"
 msgstr ""
-"{ph0}01 · Encuentra el cheque{ph1}{ph2}Cadenas → funciones de "
-"comprobación{ph3}{ph4}REA encuentra el indicador, sus referencias y el "
-"código que acepta o rechaza una entrada.{ph5}"
+"{ph0}01 · Encuentra la comprobación{ph1}{ph2}Cadenas → funciones de "
+"comprobación{ph3}{ph4}REA encuentra la petición de entrada, sus referencias "
+"y el código que acepta o rechaza una entrada.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -7284,8 +7287,8 @@ msgid ""
 "The handout is a 15 KB executable. It asks for a flag, then prints {ph0} or "
 "{ph1}. Start with a simple request to your agent."
 msgstr ""
-"El folleto es un ejecutable de 15 KB. Pide una bandera, luego imprime {ph0} "
-"o {ph1}. Comience con una simple solicitud a su agente."
+"El archivo del reto es un ejecutable de 15 KB. Pide una bandera y después "
+"imprime {ph0} o {ph1}. Comience con una petición sencilla a su agente."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -7299,7 +7302,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:showcase/ctf/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/showcase/ctf/index.html:282
 #: website/public/showcase/ctf/index.html:501
@@ -7384,7 +7387,7 @@ msgstr ""
 #: website/public/showcase/ctf/index.html:386
 msgctxt "page:showcase/ctf/index.html"
 msgid "One check reveals one character"
-msgstr "Un cheque revela un carácter"
+msgstr "Una comprobación revela un carácter"
 
 #: website/public/showcase/ctf/index.html:387
 msgctxt "page:showcase/ctf/index.html"
@@ -7432,7 +7435,7 @@ msgstr ""
 #: website/public/showcase/ctf/index.html:445
 msgctxt "page:showcase/ctf/index.html"
 msgid "From instructions to a readable check"
-msgstr "De las instrucciones a un cheque legible"
+msgstr "De las instrucciones a una comprobación legible"
 
 #: website/public/showcase/ctf/index.html:446
 msgctxt "page:showcase/ctf/index.html"
@@ -7595,9 +7598,9 @@ msgid ""
 "targets."
 msgstr ""
 "Z3 es un solucionador que encuentra valores que satisfacen estas ecuaciones."
-" Este extracto usa los cheques extraídos y asume un {ph0} bandera con "
-"letras, dígitos, guiones bajos y llaves. La descarga completa incluye las 26"
-" máscaras y objetivos."
+" Este extracto usa las comprobaciones extraídas y supone una bandera {ph0} "
+"con letras, dígitos, guiones bajos y llaves. La descarga completa incluye "
+"las 26 máscaras y objetivos."
 
 #: website/public/showcase/ctf/index.html:628
 msgctxt "page:showcase/ctf/index.html"
@@ -7757,7 +7760,7 @@ msgstr ""
 #: website/public/showcase/ctf/index.html:763
 msgctxt "page:showcase/ctf/index.html"
 msgid "Set up REA with your coding agent"
-msgstr "Configure REA con su agente de codificación"
+msgstr "Configure REA con su agente de programación"
 
 #: website/public/showcase/ctf/index.html:6
 msgctxt "page:showcase/ctf/index.html"
@@ -7856,7 +7859,7 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Showcases{ph3} / DX-Ball"
-msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / DX-Ball"
+msgstr "{ph0}Inicio{ph1} / {ph2}Casos prácticos{ph3} / DX-Ball"
 
 #: website/public/showcase/dx-ball/index.html:204
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8015,7 +8018,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/showcase/dx-ball/index.html:297
 #: website/public/showcase/dx-ball/index.html:488
@@ -8050,7 +8053,7 @@ msgid ""
 "available. The investigation below shows the REA queries and evidence behind"
 " the answer."
 msgstr ""
-"Un mensaje de ejemplo para su agente de codificación, con el ejecutable "
+"Un mensaje de ejemplo para su agente de programación, con el ejecutable "
 "local disponible. La investigación a continuación muestra las consultas REA "
 "y la evidencia detrás de la respuesta."
 
@@ -8396,8 +8399,7 @@ msgid ""
 "investigation notes retain the Evidence IDs."
 msgstr ""
 "Grabado con REA 4.1.0 para el objetivo DX-Ball 1.07 fijado con hash. Las "
-"notas de investigación vinculadas conservan las identificaciones de las "
-"pruebas."
+"notas de investigación vinculadas conservan los identificadores de Evidence."
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/dx-
 #. ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/src/gameplay.c#L41" >
@@ -8510,7 +8512,7 @@ msgid ""
 msgstr ""
 "Para inspeccionar la función de panorámica de sonido usted mismo, siga las "
 "instrucciones de configuración del proyecto DX-Ball y proporcione su "
-"objetivo original correspondiente. Entonces corre:"
+"objetivo original correspondiente. Después ejecute:"
 
 #: website/public/showcase/dx-ball/index.html:733
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8656,7 +8658,7 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:showcase/index.html"
 msgid "{ph0}Home{ph1} / Showcases"
-msgstr "{ph0}Inicio{ph1} / Vitrinas"
+msgstr "{ph0}Inicio{ph1} / Casos prácticos"
 
 #: website/public/showcase/index.html:202
 msgctxt "page:showcase/index.html"
@@ -8857,7 +8859,7 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Showcases{ph3} / Notion"
-msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / Notion"
+msgstr "{ph0}Inicio{ph1} / {ph2}Casos prácticos{ph3} / Notion"
 
 #: website/public/showcase/notion/index.html:204
 msgctxt "page:showcase/notion/index.html"
@@ -9035,7 +9037,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:showcase/notion/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/showcase/notion/index.html:279
 #: website/public/showcase/notion/index.html:352
@@ -9069,7 +9071,7 @@ msgid ""
 "coding agent."
 msgstr ""
 "Un mensaje de ejemplo con el paquete de aplicaciones locales de Notion "
-"disponible para su agente de codificación."
+"disponible para su agente de programación."
 
 #: website/public/showcase/notion/index.html:301
 msgctxt "page:showcase/notion/index.html"
@@ -9182,8 +9184,8 @@ msgid ""
 "The main process uses another wrapper. Its {ph0} method registers an {ph1} "
 "receiver for that channel."
 msgstr ""
-"El proceso principal usa otro envoltorio. Su {ph0} el método registra un "
-"{ph1} receptor para ese canal."
+"El proceso principal usa otro envoltorio. Su método {ph0} registra un "
+"receptor {ph1} para ese canal."
 
 #: website/public/showcase/notion/index.html:434
 msgctxt "page:showcase/notion/index.html"
@@ -9500,7 +9502,7 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Showcases{ph3} / TH04"
-msgstr "{ph0}Inicio{ph1} / {ph2}Vitrinas{ph3} / TH04"
+msgstr "{ph0}Inicio{ph1} / {ph2}Casos prácticos{ph3} / TH04"
 
 #: website/public/showcase/th04/index.html:204
 msgctxt "page:showcase/th04/index.html"
@@ -9689,7 +9691,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/showcase/th04/index.html:283
 #: website/public/showcase/th04/index.html:339
@@ -9713,8 +9715,7 @@ msgid ""
 "it at the player. Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
 "{ph0}›{ph1}{ph2}Usa REA para descubrir cómo TH04 crea un anillo de balas y "
-"lo apunta al jugador. Explique el cálculo y muestre el "
-"código.{ph3}{ph4}{ph5}"
+"lo apunta al jugador. Explica el cálculo y muestra el código.{ph3}{ph4}{ph5}"
 
 #: website/public/showcase/th04/index.html:301
 msgctxt "page:showcase/th04/index.html"
@@ -9810,7 +9811,7 @@ msgstr ""
 #: website/public/showcase/th04/index.html:400
 msgctxt "page:showcase/th04/index.html"
 msgid "Read the ring's multiply and divide"
-msgstr "Lee el anillo multiplica y divide"
+msgstr "Lee la multiplicación y la división del anillo"
 
 #. {ph0}: <code>SI</code>
 #. {ph1}: <code>DS:53AF</code>
@@ -10260,8 +10261,8 @@ msgid ""
 "{ph0}Current project state{ph1}{ph2}DOS verification and the separate native"
 " x64 port.{ph3}"
 msgstr ""
-"{ph0}Estado actual del proyecto{ph1}{ph2}Verificación DOS y el puerto x64 "
-"nativo separado.{ph3}"
+"{ph0}Estado actual del proyecto{ph1}{ph2}Verificación en DOS y el port "
+"nativo para x64, independiente.{ph3}"
 
 #: website/public/showcase/th04/index.html:6
 msgctxt "page:showcase/th04/index.html"
@@ -10516,7 +10517,7 @@ msgstr "Un analista pensando en una computadora"
 #: website/public/assets/figures/ctf-mask-equation.svg:24
 msgctxt "figure:ctf-mask-equation.svg"
 msgid "One check reveals one character"
-msgstr "Un cheque revela un carácter"
+msgstr "Una comprobación revela un carácter"
 
 #: website/public/assets/figures/ctf-mask-equation.svg:3
 msgctxt "figure:ctf-mask-equation.svg"
@@ -10534,7 +10535,7 @@ msgstr ""
 msgctxt "figure:ctf-mask-equation.svg"
 msgid "The seventh check. Cell labels are input positions, starting at 0."
 msgstr ""
-"El séptimo cheque. Las etiquetas de celda son posiciones de entrada, "
+"La séptima comprobación. Las etiquetas de celda son posiciones de entrada, "
 "comenzando en 0."
 
 #: website/public/assets/figures/ctf-mask-equation.svg:27
@@ -11565,7 +11566,7 @@ msgid ""
 " the proposed changes."
 msgstr ""
 "Con {ph0} y npm disponible, ejecute el programa de instalación, elija su "
-"agente de codificación y revise los cambios propuestos."
+"agente de programación y revise los cambios propuestos."
 
 #. {ph0}: <span translate="no">Node.js</span>
 #: website/public/first-investigation/index.html:209
@@ -12561,7 +12562,7 @@ msgstr "Lo que nos enseñó su resultado"
 #: website/public/blog/reverse-engineering-models/index.html:510
 msgctxt "page:blog/reverse-engineering-models/index.html"
 msgid "Try a different way to copy the results"
-msgstr "Pruebe una forma diferente de copiar los resultados."
+msgstr "Pruebe una forma diferente de copiar los resultados"
 
 #: website/public/blog/reverse-engineering-models/index.html:511
 msgctxt "page:blog/reverse-engineering-models/index.html"
@@ -12584,7 +12585,7 @@ msgstr ""
 #: website/public/blog/reverse-engineering-models/index.html:523
 msgctxt "page:blog/reverse-engineering-models/index.html"
 msgid "Keep the temporary results alive together"
-msgstr "Mantener todas las variables temporales válidas al mismo tiempo."
+msgstr "Mantener todas las variables temporales válidas al mismo tiempo"
 
 #: website/public/blog/reverse-engineering-models/index.html:524
 msgctxt "page:blog/reverse-engineering-models/index.html"
@@ -12624,11 +12625,11 @@ msgid ""
 " next decision. Keeping ineffective variations matters too: they tell a "
 "later agent which hypotheses have already been tested in that context."
 msgstr ""
-"Un registro de capacitación que mantenga esta secuencia puede enseñar más "
-"que la fuente final por sí sola. Conecta cada cambio propuesto con un "
-"resultado observado y la siguiente decisión. Mantener variaciones ineficaces"
-" también es importante: le dicen a un agente posterior qué hipótesis ya han "
-"sido probadas en ese contexto."
+"Un registro de entrenamiento que mantenga esta secuencia puede enseñar más "
+"que el código fuente final por sí solo. Conecta cada cambio propuesto con un"
+" resultado observado y la siguiente decisión. Mantener variaciones "
+"ineficaces también es importante: le dicen a un agente posterior qué "
+"hipótesis ya han sido probadas en ese contexto."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -13257,12 +13258,12 @@ msgstr "En esta página"
 #: website/public/blog/reverse-engineering-models/index.html:260
 msgctxt "page:blog/reverse-engineering-models/index.html"
 msgid "Models and reverse engineering essay"
-msgstr "Modelos y ensayo de ingeniería inversa."
+msgstr "Ensayo sobre modelos e ingeniería inversa"
 
 #: website/public/blog/reverse-engineering-models/index.html:498
 msgctxt "page:blog/reverse-engineering-models/index.html"
 msgid "Selected reconstruction experiments"
-msgstr "Experimentos de reconstrucción seleccionados."
+msgstr "Experimentos de reconstrucción seleccionados"
 
 #: website/public/blog/reverse-engineering-models/index.html:892
 msgctxt "page:blog/reverse-engineering-models/index.html"
@@ -15357,7 +15358,7 @@ msgid ""
 "create, edit, and delete data. REA records the app you provide; you start it"
 " and prepare its test data."
 msgstr ""
-"{ph0}Configure REA con su agente de codificación{ph1}. Para grabar una "
+"{ph0}Configure REA con su agente de programación{ph1}. Para grabar una "
 "aplicación, necesita un navegador de la familia Chrome y una instancia de "
 "prueba en ejecución en la que el agente pueda crear, editar y eliminar "
 "datos. REA graba la aplicación que usted le indique; usted la inicia y "
@@ -15405,7 +15406,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de programación"
 
 #: website/public/guides/rl-environments/index.html:302
 #: website/public/guides/rl-environments/index.html:347
@@ -15571,7 +15572,7 @@ msgid ""
 "Start with one operation the environment supports:"
 msgstr ""
 "Use el entorno con su framework de RL para definir objetivos, puntuar "
-"resultados y ejecutar el entrenamiento. Su agente de codificación puede "
+"resultados y ejecutar el entrenamiento. Su agente de programación puede "
 "ayudarle a escribir las tareas y las comprobaciones. Empiece por una "
 "operación que el entorno admita:"
 
