@@ -18,10 +18,11 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 
-import type {
-  ArtifactEntry,
-  ArtifactReaderTraversal,
-  ArtifactTraversalOptions,
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
 } from "../resources/ArtifactReader.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
@@ -427,10 +428,13 @@ describe("GodotPckArtifactReader member streams", () => {
         expect(prefix.value.byteLength).toBeLessThan(data.length);
         const reason = new Error("stopped after reading a member prefix");
         controller.abort(reason);
-        await expect(chunks.next()).rejects.toMatchObject({
-          reason: "cancelled",
-          cause: reason,
-        });
+        const failure = await chunks.next().catch((cause: unknown) => cause);
+        if (!(failure instanceof ArtifactReaderFailure))
+          throw new Error("Expected a typed member cancellation", {
+            cause: failure,
+          });
+        expect(failure.reason).toBe("cancelled");
+        expect(failure.cause).toBe(reason);
       },
     );
   });
