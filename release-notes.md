@@ -189,6 +189,7 @@
 * **cli:** record the caller's --join-path spelling in Apple IPS Evidence ([#10606](https://github.com/morluto/rea/issues/10606)) ([11c1e45](https://github.com/morluto/rea/commit/11c1e45cce80555133a352617a94a11dd22cf409))
 * **cli:** refuse csv and tsv formats on --llms, --llms-full, and --schema ([#11778](https://github.com/morluto/rea/issues/11778)) ([ab904c7](https://github.com/morluto/rea/commit/ab904c793cf07f50bc52eb25bf724ce45de886c2))
 * **cli:** refuse silent direct command-registry execution ([#11204](https://github.com/morluto/rea/issues/11204)) ([6136c6f](https://github.com/morluto/rea/commit/6136c6f3babd5cf2ada552341003829d41a06f71))
+* **cli:** reject blank paths in JSON input schemas ([#11794](https://github.com/morluto/rea/issues/11794)) ([eb0d1df](https://github.com/morluto/rea/commit/eb0d1df3ccd80ba5f2c7d72c599ad15ba467764f))
 * **cli:** reject extra shell completion arguments ([#11767](https://github.com/morluto/rea/issues/11767)) ([d511e8b](https://github.com/morluto/rea/commit/d511e8baf1a6729b033318e449b2156357b143b6))
 * **cli:** render help in REA and list csv and tsv formats ([#11688](https://github.com/morluto/rea/issues/11688)) ([a8cd584](https://github.com/morluto/rea/commit/a8cd584ccf90fb32ce0ef14e6eeb1c040fe6db30))
 * **cli:** report observe-web-session progress on stderr ([3e95d22](https://github.com/morluto/rea/commit/3e95d22dd4bfd3274e613e76ededd899381fd078))
