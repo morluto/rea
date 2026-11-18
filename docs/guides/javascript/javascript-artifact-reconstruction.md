@@ -365,8 +365,9 @@ Missing package context likewise retains a conditional interpretation for
 ambiguous JavaScript through application analysis and reference import;
 neither recovery proves runtime module mode.
 Source indexes and later-line columns still refer to the original text.
-Proven CommonJS loading with that prefix remains unparseable, as it is in Node;
-a plain hashbang stays valid.
+CommonJS sources with this prefix retain a conditional interpretation through
+ES module import. Direct execution and require can reject the same source.
+A plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
 angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.

@@ -54,6 +54,8 @@ const fixture = async () => {
       '\uFEFF#!/usr/bin/env node\nconst {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
     "rejected.js":
       '\uFEFF#!/usr/bin/env node\nconst {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
+    "invoke-commonjs.mjs":
+      'const print = console.log; console.log = () => {}; await import("./rejected.cjs"); await import("./rejected.js"); print(JSON.stringify({loaded:true}));',
     "plain.cjs":
       '#!/usr/bin/env node\nconst {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
     "dep.mjs": "export const marker=42;",
@@ -89,6 +91,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         code: 1,
         stderr: expect.stringContaining("SyntaxError"),
       });
+    expect(await runNodeJsonControl(root, "invoke-commonjs.mjs")).toEqual({
+      loaded: true,
+    });
     expect(await runNodeJsonControl(root, "esm/invoke.mjs")).toEqual(
       importedDotfiles.map(() => 42),
     );
@@ -103,7 +108,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       cli,
       root,
     );
-    expect(statistics.parse_failures).toBe(2);
+    expect(statistics.parse_failures).toBe(0);
     for (const [path, kind, target] of [
       ["module.mjs", "static-import", "dep.mjs"],
       ["esm/main.js", "static-import", "dep.mjs"],
@@ -113,6 +118,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["typed.mts", "static-import", "dep.mjs"],
       ["typed.cts", "require", "dep.cjs"],
       ["plain.cjs", "require", "dep.cjs"],
+      ["rejected.cjs", "require", "dep.cjs"],
+      ["rejected.js", "require", "dep.cjs"],
       ...importedDotfiles.map(
         ({ path }) => [path, "static-import", "dep.mjs"] as const,
       ),
@@ -170,22 +177,28 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ]),
       },
     });
-    expect(
-      graph.edges.filter(
-        ({ relation, evidence }) =>
-          relation === "imports" &&
-          evidence.location.available &&
-          evidence.location.value.kind === "source-range" &&
-          ["rejected.cjs", "rejected.js"].includes(
-            evidence.location.value.source,
-          ),
-      ),
-    ).toEqual([]);
+    for (const path of ["rejected.cjs", "rejected.js"]) {
+      expect(
+        graph.nodes.flatMap(({ observations }) => observations),
+      ).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            path,
+            parse_status: "partial",
+            analysis_coverage: expect.objectContaining({
+              semantics: expect.objectContaining({
+                uncertainty: ["conditional-loader"],
+              }),
+            }),
+          }),
+        }),
+      );
+    }
   },
 );
 
 cliTest.runIf(process.platform !== "win32")(
-  "reference import retains module imports and rejects CommonJS BOM/hashbangs",
+  "reference import retains conditional CommonJS BOM/hashbang dependencies",
   async ({ cli }) => {
     const { root, files } = await fixture();
     const output = await cli.run({
@@ -220,7 +233,7 @@ cliTest.runIf(process.platform !== "win32")(
       graph.parse_failures
         .map(({ path }) => path)
         .sort((a, b) => a.localeCompare(b)),
-    ).toEqual(["rejected.cjs", "rejected.js"]);
+    ).toEqual([]);
     for (const [path, parseState] of [
       ["module.mjs", "parsed"],
       ["esm/main.js", "parsed"],
@@ -254,11 +267,17 @@ cliTest.runIf(process.platform !== "win32")(
         parse_state: "parsed",
       }),
     );
-    expect(
-      graph.relationships.filter(({ from_path }) =>
-        from_path.startsWith("rejected."),
-      ),
-    ).toEqual([]);
+    for (const path of ["rejected.cjs", "rejected.js"]) {
+      expect(graph.relationships).toContainEqual(
+        expect.objectContaining({
+          from_path: path,
+          to: "dep.cjs",
+          kind: "requires",
+          parse_state: "partial",
+          resolution: "internal",
+        }),
+      );
+    }
   },
 );
 
