@@ -17,11 +17,11 @@ const input = analyzeWebBundleInputSchema.parse({
   fetch_source_maps: true,
 });
 
-const leaf = (source: string, mappings = "AAAA") => ({
+const leaf = (source: string, mappings = "AAAA", names: string[] = []) => ({
   version: 3,
   sources: [source],
   sourcesContent: ["export const value = 1;"],
-  names: [],
+  names,
   mappings,
 });
 
@@ -160,13 +160,11 @@ it("accepts mappings at the next section start and rejects mappings beyond it", 
   const text = JSON.stringify(
     indexed(
       section(0, 0, {
-        ...leaf("same.ts", "AAAAA,UAAAA"),
-        names: ["first"],
+        ...leaf("same.ts", "AAAAA,UAAAA", ["first"]),
         sourcesContent: ["export const first = 1;"],
       }),
       section(0, 10, {
-        ...leaf("same.ts", "AAAAA"),
-        names: ["second"],
+        ...leaf("same.ts", "AAAAA", ["second"]),
         sourcesContent: ["export const second = 2;"],
       }),
     ),
