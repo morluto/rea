@@ -121,8 +121,8 @@ const sectionPlacement = (
 
 /**
  * Read a thin Mach-O's section table from its header and load commands, as
- * inspect_macho reports them. A section that declares no instructions holds
- * data; a format failure leaves the inventory unclassified with its reason.
+ * inspect_macho reports them. Retain both section instruction flags and segment
+ * executability. A format failure leaves the inventory unclassified with its reason.
  */
 export const readKunaMachoLayout = async (head: {
   readonly bytes: number;
@@ -364,12 +364,12 @@ export const kunaEntryLimitations = (
     : [];
 
 /**
- * What a listing omitted as data, and what it kept without a classification,
+ * What a listing omitted from its procedures or kept without a classification,
  * among the inventory entries its query selected.
  */
 export const kunaInventoryLimitations = (
   layout: KunaInventoryLayout,
-  omittedRegions: readonly string[],
+  omitted: readonly KunaDataPlacement[],
   unplaced: number,
 ): readonly string[] => {
   if (layout.status === "unavailable")
@@ -377,19 +377,23 @@ export const kunaInventoryLimitations = (
       `REA could not read the target's Mach-O section table (${layout.reason}), so Kuna's inventory is kept unclassified and may include data symbols.`,
     ];
   const limitations: string[] = [];
-  if (omittedRegions.length > 0) {
+  if (omitted.length > 0) {
     const counts = new Map<string, number>();
-    for (const region of omittedRegions)
+    for (const { region } of omitted)
       counts.set(region, (counts.get(region) ?? 0) + 1);
-    const one = omittedRegions.length === 1;
+    const one = omitted.length === 1;
+    const entries = one ? "it" : "them";
+    const omission = omitted.some(({ codePossible }) => codePossible)
+      ? `REA leaves ${entries} out of the procedure inventory. For entries in sections mapped by executable segments, the absence of instruction flags leaves code status uncertain.`
+      : `REA classifies ${entries} as data and leaves ${entries} out of the procedure inventory.`;
     limitations.push(
-      `Kuna's inventory also lists ${String(omittedRegions.length)} ${one ? "entry" : "entries"} in Mach-O data regions (${[
+      `Kuna's inventory also lists ${String(omitted.length)} ${one ? "entry" : "entries"} in Mach-O data regions (${[
         ...counts,
       ]
         .map(([region, count]) => `${region}: ${String(count)}`)
         .join(
           "; ",
-        )}): the header, or sections whose attributes declare no instructions. REA omits ${one ? "it as data rather than a procedure entry" : "them as data rather than procedure entries"}; address_name and xrefs still accept ${one ? "its address" : "their addresses"}.`,
+        )}): the header, or sections whose attributes declare no instructions. ${omission} address_name and xrefs still accept ${one ? "its address" : "their addresses"}.`,
     );
   }
   if (unplaced > 0) {

@@ -38,7 +38,7 @@ const PROCEDURES = [
 ];
 
 const OMITTED =
-  "Kuna's inventory also lists 5 entries in Mach-O data regions (Mach-O header and load commands: 1; __TEXT,__const: 1; __DATA,__data: 2; __DATA,__bss: 1): the header, or sections whose attributes declare no instructions. REA omits them as data rather than procedure entries; address_name and xrefs still accept their addresses.";
+  "Kuna's inventory also lists 5 entries in Mach-O data regions (Mach-O header and load commands: 1; __TEXT,__const: 1; __DATA,__data: 2; __DATA,__bss: 1): the header, or sections whose attributes declare no instructions. REA leaves them out of the procedure inventory. For entries in sections mapped by executable segments, the absence of instruction flags leaves code status uncertain. address_name and xrefs still accept their addresses.";
 const UNPLACED =
   "1 Kuna inventory entry lies outside every Mach-O section and the header, so REA cannot tell whether it is code or data and keeps it.";
 
@@ -62,9 +62,16 @@ it("keeps code, stubs and import slots but omits Mach-O data symbols from proced
       { address: "0x100000400", value: "main" },
     ]);
     expect(searched.limitations).toContain(
-      "Kuna's inventory also lists 1 entry in Mach-O data regions (__DATA,__data: 1): the header, or sections whose attributes declare no instructions. REA omits it as data rather than a procedure entry; address_name and xrefs still accept its address.",
+      "Kuna's inventory also lists 1 entry in Mach-O data regions (__DATA,__data: 1): the header, or sections whose attributes declare no instructions. REA classifies it as data and leaves it out of the procedure inventory. address_name and xrefs still accept its address.",
     );
     expect(searched.limitations).not.toContain(UNPLACED);
+    const executableSearch = await run(client, "search_procedures", {
+      pattern: "table",
+    });
+    expect(executableSearch.result).toEqual([]);
+    expect(executableSearch.limitations).toContain(
+      "Kuna's inventory also lists 1 entry in Mach-O data regions (__TEXT,__const: 1): the header, or sections whose attributes declare no instructions. REA leaves it out of the procedure inventory. For entries in sections mapped by executable segments, the absence of instruction flags leaves code status uncertain. address_name and xrefs still accept its address.",
+    );
     const unmatched = await run(client, "search_procedures", {
       pattern: "helper",
     });

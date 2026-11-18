@@ -1055,7 +1055,7 @@ export class KunaSessionClient implements AnalysisClient {
       readonly value: string;
       readonly matched_aliases?: string[];
     }[] = [];
-    const omitted: string[] = [];
+    const omitted: KunaDataPlacement[] = [];
     let unclassified = 0;
     for (const entry of inventory) {
       const row = { address: entry.address, value: entry.name };
@@ -1066,7 +1066,7 @@ export class KunaSessionClient implements AnalysisClient {
       if (selected === undefined) continue;
       const placement = data.get(entry);
       if (placement !== undefined) {
-        omitted.push(placement.region);
+        omitted.push(placement);
         continue;
       }
       if (unplaced.has(entry)) unclassified += 1;
