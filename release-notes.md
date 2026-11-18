@@ -411,6 +411,8 @@
 * **test:** run the Hopper launch-failure CLI case in fresh processes on macOS CI ([#10825](https://github.com/morluto/rea/issues/10825)) ([4e84af7](https://github.com/morluto/rea/commit/4e84af75317012accba05167e68e3a65c5c7b104))
 * **test:** serve fake Hopper segments in the bridge's reply contract ([#10734](https://github.com/morluto/rea/issues/10734)) ([2237f93](https://github.com/morluto/rea/commit/2237f936f0059ccba1d02afb0f1ba134d375ed62))
 * **tests:** restore worker fixture and allow setup completion ([6878a84](https://github.com/morluto/rea/commit/6878a847965ab63311c3a3fe82d6e83f15fab0fa))
+* **tests:** treat zombies as stopped in process liveness checks ([6c3e9e0](https://github.com/morluto/rea/commit/6c3e9e0847f24850383450b4d04e5122c0da4f0e))
+* **tests:** treat zombies as stopped in process liveness checks ([#11819](https://github.com/morluto/rea/issues/11819)) ([#12034](https://github.com/morluto/rea/issues/12034)) ([6c3e9e0](https://github.com/morluto/rea/commit/6c3e9e0847f24850383450b4d04e5122c0da4f0e))
 * **v8:** report a pre-13.4 V8 module code cache as a module ([7a03182](https://github.com/morluto/rea/commit/7a031823492dbbb9d651574d7323e0341eadb19b)), closes [#10262](https://github.com/morluto/rea/issues/10262) [#10263](https://github.com/morluto/rea/issues/10263)
 * **verifiers:** accept Hopper's declared unknown relationship coverage ([30d23cc](https://github.com/morluto/rea/commit/30d23ccd926b41c9b23c971e0901a4fe383bc1b0))
 * **verifiers:** release fixture roots only after their owners finish ([#10491](https://github.com/morluto/rea/issues/10491)) ([67ce671](https://github.com/morluto/rea/commit/67ce671d66876da51c03220b2d4a16e6e02f4f00))
