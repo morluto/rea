@@ -8,7 +8,6 @@ export const binaryMetadataArchitecture = (architecture: string) => {
     case "amd64":
       return "x86_64";
     case "ppc":
-    case "ppc64":
       return "powerpc";
     default:
       return BINARY_ARCHITECTURES.find(

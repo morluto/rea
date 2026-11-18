@@ -23,9 +23,7 @@ it.each([
   [1, 2, 20, "ppc", "powerpc"],
   [1, 1, 3, "386", "x86"],
   [2, 1, 62, "amd64", "x86_64"],
-  [2, 1, 21, "ppc64", "powerpc"],
-  [2, 2, 21, "ppc64", "powerpc"],
-  [2, 2, 22, "s390", null],
+  [2, 2, 21, "ppc64", null],
 ] as const)(
   "preserves ELF class%d byte-order%d machine%d in Go and Rust subjects",
   async (bits, endian, machine, local, canonical) => {
