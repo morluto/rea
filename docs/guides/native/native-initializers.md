@@ -99,10 +99,16 @@ Symbol and section names are untrusted file text and carry
 For PIE executables and shared objects the array slots are usually zero on
 disk. A slot is reported `unresolved`, never as its stored zero, when the
 dynamic relocation tables use an encoding this inspection does not decode
-(for example Android packed relocations or an unsupported machine). Relative
+(for example Android packed APS2 relocations or an unsupported machine). Relative
 relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
 also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
+
+RELR address/bitmap tables support both standard `DT_RELR`/`DT_RELRSZ`/
+`DT_RELRENT` and Android's older `DT_ANDROID_RELR`/`DT_ANDROID_RELRSZ`/
+`DT_ANDROID_RELRENT` tags. Both retain `relr` slot provenance and the original
+record file offsets. Repeated declarations and mixtures of the two tag
+families are refused instead of choosing, combining or applying tables twice.
 
 A `COPY` relocation writes as many bytes as the image's own dynamic symbol
 records, and a TLS descriptor relocation writes two words. A slot outside

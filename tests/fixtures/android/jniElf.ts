@@ -210,6 +210,7 @@ export const jniElfFixture = (
     readonly bits?: 32 | 64;
     readonly machine?: number;
     readonly encoding?: "rel" | "rela" | "relr";
+    readonly relrTags?: "standard" | "android";
     readonly little?: boolean;
     readonly symbolicFirstFunction?: boolean;
     readonly packed?: boolean;
@@ -290,9 +291,12 @@ export const jniElfFixture = (
   const tags: [bigint, bigint][] =
     encoding === "relr"
       ? [
-          [36n, base + 0x800n],
-          [35n, BigInt(relocationSize)],
-          [37n, BigInt(word)],
+          [options.relrTags === "android" ? 0x6fffe000n : 36n, base + 0x800n],
+          [
+            options.relrTags === "android" ? 0x6fffe001n : 35n,
+            BigInt(relocationSize),
+          ],
+          [options.relrTags === "android" ? 0x6fffe003n : 37n, BigInt(word)],
         ]
       : encoding === "rela"
         ? [

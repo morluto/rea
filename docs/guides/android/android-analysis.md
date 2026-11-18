@@ -429,7 +429,8 @@ and their relocation sources. JNI exports follow the
 failed escaping does not acquire an invented export match. Tables require
 NUL-terminated [Modified UTF-8 strings](https://docs.oracle.com/en/java/javase/21/docs/specs/jni/types.html#modified-utf-8-strings),
 valid descriptors and executable load mappings. REL, RELA and RELR retain
-separate provenance; unsupported packed relocations and unresolved pointer
+separate provenance. RELR accepts standard and older Android dynamic tags;
+Android packed APS2 relocations and unresolved pointer
 spans stay explicit unknowns.
 
 A static `JNINativeMethod` entry names no class. Attribute it uniquely only
