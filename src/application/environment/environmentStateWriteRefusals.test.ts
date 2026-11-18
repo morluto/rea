@@ -58,13 +58,18 @@ const nested = (depth: number): JsonValue =>
   Array.from({ length: depth }).reduce<JsonValue>((inner) => [inner], 1);
 
 describe("served document writes", () => {
-  it("accepts only the members the capture sent, as the JSON types the document holds", () => {
+  it("changes only the recorded document path with the learned member names and types", () => {
     const settings = servedFrom(SETTINGS_ROWS);
     expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
       served: true,
       effect: "document",
     });
     expectRefusedUnchanged(settings, [
+      [
+        PATCH_SETTINGS,
+        { id: "2", body: { theme: "blue" } },
+        "holds this document only at /api/orgs/1/settings",
+      ],
       [
         PATCH_SETTINGS,
         { id: "1", body: { theme: 5, extra: true } },
@@ -76,6 +81,7 @@ describe("served document writes", () => {
         "Member extra is not one the capture showed stored",
       ],
     ]);
+    expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(DARK);
     const blue = { theme: "blue", meta: DARK.meta };
     expect(
       settings.answer(PATCH_SETTINGS, { id: "1", body: { theme: "blue" } }),
@@ -108,18 +114,6 @@ describe("served document writes", () => {
     expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
       served: false,
     });
-  });
-
-  it("changes the document only at the path the state holds it", () => {
-    const settings = servedFrom(SETTINGS_ROWS);
-    expectRefusedUnchanged(settings, [
-      [
-        PATCH_SETTINGS,
-        { id: "2", body: { theme: "blue" } },
-        "holds this document only at /api/orgs/1/settings",
-      ],
-    ]);
-    expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(DARK);
   });
 });
 

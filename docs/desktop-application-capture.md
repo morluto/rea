@@ -42,7 +42,7 @@ naming a folder under the working directory. The entry's `Exec` line is
 expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
 entry's `Path` or the home directory. When the line starts with
-`env NAME=value`, the program is found on the `PATH` those assignments set,
+`env NAME=value` or `env -- NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
 in, and their XDG folders name the state directories. Otherwise the program is
 looked up on the host's `PATH` in the order the launch searches it, and one

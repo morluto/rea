@@ -57,10 +57,17 @@ const fail = (message: string): never => {
 // few thousand nodes; the budget bounds sibling fan-out, which depth does not.
 const ASN1_NODE_BUDGET = 16_384;
 
+// Windows dual signing embeds whole SignedData values in unsigned attributes:
+// a nested signature (1.3.6.1.4.1.311.2.4.1) holding an RFC 3161 timestamp
+// (1.3.6.1.4.1.311.3.3.1). Each embedding adds eight levels, and signed system
+// binaries put values 33 levels below the outermost one, past the shared
+// reader's default of 32. The cap still bounds recursion for hostile input.
+const ASN1_DEPTH_BUDGET = 64;
+
 /** Decode one bounded ASN.1 TLV, including indefinite constructed BER values. */
 export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
   try {
-    return new Asn1BerReader(bytes, ASN1_NODE_BUDGET).read();
+    return new Asn1BerReader(bytes, ASN1_NODE_BUDGET, ASN1_DEPTH_BUDGET).read();
   } catch (cause: unknown) {
     if (cause instanceof Asn1BerFailure)
       throw new PeCertificateAsn1Failure(

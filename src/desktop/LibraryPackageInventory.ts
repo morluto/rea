@@ -443,6 +443,7 @@ const packageSources = async (
   names: readonly string[],
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
+  statusFile?: string,
 ): Promise<ReadonlyMap<string, readonly string[]> | undefined> => {
   const sources = new Map<string, readonly string[]>();
   for (let start = 0; start < names.length; start += QUERY_BATCH) {
@@ -454,7 +455,10 @@ const packageSources = async (
       ),
     );
     if (output === undefined) return undefined;
-    for (const [name, listed] of parseAptPolicyPackageSources(output))
+    for (const [name, listed] of parseAptPolicyPackageSources(
+      output,
+      statusFile,
+    ))
       sources.set(name, listed);
   }
   return sources;
@@ -466,6 +470,7 @@ export const installablePackages = async (
   available: {
     readonly origins: ReadonlyMap<string, string | null> | undefined;
     readonly declared: ReadonlySet<string>;
+    readonly statusFile?: string | undefined;
   },
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
@@ -473,7 +478,7 @@ export const installablePackages = async (
   const sources =
     names.length === 0
       ? new Map<string, readonly string[]>()
-      : await packageSources(names, runQuery, signal);
+      : await packageSources(names, runQuery, signal, available.statusFile);
   return sources === undefined
     ? undefined
     : installableLibraryPackages(names, { ...available, sources });

@@ -45,6 +45,10 @@ describe("resolveAdbBinary", () => {
     await expect(
       resolveAdbBinary({ [ADB_BINARY_ENV]: "tools/adb" }, "linux"),
     ).rejects.toThrow(/must be an absolute path/u);
+    // Rooted on the current drive, so it names a different file per drive.
+    await expect(
+      resolveAdbBinary({ [ADB_BINARY_ENV]: "\\tools\\adb.exe" }, "win32"),
+    ).rejects.toThrow(/must be an absolute path/u);
   });
 });
 

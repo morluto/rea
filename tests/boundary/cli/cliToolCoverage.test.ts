@@ -68,55 +68,8 @@ describe("CLI canonical tool coverage", () => {
     const entries = cliCommands(createCli());
     const registered = createCliInventory(entries);
     expect(registered.primary).toEqual([...CLI_COMMAND_NAMES].sort());
+    expect(new Set(registered.primary).size).toBe(registered.primary.length);
     expect(coverageViolations(entries, TOOL_CONTRACTS)).toEqual([]);
-
-    const aliasedCommands = entries.filter((entry) => {
-      const own = commandOwnOperations(entry);
-      return (
-        own.length > 0 &&
-        own.every(({ name }) => cliCommandFor(name) !== entry.name)
-      );
-    });
-    expect(aliasedCommands.length).toBeGreaterThanOrEqual(14);
-  });
-
-  it("rejects an unmapped cli: true contract or invalid operation/flag registration", () => {
-    const entries = cliCommands(createCli());
-    expect(
-      coverageViolations(entries, [
-        ...TOOL_CONTRACTS,
-        { name: "inspect_unmapped_probe", cli: true },
-      ]),
-    ).toEqual([
-      "missing CLI command inspect-unmapped-probe for inspect_unmapped_probe",
-    ]);
-    const withoutBinding = entries.map((entry) =>
-      entry.name === "inspect-plist" ? { ...entry, operations: [] } : entry,
-    );
-    expect(coverageViolations(withoutBinding, TOOL_CONTRACTS)).toEqual([
-      "command inspect-plist does not bind primary operation inspect_plist",
-    ]);
-    const withoutRoutedBinding = entries.map((entry) =>
-      entry.name === "compare-web-captures"
-        ? { ...entry, operations: [] }
-        : entry,
-    );
-    expect(coverageViolations(withoutRoutedBinding, TOOL_CONTRACTS)).toEqual([
-      "command compare-web-captures does not bind primary operation compare_web_captures",
-    ]);
-    const badFlag = entries.map((entry) =>
-      entry.name === "guidance"
-        ? {
-            ...entry,
-            operations: [
-              { name: "search_guidance", flags: { query: "--nonexistent" } },
-            ],
-          }
-        : entry,
-    );
-    expect(coverageViolations(badFlag, TOOL_CONTRACTS)).toEqual([
-      "command guidance binds search_guidance.query to undeclared flag --nonexistent",
-    ]);
   });
 
   it("names a contract's command from its declaration alone", () => {

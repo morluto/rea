@@ -42,6 +42,8 @@ jobs:
       - name: Cache npm package downloads
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
       - run: npm run test:prepare
       - name: Run the complete configuration
         env:

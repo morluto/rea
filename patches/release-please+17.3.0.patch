@@ -81,6 +81,36 @@
                  // In this case, there is no squashed merge commit. This could be a simple
                  // merge commit, a rebase merge commit, or a direct commit to the branch.
                  // Fallback to fetching the list of commits from the REST API. In the future
+@@ -995,14 +995,21 @@
+      */
+     async getFileContentsOnBranch(path, branch) {
+         this.logger.debug(`Fetching ${path} from branch ${branch}`);
+-        try {
+-            return await this.fileCache.getFileContents(path, branch);
+-        }
+-        catch (e) {
+-            if (e instanceof git_file_utils_1.FileNotFoundError) {
+-                throw new errors_1.FileNotFoundError(path);
+-            }
+-            throw e;
++        for (let attempt = 0; ; attempt++) {
++            try {
++                return await this.fileCache.getFileContents(path, branch);
++            }
++            catch (e) {
++                if (e instanceof git_file_utils_1.FileNotFoundError) {
++                    throw new errors_1.FileNotFoundError(path);
++                }
++                // Retrying this read is safe even when a release proposal is being updated.
++                if (e?.status !== 504 || attempt >= 2) {
++                    throw e;
++                }
++                this.logger.info('Received HTTP 504 reading a repository file, retrying');
++                await (0, exports.sleepInMs)(1000 * (attempt + 1));
++            }
+         }
+     }
+     async getFileJson(path, branch) {
 @@ -1154,15 +1154,40 @@
       * @returns {string} HTML URL of the new file
       */
