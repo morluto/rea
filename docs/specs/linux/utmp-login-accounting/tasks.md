@@ -20,6 +20,12 @@
 
 ## Slice 2 — timeline and correlation
 
+- [ ] Decode a trailing record shorter than the modeled extent. A 375-byte
+      `glibc-time64` tail still holds the head, session, both time words and three
+      address words, but `UtmpRecord` promises a complete record, so keeping them
+      requires stating which members were readable instead of returning a shorter
+      `addressV6` that an absent word and a zero word would share.
+
 - [ ] Normalize records into a timeline that retains the source file and offset.
 - [ ] Correlate `wtmp` logouts with the `utmp` sessions that opened them.
 - [ ] Keep `btmp` failed logins distinguishable from successful ones.
