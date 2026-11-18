@@ -1,4 +1,4 @@
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { expect, onTestFinished } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
@@ -14,6 +14,12 @@ import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+
+const silentCliEnv = { REA_LOG_LEVEL: "silent" } as const;
+const defaultMcp = lazyLocalToolsMcp();
+const browserUnconfiguredMcp = lazyLocalToolsMcp({
+  REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
+});
 
 const expectRetainedSourceMap = async (
   path: string,
@@ -73,6 +79,7 @@ const expectCliSourceLocationSummary = async (
   const { bundlePath, evidenceId, sha256 } = expected;
   const missingSink = await cli.run({
     arguments: [...arguments_, "--detail", "summary"],
+    environment: silentCliEnv,
   });
   expect(missingSink.exitCode).toBe(1);
   expect(missingSink.json).toMatchObject({
@@ -87,6 +94,7 @@ const expectCliSourceLocationSummary = async (
       "--evidence_output",
       bundlePath,
     ],
+    environment: silentCliEnv,
   });
   expect(summary.exitCode, summary.stderr).toBe(0);
   expect(summary.stdout.length).toBeLessThan(30000);
@@ -361,9 +369,7 @@ cliTest(
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
-    const { call } = await connectLocalToolsMcp({
-      REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
-    });
+    const { call } = await browserUnconfiguredMcp();
     const leaf: unknown = JSON.parse(fixture.sourceMap.text);
     for (const [index, version] of [3, 2, null, undefined, "3"].entries()) {
       const text = JSON.stringify({
@@ -473,7 +479,7 @@ cliTest(
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
-    const { call } = await connectLocalToolsMcp();
+    const { call } = await defaultMcp();
     const leaf: unknown = JSON.parse(fixture.sourceMap.text);
     const empty = { version: 3, sources: [], names: [], mappings: "" };
     const nestedEmpty = {
@@ -622,9 +628,7 @@ cliTest(
         ],
       },
     });
-    const { call } = await connectLocalToolsMcp({
-      REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
-    });
+    const { call } = await browserUnconfiguredMcp();
     const response = await call("trace_web_source_location", {
       manifest_path: manifest,
       script_index: 0,
@@ -669,6 +673,7 @@ cliTest(
     ];
     const refused = await cli.run({
       arguments: [...args, "--source-map-bytes", "128"],
+      environment: silentCliEnv,
     });
     expect(refused.exitCode).toBe(1);
     expect((refused.json as { code?: unknown }).code).toBe("truncated");
@@ -684,6 +689,7 @@ cliTest(
         "--source-map-bytes",
         String(Buffer.byteLength(fixture.sourceMap.text)),
       ],
+      environment: silentCliEnv,
     });
     expect(recovered.exitCode, recovered.stderr).toBe(0);
     expect(recovered.json).toMatchObject({
@@ -739,6 +745,7 @@ cliTest(
     ];
     const refused = await cli.run({
       arguments: [...arguments_, "--source-map-bytes", "4194304"],
+      environment: silentCliEnv,
     });
     expect(refused.exitCode).toBe(1);
     expect(JSON.stringify(refused.json)).toContain(
@@ -746,6 +753,7 @@ cliTest(
     );
     const completed = await cli.run({
       arguments: arguments_,
+      environment: silentCliEnv,
     });
     expect(completed.exitCode, completed.stderr).toBe(0);
     const evidence = completed.json as {
@@ -767,7 +775,7 @@ cliTest(
       evidenceId: evidence.evidence_id,
       sha256: fixture.sourceMap.file.sha256,
     });
-    const { call } = await connectLocalToolsMcp();
+    const { call } = await defaultMcp();
     const input = {
       manifest_path: manifest,
       script_index: 0,
