@@ -554,7 +554,10 @@ async function verifyRejectedCom() {
     env,
     stderr: "pipe",
   });
-  const connection = await fallbackOwner.open(rejectedClient, rejectedTransport);
+  const connection = await fallbackOwner.open(
+    rejectedClient,
+    rejectedTransport,
+  );
   try {
     const opened = await rejectedClient.callTool(
       {

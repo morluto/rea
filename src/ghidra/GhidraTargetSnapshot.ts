@@ -50,11 +50,7 @@ export const createGhidraTargetSnapshot = async (
   const snapshotPath = join(runtimeRoot, snapshotFileName);
   if ((options.platform ?? HOST_PLATFORM.platform) === "win32") {
     const observed = await windowsPrivateRuntime(runtimeRoot)
-      .snapshot(
-        sourcePath,
-        snapshotFileName,
-        options.signal,
-      )
+      .snapshot(sourcePath, snapshotFileName, options.signal)
       .catch((cause: unknown) => {
         if (cause instanceof WindowsSnapshotCancelledError)
           throw new ArtifactReaderFailure("cancelled", cause.message, {
