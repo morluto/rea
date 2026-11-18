@@ -57,7 +57,9 @@ magic; zip inventory does not recurse into its partitions.
 
 A partition is reconstructed only when every install operation is REPLACE,
 ZERO or REPLACE_ZSTD (via `node:zlib` zstd), the new size is known and at
-most 32 MiB, and every needed blob extent is present. The reconstructed
+most 32 MiB, and every needed blob extent is present. When an operation
+declares `data_sha256_hash`, REA checks its stored blob bytes before writing
+or decompressing them. A mismatch prevents reconstruction. The reconstructed
 image is checked against `new_partition_info.hash` when that hash is
 present. Any other operation type leaves the occurrence inventoried with
 `hash_status: unavailable` and refuses extraction of that member.
