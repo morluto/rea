@@ -14,6 +14,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { splitNmSymbolRecords } from "../../../scripts/lib/conformance-fixtures.mjs";
 import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { runningTestDeadline } from "../../support/runningTestDeadline.js";
 import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const digest = (bytes: string | Buffer) =>
@@ -68,7 +69,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       await commands.exec(
         "cc",
         ["-c", join(sources, path), "-o", join(output, artifact)],
-        { timeout: 10_000 },
+        { timeout: runningTestDeadline() },
       );
       const bytes = await readFile(join(output, artifact));
       fixtures.push({
@@ -102,7 +103,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       [verifier, manifest, sources],
       {
         cwd: root,
-        timeout: 25_000,
+        timeout: runningTestDeadline(),
       },
     );
     if (!["complete", "fragment", "prefix-complete"].includes(mode))
@@ -148,7 +149,7 @@ it.each([
   await expect(
     commands.exec(process.execPath, [verifier, manifest, root], {
       cwd: root,
-      timeout: 10_000,
+      timeout: runningTestDeadline(),
     }),
   ).rejects.toMatchObject({
     code: 1,
