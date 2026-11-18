@@ -800,6 +800,7 @@
 * **environment:** check coverage diagnostics without repeating projection ([#11900](https://github.com/morluto/rea/issues/11900)) ([14b15ba](https://github.com/morluto/rea/commit/14b15ba8a5de5c7ebfb8a8d6da4a73c6e69751c3))
 * **environment:** consolidate captured write completion checks ([#11905](https://github.com/morluto/rea/issues/11905)) ([7973afd](https://github.com/morluto/rea/commit/7973afdfaa872efdb49fde70bbc703a9d729a005))
 * **environment:** consolidate clock parsing and formatting checks ([#11902](https://github.com/morluto/rea/issues/11902)) ([f687b68](https://github.com/morluto/rea/commit/f687b68d12658267c77b1ce30b4461301e20a2f7))
+* **environment:** consolidate write body and pointer checks ([#11910](https://github.com/morluto/rea/issues/11910)) ([70d9693](https://github.com/morluto/rea/commit/70d9693a01c7faf1a54174a74ef2ee05c1446f28))
 * **environment:** distinguish write cutoffs from record ordering ([#11908](https://github.com/morluto/rea/issues/11908)) ([c5d197b](https://github.com/morluto/rea/commit/c5d197b1b4e3adeaad8d6e15c9becddab5843217))
 * **environment:** isolate manifest identifier spelling cases ([#11901](https://github.com/morluto/rea/issues/11901)) ([16fb48f](https://github.com/morluto/rea/commit/16fb48f9b72072c97d77b4e827ef8fe768083147))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
