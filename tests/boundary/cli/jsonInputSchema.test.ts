@@ -326,6 +326,38 @@ it("advertises caller paths as local spellings the CLI resolves, not URLs", asyn
     expect(validate(document(path)), path).toBe(false);
 });
 
+// #11791: `minLength` alone admitted a spaces-only path, which the CLI leaves
+// unresolved and the contract then refuses, so the advertised schema and
+// execution disagreed.
+it("advertises caller paths as nonblank, matching the CLI's admission", async () => {
+  const input = advertisedInput(
+    (
+      await serve([
+        cliCommandFor("compare_source_to_bundle"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
+  );
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(input.contentSchema as AnySchema);
+  const document = (path: string) => ({
+    reference: { kind: "file", path },
+    application: {},
+  });
+  for (const path of [" ", "\t\n", "\u00a0", "\u3000", "\ufeff"])
+    expect(validate(document(path)), JSON.stringify(path)).toBe(false);
+  for (const path of ["ref.json", " ref.json ", "a/b"])
+    expect(validate(document(path)), JSON.stringify(path)).toBe(true);
+  // The shared schema the CLI parses with refuses the same values at runtime.
+  for (const path of [" ", "\t\n", "\u00a0", "\u3000", "\ufeff"])
+    expect(cliJsonCallerPathSchema.safeParse(path).success).toBe(false);
+  for (const path of ["ref.json", " ref.json ", "a/b"])
+    expect(cliJsonCallerPathSchema.safeParse(path).success).toBe(true);
+});
+
 it("validates representative parsed documents with the advertised schema", async () => {
   const input = advertisedInput(
     (

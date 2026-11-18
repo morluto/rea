@@ -287,15 +287,26 @@ const URL_REFERENCE_SOURCE = "(?:[Ff][Ii][Ll][Ee]:|[A-Za-z][A-Za-z0-9+.-]+://)";
 const URL_REFERENCE = new RegExp(`^${URL_REFERENCE_SOURCE}`, "u");
 
 /**
+ * `resolveCliJsonPaths` resolves a caller path only when it holds a
+ * non-whitespace character, and the contract rejects a blank path afterwards.
+ * A regex rather than a refinement, because the portable grammar accepts `\S`
+ * and the client should refuse a spaces-only path before execution does; the
+ * `minLength` above only rejects the empty string.
+ */
+const NONBLANK_PATH_PATTERN = /\S/u;
+
+/**
  * A caller-path field of a CLI JSON document as the CLI admits it: any
- * nonempty local spelling, which it resolves, but not a URL, which it leaves
+ * nonblank local spelling, which it resolves, but not a URL, which it leaves
  * for the contract to refuse. The pattern spells case-insensitivity out so
  * JSON Schema, which carries no regex flags, advertises the same rule.
  */
-export const cliJsonCallerPathSchema = localPathStringSchema.regex(
-  new RegExp(`^(?!${URL_REFERENCE_SOURCE})`, "u"),
-  "must be a local path, not a URL",
-);
+export const cliJsonCallerPathSchema = localPathStringSchema
+  .regex(
+    new RegExp(`^(?!${URL_REFERENCE_SOURCE})`, "u"),
+    "must be a local path, not a URL",
+  )
+  .regex(NONBLANK_PATH_PATTERN, "must contain a non-whitespace character");
 
 /**
  * Resolve named string fields of CLI-supplied JSON against the operator
