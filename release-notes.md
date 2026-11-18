@@ -803,6 +803,7 @@
 * **cli:** scope the entropy cleanup regression to the provider id ([abd6449](https://github.com/morluto/rea/commit/abd64498b7969956debeb45875db54ec11a28622))
 * **cli:** spy on union branches through the base Zod type so main typechecks ([#11627](https://github.com/morluto/rea/issues/11627)) ([18a47ee](https://github.com/morluto/rea/commit/18a47ee5aa863f1d2f990d2ded3168f6333b9d04))
 * **cli:** verify process cleanup through owned scopes ([#11893](https://github.com/morluto/rea/issues/11893)) ([8717f93](https://github.com/morluto/rea/commit/8717f9398f8777ebafa9451750781a4972360feb))
+* **cli:** verify the advertised outline-depth range ([#12061](https://github.com/morluto/rea/issues/12061)) ([d96f038](https://github.com/morluto/rea/commit/d96f0380aaa7e304dd0aafe050a9df324b10d0a5))
 * close the wait-deadline review gaps ([55c9e8e](https://github.com/morluto/rea/commit/55c9e8e546d36dd1286d23c8d0fa1bf7e71d5559))
 * compile MCP output validators on first use ([06e6401](https://github.com/morluto/rea/commit/06e64017505765b856f25f55b1ab545b110bbf1e))
 * **composition:** expect a Rizin start after closeAll to be refused as owner-closed ([#11211](https://github.com/morluto/rea/issues/11211)) ([70351fe](https://github.com/morluto/rea/commit/70351fe33b46969f58819740de023dff64dd645a))
