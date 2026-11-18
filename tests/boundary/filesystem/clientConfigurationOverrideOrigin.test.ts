@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { readClientConfigurationFiles } from "../../../src/application/ClientConfigurationFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it("attributes case-folded Windows overrides without disclosing values", async () => {
   const root = await createTestTempDirectory("rea-config-override-origin-");

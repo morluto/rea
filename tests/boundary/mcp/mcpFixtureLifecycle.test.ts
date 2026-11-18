@@ -199,27 +199,42 @@ it("cancels a real initialize handshake before awaiting its held server handler"
   }
 });
 
-it("keeps a failed handshake as the exact error when its SDK cleanup succeeds", async () => {
-  const fixture = createSdkFixture();
-  const server = fixture.server("failed-handshake");
-  const startup = new Error("controlled server handshake failure");
-  const connect = server.connect.bind(server);
-  server.connect = async (transport) => {
-    await connect(transport);
-    throw startup;
-  };
-  const serverClose = vi.spyOn(server, "close");
-  try {
-    await expect(fixture.mcp.connect(server)).rejects.toBe(startup);
-    expect(serverClose).toHaveBeenCalledTimes(1);
-    expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
-    await fixture.mcp.close();
-    expect(serverClose).toHaveBeenCalledTimes(1);
-    expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
-  } finally {
-    await fixture.dispose();
-  }
-});
+it.each(["server handshake", "client transport startup"] as const)(
+  "keeps the exact %s failure when its SDK cleanup succeeds",
+  async (phase) => {
+    const fixture = createSdkFixture();
+    const server = fixture.server("failed-handshake");
+    const startup = new Error(`controlled ${phase} failure`);
+    const pair = InMemoryTransport.createLinkedPair();
+    const makePair = vi
+      .spyOn(InMemoryTransport, "createLinkedPair")
+      .mockReturnValueOnce(pair);
+    if (phase === "server handshake") {
+      const connect = server.connect.bind(server);
+      server.connect = async (transport) => {
+        await connect(transport);
+        throw startup;
+      };
+    } else {
+      vi.spyOn(pair[0], "start").mockRejectedValueOnce(startup);
+    }
+    const serverClose = vi.spyOn(server, "close");
+    try {
+      await expect(fixture.mcp.connect(server)).rejects.toBe(startup);
+      expect(serverClose).toHaveBeenCalledTimes(1);
+      expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
+      await expect(
+        pair[1].send({ jsonrpc: "2.0", method: "probe" }),
+      ).rejects.toThrow();
+      await fixture.mcp.close();
+      expect(serverClose).toHaveBeenCalledTimes(1);
+      expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
+    } finally {
+      makePair.mockRestore();
+      await fixture.dispose();
+    }
+  },
+);
 
 it.each([new Error("controlled server close failure"), undefined])(
   "retains failed handshake cleanup and retries its exact owner: %s",

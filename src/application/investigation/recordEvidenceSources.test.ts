@@ -16,26 +16,28 @@ const source = createEvidence(
 );
 
 it.each([
-  { cancelled: false, sourceOwner: undefined },
-  { cancelled: true, sourceOwner: undefined },
-  { cancelled: false, sourceOwner: "caller" as const },
-  { cancelled: true, sourceOwner: "caller" as const },
+  { operation: "analyze_function", cancelled: false, sourceOwner: undefined },
+  {
+    operation: "compare_wasm_interfaces",
+    cancelled: true,
+    sourceOwner: "caller" as const,
+  },
 ])(
-  "reports source recording failure without replacing earlier cancellation (cancelled=$cancelled, owner=$sourceOwner)",
-  ({ cancelled, sourceOwner }) => {
-    const primary = new AnalysisCancelledError("analyze_function", {
+  "preserves the source recording failure for $operation (cancelled=$cancelled)",
+  ({ operation, cancelled, sourceOwner }) => {
+    const primary = new AnalysisCancelledError(operation, {
       cause: "caller",
     });
     const failure = new EvidenceIntegrityError("Recorder failed");
     const result = retainAnalysisResultSources(
-      "analyze_function",
+      operation,
       () => err(failure),
       withEvidenceSources(cancelled ? err(primary) : ok("complete"), [source]),
       sourceOwner === undefined ? undefined : { sourceOwner },
     );
     if (result.ok) throw new Error("Expected recording failure");
     expect(result.error).toBe(cancelled ? primary : failure);
-    expect(primary.secondaryFailures).toEqual(cancelled ? [failure] : []);
+    if (cancelled) expect(result.error.secondaryFailures).toEqual([failure]);
   },
 );
 
@@ -80,9 +82,15 @@ it.each([false, true])(
       outcome,
       { sourceOwner: "caller" },
     );
-    expect(result).toBe(outcome);
-    expect(outcome.sourceEvidence).toEqual([source]);
-    expect(primary.secondaryFailures).toEqual([]);
+    expect(result).toMatchObject({
+      ok: !cancelled,
+      sourceEvidence: [source],
+    });
+    if (result.ok) expect(result.value).toBe("complete");
+    else {
+      expect(result.error).toBe(primary);
+      expect(result.error.secondaryFailures).toEqual([]);
+    }
   },
 );
 

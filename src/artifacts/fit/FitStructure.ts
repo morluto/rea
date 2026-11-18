@@ -16,10 +16,13 @@ import {
   type Devicetree,
 } from "../../domain/firmware/devicetree.js";
 import {
-  DevicetreeLimitFailure,
+  devicetreeLimitOf,
   parseDevicetree,
 } from "../../domain/firmware/devicetreeParser.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../../domain/binaryContainer.js";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -195,7 +198,8 @@ const fitStrings: FitFact<string[]> = (facts, node, name) => {
 const fitU32: FitFact<number | null> = (facts, node, name) => {
   const property = propertyOf(node, name);
   if (property === undefined) return null;
-  if (property.bytes === 4) return facts.fdt.readUInt32BE(property.offset);
+  if (property.bytes === 4)
+    return new BinaryReader(facts.fdt, false, "fit").u32(property.offset);
   facts.limitations.push(`${node.path}: ${name} is not a single 32-bit cell`);
   return null;
 };
@@ -210,10 +214,10 @@ const fitAddress: FitFact<string | null> = (facts, node, name) => {
     );
     return null;
   }
+  const reader = new BinaryReader(facts.fdt, false, "fit");
   let value = 0n;
   for (let offset = 0; offset < property.bytes; offset += 4)
-    value =
-      (value << 32n) | BigInt(facts.fdt.readUInt32BE(property.offset + offset));
+    value = (value << 32n) | BigInt(reader.u32(property.offset + offset));
   return `0x${value.toString(16)}`;
 };
 
@@ -227,7 +231,7 @@ const strictCell = (
     throw formatFailure(
       `${node.path}: ${property.name} is not a single 32-bit cell`,
     );
-  return fdt.readUInt32BE(property.offset);
+  return new BinaryReader(fdt, false, "fit").u32(property.offset);
 };
 
 const imageRange = (
@@ -569,12 +573,13 @@ const parseFit = (fdt: Buffer, path: string): Devicetree => {
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure)
       throw formatFailure(cause.message);
-    if (cause instanceof DevicetreeLimitFailure)
+    const limit = devicetreeLimitOf(cause);
+    if (limit !== undefined)
       throw new ArtifactReaderFailure(
         "limit",
-        `FIT devicetree exceeds the fixed ${cause.limit} allowance`,
+        `FIT devicetree exceeds the fixed ${limit.limit} allowance`,
         {
-          boundary: cause.limit === "decoded_bytes" ? "memory" : "capacity",
+          boundary: limit.limit === "decoded_bytes" ? "memory" : "capacity",
           cause,
         },
       );

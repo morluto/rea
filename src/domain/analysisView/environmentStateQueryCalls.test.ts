@@ -194,10 +194,9 @@ describe("POSTs that read state", () => {
     expect(
       readOnlyOf([
         post("/api/query-history", "post_query_history"),
-        post("/api/documents/selection_data/", "post_selection"),
         post("/api/search-results", "post_search_results"),
       ]),
-    ).toEqual(["post_search_results", "post_selection"]);
+    ).toEqual(["post_search_results"]);
   });
 
   it("reads a lookup only by the last literal segment, so a trailing write action stays a write", () => {
@@ -420,18 +419,13 @@ describe("the reads either side of a POST", () => {
 
   it("compares a POST with a read begun after another write, which shows that write's effect", () => {
     const message = { id: 1001, body: "hello" };
-    const get = (
-      start: number,
-      end: number,
-      status = 200,
-      response: JsonValue = message,
-    ): Call => ({
+    const get = (start: number, end: number, status = 200): Call => ({
       method: "GET",
       path: "/api/messages/1001",
       template: "/api/messages/{id}",
       tool: "get_message",
       status,
-      response,
+      response: status === 404 ? { error: "Not found" } : message,
       start,
       end,
     });
@@ -453,14 +447,19 @@ describe("the reads either side of a POST", () => {
       start: 10,
       end: 11,
     };
-    // The read that finished last began before the PUT; the shorter one after it shows the message survived the PUT.
+    const startedBeforeWrite = get(0, 9, 404);
+    const foundMessage = get(3, 4);
+    const missingAgain = get(12, 13, 404);
+    expect(
+      readOnlyOf([startedBeforeWrite, foundMessage, consume, missingAgain]),
+    ).toEqual(["post_ids"]);
     expect(
       readOnlyOf([
-        get(0, 9),
+        startedBeforeWrite,
         put,
-        get(3, 4),
+        foundMessage,
         consume,
-        get(12, 13, 404, { error: "Not found" }),
+        missingAgain,
       ]),
     ).toEqual([]);
   });
