@@ -227,7 +227,10 @@ Each newly analyzed JavaScript file retains `analysis_coverage` in its graph
 observation. `syntax` distinguishes complete parsing, recovered syntax errors,
 failed parsing and unexamined source. `semantics` records the number of observed
 unknown findings and typed uncertainty, including returned-reference widening
-and unavailable type-only compiler options. `examination` reports static semantic
+and unavailable type-only compiler options. `conditional-loader` records a
+BOM/hashbang source recovered under an ES module interpretation when its package
+loader is unknown; its overall `parse_status` stays partial without inventing a
+syntax error. `examination` reports static semantic
 resource limits and Electron wrapper expansion limits independently. A completed
 pass does not establish complete runtime semantics. Route examination and result
 capacity remain in the separate route inventory.
@@ -353,8 +356,11 @@ execute them.
 
 JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
 code unit, matching the original bytes identified by the artifact digest.
-A BOM before a hashbang is accepted for TypeScript files, explicit ES modules,
-and JavaScript in an observed module package, matching file-loader preprocessing.
+A BOM before a hashbang is accepted for TypeScript and JSX compiler inputs,
+explicit ES modules, and JavaScript in an observed module package, including
+`.js` and `.mjs` dotfile entrypoints. Missing package context retains a conditional
+ES module interpretation for ambiguous JavaScript through application analysis
+and reference import; it does not prove runtime module mode.
 Source indexes and later-line columns still refer to the original text.
 CommonJS JavaScript with that prefix remains unparseable, as it is in Node;
 a plain hashbang stays valid.

@@ -20,6 +20,12 @@ const fixture = async () => {
     "esm/package.json": JSON.stringify({ type: "module" }),
     "esm/main.js":
       '\uFEFF#!/usr/bin/env node\r\nconst face="😀"; import {marker} from "../dep.mjs"; console.log(JSON.stringify({marker}));',
+    "esm/.js":
+      '\uFEFF#!/usr/bin/env node\nimport {marker} from "../dep.mjs"; console.log(JSON.stringify({marker}));',
+    "esm/.mjs":
+      '\uFEFF#!/usr/bin/env node\nimport {marker} from "../dep.mjs"; console.log(JSON.stringify({marker}));',
+    "view.jsx":
+      '\uFEFF#!/usr/bin/env node\nconst element = <div/>; import "./dep.mjs";',
     "typed.mts":
       '\uFEFF#!/usr/bin/env node\nconst face: string="😀"; import {marker} from "./dep.mjs"; console.log(JSON.stringify({marker}));',
     "typed.cts":
@@ -44,6 +50,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     for (const path of [
       "module.mjs",
       "esm/main.js",
+      "esm/.js",
+      "esm/.mjs",
       "typed.mts",
       "typed.cts",
       "plain.cjs",
@@ -63,6 +71,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     for (const [path, kind, target] of [
       ["module.mjs", "static-import", "dep.mjs"],
       ["esm/main.js", "static-import", "dep.mjs"],
+      ["esm/.js", "static-import", "dep.mjs"],
+      ["esm/.mjs", "static-import", "dep.mjs"],
+      ["view.jsx", "static-import", "dep.mjs"],
       ["typed.mts", "static-import", "dep.mjs"],
       ["typed.cts", "require", "dep.cjs"],
       ["plain.cjs", "require", "dep.cjs"],
@@ -150,7 +161,14 @@ cliTest.runIf(process.platform !== "win32")(
         .map(({ path }) => path)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual(["rejected.cjs", "rejected.js"]);
-    for (const path of ["module.mjs", "esm/main.js", "typed.mts"] as const) {
+    for (const path of [
+      "module.mjs",
+      "esm/main.js",
+      "esm/.js",
+      "esm/.mjs",
+      "view.jsx",
+      "typed.mts",
+    ] as const) {
       expect(graph.entries).toContainEqual(
         expect.objectContaining({
           path,
@@ -180,5 +198,77 @@ cliTest.runIf(process.platform !== "win32")(
         from_path.startsWith("rejected."),
       ),
     ).toEqual([]);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains conditional BOM/hashbang imports when analyzing a package subtree through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-bom-subtree-");
+    const source =
+      '\uFEFF#!/usr/bin/env node\r\nconst face="😀"; import {marker} from "./dep.mjs"; console.log(JSON.stringify({marker}));';
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({ type: "module" }),
+      "src/main.js": source,
+      "src/dep.mjs": "export const marker=42;",
+    });
+    expect(await runNodeJsonControl(root, "src/main.js")).toEqual({
+      marker: 42,
+    });
+    const result = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      join(root, "src"),
+    );
+    expect(result.statistics.parse_failures).toBe(0);
+    const properties = result.graph.nodes
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties),
+      )
+      .find(
+        (properties) =>
+          properties.path === "main.js" && properties.text_status !== undefined,
+      );
+    expect(properties).toMatchObject({
+      parse_status: "partial",
+      analysis_coverage: {
+        syntax: { status: "complete", error_count: 0 },
+        semantics: { uncertainty: ["conditional-loader"] },
+      },
+    });
+    const edge = result.graph.edges.find(
+      ({ relation, evidence }) =>
+        relation === "imports" &&
+        evidence.location.available &&
+        evidence.location.value.kind === "source-range" &&
+        evidence.location.value.source === "main.js",
+    );
+    expect(edge).toMatchObject({
+      properties: { kind: "static-import", resolved_path: "dep.mjs" },
+      evidence: {
+        artifact: {
+          available: true,
+          sha256: createHash("sha256").update(source).digest("hex"),
+        },
+        location: {
+          available: true,
+          value: {
+            kind: "source-range",
+            source: "main.js",
+            start: { line: 2, column: 17 },
+            end: { line: 2, column: 50 },
+          },
+        },
+      },
+    });
+    const sourceObservation = result.graph.nodes
+      .flatMap(({ observations }) => observations)
+      .find(
+        ({ properties }) =>
+          properties.path === "main.js" && properties.text_status !== undefined,
+      );
+    expect(sourceObservation?.evidence.limitations).toContainEqual(
+      expect.stringContaining("only if Node loads it as an ES module"),
+    );
   },
 );

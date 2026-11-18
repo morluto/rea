@@ -68,12 +68,18 @@ it.each([
   ["main.ts", "commonjs", true],
   ["main.tsx", "module", true],
   ["main.TSX", "module", true],
+  ["main.jsx", "commonjs", true],
+  [".js", "module", true],
+  [".mjs", "module", true],
+  [".mjs", "commonjs", false],
+  [".js", "commonjs", false],
 ] as const)(
   "retains the loader's BOM/hashbang semantics for %s (%s)",
   (path, packageType, valid) => {
     const esm =
       path.endsWith(".mjs") ||
       path.endsWith(".mts") ||
+      path.endsWith(".jsx") ||
       (!path.endsWith(".cjs") &&
         !path.endsWith(".cts") &&
         packageType === "module");
