@@ -321,8 +321,8 @@ test("lists all connectable targets on the selected endpoint across directories"
   const fixture = await runtimeFixture();
   const outside = await temporaryFile("outside.js");
   const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(fixture.entry).href,
-    additionalTargetUrl: pathToFileURL(outside).href,
+    targetUrl: nodeDiscoveryTargetUrl(fixture.entry),
+    additionalTargetUrl: nodeDiscoveryTargetUrl(outside),
     additionalTargetCount: 205,
   });
   try {
