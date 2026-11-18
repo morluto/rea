@@ -597,9 +597,10 @@ it.skipIf(isWindows).each([
   "decides capture-host support from the selected %s host, not the running one",
   async (platform, expected) => {
     const provider = new PcapProvider({
+      // A double leading slash gives Win32 a UNC root and still opens the POSIX fixtures.
       environment: {
-        REA_TSHARK_COMMAND: tsharkStub,
-        REA_CAPINFOS_COMMAND: capinfosStub,
+        REA_TSHARK_COMMAND: `/${tsharkStub}`,
+        REA_CAPINFOS_COMMAND: `/${capinfosStub}`,
       },
       platform,
     });

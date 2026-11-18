@@ -11,6 +11,7 @@ import {
   AnalysisArtifactChangedError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 
 export interface WiresharkExecutableIdentity {
   readonly bytes: number;
@@ -91,12 +92,13 @@ const TOOL_COMMAND_ENV = {
 export const selectWiresharkTool = (
   environment: Readonly<Record<string, string | undefined>>,
   tool: "tshark" | "capinfos",
+  platform?: NodeJS.Platform,
 ): WiresharkToolSelection => {
   const key = TOOL_COMMAND_ENV[tool];
   const configured = environment[key];
   if (configured === undefined || configured.trim() === "")
     return { command: tool, source: "path" };
-  if (!isAbsolute(configured))
+  if (!isQualifiedCallerPath(configured, platform))
     throw new PcapConfigurationFailure(
       `${tool}_not_absolute`,
       `${key} must be an absolute path to the ${tool} binary`,
@@ -116,8 +118,8 @@ export const resolvePcapTools = (
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {
-    tshark: selectWiresharkTool(environment, "tshark"),
-    capinfos: selectWiresharkTool(environment, "capinfos"),
+    tshark: selectWiresharkTool(environment, "tshark", platform),
+    capinfos: selectWiresharkTool(environment, "capinfos", platform),
   };
   const locate = (tool: "tshark" | "capinfos"): WiresharkToolSelection => {
     const selection = selected[tool];
