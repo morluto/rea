@@ -12,6 +12,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { BinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
 import { BINARY_NINJA_XREF_LIMITATION } from "./BinaryNinjaProviderCapabilities.js";
 import { BinaryNinjaSessionClient } from "./BinaryNinjaSessionClient.js";
@@ -771,6 +772,29 @@ describe("Binary Ninja string capacity", () => {
       expect((await client.close()).ok).toBe(true);
     }
   });
+});
+
+it("reports a failed connection close and retries it", async () => {
+  const { client, producer } = await fixture();
+  const failure = new Error("connection still open");
+  const closeConnection = vi
+    .spyOn(producer, "close")
+    .mockRejectedValueOnce(failure);
+  try {
+    await value(client, "list_procedures");
+    expect(await client.close()).toMatchObject({
+      ok: false,
+      error: expect.any(ProviderCleanupError),
+    });
+    expect(producer.closes).toBe(0);
+    expect(await client.close()).toEqual({ ok: true, value: null });
+    expect(await client.close()).toEqual({ ok: true, value: null });
+    expect(closeConnection).toHaveBeenCalledTimes(2);
+    expect(producer.closes).toBe(1);
+  } finally {
+    closeConnection.mockRestore();
+    await client.close();
+  }
 });
 
 describe("Binary Ninja cancellation and startup retries", () => {

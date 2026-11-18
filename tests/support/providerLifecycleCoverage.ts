@@ -146,6 +146,7 @@ const CDP_BROWSER_SOCKET =
   "tests/boundary/browser/cdpBrowserProvider.browserSocket.test.ts";
 const CDP_CLEANUP_CANCELLATION =
   "tests/boundary/browser/cdpCleanupCancellation.test.ts";
+const BINARY_NINJA_SESSION = "src/binaryNinja/BinaryNinjaSessionClient.test.ts";
 
 export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
   Record<string, ProviderLifecycleCoverage>
@@ -252,6 +253,50 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         test(
           "src/apktool/ApktoolProvider.test.ts",
           "retains failed workspace cleanup and retries it on close",
+        ),
+      ),
+    },
+  },
+  "binary-ninja": {
+    ownership: "connection",
+    stages: {
+      launch: ATTACH_ONLY,
+      handshake: covered(
+        test(
+          "src/binaryNinja/BinaryNinjaMcpConnection.test.ts",
+          "negotiates the server's protocol, authenticates, and keeps producer error codes",
+        ),
+        test(
+          BINARY_NINJA_SESSION,
+          "binds the open file by its Raw view digest and never calls mutation tools",
+        ),
+      ),
+      operation: covered(
+        test(
+          BINARY_NINJA_SESSION,
+          "returns rendered pseudocode and normalized instruction lines",
+        ),
+      ),
+      cancel: covered(
+        test(
+          BINARY_NINJA_SESSION,
+          "restores the analysis view when cancellation arrives with the final Raw read",
+        ),
+        test(
+          BINARY_NINJA_SESSION,
+          "reports cancellation arriving with the final successful reply: %s",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          BINARY_NINJA_SESSION,
+          "reports a failed connection close and retries it",
+        ),
+      ),
+      retry: covered(
+        test(
+          BINARY_NINJA_SESSION,
+          "reports a failed connection close and retries it",
         ),
       ),
     },
