@@ -2785,3 +2785,80 @@ describe("Objective-C adopted protocol-list count limit", () => {
     },
   );
 });
+
+describe("Swift type record sections", () => {
+  it("lists a noncopyable type recorded in __swift5_types2 beside __swift5_types", () => {
+    const bytes = Buffer.alloc(4096);
+    const u32 = (at: number, n: number) => bytes.writeUInt32LE(n, at);
+    const rel = (at: number, n: number) => bytes.writeInt32LE(n - at, at);
+    u32(0, 0xfeedfacf);
+    u32(4, 0x0100000c);
+    u32(12, 2);
+    u32(16, 1);
+    u32(20, 232);
+    u32(32, 0x19);
+    u32(36, 232);
+    bytes.write("__TEXT", 40);
+    bytes.writeBigUInt64LE(base, 56);
+    bytes.writeBigUInt64LE(4096n, 64);
+    bytes.writeBigUInt64LE(4096n, 80);
+    u32(88, 5);
+    u32(92, 5);
+    u32(96, 2);
+    const records = [
+      { section: "__swift5_types", record: 0x200, descriptor: 0x300 },
+      { section: "__swift5_types2", record: 0x210, descriptor: 0x380 },
+    ];
+    for (const [index, { section, record, descriptor }] of records.entries()) {
+      const command = 104 + index * 80;
+      bytes.write(section, command);
+      bytes.write("__TEXT", command + 16);
+      bytes.writeBigUInt64LE(base + BigInt(record), command + 32);
+      bytes.writeBigUInt64LE(4n, command + 40);
+      u32(command + 48, record);
+      rel(record, descriptor);
+      u32(descriptor, 0x11);
+      rel(descriptor + 4, 0x400);
+      rel(descriptor + 8, 0x500 + index * 0x20);
+    }
+    rel(0x408, 0x540);
+    bytes.write("Plain\0", 0x500);
+    bytes.write("Owned\0", 0x520);
+    bytes.write("Fixture\0", 0x540);
+
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(
+      result.swift_decls.map(
+        ({ kind, qualified_name, module, decode, evidence }) => ({
+          kind,
+          qualified_name,
+          module,
+          decode,
+          evidence: evidence.map(({ description }) => description),
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "struct",
+        qualified_name: "Plain",
+        module: "Fixture",
+        decode: { status: "decoded", reason: null },
+        evidence: [
+          "Swift __swift5_types record of the nominal type descriptor at location",
+        ],
+      },
+      {
+        kind: "struct",
+        qualified_name: "Owned",
+        module: "Fixture",
+        decode: { status: "decoded", reason: null },
+        evidence: [
+          "Swift __swift5_types2 record of the nominal type descriptor at location",
+        ],
+      },
+    ]);
+    expect(
+      result.coverage.find(({ facet }) => facet === "swift_declarations"),
+    ).toMatchObject({ status: "complete", examined: 2, decoded: 2 });
+  });
+});
