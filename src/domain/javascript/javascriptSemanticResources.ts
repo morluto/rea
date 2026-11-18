@@ -1084,6 +1084,11 @@ const rejectsSocketOptionsPort = (
   // port: -1})` connects. A literal that installs a prototype is undecided for that reason.
   if (accessorDecides(options) || installsPrototype(options)) return false;
   const second = node.arguments[1];
+  // A spread can expand to the object `tls` merges over the first, so the port is
+  // undecided rather than decided by the first object. Measured on Node 24.22.1,
+  // `const args = [{ port: 443 }]; tls.connect({ port: -1 }, ...args)` connects.
+  if (specifier === "tls" && second !== undefined && t.isSpreadElement(second))
+    return false;
   if (
     specifier === "tls" &&
     second !== undefined &&

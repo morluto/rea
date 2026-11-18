@@ -264,3 +264,16 @@ it("emits no acquisition when a spread getter cannot rescue the port", () => {
     ),
   ).toEqual([]);
 });
+
+/**
+ * A spread after the first options object can supply the object `tls` merges over it,
+ * so `tls.connect({ port: -1 }, ...args)` connects when `args` holds `{ port: 443 }`.
+ * The later argument is not modelled, so the port is undecided rather than rejected.
+ */
+it("keeps the acquisition when a later spread may supply the merged options", () => {
+  expect(
+    acquisitionsFor(
+      `const args = [{ port: 443 }]; tls.connect({ port: -1 }, ...args)`,
+    ),
+  ).toHaveLength(1);
+});
