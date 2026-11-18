@@ -832,6 +832,8 @@
 * **devicetree:** use the ev_ retained Evidence id prefix in the example ([cb4ffa0](https://github.com/morluto/rea/commit/cb4ffa022060d0fa11807e7c8b4fc3491f4e182e)), closes [#7612](https://github.com/morluto/rea/issues/7612) [#7760](https://github.com/morluto/rea/issues/7760)
 * **errors:** generate the error catalogue from the classification tables ([0f6b330](https://github.com/morluto/rea/commit/0f6b330cb632ed981dcfaeb90a9697f1855e3851))
 * **errors:** keep projectAnalysisError's doc on its declaration ([#11660](https://github.com/morluto/rea/issues/11660)) ([ad4cc75](https://github.com/morluto/rea/commit/ad4cc7536f0d5d9c879bbd7538b4f2731b63dc51))
+* **i18n:** complete the Spanish website translations ([#12092](https://github.com/morluto/rea/issues/12092)) ([1bd45f0](https://github.com/morluto/rea/commit/1bd45f073ca320766b01741dbfedf11f3fcaf0ec))
+* **i18n:** complete zh-CN translations including rl-environments ([#12079](https://github.com/morluto/rea/issues/12079)) ([2191896](https://github.com/morluto/rea/commit/2191896f3b9c4e63f098fdd3af3980d05811e3e6))
 * **install:** warn against npx from inside a REA checkout ([#11285](https://github.com/morluto/rea/issues/11285)) ([8c9d29e](https://github.com/morluto/rea/commit/8c9d29e2ea7f33809289491255d9e204735f75a0))
 * **javascript:** record pushed effect invalidation for semantic reads ([#11188](https://github.com/morluto/rea/issues/11188)) ([c56fffc](https://github.com/morluto/rea/commit/c56fffcd7519539144c7339ae5dbc31819238c47))
 * **kernel-modules:** align this_module statuses and trailer reason with the parser ([139edb2](https://github.com/morluto/rea/commit/139edb2ec6422155690b126167929b96a72d849a)), closes [#7669](https://github.com/morluto/rea/issues/7669) [#7670](https://github.com/morluto/rea/issues/7670) [#7758](https://github.com/morluto/rea/issues/7758)
@@ -842,6 +844,7 @@
 * **readme:** retain packet-summary verification scope ([eb0cdab](https://github.com/morluto/rea/commit/eb0cdabfa1c3bfb76508048f5c0e56936e0818aa))
 * refuse literal tool counts in living prose ([#10585](https://github.com/morluto/rea/issues/10585)) ([959af00](https://github.com/morluto/rea/commit/959af004df855ee82d826e4fb2423cad402e931d))
 * **skill:** regenerate the Cursor plugin skill for the pyc range ([ca147d7](https://github.com/morluto/rea/commit/ca147d7c4db8ddaf6b76c9cab9468336f7773b3e))
+* **testing:** drop the removed cancelled-constructor baseline ([#12098](https://github.com/morluto/rea/issues/12098)) ([3a75ee2](https://github.com/morluto/rea/commit/3a75ee2b1d27ce19bfdbb412fe9f4416705cc911))
 * **third-party:** cite the ApiDemos provenance file at its current path ([#11698](https://github.com/morluto/rea/issues/11698)) ([a0e5a5d](https://github.com/morluto/rea/commit/a0e5a5db2cd1d4fdb73134f949a22cacd6e0bd90))
 * **web:** state the segment limit in the template_rules description ([41625d7](https://github.com/morluto/rea/commit/41625d7d1b3287ac1c33d62c135ff3e51258aa18))
 
