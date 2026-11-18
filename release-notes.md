@@ -108,6 +108,7 @@
 * **providers:** bound runOwned work and close by one deadline ([#10996](https://github.com/morluto/rea/issues/10996)) ([a6cbe8b](https://github.com/morluto/rea/commit/a6cbe8b12a76e8626ad8a5aaf59ee40a005214b0))
 * **providers:** let runOwned's deadline timeout carry the provider's recovery ([#11089](https://github.com/morluto/rea/issues/11089)) ([598a0c4](https://github.com/morluto/rea/commit/598a0c403478d110d48210e0a26e0dabcbc57f53))
 * **python:** decode CPython 3.14 and 3.15 pyc code objects ([1d08253](https://github.com/morluto/rea/commit/1d08253ff2cb68838b93cf9275000c39bf1f507a)), closes [#8206](https://github.com/morluto/rea/issues/8206)
+* **rust:** read cargo-auditable dependencies from WebAssembly modules ([#5069](https://github.com/morluto/rea/issues/5069)) ([e3713be](https://github.com/morluto/rea/commit/e3713bea60c0fc07011c4ddd0cd9a19d4023e907))
 * **setup:** expose explicit MCP catalog profile selection ([#9354](https://github.com/morluto/rea/issues/9354)) ([edc9304](https://github.com/morluto/rea/commit/edc93046692c120567553fb68390db6ec5bc98c7))
 * **setup:** inspect, refresh and remove five mcp-add-only clients ([#10694](https://github.com/morluto/rea/issues/10694)) ([d044f44](https://github.com/morluto/rea/commit/d044f44d91a55d11ac81b060a47b6fdbcf364e34))
 * **setup:** manage fx, Junie, Goose and Kilo registrations through the client table ([#10709](https://github.com/morluto/rea/issues/10709)) ([fd2eabb](https://github.com/morluto/rea/commit/fd2eabb12ab8f35e9d8946057dac86e863f711c4))
