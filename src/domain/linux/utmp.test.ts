@@ -11,6 +11,7 @@ const profile = (name: UtmpFormatProfile["name"]): UtmpFormatProfile =>
   UTMP_FORMAT_PROFILES.find((candidate) => candidate.name === name)!;
 
 const glibc32 = profile("glibc-time32");
+const glibc32be = profile("glibc-time32-be");
 const glibc64 = profile("glibc-time64");
 const musl64 = profile("musl-time64");
 const musl64be = profile("musl-time64-be");
@@ -368,6 +369,37 @@ describe("utmp field widths and byte order", () => {
     ]);
   });
 
+  it("decodes a big-endian 32-bit-time record at literal offsets", () => {
+    // s390x and big-endian ppc64 define __WORDSIZE_TIME64_COMPAT32 too, so their
+    // wtmp is the 384-byte shape with every word byte-swapped. Literal offsets,
+    // so a wrong derivation cannot agree with the fixture.
+    const bytes = new Uint8Array(384);
+    const view = new DataView(bytes.buffer);
+    view.setInt16(0, 7, false);
+    view.setInt32(4, 99, false);
+    bytes.set(new TextEncoder().encode("pts/1"), 8);
+    view.setInt32(336, 34, false); // ut_session
+    view.setInt32(340, 1_234, false); // tv_sec
+    view.setInt32(344, 5, false); // tv_usec
+    view.setInt32(348, -1, false); // first ut_addr_v6 word, signed
+    const result = parseUtmpFile(bytes, {
+      source: "wtmp",
+      profile: glibc32be,
+    });
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.records).toHaveLength(1);
+    expect(result.value.records[0]).toMatchObject({
+      fileOffset: 0,
+      type: 7,
+      pid: 99,
+      line: "pts/1",
+      session: 34,
+      timestampSeconds: 1_234,
+      timestampMicroseconds: 5,
+      addressV6: [-1, 0, 0, 0],
+    });
+  });
+
   it("pins the published offsets without asking the layout helper", () => {
     // Literal offsets, so a wrong derivation cannot make the fixture agree with it.
     const bytes = new Uint8Array(384);
@@ -502,7 +534,7 @@ describe("utmp option validation before decoding", () => {
     // profile arrives from JSON rather than from this module.
     const invented = {
       ...glibc32,
-      name: "glibc-time32-be",
+      name: "bionic-time64",
     } as unknown as UtmpFormatProfile;
     const result = parseUtmpFile(recordBytes(glibc32, login()), {
       source: "utmp",
@@ -511,7 +543,7 @@ describe("utmp option validation before decoding", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toEqual([
-      { kind: "unknown_format", name: "glibc-time32-be" },
+      { kind: "unknown_format", name: "bionic-time64" },
     ]);
   });
 });

@@ -60,6 +60,7 @@ const UTMP_TYPE_NAMES = new Map<number, string>(
 export interface UtmpFormatProfile {
   readonly name:
     | "glibc-time32"
+    | "glibc-time32-be"
     | "glibc-time64"
     | "glibc-time64-be"
     | "musl-time64"
@@ -82,15 +83,26 @@ export interface UtmpFormatProfile {
 /**
  * Supported layouts.
  *
- * `linux-x86-64` is the `__WORDSIZE_TIME64_COMPAT32` layout. `linux-aarch64` and
- * `linux-aarch64-be` are the `long`-typed layout, which glibc's aarch64 port
- * carries in both byte orders.
+ * The `-time32` pair is the `__WORDSIZE_TIME64_COMPAT32` shape glibc carries on
+ * x86-64 and, byte-swapped, on the big-endian targets that define the macro
+ * (`s390x`, big-endian `ppc64`). The `-time64` family is the `long`-typed shape,
+ * which glibc's aarch64 port carries in both byte orders.
  */
 export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
   {
     name: "glibc-time32",
     recordBytes: 384,
     byteOrder: "little",
+    sessionBytes: 4,
+    sessionPadBytes: 0,
+    sessionPadBefore: false,
+    timeBytes: 4,
+    addressSigned: true,
+  },
+  {
+    name: "glibc-time32-be",
+    recordBytes: 384,
+    byteOrder: "big",
     sessionBytes: 4,
     sessionPadBytes: 0,
     sessionPadBefore: false,

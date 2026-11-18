@@ -69,13 +69,18 @@ Published profiles:
 | Profile           | Record | `ut_session`        | `ut_tv`         | `ut_addr_v6`  |
 | ----------------- | ------ | ------------------- | --------------- | ------------- |
 | `glibc-time32`    | 384    | 336, 4              | 340, 4 + 344, 4 | 348, signed   |
+| `glibc-time32-be` | 384    | 336, 4              | 340, 4 + 344, 4 | 348, signed   |
 | `glibc-time64`    | 400    | 336, 8              | 344, 8 + 352, 8 | 360, signed   |
 | `glibc-time64-be` | 400    | 336, 8              | 344, 8 + 352, 8 | 360, signed   |
 | `musl-time64`     | 400    | 336, 4 (pad at 340) | 344, 8 + 352, 8 | 360, unsigned |
 | `musl-time64-be`  | 400    | 340, 4 (pad at 336) | 344, 8 + 352, 8 | 360, unsigned |
 
 `glibc-time32` covers glibc where the macro is set — x86, both word sizes — and
-any ABI that keeps 32-bit session and time fields.
+any ABI that keeps 32-bit session and time fields. The macro is not an x86-only
+fact: `s390x` and big-endian `ppc64` define it as well, so the 384-byte shape also
+appears byte-swapped. `glibc-time32-be` is the same record with `byteOrder: "big"`;
+without it those files have no correct profile and every numeric field — the type,
+PID, session, both time words and each address word — would read byte-swapped.
 
 ## Records and diagnostics
 
