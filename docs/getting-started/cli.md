@@ -1488,7 +1488,12 @@ descendants in other process groups that inherited its run token. If that
 cleanup cannot be confirmed, the report keeps its earlier checks and adds a
 failed `cleanup` check with the reason and retained run identifier.
 
-The default terminal format is TOON. Use `--json` when saving results for a
+The default terminal format is TOON. Complete TOON results are validated
+before stdout receives the document. Large results use a private file in the
+system temporary directory until delivery finishes and need free space there.
+A document can exceed the runtime's string limit when each encoded line fits.
+Token counting and token windows still require a complete formatted string.
+Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
 missing value fails with `MISSING_OUTPUT_VALUE` before the command runs.

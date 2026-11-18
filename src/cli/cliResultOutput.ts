@@ -38,6 +38,7 @@ import { formatCliCallToAction, type CallToAction } from "./outputEnvelope.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import type { OutputFilterPath } from "./outputFilter.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
+import { writeToonOutput } from "./toonOutput.js";
 import {
   jsonOutputParts,
   isTerminalOutput,
@@ -117,25 +118,37 @@ export const createCliResultOutput = (
   const recoverFormattingFailure = async (cause: unknown): Promise<boolean> => {
     // A rejected command never reaches write(). Destination failures retain
     // handled ownership. Only a completed, unwritten result can be replaced.
-    if (
-      completed === undefined ||
-      handled ||
-      hostRangeErrorKind(cause) !== "host-capacity" ||
-      !(cause instanceof Error) ||
-      cause.message !== "Invalid string length"
-    )
+    if (completed === undefined || handled || !(cause instanceof Error))
       return false;
+    const stringCapacity =
+      hostRangeErrorKind(cause) === "host-capacity" &&
+      cause.message === "Invalid string length";
+    const systemCode = "code" in cause ? cause.code : undefined;
+    const stagingCapacity =
+      format === "toon" &&
+      (systemCode === "ENOSPC" ||
+        systemCode === "EDQUOT" ||
+        systemCode === "EFBIG")
+        ? systemCode
+        : undefined;
+    if (!stringCapacity && stagingCapacity === undefined) return false;
     const { originalFailure } = completed;
     error = projectAnalysisError(
       retainCliPublicationOnError(
         new AnalysisResourceConstraintError(
           completed.metadata.command,
-          "memory",
-          `The ${format} result could not fit in a runtime string. The original result was not written.`,
+          stagingCapacity === undefined ? "memory" : "capacity",
+          stagingCapacity === undefined
+            ? `The ${format} result could not fit in a runtime string. The original result was not written.`
+            : "The temporary storage could not stage the TOON result. The original result was not written.",
           {
             format,
-            formatted_characters: null,
-            max_string_characters: constants.MAX_STRING_LENGTH,
+            ...(stagingCapacity === undefined
+              ? {
+                  formatted_characters: null,
+                  max_string_characters: constants.MAX_STRING_LENGTH,
+                }
+              : { system_code: stagingCapacity }),
             ...(originalFailure === undefined
               ? {}
               : { original_failure: originalFailure }),
@@ -144,7 +157,9 @@ export const createCliResultOutput = (
             cause,
             retryable: false,
             remediationAction:
-              "Use --format json to stream the complete result, or narrow it with --filter-output. Token limits are applied after formatting and cannot avoid this constraint.",
+              stagingCapacity === undefined
+                ? "Use --format json to stream the complete result, or narrow it with --filter-output. Token limits are applied after formatting and cannot avoid this constraint."
+                : "Free space in the system temporary directory, use --format json, or narrow the result with --filter-output.",
           },
         ),
         completed.receipt,
@@ -638,6 +653,12 @@ export const createCliResultOutput = (
         failed = true;
         throw cause;
       }
+      return true;
+    }
+    if (format === "toon") {
+      await writeToonOutput(document, destination, () => {
+        handled = true;
+      });
       return true;
     }
     // Once writing starts, a failed destination must not receive another document.
