@@ -132,6 +132,7 @@
 * **android:** preserve SDK-gated manifest permissions ([#10236](https://github.com/morluto/rea/issues/10236)) ([4d15b7f](https://github.com/morluto/rea/commit/4d15b7f50957e0870ddd05fbdf794b3bb1e45cfa))
 * **android:** qualify the JNI library inventory by required splits ([18b72ca](https://github.com/morluto/rea/commit/18b72ca4610d8ee1d9c75205bf0f78b07858704c)), closes [#9756](https://github.com/morluto/rea/issues/9756)
 * **android:** reject invoke coverage without site evidence ([#10679](https://github.com/morluto/rea/issues/10679)) ([fbd6fd1](https://github.com/morluto/rea/commit/fbd6fd1c4fd8be7ec00d1f12fb73a240e87a9c71))
+* **android:** report method disassembly failure as unavailable body ([#12090](https://github.com/morluto/rea/issues/12090)) ([dc6799d](https://github.com/morluto/rea/commit/dc6799d4880f3e0737be54dddfd4d48a8080fbf4))
 * **apk:** preserve ambiguous v1 certificate identity ([#11835](https://github.com/morluto/rea/issues/11835)) ([e7ed930](https://github.com/morluto/rea/commit/e7ed93004a734d156d6165f6dd5d2094a39daa94))
 * **apktool:** report the decoder JVM's heap exhaustion as memory, not a target refusal ([#10634](https://github.com/morluto/rea/issues/10634)) ([c296c91](https://github.com/morluto/rea/commit/c296c91770a0ac8d14d8773ae0e2d0699ab56888))
 * **apktool:** treat an EPERM launcher spawn as not executable ([4bf5226](https://github.com/morluto/rea/commit/4bf522672468cf21ff09a804ff287f0195501712))
