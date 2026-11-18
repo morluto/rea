@@ -25,6 +25,7 @@ import {
   unreadableRelationshipsDetail,
 } from "./DebPackageParser.js";
 import { replaceXzBindingForTests } from "./xzDecoder.js";
+import { zstandardWindowFrameFixture } from "../../tests/fixtures/zipZstandard.js";
 
 const artifact = (bytes: Uint8Array) => ({
   path: "/artifacts/hello.deb",
@@ -252,6 +253,29 @@ it("refuses xz members when the native decoder cannot load", () => {
   const error = expectFailure(() => parse(bytes), DebPackageFormatFailure);
   expect(error.kind).toBe("unsupported");
   expect(error.message).toMatch(/unavailable on this platform/u);
+});
+
+it("reports a Zstandard frame above the decoder window as an allowance, not damage", () => {
+  // Window descriptor 0x90 declares 256 MiB; the single raw block is valid.
+  const { compressed } = zstandardWindowFrameFixture(0x90);
+  const error = expectFailure(
+    () =>
+      parse(
+        debPackageFixture({
+          controlCompression: "zstd",
+          controlMemberBytes: compressed,
+        }),
+      ),
+    DebPackageAllowanceFailure,
+  );
+  expect(error.failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "zstd_window_bytes", maximum: 2 ** 27 },
+  });
+  expect(error.message).toContain("fixed 128 MiB allowance");
+  expect(error.partial?.ar.members.map((member) => member.name)).toContain(
+    "control.tar.zst",
+  );
 });
 
 it("keeps missing optional control fields null rather than empty", () => {

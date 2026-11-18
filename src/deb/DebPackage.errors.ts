@@ -54,6 +54,7 @@ export const DEB_PACKAGE_FIXED_ALLOWANCES = {
   ar_member_name_bytes: "The ar member name allowance",
   tar_extension_headers: "The tar extension header allowance",
   relationship_alternatives: "The control relationship alternatives allowance",
+  zstd_window_bytes: "The Zstandard decoder window allowance",
 } as const;
 
 /** A fixed reader allowance stopped inspection; the input is not shown to be invalid. */

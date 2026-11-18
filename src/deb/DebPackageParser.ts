@@ -75,7 +75,9 @@ const TAR_BLOCK = 512;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const BZ2_MAGIC = Buffer.from("BZh", "ascii");
+/** Fixed Zstandard decoder window: 2^27 bytes, matching the ZIP/ELF decoders. */
 const ZSTD_WINDOW_LOG_MAX = 27;
+const ZSTD_WINDOW_MAX_BYTES = 2 ** ZSTD_WINDOW_LOG_MAX;
 
 /** Limitation wording owned by the parser; tests assert delivery through these. */
 export const DEB_PACKAGE_LIMITATIONS = {
@@ -824,6 +826,16 @@ const expandArchive = (
     } catch (cause: unknown) {
       const code = (cause as { readonly code?: unknown }).code;
       if (code === "ERR_BUFFER_TOO_LARGE") throw oversize(true);
+      // A valid frame can request a window above the fixed decoder ceiling;
+      // that is a resource refusal, not evidence the stream is damaged.
+      if (code === "ZSTD_error_frameParameter_windowTooLarge")
+        throw new DebPackageAllowanceFailure(
+          "zstd_window_bytes",
+          ZSTD_WINDOW_MAX_BYTES,
+          `${member.name} requires a Zstandard decoder window above the fixed ${String(ZSTD_WINDOW_MAX_BYTES / 2 ** 20)} MiB allowance; the stream is not necessarily corrupt.`,
+          undefined,
+          { cause },
+        );
       throw new DebPackageFormatFailure(
         "malformed",
         `${member.name} is not a readable Zstandard stream.`,
