@@ -97,10 +97,10 @@ it("keeps events apart across different serials at the same timestamp", async ()
 it("counts a record type repeated for one event without dropping it", async () => {
   const metadata = await metadataOf(
     [
-      record("PATH", 1700000000, 123, 1000, "items=0"),
-      record("PATH", 1700000000, 123, 1000, "items=1"),
-      record("PATH", 1700000000, 123, 1000, "items=2"),
-      record("PATH", 1700000000, 123, 1000, "items=1"),
+      record("PATH", 1700000000, 123, 1000, "item=0"),
+      record("PATH", 1700000000, 123, 1000, "item=1"),
+      record("PATH", 1700000000, 123, 1000, "item=2"),
+      record("PATH", 1700000000, 123, 1000, "item=1"),
     ].join("\n"),
   );
   const [event] = metadata.events;
@@ -108,6 +108,30 @@ it("counts a record type repeated for one event without dropping it", async () =
   expect(event?.duplicate_record_count).toBe(1);
   expect(event?.record_types).toEqual([{ type: "PATH", count: 3 }]);
   expect(metadata.duplicate_record_count).toBe(1);
+});
+
+it("keeps every path of a multi-path event apart and counted", async () => {
+  const metadata = await metadataOf(
+    [
+      record(
+        "SYSCALL",
+        1700000000,
+        123,
+        1000,
+        "items=2 syscall=82 success=yes",
+      ),
+      record("PATH", 1700000000, 123, 1000, 'item=0 name="/tmp/from"'),
+      record("PATH", 1700000000, 123, 1000, 'item=1 name="/tmp/to"'),
+    ].join("\n"),
+  );
+  const [event] = metadata.events;
+  expect(event?.record_count).toBe(3);
+  expect(event?.duplicate_record_count).toBe(0);
+  expect(metadata.duplicate_record_count).toBe(0);
+  expect(event?.record_types).toEqual([
+    { type: "PATH", count: 2 },
+    { type: "SYSCALL", count: 1 },
+  ]);
 });
 
 it("reports interleaved and out-of-order records instead of reordering them", async () => {

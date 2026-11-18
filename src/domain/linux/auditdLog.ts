@@ -49,7 +49,7 @@ export interface AuditEventSummary {
   readonly record_types: readonly AuditEventTypeCount[];
   readonly first_line: number;
   readonly last_line: number;
-  /** Record types the event repeats with the same `items=` index. */
+  /** Record types the event repeats with the same `item=` index. */
   readonly duplicate_record_count: number;
   /** A record for this event appeared after a later event started. */
   readonly interleaved: boolean;
@@ -306,7 +306,7 @@ class AuditdLogScanner {
     }
     this.#lastEventKey = key;
 
-    const recordKey = `${type}\u0000${itemsIndex(match.groups["body"])}`;
+    const recordKey = `${type}\u0000${recordItemsIndex(match.groups["body"])}`;
     if (event.seenRecords.has(recordKey)) {
       event.duplicateCount += 1;
       this.#duplicateCount += 1;
@@ -346,9 +346,14 @@ class AuditdLogScanner {
 const occurrenceKey = (seconds: number, millis: number, serial: number) =>
   `${String(seconds)}.${String(millis)}:${String(serial)}`;
 
-/** `items=<n>` is the only per-record discriminator auditd gives repeated types. */
-const itemsIndex = (body: string | undefined): string => {
-  const match = body === undefined ? null : /\bitems=(\d+)/u.exec(body);
+/**
+ * `item=<n>` is the per-record index auditd gives repeated types. `items=` is
+ * the path count on a SYSCALL record, not an index: reading it here made every
+ * PATH record of a multi-path event share one key, so the second path was
+ * reported as a duplicate and the per-event PATH count came out as one.
+ */
+const recordItemsIndex = (body: string | undefined): string => {
+  const match = body === undefined ? null : /\bitem=(\d+)/u.exec(body);
   return match === null ? "" : match[1]!;
 };
 
