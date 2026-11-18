@@ -1,6 +1,7 @@
 import { malformedInput } from "../domain/parseFailure.js";
 import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
+import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
 import type { Section } from "../domain/apple/appleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
@@ -46,59 +47,98 @@ const HAS_CATEGORY_CLASS_PROPERTIES = 1 << 6;
 const IMAGE_INFO_SIZE = 8;
 
 /**
+ * Whether this image's `category_t` records end in `_classProperties`. Images
+ * built before the field existed end at `instanceProperties`, so the bytes
+ * after it are a field only when an image info declares them.
+ */
+type ClassPropertyDeclaration =
+  | { readonly kind: "absent" | "declared" }
+  | {
+      readonly kind: "unknown";
+      readonly location: bigint;
+      readonly reason: string;
+    };
+
+/**
+ * Read the image's declaration once for every category. Same-named image
+ * infos are read together and one that declares the field decides. An image
+ * info that cannot be read, or is too short to hold its flags, leaves the
+ * field's presence unknown rather than absent.
+ */
+const readClassPropertyDeclaration = (
+  read: Pick<ObjcDispatchReaders, "u32">,
+  imageInfos: readonly Section[],
+): ClassPropertyDeclaration => {
+  let unknown: ClassPropertyDeclaration | undefined;
+  for (const imageInfo of imageInfos) {
+    if (imageInfo.size < IMAGE_INFO_SIZE) {
+      unknown ??= {
+        kind: "unknown",
+        location: imageInfo.address,
+        reason: `image info holds ${imageInfo.size} of the ${IMAGE_INFO_SIZE} bytes that carry its flags`,
+      };
+    } else {
+      const flags = imageInfo.address + 4n;
+      try {
+        if ((read.u32(flags) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0)
+          return { kind: "declared" };
+      } catch (cause: unknown) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
+        unknown ??= {
+          kind: "unknown",
+          location: flags,
+          reason: errorMessage(cause),
+        };
+      }
+    }
+  }
+  return unknown ?? { kind: "absent" };
+};
+
+/**
  * Why a category's `_classProperties` list is unaccounted for, or null when
- * the record has none. Images built before the field existed end at
- * `instanceProperties`, so the bytes after it are a field only when an image
- * info declares them; same-named image infos are read together. A field that
- * cannot be read is reported at its address so the category keeps the facts
- * already decoded. An image info too short to hold its flags leaves the
- * field's presence unknown, which is reported rather than read as absent.
+ * the record has none. Only a raw or rebased zero is a null list: a bound
+ * field names a list in another image, and a zero whose fixups are unknown
+ * may be either. A field that cannot be resolved is reported at its address
+ * so the category keeps the facts already decoded.
  */
 const categoryClassPropertyIssue = (
-  read: Pick<ObjcDispatchReaders, "u32" | "pointer">,
-  imageInfos: readonly Section[],
+  read: Pick<ObjcDispatchReaders, "resolvePointer">,
+  declaration: ClassPropertyDeclaration,
   category: bigint,
   name: string,
 ): DecodeIssue | null => {
-  let field = category + 48n;
-  try {
-    let declared = false;
-    let truncated: Section | undefined;
-    for (const imageInfo of imageInfos) {
-      if (imageInfo.size < IMAGE_INFO_SIZE) truncated ??= imageInfo;
-      else {
-        field = imageInfo.address + 4n;
-        if ((read.u32(field) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0)
-          declared = true;
-      }
-    }
-    if (!declared)
-      return truncated === undefined
-        ? null
-        : issue(
-            "objc_properties_categories",
-            "category_class_properties_unreadable",
-            `Category ${name} class property list: image info holds ${truncated.size} of the ${IMAGE_INFO_SIZE} bytes that carry its flags`,
-            `0x${truncated.address.toString(16)}`,
-          );
-    field = category + 48n;
-    return read.pointer(field) === 0n
-      ? null
-      : issue(
-          "objc_properties_categories",
-          "category_class_properties_not_decoded",
-          `Category ${name} class property list is not decoded`,
-          `0x${field.toString(16)}`,
-        );
-  } catch (cause: unknown) {
-    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
-    return issue(
+  if (declaration.kind === "absent") return null;
+  const field = category + 48n;
+  const unreadable = (location: bigint, reason: string) =>
+    issue(
       "objc_properties_categories",
       "category_class_properties_unreadable",
-      `Category ${name} class property list: ${errorMessage(cause)}`,
-      `0x${field.toString(16)}`,
+      `Category ${name} class property list: ${reason}`,
+      `0x${location.toString(16)}`,
     );
+  if (declaration.kind === "unknown")
+    return unreadable(declaration.location, declaration.reason);
+  let list: PointerResolution;
+  try {
+    list = read.resolvePointer(field);
+  } catch (cause: unknown) {
+    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
+    return unreadable(field, errorMessage(cause));
   }
+  if (list.kind === "unsupported") return unreadable(field, list.reason);
+  if (list.kind === "unknown" && list.raw === 0n)
+    return unreadable(field, list.reason);
+  if ((list.kind === "raw" || list.kind === "rebase") && list.target === 0n)
+    return null;
+  return issue(
+    "objc_properties_categories",
+    "category_class_properties_not_decoded",
+    list.kind === "bind"
+      ? `Category ${name} class property list is bound to ${list.symbol} and is not decoded`
+      : `Category ${name} class property list is not decoded`,
+    `0x${field.toString(16)}`,
+  );
 };
 
 /**
@@ -131,8 +171,9 @@ export const decodeObjcCategories = (input: {
 }): number => {
   const { read, result } = input;
   let examined = 0;
-  const imageInfos = input.sections.filter(
-    ({ name }) => name === "__objc_imageinfo",
+  const classPropertyDeclaration = readClassPropertyDeclaration(
+    read,
+    input.sections.filter(({ name }) => name === "__objc_imageinfo"),
   );
   for (const section of input.sections.filter(
     ({ name }) => name === "__objc_catlist",
@@ -219,7 +260,7 @@ export const decodeObjcCategories = (input: {
         });
         const classProperties = categoryClassPropertyIssue(
           read,
-          imageInfos,
+          classPropertyDeclaration,
           category,
           name,
         );

@@ -2786,34 +2786,34 @@ describe("Objective-C adopted protocol-list count limit", () => {
   );
 });
 
-describe("Objective-C category class properties", () => {
-  /** A fully decoded category beside an image info; `_classProperties` is at 0xb70. */
-  const categoryImage = (flags: number, classProperties: number): Buffer => {
-    const bytes = fixture(false, "partial-method");
-    bytes.writeBigUInt64LE(base + 0x700n, 0xb98);
-    bytes.writeUInt32LE(312, 20);
-    bytes.writeUInt32LE(312, 36);
-    bytes.writeUInt32LE(3, 96);
-    bytes.write("__objc_imageinfo", 264);
-    bytes.write("__DATA", 280);
-    bytes.writeBigUInt64LE(base + 0xc00n, 296);
-    bytes.writeBigUInt64LE(8n, 304);
-    bytes.writeUInt32LE(0xc00, 312);
-    bytes.writeUInt32LE(flags, 0xc04);
-    if (classProperties !== 0)
-      bytes.writeBigUInt64LE(base + BigInt(classProperties), 0xb70);
-    return bytes;
+/** A fully decoded category beside an image info; `_classProperties` is at 0xb70. */
+const categoryImage = (flags: number, classProperties: number): Buffer => {
+  const bytes = fixture(false, "partial-method");
+  bytes.writeBigUInt64LE(base + 0x700n, 0xb98);
+  bytes.writeUInt32LE(312, 20);
+  bytes.writeUInt32LE(312, 36);
+  bytes.writeUInt32LE(3, 96);
+  bytes.write("__objc_imageinfo", 264);
+  bytes.write("__DATA", 280);
+  bytes.writeBigUInt64LE(base + 0xc00n, 296);
+  bytes.writeBigUInt64LE(8n, 304);
+  bytes.writeUInt32LE(0xc00, 312);
+  bytes.writeUInt32LE(flags, 0xc04);
+  if (classProperties !== 0)
+    bytes.writeBigUInt64LE(base + BigInt(classProperties), 0xb70);
+  return bytes;
+};
+const categoryFacts = (bytes: Buffer) => {
+  const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+  return {
+    decode: result.objc_categories.map(({ decode }) => decode),
+    coverage: result.coverage.find(
+      ({ facet }) => facet === "objc_properties_categories",
+    ),
   };
-  const categoryFacts = (bytes: Buffer) => {
-    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
-    return {
-      decode: result.objc_categories.map(({ decode }) => decode),
-      coverage: result.coverage.find(
-        ({ facet }) => facet === "objc_properties_categories",
-      ),
-    };
-  };
+};
 
+describe("Objective-C category class properties", () => {
   it("marks a category partial when its declared class property list is not decoded", () => {
     const { decode, coverage } = categoryFacts(categoryImage(0x40, 0x600));
     expect(decode).toEqual([
@@ -2883,6 +2883,95 @@ describe("Objective-C category class properties", () => {
       ),
       examined: 1,
       decoded: 0,
+    });
+  });
+});
+
+describe("Objective-C category class property applicability", () => {
+  /** Move the class list pointer out of the header so load commands can grow. */
+  const freeLoadCommandSpace = (bytes: Buffer): void => {
+    bytes.writeBigUInt64LE(bytes.readBigUInt64LE(0x180), 0xe00);
+    bytes.writeBigUInt64LE(0n, 0x180);
+    bytes.writeBigUInt64LE(base + 0xe00n, 136);
+    bytes.writeUInt32LE(0xe00, 152);
+  };
+  /** Append LC_DYLD_INFO_ONLY; its rebase and bind streams are at 352 and 360. */
+  const withLegacyFixups = (bytes: Buffer): Buffer => {
+    freeLoadCommandSpace(bytes);
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(360, 20);
+    bytes.writeUInt32LE(0x80000022, 344);
+    bytes.writeUInt32LE(48, 348);
+    return bytes;
+  };
+
+  it("reports a class property list bound to another image as not decoded", () => {
+    const bytes = withLegacyFixups(categoryImage(0x40, 0));
+    const bindings = Buffer.from([
+      0x40,
+      ...Buffer.from("_external_list\0"),
+      0x51, // SET_TYPE_IMM pointer
+      0x70, // SET_SEGMENT_AND_OFFSET_ULEB: segment 0, offset 0xb70
+      0xf0,
+      0x16,
+      0x90,
+      0x00,
+    ]);
+    bindings.copy(bytes, 0xf00);
+    bytes.writeUInt32LE(0xf00, 360);
+    bytes.writeUInt32LE(bindings.length, 364);
+    const { decode, coverage } = categoryFacts(bytes);
+    expect(decode).toEqual([
+      { status: "partial", reason: "category_class_properties_not_decoded" },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_properties_not_decoded at 0x100000b70: Category FixtureCategory class property list is bound to _external_list and is not decoded",
+      examined: 1,
+      decoded: 0,
+    });
+  });
+
+  it("does not read a zero class property field as null when its fixups are unknown", () => {
+    const bytes = withLegacyFixups(categoryImage(0x40, 0));
+    // An undecodable rebase stream leaves every raw pointer's fixup unknown.
+    bytes.writeUInt32LE(0xf80, 352);
+    bytes.writeUInt32LE(1, 356);
+    bytes.writeUInt8(0xf0, 0xf80);
+    const { decode, coverage } = categoryFacts(bytes);
+    expect(decode).toEqual([
+      { status: "partial", reason: "category_class_properties_unreadable" },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "category_class_properties_unreadable at 0x100000b70: Category FixtureCategory class property list: LC_DYLD_INFO pointer-fixup applicability was not completely decoded",
+      ),
+      examined: 1,
+      decoded: 0,
+    });
+  });
+
+  it("reads the field when one image info declares it beside one too short to hold flags", () => {
+    const bytes = categoryImage(0x40, 0x600);
+    freeLoadCommandSpace(bytes);
+    bytes.writeUInt32LE(392, 20);
+    bytes.writeUInt32LE(392, 36);
+    bytes.writeUInt32LE(4, 96);
+    bytes.write("__objc_imageinfo", 344);
+    bytes.write("__DATA", 360);
+    bytes.writeBigUInt64LE(base + 0xc40n, 376);
+    bytes.writeBigUInt64LE(4n, 384);
+    bytes.writeUInt32LE(0xc40, 392);
+    const { decode, coverage } = categoryFacts(bytes);
+    expect(decode).toEqual([
+      { status: "partial", reason: "category_class_properties_not_decoded" },
+    ]);
+    expect(coverage).toMatchObject({
+      reason: expect.stringContaining(
+        "category_class_properties_not_decoded at 0x100000b70",
+      ),
     });
   });
 });

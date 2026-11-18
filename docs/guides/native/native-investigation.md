@@ -1140,9 +1140,11 @@ complete observation.
   class property list (`@property (class)`), present when the image info
   declares it, is not decoded: the category is partial with
   `category_class_properties_not_decoded` and coverage names the list field.
-  When that field or the image info cannot be read, or the image info is too
-  short to hold its flags, the category keeps its decoded facts and is partial
-  with `category_class_properties_unreadable`.
+  A field bound to another image's symbol counts as a present list. When that
+  field or the image info cannot be read, the image info is too short to hold
+  its flags, or the field is zero while its pointer fixups are unknown, the
+  category keeps its decoded facts and is partial with
+  `category_class_properties_unreadable`.
   Swift
   field-offset globals that are only
   initialized at runtime stay unresolved. Generic, resilient, async and
