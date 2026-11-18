@@ -159,6 +159,7 @@ vi.mock("../ExecFileOutput.js", async (original) => ({
 }));
 
 import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
 import { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import { ProcessOwnershipInspectionCancelled } from "../ProcessInspectionCancellation.js";
@@ -475,12 +476,13 @@ it("does not swallow an unrelated filesystem AbortError as sampler cancellation"
 });
 
 it("does not report sampler shutdown cancellation as a proc-read failure", async () => {
-  const readStarted = deferred();
+  const readStarted = phaseArrival();
+  const published = deferred();
   setUpFixture();
   fixture.holdPath = "/proc/100/task/100/children";
-  fixture.holdStartedResolve = readStarted.resolve;
-  const { stop } = start();
-  await readStarted.promise;
+  fixture.holdStartedResolve = readStarted.arrive;
+  const { stop } = start(fixture.runId, published.resolve);
+  await readStarted.reached(published.promise, "held procfs child read");
   const result = await stop();
   expect(result.partial).toBe(true);
   expect(result.coverage.sampling_failures).toBe(1);
