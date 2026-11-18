@@ -141,8 +141,13 @@ processTest(
         arguments: { maxSize: "20", offset: "0" },
       });
       expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toHaveProperty(
+        "body",
+        INITIAL_TRASH_ROWS[0]![2],
+      );
       expect(response.structuredContent).toMatchObject({
-        body: INITIAL_TRASH_ROWS[0]![2],
+        replay: { record_ordinal: 0 },
+        state: { source: "recording", reason: "list-differs" },
       });
     } finally {
       await client.close();
