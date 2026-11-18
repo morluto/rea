@@ -196,6 +196,23 @@ it("does not walk objects when the declared header size cannot anchor them", asy
   }
 });
 
+it("recognizes a damaged journal through normal inventory", async () => {
+  // Recognition is by signature alone; a header that cannot anchor its object
+  // area still reaches this reader, which reports the header facts it read and
+  // the limitation, instead of falling back to a plain-file occurrence.
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal(
+      "damaged-header.journal",
+      journalBytes({ headerSize: 276, objects: [{ type: 1, size: 64 }] }),
+    ),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    kind: "systemd-journal",
+    object_count: 0,
+    header: { header_size: 276 },
+  });
+});
+
 it("accepts a 208-byte legacy header and omits the fields it does not carry", async () => {
   const inventory = await scanCanonicalArtifactInventory(
     await writeJournal(

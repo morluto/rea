@@ -236,20 +236,14 @@ const isUsableHeaderSize = (declared: bigint, fileBytes: number): boolean =>
   declared % BigInt(JOURNAL_OBJECT_ALIGNMENT) === 0n &&
   declared <= BigInt(fileBytes);
 
-/** Recognize a journal header without requiring its object area to verify. */
-export const hasSystemdJournalHeader = (prefix: Uint8Array): boolean => {
-  if (
-    !hasJournalSignature(prefix) ||
-    prefix.length < JOURNAL_HEADER_SIZE_PROBE_BYTES
-  )
-    return false;
-  const view = new BinaryReader(
-    Buffer.from(prefix.buffer, prefix.byteOffset, prefix.byteLength),
-    true,
-    "systemd-journal",
-  );
-  return isUsableHeaderSize(view.word(HEADER.headerSize, 64), prefix.length);
-};
+/**
+ * Recognize a journal header by its signature alone. Whether `header_size`
+ * anchors an object area is the owning reader's decision: a damaged header still
+ * holds readable facts and deserves the reader's explicit limitation, so
+ * rejecting it here would route the file to ordinary inventory instead.
+ */
+export const hasSystemdJournalHeader = (prefix: Uint8Array): boolean =>
+  hasJournalSignature(prefix);
 
 /**
  * Read a little-endian 64-bit field as a JS number. A value beyond
