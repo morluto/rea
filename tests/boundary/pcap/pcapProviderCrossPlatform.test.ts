@@ -202,7 +202,7 @@ const evidenceResult = async (
   return result.value.result as Record<string, unknown>;
 };
 
-// Windows keeps PATH/PATHEXT resolution in the launcher; POSIX hosts locate the file.
+// This integration fixture uses POSIX symlinks and executable scripts.
 it.skipIf(isWindows)(
   "runs and reports the tools located on PATH rather than bare names",
   async () => {
