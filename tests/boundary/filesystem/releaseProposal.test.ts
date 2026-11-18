@@ -138,6 +138,55 @@ function respond(value: unknown, status = 200) {
   });
 }
 
+it.each([
+  { statuses: [504, 200], expectedReads: 2, status: null },
+  { statuses: [504, 504, 504], expectedReads: 3, status: 504 },
+  { statuses: [403], expectedReads: 1, status: 403 },
+])(
+  "retries release note reads with HTTP responses $statuses",
+  async ({ statuses, expectedReads, status }) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    const branch = "proposal--release-notes";
+    const path = "release-notes.md";
+    const notes = "Existing release notes";
+    const reads: string[] = [];
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string, options: { method?: string }) => {
+        const { pathname } = new URL(input);
+        expect(options.method).toBe("GET");
+        if (pathname === `/repos/fixture/rea/git/trees/${branch}`) {
+          reads.push(pathname);
+          const responseStatus = statuses[reads.length - 1];
+          if (responseStatus !== 200) return respond({}, responseStatus);
+          return respond({ tree: [{ path, sha: baseline, type: "blob" }] });
+        }
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        return respond({
+          sha: baseline,
+          content: Buffer.from(notes).toString("base64"),
+          encoding: "base64",
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch(path, branch);
+    if (status === null) {
+      await expect(result).resolves.toMatchObject({ parsedContent: notes });
+    } else {
+      await expect(result).rejects.toMatchObject({ status });
+    }
+    expect(reads).toHaveLength(expectedReads);
+    expect(sleep.mock.calls).toEqual(
+      [[1000], [2000]].slice(0, expectedReads - 1),
+    );
+  },
+);
+
 function associatedPullRequest(number = 42, mergeCommit = latest) {
   return {
     number,
