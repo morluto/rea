@@ -74,14 +74,21 @@ cliTest.for([1, 2, 3, 4] as const)(
       expect(row?.source_path).toBe(member.path);
       expect(row?.hash_status).toBe("verified");
     }
+    const outputRoot = join(root, "extracted");
     const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        outputRoot,
+        "--json",
+      ],
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
     const result = artifactExtractionResultSchema.parse(
       parseEvidence(extracted.json).normalized_result,
     );
+    expect(result.output_root).toBe(outputRoot);
     expect(result.containment_verified).toBe(true);
     for (const member of members)
       expect(
@@ -251,9 +258,10 @@ cliTest(
         source,
         "--integrity-policy",
         "record-and-continue",
+        "--output-root",
+        join(root, "extracted"),
         "--json",
       ],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
     const result = artifactExtractionResultSchema.parse(
@@ -293,8 +301,13 @@ cliTest(
       },
     });
     const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        join(root, "extracted"),
+        "--json",
+      ],
     });
     expect(extracted.exitCode).toBe(1);
   },
