@@ -185,6 +185,7 @@
 * **cli:** admit activity extras with the runtime contract ([#10289](https://github.com/morluto/rea/issues/10289)) ([fceb469](https://github.com/morluto/rea/commit/fceb4693fc6c7ba0999806beab182a12f8fe6128))
 * **cli:** advertise parsed JSON documents in --schema ([d734e64](https://github.com/morluto/rea/commit/d734e6424df5fed42399dc22b759a1c9962c01f2))
 * **cli:** advertise the decimal token grammar on integer arguments ([884b683](https://github.com/morluto/rea/commit/884b683a94be222538aad84eb7993f62fda9aca7)), closes [#9344](https://github.com/morluto/rea/issues/9344)
+* **cli:** bound advertised decimal-token schemas by the domain range ([#9808](https://github.com/morluto/rea/issues/9808)) ([80f533d](https://github.com/morluto/rea/commit/80f533da8a977516ed77625ee8cf2bcb417cd2eb)), closes [#9348](https://github.com/morluto/rea/issues/9348)
 * **cli:** count the full-output envelope for TOON/YAML token counts ([a02202a](https://github.com/morluto/rea/commit/a02202aba2aea8a7289500ca3eb45acfa8778a0b)), closes [#7271](https://github.com/morluto/rea/issues/7271) [#7278](https://github.com/morluto/rea/issues/7278)
 * **cli:** describe a contract option whose description sits inside .optional() ([#11661](https://github.com/morluto/rea/issues/11661)) ([832984c](https://github.com/morluto/rea/commit/832984c2ccc77a627b0c2f6bce2093e55ba1bc6a))
 * **cli:** exit one-shot commands by draining the event loop ([054fbc4](https://github.com/morluto/rea/commit/054fbc4c2612f99781278a4ded4a372dca458567))
@@ -229,6 +230,7 @@
 * **doctor:** refuse Ghidra on Windows when REA_GHIDRA_PROJECT_PATH selects an existing project ([#10981](https://github.com/morluto/rea/issues/10981)) ([80755a9](https://github.com/morluto/rea/commit/80755a9d162f4aa79ce1c27c229830c8f7c29f75))
 * **electron:** refuse a wait longer than Node can schedule ([#11606](https://github.com/morluto/rea/issues/11606)) ([2910fc0](https://github.com/morluto/rea/commit/2910fc0b136ea45179e962e9e3971ec9d5821c15)), closes [#11601](https://github.com/morluto/rea/issues/11601)
 * **electron:** refuse captures handed off to an already-running app ([#10989](https://github.com/morluto/rea/issues/10989)) ([483f53f](https://github.com/morluto/rea/commit/483f53fdefac2769d17d2cc27eae7d73ee44cda9))
+* **elf:** admit distribution glibc within the default note budget ([#11847](https://github.com/morluto/rea/issues/11847)) ([2c9d015](https://github.com/morluto/rea/commit/2c9d015bb2ebda13328f5f80d0f88b6abd230b16))
 * **elf:** admit Xtensa through canonical target contracts ([#11178](https://github.com/morluto/rea/issues/11178)) ([1995ab7](https://github.com/morluto/rea/commit/1995ab7fcefbdb89459fb6bb7607c96b8c4ab93e))
 * **elf:** preserve compiler metadata after an empty kernel builder ([a7398cc](https://github.com/morluto/rea/commit/a7398cc9eb40ee89ae46d0f72b726fbd93fa4ea7)), closes [#9942](https://github.com/morluto/rea/issues/9942) [#9950](https://github.com/morluto/rea/issues/9950)
 * **environment:** admit the output root before creating its parents ([5e1d504](https://github.com/morluto/rea/commit/5e1d504664362649aec19c03f768d0bbf939b482))
@@ -386,6 +388,7 @@
 * **session:** select the registered entrypoint as the running runtime does ([065fbec](https://github.com/morluto/rea/commit/065fbec4b3993ca5903fee1eca691229e330c28a))
 * **setup:** derive client config roots from each client's own reader ([#10596](https://github.com/morluto/rea/issues/10596)) ([f5c8c1f](https://github.com/morluto/rea/commit/f5c8c1f9e0d25ed9317e79cd39fed4ef811e7d29))
 * **setup:** disclose manual connector steps before approval ([4d02bc8](https://github.com/morluto/rea/commit/4d02bc82b3de9cba642086955506dfdd848d15a2)), closes [#7692](https://github.com/morluto/rea/issues/7692) [#7792](https://github.com/morluto/rea/issues/7792)
+* **setup:** honor retained Kilo activation during uninstall ([#11795](https://github.com/morluto/rea/issues/11795)) ([41cf965](https://github.com/morluto/rea/commit/41cf9654da43a3050cc7142a574b3c3802d85041))
 * **setup:** name client configuration syntax from one reader table ([#10586](https://github.com/morluto/rea/issues/10586)) ([9ca6b41](https://github.com/morluto/rea/commit/9ca6b41ee0f762cdf80c4ec06cee9c77662e1355))
 * **setup:** normalize Gemini trust rules before selection ([#10378](https://github.com/morluto/rea/issues/10378)) ([bf63760](https://github.com/morluto/rea/commit/bf63760cb42c74eac388a314519c7ac01c6f2fc8))
 * **setup:** read MCPorter's XDG folder in the client configuration-root owner ([#11193](https://github.com/morluto/rea/issues/11193)) ([ec5cb5e](https://github.com/morluto/rea/commit/ec5cb5ec516a2129e08bbc20f3f6627341ef7b2d))
@@ -424,6 +427,7 @@
 * **web:** merge wide script analysis results without call spreads ([2032b5a](https://github.com/morluto/rea/commit/2032b5a819a90d37836822afaece0eaabfc702b0)), closes [#10445](https://github.com/morluto/rea/issues/10445) [#10446](https://github.com/morluto/rea/issues/10446)
 * **windows:** keep pre-epoch shortcut times in their millisecond ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
 * **windows:** preserve pre-epoch shortcut timestamp milliseconds ([#10305](https://github.com/morluto/rea/issues/10305)) ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
+* **zip:** account 64-bit data descriptors that MSIX packages write ([#11733](https://github.com/morluto/rea/issues/11733)) ([43aaa9f](https://github.com/morluto/rea/commit/43aaa9f1903cd11826fd261794b5514da0bb6162))
 
 
 ### Performance Improvements
