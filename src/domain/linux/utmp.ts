@@ -12,9 +12,11 @@ import { decodeStrictUtf8, isStrictUtf8 } from "../strictUtf8.js";
  * macro as 1 and `sysdeps/aarch64/bits/wordsize.h` as 0, so an x86-64 record is
  * 384 bytes and an aarch64 record is 400.
  *
- * Record length narrows the layout but never names the byte order, and a length
- * that is a multiple of both layouts narrows nothing, so the caller states the
- * profile it expects and an ambiguous file is reported instead of decoded.
+ * Record length cannot establish the layout at all, and not only because a length
+ * can be a multiple of several record sizes: a truncated tail lets a larger record
+ * explain any shorter length, so 384 bytes is one x86 record and also an aarch64
+ * record missing its last 16 bytes. The caller states the profile it expects, and an
+ * ambiguous file reports every profile instead of decoding.
  */
 
 /** Fixed-width string sizes from glibc `bits/utmp.h`. */
@@ -167,7 +169,12 @@ export interface UtmpRecord {
   readonly session: number;
   readonly timestampSeconds: number;
   readonly timestampMicroseconds: number;
-  /** `ut_addr_v6` as four signed 32-bit words, in the record's own encoding. */
+  /**
+   * `ut_addr_v6` as four words, in the record's own encoding.
+   *
+   * glibc declares the member `int32_t`, so its words are signed; musl declares it
+   * `unsigned`, so an all-ones word is `4294967295` rather than `-1`.
+   */
   readonly addressV6: readonly number[];
   /** Fixed-width fields whose bytes were not well-formed UTF-8. */
   readonly undecodedFields: readonly UndecodedField[];
