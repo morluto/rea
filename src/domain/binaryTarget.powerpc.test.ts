@@ -74,6 +74,16 @@ describe("PowerPC ELF header boundaries", () => {
     },
   );
 
+  it.each([false, true])(
+    "refuses an ELF32 header that claims EM_PPC64 (little=%s)",
+    (little) => {
+      expect(parseExecutableHeader(header(little, 32, 21), "x64")).toEqual({
+        ok: false,
+        error: "unsupported ELF architecture: e_machine 21",
+      });
+    },
+  );
+
   it("names the machine when no family covers it", () => {
     expect(parseExecutableHeader(header(false, 64, 22), "x64")).toEqual({
       ok: false,

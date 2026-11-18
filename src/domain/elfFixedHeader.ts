@@ -110,12 +110,18 @@ export const admitElfFixedHeaderFacts = (
     flags: facts.flags,
     osAbi: facts.osAbi,
     abiVersion: facts.abiVersion,
-    architecture: elfArchitecture(facts.machine) ?? null,
+    architecture: elfArchitecture(facts.machine, facts.elfClass) ?? null,
   });
 };
 
+/**
+ * The CPU family an ELF machine names. A machine that is a family only for one
+ * ELF class needs that class from the caller; without it the machine stays
+ * unclassified.
+ */
 export const elfArchitecture = (
   machine: number,
+  elfClass?: 32 | 64,
 ): ElfArchitecture | undefined => {
   switch (machine) {
     case 3:
@@ -125,8 +131,11 @@ export const elfArchitecture = (
     case 8: // EM_MIPS: ISA, ABI and byte order remain separate ELF facts.
       return "mips";
     case 20: // EM_PPC; byte order and processor variant remain ELF declarations.
-    case 21: // EM_PPC64; class, byte order and the ABI in e_flags remain ELF declarations.
       return "powerpc";
+    case 21:
+      // EM_PPC64 objects are ELF64. An ELF32 header that claims it would pass
+      // for EM_PPC downstream, where only class and byte order remain.
+      return elfClass === 64 ? "powerpc" : undefined;
     case 40:
       return "arm";
     case 164: // EM_HEXAGON: Qualcomm Hexagon DSP (QDSP6).
