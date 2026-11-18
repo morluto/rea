@@ -612,6 +612,74 @@ it("prefers an earlier selected timing divergence over a later semantic change",
 });
 
 describe("finite trace dimension attribution", () => {
+  it("reports a rendered change after raw timing accepted by the trace", () => {
+    const raw = { sequence: 0, at_ms: 10, data: "same" };
+    const laterRaw = { ...raw, at_ms: 20 };
+    const observed = (frame: typeof raw, line: string) =>
+      capture({
+        frames: [frame],
+        rendered_frames: [
+          {
+            sequence: 0,
+            at_ms: 50,
+            columns: 5,
+            rows: 1,
+            cursor_x: line.length,
+            cursor_y: 0,
+            active_buffer: "normal",
+            lines: [line],
+            serialized_state: line,
+          },
+        ],
+        process_samples: [],
+        event_journal: [
+          { collection: "frames", index: 0 },
+          { collection: "rendered_frames", index: 0 },
+        ],
+      });
+    const specification = finiteTraceSpecification(
+      [
+        {
+          id: "early",
+          source: "terminal_raw",
+          exact: raw,
+          cardinality: { kind: "optional" },
+        },
+        {
+          id: "late",
+          source: "terminal_raw",
+          exact: laterRaw,
+          cardinality: { kind: "optional" },
+        },
+      ],
+      [
+        { id: "early_raw", trace: ["early"] },
+        { id: "late_raw", trace: ["late"] },
+      ],
+    );
+
+    expect(
+      compareProcessCaptures(
+        observed(raw, "left"),
+        observed(laterRaw, "right"),
+        {
+          traceSpecification: specification,
+        },
+      ),
+    ).toMatchObject({
+      trace: { verdict: "equivalent" },
+      terminal: "changed",
+      first_divergence: {
+        status: "found",
+        dimension: "terminal",
+        left_at_ms: 50,
+        right_at_ms: 50,
+        left: { kind: "rendered", serialized_state: "left" },
+        right: { kind: "rendered", serialized_state: "right" },
+      },
+    });
+  });
+
   it("attributes a finite-trace omission to the omitted event dimension", () => {
     const left = capture({
       frames: [terminal],
