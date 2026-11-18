@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import {
+  toolContractMetadata,
+  browserEvidenceEffects,
+  evidenceEffects,
+  toolEffects,
+} from "../toolEffects.js";
 import { electronFuseOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { inspectElectronFusesInputSchema } from "../../domain/electron/electronFuses.js";
@@ -77,7 +82,8 @@ const activeExample = {
 export const ELECTRON_TOOL_CONTRACTS = [
   {
     name: "list_electron_targets",
-    ...toolContractMetadata("list_electron_targets"),
+    cli: true,
+    ...toolContractMetadata("list_electron_targets", browserEvidenceEffects),
     description:
       "List every Electron file:// page target from a selected loopback CDP endpoint. Local file paths are canonicalized after symlink resolution. Selecting an endpoint exposes every eligible target and its local path metadata.",
     kind: "electron-provider",
@@ -94,7 +100,8 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_electron_page",
-    ...toolContractMetadata("inspect_electron_page"),
+    cli: true,
+    ...toolContractMetadata("inspect_electron_page", browserEvidenceEffects),
     description:
       "Passively inspect one Electron file page by supplying its loopback CDP endpoint and target ID. The provider rechecks that the target currently exists at that endpoint and is a local file page. Returns frames, DOM structure, resource paths, and scripts without evaluating renderer JavaScript or invoking Electron APIs. The selected endpoint exposes every local file page and its metadata to this tool.",
     kind: "electron-provider",
@@ -112,7 +119,16 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "analyze_javascript_application",
-    ...toolContractMetadata("analyze_javascript_application"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata(
+      "analyze_javascript_application",
+      toolEffects({
+        mutatesSession: true,
+        writesFilesystem: true,
+        launchesProcess: true,
+      }),
+    ),
     description:
       'Build a static application graph from a local ASAR or extracted JavaScript app without executing it. Supply input_path, e.g. {input_path:"/apps/client",source_paths:["main.js"],detail:"summary"}. Copy source_paths exactly from the inventory, not host-absolute paths inferred from input_path. Returns nodes, edges, semantic relations, integrity contradictions, coverage and unknowns. source_paths limits source analysis to exact inventoried paths without narrowing inventory or artifact identity; dependencies are not implicitly analyzed and unselected sources remain unknown. detail summary reduces delivery, retaining complete Evidence for inspect_analysis_view; it does not reduce analysis. With summary detail, view {kind:"javascript-routes",collection:"routes",offset:0,limit:64} selects static route patterns; static routes do not prove reachability or the complete route set. Integrity mismatches fail by default; record-and-continue retains untrusted observed bytes and partial coverage. analysis_timeout_ms is a per-source provider budget. A host-only timeout needs a longer client deadline, not that budget; do not repeat unchanged work or assume it stopped. If configuration cannot be edited, report the host setting (Codex: mcp_servers.<server>.tool_timeout_sec, seconds).',
     kind: "electron-provider",
@@ -146,7 +162,9 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "reconcile_javascript_runtime",
-    ...toolContractMetadata("reconcile_javascript_runtime"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("reconcile_javascript_runtime", evidenceEffects),
     description:
       "Reconcile verified static JavaScript application graphs with existing passive web/Electron CDP, passive V8 Inspector, or provider-owned active Electron Evidence. Active Electron captures contribute an explicitly partial target-only runtime record; they never invent renderer scripts, frames, workers, or execution claims. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
     kind: "electron-provider",
@@ -161,7 +179,21 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "capture_electron_scenario",
-    ...toolContractMetadata("capture_electron_scenario"),
+    cli: true,
+    ...toolContractMetadata(
+      "capture_electron_scenario",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        writesFilesystem: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        changesUiState: true,
+        mayDiscardData: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Launch and exercise an owned Electron app when passive CDP/Inspector observation cannot answer the question. REA owns startup/teardown; selected click/wait, renderer reload/crash and synthetic open-url/second-instance actions change runtime behavior. Returns correlated window/WebContents/process/preload/session/navigation/shell/IPC observations without payload values, plus action targets and coverage/truncation. Actions wait for completion or cancellation; a missing click target can remain pending. External shell, navigation, permission, download, popup, updater and OS-integration effects are blocked and recorded. Cleanup failures retain observations with explicit uncertainty. Use inspect_electron_page or observe_javascript_runtime for passive observation.",
     kind: "electron-provider",
@@ -173,7 +205,9 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_electron_fuses",
-    ...toolContractMetadata("inspect_electron_fuses"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_electron_fuses", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

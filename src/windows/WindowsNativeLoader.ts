@@ -11,12 +11,13 @@ import {
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
 } from "../domain/windowsNativeArtifact.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** A native resource remains opaque until the addon validates its object tag. */
-export const windowsHandleSchema = z.custom<object>(
-  (value): value is object =>
-    typeof value === "object" && value !== null && !Array.isArray(value),
+export const windowsHandleSchema = z.custom<object>((value): value is object =>
+  isRecord(value),
 );
 
 /** Observed identity of an opened local NTFS or ReFS object. */
@@ -42,6 +43,8 @@ const inspectionSchema = z.strictObject({
   protocolStdin: z.boolean().optional(),
   /** Absent from artifacts built before owned Job Object commit limits. */
   jobMemoryLimit: z.literal(true).optional(),
+  /** Absent from artifacts built before transient private-runtime writes. */
+  runtimeWriteTransient: z.literal(true).optional(),
 });
 
 type NativeCall = (
@@ -88,7 +91,7 @@ export interface WindowsNativeLoadHost {
 }
 
 const missingWindowsNativeFileReason = (file: string): string =>
-  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
+  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball only when this checkout matches that published release's native contract. Matching package version alone is insufficient; otherwise build them from this exact source checkout using native/windows/README.md. No native artifact was loaded.`;
 
 /** Recovery when Windows refuses to load the verified artifact, for example by code-integrity policy. */
 export const WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION =
@@ -108,7 +111,7 @@ export const windowsNativeFailureRemediation = (
     : failureStage === "load"
       ? WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION
       : failureStage === "artifact"
-        ? "Use the matching Windows x64 REA package, or restore native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the same-version rea-agents tarball or build them with native/windows/README.md. The loader checks version, ABI, architecture, and digest before granting authority; no download or install is performed automatically."
+        ? "Use the matching published Windows x64 REA package. Restore native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from a same-version rea-agents tarball only for its corresponding release source. Matching package version alone is insufficient for an unreleased checkout; otherwise build them from this exact source checkout using native/windows/README.md. The loader checks version, ABI, architecture, and digest before granting authority; no download or install is performed automatically."
         : failureStage === "inspection"
           ? "Install the matching Windows x64 REA package; its native inspection must prove every required security control."
           : "Inspect the preserved native self-test error. Check that the process has a writable local NTFS/ReFS temporary directory and that its filesystem, DACL, Job Object, and cleanup operations are permitted. Resolve the reported constraint, then rerun rea doctor; reinstalling Ghidra or Java cannot fix this self-test.";
@@ -182,7 +185,7 @@ export const loadWindowsNativeAuthority = (
       return {
         available: false,
         failureStage: "load",
-        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${cause instanceof Error ? cause.message : String(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
+        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${errorMessage(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
       };
     }
     const binding = bindingSchema.parse(loadedModule);
@@ -194,7 +197,7 @@ export const loadWindowsNativeAuthority = (
         available: false,
         failureStage: "self-test",
         retryable: true,
-        reason: `REA Windows native self-test failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `REA Windows native self-test failed: ${errorMessage(cause)}`,
       };
     }
     const parsed = inspectionSchema.safeParse(observed);
@@ -210,7 +213,7 @@ export const loadWindowsNativeAuthority = (
     return {
       available: false,
       failureStage: "artifact",
-      reason: `REA Windows native controls are unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      reason: `REA Windows native controls are unavailable: ${errorMessage(cause)}`,
     };
   }
 };

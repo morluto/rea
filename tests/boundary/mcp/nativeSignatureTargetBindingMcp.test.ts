@@ -16,6 +16,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("keeps a failed snapshot descriptor and root together through MCP close and recovery", async () => {
   const root = await createTestTempDirectory("rea-signature-order-mcp-");
@@ -46,7 +47,10 @@ it("keeps a failed snapshot descriptor and root together through MCP close and r
     kind: "session",
     session: createTestBinarySession(provider),
   });
-  const client = new Client({ name: "signature-order-test", version: "1" });
+  const client = new Client(
+    { name: "signature-order-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const original = OwnedFileHandle.prototype.close;
@@ -144,7 +148,10 @@ it.each(["mach-o", "mach-o-universal"] as const)(
       new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin"),
     );
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "signature-binding-test", version: "1" });
+    const client = new Client(
+      { name: "signature-binding-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -177,7 +184,7 @@ it.each(["mach-o", "mach-o-universal"] as const)(
         JSON.stringify(inspected.structuredContent),
       ).not.toBe(true);
       expect(inspected.structuredContent).toMatchObject({
-        subject: { format },
+        subject: { identity: { kind: "file", format } },
         normalized_result: { signed: true, identifier: "com.example.fixture" },
       });
     } finally {

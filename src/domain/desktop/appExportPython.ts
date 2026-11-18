@@ -99,16 +99,20 @@ def _respelled(text: str, home: Path) -> str:
     return re.sub(re.escape(SEED_HOME) + r"(?![\w.@+~-])", lambda _: str(home), text)
 
 
+UTF16_CODECS = {b"\xff\xfe": "utf-16-le", b"\xfe\xff": "utf-16-be"}
+
+
 def _respelled_utf16(data: bytes, home: Path) -> bytes:
     """A UTF-16 text file with a byte-order mark respelled like a text seed, its mark kept; any other bytes as given."""
-    for mark, codec in ((b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")):
-        if data.startswith(mark):
-            try:
-                text = data[len(mark):].decode(codec)
-            except UnicodeDecodeError:
-                return data
-            return mark + _respelled(text, home).encode(codec) if SEED_HOME in text else data
-    return data
+    mark = data[:2]
+    codec = UTF16_CODECS.get(mark)
+    if codec is None:
+        return data
+    try:
+        text = data[2:].decode(codec)
+    except UnicodeDecodeError:
+        return data
+    return mark + _respelled(text, home).encode(codec) if SEED_HOME in text else data
 
 
 #: What marks a window as not yet the app's own: skipping the taskbar, as splash screens and dialogs do, or a splash type.
@@ -141,10 +145,10 @@ def _seed_home(home: Path) -> None:
         target = home / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         data = source.read_bytes()
-        if relative in TEXT_SEEDS:
-            data = _respelled(data.decode("utf-8"), home).encode("utf-8")
-        else:
+        if data[:2] in UTF16_CODECS:
             data = _respelled_utf16(data, home)
+        elif relative in TEXT_SEEDS:
+            data = _respelled(data.decode("utf-8"), home).encode("utf-8")
         target.write_bytes(data)
         mode = SEED_MODES.get(relative)
         if mode is not None:
@@ -400,10 +404,14 @@ def _text_view(name: str, text: str, size: int) -> dict:
 def _bytes_view(name: str, data: bytes) -> dict:
     """The view of a document that is no database or archive: its text's, or none when it is binary."""
     try:
-        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
+        codec = UTF16_CODECS.get(bytes(data[:2]))
+        if codec is not None:
+            text = data[2:].decode(codec)
+        else:
+            text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
     except UnicodeDecodeError:
         text = None
-    if text is None:
+    if text is None or (codec is not None and "\x00" in text):
         return {"format": "binary", "view": None, "truncated": False}
     return _text_view(name, text, len(data))
 
@@ -417,7 +425,8 @@ def _view(path: Path) -> dict:
         data = file.read(min(8192, MAX_VIEW_BYTES + 1))
         if len(data) > MAX_VIEW_BYTES:
             return too_large
-        whole = data.startswith(GZIP_HEADER) or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data)
+        whole = (data.startswith(GZIP_HEADER) or data[:2] in UTF16_CODECS
+                 or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data))
         remaining = MAX_VIEW_BYTES + 1 - len(data)
         if whole and remaining > 0:
             data += file.read(remaining)

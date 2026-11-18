@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema, dexTypeSchema } from "./dexTypes.js";
+import { parseJsonWithDuplicatePolicy } from "../jsonDuplicateMember.js";
 import { jsonStringByteLength } from "../jsonStringByteLength.js";
 
 /** Retained representation and per-residual-class claim budgets, not file-size limits. */
@@ -550,21 +551,26 @@ const parseMember = (state: ParseState, line: string, number: number) => {
   malformed(state, number, "member-line");
 };
 
-const metadataObject = (body: string): Record<string, unknown> | undefined => {
+const metadataObject = (
+  body: string,
+):
+  | { readonly kind: "valid"; readonly record: Record<string, unknown> }
+  | { readonly kind: "duplicate" }
+  | undefined => {
   if (!body.startsWith("{")) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(body);
-  } catch {
+  const parsed = parseJsonWithDuplicatePolicy(body, "reject");
+  if (!parsed.ok)
+    return parsed.duplicate === undefined ? undefined : { kind: "duplicate" };
+  const value = parsed.value;
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    !("id" in value) ||
+    typeof value.id !== "string"
+  )
     return undefined;
-  }
-  return value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    "id" in value &&
-    typeof value.id === "string"
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return { kind: "valid", record: value as Record<string, unknown> };
 };
 
 const setReported = (
@@ -647,7 +653,8 @@ const parseComment = (state: ParseState, line: string, number: number) => {
   }
   const metadata = metadataObject(body);
   if (metadata !== undefined) {
-    parseMetadata(state, metadata, number);
+    if (metadata.kind === "duplicate") malformed(state, number, "metadata");
+    else parseMetadata(state, metadata.record, number);
     return;
   }
   const header = state.current === undefined ? HEADER.exec(line) : null;

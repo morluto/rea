@@ -1,96 +1,68 @@
 import { expect, it } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  cancelDuringCleanup,
+  controlledCleanup,
+  phaseGate,
+  settledCause,
+} from "../../tests/support/lifecycleHarness.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
 import { runDoctorOwned, systemDoctorHost } from "./Doctor.js";
 
 it("joins a late provider inspection and retries only its unresolved cleanup owners", async () => {
-  let enter!: (signal: AbortSignal) => void;
-  const entered = new Promise<AbortSignal>((resolve) => {
-    enter = resolve;
-  });
-  let handOff!: () => void;
-  const handoff = new Promise<void>((resolve) => {
-    handOff = resolve;
-  });
-  let finish!: () => void;
-  const finishing = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  let denied = true;
-  let closed = false;
-  const closes = { successful: 0, refused: 0 };
+  // The inspection is still running when close starts, then hands over two
+  // children with mixed cleanup outcomes; only the refused one is retried.
+  const inspecting = phaseGate<AbortSignal>();
+  const finishing = phaseGate();
+  const successful = controlledCleanup();
+  const refused = controlledCleanup({ refused: true });
   const host = systemDoctorHost({
     environment: {},
     providerInspections: async (owner, signal) => {
-      enter(signal);
-      await handoff;
+      await inspecting.hold(signal);
       owner.retain(
-        {
-          close: async () => {
-            closes.successful++;
-            await finishing;
-          },
-        },
+        { close: () => successful.close(() => finishing.hold()) },
         "successful-prerequisite",
       );
-      owner.retain(
-        {
-          close: async () => {
-            closes.refused++;
-            if (denied) throw new Error("controlled cleanup refusal");
-          },
-        },
-        "refused-prerequisite",
-      );
+      owner.retain({ close: () => refused.close() }, "refused-prerequisite");
       return [];
     },
   });
   const inspection = host.providerInspections!([]);
   let closing: Promise<unknown> | undefined;
+  let closed = false;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(
-      entered.then(() => {}),
-      inspection,
-      "provider inspection",
-    );
-    const signal = await entered;
-    closing = host.close!().then(
-      () => {
-        closed = true;
-        return undefined;
-      },
-      (cause: unknown) => {
-        closed = true;
-        return cause;
-      },
-    );
+    const signal = await inspecting.reached(inspection, "provider inspection");
+    closing = settledCause(host.close!()).finally(() => {
+      closed = true;
+    });
     expect(signal.aborted).toBe(true);
     expect(closed).toBe(false);
-    handOff();
+    inspecting.release();
     await inspection;
     expect(closed).toBe(false);
-    finish();
+    finishing.release();
     const failure = await closing;
     if (!(failure instanceof AnalysisError))
       throw new Error("Expected attributed cleanup failure");
     expect(failure.cleanupResources).toEqual(["refused-prerequisite"]);
     expect(failure.cleanupIncomplete).toBe(true);
-    expect(closes).toEqual({ successful: 1, refused: 1 });
-    denied = false;
+    expect([successful.attempts, refused.attempts]).toEqual([1, 1]);
+    refused.allow();
     await host.close!();
     expect(failure.cleanupIncomplete).toBe(false);
-    expect(closes).toEqual({ successful: 1, refused: 2 });
+    expect([successful.attempts, refused.attempts]).toEqual([1, 2]);
     await expect(host.providerInspections!([])).rejects.toThrow(
       "scope is closed",
     );
   }, [
     () => {
-      denied = false;
-      handOff();
-      finish();
+      refused.allow();
+      inspecting.release();
+      finishing.release();
     },
     async () => {
       await inspection;
@@ -110,10 +82,7 @@ it("retains a completed healthy report when cancellation arrives during final cl
       undefined,
       createDoctorHostFixture({
         signal: controller.signal,
-        close: async () => {
-          controller.abort(reason);
-          return undefined;
-        },
+        close: cancelDuringCleanup(controller, reason),
       }),
     ),
   ).rejects.toMatchObject({
@@ -136,12 +105,123 @@ it("preserves an inspection-authored physical failure when final cleanup also ob
         providerInspections: async () => {
           throw physical;
         },
-        close: async () => {
-          controller.abort(physical);
-          return undefined;
-        },
+        close: cancelDuringCleanup(controller, physical),
       }),
     ),
   ).rejects.toBe(physical);
   expect(physical.cause).toBeUndefined();
+});
+
+it("joins concurrent sibling probes before closing and prefers physical failure over sibling cancellation", async () => {
+  const controller = new AbortController();
+  const siblingInFlight = phaseGate();
+  const refusedCleanup = controlledCleanup({ refused: true });
+  const physical = new ProviderAdapterError("jadx", "doctor", {
+    diagnostics: { reason: "concurrent provider fault" },
+  });
+  let closeStarted = false;
+  let siblingSettledBeforeClose = false;
+  const ownedSystem = systemDoctorHost({
+    signal: controller.signal,
+    platform: "darwin",
+    environment: {},
+    providerInspections: async (owner) => {
+      await siblingInFlight.hold();
+      siblingSettledBeforeClose = !closeStarted;
+      owner.retain(
+        { close: () => refusedCleanup.close() },
+        "sibling-prerequisite",
+      );
+      throw physical;
+    },
+  });
+  const ownedHost = {
+    ...ownedSystem,
+    macosVersion: async () => {
+      controller.abort({ request: "concurrent cancellation" });
+      throw cancelledBy("doctor", controller.signal);
+    },
+    close: async () => {
+      closeStarted = true;
+      return ownedSystem.close!();
+    },
+  };
+  const running = settledCause(runDoctorOwned(undefined, ownedHost));
+  await withVerifierCleanup(async () => {
+    await siblingInFlight.reached(running, "concurrent provider probe");
+    expect(closeStarted).toBe(false);
+    siblingInFlight.release();
+    const failure = await running;
+    expect(siblingSettledBeforeClose).toBe(true);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected attributed composite failure");
+    expect(failure.cleanupResources).toEqual(["sibling-prerequisite"]);
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.diagnostics).toMatchObject({
+      primary_error: {
+        details: {
+          provider_id: "jadx",
+          diagnostics: { reason: "concurrent provider fault" },
+        },
+      },
+    });
+    refusedCleanup.allow();
+    await ownedHost.close();
+    expect(failure.cleanupIncomplete).toBe(false);
+  }, [
+    () => {
+      refusedCleanup.allow();
+      siblingInFlight.release();
+    },
+    async () => {
+      await running;
+    },
+    () => ownedHost.close(),
+  ]);
+});
+
+it("does not deadlock when one concurrent probe retains failed cleanup while a peer enters another scoped read", async () => {
+  const betweenReads = phaseGate();
+  const refusedCleanup = controlledCleanup({ refused: true });
+  let secondReadCompleted = false;
+  const host = systemDoctorHost({
+    platform: "darwin",
+    environment: {},
+    providerInspections: async (owner) => {
+      const peerProbe = (async () => {
+        await owner.run(async () => undefined);
+        await betweenReads.hold();
+        await owner.run(async () => {
+          secondReadCompleted = true;
+        });
+      })();
+      await owner.run(async () => {
+        owner.retain(
+          { close: () => refusedCleanup.close() },
+          "ida-registration-handle",
+        );
+      });
+      betweenReads.release();
+      await peerProbe;
+      return [];
+    },
+  });
+  await withVerifierCleanup(async () => {
+    await expect(host.providerInspections!([])).resolves.toEqual([]);
+    expect(secondReadCompleted).toBe(true);
+    const failure = await settledCause(host.close!());
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected retained cleanup failure on close");
+    expect(failure.cleanupResources).toEqual(["ida-registration-handle"]);
+    expect(failure.cleanupIncomplete).toBe(true);
+    refusedCleanup.allow();
+    await host.close!();
+    expect(failure.cleanupIncomplete).toBe(false);
+  }, [
+    () => {
+      refusedCleanup.allow();
+      betweenReads.release();
+    },
+    () => host.close!(),
+  ]);
 });

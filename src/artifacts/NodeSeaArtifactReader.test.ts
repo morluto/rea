@@ -15,12 +15,12 @@ import { setImmediate } from "node:timers";
 
 import { expect, it, vi } from "vitest";
 
-import * as artifactPaths from "./ArtifactPaths.js";
+import * as artifactPaths from "../resources/ArtifactPaths.js";
 
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { artifactFormatDescriptor } from "./artifactFormats.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   NODE_SEA_FUSE_HASH,
@@ -32,10 +32,13 @@ import {
   nodeSeaUniversal,
 } from "./nodeSea/NodeSea.fixture.js";
 import { elfNote, elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { classifyAndHashRootForInventory } from "./inventory/classify.js";
@@ -965,6 +968,52 @@ it.each([8, 1024 * 1024])(
   },
 );
 
+it("joins Node SEA descriptor closure and preserves its failure for retry", async () => {
+  const path = await writeCarrier("close-retry", nodeSeaElf());
+  const reader = new NodeSeaArtifactReader(path);
+  const reached = createDeferred<OwnedFileHandle>();
+  const release = createDeferred<void>();
+  const failure = new Error("controlled descriptor close failure");
+  let closing: Promise<unknown> | undefined;
+  try {
+    expect(await seaEntries(reader)).not.toHaveLength(0);
+    const close = vi.spyOn(OwnedFileHandle.prototype, "close");
+    try {
+      close.mockImplementationOnce(async function (this: OwnedFileHandle) {
+        reached.resolve(this);
+        await release.promise;
+        throw failure;
+      });
+      let settled = false;
+      closing = reader.close().then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (cause: unknown) => {
+          settled = true;
+          return cause;
+        },
+      );
+      await awaitAcknowledgement(reached.promise, closing, "descriptor close");
+      const owner = await reached.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      release.resolve();
+      expect(await closing).toBe(failure);
+      expect(owner.handle.fd).toBeGreaterThanOrEqual(0);
+      await reader.close();
+      expect(owner.handle.fd).toBe(-1);
+    } finally {
+      release.resolve();
+      await closing;
+      close.mockRestore();
+    }
+  } finally {
+    await reader.close();
+  }
+});
+
 it("honors cancellation before admitting a carrier", async () => {
   const path = await writeCarrier("cancel", nodeSeaElf());
   const reader = new NodeSeaArtifactReader(path);
@@ -1122,7 +1171,7 @@ it("confirms SEA naming before rejecting an unrelated cyclic PE resource branch"
   try {
     await expect(
       locateNodeSea(handle, fixture.bytes.length),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "malformed" });
   } finally {
     await handle.close();
   }

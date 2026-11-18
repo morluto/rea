@@ -22,7 +22,7 @@ import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -34,7 +34,7 @@ import {
   hasParentTraversal,
   sameLexicalDirectory,
   withinLexicalDirectory,
-} from "../config/kunaCacheDirectory.js";
+} from "../filesystem/cacheDirectory.js";
 import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
@@ -64,9 +64,11 @@ import {
   InvalidUtf8FileError,
   readRegularFileText,
   bindRegularFileCleanup,
-} from "./RegularFileRead.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../process/RegularFileRead.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
@@ -246,11 +248,11 @@ export const runUninstall = async (
   if (failed) {
     if (cleanupFailure !== undefined) {
       if (primaryFailure instanceof AnalysisError)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           primaryFailure,
           cleanupFailure,
           "uninstall",
-        ).bindCleanupDependencies([primaryFailure, cleanupFailure]);
+        );
       throw new AggregateError(
         [primaryFailure, cleanupFailure],
         "Uninstall failed and its resource cleanup remains incomplete.",
@@ -527,13 +529,17 @@ export const systemUninstallHost = (
     client: UninstallClient,
     ownershipEstablished: boolean,
     upper?: ClientConfigurationSource,
+    inline?: ClientConfigurationSource,
   ): Promise<
     | { readonly kind: "item"; readonly item: UninstallItem }
     | { readonly kind: "entry"; readonly entry: unknown }
   > => {
     const lowerLayers: ClientConfigurationSource[] = [];
     for (const configPath of client.configPaths ?? []) {
-      if (configPath === client.configPath) continue;
+      if (configPath === client.configPath) {
+        if (upper !== undefined) lowerLayers.push(upper);
+        continue;
+      }
       const layer = await readClientConfiguration(
         { ...client, configPath },
         fileSystem,
@@ -547,7 +553,9 @@ export const systemUninstallHost = (
       }
       lowerLayers.push({ ...layer.parsed, sourcePath: configPath });
     }
-    if (upper !== undefined) lowerLayers.push(upper);
+    if (upper !== undefined && !client.configPaths?.includes(client.configPath))
+      lowerLayers.push(upper);
+    if (inline !== undefined) lowerLayers.push(inline);
     return {
       kind: "entry",
       entry: effectiveClientConfiguration(lowerLayers, undefined, platform)
@@ -565,9 +573,8 @@ export const systemUninstallHost = (
     ownershipEstablished: boolean,
     upper?: ClientConfigurationSource,
   ): Promise<UninstallItem | undefined> => {
-    // An inline layer (KILO_CONFIG_CONTENT) that alone sets REA's enabled
-    // entry keeps it in effect whatever uninstall removes from the files, as
-    // doctor reports; any file entry is refused by the layered check instead.
+    // Inline options inherit omitted fields from the files that remain.
+    // In particular, an inline launcher does not override a file's disabled flag.
     const inline = client.inlineConfiguration;
     const inlineEntry =
       inline === undefined
@@ -582,6 +589,18 @@ export const systemUninstallHost = (
       enabledRegistration(inlineEntry) &&
       clientRegistrationOwnership(inlineEntry, client) === "owned"
     ) {
+      const remaining = await lowerLayerRegistration(
+        client,
+        ownershipEstablished,
+        upper,
+        { ...inline.parsed, inlineOrigin: inline.origin },
+      );
+      if (remaining.kind === "item") return remaining.item;
+      if (
+        !enabledRegistration(remaining.entry) ||
+        clientRegistrationOwnership(remaining.entry, client) !== "owned"
+      )
+        return undefined;
       if (!inlineReported.has(client.name)) {
         inlineReported.add(client.name);
         const name = client.displayName ?? client.name;

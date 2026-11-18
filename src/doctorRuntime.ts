@@ -1,10 +1,13 @@
 import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
 import {
   systemDoctorHost,
-  type DoctorCheck,
   type DoctorHost,
-  type DoctorProviderInspection,
+  type RetainedProviderRequestBudgetResolver,
 } from "./application/Doctor.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "./ports/DoctorProviderInspection.js";
 import { fileURLToPath } from "node:url";
 import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
 import {
@@ -28,8 +31,12 @@ import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayP
 import { ok } from "./domain/result.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
-import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+} from "./resources/index.js";
+import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
@@ -43,6 +50,7 @@ import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
 } from "./application/LinuxHopperPython.js";
+import { settleConcurrent } from "./application/settleConcurrent.js";
 
 /**
  * A selected client's own environment, when its registration records one.
@@ -292,6 +300,30 @@ const unresolvedProvider = (
   };
 };
 
+const withProbeResourceScope = <T>(
+  parent: RetainedResourceScope,
+  label: string,
+  operation: (scope: RetainedResourceScope) => Promise<T>,
+): Promise<T> =>
+  parent.run(async () => {
+    const child = new ArtifactResourceScope();
+    const scope: RetainedResourceScope = {
+      retain: (owner, resource) =>
+        child.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+      run: (work) => child.run(work),
+    };
+    try {
+      return await operation(scope);
+    } finally {
+      if (child.hasPending) parent.retain(child, label);
+      else await child.close();
+    }
+  });
+
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
@@ -316,10 +348,12 @@ export const createSystemDoctorHost = (
     }
     let registration = byPath.get(path);
     if (registration === undefined) {
-      registration = readIdaConfiguration(path, {
-        resourceScope,
-        signal: inspectionSignal,
-      });
+      registration = withProbeResourceScope(resourceScope, path, (probeScope) =>
+        readIdaConfiguration(path, {
+          resourceScope: probeScope,
+          signal: inspectionSignal,
+        }),
+      );
       byPath.set(path, registration);
     }
     return registration;
@@ -329,89 +363,138 @@ export const createSystemDoctorHost = (
     platform,
     architecture: host.architecture,
     ...(signal === undefined ? {} : { signal }),
-    resolveProviderRequestBudget: async (
-      analysisProvider,
-      registrationEnvironment,
-      resourceScope,
-      inspectionSignal,
-    ) => {
-      if (analysisProvider !== "ida" && analysisProvider !== "auto")
-        return ok(undefined);
-      const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
-      if (path === undefined) return ok(undefined);
-      const registration = await readRegistration(
-        path,
-        resourceScope,
-        inspectionSignal,
-      );
-      if (registration.ok) return ok(registration.value.timeoutMs);
-      // An invalid IDA registration cannot be selected automatically. Keep it
-      // out of recommendations for another available provider, but surface the
-      // parser-owned error when IDA itself was explicitly selected.
-      return analysisProvider === "ida" ? registration : ok(undefined);
-    },
+    resolveProviderRequestBudget: Object.assign(
+      async (
+        analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
+        registrationEnvironment: Parameters<RetainedProviderRequestBudgetResolver>[1],
+        resourceScope: Parameters<RetainedProviderRequestBudgetResolver>[2],
+        inspectionSignal: Parameters<RetainedProviderRequestBudgetResolver>[3],
+      ) => {
+        if (analysisProvider !== "ida" && analysisProvider !== "auto")
+          return ok(undefined);
+        const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
+        if (path === undefined) return ok(undefined);
+        const registration = await readRegistration(
+          path,
+          resourceScope,
+          inspectionSignal,
+        );
+        if (registration.ok) return ok(registration.value.timeoutMs);
+        // An invalid IDA registration cannot be selected automatically. Keep it
+        // out of recommendations for another available provider, but surface the
+        // parser-owned error when IDA itself was explicitly selected.
+        return analysisProvider === "ida" ? registration : ok(undefined);
+      },
+      // The only environment setting this resolver reads; an unresolved
+      // expression for it blocks budget derivation.
+      { budgetSettings: new Set(["REA_IDA_MCP_CONFIG"]) },
+    ),
     providerInspections: async (
       resourceScope: RetainedResourceScope,
       inspectionSignal: AbortSignal,
       clients: readonly string[],
     ) => {
-      const selected = await selectedRegistrationEnvironment(
-        clients,
-        environment,
+      const selected = await withProbeResourceScope(
         resourceScope,
-        inspectionSignal,
-        platform,
+        "selected-registration",
+        (probeScope) =>
+          selectedRegistrationEnvironment(
+            clients,
+            environment,
+            probeScope,
+            inspectionSignal,
+            platform,
+          ),
       );
       const inspectionEnvironment = selectedProviderSettings(
         selected,
         environment,
         platform,
       );
-      return [
-        unresolvedProvider(
-          "ghidra",
-          selected,
-          inspectionEnvironment,
-          platform,
-        ) ??
-          (await inspectSystemGhidraProvider(
-            inspectionEnvironment,
-            resourceScope,
-            inspectionSignal,
-          )),
-        unresolvedProvider("ida", selected, inspectionEnvironment, platform) ??
-          (await inspectIdaRegistration(
-            inspectionEnvironment.REA_IDA_MCP_CONFIG,
-            resourceScope,
-            inspectionSignal,
-            inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
-              ? undefined
-              : readRegistration(
-                  inspectionEnvironment.REA_IDA_MCP_CONFIG,
-                  resourceScope,
+      const ghidraUnresolved = unresolvedProvider(
+        "ghidra",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const idaUnresolved = unresolvedProvider(
+        "ida",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const jadxUnresolved = unresolvedProvider(
+        "jadx",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const kunaUnresolved = unresolvedProvider(
+        "kuna",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      return await settleConcurrent([
+        ghidraUnresolved !== undefined
+          ? Promise.resolve(ghidraUnresolved)
+          : withProbeResourceScope(
+              resourceScope,
+              "ghidra-doctor",
+              (probeScope) =>
+                inspectSystemGhidraProvider(
+                  inspectionEnvironment,
+                  probeScope,
                   inspectionSignal,
                 ),
-          )),
-        unresolvedProvider("jadx", selected, inspectionEnvironment, platform) ??
-          (await inspectJadxProvider(
-            inspectionEnvironment,
-            resourceScope,
-            host,
-            inspectionSignal,
-          )),
-        unresolvedProvider("kuna", selected, inspectionEnvironment, platform) ??
-          (await inspectKunaProvider(inspectionEnvironment, platform, {
-            resourceScope,
-            signal: inspectionSignal,
-          })),
-      ] satisfies readonly DoctorProviderInspection[];
+            ),
+        idaUnresolved !== undefined
+          ? Promise.resolve(idaUnresolved)
+          : withProbeResourceScope(resourceScope, "ida-doctor", (probeScope) =>
+              inspectIdaRegistration(
+                inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                probeScope,
+                inspectionSignal,
+                inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
+                  ? undefined
+                  : readRegistration(
+                      inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                      resourceScope,
+                      inspectionSignal,
+                    ),
+              ),
+            ),
+        jadxUnresolved !== undefined
+          ? Promise.resolve(jadxUnresolved)
+          : withProbeResourceScope(resourceScope, "jadx-doctor", (probeScope) =>
+              inspectJadxProvider(
+                inspectionEnvironment,
+                probeScope,
+                host,
+                inspectionSignal,
+              ),
+            ),
+        kunaUnresolved !== undefined
+          ? Promise.resolve(kunaUnresolved)
+          : withProbeResourceScope(resourceScope, "kuna-doctor", (probeScope) =>
+              inspectKunaProvider(inspectionEnvironment, platform, {
+                resourceScope: probeScope,
+                signal: inspectionSignal,
+              }),
+            ),
+      ]);
     },
     desktopBuildFacts: readDesktopBuildFacts,
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
-      inspectLinuxHopperDemoRuntime(
-        environment,
+      withProbeResourceScope(
         resourceScope,
-        inspectionSignal,
+        "hopper-demo-runtime",
+        (probeScope) =>
+          inspectLinuxHopperDemoRuntime(
+            environment,
+            probeScope,
+            inspectionSignal,
+          ),
       ),
   });
 };

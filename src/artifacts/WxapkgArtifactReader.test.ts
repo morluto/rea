@@ -15,7 +15,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { hasWxapkgHeader } from "../domain/wxapkgFormat.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 

@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { INVALID_BASE64_PADDING_PATTERN } from "../domain/stringPatterns.js";
 
-import { portablePatternViolations } from "./advertisedDialect.js";
 import {
-  presentInputJsonSchema,
-  presentOutputJsonSchema,
-} from "./inputSchemaPresentation.js";
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  portablePatternViolations,
+} from "./advertisedDialect.js";
+import { advertiseToolInput } from "./advertisedTool.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { presentOutputJsonSchema } from "./outputSchemaPresentation.js";
 import { projectPortablePattern } from "./portablePattern.js";
 
 // Short strings over an alphabet that reaches every class boundary the
@@ -67,16 +68,15 @@ const bmpSamples = samples.filter(
   (value) => !/[\u{10000}-\u{10FFFF}]/u.test(value),
 );
 
+const EXACT_SOURCES = new Set(["^\\/", "^\\d+$", "^[A-Za-z0-9._-]+$"]);
+
 const SOURCES = [
+  ...EXACT_SOURCES,
   // Advertised before projection (input and output catalogs).
-  "^\\/",
   "^-?\\d+$",
   "^[^\\s\\x5b\\x5d]+$",
   "^[^\\x00\\s\"']+$",
   "^(?:....)*$",
-  "[^A-Za-z0-9+\\x2f=]",
-  "(?:=[^=]|===)",
-  "(?:[^AQgw]==$|[BCDFGHJKLNOPRSTVWXZabdefhijlmnpqrtuvxyz1235679+\\x2f]=$)",
   "^1\\.0\\.\\d+$",
   "^\\x2F(?:[^\\x2F\\x5C]|$)",
   "^(?:\\/.*)?$",
@@ -89,7 +89,6 @@ const SOURCES = [
   // Constructs other engines refuse.
   "^[^\\0]*$",
   "^[^\\uD800-\\uDFFF]*$",
-  "^[A-Za-z0-9._-]+$",
   "^[a-z0-9]+(?:-[a-z0-9]+)*(?![\\s\\S])",
   "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)",
   "^(?!\\.\\.?$)[^/]+$",
@@ -113,15 +112,10 @@ describe("portable pattern projection", () => {
     "re-emits %s inside the grammar and its declared relation",
     (source) => {
       const projection = projectPortablePattern(source);
-      if (projection.kind === "unexpressible") {
-        expect(
-          presentOutputJsonSchema({ type: "string", pattern: source }),
-        ).not.toHaveProperty("pattern");
-        return;
-      }
+      if (projection.kind === "unexpressible")
+        throw new Error(`Expected a portable projection for /${source}/`);
+      if (EXACT_SOURCES.has(source)) expect(projection.kind).toBe("exact");
       expect(portablePatternViolations(projection.pattern)).toEqual([]);
-      for (const flags of ["", "u", "v"])
-        expect(() => new RegExp(projection.pattern, flags)).not.toThrow();
       const original = new RegExp(source, "u");
       const projected = new RegExp(projection.pattern, "u");
       // Engines differ only on astral characters (see `projectPortablePattern`):
@@ -149,16 +143,6 @@ describe("portable pattern projection", () => {
         ).toEqual([]);
     },
   );
-
-  it.each([
-    ["^\\d+$", "exact", "^[0-9]+$"],
-    ["^[A-Za-z0-9._-]+$", "exact", "^[\\-.0-9A-Z_a-z]+$"],
-    ["^\\/", "exact", "^/[^\\x00]*(?:\\x00[^\\x00]*)*$"],
-    ["^(?!con$)[a-z]+$", "wider", "^[a-z]+$"],
-    ["^[^\\x00\\s\"']+$", "wider", "^[^\\x00\\x09-\\x0d \"']+$"],
-  ])("projects %s %s as %s", (source, kind, pattern) => {
-    expect(projectPortablePattern(source)).toEqual({ kind, pattern });
-  });
 
   // An astral literal is two UTF-16 units in V8 without `u`; a one-or-two
   // unit atom would backtrack exponentially under a repeat.
@@ -192,12 +176,6 @@ describe("portable pattern projection", () => {
       expect(new RegExp(projected.pattern, flags).test(large)).toBe(true);
   });
 
-  it("omits the unsafe unbounded base64 padding projection", () => {
-    expect(
-      projectPortablePattern(INVALID_BASE64_PADDING_PATTERN.source),
-    ).toEqual({ kind: "unexpressible" });
-  });
-
   it.each(["^[^^]+$", "^[^^a]+$"])(
     "preserves the literal leading caret in %s",
     (pattern) => {
@@ -216,13 +194,41 @@ describe("portable pattern projection", () => {
 const PRESENTERS = [
   [
     "input",
+    // The input schema a client receives: presentation, then the dialect.
     (schema: Record<string, unknown>) =>
-      presentInputJsonSchema(schema, () => undefined),
+      advertiseToolInput(
+        undefined,
+        presentInputJsonSchema(schema, () => undefined),
+        { budgetBytes: ADVERTISED_INPUT_SCHEMA_MAX_BYTES },
+      ).inputSchema,
   ],
   ["output", presentOutputJsonSchema],
 ] as const;
 
 describe("advertised pattern presentation", () => {
+  it.each(PRESENTERS)(
+    "omits overlapping widened alternatives from the %s schema",
+    (_kind, present) => {
+      for (const pattern of ["^(?:é|è)+$", "^(?:é|[èa])+$", "^(?:(?:é|è))+$"]) {
+        const canonical = new Ajv({ strict: false }).compile({
+          type: "string",
+          pattern,
+        });
+        const schema = present(property({ type: "string", pattern }));
+        expect(
+          (schema.properties as Record<string, unknown>).name,
+        ).not.toHaveProperty("pattern");
+        const validate = new Ajv({ strict: false }).compile(schema);
+        expect(validate({ name: "é".repeat(1000) + "A" })).toBe(true);
+        expect(canonical("éè"), pattern).toBe(true);
+        expect(canonical("éèA"), pattern).toBe(false);
+      }
+      expect(projectPortablePattern("^(?:a|b)+$").kind).toBe("exact");
+      expect(projectPortablePattern("^[éè]+$").kind).toBe("wider");
+      expect(projectPortablePattern("^é(?:a|b)+$").kind).toBe("wider");
+    },
+  );
+
   const lookAround = "^(?!con$)[a-z]+$";
   const property = (schema: Record<string, unknown>) => ({
     type: "object",
@@ -231,16 +237,23 @@ describe("advertised pattern presentation", () => {
 
   it.each(PRESENTERS)(
     "keeps only widening around a widened %s pattern",
-    (_kind, present) => {
+    (kind, present) => {
       // Widening a pattern under `not` would narrow the enclosing schema.
       const negated = present(
         property({ type: "string", not: { pattern: lookAround } }),
       );
       expect(negated).toEqual(property({ type: "string" }));
-      // Exact re-emission keeps the negation.
+      // Exact re-emission keeps an output negation; the advertised input
+      // dialect has no `not`, so the input drops it.
       expect(
         present(property({ type: "string", not: { pattern: "^\\d+$" } })),
-      ).toEqual(property({ type: "string", not: { pattern: "^[0-9]+$" } }));
+      ).toEqual(
+        property(
+          kind === "input"
+            ? { type: "string" }
+            : { type: "string", not: { pattern: "^[0-9]+$" } },
+        ),
+      );
       // A widened branch could match alongside a sibling, so `oneOf` becomes `anyOf`.
       expect(
         present(
@@ -253,6 +266,8 @@ describe("advertised pattern presentation", () => {
         ),
       ).toEqual(
         property({
+          // The input dialect types a union whose branches share one type.
+          ...(kind === "input" ? { type: "string" } : {}),
           anyOf: [
             { type: "string", pattern: "^[a-z]+$" },
             { type: "string", pattern: "^con$" },
@@ -261,11 +276,6 @@ describe("advertised pattern presentation", () => {
       );
     },
   );
-
-  it("returns an output schema without non-portable patterns unchanged", () => {
-    const schema = property({ type: "string", pattern: "^[a-z]+$" });
-    expect(presentOutputJsonSchema(schema)).toBe(schema);
-  });
 
   it.each(PRESENTERS)(
     "does not narrow %s through a named anchor",

@@ -6,7 +6,7 @@ import {
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedNativeBoundaryInspectionSchema,
@@ -16,22 +16,22 @@ import {
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   decodeMetadataCodedIndex,
   metadataToken,
   readMetadataString,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
-import type { ManagedMetadataInventory } from "./ManagedMetadataInventory.js";
+import type { ManagedMetadataInventory } from "../domain/managed/managedMetadataInventory.js";
 import {
   managedCli32BitRequirement,
   managedCliIsMixedClrNative,
   type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedPeReader.js";
+import { readManagedValue } from "../domain/managed/managedReaderFailure.js";
 
 type ModuleRef = ManagedNativeBoundaryInspection["module_refs"][number];
 type NativeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];

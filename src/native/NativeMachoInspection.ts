@@ -15,29 +15,26 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { machoRuntimeSymbolName } from "../domain/native/machoSymbolName.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { MachoSliceSelectionRefusal } from "./metadata/MachoSliceSelection.js";
-import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
-  type NativeCommandCapture,
-} from "./CommandRunner.js";
-import { chainedImportNames } from "./AppleMachoFixups.js";
+import type { MachoSliceSelectionRefusal } from "../domain/apple/machoSliceSelection.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
+import { chainedImportNames } from "../domain/apple/appleMachoFixups.js";
 import {
   architectureBaseName,
   selectLipoArchitecture,
   type SelectedLipoArchitecture,
-} from "./MachoArchitectureSelection.js";
+} from "../domain/apple/machoArchitectureSelection.js";
 import {
   parseDyldExportAddressRow,
   parseDyldExports,
   parseDyldImports,
 } from "./parsers/dyldInfo.js";
-import { parseLipoCapture, type LipoArchitecture } from "./parsers/lipo.js";
+import { parseLipoCapture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import {
   projectMachoBinary,
   type BinaryMachoProjection,
 } from "./MachoBinaryProjection.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { ResolvedMachoSlice } from "./NativeMachoSelectedSlice.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -59,6 +56,8 @@ import {
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
+import type { LipoArchitecture } from "../domain/apple/lipo.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;

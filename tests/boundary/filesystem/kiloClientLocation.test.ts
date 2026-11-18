@@ -1,3 +1,4 @@
+import { registerMcpClientsOnHost } from "../../fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +7,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readEffectiveClientRegistrationConfiguration } from "../../../src/application/ClientConfigurationFiles.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
 import {
   resolveSupportedClients,
@@ -23,7 +23,7 @@ import {
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -234,7 +234,7 @@ it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async ()
     resources,
   );
   if (!selected.ok) throw selected.error;
-  const [outcome] = await registerMcpClients(
+  const [outcome] = await registerMcpClientsOnHost(
     selected.value,
     { command: command[0] ?? "", args: command.slice(1) },
     undefined,
@@ -394,7 +394,7 @@ it("registers Kilo through its table row in rea mcp add", async () => {
   expect(selected.value[0]?.inlineConfiguration?.origin).toBe(
     "KILO_CONFIG_CONTENT",
   );
-  const [outcome] = await registerMcpClients(
+  const [outcome] = await registerMcpClientsOnHost(
     selected.value,
     { command: command[0] ?? "", args: command.slice(1) },
     undefined,
@@ -483,6 +483,54 @@ it("reports REA's Kilo entry that only KILO_CONFIG_CONTENT sets instead of calli
   expect(details.match(/KILO_CONFIG_CONTENT sets/g)).toHaveLength(1);
   expect(await readFile(join(root, "kilo.json"), "utf8")).toBe(other);
 });
+
+it.each(["lower", "upper"])(
+  "keeps an inline Kilo registration disabled by its %s file during uninstall",
+  async (layer) => {
+    const home = await createTestTempDirectory("rea-kilo-uninstall-disabled-");
+    const lowerRoot = join(home, ".config", "kilo");
+    const upperRoot = join(home, ".kilo");
+    await mkdir(lowerRoot, { recursive: true });
+    await mkdir(upperRoot);
+    const lower = join(lowerRoot, "kilo.json");
+    const upper = join(upperRoot, "kilo.json");
+    const disabled = JSON.stringify({ mcp: { rea: { enabled: false } } });
+    const other = JSON.stringify({ mcp: { other: { command: ["x"] } } });
+    await writeFile(lower, layer === "lower" ? disabled : other);
+    await writeFile(upper, layer === "upper" ? disabled : other);
+    const environment = {
+      KILO_CONFIG_CONTENT: JSON.stringify({
+        mcp: { rea: { type: "local", command } },
+      }),
+    };
+    const row = await kiloRow(home, environment);
+    if (row === undefined) throw new Error("Kilo row is missing");
+    const before = await readEffectiveClientRegistrationConfiguration(
+      row,
+      undefined,
+      platform,
+    );
+    expect(before).toMatchObject({
+      ok: true,
+      value: { document: { servers: { rea: { enabled: false } } } },
+    });
+    const { kilo } = await uninstallKilo(home, environment);
+    expect(kilo).toBeDefined();
+    expect(kilo?.status).not.toBe("failed");
+    const enabled = await uninstallKilo(home, {
+      KILO_CONFIG_CONTENT: JSON.stringify({
+        mcp: { rea: { type: "local", command, enabled: true } },
+      }),
+    });
+    expect(enabled.kilo?.status).toBe("failed");
+    expect(await readFile(lower, "utf8")).toBe(
+      layer === "lower" ? disabled : other,
+    );
+    expect(await readFile(upper, "utf8")).toBe(
+      layer === "upper" ? disabled : other,
+    );
+  },
+);
 
 it("leaves a stale Kilo registration KILO_CONFIG_CONTENT pins out of update maintenance", async () => {
   const home = await createTestTempDirectory("rea-kilo-update-inline-");

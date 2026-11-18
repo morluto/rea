@@ -1,0 +1,9 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.blocks --columns offset,entropy --format tsv
+exit: 0
+--- stdout
+# rea-delimited-v1 {"version":1,"format":"tsv","command":"inspect-byte-entropy","duration":"<ms>ms","selected_path":["normalized_result","blocks"],"coverage":null,"source_coverage":null,"source_complete":null,"view":null,"limitations":["Entropy does not prove encryption; compressed and encrypted bytes cannot be distinguished by this measure.","Entropy is rounded to four decimal places; thresholds classify those reported values. Small blocks can underestimate entropy.","The file-wide hash and entropy cover the entire file; blocks and runs cover only the selected window. Empty input has entropy 0 by convention."],"unknowns":null,"provenance":{},"pagination":{}}
+offset	entropy
+0	4.3219
+<end>
+--- stderr
+<end>

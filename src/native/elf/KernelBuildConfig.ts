@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
@@ -264,10 +266,6 @@ const decodeText = async (
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 
-/** Line terminators other than LF that a `.config` value may not contain. */
-const isLineBreak = (char: number): boolean =>
-  char === 0x0d || char === 0x2028 || char === 0x2029;
-
 /**
  * Decoded `"..."` value whose only escapes are `\"` and `\\`. The line is
  * validated in place first, yielding once per TURN_STRIDE characters, so the
@@ -288,7 +286,9 @@ const unquote = async (
       await yieldTurn(signal);
     }
     const char = raw.charCodeAt(index);
-    if (char === QUOTE || isLineBreak(char)) return null;
+    // Kconfig writes Unicode separators literally inside quoted strings.
+    // LF already frames records; CR remains disallowed in a value.
+    if (char === QUOTE || char === 0x0d) return null;
     if (char !== BACKSLASH) continue;
     const next = raw.charCodeAt(index + 1);
     if (index + 1 >= end || (next !== QUOTE && next !== BACKSLASH)) return null;
@@ -767,7 +767,6 @@ const reportFromSearch = async (
                 ...blobRanges(found, search.space),
               }
             : acceptedConfig(found, input, search.space);
-  const complete = found === "absent" || config.status === "present";
   const banner = await findBanner(search.bytes, search.space, signal);
   return {
     artifact,
@@ -777,7 +776,14 @@ const reportFromSearch = async (
     banner,
     config,
     coverage: {
-      status: complete ? "complete" : "incomplete",
+      status:
+        found === "absent" || config.status === "present"
+          ? "complete"
+          : // A member cut by the searched bytes, or candidates the budget
+            // left uninflated, is a known gap; a malformed config is unreadable.
+            found === "truncated" || found === "exhausted"
+            ? "partial"
+            : "unknown",
       examined_bytes: search.bytes.length,
       examined_entries: config.option_count,
     },
@@ -855,7 +861,12 @@ const closedReport = (
       : null,
   banner: absentBanner("unknown"),
   config: emptyConfig(input, status, reason),
-  coverage: { status, examined_bytes: 0, examined_entries: 0 },
+  // Nothing was searched, so whether a config exists cannot be determined.
+  coverage: {
+    status: status === "incomplete" ? "unknown" : status,
+    examined_bytes: 0,
+    examined_entries: 0,
+  },
   limitations: [...baseLimitations(), limitation],
 });
 

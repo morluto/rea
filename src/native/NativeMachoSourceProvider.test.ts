@@ -5,11 +5,14 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { NativeCommandFailure, XcrunCommandRunner } from "./CommandRunner.js";
+import {
+  NativeCommandFailure,
+  XcrunCommandRunner,
+} from "../providers/NativeCommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { err } from "../domain/result.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
-import { MachoCommandNamesLimitError } from "./MachoCommandNames.js";
+import { MachoCommandNamesLimitError } from "../domain/apple/machoCommandNames.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
@@ -85,7 +88,7 @@ it.each(
     expect(result.error.partialObservation).toMatchObject({
       operation,
       parameters: { native_command_timeout_ms: 5000 },
-      subject: { local_path: path, digest: { sha256: target.sha256 } },
+      subject: { local_path: path, identity: { sha256: target.sha256 } },
       normalized_result: { provenance: expect.any(Array) },
       locations: expect.any(Array),
     });
@@ -191,16 +194,18 @@ it.each(
     } else {
       expect(result.error.partialObservation).toMatchObject({
         operation,
-        subject: { local_path: path, digest: { sha256: target.sha256 } },
+        subject: { local_path: path, identity: { sha256: target.sha256 } },
         normalized_result: { provenance: expect.any(Array) },
       });
     }
     expect((await client.close()).ok).toBe(true);
   },
 );
-vi.mock("./MachoCommandNames.js", async (importOriginal) => {
+vi.mock("../domain/apple/machoCommandNames.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("./MachoCommandNames.js")>();
+    await importOriginal<
+      typeof import("../domain/apple/machoCommandNames.js")
+    >();
   return {
     ...actual,
     readMachoCommandNames: (

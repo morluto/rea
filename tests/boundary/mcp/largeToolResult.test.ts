@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -9,20 +10,23 @@ import {
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   jsonObjectSchema,
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { registerOfficialTools } from "../../../src/server/registerOfficialTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
+import type { WithAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { mcpResponseOverflowProjection } from "../../../src/server/ToolResultDelivery.js";
 import {
@@ -37,6 +41,7 @@ import {
 } from "../../../src/server/toolResultEncoding.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
@@ -60,21 +65,33 @@ const callPseudoCode = async (
     recordEvidence,
     delivery,
   );
-  registerOfficialTools(server, {
-    logger: silentLogger,
-    activeTarget: undefined,
-    recordEvidence,
-    withAdmittedAnalysis: async (_operationName, _signal, operation) =>
-      ok(
-        await operation({
-          execute: () =>
-            Promise.resolve(
-              ok(createAnalysisExecution(payload, provider, { rawResult })),
-            ),
-        }),
-      ),
-  });
-  const client = new Client({ name: "complete-evidence-client", version: "1" });
+  const withAdmittedAnalysis: WithAdmittedAnalysis = async (
+    _operationName,
+    _signal,
+    operation,
+  ) =>
+    ok(
+      await operation({
+        execute: () =>
+          Promise.resolve(
+            ok(createAnalysisExecution(payload, provider, { rawResult })),
+          ),
+      }),
+    );
+  registerServiceTools(
+    server,
+    {
+      providerOperations: {
+        contracts: OFFICIAL_TOOL_CONTRACTS,
+        activeTarget: undefined,
+      },
+    },
+    { logger: silentLogger, recordEvidence, withAdmittedAnalysis },
+  );
+  const client = new Client(
+    { name: "complete-evidence-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const send = serverTransport.send.bind(serverTransport);
@@ -179,11 +196,14 @@ describe("MCP response budget recovery", () => {
       }),
       toolContract("get_evidence_bundle"),
     );
-    const action = z
-      .object({
-        error: z.object({ remediation: z.object({ action: z.string() }) }),
-      })
-      .parse(delivered.structuredContent).error.remediation.action;
+    expect(delivered.isError).toBe(true);
+    const { error } = z
+      .object({ error: analysisErrorProjectionSchema })
+      .parse(delivered.structuredContent);
+    const action = error.remediation.action;
+    expect(error.details).toMatchObject({
+      reported_limits: { next_operation: "export_evidence_bundle" },
+    });
     expect(action).not.toContain("get_evidence_bundle and detail: summary");
     expect(action).toContain("export_evidence_bundle");
     expect(action).toContain("caller-selected path");
@@ -264,7 +284,9 @@ describe("large complete Evidence MCP delivery", () => {
     expect(encoded.bytes).toBe(Buffer.byteLength(JSON.stringify(result)));
     expect(JSON.parse(responseWire).result.structuredContent).toEqual(evidence);
   });
+});
 
+describe("oversized Evidence MCP retention", () => {
   it("reports a true escaped-wire overrun and keeps acknowledged evidence recoverable", async () => {
     // Control characters expand once in structured JSON and again in the text mirror.
     const payload = "\u0000".repeat(
@@ -276,6 +298,9 @@ describe("large complete Evidence MCP delivery", () => {
       true,
     );
     expect(result.isError).toBe(true);
+    expect(result._meta).toEqual({
+      provenance: { untrusted_content: true, source: "analysis_target" },
+    });
     const limits = z
       .object({
         error: z.object({
@@ -303,7 +328,7 @@ describe("large complete Evidence MCP delivery", () => {
   });
 
   it("does not claim retention without a recording acknowledgment", () => {
-    const evidence = createEvidence(undefined, provider, {
+    const evidence = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_pseudo_code",
       parameters: {},
       result: "x".repeat(Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2)),
@@ -339,6 +364,7 @@ describe("large complete Evidence MCP delivery", () => {
     expect(limits.details.reported_limits).not.toHaveProperty(
       "evidence_reference",
     );
+    expect(limits.details.reported_limits).not.toHaveProperty("next_operation");
     expect(limits.details.reported_limits).toHaveProperty(
       "evidence_id",
       evidence.evidence_id,

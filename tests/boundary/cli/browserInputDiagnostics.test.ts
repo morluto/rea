@@ -54,17 +54,23 @@ const invalidInputs = [
       path: ["cdp_endpoint"],
       reason: "invalid_value",
     },
+    // Projected from its contract, so the issue names the CLI key.
+    cliPath: ["endpoint"],
     schema: listBrowserTargetsInputSchema,
   },
   {
     command: "analyze-web-bundle",
     arguments: [malformedEndpoint, "target"],
     operation: "analyze_web_bundle",
-    error: "Browser observation failed",
+    // The contract builder admits the decoded input before the handler, so
+    // the refusal carries no handler label.
+    error: undefined,
     issue: {
       path: ["cdp_endpoint"],
       reason: "invalid_value",
     },
+    // Builder admission names the field by its CLI key.
+    cliPath: ["endpoint"],
     schema: analyzeWebBundleInputSchema,
   },
   {
@@ -76,6 +82,8 @@ const invalidInputs = [
       path: ["cdp_endpoint"],
       reason: "invalid_value",
     },
+    // Projected from its contract, so the issue names the CLI key.
+    cliPath: ["endpoint"],
     schema: discoverWebMcpToolsInputSchema,
   },
 ];
@@ -139,7 +147,7 @@ describe("inspection branch diagnostics", () => {
           operation: "inspect_web_page",
           issues: [
             {
-              path: ["cdp_endpoint"],
+              path: ["endpoint"],
               reason: "invalid_value",
               message: owner.message,
             },
@@ -167,7 +175,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
-        error: input.error,
+        ...(input.error === undefined ? {} : { error: input.error }),
         code: "invalid_request",
         category: "invalid_input",
         message: expect.stringMatching(/input.*invalid/iu),
@@ -182,7 +190,11 @@ describe("browser and Inspector CLI input diagnostics", () => {
         details: {
           operation: input.operation,
           issues: expect.arrayContaining([
-            { ...input.issue, message: owner.message },
+            {
+              ...input.issue,
+              path: input.cliPath,
+              message: owner.message,
+            },
           ]),
         },
       });
@@ -195,11 +207,11 @@ describe("browser and Inspector CLI input diagnostics", () => {
   );
 
   cliTest.for([
-    ["list-browser-targets", "cdp_endpoint"],
-    ["list-javascript-runtime-targets", "inspector_endpoint"],
+    ["list-browser-targets", "cdp_endpoint", "endpoint"],
+    ["list-javascript-runtime-targets", "inspector_endpoint", "endpoint"],
   ] as const)(
     "%s does not echo rejected endpoint credentials",
-    async ([command, field], { cli, workspace }) => {
+    async ([command, field, key], { cli, workspace }) => {
       const endpoint =
         "http://rea-diagnostic-user:rea-diagnostic-secret@127.0.0.1:9222/";
       const result = await cli.run({
@@ -223,7 +235,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
         details: {
           issues: [
             {
-              path: [field],
+              path: [key],
               reason: "invalid_value",
               message: owner.message,
             },
@@ -271,7 +283,8 @@ describe("browser correction facts", () => {
           operation: "inspect_web_page",
           issues: expect.arrayContaining([
             {
-              path: ["include_storage_fingerprints"],
+              // Projected from its contract, so the issue names the CLI key.
+              path: ["includeStorageFingerprints"],
               reason: "invalid_value",
               message: owner.message,
             },
@@ -297,14 +310,60 @@ describe("browser correction facts", () => {
           operation: "compare_web_captures",
           issues: expect.arrayContaining([
             expect.objectContaining({
-              path: ["before", "inspection"],
+              path: ["beforeJson", "inspection"],
               reason: "missing_argument",
             }),
             expect.objectContaining({
-              path: ["after", "inspection"],
+              path: ["afterJson", "inspection"],
               reason: "missing_argument",
             }),
           ]),
+        },
+      });
+    },
+  );
+
+  cliTest(
+    "chooses the capture comparison shape from the documents",
+    async ({ cli, workspace }) => {
+      const run = async (...argv: string[]) =>
+        (
+          await cli.run({
+            arguments: ["compare-web-captures", ...argv, "--json"],
+            cwd: workspace.root,
+            environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
+          })
+        ).json;
+      // A scenario-owned field selects the scenario shape, so its own
+      // issues are reported rather than the passive capture's.
+      expect(await run('{"steps":[]}', "{}")).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: ["beforeJson", "browser"],
+              reason: "missing_argument",
+            }),
+          ]),
+        },
+      });
+      // Normalization applies only to scenarios; passive captures refuse it
+      // instead of ignoring it.
+      expect(
+        await run("{}", "{}", "--normalization-json", '{"rules":[]}'),
+      ).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: [
+            {
+              path: ["normalizationJson"],
+              reason: "invalid_value",
+              message:
+                "--normalization-json requires recorded browser scenario captures; the given input selects passive page captures, which does not take it.",
+            },
+          ],
         },
       });
     },

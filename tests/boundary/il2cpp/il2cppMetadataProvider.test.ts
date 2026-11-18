@@ -27,7 +27,7 @@ import {
   createLinkedIl2cppMetadataFixture,
 } from "../../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -485,23 +485,15 @@ it("bounds concurrent snapshots and retains active decoding until close complete
   const root = await createTestTempDirectory("rea-il2cpp-provider-close-");
   const path = join(root, "global-metadata.dat");
   await writeFile(path, createIl2cppMetadataFixture().bytes);
-  let markEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    markEntered = resolve;
-  });
-  let resume!: () => void;
-  const release = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const decoding = phaseGate();
   const provider = new Il2cppMetadataProvider(undefined, () => {
-    markEntered();
-    return release;
+    return decoding.hold();
   });
   const active = provider.inspect({ path });
   let closed = false;
   let closing: Promise<void> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, active, "metadata decoding");
+    await decoding.reached(active, "metadata decoding");
     closing = provider.close().then(() => {
       closed = true;
     });
@@ -520,7 +512,7 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     }
     await setImmediate();
     expect(closed).toBe(false);
-    resume();
+    decoding.release();
     await closing;
     expect((await active).ok).toBe(true);
     expect(closed).toBe(true);
@@ -533,7 +525,7 @@ it("bounds concurrent snapshots and retains active decoding until close complete
       expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
     }
   }, [
-    resume,
+    decoding.release,
     async () => {
       await closing;
     },
@@ -550,21 +542,13 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
   const root = await createTestTempDirectory("rea-il2cpp-provider-occupied-");
   const path = join(root, "global-metadata.dat");
   await writeFile(path, createIl2cppMetadataFixture().bytes);
-  let markEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    markEntered = resolve;
-  });
-  let resume!: () => void;
-  const release = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const decoding = phaseGate();
   const provider = new Il2cppMetadataProvider(undefined, () => {
-    markEntered();
-    return release;
+    return decoding.hold();
   });
   const active = provider.inspect({ path });
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, active, "metadata decoding");
+    await decoding.reached(active, "metadata decoding");
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -581,7 +565,7 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
       });
     }
   }, [
-    resume,
+    decoding.release,
     async () => {
       await active;
     },
@@ -1083,8 +1067,9 @@ it("reports the exceeded native-link maximum in the public refusal", async () =>
       resource: "capacity",
       reportedLimits: {
         boundary: "native-index-capacity",
-        maximum_entries: 64,
+        maximum: 64,
       },
+      fixedAllowance: { limit: 64, unit: "entries" },
     });
   } finally {
     await provider.close();

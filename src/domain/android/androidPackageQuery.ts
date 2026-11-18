@@ -66,11 +66,3 @@ export const validateAndroidPackageDelivery = (
         "Android view selection requires detail summary; complete detail preserves the complete source result.",
     });
 };
-
-/** Delivery choices never change the provider's analysis request. */
-export const androidPackageDeliverySchema = z
-  .strictObject({
-    detail: z.enum(["complete", "summary"]).default("complete"),
-    view: androidViewRequestSchema.optional(),
-  })
-  .superRefine(validateAndroidPackageDelivery);

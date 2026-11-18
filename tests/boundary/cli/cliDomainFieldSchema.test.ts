@@ -1,14 +1,12 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
-import { Cli, z } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 
 type CliInstance = ReturnType<typeof createCli>;
-type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
-
-const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
 
 const serve = async (cli: CliInstance, argv: readonly string[]) => {
   let stdout = "";
@@ -156,7 +154,7 @@ it("advertises the domain constraints for android, adb settings, and browser sel
     }),
   ).toBe(true);
 
-  const parser = registeredCommands.get(cli)?.get("inspect-android-class");
+  const parser = cliCommand(cli, "inspect-android-class")?.definition;
   expect(parser && "args" in parser && parser.args instanceof z.ZodObject).toBe(
     true,
   );

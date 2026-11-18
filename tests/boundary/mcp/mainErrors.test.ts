@@ -86,6 +86,13 @@ describe("MCP runtime errors", () => {
       message: MCP_CONNECTION_LOST,
     },
     {
+      name: "a disconnected stdio socket",
+      cause: Object.assign(new Error("SECRET not connected"), {
+        code: "ENOTCONN",
+      }),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
       name: "a wrapped HTTP broken pipe",
       cause: wrappedListenerDisconnect("EPIPE"),
       message: MCP_CONNECTION_LOST,

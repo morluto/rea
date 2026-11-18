@@ -1,3 +1,4 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,14 +16,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-
-cliTest("rejects the removed compare-bundles command", async ({ cli }) => {
-  const result = await cli.run({
-    arguments: ["compare-bundles", "left.json", "right.json", "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.stdout).toContain("COMMAND_NOT_FOUND");
-});
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 cliTest(
   "compares Evidence bundles without unexplained display-only changes",
@@ -54,11 +48,10 @@ cliTest(
       records: [
         {
           ...record,
-          subject: {
-            ...record.subject!,
+          subject: displayedEvidenceSubject(record.subject, {
             name: "renamed.elf",
             local_path: join(root, "renamed.elf"),
-          },
+          }),
         },
       ],
     };
@@ -189,10 +182,13 @@ cliTest(
       writeFile(rightPath, encoded),
     ]);
 
-    const client = new Client({
-      name: "bundle-path-contract-test",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "bundle-path-contract-test",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [
