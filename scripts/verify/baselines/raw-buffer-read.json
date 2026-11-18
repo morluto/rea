@@ -121,6 +121,5 @@
   "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
   "src/native/windows/WindowsShortcutParser.ts": 49,
   "src/pcap/PcapDnsWire.ts": 5,
-  "src/resources/AsarHeader.ts": 4,
   "src/v8/V8CodeCacheParser.ts": 1
 }
