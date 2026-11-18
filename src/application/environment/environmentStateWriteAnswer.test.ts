@@ -47,11 +47,9 @@ import {
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import { seededUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
-import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
-import { describeWrite } from "./environmentStateWriteDescription.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import {
@@ -953,47 +951,14 @@ describe("served catalog", () => {
     );
   });
 
-  it("quotes body member names and omits one that exceeds the sample budget", () => {
-    const plan: StateWritePlan = {
-      tool: "post_books",
-      effect: "create",
-      target: "/api/books",
-      served: true,
-      reason: null,
-      exemplar_ordinal: null,
-      observation: null,
-      response: null,
-      body: {
-        accepted: ["name, title", "note\nline"],
-        fixed: [],
-        required: [],
-        identity: null,
-        kinds: [],
-      },
-      rules: [],
-      collection: null,
-      insert: null,
-      merge: null,
-      checked_record_ordinals: [],
-      contradicted_by: null,
-    };
-    expect(describeWrite(plan)).toContain(
-      'body members "name, title", "note\\nline"',
-    );
-    const long = describeWrite({
-      ...plan,
-      body: { ...plan.body!, accepted: ["m".repeat(2000)] },
-    });
-    expect(long).not.toContain("m".repeat(2000));
-    expect(Buffer.byteLength(long ?? "", "utf8")).toBeLessThan(1200);
-  });
-
   it("quotes the member names a write's description lists and samples a long one", () => {
-    const long = "n".repeat(90_000);
+    const long = "n".repeat(2_000);
+    const note = "note\nline";
     const item = (id: number, name: string) => ({
       id,
       name,
       "x, y": name,
+      [note]: name,
       [long]: name,
     });
     const { source, state } = servedFrom([
@@ -1004,7 +969,7 @@ describe("served catalog", () => {
         "/api/books",
         item(2, "B"),
         201,
-        { name: "B", "x, y": "B", [long]: "B" },
+        { name: "B", "x, y": "B", [note]: "B", [long]: "B" },
       ],
       ["GET", "/api/books/2", item(2, "B")],
       ["GET", "/api/books", [item(1, "A"), item(2, "B")]],
@@ -1014,9 +979,13 @@ describe("served catalog", () => {
     const created = catalog.value.tools.find(
       (tool) => tool.name === "post_books",
     );
-    expect(created?.description).toContain(
-      'body members "name", "x, y", … (2/3 shown; full list in state Evidence)',
+    const description = created?.description ?? "";
+    expect(description).toContain(
+      'body members "name", "x, y", "note\\nline", … (3/4 shown; full list in state Evidence)',
     );
+    expect(description).not.toContain(note);
+    expect(Buffer.byteLength(description, "utf8")).toBeLessThan(1200);
+    expect(state.writes.get("post_books")?.body?.accepted).toContain(long);
   });
 
   it("serves every manifest tool unchanged in replay mode", () => {
