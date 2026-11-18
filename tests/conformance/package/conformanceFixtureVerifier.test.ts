@@ -106,7 +106,11 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       const ready = join(root, "file-started");
       await writeFile(
         helper,
-        '#!/bin/sh\nprintf "%s\\n" "$$" > "$CONFORMANCE_FILE_STARTED"\nexec sleep 15\n',
+        `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+writeFileSync(process.env.CONFORMANCE_FILE_STARTED, String(process.pid));
+setTimeout(() => {}, 15_000);
+`,
       );
       await chmod(helper, 0o755);
       const controller = new AbortController();
