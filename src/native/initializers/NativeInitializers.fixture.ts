@@ -159,7 +159,10 @@ export const elfUnmappedInitializerTargets = (
  * ELF64 PIE: DT_INIT, RELATIVE init_array, one import, one RELR fini slot.
  * `needed` prepends that many DT_NEEDED entries, which repeat by design.
  */
-export const elf64PieInitializers = (needed = 0): Buffer => {
+export const elf64PieInitializers = (
+  needed = 0,
+  relrTags: "standard" | "android" = "standard",
+): Buffer => {
   const file = Buffer.alloc(0xc00);
   const dynstr = cStringTable(["imp_init"]);
   const strtab = cStringTable(["ctor_a", "ctor_b", "fini_fn"]);
@@ -202,9 +205,9 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
     [7, 0x480],
     [8, 96],
     [9, 24],
-    [36, 0x500],
-    [35, 8],
-    [37, 8],
+    [relrTags === "android" ? 0x6fffe000 : 36, 0x500],
+    [relrTags === "android" ? 0x6fffe001 : 35, 8],
+    [relrTags === "android" ? 0x6fffe003 : 37, 8],
     [6, 0x520],
     [5, 0x560],
     [10, dynstr.bytes.length],
