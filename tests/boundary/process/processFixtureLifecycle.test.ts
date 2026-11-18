@@ -305,3 +305,24 @@ it(
     }
   },
 );
+
+it("preserves the exit result when a child closes stdin before consuming its input", async () => {
+  const processes = createTestProcessRegistry();
+  try {
+    await expect(
+      processes.run(
+        process.execPath,
+        [
+          "-e",
+          'process.stderr.write("input refused\\n", () => process.exit(7));',
+        ],
+        { input: Buffer.alloc(4 * 1024 * 1024) },
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 7,
+      stderr: "input refused\n",
+    });
+  } finally {
+    await processes.shutdown();
+  }
+});
