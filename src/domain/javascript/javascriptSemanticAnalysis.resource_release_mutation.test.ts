@@ -7,6 +7,17 @@ const releases = (source: string) =>
     ({ kind }) => kind === "release",
   );
 
+it("keeps a method mutation on a candidate CommonJS acquisition", () => {
+  expect(
+    releases(`
+      const { createReadStream } = require("node:fs");
+      const stream = createReadStream("fixture.txt");
+      stream.close = replacement;
+      stream.close();
+    `),
+  ).toMatchObject([{ builtinAuthority: "candidate", resolution: "partial" }]);
+});
+
 it.each([
   "stream.destroy = () => stream;",
   "const alias = stream; alias.destroy = () => alias;",
@@ -138,6 +149,78 @@ it.each([
     ),
   ).toMatchObject([{ method: "close", resolution }]);
 });
+
+it.each([
+  ["createReadStream", "close", 1, "partial"],
+  ["createReadStream", "close", 2, "complete"],
+  ["createReadStream", "destroy", 2, "partial"],
+  ["createWriteStream", "close", 2, "complete"],
+  ["createWriteStream", "end", 2, "partial"],
+])(
+  "respects %s close lookup after a %s write at depth %i",
+  (factory, method, depth, resolution) => {
+    expect(
+      releases(`
+      import { ${factory} } from "node:fs";
+      const stream = ${factory}("fixture.txt");
+      stream${".__proto__".repeat(depth)}.${method} = replacement;
+      stream.close();
+    `),
+    ).toMatchObject([{ method: "close", resolution }]);
+  },
+);
+
+it.each([
+  ["await file.close(); await file.close();", ["complete", "complete"]],
+  [
+    'file.once("close", () => { file.close = replacement; }); file.close(); file.close();',
+    ["partial", "partial"],
+  ],
+  [
+    "file.close(); file.close = replacement; file.close();",
+    ["complete", "partial"],
+  ],
+])("checks each FileHandle release in %s", (body, resolutions) => {
+  expect(
+    releases(`
+      import { open } from "node:fs/promises";
+      const file = await open("fixture.txt");
+      ${body}
+    `).map(({ resolution }) => resolution),
+  ).toEqual(resolutions);
+});
+
+it("keeps uncertainty when the exported stream constructor was replaced", () => {
+  expect(
+    releases(`
+      import fs, { createReadStream } from "node:fs";
+      class Base { close() {} }
+      class Custom extends Base {}
+      fs.ReadStream = Custom;
+      const stream = createReadStream("fixture.txt");
+      stream.__proto__.__proto__.close = replacement;
+      stream.close();
+    `),
+  ).toMatchObject([{ resolution: "partial" }]);
+});
+
+it.each(["EventEmitter", "default"])(
+  "retains FileHandle receiver effects if the %s event emitter can run user code",
+  (origin) => {
+    expect(
+      releases(`
+        import { ${origin} as Emitter } from "node:events";
+        import { open } from "node:fs/promises";
+        Emitter.prototype.emit = function (event) {
+          if (event === "close") this.close = replacement;
+        };
+        const file = await open("fixture.txt");
+        await file.close();
+        await file.close();
+      `).map(({ resolution }) => resolution),
+    ).toEqual(["complete", "partial"]);
+  },
+);
 
 it.each([
   'eval("stream.destroy = () => stream");',

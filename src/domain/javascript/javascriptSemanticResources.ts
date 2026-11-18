@@ -5,6 +5,7 @@ import {
   BUILTIN_RESOURCE_SPECIFIERS,
   BUILTIN_RESOURCE_METHODS,
   builtinResourceReleases,
+  type BuiltinResourceReleaseMember,
 } from "./javascriptBuiltinResourceMethods.js";
 import type {
   JavaScriptSemanticCallable,
@@ -22,6 +23,7 @@ import {
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import {
+  bindingEffectsConfinedToReceiverCalls,
   bindingMethodMayHaveChanged,
   opaqueCodeMayRebindBinding,
   prototypeMutationMayPrecede,
@@ -37,6 +39,7 @@ import {
   builtinDataEffectIdentity,
   dataEffectMemberCallee,
   outerDataEffectBinding,
+  requiredModuleChanged,
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
@@ -414,6 +417,25 @@ const collectAcquisitions = (
   return output;
 };
 
+/** FileHandle.close can run close listeners. Exempt receiver effects only
+ * when the binding has no writes or exposures besides direct native closes. */
+const hasOnlyDirectCloseInvocations = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  bindingEffectsConfinedToReceiverCalls(binding, (node) => {
+    if (!t.isCallExpression(node) || node.arguments.length !== 0) return false;
+    const member = dataEffectMemberCallee(node);
+    return (
+      member !== null &&
+      t.isIdentifier(member.object) &&
+      semanticStaticPropertyName(member.property, member.computed) ===
+        "close" &&
+      resolveSemanticBindingState(state, member.object, member.object.name) ===
+        binding
+    );
+  });
+
 const collectReleases = (
   program: t.Program,
   context: DataEffectTraversalContext,
@@ -427,6 +449,7 @@ const collectReleases = (
     byBinding.set(acquisition.resultBindingId, existing);
   }
   const output: JavaScriptSemanticResourceOperation[] = [];
+  const isolatedFileHandles = new Map<string, boolean>();
   traverseDataEffects(program, context, (node) => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const member = dataEffectMemberCallee(node);
@@ -490,10 +513,47 @@ const collectReleases = (
     // No linked acquisition exposes this release method, so the call is not a
     // release of it at all: Node throws at the call site instead.
     if (linked.length === 0) return;
+    const possibleAcquisitions = new Set(linked.map(({ node }) => node));
     const [first] = linked;
     const members =
       linked.length === 1 && first ? releasesFor(first) : undefined;
     const release = members?.[method];
+    const streamConstructor =
+      first?.specifier !== "fs"
+        ? undefined
+        : first.method === "createReadStream"
+          ? "ReadStream"
+          : first.method === "createWriteStream"
+            ? "WriteStream"
+            : undefined;
+    const streamConstructorMayHaveChanged =
+      first !== undefined &&
+      streamConstructor !== undefined &&
+      requiredModuleChanged(
+        "fs",
+        [streamConstructor],
+        first.node,
+        context.state,
+      );
+    let isolatedNativeCloses = false;
+    if (
+      fresh &&
+      first?.specifier === "fs/promises" &&
+      release?.owner === "instance"
+    ) {
+      isolatedNativeCloses =
+        isolatedFileHandles.get(binding.bindingId) ??
+        hasOnlyDirectCloseInvocations(binding, context.state);
+      isolatedFileHandles.set(binding.bindingId, isolatedNativeCloses);
+      isolatedNativeCloses =
+        isolatedNativeCloses &&
+        !requiredModuleChanged(
+          "events",
+          ["prototype", "emit"],
+          member,
+          context.state,
+        );
+    }
     output.push({
       resourceId: `resource:release:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "release",
@@ -507,15 +567,15 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
+        !streamConstructorMayHaveChanged &&
         release !== undefined &&
         !releaseMethodMayHaveChanged(
           binding,
           method,
           member,
           context.state,
-          knownAcquisitions,
-          fresh,
-          release.owner === "prototype",
+          possibleAcquisitions,
+          { fresh, release, isolatedNativeCloses },
         ) &&
         !release.delegates?.some((dependency) =>
           releaseMethodMayHaveChanged(
@@ -523,9 +583,8 @@ const collectReleases = (
             dependency,
             node,
             context.state,
-            knownAcquisitions,
-            fresh,
-            members?.[dependency]?.owner !== "instance",
+            possibleAcquisitions,
+            { fresh, release: members?.[dependency] },
           ),
         ) &&
         (binding.kind !== "parameter" || receiver.hasDefiniteInitializer) &&
@@ -544,8 +603,15 @@ const releaseMethodMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   acquisitions: ReadonlySet<t.Node>,
-  fresh: boolean,
-  inherited: boolean,
+  {
+    fresh,
+    release,
+    isolatedNativeCloses = false,
+  }: {
+    fresh: boolean;
+    release: BuiltinResourceReleaseMember | undefined;
+    isolatedNativeCloses?: boolean;
+  },
 ): boolean => {
   const targetsAcquisition = (
     effect: JavaScriptSemanticMemberEffect,
@@ -568,7 +634,9 @@ const releaseMethodMayHaveChanged = (
   };
   return bindingMethodMayHaveChanged(binding, method, read, state, {
     fresh,
-    inherited,
+    inherited: release?.owner !== "instance",
+    definingPrototypeDepth: fresh ? release?.definingPrototypeDepth : undefined,
+    isolatedNativeCloses,
     targets: targetsAcquisition,
   });
 };

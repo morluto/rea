@@ -21,24 +21,33 @@ export const BUILTIN_RESOURCE_METHODS = {
  * so a family-blind release list claims a teardown that throws instead.
  */
 type ReleaseMethod = "close" | "destroy" | "end";
-interface ReleaseMember {
+export interface BuiltinResourceReleaseMember {
   readonly owner: "instance" | "prototype";
+  readonly definingPrototypeDepth?: number;
   readonly delegates?: readonly ReleaseMethod[];
 }
 const inherited = { owner: "prototype" } as const;
 
 // Each entry lists the release methods looked up inside the native call.
 const releases: Readonly<
-  Record<string, Partial<Record<ReleaseMethod, ReleaseMember>>>
+  Record<string, Partial<Record<ReleaseMethod, BuiltinResourceReleaseMember>>>
 > = {
   "fs:createReadStream": {
-    close: { owner: "prototype", delegates: ["destroy"] },
-    destroy: inherited,
+    close: {
+      owner: "prototype",
+      definingPrototypeDepth: 1,
+      delegates: ["destroy"],
+    },
+    destroy: { owner: "prototype", definingPrototypeDepth: 2 },
   },
   "fs:createWriteStream": {
-    close: { owner: "prototype", delegates: ["end", "destroy"] },
-    destroy: inherited,
-    end: inherited,
+    close: {
+      owner: "prototype",
+      definingPrototypeDepth: 1,
+      delegates: ["end", "destroy"],
+    },
+    destroy: { owner: "prototype", definingPrototypeDepth: 2 },
+    end: { owner: "prototype", definingPrototypeDepth: 2 },
   },
   "fs/promises:open": { close: { owner: "instance" } },
   "net:connect": { destroy: inherited, end: inherited },

@@ -607,10 +607,14 @@ export const bindingMethodMayHaveChanged = (
   {
     fresh,
     inherited,
+    definingPrototypeDepth,
+    isolatedNativeCloses,
     targets,
   }: {
     fresh: boolean;
     inherited: boolean;
+    definingPrototypeDepth: number | undefined;
+    isolatedNativeCloses: boolean;
     targets: (effect: JavaScriptSemanticMemberEffect) => boolean;
   },
 ): boolean => {
@@ -657,10 +661,16 @@ export const bindingMethodMayHaveChanged = (
     "reference",
   ))
     if (mayPrecede(effect, true)) return true;
+  const shadowedWrite = (path: JavaScriptSemanticPropertyPath): boolean =>
+    definingPrototypeDepth !== undefined &&
+    path.length - 1 > definingPrototypeDepth &&
+    path.at(-1) === method &&
+    path.slice(0, -1).every((key) => key === "__proto__");
   return (
     binding.memberWrites.some(
       (effect) =>
         (effect.path.length > 1 || targets(effect)) &&
+        !shadowedWrite(effect.path) &&
         // A write changes a slot on its parent. Rebinding C.prototype
         // leaves the prototype of an already acquired receiver intact.
         (effect.path.length === 0 ||
@@ -675,6 +685,7 @@ export const bindingMethodMayHaveChanged = (
     ) ||
     binding.escapedPaths.some(
       (effect) =>
+        !(isolatedNativeCloses && effect.path.length === 0) &&
         (effect.path.length > 0 || targets(effect)) &&
         reachesReceiver(effect.path, effect.path.length, true) &&
         effect.node !== state.parentsByNode.get(read) &&
@@ -687,6 +698,17 @@ export const bindingMethodMayHaveChanged = (
 export const bindingHasMemberWrites = (
   binding: JavaScriptSemanticBindingState,
 ): boolean => binding.memberWrites.length > 0;
+
+/** An opaque release can see the receiver only through its recorded effects. */
+export const bindingEffectsConfinedToReceiverCalls = (
+  binding: JavaScriptSemanticBindingState,
+  matchesCall: (node: t.Node) => boolean,
+): boolean =>
+  !bindingHasMemberWrites(binding) &&
+  binding.escapedPaths.every(
+    ({ node, path }) =>
+      path.length === 0 && node !== undefined && matchesCall(node),
+  );
 
 /**
  * The nodes recorded member writes to `binding`'s object involve, in record
