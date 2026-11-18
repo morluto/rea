@@ -288,8 +288,8 @@ const URL_REFERENCE = new RegExp(`^${URL_REFERENCE_SOURCE}`, "u");
 
 /**
  * A caller-path field of a CLI JSON document as the CLI admits it: any
- * nonempty local spelling, which it resolves, but not a URL, which it leaves
- * for the contract to refuse. The pattern spells case-insensitivity out so
+ * nonblank local spelling, which it resolves, but not a URL, which it leaves
+ * for the contract to refuse. The URL pattern spells case-insensitivity out so
  * JSON Schema, which carries no regex flags, advertises the same rule.
  */
 export const cliJsonCallerPathSchema = localPathStringSchema
