@@ -1,3 +1,5 @@
+import { BinaryReader } from "./binaryContainer.js";
+
 /** Whether bytes start with a standalone Godot PCK header. */
 export const hasGodotPckHeader = (bytes: Uint8Array): boolean =>
   bytes.length >= 4 &&
@@ -14,16 +16,25 @@ export interface GodotPckHeaderFacts {
   readonly enginePatch: number;
 }
 
+const pckReader = (bytes: Uint8Array): BinaryReader =>
+  new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "godot-pck",
+  );
+
 /** Decode declared fields after the caller admits a complete 20-byte header. */
 export const readGodotPckHeaderFacts = (
   bytes: Uint8Array,
 ): GodotPckHeaderFacts => {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = pckReader(bytes);
   return {
-    formatVersion: view.getUint32(4, true),
-    engineMajor: view.getUint32(8, true),
-    engineMinor: view.getUint32(12, true),
-    enginePatch: view.getUint32(16, true),
+    formatVersion: reader.u32(4),
+    engineMajor: reader.u32(8),
+    engineMinor: reader.u32(12),
+    enginePatch: reader.u32(16),
   };
 };
 
@@ -43,12 +54,7 @@ export const readGodotPckTrailerFacts = (
   fileSize: number,
 ): GodotPckTrailerFacts => {
   if (!hasGodotPckHeader(trailer.subarray(8, 12))) return { state: "absent" };
-  const view = new DataView(
-    trailer.buffer,
-    trailer.byteOffset,
-    trailer.byteLength,
-  );
-  const packBytes = view.getBigUint64(0, true);
+  const packBytes = pckReader(trailer).word(0, 64);
   const end = fileSize - 12;
   return {
     state: "declared",
