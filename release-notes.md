@@ -514,6 +514,7 @@
 * **wasm:** keep a rejected relative WABT directory in the refusal ([ab26fc9](https://github.com/morluto/rea/commit/ab26fc90233a0ac868993a72848d10a20190d292))
 * **wasm:** report interface comparison coverage unknown when either side has no interface facts ([#11243](https://github.com/morluto/rea/issues/11243)) ([6ec19b4](https://github.com/morluto/rea/commit/6ec19b4b01563ac0f60332c43f281a05544e518a))
 * **web:** merge wide script analysis results without call spreads ([2032b5a](https://github.com/morluto/rea/commit/2032b5a819a90d37836822afaece0eaabfc702b0)), closes [#10445](https://github.com/morluto/rea/issues/10445) [#10446](https://github.com/morluto/rea/issues/10446)
+* **windows:** gate transient writes on runtimeWriteTransient capability ([#10607](https://github.com/morluto/rea/issues/10607)) ([731049a](https://github.com/morluto/rea/commit/731049ab9ca6391be9c727e64971672d6134efb5))
 * **windows:** keep pre-epoch shortcut times in their millisecond ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
 * **windows:** preserve opaque ANSI shortcut path identity ([#11923](https://github.com/morluto/rea/issues/11923)) ([e39a53d](https://github.com/morluto/rea/commit/e39a53d5cdc96e81e861f257915bca862d7f8a90))
 * **windows:** preserve pre-epoch shortcut timestamp milliseconds ([#10305](https://github.com/morluto/rea/issues/10305)) ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
