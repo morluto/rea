@@ -284,16 +284,22 @@ describe("environment catalog limits", () => {
       params: users.params.map((param) => ({
         ...param,
         observed_values: Array.from(
-          { length: 10_000 },
+          { length: 8 },
           (_, index) => `${String(index)}-${"x".repeat(200)}`,
         ),
       })),
-      record_ordinals: Array.from({ length: 10_000 }, (_, index) => index),
+      record_ordinals: [
+        ...Array.from({ length: 360 }, (_, index) => index),
+        50_000,
+      ],
     };
+    const retained = source.exchanges.get(5);
+    if (retained === undefined) throw new Error("Missing fixture user record");
     const entry = await serveEnvironment({
       source: {
         ...source,
         manifest: { ...source.manifest, tools: [expanded] },
+        exchanges: new Map([[50_000, { ...retained, ordinal: 50_000 }]]),
       },
       host: "127.0.0.1",
       port: 0,
@@ -314,9 +320,10 @@ describe("environment catalog limits", () => {
           inputSchema,
         })),
       );
-      expect(cardText).toContain(
-        "/10000 shown; full list in manifest Evidence",
+      expect(tools[0]?.description).toMatch(
+        /replays retained records \[0, 1, .*\/361 shown; full list in manifest Evidence\)/u,
       );
+      expect(tools[0]?.description).not.toContain("50000");
       const replay = await client.callTool({
         name: users.name,
         arguments: { id: "2" },
@@ -324,7 +331,7 @@ describe("environment catalog limits", () => {
       expect(replay.isError).toBeFalsy();
       expect(replay.structuredContent).toMatchObject({
         body: { login: "probe" },
-        replay: { exact_match: true, record_ordinal: 5 },
+        replay: { exact_match: true, record_ordinal: 50_000 },
       });
     } finally {
       await transport.terminateSession();

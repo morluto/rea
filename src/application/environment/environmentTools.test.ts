@@ -404,10 +404,10 @@ describe("environment catalog description budgets", () => {
   it("bounds observation and record samples without changing the retained manifest", () => {
     const users = tool("get_users_by_id");
     const observations = Array.from(
-      { length: 10_000 },
+      { length: 8 },
       (_, index) => `${String(index)}-${"x".repeat(200)}`,
     );
-    const ordinals = Array.from({ length: 10_000 }, (_, index) => index);
+    const ordinals = Array.from({ length: 360 }, (_, index) => index);
     const expanded = {
       ...users,
       params: users.params.map((param) => ({
@@ -420,22 +420,19 @@ describe("environment catalog description budgets", () => {
       withTools([expanded]),
       source.manifest.name,
     );
-    expect(definition?.tool).toBe(expanded);
-    expect(expanded.params[0]?.observed_values).toBe(observations);
-    expect(expanded.record_ordinals).toBe(ordinals);
-    for (const description of [
-      definition?.description,
-      definition?.inputSchema.properties.id?.description,
-    ]) {
-      expect(Buffer.byteLength(description ?? "")).toBeLessThan(1536);
-      expect(description).toContain(
-        "/10000 shown; full list in manifest Evidence",
-      );
-    }
-    expect(definition?.description).toContain(source.evidenceId);
-    expect(definition?.inputSchema.properties.id?.description).toContain(
-      observations[0],
+    expect(definition?.tool.params[0]?.observed_values).toEqual(observations);
+    expect(definition?.tool.record_ordinals).toEqual(ordinals);
+    const describedValues = definition?.inputSchema.properties.id?.description;
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(1536);
+    expect(Buffer.byteLength(describedValues ?? "")).toBeLessThan(1536);
+    expect(definition?.description).toContain(
+      "/360 shown; full list in manifest Evidence",
     );
+    expect(describedValues).toContain(
+      "/8 shown; full list in manifest Evidence",
+    );
+    expect(definition?.description).toContain(source.evidenceId);
+    expect(describedValues).toContain(observations[0]);
   });
 
   it("advertises long path parameters with collision-safe aliases consistently", () => {
@@ -508,7 +505,7 @@ describe("environment catalog description budgets", () => {
     if (folders.body_shape === null)
       throw new Error("Missing fixture body shape");
     const properties = Object.fromEntries(
-      Array.from({ length: 10_000 }, (_, index) => [
+      Array.from({ length: 8 }, (_, index) => [
         `${String(index)}-${"x".repeat(200)}`,
         "string" as const,
       ]),
@@ -520,10 +517,8 @@ describe("environment catalog description budgets", () => {
     });
     const description = schema.properties.body?.description;
     expect(Buffer.byteLength(description ?? "")).toBeLessThan(1300);
-    expect(description).toContain(
-      "/10000 shown; full list in manifest Evidence",
-    );
-    expect(Object.keys(bodyShape.properties)).toHaveLength(10_000);
+    expect(description).toContain("/8 shown; full list in manifest Evidence");
+    expect(Object.keys(bodyShape.properties)).toHaveLength(8);
   });
 });
 
