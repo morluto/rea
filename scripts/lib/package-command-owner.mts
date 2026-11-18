@@ -74,8 +74,17 @@ class PackageCommands implements PackageVerifierCommands {
     arguments_: readonly string[],
     options: VerifierCommandOptions = {},
   ): Promise<VerifierCommandOutput> {
-    const invocation = npmInvocation(arguments_, options.env ?? process.env);
-    return this.exec(invocation.command, invocation.arguments, options);
+    // npm exports this setting to scripts, but rejects it in nested project installs.
+    const environment = Object.fromEntries(
+      Object.entries(options.env ?? process.env).filter(
+        ([key]) => key.toLowerCase() !== "npm_config_allow_scripts",
+      ),
+    );
+    const invocation = npmInvocation(arguments_, environment);
+    return this.exec(invocation.command, invocation.arguments, {
+      ...options,
+      env: environment,
+    });
   }
 
   async run(

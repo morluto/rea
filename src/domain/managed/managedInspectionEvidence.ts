@@ -1,4 +1,4 @@
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
@@ -53,11 +53,13 @@ export const readManagedInspectionEvidence = <
       ]),
     );
   }
-  const payload = readEvidencePayload(schema, evidence.normalized_result);
+  const payload = readEvidencePayload(schema, evidence.normalized_result, {
+    within: ["normalized_result"],
+  });
   if (!payload.ok) return payload;
   const result = payload.value;
   const artifactSha256 = result.artifact.sha256;
-  const subjectSha256 = evidence.subject?.digest.sha256;
+  const subjectSha256 = evidenceFileTarget(evidence)?.sha256;
   if (subjectSha256 !== undefined && artifactSha256 !== subjectSha256)
     return err(
       integrityFailure(

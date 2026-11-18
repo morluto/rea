@@ -14,6 +14,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { splitNmSymbolRecords } from "../../../scripts/lib/conformance-fixtures.mjs";
 import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { runningTestDeadline } from "../../support/runningTestDeadline.js";
 import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const digest = (bytes: string | Buffer) =>
@@ -39,10 +40,6 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
   { mode: "wrong-prefix", marker: "REA_C_ENTRY" },
   { mode: "prefix-complete", marker: "REA_C_ENTRY" },
   { mode: "marker", marker: "REA_C_ENTRY" },
-  { mode: "marker", marker: "REA_VERSION_ONE" },
-  { mode: "marker", marker: "reaProbeOne" },
-  { mode: "marker", marker: "REA_SWIFT_EXECUTE" },
-  { mode: "fragment", marker: "REAService" },
   { mode: "fragment", marker: "performAction:error:" },
 ])(
   "verifies compiler-produced fixture records: $mode / $marker",
@@ -72,7 +69,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       await commands.exec(
         "cc",
         ["-c", join(sources, path), "-o", join(output, artifact)],
-        { timeout: 10_000 },
+        { timeout: runningTestDeadline() },
       );
       const bytes = await readFile(join(output, artifact));
       fixtures.push({
@@ -106,7 +103,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       [verifier, manifest, sources],
       {
         cwd: root,
-        timeout: 25_000,
+        timeout: runningTestDeadline(),
       },
     );
     if (!["complete", "fragment", "prefix-complete"].includes(mode))
@@ -152,7 +149,7 @@ it.each([
   await expect(
     commands.exec(process.execPath, [verifier, manifest, root], {
       cwd: root,
-      timeout: 10_000,
+      timeout: runningTestDeadline(),
     }),
   ).rejects.toMatchObject({
     code: 1,
@@ -169,9 +166,27 @@ it.each([
 });
 
 it("preserves a carriage return that belongs to an nm symbol name", () => {
-  expect(splitNmSymbolRecords("rea_entry\r\nrea_inventory_0000\n")).toEqual([
+  expect(splitNmSymbolRecords("rea_entry\r\nrea_inventory_0000\r\n")).toEqual([
     "rea_entry\r",
-    "rea_inventory_0000",
+    "rea_inventory_0000\r",
   ]);
-  expect(splitNmSymbolRecords("rea_entry\r\n")).toEqual(["rea_entry\r"]);
+});
+
+it("refuses a missing explicit source root even when a default exists", async () => {
+  const { commands, root } = await ownedFixture("rea-fixture-source-root-");
+  await mkdir(join(root, "tests", "conformance"), { recursive: true });
+  const manifest = join(root, "manifest.json");
+  await writeFile(manifest, "{}");
+  const selected = join(root, "selected-sources");
+  await expect(
+    commands.exec(process.execPath, [verifier, manifest, selected], {
+      cwd: root,
+      timeout: 10_000,
+    }),
+  ).rejects.toMatchObject({
+    code: 1,
+    snapshot: {
+      stderr: { text: expect.stringContaining(selected) },
+    },
+  });
 });

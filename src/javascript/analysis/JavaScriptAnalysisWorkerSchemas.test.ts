@@ -20,17 +20,17 @@ import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSe
 import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
-it("preserves independent static coverage and historical unmeasured facts", () => {
+it("preserves independent static coverage and refuses facts without it", () => {
   const facts = analyzeJavaScriptStaticSource("require(moduleName);");
   expect(
     javaScriptWorkerStaticAnalysisSchema.parse(
       JSON.parse(JSON.stringify(facts)),
     ),
   ).toEqual(facts);
-  const { analysis_coverage: _coverage, ...historical } = facts;
-  expect(javaScriptWorkerStaticAnalysisSchema.parse(historical)).toEqual(
-    historical,
-  );
+  const { analysis_coverage: _coverage, ...unmeasured } = facts;
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.safeParse(unmeasured).success,
+  ).toBe(false);
   expect(
     javaScriptWorkerStaticAnalysisSchema.safeParse({
       ...facts,
@@ -154,6 +154,7 @@ it("retains candidate endpoint interpretation across the worker boundary", () =>
   const facts = analyzeJavaScriptStaticSource(`
     client.get("settingKey");
     fetch("/api");
+    http.request("POST", target);
   `);
   expect(facts.endpoints).toEqual([
     expect.objectContaining({
@@ -161,6 +162,11 @@ it("retains candidate endpoint interpretation across the worker boundary", () =>
       interpretation: "candidate",
     }),
     expect.objectContaining({ value: "/api" }),
+    expect.objectContaining({
+      kind: "network",
+      value: "POST",
+      interpretation: "candidate",
+    }),
   ]);
   expect(facts.endpoints[1]).not.toHaveProperty("interpretation");
   const serialized = JSON.parse(JSON.stringify(facts)) as unknown;
@@ -176,54 +182,33 @@ it("retains candidate endpoint interpretation across the worker boundary", () =>
   ).toBe(false);
 });
 
-it.each(["babel-ast-v1", "babel-ast-v2"])(
-  "versions fingerprints through the worker schema and rejects %s",
-  (oldAlgorithm) => {
-    const facts =
-      analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
+it("admits the current fingerprint version and refuses an incompatible one", () => {
+  const facts =
+    analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
     17(module, exports) { const key = selectKey(); exports.read = value[key]; }
   }]);`);
-    expect(facts.bundler_registrations[0]?.modules[0]).toMatchObject({
-      structural_fingerprint_algorithm: "babel-ast-v3",
-      structural_fingerprint_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-    });
-    expect(
-      javaScriptWorkerStaticAnalysisSchema.safeParse(
-        JSON.parse(JSON.stringify(facts)) as unknown,
-      ).success,
-    ).toBe(true);
-    const old = {
-      ...facts,
-      bundler_registrations: facts.bundler_registrations.map(
-        (registration) => ({
-          ...registration,
-          modules: registration.modules.map((module) => ({
-            ...module,
-            structural_fingerprint_algorithm: oldAlgorithm,
-          })),
-        }),
-      ),
-    };
-    expect(javaScriptWorkerStaticAnalysisSchema.safeParse(old).success).toBe(
-      false,
-    );
-  },
-);
-
-it("accepts candidate endpoint interpretations from static analysis", () => {
-  const facts = analyzeJavaScriptStaticSource(`http.request("POST", target);`);
-  expect(facts.endpoints).toContainEqual(
-    expect.objectContaining({
-      kind: "network",
-      value: "POST",
-      interpretation: "candidate",
-    }),
-  );
+  expect(facts.bundler_registrations[0]?.modules[0]).toMatchObject({
+    structural_fingerprint_algorithm: "babel-ast-v3",
+    structural_fingerprint_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
   expect(
     javaScriptWorkerStaticAnalysisSchema.safeParse(
       JSON.parse(JSON.stringify(facts)) as unknown,
     ).success,
   ).toBe(true);
+  const old = {
+    ...facts,
+    bundler_registrations: facts.bundler_registrations.map((registration) => ({
+      ...registration,
+      modules: registration.modules.map((module) => ({
+        ...module,
+        structural_fingerprint_algorithm: "babel-ast-v2",
+      })),
+    })),
+  };
+  expect(javaScriptWorkerStaticAnalysisSchema.safeParse(old).success).toBe(
+    false,
+  );
 });
 
 it("preserves partial request targets through the strict worker schema", () => {

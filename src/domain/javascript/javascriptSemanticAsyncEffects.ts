@@ -20,13 +20,11 @@ import {
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
-  createGlobalReferenceReader,
+  isIntrinsicGlobalReference,
   isUnmodifiedGlobalReference,
-} from "./javascriptSemanticAmbientWrites.js";
-import {
-  semanticOpaqueGlobalMayHaveChanged,
-  semanticOpaqueNameMayHaveChanged,
-} from "./javascriptSemanticOpaqueEffects.js";
+} from "./javascriptSemanticGlobalReference.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   builtinDataEffectIdentity,
@@ -380,8 +378,7 @@ const schedulesWithNonFunctionCallback = (
   if (
     t.isIdentifier(value) &&
     ["undefined", "NaN", "Infinity"].includes(value.name) &&
-    isUnmodifiedGlobalReference(value, state, value.name) &&
-    !semanticOpaqueNameMayHaveChanged(value, state)
+    isIntrinsicGlobalReference(value, state, value.name)
   )
     return true;
   // A class passes Node's own typeof check; invoking it is a separate failure,
@@ -418,8 +415,7 @@ const schedulesWithInvalidDelay = (
     t.isIdentifier(value.callee) &&
     delayConstructors.get(value.callee.name)?.(value.callee).status ===
       "unmodified" &&
-    !semanticOpaqueNameMayHaveChanged(value.callee, state) &&
-    !semanticOpaqueGlobalMayHaveChanged(value.callee, state)
+    !opaqueCodeMayChangeGlobalRead(value.callee, state, value.callee.name)
   );
 };
 

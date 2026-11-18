@@ -1,4 +1,8 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_CAPTURE_RECONSTRUCTION,
   PROCESS_COMPARISON_EVIDENCE,
@@ -179,14 +183,14 @@ it.for([
               .update(changed)
               .digest("hex"),
             unpacked,
+            integrity_check: "declared-digest",
+            related_parameters: ["integrity_policy"],
           },
           retryable: false,
           remediation: { action: projected.error.message },
         },
       });
-      expect(projected.error.message).toContain(
-        "--integrity-policy record-and-continue",
-      );
+      expect(projected.error.message).not.toContain("--integrity-policy");
       if (unpacked)
         expect(projected.error.message).toMatch(
           /unpacked entry main\.js.*companion file/iu,
@@ -290,6 +294,7 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({
         logical_path: "╟╤▒█.txt",
+        hash_status: "verified",
         limitations: [
           expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
         ],
@@ -644,7 +649,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     if (evidence === undefined) throw new Error("missing inventory Evidence");
     expect(evidence).toMatchObject({
       provider: { id: "rea-artifact-graph" },
-      subject: { format: "ipa" },
+      subject: { identity: { format: "ipa" } },
     });
     const inventoryInspection = z
       .object({
@@ -916,12 +921,11 @@ const withForeignMetadataAndNestedZipMember = (
     graphSha256,
   );
   const subject = evidence.subject;
-  if (subject === null) throw new Error("missing inventory subject");
   return createEvidence(
     {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      path: fileSubjectDisplay(subject).local_path,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     evidence.provider,
     {
@@ -980,6 +984,67 @@ it("does not apply PyInstaller declaration unknowns to foreign metadata or neste
   }
 });
 
+const verifyComparableDeclarations = async (
+  client: Client,
+  session: ReturnType<typeof createTestBinarySession>,
+  clean: ReturnType<typeof parseEvidence>,
+  declarationsPath: string,
+  declarationsCopyPath: string,
+) => {
+  // Complete PyInstaller declarations can prove equality even when their
+  // payloads were not hashed. Verification must reuse that producer rule.
+  const manifest = artifactInventoryResultSchema.parse(
+    clean.normalized_result,
+  ).manifest;
+  const declarationEvidence = (path: string) =>
+    createEvidence(
+      { path, sha256: manifest.root_sha256, format: manifest.root_format },
+      clean.provider,
+      {
+        operation: "inventory_artifact",
+        parameters: { path },
+        result: clean.normalized_result,
+        confidence: "observed",
+      },
+    );
+  const original = declarationEvidence(declarationsPath);
+  const reconstruction = declarationEvidence(declarationsCopyPath);
+  expect(session.recordEvidence(original).ok).toBe(true);
+  expect(session.recordEvidence(reconstruction).ok).toBe(true);
+  const separateDeclarations = await compareArtifactEvidenceThroughMcp(
+    client,
+    original,
+    reconstruction,
+  );
+  expect(separateDeclarations.isError).not.toBe(true);
+  const comparison = toolEvidence(separateDeclarations.structuredContent);
+  expect(comparison.normalized_result).toMatchObject({ status: "unchanged" });
+  const verification = await client.callTool({
+    name: "verify_reconstruction",
+    arguments: {
+      specification: {
+        name: "Declaration comparison",
+        claims: [
+          {
+            kind: "structural-artifact",
+            claim_id: "declarations",
+            title: "Declared structure remains equal",
+            comparison_evidence_id: comparison.evidence_id,
+            dimension: "overall",
+          },
+        ],
+      },
+    },
+  });
+  expect(verification.isError, JSON.stringify(verification)).not.toBe(true);
+  expect(
+    toolEvidence(verification.structuredContent).normalized_result,
+    JSON.stringify(verification),
+  ).toMatchObject({
+    status: "pass",
+  });
+};
+
 it("compares PyInstaller declaration facts without inventing payload identity", async ({
   mcp,
   onTestFinished,
@@ -988,12 +1053,14 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
   const leftPath = join(root, "module");
   const rightPath = join(root, "script");
   const declarationsPath = join(root, "declarations");
+  const declarationsCopyPath = join(root, "declarations-copy");
   const modulePath = join(root, "module-clean");
   const shiftedPath = join(root, "module-shifted");
   await Promise.all([
     writeFile(leftPath, pyInstallerComparisonArchive("m", true)),
     writeFile(rightPath, pyInstallerComparisonArchive("s", true)),
     writeFile(declarationsPath, pyInstallerComparisonArchive("s", false)),
+    writeFile(declarationsCopyPath, pyInstallerComparisonArchive("s", false)),
     writeFile(modulePath, pyInstallerComparisonArchive("m", false)),
     writeFile(shiftedPath, pyInstallerComparisonArchive("m", false, true)),
   ]);
@@ -1069,18 +1136,12 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
         }),
       ]),
     });
-    expect(
-      z
-        .object({ changes: z.array(z.object({ logical_path: z.string() })) })
-        .parse(changedResult)
-        .changes.map(({ logical_path }) => logical_path),
-    ).not.toContain("__pyinstaller__/runtime-options/1");
-    expect(
-      z
-        .object({ changes: z.array(z.object({ logical_path: z.string() })) })
-        .parse(changedResult)
-        .changes.map(({ logical_path }) => logical_path),
-    ).not.toContain("__pyinstaller__/dependencies/2");
+    const changedPaths = z
+      .object({ changes: z.array(z.object({ logical_path: z.string() })) })
+      .parse(changedResult)
+      .changes.map(({ logical_path }) => logical_path);
+    expect(changedPaths).not.toContain("__pyinstaller__/runtime-options/1");
+    expect(changedPaths).not.toContain("__pyinstaller__/dependencies/2");
 
     const declarationsOnly = await client.callTool({
       name: "compare_artifacts",
@@ -1094,6 +1155,14 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
       summary: { unchanged: 4, unknown: 0 },
       changes: [],
     });
+
+    await verifyComparableDeclarations(
+      client,
+      session,
+      clean,
+      declarationsPath,
+      declarationsCopyPath,
+    );
 
     const layoutOnly = await client.callTool({
       name: "compare_artifacts",

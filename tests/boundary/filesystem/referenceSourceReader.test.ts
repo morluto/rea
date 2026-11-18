@@ -183,7 +183,7 @@ describe("readReferenceSource entries", () => {
     });
   });
 
-  it("reads a source file larger than the former 16 MiB ceiling", async () => {
+  it("reads a source file above 16 MiB", async () => {
     const root = await createTestTempDirectory("rea-reference-large-");
     const size = 16 * 1024 * 1024 + 1;
     const bytes = Buffer.alloc(size, 0x61);
@@ -212,7 +212,7 @@ describe("readReferenceSource entries", () => {
     );
   });
 
-  it("traverses source directories deeper than the former depth ceiling", async () => {
+  it("traverses a source directory 40 levels deep", async () => {
     const root = await createTestTempDirectory("rea-reference-deep-");
     const segments = Array.from({ length: 40 }, (_, index) => `d${index}`);
     const directory = join(root, ...segments);

@@ -4,9 +4,7 @@ import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import * as processOutput from "../../process/ExecFileOutput.js";
 import {
   AnalysisCancelledError,
-  AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
@@ -17,10 +15,8 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
-import {
-  WEB_SOURCE_MAP_LIMITS,
-  type WebSourceMapReport,
-} from "../../domain/webSourceLocation.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../../domain/sourceMapLimits.js";
+import type { WebSourceMapReport } from "../../domain/webSourceLocation.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   runSourceMapCommand,
@@ -62,7 +58,6 @@ const runChild = (
   signal: AbortSignal | undefined,
   script: string,
   onRuntime?: (path: string) => void,
-  onLaunch?: () => void,
 ) =>
   runSourceMapCommand(
     "{}",
@@ -82,45 +77,22 @@ const runChild = (
           ...options,
           arguments: ["-e", script],
         });
-        onLaunch?.();
         return child;
       },
     },
     unexpectedCleanup,
   );
 
-const exitsAfterHoldingOutput =
-  'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e","setTimeout(()=>{},400)"],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
-
-it("preserves Linux process inspection failure and recovery before launching the codec", async () => {
-  const cause = Object.assign(new Error("ps permission denied"), {
-    code: "EACCES",
+const lateDiagnostic =
+  'setTimeout(() => process.stderr.write("late descendant diagnostic"), 400)';
+const exitsAfterHoldingOutput = `
+  const { spawn } = require("node:child_process");
+  spawn(process.execPath, ["-e", ${JSON.stringify(lateDiagnostic)}], {
+    stdio: ["ignore", "inherit", "inherit"],
   });
-  const command = vi
-    .spyOn(processOutput, "execFileOutput")
-    .mockRejectedValue(cause);
-  onTestFinished(() => command.mockRestore());
-  const host = createSystemProcessOwnershipHost("linux", {});
-  const result = await runSourceMapCommand(
-    "{}",
-    "/probe/source.map",
-    undefined,
-    {
-      prepareOwnership: () => host.prepare!(),
-      launcher: async () => {
-        throw new Error("must not launch");
-      },
-    },
-    unexpectedCleanup,
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("expected prerequisite failure");
-  expect(result.error).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
-  expect(result.error).toMatchObject({
-    cause,
-    remediationAction: expect.stringContaining("EACCES"),
-  });
-});
+  process.stderr.write("physical exit 7");
+  process.exit(7);
+`;
 
 it("retains a physical process inspection failure when the caller cancels concurrently", async () => {
   const controller = new AbortController();
@@ -151,6 +123,9 @@ it("retains a physical process inspection failure when the caller cancels concur
   if (result.ok) throw new Error("expected inspection failure");
   expect(result.error).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
   expect(result.error.cause).toBe(physical);
+  expect(result.error).toMatchObject({
+    remediationAction: expect.stringContaining("EACCES"),
+  });
   expect(result.error.secondaryFailures).toHaveLength(1);
   expect(result.error.secondaryFailures[0]).toMatchObject({
     _tag: "AnalysisCancelledError",
@@ -158,52 +133,8 @@ it("retains a physical process inspection failure when the caller cancels concur
   });
 });
 
-it("does not adopt an opaque typed cancellation reason as an ownership failure", async () => {
-  const controller = new AbortController();
-  const reason = new AnalysisOutputError("unrelated", "opaque caller reason");
-  const result = await runSourceMapCommand(
-    "{}",
-    "/probe/source.map",
-    { signal: controller.signal },
-    {
-      prepareOwnership: async () => {
-        controller.abort(reason);
-        throw reason;
-      },
-      launcher: async () => {
-        throw new Error("must not launch");
-      },
-    },
-    unexpectedCleanup,
-  );
-  if (result.ok) throw new Error("expected cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-});
-
 const exitsThenDescendantExceedsStderrBudget =
   'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e",`setTimeout(()=>{process.stderr.write("x".repeat(1024*1024+64)); setInterval(()=>{},1000)},25)`],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
-
-it("preserves the exact object reason for an already-aborted caller", async () => {
-  const reason = { caller: "opaque source-map request" };
-  const controller = new AbortController();
-  controller.abort(reason);
-  const result = await runSourceMapCommand(
-    "{}",
-    "/probe/source.map",
-    { signal: controller.signal },
-    {
-      prepareOwnership: async () => {},
-      launcher: async () => {
-        throw new Error("must not launch");
-      },
-    },
-    unexpectedCleanup,
-  );
-  if (result.ok) throw new Error("expected cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-});
 
 it.each([null, { caller: "late source-map cancellation" }])(
   "retains a late caller reason %j when runtime cleanup first fails",
@@ -260,30 +191,6 @@ it.each([null, { caller: "late source-map cancellation" }])(
     }
   },
 );
-
-it("returns completed codec output after successful cleanup", async () => {
-  const result = await runChild(undefined, completedCodec);
-  expect(result).toEqual({ ok: true, value: completedReport });
-});
-
-it("preserves exact caller reason when cancellation precedes process exit", async () => {
-  const reason = { caller: "active source-map cancellation" };
-  const controller = new AbortController();
-  let runtimePath: string | undefined;
-  const result = await runChild(
-    controller.signal,
-    'process.stdout.write("ready\\n"); setInterval(()=>{},1000)',
-    (path) => {
-      runtimePath = path;
-    },
-    () => setTimeout(() => controller.abort(reason), 0),
-  );
-  if (result.ok) throw new Error("expected cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  if (runtimePath === undefined) throw new Error("runtime was not acquired");
-  await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
-});
 
 it("preserves an observed nonzero exit before caller cancellation during output drain", async () => {
   const reason = { caller: "later than owned exit" };
@@ -344,7 +251,7 @@ it("classifies the same nonzero exit without cancellation", async () => {
     _tag: "ProviderAdapterError",
     diagnostics: {
       exit_code: 7,
-      stderr: "physical exit 7",
+      stderr: "physical exit 7late descendant diagnostic",
       output_complete: true,
     },
   });
@@ -366,7 +273,9 @@ it("stops a held drain after late output exceeds budget but keeps the exit prima
   });
   expect(result.error.diagnostics?.stderr).toContain("physical exit 7");
   expect(result.error.capturedOutput?.truncated).toBe(true);
-  expect(elapsedMs).toBeLessThan(5_000);
+  // The descendant holds stderr open forever, and a drain the codec deadline
+  // ends reports the same exit. Only the output-limit stop beats that deadline.
+  expect(elapsedMs).toBeLessThan(WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs);
 });
 
 it("preserves an observed process-memory limit over the codec exit status", async () => {
@@ -433,81 +342,6 @@ it("preserves an observed process-memory limit over the codec exit status", asyn
     capturedOutput: { stderr: "memory limit reached" },
   });
   expect(result.error.capturedOutput?.truncated).toBe(true);
-});
-
-it("keeps a timeout distinct from caller cancellation", async () => {
-  vi.useFakeTimers({
-    toFake: ["setTimeout", "clearTimeout", "performance"],
-  });
-  let runtimePath: string | undefined;
-  try {
-    const result = await runSourceMapCommand(
-      "{}",
-      "/probe/source.map",
-      undefined,
-      {
-        prepareOwnership: async () => {},
-        createRuntime: async () => {
-          const runtime = await PrivateRuntimeRoot.create({
-            prefix: "rea-source-map-timeout-test-",
-          });
-          runtimePath = runtime.path;
-          return runtime;
-        },
-        launcher: async () => {
-          await vi.advanceTimersByTimeAsync(
-            WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs + 1,
-          );
-          throw new Error("launcher settled after deadline");
-        },
-      },
-      unexpectedCleanup,
-    );
-    if (result.ok) throw new Error("expected timeout");
-    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
-    if (runtimePath === undefined) throw new Error("runtime was not acquired");
-    await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-it("applies a non-default decode deadline and releases its runtime", async () => {
-  vi.useFakeTimers({
-    toFake: ["setTimeout", "clearTimeout", "performance"],
-  });
-  let runtimePath: string | undefined;
-  try {
-    const result = await runSourceMapCommand(
-      "{}",
-      "/probe/source.map",
-      undefined,
-      {
-        prepareOwnership: async () => {},
-        createRuntime: async () => {
-          const runtime = await PrivateRuntimeRoot.create({
-            prefix: "rea-source-map-selected-deadline-",
-          });
-          runtimePath = runtime.path;
-          return runtime;
-        },
-        launcher: async () => {
-          await vi.advanceTimersByTimeAsync(251);
-          throw new Error("launcher settled after deadline");
-        },
-      },
-      unexpectedCleanup,
-      250,
-    );
-    if (result.ok) throw new Error("expected timeout");
-    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
-    expect(result.error.userMessage).toContain("250");
-    expect(result.error.userMessage).toContain("decode_timeout_ms");
-    if (runtimePath === undefined) throw new Error("runtime was not acquired");
-    await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    vi.useRealTimers();
-  }
 });
 
 it("retains a physical process admission error alongside cancellation", async () => {

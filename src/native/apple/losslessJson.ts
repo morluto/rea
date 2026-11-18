@@ -1,3 +1,5 @@
+import { parseJsonStringLiteral } from "../../domain/jsonDuplicateMember.js";
+
 /** JSON container type a projection declined to materialize. */
 export type JsonContainerType = "array" | "object";
 
@@ -312,7 +314,7 @@ class Parser {
     const decoded: unknown = escaped
       ? // A decoded JSON string cannot contain more code units than its literal.
         // The input's byte allowance bounds this allocation, including dense escapes.
-        JSON.parse(this.text.slice(start, this.position))
+        parseJsonStringLiteral(this.text.slice(start, this.position))
       : this.text.slice(start + 1, this.position - 1);
     if (typeof decoded !== "string")
       throw new LosslessJsonFailure("Expected a JSON string");

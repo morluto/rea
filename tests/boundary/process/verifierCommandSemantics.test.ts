@@ -27,29 +27,6 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-it("does not pass the caller's npm install-script policy to verifier children", async () => {
-  const directory = await createTestTempDirectory("rea-verify-env-scrub-");
-  const marker = "npm_config_allow_scripts";
-  const previous = process.env[marker];
-  process.env[marker] = "frida,onnxruntime-node,protobufjs";
-  const commands = await createVerifierCommands({});
-  try {
-    const output = await commands.exec(
-      process.execPath,
-      [
-        "-e",
-        `process.stdout.write(process.env[${JSON.stringify(marker)}] ?? "absent")`,
-      ],
-      { cwd: directory },
-    );
-    expect(output.stdout).toBe("absent");
-  } finally {
-    if (previous === undefined) delete process.env[marker];
-    else process.env[marker] = previous;
-    await commands.close();
-  }
-});
-
 it("rejects unsupported stdin before acquiring a launcher", async () => {
   const directory = await createTestTempDirectory("rea-verifier-stdin-");
   const forbidden = join(directory, "forbidden launch");
@@ -579,9 +556,8 @@ it.skipIf(process.platform === "win32")(
       ),
     );
     let outcome;
-    let sameClose = false;
-    let closeSettled = false;
-    let settledBeforeLaunchRelease = false;
+    let settledCloses = 0;
+    let settledBeforeLaunchRelease;
     try {
       await Promise.race([
         entered.promise,
@@ -591,17 +567,13 @@ it.skipIf(process.platform === "win32")(
       ]);
       const first = commands.close();
       const second = commands.close();
-      sameClose = first === second;
-      void first.then(
-        () => {
-          closeSettled = true;
-        },
-        () => {
-          closeSettled = true;
-        },
-      );
+      const settled = () => {
+        settledCloses += 1;
+      };
+      for (const closing of [first, second])
+        void closing.then(settled, settled);
       await cancelled.promise;
-      settledBeforeLaunchRelease = closeSettled;
+      settledBeforeLaunchRelease = settledCloses;
       release.resolve();
       await Promise.all([first, second]);
       outcome = await running;
@@ -611,8 +583,7 @@ it.skipIf(process.platform === "win32")(
       await running;
     }
 
-    expect(sameClose).toBe(true);
-    expect(settledBeforeLaunchRelease).toBe(false);
+    expect(settledBeforeLaunchRelease).toBe(0);
     expect(outcome).toEqual({
       ok: false,
       cause: expect.objectContaining({ reason: "cancelled", snapshot: null }),

@@ -44,7 +44,6 @@ import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
-export { shellQuote } from "./shellQuote.js";
 
 /** agentenv-framework release targeted by the exported class. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";

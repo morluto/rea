@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, rm, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
@@ -32,11 +31,17 @@ import {
   measureMcpStartup,
   profileMcpModuleLoading,
 } from "./lib/mcp-startup-probe.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const root = process.cwd();
 const retentionDirectory = process.env.REA_VERIFIED_PACKAGE_DIRECTORY;
 const verifierRun = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-package-"));
+// npm and the package's children write beneath the root, as under the former mkdtemp.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-package-",
+  private: false,
+});
+const workspace = fixture.path;
 const evidenceRoot = join(workspace, "evidence");
 const referenceRoot = join(workspace, "reference-source");
 let tarball;
@@ -48,10 +53,9 @@ let report;
 let retainedPackage;
 let retentionMetadata;
 let commands;
+// The package command owner releases the fixture after its commands close.
 const releaseWorkspace = () =>
-  runStage("workspace cleanup", () =>
-    rm(workspace, { recursive: true, force: true }),
-  );
+  runStage("workspace cleanup", () => fixture.release());
 
 const runStage = async (name, action) => {
   const started = performance.now();

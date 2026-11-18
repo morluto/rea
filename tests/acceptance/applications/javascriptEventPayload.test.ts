@@ -35,7 +35,6 @@ cliTest(
         "directory",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(cliResponse.exitCode).toBe(0);
     const cliEvidence = toolContract(
@@ -160,7 +159,6 @@ cliTest(
         "directory",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(analyzed.exitCode, analyzed.stderr).toBe(0);
     const application = toolContract(
@@ -193,7 +191,6 @@ cliTest(
     );
     const traced = await cli.run({
       arguments: ["trace-javascript-semantics", request, "--json"],
-      timeoutMs: 60_000,
     });
     expect(traced.exitCode, traced.stdout).toBe(0);
     const trace = javaScriptSemanticTraceResultSchema.parse(

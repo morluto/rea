@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -25,9 +25,10 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 import { ReleaseExposureService } from "./ReleaseExposureService.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const SHA = "ab".repeat(32);
 
@@ -2126,9 +2127,9 @@ describe("ReleaseExposureService cleanup", () => {
       "/work/app/desktop",
       "/work/app/go",
     ]);
-    first.resolveCleanup();
+    releaseOwnedCleanup(first);
     expect(failure.cleanupIncomplete).toBe(true);
-    second.resolveCleanup();
+    releaseOwnedCleanup(second);
     expect(failure.cleanupIncomplete).toBe(false);
   });
 });
@@ -2238,6 +2239,32 @@ describe("ReleaseExposureService compiler path separators", () => {
   );
 });
 
+describe("ReleaseExposureService compiler profile paths", () => {
+  it.each([
+    ["CGO_CFLAGS", "-O2 -fprofile-use=internal/profiles", "internal/profiles"],
+    ["CGO_CFLAGS", "'-fprofile-dir=private profiles'", "private profiles"],
+    ["-ldflags", "-extldflags=-fprofile-generate=private/gcov", "private/gcov"],
+  ])("reports the named directory in %s %s", async (key, value, path) => {
+    const report = await goReport(goModule([{ key, value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+  });
+
+  it("finds no profile path for options without directory operands", async () => {
+    const report = await goReport(
+      goModule([
+        {
+          key: "CGO_CFLAGS",
+          value: "-fprofile-use -fprofile-generate -O2",
+        },
+      ]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+});
+
 describe("ReleaseExposureService Go linker -r search list", () => {
   it.each([["-r=$ORIGIN/../lib -s -w"], ["-r ${ORIGIN}/lib:$ORIGIN"]])(
     "does not read the ELF loader-expanded entries in %s as build paths",
@@ -2251,6 +2278,7 @@ describe("ReleaseExposureService Go linker -r search list", () => {
   it.each([
     ["-r=$ORIGIN/../lib:/opt/private-runtime", ["/opt/private-runtime"]],
     ["-r /opt/a:$ORIGIN/lib:vendor/lib", ["/opt/a", "vendor/lib"]],
+    ["-r a:$ORIGIN:/opt/private-runtime", ["a", "/opt/private-runtime"]],
   ])("reads each ELF entry of the search list in %s", async (value, paths) => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
@@ -2331,6 +2359,8 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
       ["/opt/a", "/opt/b"],
     ],
     ["-Wl,-rpath-link,/opt/a:vendor/lib", ["/opt/a", "vendor/lib"]],
+    ["-Wl,-rpath,a:/opt/private-runtime", ["a", "/opt/private-runtime"]],
+    ["-Wl,-rpath-link,a:vendor/lib", ["a", "vendor/lib"]],
   ])("reads each entry of the search list in %s", async (value, paths) => {
     const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
 import {
   ExportPublishedCleanupFailure,
@@ -92,6 +92,7 @@ it("retains the source failure's parsed facts and cancellation identity", () => 
       resolvedPath: "/resolved/source",
       boundary: "capacity",
       admission,
+      integrityCheck: "read-coverage",
     },
     details,
   );
@@ -100,10 +101,8 @@ it("retains the source failure's parsed facts and cancellation identity", () => 
     original,
   );
   expect(published.cancellation?.reason).toBe(reason);
-  expect(published.userMessage).toBe(original.userMessage);
-  expect(published.resolvedPath).toBe(original.resolvedPath);
-  expect(published.boundary).toBe(original.boundary);
-  expect(published.admission).toEqual(admission);
+  expect(published.primaryFacts()).toEqual(original.primaryFacts());
+  expect(published.integrityCheck).toBe("read-coverage");
   expect(published.details).toEqual(details);
   expect(published.cause).toBe(original);
 });

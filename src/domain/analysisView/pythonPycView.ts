@@ -40,10 +40,6 @@ export const pythonPycSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: pythonPycViewRequestSchema.exactOptional(),
 };
-export const pythonPycDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(pythonPycCompleteDeliveryShape),
-  z.strictObject(pythonPycSummaryDeliveryShape),
-]);
 
 export const pythonPycViewItemsSchema = z.array(
   code.partial().extend({ source_index: z.int().nonnegative() }),
@@ -102,10 +98,7 @@ export const projectPythonPycView = (
       kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(
-        code_objects.length,
-        code_objects.length,
-      ),
+      coverage: completeWithinViewCoverage(code_objects.length),
     });
   const names = view.names === undefined ? undefined : new Set(view.names);
   const indices =

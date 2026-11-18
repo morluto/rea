@@ -52,6 +52,8 @@ const isMcpHttpMode =
   isMcpEntry &&
   (args[1]?.startsWith("-") ?? false) &&
   args.slice(1).includes("--http");
+/** How long an exiting command may wait for its remaining handles to close. */
+const EXIT_DRAIN_GRACE_MS = 1_000;
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
 const SIGPIPE_EXIT_STATUS = 141;
 // Set once the reader of CLI output has closed the pipe.
@@ -82,10 +84,10 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   await runMcpHttpEntrypoint(args.slice(1));
 } else if (isMcpDoctorMode) {
   guardClosedStdout();
-  // Doctor runs outside Incur, so handle its global timing flag here. Keep a
-  // token consumed by --format as a value, even when it looks like a flag.
-  const { arguments: doctorCliArguments, enabled: timingRequested } =
-    builtinArguments.splitCliTimingArguments(doctorArguments);
+  // Doctor runs outside the command dispatcher, so the launcher measures its
+  // timing global, which the global argument reader has taken out.
+  const { arguments: doctorCliArguments, timings: timingRequested } =
+    doctorArguments;
   const started = performance.now();
   try {
     const { runProductionMcpDoctorCli } =
@@ -154,18 +156,26 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
             if (status === 0) status = 1;
           }
           try {
-            await finishOutput(status);
+            await finishOutput();
           } catch (cause) {
             if (!stdoutClosed)
               process.stderr.write(`${cleanupFailureText(cause)}\n`);
             if (status === 0) status = 1;
           }
-          process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : status);
+          // process.exit() shuts the platform down without tearing the
+          // isolate down, so a V8 compile thread waiting for a collection can
+          // deadlock that shutdown. Let the event loop drain instead, and force
+          // the exit only when a handle outlives a short grace.
+          process.exitCode = stdoutClosed ? SIGPIPE_EXIT_STATUS : status;
+          setTimeout(
+            () => process.exit(process.exitCode),
+            EXIT_DRAIN_GRACE_MS,
+          ).unref();
         })();
       },
     });
   } catch (cause) {
-    if (cause?.code === "EPIPE") {
+    if (isClosedReaderFailure(cause)) {
       stdoutClosed = true;
       process.exitCode = SIGPIPE_EXIT_STATUS;
     }
@@ -191,7 +201,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   if (
     !exiting &&
     dispatchFailure !== undefined &&
-    !(stdoutClosed && dispatchFailure?.code === "EPIPE")
+    !(stdoutClosed && isClosedReaderFailure(dispatchFailure))
   )
     throw dispatchFailure;
 }
@@ -209,7 +219,7 @@ function cleanupFailureText(cleanup) {
 
 function guardClosedStdout() {
   process.stdout.on("error", (cause) => {
-    if (cause?.code === "EPIPE") {
+    if (isClosedReaderFailure(cause)) {
       stdoutClosed = true;
       process.exitCode = SIGPIPE_EXIT_STATUS;
       return;
@@ -217,6 +227,14 @@ function guardClosedStdout() {
     // Other failures stay unhandled unless a pending JSON write reports them.
     if (process.stdout.listenerCount("error") === 1) throw cause;
   });
+}
+
+/**
+ * A write failure that means the stdout reader has gone. A pipe reports EPIPE;
+ * macOS can report ENOTCONN when the reader closes a socket-pair stdout.
+ */
+function isClosedReaderFailure(cause) {
+  return cause?.code === "EPIPE" || cause?.code === "ENOTCONN";
 }
 
 function writeStdout(output) {

@@ -1,7 +1,9 @@
+import { unknownTarget } from "./targetIdentity.js";
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
   type Evidence,
+  type EvidenceAuthority,
   type EvidenceCreationOptions,
   type EvidenceLocation,
   type EvidenceProvider,
@@ -28,6 +30,11 @@ export interface AnalysisObservation {
    * its caller. Explicit null means the observation has no file subject.
    */
   readonly subject?: EvidenceSubjectTarget | null;
+  /**
+   * The authority the observation itself supports. Missing derives it from the
+   * subject, which a service REA does not own cannot name.
+   */
+  readonly authority?: EvidenceAuthority;
 }
 
 /** Build the single borrowed observation used for admission and commitment. */
@@ -48,6 +55,9 @@ const analysisExecutionEvidenceInput = (
   ...(execution.relationshipCoverage === undefined
     ? {}
     : { relationshipCoverage: execution.relationshipCoverage }),
+  ...(execution.authority === undefined
+    ? {}
+    : { authority: execution.authority }),
   locations: execution.locations,
   confidence,
 });
@@ -60,7 +70,7 @@ export const analysisExecutionEnvelopeForAdmission = (
   confidence: "observed" | "derived",
 ) =>
   evidenceEnvelopeForAdmission(
-    execution.subject ?? undefined,
+    execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
     analysisExecutionEvidenceInput(operation, input, execution, confidence),
   );
@@ -74,7 +84,7 @@ export const createAnalysisExecutionEvidence = (
   options?: EvidenceCreationOptions,
 ): Evidence =>
   createEvidence(
-    execution.subject ?? undefined,
+    execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
     {
       ...analysisExecutionEvidenceInput(

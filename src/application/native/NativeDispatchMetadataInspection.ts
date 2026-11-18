@@ -1,19 +1,17 @@
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
-import { nativeInventoryRowsSchemas } from "../../domain/native/nativeInventory.js";
+import { listNamesFact } from "../../domain/native/nativeOperationFacts.js";
 import {
   nativeDispatchMetadataResultSchema,
   inspectNativeDispatchMetadata,
 } from "../../domain/native/objcSwiftMetadata.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import { executeFact } from "../AnalysisOperationFacts.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import type { EnhancedResult } from "../EnhancedToolTypes.js";
-
-const dispatchNameInventorySchema = nativeInventoryRowsSchemas.names.element
-  .strict()
-  .array();
 
 /** Source operations for this workflow, shared with capability discovery. */
 export const NATIVE_DISPATCH_METADATA_SOURCES = {
@@ -46,8 +44,12 @@ export const inspectNativeDispatch = async (
       ? {}
       : {
           objc_class_import_addresses: [...objcClassImportAddresses],
-          objc_class_import_addresses_complete:
-            objcClassImportAddressesComplete ?? true,
+          ...(objcClassImportAddressesComplete === undefined
+            ? {}
+            : {
+                objc_class_import_addresses_complete:
+                  objcClassImportAddressesComplete,
+              }),
         }),
   };
   const binaryMetadata = await analysis.execute(
@@ -78,30 +80,21 @@ export const inspectNativeDispatch = async (
   }
   if (!permitsCapabilityFallback(binaryMetadata.error))
     return err(binaryMetadata.error);
-  const execution = await analysis.execute(
-    NATIVE_DISPATCH_METADATA_SOURCES.symbols,
+  const names = await executeFact(
+    analysis,
+    listNamesFact,
     {},
     signal === undefined ? {} : { signal },
   );
-  if (!execution.ok) return execution;
-  const names = dispatchNameInventorySchema.safeParse(execution.value.result);
-  if (!names.success)
+  if (!names.ok)
     return err(
-      new AnalysisOutputError(
-        NATIVE_DISPATCH_METADATA_SOURCES.symbols,
-        "provider returned an invalid inventory",
-        { cause: names.error },
-      ).retainPartialObservation(
-        createAnalysisExecutionEvidence(
-          NATIVE_DISPATCH_METADATA_SOURCES.symbols,
-          {},
-          execution.value,
-          "observed",
-        ),
-      ),
+      names.error.retainSecondaryFailure(binaryMetadata.error, {
+        binary_metadata_failure: projectAnalysisError(binaryMetadata.error),
+      }),
     );
+  const { execution, fact } = names.value;
   const result = inspectNativeDispatchMetadata(
-    names.data.map((entry) => ({
+    fact.map((entry) => ({
       address: entry.address,
       name: entry.value,
     })),
@@ -120,11 +113,10 @@ export const inspectNativeDispatch = async (
   return ok(
     jsonValueSchema.parse(
       nativeDispatchMetadataResultSchema.parse({
-        target_sha256: execution.value.subject?.sha256 ?? null,
-        target_architecture: execution.value.subject?.architecture ?? null,
-        provider: execution.value.provider,
-        analysis_profile_digest:
-          execution.value.analysisProfile?.digest ?? null,
+        target_sha256: execution.subject?.sha256 ?? null,
+        target_architecture: execution.subject?.architecture ?? null,
+        provider: execution.provider,
+        analysis_profile_digest: execution.analysisProfile?.digest ?? null,
         result,
       }),
     ),

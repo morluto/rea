@@ -1,0 +1,35 @@
+$ rea read-bytes --help
+exit: 0
+--- stdout
+rea read-bytes — Read provider memory bytes; Ghidra memory may include loader fixups and differ from file bytes
+
+Usage: rea read-bytes <path> <address> [options]
+
+Arguments:
+  path     Local executable path
+  address  Exact provider memory address
+
+Options:
+  --length <value>                                   Requested byte count (default: 256)
+  --target-format <dos-com|raw-binary|gamecube-dol>  Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection
+  --architecture <6502|x86|x86_64|arm|arm64|m68k>    Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol
+  --entry-point <string>                             Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)
+  --provider <value>                                 Bind deep analysis to a provider ID or use deterministic auto selection
+
+Custom Global Options:
+  --timings  Write measured command timing to stderr.
+
+Global Options:
+  --filter-output <keys>                      Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
+  --full-output                               Show full output envelope
+  --help                                      Show help
+  --json                                      Shorthand for --format json
+  --llms, --llms-full                         Print LLM-readable manifest
+  --schema                                    Show JSON Schema for command
+  --token-count                               Print token count of output (instead of output)
+  --token-limit <n>                           Limit output to n tokens
+  --token-offset <n>                          Skip first n tokens of output
+<end>
+--- stderr
+<end>

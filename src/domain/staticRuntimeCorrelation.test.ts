@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { FUNCTION_COMPARISON_EVIDENCE } from "../contracts/investigationExamples.js";
@@ -7,7 +8,11 @@ import {
 } from "./artifactComparison.js";
 import { findChangedBehavior } from "./changedBehavior.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./comparisonEvidenceIdentity.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  evidenceSubjectInput,
+} from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
@@ -16,14 +21,13 @@ import { compareFunctions } from "./functionComparison.js";
 import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
 import {
   correlateStaticAndRuntime,
-  staticRuntimeCorrelationInputSchema,
   staticRuntimeCorrelationResultSchema,
 } from "./staticRuntimeCorrelation.js";
 
 const staticComparison = FUNCTION_COMPARISON_EVIDENCE;
 
 const artifactComparison = createEvidence(
-  undefined,
+  unknownTarget("derived-from-linked-evidence"),
   ARTIFACT_COMPARISON_PROVIDER,
   {
     predicateType: "rea.artifact-comparison",
@@ -47,7 +51,7 @@ const artifactComparison = createEvidence(
 
 const capture = (digit: string): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       predicateType: "rea.process-capture",
@@ -94,7 +98,7 @@ const processComparison = (
     limitations: terminal === "unknown" ? ["Terminal unavailable."] : [],
   } satisfies JsonValue;
   return createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-process",
       name: "REA deterministic process harness",
@@ -166,19 +170,23 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
     functionSnapshotFixture(left),
     functionSnapshotFixture(right),
   );
-  const comparison = createEvidence(undefined, staticComparison.provider, {
-    predicateType: "rea.function-comparison",
-    operation: "compare_functions",
-    parameters: {
-      left_evidence_id: left.evidence_id,
-      right_evidence_id: right.evidence_id,
+  const comparison = createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    staticComparison.provider,
+    {
+      predicateType: "rea.function-comparison",
+      operation: "compare_functions",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+      },
+      result: computed,
+      confidence: "derived",
+      authority: "analyst-inference",
+      limitations: computed.limitations,
+      evidenceLinks: [left.evidence_id, right.evidence_id],
     },
-    result: computed,
-    confidence: "derived",
-    authority: "analyst-inference",
-    limitations: computed.limitations,
-    evidenceLinks: [left.evidence_id, right.evidence_id],
-  });
+  );
   const input = mapping(processComparison("unchanged"), "static_only");
   const result = correlateStaticAndRuntime({
     ...input,
@@ -213,17 +221,16 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
 });
 
 describe("static/runtime correlation", () => {
-  it("accepts real runtime dimensions and rejects removed protocol dimensions", () => {
-    const runtime = processComparison("unchanged");
+  it("uses the selected interaction status even when the terminal changed", () => {
+    const runtime = processComparison("changed");
     expect(
       correlateStaticAndRuntime(mapping(runtime, "static_only", "interaction")),
-    ).toMatchObject({ status: "correlated" });
-    for (const dimension of ["protocol", "shim"] as const)
-      expect(
-        staticRuntimeCorrelationInputSchema.safeParse(
-          mapping(runtime, "static_only", dimension),
-        ).success,
-      ).toBe(false);
+    ).toMatchObject({
+      status: "correlated",
+      correlations: {
+        items: [{ runtime: { dimension: "interaction", status: "unchanged" } }],
+      },
+    });
   });
 
   it("rejects duplicate static comparison selection", () => {
@@ -447,18 +454,22 @@ describe("static/runtime correlation selection", () => {
 describe("static/runtime correlation Evidence validation", () => {
   it("rejects comparison citations that disagree with source parameters", () => {
     const runtime = processComparison("changed");
-    const forged = createEvidence(undefined, runtime.provider, {
-      predicateType: runtime.predicate_type,
-      operation: runtime.operation,
-      parameters: {
-        left_evidence_id: leftCapture.evidence_id,
-        right_evidence_id: staticComparison.evidence_id,
+    const forged = createEvidence(
+      evidenceSubjectInput(runtime.subject),
+      runtime.provider,
+      {
+        predicateType: runtime.predicate_type,
+        operation: runtime.operation,
+        parameters: {
+          left_evidence_id: leftCapture.evidence_id,
+          right_evidence_id: staticComparison.evidence_id,
+        },
+        result: runtime.normalized_result,
+        confidence: runtime.confidence,
+        authority: runtime.authority,
+        evidenceLinks: runtime.evidence_links,
       },
-      result: runtime.normalized_result,
-      confidence: runtime.confidence,
-      authority: runtime.authority,
-      evidenceLinks: runtime.evidence_links,
-    });
+    );
     const input = mapping(forged, "cochanged");
     expect(() => correlateStaticAndRuntime(input)).toThrowError(
       expect.toSatisfy(
@@ -475,15 +486,19 @@ describe("static/runtime correlation Evidence validation", () => {
 
   it("retains invalid authenticated result payloads as Evidence failures", () => {
     const valid = processComparison("changed");
-    const malformed = createEvidence(undefined, valid.provider, {
-      predicateType: valid.predicate_type,
-      operation: valid.operation,
-      parameters: valid.parameters,
-      result: { status: "changed" },
-      confidence: valid.confidence,
-      authority: valid.authority,
-      evidenceLinks: valid.evidence_links,
-    });
+    const malformed = createEvidence(
+      evidenceSubjectInput(valid.subject),
+      valid.provider,
+      {
+        predicateType: valid.predicate_type,
+        operation: valid.operation,
+        parameters: valid.parameters,
+        result: { status: "changed" },
+        confidence: valid.confidence,
+        authority: valid.authority,
+        evidenceLinks: valid.evidence_links,
+      },
+    );
     expect(() =>
       correlateStaticAndRuntime(mapping(malformed, "cochanged")),
     ).toThrowError(
@@ -499,15 +514,19 @@ describe("static/runtime correlation citation closure", () => {
   it("accepts extra parent citations for changed behavior but rejects them for correlation", () => {
     const runtime = processComparison("changed");
     const extra = staticComparison.evidence_id;
-    const extended = createEvidence(undefined, runtime.provider, {
-      predicateType: runtime.predicate_type,
-      operation: runtime.operation,
-      parameters: runtime.parameters,
-      result: runtime.normalized_result,
-      confidence: runtime.confidence,
-      authority: runtime.authority,
-      evidenceLinks: [...runtime.evidence_links, extra],
-    });
+    const extended = createEvidence(
+      evidenceSubjectInput(runtime.subject),
+      runtime.provider,
+      {
+        predicateType: runtime.predicate_type,
+        operation: runtime.operation,
+        parameters: runtime.parameters,
+        result: runtime.normalized_result,
+        confidence: runtime.confidence,
+        authority: runtime.authority,
+        evidenceLinks: [...runtime.evidence_links, extra],
+      },
+    );
     const aggregated = findChangedBehavior({ comparisons: [extended] });
     expect(aggregated.result.behavior_status).toBe("observed_changed");
     expect(aggregated.result.evidence_links).toContain(extra);
@@ -560,15 +579,19 @@ describe("static/runtime correlation citation closure", () => {
           })),
         });
       }
-      const danglingNested = createEvidence(undefined, base.provider, {
-        predicateType: base.predicate_type,
-        operation: base.operation,
-        parameters: base.parameters,
-        result,
-        confidence: base.confidence,
-        authority: base.authority,
-        evidenceLinks: base.evidence_links,
-      });
+      const danglingNested = createEvidence(
+        evidenceSubjectInput(base.subject),
+        base.provider,
+        {
+          predicateType: base.predicate_type,
+          operation: base.operation,
+          parameters: base.parameters,
+          result,
+          confidence: base.confidence,
+          authority: base.authority,
+          evidenceLinks: base.evidence_links,
+        },
+      );
       const input = mapping(processComparison("changed"), "cochanged");
       expect(() =>
         correlateStaticAndRuntime({

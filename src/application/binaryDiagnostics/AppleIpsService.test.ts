@@ -149,7 +149,7 @@ it("records the selected report as a file subject", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "file" },
+    subject: { identity: { format: "file" } },
     normalized_result: report,
   });
 });
@@ -283,10 +283,12 @@ it.each([
               inline: null,
               recorded_symbol: "main",
               symbol_location: { decimal: "12345", hex: "0x3039" },
+              unlisted_keys: [],
             },
           ],
           state_flavor: null,
           registers: [],
+          unlisted_keys: [],
         },
       ],
       coverage: { ...report.coverage, threads: 1, frames: 1 },

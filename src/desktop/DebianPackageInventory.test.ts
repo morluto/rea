@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   access,
   chmod,
@@ -15,7 +16,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   A_ARMORED,
   B_ARMORED,
@@ -27,7 +28,11 @@ import {
 import { exportInstall } from "../domain/desktop/appExportInstall.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { QueryOutcome, QueryRunner } from "./HostQuery.js";
+import {
+  runHostQuery,
+  type QueryOutcome,
+  type QueryRunner,
+} from "./HostQuery.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
 
 const NOBLE = "http://ports.ubuntu.com/ubuntu-ports noble/main arm64 Packages";
@@ -617,6 +622,29 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an apt release the check cannot reach",
+  () => {
+    it("says the release files could not be checked rather than that apt holds none", async () => {
+      const { root, inspect } = await vendorFixture();
+      const lists = join(root, "lists");
+      await chmod(lists, 0o000);
+      try {
+        const result = await inspect();
+        if (!result.ok) throw new Error(result.error.reason);
+        const repository = result.value.inventory.package.apt_repositories?.[0];
+
+        expect(repository).toMatchObject({
+          signing_key: null,
+          signing_key_reason: `apt's release files for it in ${lists} could not be checked`,
+        });
+      } finally {
+        await chmod(lists, 0o755);
+      }
+    });
+  },
+);
+
 describe.skipIf(process.platform === "win32")("library packages", () => {
   it("keeps the library packages the Ubuntu archive offers and sets aside the rest", async () => {
     const vendor = await inspected();
@@ -856,6 +884,61 @@ const writerFixture = async () => {
   };
   return { root, runQuery, inspect };
 };
+
+it
+  .skipIf(
+    process.platform !== "linux" ||
+      !existsSync("/usr/bin/apt-cache") ||
+      !existsSync("/usr/bin/apt-config"),
+  )
+  .each(["installed status", "installed status ", "installed\nstatus"])(
+  "does not turn APT's configured database %j into a vendor repository",
+  async (name) => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const status = join(root, name);
+    const lists = join(root, "private-lists");
+    await mkdir(lists);
+    await writeFile(
+      status,
+      `Package: libreoffice-writer\nStatus: install ok installed\nArchitecture: arm64\nVersion: ${WRITER_VERSION}\nDescription: Owned installed-package fixture\n`,
+    );
+    let repositoryQueries = 0;
+    const query: QueryRunner = async (command, argv, signal) => {
+      if (command === "apt-cache" || command === "apt-config")
+        return runHostQuery(
+          `/usr/bin/${command}`,
+          [
+            "-o",
+            `Dir::State::status=${status}`,
+            "-o",
+            `Dir::State::lists=${lists}`,
+            "-o",
+            "Dir::Etc::sourcelist=-",
+            "-o",
+            "Dir::Etc::sourceparts=-",
+            "-o",
+            "APT::Architecture=arm64",
+            ...argv,
+          ],
+          signal,
+        );
+      if (command === "apt-get") repositoryQueries++;
+      return runQuery(command, argv, signal);
+    };
+    const { installed } = await inspect(
+      { desktopEntry: "libreoffice-writer" },
+      { run: query },
+    );
+    expect(installed).toMatchObject({
+      name: "libreoffice-writer",
+      version: WRITER_VERSION,
+      sources: [],
+      source_origins: [],
+      apt_repositories: [],
+    });
+    expect(repositoryQueries).toBe(0);
+  },
+);
 
 describe.skipIf(process.platform === "win32")("desktop entry package", () => {
   it("records the package that owns the launched entry, and the program's when it differs", async () => {

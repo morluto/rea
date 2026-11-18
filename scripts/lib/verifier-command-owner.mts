@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import type { RetainedResourceScope } from "../../src/application/AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import {
   prepareOwnedCommand,
   runOwnedCommand,
@@ -114,22 +114,6 @@ const launchVerifierCommand = async (
   };
 };
 
-/**
- * The verifier's child npm calls must not inherit the user's ambient npm
- * install-script policy: a user-level npmrc with allow-scripts set, exported
- * through the environment, makes every project-scoped nested npm invocation
- * fail with EALLOWSCRIPTS (npm #2026-11-14). Scrub npm_config_allow_scripts
- * case-insensitively; everything else passes through untouched.
- */
-const scrubParentEnvironment = (
-  environment: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv => {
-  const scrubbed: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(environment))
-    if (key.toLowerCase() !== "npm_config_allow_scripts") scrubbed[key] = value;
-  return scrubbed;
-};
-
 const commandLimits = (options: VerifierCommandOptions) => {
   if (
     options.stdin !== undefined &&
@@ -227,7 +211,7 @@ class VerifierCommandOwner implements VerifierCommands {
             command,
             arguments: arguments_,
             cwd: options.cwd ?? process.cwd(),
-            hostEnvironment: options.env ?? scrubParentEnvironment(process.env),
+            hostEnvironment: options.env ?? process.env,
             expectedCommand: null,
             runId: `rea-verifier-command-${randomUUID()}`,
             sweepTokenOwnedProcesses: true,

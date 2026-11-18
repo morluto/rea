@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each([false, true])(
   "stops an SDK export cancellation before publication and keeps the same session usable (overwrite: %s)",
@@ -19,7 +21,7 @@ it.each([false, true])(
       throw new Error("Evidence export must not start a binary provider");
     });
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "large_observation",
@@ -29,10 +31,13 @@ it.each([false, true])(
     );
     expect(session.recordEvidence(evidence).ok).toBe(true);
     const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "evidence-export-cancellation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "evidence-export-cancellation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const controller = new AbortController();
     onTestFinished(async () => {
       controller.abort();
@@ -82,7 +87,7 @@ it.each([false, true])(
       message: expect.stringContaining("SDK export cancellation verification"),
     });
     await expect
-      .poll(() => readdir(root), { timeout: 5000 })
+      .poll(() => readdir(root))
       .toEqual(overwrite ? ["bundle.json"] : []);
     if (overwrite)
       expect(await readFile(path, "utf8")).toBe("original destination");

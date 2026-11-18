@@ -4,16 +4,15 @@ import {
 } from "../domain/sourceMapLimits.js";
 import { WEB_SOURCE_LOCATION_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   primaryAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -31,7 +30,7 @@ import {
 } from "../domain/webSourceLocation.js";
 import type { WebTraceObservation } from "../domain/webTraceObservation.js";
 import { resolveWebSourcePosition } from "../domain/webSourcePosition.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   capturedWebManifestIdentity,
   validateSelectedWebScript,
@@ -39,9 +38,10 @@ import {
 import type {
   WebSourceLocationArtifactPort,
   WebSourceMapPort,
-} from "./WebSourceLocationPorts.js";
+} from "../ports/WebSourceLocationPorts.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "trace_web_source_location";
 const artifactsSchema = selectedWebScriptArtifactsSchema.extend({
@@ -153,9 +153,7 @@ export class WebSourceLocationService {
     if (!generated.ok) return incomplete(generated.error);
     const generatedOffset = generated.value;
     if (options?.signal?.aborted)
-      return incomplete(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return incomplete(cancelledBy(OPERATION, options.signal));
     const traced = await this.decoder.trace(
       {
         text: map.text,
@@ -295,7 +293,7 @@ const verifyPairing = (
     map.file.path !== input.source_map.path ||
     map.url !== input.source_map.url ||
     Buffer.byteLength(map.text) !== map.file.bytes ||
-    createHash("sha256").update(map.text).digest("hex") !== map.file.sha256 ||
+    sha256Hex(map.text) !== map.file.sha256 ||
     map.file.bytes > selectedSourceMapLimits(input.source_map_limits).mapBytes
   )
     return invalidOutput(
