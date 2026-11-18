@@ -153,7 +153,15 @@ const PACKED_TAGS = [
   DT_ANDROID_RELA,
   DT_ANDROID_RELASZ,
 ];
-const ANDROID_RELR_TAGS = [0x6fffe000n, 0x6fffe001n, 0x6fffe003n];
+// Android's pre-standard RELR uses the same address/bitmap encoding. Resolve
+// its dynamic-tag aliases here so every consumer shares validation, duplicate
+// detection and relocation provenance with standard RELR.
+const RELR_TAG_ALIASES = new Map([
+  [0x6fffe000n, DT_RELR],
+  [0x6fffe001n, DT_RELRSZ],
+  [0x6fffe003n, DT_RELRENT],
+]);
+const RELR_TAGS = new Set([DT_RELR, DT_RELRSZ, DT_RELRENT]);
 const UNIQUE_TAGS = new Set([
   DT_RELA,
   DT_RELASZ,
@@ -161,14 +169,11 @@ const UNIQUE_TAGS = new Set([
   DT_REL,
   DT_RELSZ,
   DT_RELENT,
-  DT_RELR,
-  DT_RELRSZ,
-  DT_RELRENT,
+  ...RELR_TAGS,
   DT_JMPREL,
   DT_PLTRELSZ,
   DT_PLTREL,
   ...PACKED_TAGS,
-  ...ANDROID_RELR_TAGS,
 ]);
 // Ambiguous symbol declarations leave symbolic writes unknown without
 // rejecting independently decoded relative relocations.
@@ -443,6 +448,7 @@ function* dynamicTags(
     malformed("PT_DYNAMIC is truncated or outside the file");
   const tags = new Map<bigint, bigint>();
   const redeclared = new Set<bigint>();
+  let relrFamily: "standard" | "android" | undefined;
   const start = Number(declaration.offset),
     end = start + Number(declaration.size);
   for (let at = start; at < end; at += width) {
@@ -453,7 +459,14 @@ function* dynamicTags(
       input.little,
     );
     if (!parsed.ok) return malformed(parsed.error.message);
-    const { tag, value } = parsed.value;
+    const { value } = parsed.value;
+    const tag = RELR_TAG_ALIASES.get(parsed.value.tag) ?? parsed.value.tag;
+    if (RELR_TAGS.has(tag)) {
+      const family = tag === parsed.value.tag ? "standard" : "android";
+      if (relrFamily !== undefined && relrFamily !== family)
+        malformed("mixed standard and Android RELR dynamic tags");
+      relrFamily = family;
+    }
     if (tag === 0n) {
       for (const symbolTag of redeclared) tags.delete(symbolTag);
       return { values: tags, ambiguous: redeclared };
@@ -698,8 +711,6 @@ export function* readElfRelocationWritesSteps(
   // Consumers do work across each COPY span, which repeated or overlapping
   // records would multiply, so the spans together are limited to the file size.
   let copyAllowance = bytes.length;
-  if (ANDROID_RELR_TAGS.some((tag) => tags.has(tag)))
-    unsupported("Android-specific RELR dynamic tags are not decoded");
 
   /** One owner applies fixed and packed REL/RELA records to loader pointer facts. */
   function* applyRelocation(
@@ -891,16 +902,17 @@ export function* readElfRelocationWritesSteps(
     malformed("DT_PLTRELSZ has no DT_JMPREL");
 
   const relr = tags.get(DT_RELR),
-    relrSize = tags.get(DT_RELRSZ) ?? 0n;
+    relrSize = tags.get(DT_RELRSZ);
   if (relr === undefined) {
-    if (relrSize !== 0n) malformed("DT_RELRSZ has no DT_RELR");
+    if ((relrSize ?? 0n) !== 0n) malformed("DT_RELRSZ has no DT_RELR");
   } else {
     if (
+      relrSize === undefined ||
       relrSize % BigInt(word) !== 0n ||
       relrSize > BigInt(bytes.length) ||
       (tags.get(DT_RELRENT) ?? BigInt(word)) !== BigInt(word)
     )
-      malformed("invalid DT_RELRSZ or DT_RELRENT");
+      return malformed("invalid DT_RELRSZ or DT_RELRENT");
     const start = relrSize === 0n ? 0 : fileOffset(relr, Number(relrSize));
     if (start === null) return malformed("RELR table is not file-backed");
     let next: bigint | undefined;

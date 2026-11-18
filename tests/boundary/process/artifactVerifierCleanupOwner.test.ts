@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import { createPackageVerifierCommands } from "../../../scripts/lib/verify-package-commands.mjs";
 import { OwnedMcpStdioTransport } from "../../../src/process/OwnedMcpStdioTransport.js";
 import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
 
 it("retains the workspace until an owned protocol cleanup can be retried", async () => {
   const path = await mkdtemp(join(tmpdir(), "rea-verifier-transport-"));
@@ -106,10 +107,7 @@ setInterval(()=>{},1000);`,
       }
       expect(pids).toHaveLength(2);
       await transport.close();
-      for (const pid of pids)
-        expect(() => process.kill(pid, 0)).toThrowError(
-          expect.objectContaining({ code: "ESRCH" }),
-        );
+      for (const pid of pids) expect(await processHasStopped(pid)).toBe(true);
     } finally {
       await transport.close();
       await rm(path, { recursive: true, force: true });

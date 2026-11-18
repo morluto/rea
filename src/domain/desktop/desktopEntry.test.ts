@@ -8,7 +8,6 @@ import {
   replaceDesktopExec,
   tokenizeDesktopExec,
   unwrapDesktopCommand,
-  desktopArgumentIndex,
 } from "./desktopEntry.js";
 
 describe("parseDesktopEntry", () => {
@@ -178,6 +177,17 @@ describe("expandDesktopExec", () => {
 });
 
 describe("unwrapDesktopCommand", () => {
+  it("keeps an env operand named -- after an assignment distinct from the option terminator", () => {
+    expect(
+      unwrapDesktopCommand(["env", "MODE=selected", "--", "notes"]),
+    ).toEqual({
+      kind: "direct",
+      program: "--",
+      environment: { MODE: "selected" },
+      index: 2,
+      argumentIndex: 3,
+    });
+  });
   it("keeps env assignments as the program's environment", () => {
     expect(
       unwrapDesktopCommand([
@@ -191,6 +201,7 @@ describe("unwrapDesktopCommand", () => {
       kind: "direct",
       program: "notes",
       index: 4,
+      argumentIndex: 5,
       environment: {
         BAMF_DESKTOP_FILE_HINT: "/x.desktop",
         PATH: "/opt/notes/bin",
@@ -226,7 +237,7 @@ describe("unwrapDesktopCommand", () => {
     });
     expect(Object.hasOwn(wrapper.environment, "VARIABLE")).toBe(true);
     expect(wrapper.environment.VARIABLE).toBeUndefined();
-    expect(argv.slice(desktopArgumentIndex(argv))).toEqual(["-u"]);
+    expect(argv.slice(wrapper.argumentIndex)).toEqual(["-u"]);
   });
 
   it("recognises flatpak launchers and their application id", () => {
@@ -243,6 +254,7 @@ describe("unwrapDesktopCommand", () => {
     ).toEqual({
       kind: "flatpak",
       program: "/usr/bin/flatpak",
+      argumentIndex: 5,
       environment: {},
       application_id: "net.cozic.joplin_desktop",
     });

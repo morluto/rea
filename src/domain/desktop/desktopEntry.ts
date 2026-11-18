@@ -267,6 +267,8 @@ export type DesktopCommandWrapper = {
   readonly program: string;
   /** Changes made by the env prefix. An own undefined value removes a variable. */
   readonly environment: Readonly<Record<string, string | undefined>>;
+  /** First argument of the application, after the program or flatpak's app id. */
+  readonly argumentIndex: number;
 } & (
   | {
       readonly kind: "direct";
@@ -327,16 +329,26 @@ const FLATPAK_RUN_VALUE_OPTIONS: ReadonlySet<string> = new Set([
  * The application id a `flatpak run` argument list names: its first operand,
  * after options and their values, without a `/arch/branch` ref suffix.
  */
-const flatpakApplicationId = (arguments_: readonly string[]): string | null => {
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const token = arguments_[index] ?? "";
-    if (token === "--") return arguments_[index + 1]?.split("/")[0] || null;
-    if (!token.startsWith("-")) return token.split("/")[0] || null;
+const flatpakApplication = (argv: readonly string[], start: number) => {
+  for (let index = start; index < argv.length; index += 1) {
+    const token = argv[index] ?? "";
+    if (token === "--")
+      return {
+        application_id: argv[index + 1]?.split("/")[0] || null,
+        argumentIndex: Math.min(index + 2, argv.length),
+      };
+    if (!token.startsWith("-"))
+      return {
+        application_id: token.split("/")[0] || null,
+        argumentIndex: index + 1,
+      };
     if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
   }
-  return null;
+  return { application_id: null, argumentIndex: argv.length };
 };
 
+// An option terminator before assignments belongs to env; a later `--` can
+// name the command or belong to the application.
 const desktopEnvPrefix = (argv: readonly string[]) => {
   const environment: Record<string, string | undefined> = Object.create(null);
   if (argv[0]?.split("/").at(-1) !== "env") return { index: 0, environment };
@@ -382,23 +394,13 @@ export const unwrapDesktopCommand = (
       kind: "flatpak",
       program,
       environment,
-      application_id: flatpakApplicationId(argv.slice(index + 2)),
+      ...flatpakApplication(argv, index + 2),
     };
-  return { kind: "direct", program, environment, index };
-};
-
-/** The first argument after an `env` prefix, the program, and a `flatpak run` id. */
-export const desktopArgumentIndex = (argv: readonly string[]): number => {
-  const command = unwrapDesktopCommand(argv);
-  if (command.kind === "direct") return command.index + 1;
-  let { index } = desktopEnvPrefix(argv);
-  index += 1;
-  if (argv[index] === "run") index += 1;
-  for (; index < argv.length; index += 1) {
-    const token = argv[index] ?? "";
-    if (token === "--") return Math.min(index + 2, argv.length);
-    if (!token.startsWith("-")) return index + 1;
-    if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
-  }
-  return argv.length;
+  return {
+    kind: "direct",
+    program,
+    environment,
+    index,
+    argumentIndex: index + 1,
+  };
 };

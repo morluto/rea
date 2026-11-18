@@ -41,12 +41,13 @@ requires, so a relative value leaves the home default in use instead of
 naming a folder under the working directory. The entry's `Exec` line is
 expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
-entry's `Path` or the home directory. A leading `env` can set variables with
-`NAME=value` and remove inherited values with `-u NAME` or `--unset=NAME`.
-Later assignments can restore a removed variable. The resulting `PATH`
-finds the program, and the resulting XDG variables select its state
-directories. Removing an XDG variable restores its home default. On Linux,
-explicitly removing `PATH` uses the system lookup path `/bin:/usr/bin`.
+entry's `Path` or the home directory. A leading `env` can remove inherited
+values with `-u NAME` or `--unset=NAME`. Subsequent `NAME=value` assignments
+can restore a removed variable. An optional `--` ends option processing
+before the assignments. The resulting `PATH` finds the program, and the
+resulting XDG variables select its state directories. Removing an XDG
+variable restores its home default. Explicitly removing `PATH` uses the
+default lookup path `/bin:/usr/bin` in the Linux capture environment.
 An empty or relative `PATH` entry is read from the application's working
 directory. Without a `PATH` change, a program
 found only through a relative or empty entry is refused, since the exported

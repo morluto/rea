@@ -24,11 +24,16 @@ export interface ZipMemberRegionAccount {
   readonly firstUnaccountedOffset: number | undefined;
   /** Records whose local file header could not be located. */
   readonly unlocatedHeaders: number;
+  /** Extents not corroborated by their local header or required descriptor. */
+  readonly unverifiedExtents: number;
 }
 
 const LOCAL_HEADER_BYTES = 30;
 const LOCAL_HEADER_SIGNATURE = 0x04034b50;
 const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
+const DATA_DESCRIPTOR_FLAG = 0x8;
+const ZIP64_EXTRA = 0x1;
+const ZIP64_SIZE_SENTINEL = 0xffffffff;
 /** The APK Signature Scheme v2+ block sits between the last member and the directory. */
 const APK_SIGNING_BLOCK_MAGIC = "APK Sig Block 42";
 const APK_SIGNING_BLOCK_FOOTER_BYTES = 24;
@@ -75,12 +80,30 @@ export const accountZipMemberRegion = async (
   let unaccountedRanges = 0;
   let firstUnaccountedOffset: number | undefined;
   let unlocatedHeaders = 0;
+  let unverifiedExtents = 0;
+  let localSizeOffset: number | undefined;
+  let localSize: bigint | undefined;
+  // Distinct well-formed local headers have disjoint extra fields. Bound the
+  // field-walk work even when malformed references overlap those source bytes.
+  let localExtraBytesRemaining = directoryOffset;
+  const localExtra = async (offset: number, length: number) => {
+    if (length > localExtraBytesRemaining) return undefined;
+    localExtraBytesRemaining -= length;
+    return view(offset, length);
+  };
+  // Contained payloads can end far from their headers. Exact descriptor reads
+  // leave the header window intact instead of reloading it for every alias.
+  const descriptorView = async (offset: number, length: number) =>
+    new BinaryReader(Buffer.from(await read(offset, length)), true, "zip");
   let cursor = 0;
   let descriptor: ZipLocalRecord | undefined;
   const gap = async (end: number) => {
-    if (end <= cursor) return;
-    if (descriptor !== undefined)
-      cursor += await dataDescriptorBytes(descriptor, cursor, end, view);
+    if (end < cursor) return;
+    if (descriptor !== undefined) {
+      const bytes = await dataDescriptorBytes(descriptor, cursor, end, view);
+      if (bytes === 0) unverifiedExtents += 1;
+      cursor += bytes;
+    }
     descriptor = undefined;
     const size = end - cursor;
     if (size <= 0) return;
@@ -98,18 +121,44 @@ export const accountZipMemberRegion = async (
       unlocatedHeaders += 1;
       continue;
     }
+    const dataOffset =
+      record.offset + LOCAL_HEADER_BYTES + header.u16(26) + header.u16(28);
+    const end = dataOffset + record.compressedSize;
+    const deferred = (header.u16(6) & DATA_DESCRIPTOR_FLAG) !== 0;
+    // A directory/encrypted entry may never be opened. Do not let an unchecked
+    // central size cover other local records or bytes beyond the member region.
+    if (end > directoryOffset || deferred !== record.dataDescriptor) {
+      unverifiedExtents += 1;
+      continue;
+    }
+    if (!deferred) {
+      // Records are sorted by offset; repeated references share one immutable
+      // local header and must not repeatedly walk or charge its extra field.
+      if (localSizeOffset !== record.offset) {
+        localSize = await localCompressedSize(header, dataOffset, localExtra);
+        localSizeOffset = record.offset;
+      }
+      if (localSize !== BigInt(record.compressedSize)) {
+        unverifiedExtents += 1;
+        continue;
+      }
+    }
     await gap(record.offset);
-    const end =
-      record.offset +
-      LOCAL_HEADER_BYTES +
-      header.u16(26) +
-      header.u16(28) +
-      record.compressedSize;
     // Overlapping records are refused when their data is read.
     if (end > cursor) {
+      if (descriptor !== undefined) unverifiedExtents += 1;
       cursor = end;
       descriptor = record.dataDescriptor ? record : undefined;
-    }
+    } else if (
+      deferred &&
+      (await dataDescriptorBytes(
+        record,
+        end,
+        directoryOffset,
+        descriptorView,
+      )) === 0
+    )
+      unverifiedExtents += 1;
   }
   await gap(await apkSigningBlockStart(cursor, directoryOffset, view));
   return {
@@ -117,7 +166,38 @@ export const accountZipMemberRegion = async (
     unaccountedRanges,
     firstUnaccountedOffset,
     unlocatedHeaders,
+    unverifiedExtents,
   };
+};
+
+/** The local compressed size, including its conditional Zip64 extra-field slot. */
+const localCompressedSize = async (
+  header: BinaryReader,
+  dataOffset: number,
+  view: (offset: number, length: number) => Promise<BinaryReader | undefined>,
+): Promise<bigint | undefined> => {
+  const size = header.u32(18);
+  if (size !== ZIP64_SIZE_SENTINEL) return BigInt(size);
+  const length = header.u16(28);
+  if (length === 0) return undefined;
+  const extra = await view(dataOffset - length, length);
+  if (extra === undefined) return undefined;
+  let size64: bigint | undefined;
+  for (let at = 0; at + 4 <= length;) {
+    const bytes = extra.u16(at + 2);
+    const next = at + 4 + bytes;
+    if (extra.u16(at) === ZIP64_EXTRA) {
+      // Fields are present only for their corresponding 32-bit sentinel.
+      const compressedAt =
+        at + 4 + (header.u32(22) === ZIP64_SIZE_SENTINEL ? 8 : 0);
+      size64 =
+        next <= length && compressedAt + 8 <= next
+          ? extra.word(compressedAt, 64)
+          : undefined;
+    }
+    at = next;
+  }
+  return size64;
 };
 
 /**

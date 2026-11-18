@@ -14,6 +14,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
+  expandDesktopExec,
   parseDesktopEntry,
   tokenizeDesktopExec,
   unwrapDesktopCommand,
@@ -139,7 +140,7 @@ describe("download install scripts", () => {
     expect(failed?.stderr).toContain("drawio.desktop");
   });
 
-  it.each(["env", "env -u GTK_THEME --unset=QT_QPA_PLATFORM --"])(
+  it.each(["env", "env --", "env -u GTK_THEME --unset=QT_QPA_PLATFORM --"])(
     "keeps the %s prefix when it points the AppImage's entry at AppRun",
     async (prefix) => {
       const root = await stage("rea-appimage-env-");
@@ -289,6 +290,12 @@ describe("download install scripts and archive links", () => {
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
+const electronLaunchPrefixes = [
+  ["", "ambient"],
+  ["/usr/bin/env -- REA_TEST_ENV=selected ", "selected"],
+  ["/usr/bin/env -u REA_TEST_ENV -- ", ""],
+] as const;
+
 describe("installed launch paths", () => {
   it("keeps an archive folder with spaces as the rea entrypoint", async () => {
     const root = await createTestTempDirectory("rea-launcher-spaces-");
@@ -345,67 +352,101 @@ describe("installed launch paths", () => {
     expect(await readFile(marker, "utf8")).toBe(`${linked}\n--version\n`);
   });
 
-  it("rewrites an Electron desktop command with the shared launch policy", async () => {
-    const bundle = renderBuildBundle(
-      {
-        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
-        desktop_entry: "typora.desktop",
-        electron: true,
-      },
-      localPayload,
-    );
-    const root = await createTestTempDirectory("rea-electron-launch-");
-    const policy = join(
-      root,
-      "opt/rea/payload/rea/dist/domain/desktop/appExportInstall.js",
-    );
-    await mkdir(dirname(policy), { recursive: true });
-    const source = fileURLToPath(
-      new URL(
-        "../../../src/domain/desktop/appExportInstall.ts",
-        import.meta.url,
-      ),
-    );
-    await writeFile(
-      policy,
-      `export { adjustInstalledDesktopText } from ${JSON.stringify(source)};\n`,
-    );
-    const applications = join(root, "share/applications");
-    await mkdir(applications, { recursive: true });
-    const desktop = join(applications, "typora.desktop");
-    const original = [
-      "[Desktop Entry]",
-      "Type=Application",
-      "Name=Typora",
-      "Exec=typora %U",
-      "[Desktop Action New]",
-      "Name=New Window",
-      "Exec=typora --new-window",
-      "",
-    ].join("\n");
-    await writeFile(desktop, original);
-    const bin = join(root, "bin");
-    await mkdir(bin, { recursive: true });
-    await writeFile(
-      join(bin, "node"),
-      `#!/bin/sh\nexec ${shellQuote(process.execPath)} --import tsx "$@"\n`,
-    );
-    await chmod(join(bin, "node"), 0o755);
-    const script = text(bundle.files, "envs/typora/prepare-electron-launch.sh")
-      .replaceAll("/opt/rea", join(root, "opt/rea"))
-      .replaceAll("/usr/local/bin", bin);
-    const scriptPath = join(root, "prepare-electron-launch.sh");
-    await writeFile(scriptPath, script);
-    await chmod(scriptPath, 0o755);
-    await execute("sh", [scriptPath], {
-      cwd: process.cwd(),
-      env: { ...process.env, XDG_DATA_DIRS: join(root, "share") },
-    });
+  it.each(electronLaunchPrefixes)(
+    "rewrites and launches an Electron-style command with the shared launch policy (prefix %j)",
+    async (prefix, expectedEnvironment) => {
+      const bundle = renderBuildBundle(
+        {
+          ...request({
+            kind: "archive",
+            package: "typora",
+            extra_packages: [],
+          }),
+          desktop_entry: "typora.desktop",
+          electron: true,
+        },
+        localPayload,
+      );
+      const root = await createTestTempDirectory("rea-electron-launch-");
+      const policy = join(
+        root,
+        "opt/rea/payload/rea/dist/domain/desktop/appExportInstall.js",
+      );
+      await mkdir(dirname(policy), { recursive: true });
+      const source = fileURLToPath(
+        new URL(
+          "../../../src/domain/desktop/appExportInstall.ts",
+          import.meta.url,
+        ),
+      );
+      await writeFile(
+        policy,
+        `export { adjustInstalledDesktopText } from ${JSON.stringify(source)};\n`,
+      );
+      const applications = join(root, "share/applications");
+      await mkdir(applications, { recursive: true });
+      const desktop = join(applications, "typora.desktop");
+      const bin = join(root, "bin");
+      await mkdir(bin, { recursive: true });
+      const app = join(bin, "typora");
+      await writeFile(app, '#!/bin/sh\nprintf "%s\\n" "$REA_TEST_ENV" "$@"\n', {
+        mode: 0o755,
+      });
+      const exec = `${prefix}${app} --title=sample -- APP_MODE=argument %U`;
+      const original = [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Typora",
+        `Exec=${exec}`,
+        "[Desktop Action New]",
+        "Name=New Window",
+        "Exec=typora --new-window",
+        "",
+      ].join("\n");
+      await writeFile(desktop, original);
+      await writeFile(
+        join(bin, "node"),
+        `#!/bin/sh\nexec ${shellQuote(process.execPath)} --import tsx "$@"\n`,
+      );
+      await chmod(join(bin, "node"), 0o755);
+      const script = text(
+        bundle.files,
+        "envs/typora/prepare-electron-launch.sh",
+      )
+        .replaceAll("/opt/rea", join(root, "opt/rea"))
+        .replaceAll("/usr/local/bin", bin);
+      const scriptPath = join(root, "prepare-electron-launch.sh");
+      await writeFile(scriptPath, script);
+      await chmod(scriptPath, 0o755);
+      await execute("sh", [scriptPath], {
+        cwd: process.cwd(),
+        env: { ...process.env, XDG_DATA_DIRS: join(root, "share") },
+      });
 
-    expect(await readFile(desktop, "utf8")).toBe(
-      original.replace("Exec=typora %U", "Exec=typora --no-sandbox %U"),
-    );
-  });
+      const adjusted = await readFile(desktop, "utf8");
+      expect(adjusted).toBe(
+        original.replace(
+          `Exec=${exec}`,
+          `Exec=${prefix}${app} --no-sandbox --title=sample -- APP_MODE=argument %U`,
+        ),
+      );
+      const parsed = parseDesktopEntry(adjusted);
+      if (!parsed.ok) throw new Error(parsed.error);
+      const tokens = tokenizeDesktopExec(parsed.value.exec ?? "");
+      if (!tokens.ok) throw new Error(tokens.error);
+      const argv = expandDesktopExec(
+        tokens.value,
+        { name: "Typora", icon: null, location: desktop },
+        [],
+      );
+      const { stdout } = await execute(argv[0]!, argv.slice(1), {
+        env: { PATH: "/usr/bin:/bin", REA_TEST_ENV: "ambient" },
+      });
+      expect(stdout).toBe(
+        `${expectedEnvironment}\n--no-sandbox\n--title=sample\n--\nAPP_MODE=argument\n`,
+      );
+    },
+  );
 });
 
 it("preserves a quoted env executable when rewriting an AppImage entry", async () => {
