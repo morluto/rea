@@ -690,7 +690,9 @@ it("caps the failed file list and limits partial diagnostics to reported modules
     MERGE_RESULT: "failure",
   });
   expect(summary).toContain("Partial test diagnostics");
-  expect(summary).toContain("tests/&#60;tag&#62;.test.ts");
+  expect(summary).toContain(
+    '```text\nFailed test modules reported: 22.\n- "tests/<tag>.test.ts"',
+  );
   expect(stdout).toContain("Failed test modules reported: 22.");
   expect(stdout).toContain('- "tests/<tag>.test.ts"');
   expect(stdout).toContain('- "tests/z18.test.ts"');
