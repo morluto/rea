@@ -59,6 +59,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "ntfs-mft": "archive",
   "systemd-journal": "archive",
   "auditd-log": "archive",
+  "macos-fsevents": "archive",
   plist: "artifact",
   javascript: "artifact",
   uefi: "artifact",

@@ -137,6 +137,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-nvs",
   "deb",
   "labview-rsrc",
+  "macos-fsevents",
   "unknown",
 ] as const;
 
@@ -186,6 +187,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ntfs-mft",
   "systemd-journal",
   "auditd-log",
+  "macos-fsevents",
   "mach-o-universal",
   "mach-o",
   "elf",

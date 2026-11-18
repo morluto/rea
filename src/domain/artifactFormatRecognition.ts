@@ -55,6 +55,7 @@ import {
   hasRiffXma2Header,
   hasVulkanPipelineCacheHeader,
 } from "./mediaAssetFormats.js";
+import { hasMacosFseventsHeader } from "./apple/macosFsevents.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -101,6 +102,7 @@ export type RecognizedArtifactFormat = Extract<
   | "ntfs-mft"
   | "systemd-journal"
   | "auditd-log"
+  | "macos-fsevents"
   | "plist"
   | StandaloneArtifactFormat
 >;
@@ -366,6 +368,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       }
       return { state: "recognized", format: "devicetree" };
     },
+    when("macos-fsevents", hasMacosFseventsHeader),
     // Binary plists, including keyed archives, often use other extensions.
     when("labview-rsrc", hasLabviewRsrcHeader),
     when("plist", hasBinaryPlistSignature),
