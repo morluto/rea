@@ -38,7 +38,11 @@ import { formatCliCallToAction, type CallToAction } from "./outputEnvelope.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import type { OutputFilterPath } from "./outputFilter.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
-import { ToonOutputCleanupFailure, writeToonOutput } from "./toonOutput.js";
+import {
+  ToonOutputCleanupFailure,
+  toonOutputCancellationStatus,
+  writeToonOutput,
+} from "./toonOutput.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   jsonOutputParts,
@@ -47,6 +51,8 @@ import {
   writeOutputParts,
   writeOutputText,
 } from "./jsonOutput.js";
+export { toonOutputCancellationStatus as cliOutputCancellationStatus } from "./toonOutput.js";
+
 /** Result metadata supplied by the command that actually ran. */
 export interface CliResultOutputMetadata {
   readonly command: string;
@@ -106,6 +112,7 @@ export const createCliResultOutput = (
     | "tsv";
   let handled = false;
   let failed = false;
+  let interrupted = false;
   let error: AnalysisErrorProjection | undefined;
   let completed:
     | {
@@ -263,6 +270,12 @@ export const createCliResultOutput = (
       }
       return written;
     } catch (cause: unknown) {
+      if (toonOutputCancellationStatus(cause) !== undefined) {
+        interrupted = true;
+        handled = true;
+        failed = true;
+        throw cause;
+      }
       if (await recoverFormattingFailure(cause)) return true;
       if (handled) failed = true;
       throw cause;
@@ -283,11 +296,12 @@ export const createCliResultOutput = (
       format = options.format as typeof format;
       handled = false;
       failed = false;
+      interrupted = false;
       error = undefined;
       completed = undefined;
     },
     finish() {
-      return writeOutputText(destination, "");
+      return interrupted ? Promise.resolve() : writeOutputText(destination, "");
     },
     write,
     recoverFormattingFailure,

@@ -7,6 +7,7 @@ import { decode } from "@toon-format/toon";
 import { expect, it, vi } from "vitest";
 
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
+import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { closeCliResources } from "../../../src/cli/cliResources.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -262,4 +263,22 @@ it("updates unresolved resources when a recovered close is followed by failed re
       });
     },
   );
+});
+
+it("refuses staging when the private-root authority cannot establish privacy", async () => {
+  const refusal = new Error("Private runtime unavailable");
+  const create = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockRejectedValueOnce(refusal);
+  const openStage = vi.mocked(open);
+  const before = openStage.mock.calls.length;
+  const parts: Buffer[] = [];
+  try {
+    await expect(outputFor(parts).write(value, metadata)).rejects.toBe(refusal);
+    expect(create).toHaveBeenCalledWith({ prefix: "rea-toon-" });
+    expect(openStage.mock.calls.length).toBe(before);
+    expect(parts).toEqual([]);
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
