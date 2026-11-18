@@ -1,4 +1,5 @@
 import { ProviderAdapterError } from "./providerAdapterError.js";
+import { ProviderCleanupError } from "./providerCleanupError.js";
 import { childFailureDiagnostics } from "./analysisErrorProjection.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
 import {
@@ -102,3 +103,29 @@ export const analysisErrorWithCloseRejections = (
   first.cleanupIncomplete
     ? analysisErrorWithCloseRejection(first, second, operation)
     : analysisErrorWithCleanupFailure(first, second, operation);
+
+/**
+ * Compose several cleanup failures into one provider cleanup failure. It lists
+ * the parts' resources and completes once every part reports release. Pass
+ * `causes` to keep failures that are not AnalysisErrors in the aggregate
+ * cause; only `failures` own completion.
+ */
+export const providerCleanupErrorFromFailures = (
+  providerId: string,
+  failures: readonly AnalysisError[],
+  reason: string,
+  options: {
+    readonly operation: string;
+    readonly causes?: readonly unknown[];
+    readonly message?: string;
+  },
+): ProviderCleanupError =>
+  new ProviderCleanupError(
+    providerId,
+    failures.flatMap((failure) => failure.cleanupResources),
+    { reason },
+    {
+      operation: options.operation,
+      cause: new AggregateError(options.causes ?? failures, options.message),
+    },
+  ).bindCleanupDependencies(failures);

@@ -42,7 +42,10 @@ import {
 
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   CdpTargetSessionOwner,
@@ -102,15 +105,12 @@ export class CdpElectronProvider implements ElectronObservationPort {
       const typed = mapped.filter(
         (failure): failure is AnalysisError => failure instanceof AnalysisError,
       );
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         CDP_ELECTRON_PROVIDER_IDENTITY.id,
-        typed.flatMap((failure) => failure.cleanupResources),
-        { reason: "Electron transport and file cleanup remain incomplete" },
-        {
-          operation: "inspect_electron_page",
-          cause: new AggregateError(mapped),
-        },
-      ).bindCleanupDependencies(typed);
+        typed,
+        "Electron transport and file cleanup remain incomplete",
+        { operation: "inspect_electron_page", causes: mapped },
+      );
     }
   }
 
