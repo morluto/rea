@@ -273,5 +273,5 @@ reader. The verification lane requires Go; normal inspection does not.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
-`ppc` to `powerpc`. Unknown families such as `ppc64` remain unknown rather than
-being inferred from a related spelling.
+`ppc` and `ppc64` to `powerpc`. Unknown families such as `s390` remain unknown
+rather than being inferred from a related spelling.

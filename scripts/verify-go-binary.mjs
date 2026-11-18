@@ -451,9 +451,13 @@ async function verify(
     assert.equal(report.architecture, target[1]);
     assert.equal(
       evidence.subject.identity.architecture,
-      { amd64: "x86_64", 386: "x86", arm64: "arm64", mips: "mips" }[
-        target[1]
-      ] ?? null,
+      {
+        amd64: "x86_64",
+        386: "x86",
+        arm64: "arm64",
+        mips: "mips",
+        ppc64: "powerpc",
+      }[target[1]] ?? null,
     );
     assert.equal(report.bits, target[3]);
     assert.equal(report.byte_order, target[4]);
