@@ -832,6 +832,7 @@
 * **environment:** prove natural key competition ([#11950](https://github.com/morluto/rea/issues/11950)) ([f9b9302](https://github.com/morluto/rea/commit/f9b93021a215aa412c1e0ca8cb2378a5fb6cb9f5))
 * **environment:** prove replay selection precedence ([#11912](https://github.com/morluto/rea/issues/11912)) ([9e7db13](https://github.com/morluto/rea/commit/9e7db13005874a073f012ba409bd8e87d64ea643))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
+* **environment:** sharpen replay scope and media type checks ([#11972](https://github.com/morluto/rea/issues/11972)) ([9d5fa97](https://github.com/morluto/rea/commit/9d5fa97157719acc3cf6093a0e5b30019499be84))
 * **environment:** shrink catalog display fixtures ([#11941](https://github.com/morluto/rea/issues/11941)) ([df12107](https://github.com/morluto/rea/commit/df12107af58f4f583956048cc3d62088ecc1caf4))
 * **environment:** shrink the request-body read-budget fixture ([#11903](https://github.com/morluto/rea/issues/11903)) ([518a2ad](https://github.com/morluto/rea/commit/518a2ad434896d7c33890f4007b3400c1e8cfffb))
 * **environment:** tighten varied write outcomes ([#11965](https://github.com/morluto/rea/issues/11965)) ([845c162](https://github.com/morluto/rea/commit/845c162495279bee570e2fb8d1d3bb84608c3c36))
