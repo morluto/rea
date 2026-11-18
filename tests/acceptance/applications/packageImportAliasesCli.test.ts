@@ -237,7 +237,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }),
         evidence: expect.objectContaining({
           limitations: expect.arrayContaining([
-            expect.stringContaining("does not define package import alias #missing"),
+            expect.stringContaining(
+              "does not define package import alias #missing",
+            ),
             expect.stringContaining("#config"),
           ]),
         }),

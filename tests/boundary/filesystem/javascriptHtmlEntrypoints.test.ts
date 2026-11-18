@@ -100,7 +100,10 @@ it("preserves external and inline HTML script ranges across line endings", async
     expect(records).toHaveLength(documents.length);
 
   for (const { source, html, start, end } of documents) {
-    const missingStart = { line: end.line, column: end.column + closing.length };
+    const missingStart = {
+      line: end.line,
+      column: end.column + closing.length,
+    };
     const missingEnd = {
       line: end.line,
       column: missingStart.column + missingOpening.length,

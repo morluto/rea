@@ -94,7 +94,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
     const runtime = inventory?.sources.find(({ key }) => key === "runtime.js");
     for (const [anchor, descendant] of patterns) {
-      expect(routes.find(({ path }) => path === anchor), anchor).toMatchObject({
+      expect(
+        routes.find(({ path }) => path === anchor),
+        anchor,
+      ).toMatchObject({
         occurrence_count: 2,
         source_count: 2,
       });
