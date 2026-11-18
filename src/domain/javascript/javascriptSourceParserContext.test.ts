@@ -30,6 +30,7 @@ import {
 
 it.each([
   ["main.js", "commonjs", "void new.target; return;", false],
+  ["main.cjs", "module", "void new.target; return;", false],
   ["main.js", "unspecified", "void new.target; return;", false],
   ["main.js", "module", "return;", true],
   ["main.mjs", "commonjs", "return;", true],
@@ -55,6 +56,36 @@ it.each([
     expect(application).not.toBeNull();
     expect((application?.errors.length ?? 0) > 0).toBe(invalid);
     expect(reference.errors.length > 0).toBe(invalid);
+  },
+);
+
+it.each([
+  ["entry.js", "commonjs"],
+  ["entry.cjs", "module"],
+] as const)(
+  "retains recovered imports and grammar errors for mixed syntax in %s",
+  (path, packageType) => {
+    const source = 'import "./dep.mjs"; void new.target; return;';
+    const application = parseJavaScriptSource(source, path, packageType);
+    const reference = parseRecoveredJavaScript(
+      source,
+      path,
+      { plugins: parserPluginsForPath(path) },
+      packageType,
+    ).file;
+
+    expect(
+      application?.program.body.some((node) => t.isImportDeclaration(node)),
+    ).toBe(true);
+    expect(application?.errors.map(({ reasonCode }) => reasonCode)).toContain(
+      "IllegalReturn",
+    );
+    expect(
+      reference.program.body.some((node) => t.isImportDeclaration(node)),
+    ).toBe(true);
+    expect(reference.errors.map(({ reasonCode }) => reasonCode)).toContain(
+      "ImportOutsideModule",
+    );
   },
 );
 

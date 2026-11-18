@@ -218,7 +218,8 @@ const parserOptionsForLoader = (
           allowReturnOutsideFunction: false,
           allowNewTargetOutsideFunction: false,
         }
-      : hasCommonJsWrapper(sourcePath, packageContext)
+      : options.sourceType === "script" &&
+          hasCommonJsWrapper(sourcePath, packageContext)
         ? {
             allowReturnOutsideFunction: true,
             allowNewTargetOutsideFunction: true,
