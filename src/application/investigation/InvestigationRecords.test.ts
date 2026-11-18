@@ -94,12 +94,17 @@ describe("investigation record ownership", () => {
 
   it("rolls back Evidence when the linked Unknown fails validation", () => {
     const records = new InvestigationRecords();
+    const missingId = `ev_${"f".repeat(64)}`;
     const invalid = {
       ...unknownInput("Is the missing Evidence present?"),
-      supporting_evidence_ids: [`ev_${"f".repeat(64)}`],
+      supporting_evidence_ids: [missingId],
     };
     const refused = records.recordEvidenceWithUnknown(evidence, invalid);
     if (refused.ok) throw new Error("Expected invalid Unknown references");
+    expect(refused.error).toMatchObject({
+      _tag: "UnknownRegistryError",
+      constraint: { kind: "missing_evidence", evidence_id: missingId },
+    });
     expect(refused.error.partialObservation).toBeUndefined();
     expect(records.hasEvidence(evidence.evidence_id)).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));

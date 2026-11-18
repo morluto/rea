@@ -46,7 +46,7 @@ it.each(["none", "excluded", "mixed", "redirect", "not-selected"] as const)(
             "main",
             mode === "none"
               ? undefined
-              : mode === "redirect"
+              : mode === "redirect" || mode === "not-selected"
                 ? "/app.js.map"
                 : "https://outside.example.test/main.js.map",
           ),

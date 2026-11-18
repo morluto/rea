@@ -932,11 +932,11 @@ export class PcapProvider {
             new RetainedSnapshotFailure(failure, failure),
           );
         } else {
-          const returned = analysisErrorWithCleanupFailure(
+          const returned = analysisErrorWithCleanupDependencies(
             result.error,
             cleanup,
             request.operation,
-          ).bindCleanupDependencies([cleanup]);
+          );
           result = err(returned);
           this.snapshotFailures.set(
             snapshot,

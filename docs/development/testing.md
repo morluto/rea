@@ -127,8 +127,7 @@ TypeScript versions.
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
 The build also records `dist/mcp-catalog.json` (compact inputs) from the
 canonical SDK registrations and binds it to the runtime with its SHA-256
-digest. These are
-runtime artifacts, separate from the test catalog below. Default target-free
+digest. Default target-free
 MCP startup serves its schemas without constructing analysis validators;
 the first tool or guided-workflow request materializes the canonical runtime
 on that same SDK server. Explicit compact/full input selections preserve
@@ -142,12 +141,9 @@ Turbo's strict task environment preserves caller-selected `GOMAXPROCS`,
 checks. These execution controls do not change artifact content, so changing
 their values retains cache reuse. They control individual runtimes; monitor
 the complete process family separately when enforcing a total memory budget.
-`npm run test:prepare` also generates the MCP contract test catalog, product
-catalog, and portable managed evidence used by the complete suite. Focused
-tests prepare those extra outputs only when their selected files consume them.
-The MCP test catalog is JSON in `.cache/mcp-tool-catalog.json`; the tracked
-test loader supplies its types without making generation a source-check
-prerequisite. Run `npm run mcp-catalog:generate` to refresh it independently.
+`npm run test:prepare` also generates the product catalog and portable managed
+evidence used by the complete suite. Focused tests prepare those extra outputs
+only when their selected files consume them.
 Documentation generation and managed conformance run through their separate
 `docs:generate` and `evidence:generate` task graphs.
 
@@ -617,8 +613,8 @@ affected consumer.
 Every provider capability that `src/composition/capabilityDeclarations.ts`
 binds to a provider needs an entry in
 `tests/conformance/providerCapabilityCases.ts`. The entry is either a
-CLI, MCP or acceptance test that names one of the capability's operations, or an
-exemption that states why no such case exists.
+CLI, MCP or acceptance test that exercises one of the capability's operations,
+or an exemption that states why no such case exists.
 `tests/conformance/providerCapabilityConformance.test.ts` iterates the
 declarations, so a new capability fails the suite until it has one.
 

@@ -55,8 +55,6 @@ describe("decompile-all CLI", () => {
           address_start: "0X1000",
           address_end: "0X1040",
           limit: 1,
-          layout: "address",
-          resume: false,
         },
         normalized_result: {
           output_directory: join(root, "out"),
@@ -64,6 +62,8 @@ describe("decompile-all CLI", () => {
           counts: { selected: 2, excluded: 2, written: 1, remaining: 1 },
         },
       });
+      expect(result.json).not.toHaveProperty("parameters.layout");
+      expect(result.json).not.toHaveProperty("parameters.resume");
       expect(await readdir(join(root, "out", "functions"))).toEqual([
         "0x1000.c",
       ]);
@@ -79,6 +79,8 @@ describe("decompile-all CLI", () => {
           "--output",
           "out",
           "--resume",
+          "--layout",
+          "address",
           "--address-start",
           "0X1000",
           "--address-end",
@@ -93,7 +95,7 @@ describe("decompile-all CLI", () => {
       });
       expect(resumed.exitCode, JSON.stringify(resumed.json)).toBe(0);
       expect(resumed.json).toMatchObject({
-        parameters: { limit: 100001, resume: true },
+        parameters: { limit: 100001, resume: true, layout: "address" },
         normalized_result: {
           counts: { selected: 2, written: 1, skipped: 1, remaining: 0 },
         },

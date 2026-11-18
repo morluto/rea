@@ -13,6 +13,9 @@ On Linux, JADX launches an REA-owned process and requires a procps-compatible
 system `ps`; see the shared
 [Linux process prerequisite](../../getting-started/installation.md#linux-owned-process-prerequisite).
 
+A/B OTA `payload.bin` files are a separate offline artifact, not a JADX
+package. See [Android OTA update payloads](../firmware/android-ota-payload.md).
+
 ## Optional package delivery
 
 The MCP `inspect_android_package` request keeps complete output when `detail` is
