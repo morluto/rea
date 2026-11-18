@@ -612,8 +612,27 @@ export const bindingMethodMayHaveChanged = (
     targets: (effect: JavaScriptSemanticMemberEffect) => boolean;
   },
 ): boolean => {
-  const prototype = (key: JavaScriptSemanticPropertyPath[number]) =>
-    semanticPropertyPathKeyMatches(key, "__proto__");
+  // A prototype hop stays on the receiver chain. A constructor hop can
+  // return to that chain through .prototype. A wildcard may do either.
+  const reachesReceiver = (
+    path: JavaScriptSemanticPropertyPath,
+    length = path.length,
+    escape = false,
+  ) => {
+    let receiver = true;
+    let constructor = false;
+    for (let i = 0; i < length && (receiver || constructor); i++) {
+      const key = path[i]!;
+      const nextConstructor: boolean =
+        receiver && semanticPropertyPathKeyMatches(key, "constructor");
+      receiver =
+        (receiver && semanticPropertyPathKeyMatches(key, "__proto__")) ||
+        (constructor && semanticPropertyPathKeyMatches(key, "prototype"));
+      constructor = nextConstructor;
+    }
+    // The native constructor itself also exposes its mutable prototype.
+    return receiver || (escape && constructor);
+  };
   const mayPrecede = (effect: t.Node | undefined): boolean =>
     semanticEffectTiming(read, effect, state) !== "after" &&
     !(
@@ -636,16 +655,15 @@ export const bindingMethodMayHaveChanged = (
     binding.memberWrites.some(
       (effect) =>
         targets(effect) &&
-        (effect.path.length === 0 ||
-          (effect.path.length === 1 &&
-            semanticPropertyPathKeyMatches(effect.path[0]!, method)) ||
-          prototype(effect.path[0]!)) &&
+        (reachesReceiver(effect.path) ||
+          (semanticPropertyPathKeyMatches(effect.path.at(-1)!, method) &&
+            reachesReceiver(effect.path, effect.path.length - 1))) &&
         mayPrecede(effect.node),
     ) ||
     binding.escapedPaths.some(
       (effect) =>
         targets(effect) &&
-        effect.path.every(prototype) &&
+        reachesReceiver(effect.path, effect.path.length, true) &&
         effect.node !== state.parentsByNode.get(read) &&
         mayPrecede(effect.node),
     )

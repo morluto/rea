@@ -55,19 +55,50 @@ it("keeps unrelated properties and writes after the release complete", () => {
   ).toMatchObject([{ resolution: "complete" }]);
 });
 
-it.each(["stream.destroy", "stream.__proto__.destroy"])(
-  "keeps the callable identity after observing %s",
-  (observed) => {
-    expect(
-      releases(`
+it.each([
+  "stream.destroy",
+  "stream.__proto__.destroy",
+  "stream.__proto__.constructor.prototype.destroy",
+])("keeps the callable identity after observing %s", (observed) => {
+  expect(
+    releases(`
     import { createReadStream } from "node:fs";
     const stream = createReadStream("fixture.txt");
     observe(${observed});
     stream.destroy();
   `),
-    ).toMatchObject([{ resolution: "complete" }]);
+  ).toMatchObject([{ resolution: "complete" }]);
+});
+
+it.each([
+  "stream.__proto__.constructor.prototype",
+  "stream.constructor",
+  "stream.constructor.prototype",
+  "stream.__proto__.constructor.prototype.__proto__",
+  "stream[key].prototype",
+])(
+  "qualifies releases after handing out a possible prototype via %s",
+  (prototype) => {
+    expect(
+      releases(`import { createReadStream } from "node:fs";
+    const stream = createReadStream("fixture.txt");
+    decorate(${prototype});
+    stream.destroy();`),
+    ).toMatchObject([{ resolution: "partial" }]);
   },
 );
+
+it.each([
+  ["stream.constructor.prototype.destroy = replacement", "partial"],
+  ["stream.__proto__.constructor.prototype.label = 1", "complete"],
+])("checks the written prototype slot in %s", (write, resolution) => {
+  expect(
+    releases(`import { createReadStream } from "node:fs";
+    const stream = createReadStream("fixture.txt");
+    ${write};
+    stream.destroy();`),
+  ).toMatchObject([{ resolution }]);
+});
 
 it.each([
   ["createReadStream", "stream.destroy = () => {}; stream.close()", "partial"],
