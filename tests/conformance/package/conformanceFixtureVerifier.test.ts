@@ -170,3 +170,22 @@ it("preserves a carriage return that belongs to an nm symbol name", () => {
     "rea_inventory_0000\r",
   ]);
 });
+
+it("refuses a missing explicit source root even when a default exists", async () => {
+  const { commands, root } = await ownedFixture("rea-fixture-source-root-");
+  await mkdir(join(root, "tests", "conformance"), { recursive: true });
+  const manifest = join(root, "manifest.json");
+  await writeFile(manifest, "{}");
+  const selected = join(root, "selected-sources");
+  await expect(
+    commands.exec(process.execPath, [verifier, manifest, selected], {
+      cwd: root,
+      timeout: 10_000,
+    }),
+  ).rejects.toMatchObject({
+    code: 1,
+    snapshot: {
+      stderr: { text: expect.stringContaining(selected) },
+    },
+  });
+});
