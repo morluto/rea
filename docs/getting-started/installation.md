@@ -636,6 +636,13 @@ wherever these docs say `rea …`, run
 `node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
 the checkout's `scripts/rea.mjs` with your agents.
 
+Avoid `npx rea-agents` from inside this checkout. Its package name is
+`rea-agents`, so npm can select the checkout, including when the requested
+version matches it. If the checkout's `rea` command is unavailable, the launch
+fails. Use the linked `rea` or
+`node /absolute/path/to/rea/scripts/rea.mjs` forms above. Run setup through
+that entrypoint to register the checkout for your agent.
+
 After `git pull`, run `npm ci` and `npm run build:cached` again. If the
 checkout's skill changed, refresh each installed copy before restarting its
 agent. For example, preview and review the Claude Code skill changes:
@@ -2157,9 +2164,10 @@ before running setup again. A global installation provides a more durable path.
 
 ## Package runners and global installation
 
-Package runners can select project-local packages and read project configuration,
-even for explicit version requests. Acquire REA from a trusted working directory,
-outside the target project, and pass absolute target paths to analysis commands.
+Package runners can read project configuration. Acquire REA from a trusted
+working directory outside the target project and any REA source checkout, and
+pass absolute target paths to analysis commands. To run REA from its checkout,
+use the [source checkout instructions](#run-rea-from-a-checkout).
 REA cannot validate package acquisition that happens before its entrypoint starts.
 To request the latest release explicitly, use:
 
