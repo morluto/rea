@@ -687,6 +687,30 @@ describe("libraryPackageNames", () => {
 });
 
 describe("absolute dependency lookup reuse", () => {
+  it("reports truncation before reading a new absolute dependency beyond the limit", async () => {
+    const admitted = "/native/admitted.so";
+    const beyondLimit = "/native/over-budget.so";
+    const reads = host({ [admitted]: elf([]) });
+    const result = await libraryClosure(
+      app(elf([admitted, beyondLimit])),
+      [],
+      {
+        ...reads,
+        resolvePath: async (path) => {
+          if (path === beyondLimit) throw new Error("metadata read failed");
+          return reads.resolvePath(path);
+        },
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      libraries: [{ soname: admitted }],
+      unreadable: [],
+      truncated: true,
+    });
+  });
+
   it("resolves each exact successful spelling once across repeated declarations", async () => {
     const paths = Array.from(
       { length: 8 },
@@ -705,7 +729,7 @@ describe("absolute dependency lookup reuse", () => {
           return reads.resolvePath(path);
         },
       },
-      16,
+      paths.length,
     );
     expect(result.libraries.map((row) => row.path)).toEqual(paths);
     expect(result.missing).toEqual([]);

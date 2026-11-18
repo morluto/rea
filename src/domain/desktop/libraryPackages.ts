@@ -202,19 +202,9 @@ export const libraryClosure = async (
   limit: number,
 ): Promise<LibraryClosure> => {
   // Reuse admitted path facts only within this walk and by exact spelling.
-  // Failures stay retryable; distinct spellings beyond the policy capacity
-  // still resolve normally rather than growing a second unbounded inventory.
+  // Failures stay retryable within the walk budget. Bound the cache separately
+  // because multiple spellings can resolve to the same request identity.
   const resolvedLookups = new Map<string, LibraryPath>();
-  const resolveLookup = async (
-    path: string,
-  ): Promise<LibraryPath | undefined> => {
-    const cached = resolvedLookups.get(path);
-    if (cached !== undefined) return cached;
-    const resolved = await host.resolvePath(path);
-    if (resolved !== undefined && resolvedLookups.size < limit)
-      resolvedLookups.set(path, resolved);
-    return resolved;
-  };
   const seen = new Set<string>();
   const closure = {
     requiredAliases: [] as LibraryLookupAlias[],
@@ -252,15 +242,22 @@ export const libraryClosure = async (
       const unsupported =
         expandedRequest !== soname &&
         soname.replace(ORIGIN_TOKEN, "").includes("$");
-      const directPath =
-        !unsupported && expandedRequest.startsWith("/")
-          ? await resolveLookup(expandedRequest)
-          : undefined;
+      const direct = !unsupported && expandedRequest.startsWith("/");
+      let directPath = direct
+        ? resolvedLookups.get(expandedRequest)
+        : undefined;
+      if (direct && directPath === undefined) {
+        // Cached facts can still identify duplicates at capacity. A new
+        // filesystem lookup needs room in the dependency budget.
+        if (seen.size >= limit) return { ...closure, truncated: true };
+        directPath = await host.resolvePath(expandedRequest);
+        if (directPath !== undefined && resolvedLookups.size < limit)
+          resolvedLookups.set(expandedRequest, directPath);
+      }
       const request = directPath?.path ?? expandedRequest;
       // An unresolved declaration cannot claim a known literal lookup's identity.
       const key =
-        unsupported ||
-        (expandedRequest.startsWith("/") && directPath === undefined)
+        unsupported || (direct && directPath === undefined)
           ? compositeKey(["unresolved", object.path, soname])
           : compositeKey([
               "lookup",
@@ -281,7 +278,7 @@ export const libraryClosure = async (
         });
         continue;
       }
-      if (expandedRequest.startsWith("/") && directPath === undefined) {
+      if (direct && directPath === undefined) {
         closure.unreadable.push({
           path: expandedRequest,
           reason: "the library's filesystem path could not be resolved",
