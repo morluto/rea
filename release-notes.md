@@ -1042,6 +1042,7 @@
 * **process:** assert regex deadline and launcher grace outcomes instead of elapsed-time bounds ([#10957](https://github.com/morluto/rea/issues/10957)) ([bf074b8](https://github.com/morluto/rea/commit/bf074b8c064cade132e411ec2f8a5e180b7050cc))
 * **process:** await completed sampling coverage ([#11927](https://github.com/morluto/rea/issues/11927)) ([87b1b32](https://github.com/morluto/rea/commit/87b1b322e4cab47c733d5967f2fe0c7c2bfdcb7c))
 * **process:** check each capture provider field once instead of per side ([#11067](https://github.com/morluto/rea/issues/11067)) ([b3cba0d](https://github.com/morluto/rea/commit/b3cba0d762de46cbc685bf29b41e95376c45c1ca))
+* **process:** count zombie descendants as stopped in cleanup checks ([#12091](https://github.com/morluto/rea/issues/12091)) ([5397780](https://github.com/morluto/rea/commit/53977802b3368ecc5d4234c5903c0520d340a24c))
 * **process:** cover observer path resolution errors ([1201c99](https://github.com/morluto/rea/commit/1201c994270055b8f933d3710a1cc951fe6dc286)), closes [#7281](https://github.com/morluto/rea/issues/7281)
 * **process:** drive kernel thread exclusion through Linux procfs ([3f7d0d2](https://github.com/morluto/rea/commit/3f7d0d2d21bbc738a4d66315c4a0be19ec632c84))
 * **process:** inherit project deadlines in agent evaluation fixtures ([f916b3e](https://github.com/morluto/rea/commit/f916b3ecf5455ffc80e300d8cf7eea144d02d61c))
