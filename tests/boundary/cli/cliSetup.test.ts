@@ -16,14 +16,12 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { parse as parseToml } from "smol-toml";
 
-import {
-  manualRegistrationRemediation,
-  supportedClientRegistrationProfile,
-} from "../../../src/application/SupportedClients.js";
+import { manualRegistrationRemediation } from "../../../src/application/SupportedClients.js";
 import type {
   SetupClientState,
   SetupResult,
 } from "../../../src/application/SetupTypes.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
@@ -176,9 +174,7 @@ cliTest(
     expect(result.exitCode).not.toBe(0);
     expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
     expect(result.stdout).toContain("--dry-run");
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain(
-      "Incur.ParseError",
-    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
     await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -681,18 +677,51 @@ describe("interactive setup journey", () => {
 });
 
 describe("interactive setup client hints", () => {
-  it.for(["unknown", "invalid"] as const)(
-    "names an unresolved %s client location instead of a repair (#11697)",
-    async (status) => {
-      const unresolved: SetupClientState = {
+  const manual =
+    "Found migrated Claude Desktop storage. Register REA manually in the active file.";
+  const repairOverride =
+    "Invalid PI_CODING_AGENT_DIR: encoded slash. Repair the override before configuring Pi.";
+  const repairConfiguration =
+    "Existing configuration needs repair before setup";
+  it.for([
+    {
+      name: "claude_desktop",
+      format: "json",
+      status: "unknown",
+      configPathError: manual,
+      expected: manual,
+    },
+    {
+      name: "claude_desktop",
+      format: "json",
+      status: "invalid",
+      configPathError: manual,
+      expected: manual,
+    },
+    {
+      name: "pi",
+      format: "pi",
+      status: "unknown",
+      configPathError: repairOverride,
+      expected: repairOverride,
+    },
+    {
+      name: "codex",
+      format: "toml",
+      status: "invalid",
+      configPathError: undefined,
+      expected: repairConfiguration,
+    },
+  ] as const)(
+    "shows the recovery for $name when setup reports $status",
+    async ({ name, format, status, configPathError, expected }) => {
+      const state: SetupClientState = {
         client: {
-          name: "claude_desktop",
-          registrationProfile:
-            supportedClientRegistrationProfile("claude_desktop"),
-          format: "json",
-          configPath: "",
-          configPathError:
-            "Found migrated Claude Desktop storage. Register REA manually in the active file.",
+          name,
+          registrationProfile: supportedClientRegistrationProfile(name),
+          format,
+          configPath: join(name, "config"),
+          ...(configPathError === undefined ? {} : { configPathError }),
         },
         detected: true,
         configured: false,
@@ -702,14 +731,9 @@ describe("interactive setup client hints", () => {
         [step("Which agents should use REA?", "\r")],
         false,
         [actions[0]],
-        { states: [unresolved, ...clientStates] },
+        { states: [state, clientStates[1]] },
       );
-      expect(result.output).toContain(
-        "Configuration location unresolved · register REA manually",
-      );
-      expect(result.output).not.toContain(
-        "Existing configuration needs repair before setup",
-      );
+      expect(result.output).toContain(expected);
       expect(result.decision.selectedActionIds).toEqual([]);
     },
   );

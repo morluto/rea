@@ -111,7 +111,6 @@
   "src/native/NativePlistSource.ts": 2,
   "src/native/SignatureTargetBinding.ts": 1,
   "src/native/apple/AppleIpsProvider.ts": 2,
-  "src/native/elf/ElfNotesProvider.ts": 1,
   "src/native/elf/ElfUnwindRangesProvider.ts": 2,
   "src/native/elf/KernelBuildConfigProvider.ts": 1,
   "src/native/elf/KernelModuleProvider.ts": 1,

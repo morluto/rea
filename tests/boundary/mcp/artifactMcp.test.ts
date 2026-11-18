@@ -294,6 +294,7 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({
         logical_path: "╟╤▒█.txt",
+        hash_status: "verified",
         limitations: [
           expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
         ],

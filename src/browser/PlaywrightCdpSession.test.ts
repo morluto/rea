@@ -64,7 +64,8 @@ describe("Playwright CDP session registry", () => {
   it("refuses an unregistered command without sending it", async () => {
     const { raw, session } = await open();
     await expect(
-      session.send("Page.notRegistered" as never),
+      // @ts-expect-error This protocol command has no registered result schema.
+      session.send("Accessibility.getPartialAXTree"),
     ).rejects.toMatchObject({
       _tag: "BrowserObservationError",
       reason: "protocol_error",
@@ -75,8 +76,9 @@ describe("Playwright CDP session registry", () => {
   it("refuses an unregistered event without subscribing", async () => {
     const { raw, session } = await open();
     expect(() =>
-      session.on("Page.notRegistered" as never, () => undefined),
+      // @ts-expect-error This protocol event has no registered payload schema.
+      session.on("Network.dataReceived", () => undefined),
     ).toThrow(expect.objectContaining({ reason: "protocol_error" }));
-    expect(raw.listenerCount("Page.notRegistered")).toBe(0);
+    expect(raw.listenerCount("Network.dataReceived")).toBe(0);
   });
 });

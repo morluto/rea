@@ -316,7 +316,6 @@ test.each([true, false])(
       () => selected.mockRestore(),
     ]);
   },
-  5_000,
 );
 
 test("joins display finalization before preserving a late cancellation", async () => {

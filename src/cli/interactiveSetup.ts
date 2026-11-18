@@ -189,8 +189,7 @@ const clientHint = (state: SetupClientState): string =>
   state.configured
     ? "REA already configured · selected from existing configuration"
     : state.client.configPathError !== undefined
-      ? // Setup cannot write a file it cannot locate; nothing there is broken.
-        "Configuration location unresolved · register REA manually"
+      ? state.client.configPathError
       : state.status === "invalid"
         ? "Existing configuration needs repair before setup"
         : state.detected
