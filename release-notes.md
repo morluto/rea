@@ -826,6 +826,7 @@
 * **environment:** shrink the request-body read-budget fixture ([#11903](https://github.com/morluto/rea/issues/11903)) ([518a2ad](https://github.com/morluto/rea/commit/518a2ad434896d7c33890f4007b3400c1e8cfffb))
 * **environment:** use the compiled standalone card proof ([#11935](https://github.com/morluto/rea/issues/11935)) ([01e691f](https://github.com/morluto/rea/commit/01e691f4a20ce8df343622da75e6436327672f9c))
 * **environment:** verify escaped card capacity at the wire boundary ([#11937](https://github.com/morluto/rea/issues/11937)) ([4f68939](https://github.com/morluto/rea/commit/4f68939830d96cb35a9e5c10ae8992dc20c4c236))
+* **environment:** verify probe timestamp ordering ([#11953](https://github.com/morluto/rea/issues/11953)) ([27a3f5b](https://github.com/morluto/rea/commit/27a3f5bbd375bfc4ad459bf4640e9082a244cf68))
 * **environment:** verify registry pins in the exported bundle ([#11870](https://github.com/morluto/rea/issues/11870)) ([e9cc643](https://github.com/morluto/rea/commit/e9cc643198938c3d88f353c4dc0cf8f92f56ecce))
 * **errors:** assert recovery kind and retryability instead of remediation prose ([#10791](https://github.com/morluto/rea/issues/10791)) ([8d7eaf9](https://github.com/morluto/rea/commit/8d7eaf9693dcee5f400c8818a9575ee6cac29db6)), closes [#10508](https://github.com/morluto/rea/issues/10508)
 * **esp:** keep distinct flash read interruption checks with smaller fixtures ([#11884](https://github.com/morluto/rea/issues/11884)) ([0eb54a8](https://github.com/morluto/rea/commit/0eb54a801ba7fbc9fba2fc1eabce620900829b1b))
