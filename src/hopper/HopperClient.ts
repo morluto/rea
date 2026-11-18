@@ -15,6 +15,7 @@ import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
+  withInheritedCleanupOwnership,
 } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import {
@@ -839,11 +840,7 @@ export class HopperClient<
       source.safeMessage,
       analysisClientFailureContext(source, "hopper", name),
     );
-    return err(
-      source.cleanupIncomplete
-        ? failure.bindCleanupDependencies([source])
-        : failure,
-    );
+    return err(withInheritedCleanupOwnership(failure, source));
   }
 
   /** Stop the bridge and report whether every owned resource was verified clean. */
