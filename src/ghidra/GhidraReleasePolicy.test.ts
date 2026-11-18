@@ -7,6 +7,9 @@ import {
   ghidraReleaseAccepted,
   ghidraReleaseCompatibility,
   ghidraReleaseLine,
+  GHIDRA_CLANG_O0_SWITCH_DEFECT,
+  ghidraKnownProviderDefect,
+  ghidraKnownProviderDefectLimitation,
   ghidraVersionDetail,
   unverifiedGhidraBuildLimitation,
 } from "./GhidraReleasePolicy.js";
@@ -22,6 +25,30 @@ describe("Ghidra release admission", () => {
     });
     expect(ghidraReleaseAccepted("12.2")).toBe(true);
     expect(unverifiedGhidraBuildLimitation("12.2")).toBeUndefined();
+    expect(ghidraKnownProviderDefect("12.2")).toEqual({
+      kind: "known-provider-defect",
+      id: "ghidra-9996",
+      provider_id: "ghidra",
+      release: "12.2",
+      fixed_in: "12.2.1",
+      scope: {
+        compiler: "clang",
+        architecture: "x86-64",
+        optimization: "-O0",
+        construct: "switch",
+        case_base: "above-zero",
+      },
+      effect: "jump-table-flow-references-omitted",
+      fix_commit: "c93917a622211349998f641de54cfdbe0e0e5bee",
+      upstream_issue:
+        "https://github.com/NationalSecurityAgency/ghidra/issues/9996",
+    });
+    expect(ghidraKnownProviderDefect("12.2")).toBe(
+      GHIDRA_CLANG_O0_SWITCH_DEFECT,
+    );
+    expect(ghidraKnownProviderDefectLimitation("12.2")).toBe(
+      "Known provider defect ghidra-9996: Ghidra 12.2 can omit jump-table flow references and emit incorrect decompiler output for Clang -O0 x86-64 switches whose case labels start above zero. Upstream issue https://github.com/NationalSecurityAgency/ghidra/issues/9996 is closed by c93917a622211349998f641de54cfdbe0e0e5bee, milestone 12.2.1, which is not yet released. This limitation is recorded only for the exact 12.2 build and clears on 12.2.1. REA's verified switch lane compiles with -O2 and does not cover this shape.",
+    );
     expect(ghidraVersionDetail("12.2")).toBe("12.2");
   });
 
@@ -33,6 +60,10 @@ describe("Ghidra release admission", () => {
       expect(ghidraVersionDetail(raw)).toBe(
         `${raw}; compatible ${ghidraReleaseLine()} release (verified build ${SUPPORTED_GHIDRA_VERSION})`,
       );
+    }
+    for (const raw of ["12.2.0", "12.2.1", "12.2-DEV", "12.3"]) {
+      expect(ghidraKnownProviderDefect(raw)).toBeUndefined();
+      expect(ghidraKnownProviderDefectLimitation(raw)).toBeUndefined();
     }
     expect(ghidraReleaseLine()).toBe("12.x (>=12.2)");
   });

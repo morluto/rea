@@ -60,6 +60,46 @@ export const ghidraReleaseCompatibility = (
 };
 
 /**
+ * Exact Ghidra 12.2 PUBLIC build. Closed upstream issue #9996, fixed by
+ * `c93917a622211349998f641de54cfdbe0e0e5bee` and scheduled for 12.2.1.
+ */
+export const GHIDRA_CLANG_O0_SWITCH_DEFECT = {
+  kind: "known-provider-defect",
+  id: "ghidra-9996",
+  provider_id: "ghidra",
+  release: "12.2",
+  fixed_in: "12.2.1",
+  fix_commit: "c93917a622211349998f641de54cfdbe0e0e5bee",
+  scope: {
+    compiler: "clang",
+    architecture: "x86-64",
+    optimization: "-O0",
+    construct: "switch",
+    case_base: "above-zero",
+  },
+  effect: "jump-table-flow-references-omitted",
+  upstream_issue:
+    "https://github.com/NationalSecurityAgency/ghidra/issues/9996",
+} as const;
+
+export type GhidraKnownProviderDefect = typeof GHIDRA_CLANG_O0_SWITCH_DEFECT;
+
+/** Only the exact 12.2 application version carries the closed #9996 defect. */
+export const ghidraKnownProviderDefect = (
+  providerVersion: string,
+): GhidraKnownProviderDefect | undefined =>
+  providerVersion === "12.2" ? GHIDRA_CLANG_O0_SWITCH_DEFECT : undefined;
+
+/** Session and decompile limitation for the exact Ghidra 12.2 switch defect. */
+export const ghidraKnownProviderDefectLimitation = (
+  providerVersion: string,
+): string | undefined => {
+  const defect = ghidraKnownProviderDefect(providerVersion);
+  if (defect === undefined) return undefined;
+  return `Known provider defect ${defect.id}: Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for Clang ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded only for the exact ${defect.release} build and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
+};
+
+/**
  * Limitation recorded when a session runs a compatible build other than the
  * verified release. The observed version stays on the provider identity.
  */
