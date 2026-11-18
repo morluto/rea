@@ -855,8 +855,9 @@ public class ReaJadxMetadataRegression {
         select.invoke(null, new JadxSession.MethodSmali("highlightText", blocks, true, null), "highlightText()V");
         throw new AssertionError("Unproven disassembly identity or completeness was accepted");
       } catch (InvocationTargetException failure) {
-        require(failure.getCause() instanceof IllegalArgumentException,
-            "Disassembly uncertainty lost its failure reason");
+        require(failure.getCause().getClass().getSimpleName().equals("MethodDisassemblyUnavailable")
+            && failure.getCause().getMessage().contains("highlightText()V"),
+            "Disassembly uncertainty lost its method-scoped reason");
       }
     }
     String reason = "smali generation failed: controlled timeout";
@@ -864,8 +865,8 @@ public class ReaJadxMetadataRegression {
       select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, reason), "highlightText()V");
       throw new AssertionError("Disassembly generation failure was accepted");
     } catch (InvocationTargetException failure) {
-      require(failure.getCause() instanceof IllegalArgumentException
-          && failure.getCause().getMessage().contains(reason), "Original disassembly failure reason was lost");
+      require(failure.getCause().getClass() == IllegalArgumentException.class
+          && failure.getCause().getMessage().contains(reason), "Disassembly generation failure was reclassified");
     }
   }
 
