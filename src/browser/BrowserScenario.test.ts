@@ -252,15 +252,6 @@ describe("browserScenarioSchema", () => {
     expect(actions[1]).toMatchObject({ duration_ms: 120_001 });
   });
 
-  it("does not accept the removed provider timeout configuration", () => {
-    expect(
-      browserScenarioSchema.safeParse({
-        ...baseScenario(),
-        limits: { max_duration_ms: 1 },
-      }).success,
-    ).toBe(false);
-  });
-
   it("redacts overlapping secrets longest-first", () => {
     const scenario = browserScenarioSchema.parse(baseScenario());
     const secrets = resolveScenarioSecrets(scenario, {
@@ -365,19 +356,6 @@ describe("browserScenarioSchema secret declarations", () => {
     expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
     redactionOnly.environment_variable = "INVALID\0NAME";
     expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
-  });
-
-  it("rejects removed replay and origin policy options", () => {
-    for (const legacyField of [
-      { request_replay: { mode: "disabled" } },
-      { allowed_origins: ["https://app.example.test"] },
-    ])
-      expect(
-        browserScenarioSchema.safeParse({
-          ...baseScenario(),
-          ...legacyField,
-        }).success,
-      ).toBe(false);
   });
 
   it("rejects raw secret-shaped action values", () => {

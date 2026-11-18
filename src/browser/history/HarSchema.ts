@@ -48,10 +48,15 @@ interface BracketedIpv6Adaptation {
   readonly entries: readonly number[];
 }
 
+interface HarProducerAdaptations {
+  readonly bracketedIpv6: BracketedIpv6Adaptation | null;
+  readonly failedRequests: readonly number[];
+}
+
 /** Validate with pinned HAR 1.2 draft-06 schemas and the owned schema corrections. */
 export const createHarValidator = (): ((
   value: unknown,
-) => BracketedIpv6Adaptation | null) => {
+) => HarProducerAdaptations) => {
   const require = createRequire(import.meta.url);
   const schemas = z
     .record(z.string(), z.record(z.string(), z.unknown()))
@@ -124,18 +129,42 @@ const bracketedIpv6ProducerOf = (
 /** Adapt only observed producer representations in the disposable validation copy. */
 const allowObservedProducerRepresentations = (
   value: unknown,
-): BracketedIpv6Adaptation | null => {
-  if (!captureObject(value) || !captureObject(value.log)) return null;
+): HarProducerAdaptations => {
+  const none = { bracketedIpv6: null, failedRequests: [] };
+  if (!captureObject(value) || !captureObject(value.log)) return none;
   const log = value.log;
-  if (!captureObject(log.creator) || !Array.isArray(log.entries)) return null;
+  if (!captureObject(log.creator) || !Array.isArray(log.entries)) return none;
   const mitmproxy =
     log.creator.name === "mitmproxy" && log.creator.version === "12.2.3";
   const bracketedIpv6Producer = bracketedIpv6ProducerOf(log.creator);
-  if (!mitmproxy && bracketedIpv6Producer === null) return null;
+  const playwright =
+    log.creator.name === "Playwright" && log.creator.version === "1.64.1";
+  if (!mitmproxy && !playwright && bracketedIpv6Producer === null) return none;
+  const failedRequests: number[] = [];
   const adaptedEntries: number[] = [];
   for (const [ordinal, entry] of log.entries.entries()) {
     const candidate: unknown = entry;
     if (!captureObject(candidate)) continue;
+    // Playwright leaves required durations at -1 when a request fails before
+    // response timing is available. Adapt only this observed sentinel in the
+    // disposable validation copy; the recorded values remain unchanged.
+    const response = candidate.response;
+    const timings = candidate.timings;
+    if (
+      playwright &&
+      captureObject(response) &&
+      typeof response._failureText === "string" &&
+      response._failureText.length > 0 &&
+      captureObject(timings)
+    ) {
+      let adapted = false;
+      for (const field of ["send", "wait", "receive"])
+        if (timings[field] === -1) {
+          timings[field] = 0;
+          adapted = true;
+        }
+      if (adapted) failedRequests.push(ordinal);
+    }
     const address = candidate.serverIPAddress;
     if (
       bracketedIpv6Producer !== null &&
@@ -153,9 +182,13 @@ const allowObservedProducerRepresentations = (
     const body = request.postData;
     if (captureObject(body) && body.text === null) delete body.text;
   }
-  return bracketedIpv6Producer === null
-    ? null
-    : { producer: bracketedIpv6Producer, entries: adaptedEntries };
+  return {
+    bracketedIpv6:
+      bracketedIpv6Producer === null
+        ? null
+        : { producer: bracketedIpv6Producer, entries: adaptedEntries },
+    failedRequests,
+  };
 };
 
 const HAR_REQUEST_URL_FORMAT = "absolute-url";

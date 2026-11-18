@@ -50,10 +50,7 @@ import { errorMessage } from "../kernel/errorMessage.js";
  * exit listener into an uncaught error that changes the exit status, so the
  * remaining root is named once on stderr instead.
  */
-export const removeHelperRootAtExit = (
-  path: string,
-  report: (message: string) => void = (message) => writeSync(2, message),
-): void => {
+const removeHelperRootAtExit = (path: string): void => {
   try {
     rmSync(path, { recursive: true, force: true });
   } catch (cause: unknown) {
@@ -61,19 +58,15 @@ export const removeHelperRootAtExit = (
     // last report names the retained root with a synchronous write. A closed
     // or full descriptor leaves nothing else this process can do.
     try {
-      report(helperRootRetentionMessage(path, cause));
+      writeSync(
+        2,
+        `REA could not remove the Darwin ownership helper root ${path} at exit: ${errorMessage(cause)}\n`,
+      );
     } catch {
       // Exit is not the place to report a failed report.
     }
   }
 };
-
-/** The exit-time report for a helper root the process leaves behind. */
-export const helperRootRetentionMessage = (
-  path: string,
-  cause: unknown,
-): string =>
-  `REA could not remove the Darwin ownership helper root ${path} at exit: ${errorMessage(cause)}\n`;
 
 const responseSchema = z.strictObject({
   results: z.array(

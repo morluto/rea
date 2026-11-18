@@ -720,12 +720,12 @@ bound. The XML estimate charges every element and every text, comment or CDATA
 node of the decoder's DOM at a measured upper bound, so a plist made of many
 small elements reaches it at a few MiB of source. JSON decode memory has not
 been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
-`reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
+`reported_limits.maximum_input_bytes` for the input ceiling or `reported_limits: { boundary: "plist-decode-bytes", maximum: 67108864 }` for the decode budget (with `details.refusal.unit: "bytes"`).
 Ordinary direct-source decoding has a ceiling of 997 source nesting levels,
 derived from the existing 1000-level JSON result capacity. Three levels are
 reserved for typed scalar fields, the report value and its Evidence envelope.
 Deeper input reports `resource_constraint` with
-`reported_limits.maximum_nesting_depth: 997` and names the fixed nesting allowance.
+`reported_limits: { boundary: "plist-nesting-depth", maximum: 997 }` and `details.refusal` naming the fixed nesting allowance and its `unit` (`"levels"`).
 XML admission also requires native validation, which
 can refuse input below this decoding ceiling. Compatibility conversions can
 likewise encounter an earlier native utility refusal; both retain native
@@ -1042,11 +1042,12 @@ complete observation.
   (`default` or `caller`) and the bytes retained. A refusal names the observed
   file size, the effective budget and its source, and either the budget to
   select or, above 1 GiB, a deep analysis provider.
-  `swift_decls` lists each `__swift5_types` nominal type descriptor, which
-  survives stripping: `kind` (`class`, `struct`, `enum`, or `actor` from the
-  class actor flag), the descriptor's own `name`, `module`, `qualified_name`
-  (`Outer.Inner`), `generic`, the metadata `accessor_address`, the descriptor
-  `location`, and evidence citing its `__swift5_types` record.
+  `swift_decls` lists each `__swift5_types` and `__swift5_types2` nominal type
+  descriptor, which survives stripping: `kind` (`class`, `struct`, `enum`, or
+  `actor` from the class actor flag), the descriptor's own `name`, `module`,
+  `qualified_name` (`Outer.Inner`), `generic`, the metadata
+  `accessor_address`, the descriptor `location`, and evidence citing its type
+  record by section. Noncopyable types are recorded in `__swift5_types2`.
   Private and local types set `anonymous_context` because their anonymous
   context is omitted from `qualified_name`. When a parent context cannot be
   resolved, such as an extension of a type named only by a mangled name, a
@@ -1136,7 +1137,16 @@ complete observation.
   implementations with a `category`. A category whose class reference is null,
   or is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
   metadata symbol of another module's Swift class, keeps a null class, and
-  `objc_properties_categories` coverage names that reference. Swift
+  `objc_properties_categories` coverage names that reference. A category's
+  class property list (`@property (class)`), present when the image info
+  declares it, is not decoded: the category is partial with
+  `category_class_properties_not_decoded` and coverage names the list field.
+  A field bound to another image's symbol counts as a present list. When that
+  field or the image info cannot be read, the image info is too short to hold
+  its flags, or the field is zero while its pointer fixups are unknown, the
+  category keeps its decoded facts and is partial with
+  `category_class_properties_unreadable`.
+  Swift
   field-offset globals that are only
   initialized at runtime stay unresolved. Generic, resilient, async and
   coroutine tables, and inherited overrides, have explicit unsupported or

@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import {
   AnalysisInputError,
   AnalysisCancelledError,
@@ -43,6 +44,7 @@ it.each(["descriptor-first", "command-first"] as const)(
         bridge_directory: "/fixture",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       confirmCommandCompletion: async () =>
         readFails
@@ -108,6 +110,7 @@ it("retains uncertain command completion as Evidence without encouraging a retry
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async () => ({
       requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
@@ -180,6 +183,7 @@ it("clears a poisoned command only after its exact UI-dispatcher receipt", async
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     confirmCommandCompletion,
     execute: async () => {
@@ -313,6 +317,7 @@ it("recovers canceled command A after B and does not retain poisoned B", async (
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found" as const,
       bridge_directory_security: "private_verified" as const,
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     confirmCommandCompletion,
     execute,
@@ -352,6 +357,7 @@ it("rejects malformed Cutter commands and pre-aborted calls", async () => {
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async () => {
       throw new Error("must not dispatch");
@@ -385,6 +391,7 @@ it.each([
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async () => {
       throw failure;
@@ -406,6 +413,7 @@ it.each(["transport cancelled", "command may have completed"])(
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => {
         controller.abort(new Error("later cancellation"));
@@ -446,6 +454,7 @@ it("shares one cleanup attempt when commands retry the same receipt together", a
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     confirmCommandCompletion,
     execute: async () => {
@@ -530,6 +539,7 @@ it.each([
           bridge_directory: "/private/bridge",
           discovery_status: "no_live_bridge_found",
           bridge_directory_security: "private_verified",
+          limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
         };
       },
       execute: async () => {
@@ -571,6 +581,7 @@ it.each(["descriptor-first", "command-first"])(
         bridge_directory: "/fixture",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       confirmCommandCompletion: async () => ({ ok: true, value: terminal }),
       retryDescriptorCleanup: releaseDescriptors,
@@ -619,6 +630,7 @@ it.each([
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => {
         throw cause;
@@ -648,6 +660,7 @@ it.each([
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => {
         controller.abort(reason);
