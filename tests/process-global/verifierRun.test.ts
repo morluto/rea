@@ -49,13 +49,18 @@ describe("verifier run identity", { concurrent: false }, () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")(
-    "reports token-verified live descendants",
-    async () => {
+  it
+    .runIf(process.platform !== "win32")
+    .each([
+      undefined,
+      ...(process.platform === "linux" ? ["fixture\nworker"] : []),
+    ])(
+    "reports token-verified live descendants with display name %j",
+    async (displayName) => {
       const previousRunId = process.env.REA_PROCESS_RUN_ID;
       delete process.env.REA_PROCESS_RUN_ID;
       const run = createVerifierRun();
-      const child = spawnReadyChild(process.env);
+      const child = spawnReadyChild(process.env, displayName);
       try {
         await childReady(child);
         const completed = await completeVerifierRun(run);
@@ -106,10 +111,17 @@ describe("verifier run identity", { concurrent: false }, () => {
   );
 });
 
-const spawnReadyChild = (env: NodeJS.ProcessEnv): ChildProcess =>
+const spawnReadyChild = (
+  env: NodeJS.ProcessEnv,
+  displayName?: string,
+): ChildProcess =>
   spawn(
     process.execPath,
-    ["-e", "process.stdout.write('ready'); setInterval(() => {}, 1000)"],
+    [
+      "-e",
+      `if (process.argv[1] !== undefined) process.title = process.argv[1]; process.stdout.write("ready"); setInterval(() => {}, 1000)`,
+      ...(displayName === undefined ? [] : [displayName]),
+    ],
     { env, stdio: ["ignore", "pipe", "ignore"] },
   );
 
