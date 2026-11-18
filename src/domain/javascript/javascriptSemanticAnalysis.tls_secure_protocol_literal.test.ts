@@ -83,6 +83,14 @@ it.each([
     `tls.connect({ port: 80, secureProtocol: 5, minVersion: "TLSv1.2" })`,
   ],
   [
+    "a wrapped negative method",
+    'tls.connect({ port: 443, secureProtocol: -(1 as number), minVersion: "TLSv1.2" })',
+  ],
+  [
+    "a wrapped positive method",
+    'tls.connect({ port: 443, secureProtocol: +(1 satisfies number), minVersion: "TLSv1.2" })',
+  ],
+  [
     "a null secure context beside an unknown method",
     `tls.connect({ port: 80, secureContext: null, secureProtocol: "bogus" })`,
   ],
@@ -107,6 +115,14 @@ it.each([
   ["an object method", `tls.connect({ port: 80, secureProtocol: {} })`],
   ["a null method", `tls.connect({ port: 80, secureProtocol: null })`],
   ["a computed method", `tls.connect({ port: 80, secureProtocol: p })`],
+  [
+    "a wrapped zero method",
+    'tls.connect({ port: 443, secureProtocol: -(0 as number), minVersion: "TLSv1.2" })',
+  ],
+  [
+    "a wrapped unknown method",
+    'tls.connect({ port: 443, secureProtocol: +(p as number), minVersion: "TLSv1.2" })',
+  ],
   [
     "a method name beside a null version",
     `tls.connect({ port: 80, secureProtocol: "TLS_method", minVersion: null })`,
