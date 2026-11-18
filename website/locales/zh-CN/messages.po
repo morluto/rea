@@ -13690,7 +13690,7 @@ msgstr "构建环境指南"
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Skip to content"
-msgstr ""
+msgstr "跳转到内容"
 
 #. {ph0}: <a href="../../">
 #. {ph1}: </a>
@@ -13700,12 +13700,12 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / RL environments"
-msgstr ""
+msgstr "{ph0}首页{ph1} / {ph2}指南{ph3} / RL 环境"
 
 #: website/public/guides/rl-environments/index.html:204
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments."
-msgstr ""
+msgstr "构建 RL 环境。"
 
 #: website/public/guides/rl-environments/index.html:205
 #: website/public/guides/rl-environments/index.html:7
@@ -13713,7 +13713,7 @@ msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Turn a recorded web app session into a runnable environment for training and"
 " testing AI agents."
-msgstr ""
+msgstr "把录制的 Web 应用会话转换为可运行的环境，用于训练和测试 AI 智能体。"
 
 #. {ph0}: <a href="https://x.com/reatools/status/2112574822584918075?s=20" >
 #. {ph1}: </a >
@@ -13721,33 +13721,33 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Watch the announcement video on X{ph1}"
-msgstr ""
+msgstr "{ph0}在 X 上观看发布视频{ph1}"
 
 #: website/public/guides/rl-environments/index.html:217
 #: website/public/guides/rl-environments/index.html:216
 msgctxt "page:guides/rl-environments/index.html"
 msgid "On this page"
-msgstr ""
+msgstr "在本页"
 
 #: website/public/guides/rl-environments/index.html:230
 msgctxt "page:guides/rl-environments/index.html"
 msgid "What REA builds"
-msgstr ""
+msgstr "REA 构建的内容"
 
 #: website/public/guides/rl-environments/index.html:273
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Before you start"
-msgstr ""
+msgstr "开始之前"
 
 #: website/public/guides/rl-environments/index.html:374
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment"
-msgstr ""
+msgstr "运行环境"
 
 #: website/public/guides/rl-environments/index.html:455
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Check what works"
-msgstr ""
+msgstr "检查可用功能"
 
 #: website/public/guides/rl-environments/index.html:231
 msgctxt "page:guides/rl-environments/index.html"
@@ -13757,6 +13757,7 @@ msgid ""
 "calls, the local data those tools use, and a basic test that checks the "
 "environment starts and responds."
 msgstr ""
+"智能体无需运行原应用即可练习查找问题、创建文件夹或编辑记录。REA 会构建供智能体调用的工具、这些工具使用的本地数据，以及用于检查环境能否启动并响应的基础测试。"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -13770,7 +13771,7 @@ msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "{ph0}01 · Record{ph1}{ph2}Use a test app{ph3}{ph4}Capture requests, "
 "responses, and the results of changes.{ph5}"
-msgstr ""
+msgstr "{ph0}01 · 录制{ph1}{ph2}使用测试应用{ph3}{ph4}捕获请求、响应以及变更产生的结果。{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -13786,6 +13787,7 @@ msgid ""
 "state{ph3}{ph4}Export a runnable AgentEnv folder with the recording and a "
 "test.{ph5}"
 msgstr ""
+"{ph0}02 · 用 REA 构建{ph1}{ph2}创建工具和本地状态{ph3}{ph4}连同录制数据和测试一起导出可运行的 AgentEnv 文件夹。{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -13801,13 +13803,14 @@ msgid ""
 "agent{ph3}{ph4}Add task goals and reward checks for evaluation or RL "
 "training.{ph5}"
 msgstr ""
+"{ph0}03 · 用 AgentEnv 运行{ph1}{ph2}把环境交给智能体{ph3}{ph4}添加任务目标和奖励检查，用于评测或强化学习训练。{ph5}"
 
 #: website/public/guides/rl-environments/index.html:265
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "The recording determines which operations the environment can support. "
 "Changes are supported when the recording confirms their effects."
-msgstr ""
+msgstr "录制内容决定了环境能够支持哪些操作。只有当录制记录确认了变更效果时，相应的修改操作才会受支持。"
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a >
@@ -13820,6 +13823,8 @@ msgid ""
 "create, edit, and delete data. REA records the app you provide; you start it"
 " and prepare its test data."
 msgstr ""
+"{ph0}将 REA 与你的编程助手完成配置{ph1}。要录制应用，你需要准备基于 Chromium "
+"的浏览器和一个正在运行的测试实例，且允许智能体在其中创建、编辑和删除数据。REA 只负责录制你提供的应用，应用的启动和测试数据准备由你完成。"
 
 #. {ph0}: <a href="https://github.com/scaleapi/agentenv-framework#install" >
 #. {ph1}: </a >
@@ -13832,18 +13837,20 @@ msgid ""
 "and start Docker. REA's compatibility check uses AgentEnv version {ph2} with"
 " Python 3.12."
 msgstr ""
+"要运行导出的环境，请先安装 {ph0}AgentEnv 框架{ph1}并启动 Docker。REA 的兼容性检查使用 Python 3.12 及 AgentEnv 版本 "
+"{ph2}。"
 
 #: website/public/guides/rl-environments/index.html:291
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Record and build with your agent"
-msgstr ""
+msgstr "用你的智能体录制并构建"
 
 #: website/public/guides/rl-environments/index.html:292
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Tell your agent which app and operations to cover. For an app with folders, "
 "adapt this example:"
-msgstr ""
+msgstr "告诉智能体要覆盖哪个应用以及哪些操作。对于带文件夹功能的应用，可以参考下面的示例进行调整："
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -13858,7 +13865,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr ""
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}你的编程助手"
 
 #: website/public/guides/rl-environments/index.html:302
 #: website/public/guides/rl-environments/index.html:347
@@ -13866,7 +13873,7 @@ msgstr ""
 #: website/public/guides/rl-environments/index.html:419
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy"
-msgstr ""
+msgstr "复制"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -13889,6 +13896,9 @@ msgid ""
 " {ph6}, which does not exist yet. Check which operations are supported and "
 "report any gaps.{ph7}{ph8}{ph9}"
 msgstr ""
+"{ph0}›{ph1}{ph2}使用 REA 根据我位于 {ph3} 的测试 Web 应用构建一个 AgentEnv "
+"环境。需要覆盖列出、创建、重命名和删除文件夹操作。你可以创建并删除测试文件夹，不要修改现有数据。使用 {ph4} 中的密码以 admin 身份登录。通过位于 {ph5} "
+"的浏览器进行录制，并导出到尚不存在的 {ph6} 目录。检查哪些操作受支持，并报告所有缺口。{ph7}{ph8}{ph9}"
 
 #. {ph0}: <code>APP_PASSWORD</code>
 #: website/public/guides/rl-environments/index.html:326
@@ -13898,7 +13908,7 @@ msgid ""
 "Example prompt. Replace the URL, operations, account, and paths. Set {ph0} "
 "in the environment that starts REA's MCP server so the password stays out of"
 " the prompt."
-msgstr ""
+msgstr "示例提示词。请替换其中的 URL、操作、账号和路径。请在启动 REA MCP 服务器的环境变量中设置 {ph0}，避免将密码直接写进提示词。"
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -13909,12 +13919,12 @@ msgid ""
 "Your agent inspects the app, records a session, checks the supported "
 "operations, and exports the environment. After export, continue with "
 "{ph0}running the environment{ph1}."
-msgstr ""
+msgstr "你的智能体会检查应用、录制会话、核验受支持的操作，并导出环境。导出完成后，请继续执行{ph0}运行环境{ph1}。"
 
 #: website/public/guides/rl-environments/index.html:338
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Or use a saved recording"
-msgstr ""
+msgstr "或使用已保存的录制文件"
 
 #: website/public/guides/rl-environments/index.html:339
 msgctxt "page:guides/rl-environments/index.html"
@@ -13922,12 +13932,12 @@ msgid ""
 "A HAR file records a browser's network requests and responses. Export one "
 "with API response bodies from the browser's network panel, then build into a"
 " new or empty folder:"
-msgstr ""
+msgstr "HAR 文件会记录浏览器的网络请求和响应。请从浏览器的网络面板导出包含 API 响应体的 HAR 文件，然后构建到新建或空文件夹中："
 
 #: website/public/guides/rl-environments/index.html:346
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build the environment"
-msgstr ""
+msgstr "构建环境"
 
 #. {ph0}: <code>capture-browser-scenario</code>
 #. {ph1}: <code>--dry-run</code>
@@ -13940,6 +13950,8 @@ msgid ""
 " build reads local data and writes the folder without contacting the app. "
 "Add {ph1} to review the report without writing files."
 msgstr ""
+"你也可以传入 REA 的 {ph0} 或 HAR 检查功能保存的捕获 Evidence JSON。Evidence "
+"是附带来源信息的已保存录制数据。构建过程仅读取本地数据并写入目标目录，不会连接原应用。添加 {ph1} 参数可在不写入文件的情况下预览报告。"
 
 #: website/public/guides/rl-environments/index.html:366
 msgctxt "page:guides/rl-environments/index.html"
@@ -13947,26 +13959,26 @@ msgid ""
 "The report lists read operations, supported changes, and operations withheld"
 " because the recording did not establish their effects. Each withheld "
 "operation has a reason and a hint about what to record next."
-msgstr ""
+msgstr "报告会列出读取操作、受支持的修改操作，以及因录制内容未能确认其效果而暂未纳入的操作。每个暂未纳入的操作都会说明原因，并提示接下来需要补录什么步骤。"
 
 #: website/public/guides/rl-environments/index.html:375
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Whether your agent exported the folder or you built it from a recording, run"
 " it with AgentEnv:"
-msgstr ""
+msgstr "无论该目录是由智能体导出还是基于录制文件构建，都可以使用 AgentEnv 运行："
 
 #: website/public/guides/rl-environments/index.html:381
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment test"
-msgstr ""
+msgstr "运行环境测试"
 
 #: website/public/guides/rl-environments/index.html:393
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Use the path your agent reported if it differs. The first run builds the "
 "container image and needs access to its image and package sources."
-msgstr ""
+msgstr "如果智能体报告的路径不同，请替换为实际路径。首次运行会构建容器镜像，需要能够访问镜像和软件包源。"
 
 #: website/public/guides/rl-environments/index.html:398
 msgctxt "page:guides/rl-environments/index.html"
@@ -13974,12 +13986,12 @@ msgid ""
 "The included smoke task is a basic test. It checks the tool count and, when "
 "a suitable read tool exists, calls it and checks its response status. "
 "Passing it shows the environment starts and responds in that setup."
-msgstr ""
+msgstr "内置的冒烟测试任务是一个基础验证：它会检查工具数量，并在存在合适的读取工具时调用该工具并校验响应状态。测试通过即表明该环境在当前配置下可以正常启动并响应。"
 
 #: website/public/guides/rl-environments/index.html:406
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Add tasks and reward checks"
-msgstr ""
+msgstr "添加任务和奖励检查"
 
 #: website/public/guides/rl-environments/index.html:407
 msgctxt "page:guides/rl-environments/index.html"
@@ -13987,7 +13999,7 @@ msgid ""
 "Use the environment with your RL framework to define goals, score results, "
 "and run training. Your coding agent can help write the tasks and checks. "
 "Start with one operation the environment supports:"
-msgstr ""
+msgstr "结合你的强化学习框架使用该环境来定义目标、评估得分并运行训练。你的编程助手可以协助编写任务与校验逻辑。建议先从环境已支持的单个操作开始："
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -14005,6 +14017,8 @@ msgid ""
 "the result. Reset the environment before each run. Use the AgentEnv task and"
 " verifier formats.{ph3}{ph4}{ph5}"
 msgstr ""
+"{ph0}›{ph1}{ph2}使用这个导出的环境添加一个 AgentEnv 任务，要求智能体创建名为 Practice "
+"的文件夹。检查环境状态以确认该名称的文件夹已存在，并据此检查对结果评分。每次运行前重置环境。遵循 AgentEnv 的任务与验证器格式。{ph3}{ph4}{ph5}"
 
 #: website/public/guides/rl-environments/index.html:440
 msgctxt "page:guides/rl-environments/index.html"
@@ -14012,7 +14026,7 @@ msgid ""
 "Example prompt for an environment that supports folder creation. A task that"
 " changes data should check the resulting state; a retrieval task can check "
 "an answer against a recorded value."
-msgstr ""
+msgstr "这是面向支持文件夹创建操作的环境的示例提示词。修改数据的任务应检查变更后的结果状态；检索类任务可以将答案与录制中的实际值进行核对。"
 
 #. {ph0}: <a href="https://www.agentenvframework.com/docs" >
 #. {ph1}: </a >
@@ -14024,6 +14038,8 @@ msgid ""
 "specific grading is added in the evaluation workflow. See the {ph0}AgentEnv "
 "documentation{ph1} for tasks, verifiers, and agent connections."
 msgstr ""
+"导出结果包含可运行的环境及其基础测试。具体任务的评分逻辑需要在评测工作流中自行添加。有关任务、验证器和智能体接入的详细信息，请参阅 {ph0}AgentEnv "
+"文档{ph1}。"
 
 #: website/public/guides/rl-environments/index.html:456
 msgctxt "page:guides/rl-environments/index.html"
@@ -14033,6 +14049,7 @@ msgid ""
 "change. Repeat with different values. For deletes, record the missing-item "
 "response and the updated list."
 msgstr ""
+"要让修改操作得到支持，不仅要录制操作本身，还要录制操作结果：先读取条目，再修改条目，然后在下一次修改前重新读取该条目及其所在列表；并使用不同取值重复这一过程。对于删除操作，则需要同时录制条目不存在的响应以及更新后的列表。"
 
 #. {ph0}: <code>environment-compare</code>
 #: website/public/guides/rl-environments/index.html:462
@@ -14043,7 +14060,7 @@ msgid ""
 "original app are separate checks. For the last one, use {ph0} with a "
 "separate recording of calls made against the app from the same starting "
 "data."
-msgstr ""
+msgstr "启动测试通过、智能体完成任务以及与原应用行为一致，这三者是相互独立的检查。要验证后者，请将从相同初始数据出发、另行录制的原应用调用记录传给 {ph0}。"
 
 #: website/public/guides/rl-environments/index.html:468
 msgctxt "page:guides/rl-environments/index.html"
@@ -14052,6 +14069,7 @@ msgid ""
 "paths. Custom headers, query values, and body tokens can remain. Credential-"
 "name warnings identify places to review; they do not remove those values."
 msgstr ""
+"分享该文件夹前，请检查其中保留的响应体和本地路径。自定义请求头、查询参数值和响应体令牌仍可能保留在里面。凭据名称警告只会标记需要复核的位置，不会自动删除这些值。"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/agent-
 #. environments-quickstart.md" >
@@ -14067,36 +14085,37 @@ msgid ""
 "reports and comparison commands. The {ph2}environment reference{ph3} covers "
 "direct MCP serving, state controls, and limits."
 msgstr ""
+"如需了解覆盖率报告和比对命令，请参阅{ph0}完整录制与验证指南{ph1}；如需了解直接 MCP 服务、状态控制和限制说明，请参阅{ph2}环境参考文档{ph3}。"
 
 #: website/public/guides/rl-environments/index.html:6
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments with REA"
-msgstr ""
+msgstr "用 REA 构建 RL 环境"
 
 #: website/public/guides/rl-environments/index.html:302
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment prompt"
-msgstr ""
+msgstr "复制环境提示词"
 
 #: website/public/guides/rl-environments/index.html:347
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment build command"
-msgstr ""
+msgstr "复制环境构建命令"
 
 #: website/public/guides/rl-environments/index.html:382
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment run command"
-msgstr ""
+msgstr "复制环境运行命令"
 
 #: website/public/guides/rl-environments/index.html:419
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy task prompt"
-msgstr ""
+msgstr "复制任务提示词"
 
 #: website/public/guides/rl-environments/index.html:507
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Back to top"
-msgstr ""
+msgstr "回到顶部"
 
 #. {ph0}: <a href="#rl-environments">
 #. {ph1}: </a>
@@ -14134,7 +14153,7 @@ msgstr "{ph0}构建环境指南{ph1} · {ph2}在 X 上观看演示{ph3}"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}What REA builds{ph1}"
-msgstr ""
+msgstr "{ph0}REA 构建的内容{ph1}"
 
 #. {ph0}: <a href="#prepare">
 #. {ph1}: </a>
@@ -14142,7 +14161,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Before you start{ph1}"
-msgstr ""
+msgstr "{ph0}开始之前{ph1}"
 
 #. {ph0}: <a href="#record">
 #. {ph1}: </a>
@@ -14150,7 +14169,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Record with your agent{ph1}"
-msgstr ""
+msgstr "{ph0}用你的智能体录制{ph1}"
 
 #. {ph0}: <a href="#build">
 #. {ph1}: </a>
@@ -14158,7 +14177,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Use a saved recording{ph1}"
-msgstr ""
+msgstr "{ph0}使用已保存的录制文件{ph1}"
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -14166,7 +14185,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Run the environment{ph1}"
-msgstr ""
+msgstr "{ph0}运行环境{ph1}"
 
 #. {ph0}: <a href="#tasks">
 #. {ph1}: </a>
@@ -14174,7 +14193,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Add tasks and rewards{ph1}"
-msgstr ""
+msgstr "{ph0}添加任务和奖励检查{ph1}"
 
 #. {ph0}: <a href="#check">
 #. {ph1}: </a>
@@ -14182,7 +14201,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Check what works{ph1}"
-msgstr ""
+msgstr "{ph0}检查可用功能{ph1}"
 
 #: website/public/showcase/index.html:301
 msgctxt "page:showcase/index.html"
@@ -14384,7 +14403,7 @@ msgid ""
 "Recorded by REA 4.1.0 on an earlier version of the example below. The "
 "renderer has since changed; the recorded source locations accompany the API,"
 " channel and handler findings."
-msgstr ""
+msgstr "本记录由 REA 4.1.0 基于下方示例的早期版本采集。渲染器随后已发生变化；API、通道和处理器发现结果均附带当时录制的源码位置。"
 
 #. {ph0}: <code>--client</code>
 #: website/public/get-started/index.html:635
@@ -14393,7 +14412,7 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "Use the ID with {ph0} when choosing a client explicitly. These clients are "
 "supported in npm 6.8.0 and later."
-msgstr ""
+msgstr "显式指定客户端时，请将对应的 ID 传给 {ph0}。这些客户端自 npm 6.8.0 及更高版本起受支持。"
 
 #. {ph0}: <code>droid</code>
 #. {ph1}: <code>dsh</code>
@@ -14410,6 +14429,8 @@ msgid ""
 "{ph0}, {ph1}, {ph2}, {ph3}, {ph4}, {ph5} and {ph6} require npm 6.5.0 or "
 "later. {ph7} requires npm 6.8.0 or later."
 msgstr ""
+"{ph0}、{ph1}、{ph2}、{ph3}、{ph4}、{ph5} 和 {ph6} 需要 npm 6.5.0 或更高版本。{ph7} 需要 npm 6.8.0 "
+"或更高版本。"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -14421,11 +14442,13 @@ msgid ""
 "with an MCP registration. The macOS headless profile requires a source build"
 " or a release that includes it."
 msgstr ""
+"{ph0}IDA{ph1}（Windows；macOS arm64 无头模式）：使用已注册 MCP 的现有 IDA 安装。macOS "
+"无头配置需要源码构建版本或包含该支持的发布包。"
 
 #: website/public/get-started/index.html:1042
 msgctxt "page:get-started/index.html"
 msgid "x86_64 installer on supported distributions"
-msgstr ""
+msgstr "受支持发行版上的 x86_64 安装包"
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
@@ -14443,6 +14466,9 @@ msgid ""
 "prerequisites and PowerShell setup. A Linux environment such as WSL is "
 "another option."
 msgstr ""
+"{ph0}完成 REA 配置{ph1}后，将这两个文件下载到同一个文件夹。在 Windows x64 上，请使用具备对应 Windows "
+"原生控件与自有协议标准输入（stdin）支持的软件包；先决条件和 PowerShell 配置请参阅 {ph2}Android 分析后端指南{ph3}。你也可以使用 WSL "
+"等 Linux 环境。"
 
 #: website/public/get-started/index.html:1072
 msgctxt "page:get-started/index.html"
@@ -14453,6 +14479,9 @@ msgid ""
 "arm64, use Ghidra. Hopper is commercial software; its demo has vendor-"
 "defined limits."
 msgstr ""
+"Linux 自动配置需要运行 Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch Linux、CachyOS 或 Omarchy 的 "
+"x86_64 主机。在其他受支持的 Linux 发行版上也可以配置已有的 Hopper 启动器。在 Linux arm64 上请使用 Ghidra。Hopper "
+"为商业软件，其演示版带有厂商设定的限制。"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -14465,6 +14494,8 @@ msgid ""
 "license before your first analysis. Automated Linux setup requires x86_64; "
 "use Ghidra on Linux arm64."
 msgstr ""
+"{ph0}Hopper{ph1}（macOS 或 Linux）：REA 配置工具会自动检测或提供安装选项。在 macOS 上，首次分析前请先打开一次 Hopper "
+"并选择演示模式或激活许可证。Linux 自动配置需要 x86_64；Linux arm64 请使用 Ghidra。"
 
 #~ msgctxt "page:get-started/index.html"
 #~ msgid ""
