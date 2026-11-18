@@ -95,7 +95,9 @@ const eventId = (event: PendingEvent): string =>
 const sortedCounts = (counts: Map<string, number>): AuditEventTypeCount[] =>
   [...counts]
     .map(([type, count]) => ({ type, count }))
-    .sort((left, right) => (left.type < right.type ? -1 : left.type > right.type ? 1 : 0));
+    .sort((left, right) =>
+      left.type < right.type ? -1 : left.type > right.type ? 1 : 0,
+    );
 
 const failure = (message: string): RegionDecodeFailure => ({
   kind: "format",
@@ -185,7 +187,9 @@ class AuditdLogScanner {
     );
 
     const sampled = boundedList(this.#eventOrder, AUDITD_INLINE_EVENT_LIMIT);
-    const events = sampled.items.map((key) => this.#summarize(this.#events.get(key)!));
+    const events = sampled.items.map((key) =>
+      this.#summarize(this.#events.get(key)!),
+    );
     return ok({
       metadata: {
         kind: "auditd-log",

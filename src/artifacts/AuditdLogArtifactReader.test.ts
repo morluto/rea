@@ -39,7 +39,13 @@ const metadataOf = async (text: string) => {
 };
 
 const EXECUTION_EVENT = [
-  record("SYSCALL", 1700000000, 123, 1000, "arch=c000003e syscall=59 success=yes"),
+  record(
+    "SYSCALL",
+    1700000000,
+    123,
+    1000,
+    "arch=c000003e syscall=59 success=yes",
+  ),
   record("EXECVE", 1700000000, 123, 1000, "argc=1 a0=whoami"),
   record("PATH", 1700000000, 123, 1000, 'item=0 name="/usr/bin/whoami"'),
   record("CWD", 1700000000, 123, 1000, 'cwd="/root"'),
@@ -66,7 +72,10 @@ it("joins records sharing an audit event identity into one event", async () => {
     { type: "PROCTITLE", count: 1 },
     { type: "SYSCALL", count: 1 },
   ]);
-  expect(metadata.event_type_counts).toContainEqual({ type: "SYSCALL", count: 1 });
+  expect(metadata.event_type_counts).toContainEqual({
+    type: "SYSCALL",
+    count: 1,
+  });
 });
 
 it("keeps events apart across different serials at the same timestamp", async () => {
