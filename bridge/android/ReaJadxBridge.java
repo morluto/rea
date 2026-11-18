@@ -718,9 +718,14 @@ class ReaJadxBridge {
   }
 
   private static String selectMethodSmali(JadxSession.MethodSmali smali, String shortId) {
-    if (!smali.getFound())
-      throw new IllegalArgumentException("JADX could not disassemble " + shortId
-          + (smali.getNote() == null ? "" : ": " + smali.getNote()));
+    if (!smali.getFound()) {
+      String reason = "JADX could not disassemble " + shortId
+          + (smali.getNote() == null ? "" : ": " + smali.getNote());
+      // JADX folds caller interruption into the same result as failed generation
+      // and missing blocks, but leaves the interrupt flag set.
+      if (Thread.currentThread().isInterrupted()) throw new IllegalArgumentException(reason);
+      throw new MethodDisassemblyUnavailable(reason);
+    }
     // Upstream returns every same-name overload, and can return an unterminated
     // trailing block. Match the full original identity before applying output limits.
     List<String> matches = smali.getBlocks().stream().filter(block -> {
