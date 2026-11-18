@@ -8,7 +8,7 @@ Usage: rea doctor [options]
 Options:
   --target <string>   Optional app path to check
   --client <array>    Agent registration whose readiness is required; repeatable
-  --provider <array>  Deep-analysis provider, or desktop_build for a desktop build host, whose readiness is required
+  --provider <array>  Analysis provider, firmware integration, or desktop_build host whose readiness is required
   --skill             Require the installed REA skill identity to be aligned
 
 Custom Global Options:

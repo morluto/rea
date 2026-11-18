@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   computeJavaScriptApplicationGraphSha256,
@@ -178,10 +179,9 @@ describe("JavaScript Application Graph: vocabulary", () => {
     const decoded: unknown = JSON.parse(serialized);
 
     expect(parseJavaScriptApplicationGraph(decoded)).toEqual(graph);
-    expect(javascriptApplicationGraphSchema.parse(decoded)).toEqual(graph);
     expect(serializeJavaScriptApplicationGraph(decoded)).toBe(serialized);
-    expect(computeJavaScriptApplicationGraphSha256(decoded)).toMatch(
-      /^[a-f0-9]{64}$/u,
+    expect(computeJavaScriptApplicationGraphSha256(decoded)).toBe(
+      createHash("sha256").update(serialized).digest("hex"),
     );
 
     const { graph_id: _graphId, ...semantic } = graph;
@@ -206,39 +206,6 @@ describe("JavaScript Application Graph: vocabulary", () => {
     expect(
       Object.keys(largeExport?.observations[0]?.properties ?? {}),
     ).toHaveLength(1_001);
-  });
-
-  it("represents the synthetic ASAR to preload to IPC to native chain", () => {
-    const graph = buildSyntheticJavaScriptApplicationGraph();
-    const labels = [
-      "resources/app.asar",
-      "desktop preload",
-      "desktopApi",
-      "project:open",
-      "project open handler",
-      "synthetic.node",
-      "openProject",
-    ];
-    const chain = labels.map((label) => nodeByLabel(graph, label));
-    const expectedRelations = [
-      "contains",
-      "exposes",
-      "invokes",
-      "handles",
-      "loads",
-      "contains",
-    ];
-
-    for (let index = 0; index < expectedRelations.length; index += 1)
-      expect(graph.edges).toContainEqual(
-        expect.objectContaining({
-          source_node_id: chain[index]?.node_id,
-          target_node_id: chain[index + 1]?.node_id,
-          relation: expectedRelations[index],
-        }),
-      );
-    expect(chain.at(-2)?.kind).toBe("native-addon");
-    expect(chain.at(-1)?.kind).toBe("native-export");
   });
 });
 

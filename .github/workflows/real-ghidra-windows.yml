@@ -26,14 +26,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Prepare cross compiler
-        run: |
-          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$source" ]; then
-              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+        uses: ./.github/actions/windows-cross-compiler
       - run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
