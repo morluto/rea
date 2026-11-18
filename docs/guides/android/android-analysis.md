@@ -307,8 +307,9 @@ overload even when Java code generation renames a method. If the selected Java
 body was omitted, including a method merged into a synthetic bridge, REA returns
 its original smali with the `java_body_unavailable` marker. The marker describes
 missing Java; it does not infer why the method was omitted or name a replacement.
-Unresolved or duplicate disassembly identities fail instead of attributing another
-method's instructions to the selection.
+If disassembly cannot establish one complete block for the selected method, the
+result keeps that method's identity and reports `body_status: "not_available"`
+with a `body_unavailable_reason`. Both `representation` and `source` are null.
 
 Native and abstract methods are identified from access flags
 captured before code generation. They report `body_status: "not_available"`, an
