@@ -80,7 +80,7 @@ import {
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
 
-/** Capture structured issues from the canonical validation the SDK already performs. */
+/** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
@@ -101,6 +101,8 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
               issues: result.issues as readonly z.core.$ZodIssue[],
               input: value,
             };
+          if (result.issues === undefined)
+            context?.captureCallerParameters(tool, value, result.value);
           return result;
         };
         const result = standard.validate(value);
