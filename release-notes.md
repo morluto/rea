@@ -1118,6 +1118,7 @@
 * **hooks:** skip the staged-file autofix on merge commits ([#11530](https://github.com/morluto/rea/issues/11530)) ([9c960b4](https://github.com/morluto/rea/commit/9c960b4b675889536304e32e8603fa7ff9371087))
 * let a lane that names a shared process file select it on the fast tier ([#11523](https://github.com/morluto/rea/issues/11523)) ([3362752](https://github.com/morluto/rea/commit/336275259ce8f026a0af803675c2367162a77ada)), closes [#11404](https://github.com/morluto/rea/issues/11404)
 * remove merge-queue support from the CI and title workflows ([#11337](https://github.com/morluto/rea/issues/11337)) ([25b1c42](https://github.com/morluto/rea/commit/25b1c42ce45ad29f30fdb096dc444e0ace980723))
+* retire the automated PR readiness check ([#12095](https://github.com/morluto/rea/issues/12095)) ([b60836a](https://github.com/morluto/rea/commit/b60836a157f306eb529f5f934d1fe88163093550))
 * run only the affected portable tests on pull requests ([#11346](https://github.com/morluto/rea/issues/11346)) ([ff6d1d8](https://github.com/morluto/rea/commit/ff6d1d8142efd5fcae8de641c7626a0c104df8be))
 * run required checks on merge-queue groups ([#11297](https://github.com/morluto/rea/issues/11297)) ([5efaedd](https://github.com/morluto/rea/commit/5efaedda88084e1d2e9523af44a0fe20e4e81ddc))
 * split fast built tests into twelve shards ([add0aa1](https://github.com/morluto/rea/commit/add0aa12934d126573f5a20970b278c468d698b7))
