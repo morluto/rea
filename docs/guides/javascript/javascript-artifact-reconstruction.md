@@ -229,7 +229,7 @@ failed parsing and unexamined source. `semantics` records the number of observed
 unknown findings and typed uncertainty, including returned-reference widening
 and unavailable type-only compiler options. `conditional-loader` records a
 BOM/hashbang source recovered under an ES module interpretation when its package
-loader is unknown; its overall `parse_status` stays partial without inventing a
+mode or loader invocation is unknown; its overall `parse_status` stays partial without inventing a
 syntax error. `examination` reports static semantic
 resource limits and Electron wrapper expansion limits independently. A completed
 pass does not establish complete runtime semantics. Route examination and result
@@ -357,12 +357,15 @@ execute them.
 JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
 code unit, matching the original bytes identified by the artifact digest.
 A BOM before a hashbang is accepted for TypeScript and JSX compiler inputs,
-explicit ES modules, and JavaScript in an observed module package, including
-`.js` and `.mjs` dotfile entrypoints. Missing package context retains a conditional
-ES module interpretation for ambiguous JavaScript through application analysis
-and reference import; it does not prove runtime module mode.
+explicit ES modules, and JavaScript in an observed module package.
+For this prefix, suffix-only source names, including `.cjs` and case variants such as `.MJS`,
+retain a conditional ES module interpretation: direct entrypoint and module
+import can select different loaders even in an observed module package.
+Missing package context likewise retains a conditional interpretation for
+ambiguous JavaScript through application analysis and reference import;
+neither recovery proves runtime module mode.
 Source indexes and later-line columns still refer to the original text.
-CommonJS JavaScript with that prefix remains unparseable, as it is in Node;
+Proven CommonJS loading with that prefix remains unparseable, as it is in Node;
 a plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including

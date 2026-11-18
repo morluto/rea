@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { isJavaScriptSourcePath } from "./javascriptArtifactFiles.js";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
 import {
   explicitJavaScriptLoaderMode,
@@ -47,10 +48,11 @@ export const javaScriptSourceLoaderCondition = (
   program: t.Program,
 ): string | undefined => contextByProgram.get(program)?.loaderCondition;
 
-/** Package scope can admit a dotfile hashbang without proving its loader suffix. */
-const isAmbiguousHashbangPath = (path: string | undefined): boolean =>
-  posix.extname(path ?? "") === ".js" ||
-  [".js", ".mjs"].includes(posix.basename(path ?? ""));
+/** A suffix-only source name has no extension in Node's module-import dispatch. */
+const isSuffixOnlySourcePath = (path: string | undefined): boolean =>
+  path !== undefined &&
+  posix.extname(path) === "" &&
+  isJavaScriptSourcePath(path);
 
 /** Runtime strictness follows parser-owned mode, not erased TypeScript syntax. */
 export const javaScriptProgramStrictness = (
@@ -119,9 +121,12 @@ const parseWithRuntimeContext = (
 ): ParsedJavaScriptSource => {
   const filenameMode = explicitJavaScriptLoaderMode(sourcePath);
   const packageContext = packageContextForPath(sourcePath, observedPackageType);
+  const suffixOnlySource = isSuffixOnlySourcePath(sourcePath);
+  const ambiguousHashbangPath =
+    posix.extname(sourcePath ?? "") === ".js" || suffixOnlySource;
   // Dotfile entrypoints have no extname. Their package can explain signature
   // preprocessing, but must not grant wrapper/module authority to ordinary data.
-  const signaturePackageContext = isAmbiguousHashbangPath(sourcePath)
+  const signaturePackageContext = ambiguousHashbangPath
     ? observedPackageType
     : packageContext;
   // ESM and TypeScript file loading remove the UTF-8 signature before a
@@ -130,11 +135,14 @@ const parseWithRuntimeContext = (
   const compilerSource = /\.(?:jsx|ts|tsx|mts|cts)$/iu.test(sourcePath ?? "");
   const conditionalModule =
     source.startsWith("\uFEFF#!") &&
-    isAmbiguousHashbangPath(sourcePath) &&
+    ambiguousHashbangPath &&
     (signaturePackageContext === undefined ||
-      signaturePackageContext === "unknown");
+      signaturePackageContext === "unknown" ||
+      (suffixOnlySource && signaturePackageContext === "module"));
   const loaderCondition = conditionalModule
-    ? `Source in ${sourcePath ?? "<unknown>"} is parseable only if Node loads it as an ES module. Its package loader mode is unknown.`
+    ? suffixOnlySource
+      ? `Source in ${sourcePath ?? "<unknown>"} is recovered under an ES module interpretation. Its loader invocation is unknown; direct entrypoint and module import can differ.`
+      : `Source in ${sourcePath ?? "<unknown>"} is parseable only if Node loads it as an ES module. Its package loader mode is unknown.`
     : undefined;
   const hashbangSignature =
     source.startsWith("\uFEFF#!") &&

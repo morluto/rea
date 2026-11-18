@@ -73,6 +73,11 @@ it.each([
   [".mjs", "module", true],
   [".mjs", "commonjs", false],
   [".js", "commonjs", false],
+  [".cjs", "module", true],
+  [".CJS", "module", true],
+  [".JS", "module", true],
+  [".MJS", "module", true],
+  [".cjs", "commonjs", false],
 ] as const)(
   "retains the loader's BOM/hashbang semantics for %s (%s)",
   (path, packageType, valid) => {
@@ -80,6 +85,7 @@ it.each([
       path.endsWith(".mjs") ||
       path.endsWith(".mts") ||
       path.endsWith(".jsx") ||
+      (path.startsWith(".") && packageType === "module") ||
       (!path.endsWith(".cjs") &&
         !path.endsWith(".cts") &&
         packageType === "module");
@@ -93,7 +99,10 @@ it.each([
     if (valid) {
       expect(parsed.parse_failures).toEqual([]);
       expect(parsed.relationships).toMatchObject([
-        { to: esm ? "./dep.mjs" : "./dep.cjs", parse_state: "parsed" },
+        {
+          to: esm ? "./dep.mjs" : "./dep.cjs",
+          parse_state: path.startsWith(".") ? "partial" : "parsed",
+        },
       ]);
     } else {
       expect(parsed.parse_failures).toHaveLength(1);
