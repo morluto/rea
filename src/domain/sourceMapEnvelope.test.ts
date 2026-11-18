@@ -176,7 +176,12 @@ describe("malformed source-map envelope facts", () => {
     expect(
       inspectSourceMapEnvelope({
         version: 3,
-        sections: [{ offset: { line: 0, column: 0 }, map: { version: 2 } }],
+        sections: [
+          {
+            offset: { line: 0, column: 0 },
+            map: { version: "3", sections: [] },
+          },
+        ],
       }),
     ).toMatchObject({
       status: "malformed",

@@ -30,44 +30,53 @@ const destinationScopeSchema = z.enum([
   "outside_policy",
   "unsupported",
 ]);
-const timelineEventSchema = z.object({
-  sequence: z.int().min(1),
-  type: z.enum([
-    "navigation_requested",
-    "navigation_committed",
-    "same_origin_reload",
-    "same_document_navigation",
-    "redirect",
-    "load_failed",
-    "lifecycle",
-    "target_terminated",
-    "session_detached",
-    "transport_disconnected",
-  ]),
-  timestamp: z
-    .number()
-    .min(0)
-    .nullable()
-    .describe(
-      "CDP monotonic seconds when supplied; null when the event has no valid comparable producer timestamp.",
-    ),
-  frame_id: z.string().nullable(),
-  loader_id: z.string().nullable(),
-  request_id: z.string().nullable(),
-  url: z.string().nullable(),
-  destination_scope: destinationScopeSchema.nullable(),
-  detail: z.string().nullable(),
-  redirect_response: z
-    .object({
-      url: z.string().nullable(),
-      status: z.number().nullable(),
-      scope: destinationScopeSchema.nullable(),
-    })
-    .optional()
-    .describe(
-      "Prior-hop response metadata. URL and status require an approved response origin; null scope is unknown. Omitted in historical Evidence.",
-    ),
-});
+const timelineEventSchema = z
+  .object({
+    sequence: z.int().min(1),
+    type: z.enum([
+      "navigation_requested",
+      "navigation_committed",
+      "same_origin_reload",
+      "same_document_navigation",
+      "redirect",
+      "load_failed",
+      "lifecycle",
+      "target_terminated",
+      "session_detached",
+      "transport_disconnected",
+    ]),
+    timestamp: z
+      .number()
+      .min(0)
+      .nullable()
+      .describe(
+        "CDP monotonic seconds when supplied; null when the event has no valid comparable producer timestamp.",
+      ),
+    frame_id: z.string().nullable(),
+    loader_id: z.string().nullable(),
+    request_id: z.string().nullable(),
+    url: z.string().nullable(),
+    destination_scope: destinationScopeSchema.nullable(),
+    detail: z.string().nullable(),
+    redirect_response: z
+      .object({
+        url: z.string().nullable(),
+        status: z.number().nullable(),
+        scope: destinationScopeSchema.nullable(),
+      })
+      .optional()
+      .describe(
+        "Prior-hop response metadata, present exactly on redirect events. URL and status require an approved response origin; null scope is unknown.",
+      ),
+  })
+  .refine(
+    (event) =>
+      (event.type === "redirect") === (event.redirect_response !== undefined),
+    {
+      path: ["redirect_response"],
+      message: "redirect_response is present exactly on redirect events.",
+    },
+  );
 
 /** Navigation-aware session result for external user actions. */
 export const webObservationSessionSchema = z.object({

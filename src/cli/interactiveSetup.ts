@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   cancel,
   confirm,
@@ -261,7 +262,7 @@ const renderKeyboardHelp = (accessible: boolean): void => {
 };
 
 const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string => {
-  const runner = invokingPackageRunner(environment);
+  const runner = invokingPackageRunner(environment, HOST_PLATFORM.platform);
   return runner === undefined ? "rea" : `${runner} rea-agents`;
 };
 

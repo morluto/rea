@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,10 +13,10 @@ import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "../../src/application/EvidenceBundleFiles.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedStagedOutput } from "../../src/filesystem/OwnedStagedOutput.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
 import * as bundleComparison from "../../src/domain/bundleComparison.js";
 import * as bundleSummary from "../../src/domain/evidenceRecordSummary.js";
 import { bundleComparisonResultSchema } from "../../src/domain/bundleComparison.js";
@@ -26,6 +27,7 @@ import * as evidenceDomain from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const unexpectedBundleFailures = [
   new TypeError("bundle authentication TypeError"),
@@ -186,7 +188,10 @@ it.each(unexpectedBundleFailures)(
       throw new Error("Evidence import must not launch a provider");
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "bundle-import-failure", version: "1" });
+    const client = new Client(
+      { name: "bundle-import-failure", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     spyOnBundleParse(failure);
@@ -222,7 +227,7 @@ it.each(unexpectedBundleFailures)(
     );
     const { bundle } = await validBundleFile(directory);
     const existing = evidenceDomain.createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",
@@ -565,3 +570,22 @@ it.each(["before-commit", "after-commit", "cleanup-retry"])(
     }
   },
 );
+
+it("reports an unconfirmed read cleanup after a completed comparison as cleanup_incomplete", async () => {
+  const directory = await createTestTempDirectory("rea-bundle-close-failure-");
+  const { path, bundle } = await validBundleFile(directory);
+  const close = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockRejectedValueOnce(new Error("injected scope close failure"));
+  onTestFinished(() => close.mockRestore());
+  const result = await compareEvidenceBundlesCommand({
+    leftPath: path,
+    rightPath: path,
+  });
+  if (result.ok) throw new Error("Expected an unconfirmed cleanup");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  // The completed comparison stays with the cleanup failure.
+  expect(result.error.diagnostics).toMatchObject({
+    completed_result: bundleComparison.compareBundles(bundle, bundle),
+  });
+});

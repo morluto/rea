@@ -1,4 +1,5 @@
-import { readMachoContainer } from "../../artifacts/apple/MachoLoadCommandReader.js";
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import { readMachoContainer } from "../../domain/apple/machoLoadCommandReader.js";
 import { readUniversalMachoSlice } from "../../domain/apple/machoImageSelection.js";
 import {
   readMachoLoadCommandTableHeader,
@@ -24,9 +25,6 @@ import type { AppleIps, AppleIpsJoin } from "../../domain/native/appleIps.js";
  * join artifact; the report stays the owner of its own recorded rows.
  */
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
-const LC_UUID = 0x1b;
 const MAX_SLICES = 64;
 
 /** Canonical uppercase UUID text, or the source spelling when not 16 bytes. */
@@ -125,16 +123,16 @@ const sliceAt = (
     const frame = cursor.read(command);
     if (!frame.ok) return null;
     const payload = command.subarray(0, frame.value.size);
-    if (frame.value.command === LC_UUID) {
+    if (frame.value.command === LC.UUID) {
       if (uuidSeen || payload.length !== 24) return null;
       uuidSeen = true;
       uuid = canonicalUuidBytes(payload.subarray(8, 24));
     }
     if (
-      frame.value.command === LC_SEGMENT ||
-      frame.value.command === LC_SEGMENT_64
+      frame.value.command === LC.SEGMENT ||
+      frame.value.command === LC.SEGMENT_64
     ) {
-      const wide = frame.value.command === LC_SEGMENT_64;
+      const wide = frame.value.command === LC.SEGMENT_64;
       if (wide !== header.wide) return null;
       const segment = readMachoSegmentHeader(
         payload,

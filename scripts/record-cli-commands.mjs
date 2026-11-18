@@ -2,7 +2,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Cli } from "incur";
 
 // Record which registrar defines each top-level CLI command. Run after `tsc`
 // and before bundling, so the record comes from the same compiled registration
@@ -13,10 +12,12 @@ const [
   { CLI_COMMAND_REGISTRATIONS, CLI_REGISTRATION_ORDER },
   { createCliShell },
   { createDirectAnalysis },
+  { cliCommands },
 ] = await Promise.all([
   read("cli/cliCommandRegistrations.js"),
   read("cli/cliShell.js"),
   read("composition/directAnalysis.js"),
+  read("cli/commandRegistry.js"),
 ]);
 
 // Registration is independent of the host account and user configuration.
@@ -31,9 +32,11 @@ try {
         registration: {
           ...registration,
           register(module, context) {
-            const before = new Set(Cli.toCommands.get(context.cli)?.keys());
+            const before = new Set(
+              cliCommands(context.cli).map(({ name }) => name),
+            );
             registration.register(module, context);
-            for (const name of Cli.toCommands.get(context.cli)?.keys() ?? [])
+            for (const { name } of cliCommands(context.cli))
               if (!before.has(name)) recorded[name] = id;
           },
         },

@@ -4,7 +4,7 @@ import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
@@ -106,6 +106,27 @@ it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
   }
 });
 
+// The parser always reports the field (null when absent), so a report that
+// omits it is refused at that field rather than read as unknown.
+it("refuses a signer that omits unsigned_attribute_oids", () => {
+  const report = parse(peCertificateFixture(false));
+  const [entry] = report.entries;
+  const [signer] = entry?.pkcs7?.signers ?? [];
+  if (entry?.pkcs7 === undefined || entry.pkcs7 === null || !signer)
+    throw new Error("Fixture has no PKCS#7 signer");
+  const { unsigned_attribute_oids: _omitted, ...withoutField } = signer;
+  const refused = peCertificatesSchema.safeParse({
+    ...report,
+    entries: [{ ...entry, pkcs7: { ...entry.pkcs7, signers: [withoutField] } }],
+  });
+  expect(refused.success).toBe(false);
+  expect(refused.error?.issues).toContainEqual(
+    expect.objectContaining({
+      path: ["entries", 0, "pkcs7", "signers", 0, "unsigned_attribute_oids"],
+    }),
+  );
+});
+
 it.each([false, true])(
   "rejects a misaligned certificate table (PE32+ = %s)",
   (plus) => {
@@ -148,6 +169,42 @@ it("accepts only zero eight-byte alignment padding included in dwLength", () => 
     expect(report.entries[0]?.pkcs7?.signers).toHaveLength(1);
   }
 });
+
+it.each([false, true])(
+  "rejects incomplete final alignment without rejecting complete entries (PE32+ = %s)",
+  (plus) => {
+    for (const type of [0x0001, 0x0002]) {
+      const gaps = new Set<number>();
+      for (let size = 1; size <= 32; size += 1) {
+        const payload = pkcs7SignedDataFixture("x".repeat(size));
+        const bytes = peCertificateFixture(plus, payload, type);
+        const directoryAt = 0x98 + (plus ? 112 : 96) + 4 * 8;
+        const tableSize = bytes.readUInt32LE(directoryAt + 4);
+        const length = bytes.readUInt32LE(0x200);
+        const gap = tableSize - length;
+        if (gaps.has(gap)) continue;
+        gaps.add(gap);
+        const report = parse(bytes);
+        expect(report.coverage.status).toBe("complete");
+        expect(report.entries[0]?.length).toBe(length);
+        expect(report.entries[0]?.payload.bytes).toBe(payload.length);
+        for (let missing = 1; missing <= gap; missing += 1) {
+          const truncated = Buffer.from(bytes);
+          truncated.writeUInt32LE(tableSize - missing, directoryAt + 4);
+          // Every advertised entry byte still exists; only its final
+          // alignment range extends beyond the declared table.
+          expect(length).toBeLessThanOrEqual(tableSize - missing);
+          expect(() => parse(truncated)).toThrow(
+            expect.objectContaining({ reason: "format" }),
+          );
+        }
+      }
+      expect([...gaps].sort((left, right) => left - right)).toEqual([
+        0, 1, 2, 3, 4, 5, 6, 7,
+      ]);
+    }
+  },
+);
 
 it.each([false, true])(
   "reads all counted alignment gaps and consecutive entries (PE32+ = %s)",

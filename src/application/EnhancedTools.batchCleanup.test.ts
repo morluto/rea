@@ -1,11 +1,11 @@
 import { expect, it } from "vitest";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 
 it.each([
@@ -47,7 +47,10 @@ it.each([
           ),
         );
       },
-    }).execute("batch_decompile", { addresses: ["first", "second", "third"] });
+    }).executeValidated({
+      name: "batch_decompile",
+      input: { addresses: ["first", "second", "third"] },
+    });
     if (result.ok)
       throw new Error("Unresolved cleanup was reported as a completed batch");
     expect(result.error).toBe(failure);
@@ -121,9 +124,11 @@ it.each([
           ),
         );
       },
-    }).execute(
-      "batch_decompile",
-      { addresses: ["0x1000", "0x2000", "0x3000"] },
+    }).executeValidated(
+      {
+        name: "batch_decompile",
+        input: { addresses: ["0x1000", "0x2000", "0x3000"] },
+      },
       controller.signal,
     );
     if (result.ok) throw new Error("Cancelled batch completed successfully");

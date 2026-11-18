@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -56,10 +60,12 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
     "inspect_web_event_listeners",
   ] as const) {
     const advertised = tools.find((tool) => tool.name === name);
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error(`Missing advertised runtime schemas: ${name}`);
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const args =
@@ -73,7 +79,7 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
     expect(ajv.validate(inputSchema, args)).toBe(true);
     const response = await client.callTool(
       { name, arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
     const parsed = toolContract(name).outputSchema.parse(
@@ -94,6 +100,60 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
   expect(parseMcpToolError(invalid).error).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
+  });
+});
+
+it("reports provider progress for observe_web_execution to the MCP caller", async () => {
+  const recording = recordingWebRuntimePort();
+  const session = createTestBinarySession(() => {
+    throw new Error("Binary provider must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      webRuntime: new WebRuntimeService({
+        ...recording,
+        observeExecution: async (input, options) => {
+          await options?.progress?.report({
+            phase: "observe",
+            completed: 1,
+            total: 2,
+            message: "observation window open",
+          });
+          return recording.observeExecution(input, options);
+        },
+      }),
+    },
+  );
+  const client = new Client(
+    { name: "web-runtime-progress", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const progress: unknown[] = [];
+  const response = await client.callTool(
+    {
+      name: "observe_web_execution",
+      arguments: {
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "allowed-page",
+        observation_ms: 5,
+      },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+  expect(response.isError).not.toBe(true);
+  expect(progress).toContainEqual({
+    progress: 1,
+    message: "observe: observation window open",
   });
 });
 
@@ -162,6 +222,16 @@ cliTest(
           initial_url: `${browser.allowedOrigin}/app?caller=retained#details`,
         },
       });
+      // The observation names the page it was armed on.
+      expect(evidence.subject).toEqual({
+        identity: {
+          kind: "url",
+          url: `${browser.allowedOrigin}/app?caller=retained#details`,
+          origin: browser.allowedOrigin,
+        },
+        name: null,
+        local_path: null,
+      });
       expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
       const cliResult = await cli.run({
         arguments: [
@@ -218,7 +288,7 @@ cliTest(
     const advertised = (await client.listTools()).tools.find(
       ({ name }) => name === "inspect_web_event_listeners",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Missing advertised listener output schema");
     const response = await client.callTool(
       {
@@ -230,7 +300,7 @@ cliTest(
           selector: "#selected",
         },
       },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
     const cliResult = await cli.run({

@@ -1,36 +1,31 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { DevicetreePort } from "../../application/binaryDiagnostics/DevicetreePort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { DevicetreePort } from "../../ports/binaryDiagnostics/DevicetreePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_DEVICETREE_FILE_BYTES,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
 import { err, ok } from "../../domain/result.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
-import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
+import {
+  devicetreeLimitOf,
+  parseDevicetree,
+} from "../../domain/firmware/devicetreeParser.js";
 
 const OPERATION = "inspect_devicetree";
 
@@ -85,33 +80,20 @@ const devicetreeFailurePrimary = (
   input: InspectDevicetreeInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof DevicetreeLimitFailure)
+  const limit = devicetreeLimitOf(cause);
+  if (limit !== undefined && cause instanceof Error)
     return new AnalysisResourceConstraintError(
       OPERATION,
-      cause.limit === "decoded_bytes" ? "memory" : "capacity",
+      limit.limit === "decoded_bytes" ? "memory" : "capacity",
       cause.message,
       {
-        limit: cause.limit,
-        selected:
-          cause.limit === "decoded_bytes" ? 33554432 : input[cause.limit],
+        limit: limit.limit,
+        selected: limit.maximum,
       },
       { cause, retryable: false, remediationAction: cause.message },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,

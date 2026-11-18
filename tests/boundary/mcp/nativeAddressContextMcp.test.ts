@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchemaObject } from "ajv";
@@ -55,10 +56,7 @@ const overviewClient = (segments: SegmentSummary[]) =>
 
 it("preserves observed coordinates and main's optional-string output contract after SDK conversion", async () => {
   const client = await overviewClient([segment]);
-  const schema = (await client.listTools()).tools.find(
-    ({ name }) => name === "binary_overview",
-  )?.outputSchema;
-  if (schema === undefined) throw new Error("Missing overview output schema");
+  const schema = canonicalOutputSchema("binary_overview");
   const validate = new Ajv2020({ strict: false }).compile(
     schema as AnySchemaObject,
   );

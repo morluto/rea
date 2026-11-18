@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import {
@@ -9,6 +7,7 @@ import {
 
 import { decodeCanonicalBase64 } from "../webScreenshot.js";
 import { readPngHeaderDimensions } from "../pngHeader.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const scope = {
   pid: z.int().positive(),
@@ -103,7 +102,7 @@ const nativeUiScreenshotSchema = z
       });
       return;
     }
-    if (createHash("sha256").update(bytes).digest("hex") !== screenshot.sha256)
+    if (sha256Hex(bytes) !== screenshot.sha256)
       context.addIssue({
         code: "custom",
         message: "PNG screenshot digest mismatch",
