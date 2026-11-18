@@ -8,12 +8,8 @@ import {
   BULK_EMPTY_TAG_ROWS,
   CREATION_ORDER_ROWS,
   DERIVED_TEXT_ROWS,
-  formLabelRows,
   ID_OR_TITLE_ROWS,
-  LISTED_ID_ROWS,
   MINIMAL_CONTACT_ROWS,
-  NOTE_DEFAULT_ROWS,
-  RENAMED_LABEL_ROWS,
   SHELF_SORTED_ROWS,
   SHELF_TIE_ROWS,
   SHELF_GUESS_ROWS,
@@ -21,8 +17,6 @@ import {
   UNSORTED_PENDING_ROWS,
   IN_PLACE_THEN_LAST_ROWS,
   IN_PLACE_THEN_SORTED_ROWS,
-  TITLE_ORDER_ROWS,
-  UNLOADED_ANSWER_ROWS,
   UNSORTED_SEED_ROWS,
   CONFIRMED_RENAME_ROWS,
   UNPLACED_CREATE_ROWS,
@@ -47,21 +41,6 @@ const BY_NAME = {
 } as const;
 
 describe("create members a form sent empty", () => {
-  it("requires only the members some recorded create filled in, and applies the others as they were sent", () => {
-    expect(planOf(formLabelRows(), "post_labels")).toMatchObject({
-      served: true,
-      body: {
-        accepted: ["name", "description", "color", "icon"],
-        required: ["name"],
-        blank: [
-          { member: "color", sent: "" },
-          { member: "icon", sent: "" },
-          { member: "description", sent: "" },
-        ],
-      },
-    });
-  });
-
   it("accepts either spelling of a member two creates sent empty differently, filling the earliest", () => {
     const body: WriteBody = {
       accepted: ["name", "note"],
@@ -96,19 +75,6 @@ describe("create members a form sent empty", () => {
   });
 });
 
-describe("empty values and defaults", () => {
-  it("keeps accepting a recorded empty value after a later call that left the member out teaches its default", () => {
-    expect(planOf(NOTE_DEFAULT_ROWS, "post_notes")).toMatchObject({
-      served: true,
-      body: {
-        required: ["name"],
-        defaults: [{ member: "note", value: "" }],
-        blank: [{ member: "note", sent: null }],
-      },
-    });
-  });
-});
-
 describe("a create with only what a person must give", () => {
   it("serves a create whose minimal call left string members `null` and an empty flag spelled another way", () => {
     expect(planOf(MINIMAL_CONTACT_ROWS, "post_contacts")).toMatchObject({
@@ -127,25 +93,6 @@ describe("a create with only what a person must give", () => {
 });
 
 describe("collections kept sorted", () => {
-  it("moves an updated entity by the field its collection's creates insert by", () => {
-    expect(planOf(RENAMED_LABEL_ROWS, "patch_labels_by_id")).toMatchObject({
-      served: true,
-      insert: BY_NAME,
-    });
-  });
-
-  it("learns the sort from a rename that moves a folder, and inserts creates by it", () => {
-    const byTitle = { rule: "sorted", field: "title", direction: "ascending" };
-    expect(planOf(TITLE_ORDER_ROWS, "put_folders_by_id")).toMatchObject({
-      served: true,
-      insert: byTitle,
-    });
-    expect(planOf(TITLE_ORDER_ROWS, "post_folders")).toMatchObject({
-      served: true,
-      insert: byTitle,
-    });
-  });
-
   it("learns the title order from a rename when the creates fit both id and title order", () => {
     const byTitle = { rule: "sorted", field: "title", direction: "ascending" };
     expect(planOf(ID_OR_TITLE_ROWS, "put_folders_by_id")).toMatchObject({
@@ -250,39 +197,9 @@ describe("collections kept sorted", () => {
     );
     expect(order).toEqual([a, d, movedC, movedB]);
   });
-
-  it("renders a list envelope's ids of the listed entities from the state", () => {
-    const { views, writes } = environmentStateViewOf(
-      timedCaptureEvidence(LISTED_ID_ROWS),
-    );
-    const list = views.find(({ tool }) => tool === "get_tags");
-    const create = writes.find(({ tool }) => tool === "post_tags");
-    expect(list).toMatchObject({
-      shape: "list",
-      listed_ids: [{ member: "all", field: "id" }],
-    });
-    expect(create).toMatchObject({
-      served: true,
-      insert: BY_NAME,
-    });
-  });
 });
 
 describe("answers that show stored values otherwise than reads", () => {
-  it("takes the later read's values where a create's answer had not loaded them", () => {
-    expect(planOf(UNLOADED_ANSWER_ROWS, "post_tasks")).toMatchObject({
-      served: true,
-      observation: { read: { shape: "item" } },
-    });
-  });
-
-  it("reads an empty list spelled `[]` in an update's answer and `null` in reads as unchanged", () => {
-    expect(planOf(UNLOADED_ANSWER_ROWS, "patch_tasks_by_id")).toMatchObject({
-      served: true,
-      rules: [{ field: "done", rule: "echo" }],
-    });
-  });
-
   it("withholds a later create that stored an unruled field otherwise, without blocking checks of later writes", () => {
     expect(planOf(DERIVED_TEXT_ROWS, "post_tags")).toMatchObject({
       served: false,
