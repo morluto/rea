@@ -606,9 +606,11 @@ export const bindingMethodMayHaveChanged = (
   state: JavaScriptSemanticAnalysisState,
   {
     fresh,
+    inherited,
     targets,
   }: {
     fresh: boolean;
+    inherited: boolean;
     targets: (effect: JavaScriptSemanticMemberEffect) => boolean;
   },
 ): boolean => {
@@ -616,9 +618,10 @@ export const bindingMethodMayHaveChanged = (
   // return to that chain through .prototype. A wildcard may do either.
   const reachesReceiver = (
     path: JavaScriptSemanticPropertyPath,
-    length = path.length,
+    length: number,
     escape = false,
   ) => {
+    if (!inherited) return length === 0;
     let receiver = true;
     let constructor = false;
     for (let i = 0; i < length && (receiver || constructor); i++) {
@@ -655,9 +658,16 @@ export const bindingMethodMayHaveChanged = (
     binding.memberWrites.some(
       (effect) =>
         targets(effect) &&
-        (reachesReceiver(effect.path) ||
-          (semanticPropertyPathKeyMatches(effect.path.at(-1)!, method) &&
-            reachesReceiver(effect.path, effect.path.length - 1))) &&
+        // A write changes a slot on its parent. Rebinding C.prototype
+        // leaves the prototype of an already acquired receiver intact.
+        (effect.path.length === 0 ||
+          (reachesReceiver(effect.path, effect.path.length - 1) &&
+            (semanticPropertyPathKeyMatches(effect.path.at(-1)!, method) ||
+              (inherited &&
+                semanticPropertyPathKeyMatches(
+                  effect.path.at(-1)!,
+                  "__proto__",
+                ))))) &&
         mayPrecede(effect.node),
     ) ||
     binding.escapedPaths.some(

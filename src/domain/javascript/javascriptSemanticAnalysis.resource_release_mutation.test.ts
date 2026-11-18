@@ -90,6 +90,10 @@ it.each([
 
 it.each([
   ["stream.constructor.prototype.destroy = replacement", "partial"],
+  ["stream.constructor.prototype = {}", "complete"],
+  ["stream.__proto__.constructor.prototype = {}", "complete"],
+  ["stream.__proto__ = replacement", "partial"],
+  ["stream.constructor.prototype.__proto__ = replacement", "partial"],
   ["stream.__proto__.constructor.prototype.label = 1", "complete"],
 ])("checks the written prototype slot in %s", (write, resolution) => {
   expect(
@@ -98,6 +102,23 @@ it.each([
     ${write};
     stream.destroy();`),
   ).toMatchObject([{ resolution }]);
+});
+
+it.each([
+  ["file.__proto__.close = replacement", "complete"],
+  ["file.constructor.prototype.close = replacement", "complete"],
+  ["decorate(file.__proto__)", "complete"],
+  ["file.__proto__ = replacement", "complete"],
+  ["file.close = replacement", "partial"],
+  ["delete file.close", "partial"],
+  ["decorate(file)", "partial"],
+])("checks the FileHandle instance field after %s", (effect, resolution) => {
+  expect(
+    releases(`import { open } from "node:fs/promises";
+    const file = await open("fixture.txt");
+    ${effect};
+    file.close();`),
+  ).toMatchObject([{ method: "close", resolution }]);
 });
 
 it.each([

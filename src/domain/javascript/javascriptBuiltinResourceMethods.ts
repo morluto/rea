@@ -21,18 +21,29 @@ export const BUILTIN_RESOURCE_METHODS = {
  * so a family-blind release list claims a teardown that throws instead.
  */
 type ReleaseMethod = "close" | "destroy" | "end";
-type ReleaseDependencies = Readonly<
-  Partial<Record<ReleaseMethod, readonly ReleaseMethod[]>>
->;
+interface ReleaseMember {
+  readonly owner: "instance" | "prototype";
+  readonly delegates?: readonly ReleaseMethod[];
+}
+const inherited = { owner: "prototype" } as const;
 
 // Each entry lists the release methods looked up inside the native call.
-const releases: Readonly<Record<string, ReleaseDependencies>> = {
-  "fs:createReadStream": { close: ["destroy"], destroy: [] },
-  "fs:createWriteStream": { close: ["end", "destroy"], destroy: [], end: [] },
-  "fs/promises:open": { close: [] },
-  "net:connect": { destroy: [], end: [] },
-  "net:createConnection": { destroy: [], end: [] },
-  "tls:connect": { destroy: [], end: [] },
+const releases: Readonly<
+  Record<string, Partial<Record<ReleaseMethod, ReleaseMember>>>
+> = {
+  "fs:createReadStream": {
+    close: { owner: "prototype", delegates: ["destroy"] },
+    destroy: inherited,
+  },
+  "fs:createWriteStream": {
+    close: { owner: "prototype", delegates: ["end", "destroy"] },
+    destroy: inherited,
+    end: inherited,
+  },
+  "fs/promises:open": { close: { owner: "instance" } },
+  "net:connect": { destroy: inherited, end: inherited },
+  "net:createConnection": { destroy: inherited, end: inherited },
+  "tls:connect": { destroy: inherited, end: inherited },
 };
 
 export const builtinResourceReleases = (specifier: string, method: string) =>

@@ -458,13 +458,11 @@ const collectReleases = (
         .filter(({ builtinAuthority }) => builtinAuthority === undefined)
         .map(({ node }) => node),
     );
-    const dependenciesFor = (acquisition: ResourceCandidate) =>
-      builtinResourceReleases(acquisition.specifier, acquisition.method)?.[
-        method
-      ];
+    const releasesFor = (acquisition: ResourceCandidate) =>
+      builtinResourceReleases(acquisition.specifier, acquisition.method);
     const linked = candidates.filter(
       (acquisition) =>
-        dependenciesFor(acquisition) !== undefined &&
+        releasesFor(acquisition)?.[method] !== undefined &&
         (!acquisition.resultIsPromise ||
           opaqueReceiver ||
           mayReceiveFulfilledHandle(
@@ -478,8 +476,9 @@ const collectReleases = (
     // release of it at all: Node throws at the call site instead.
     if (linked.length === 0) return;
     const [first] = linked;
-    const dependencies =
-      linked.length === 1 && first ? dependenciesFor(first) : undefined;
+    const members =
+      linked.length === 1 && first ? releasesFor(first) : undefined;
+    const release = members?.[method];
     output.push({
       resourceId: `resource:release:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "release",
@@ -493,21 +492,23 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
-        dependencies !== undefined &&
+        release !== undefined &&
         !releaseMethodMayHaveChanged(
           binding,
           method,
           member,
           context.state,
           knownAcquisitions,
+          release.owner === "prototype",
         ) &&
-        !dependencies.some((dependency) =>
+        !release.delegates?.some((dependency) =>
           releaseMethodMayHaveChanged(
             binding,
             dependency,
             node,
             context.state,
             knownAcquisitions,
+            members?.[dependency]?.owner !== "instance",
           ),
         ) &&
         (binding.kind !== "parameter" ||
@@ -528,6 +529,7 @@ const releaseMethodMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   acquisitions: ReadonlySet<t.Node>,
+  inherited: boolean,
 ): boolean => {
   const initializer = binding.initializers[0];
   const fresh =
@@ -555,6 +557,7 @@ const releaseMethodMayHaveChanged = (
   };
   return bindingMethodMayHaveChanged(binding, method, read, state, {
     fresh,
+    inherited,
     targets: targetsAcquisition,
   });
 };
