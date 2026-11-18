@@ -5254,6 +5254,22 @@ msgctxt "page:get-started/index.html"
 msgid "Ghidra · install the free analysis tool and Java"
 msgstr ""
 
+#: website/public/get-started/index.html:1113
+msgctxt "page:get-started/index.html"
+msgid ""
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
+"package matching your computer's architecture."
+msgstr ""
+
+#. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
+#: website/public/get-started/index.html:1118
+#, python-brace-format
+msgctxt "page:get-started/index.html"
+msgid ""
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
+"archive. Choose the release archive, not “Source code”."
+msgstr ""
+
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
 #. {ph2}: <code>GHIDRA_INSTALL_DIR</code>
@@ -5263,6 +5279,18 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "Find the extracted folder containing {ph0} or {ph1}. Use that folder for "
 "{ph2}."
+msgstr ""
+
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
+#. {ph1}: </a >
+#. {ph2}: <a
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
+#. >
+#. {ph3}: </a >
+#: website/public/get-started/index.html:1129
+#, python-brace-format
+msgctxt "page:get-started/index.html"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
 msgstr ""
 
 #. {ph0}: <code>java.home</code>
@@ -5278,6 +5306,14 @@ msgstr ""
 #: website/public/get-started/index.html:1160
 msgctxt "page:get-started/index.html"
 msgid "Connect Ghidra on Windows"
+msgstr ""
+
+#: website/public/get-started/index.html:1161
+msgctxt "page:get-started/index.html"
+msgid ""
+"Windows x64 has experimental, read-only support for native x86 and x64 PE "
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
 
 #: website/public/get-started/index.html:1184
@@ -7428,6 +7464,16 @@ msgid ""
 "install it. On macOS, open Hopper once and choose demo mode or activate a "
 "license before your first analysis. Automated Linux setup requires x86_64; "
 "use Ghidra on Linux arm64."
+msgstr ""
+
+#. {ph0}: <strong>
+#. {ph1}: </strong>
+#: website/public/guides/native/index.html:325
+#, python-brace-format
+msgctxt "page:guides/native/index.html"
+msgid ""
+"{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
 
 #. {ph0}: <strong>
@@ -13884,84 +13930,6 @@ msgstr ""
 msgctxt "figure:th04-bullet-ring.svg"
 msgid "Same spacing: 256 ÷ 16 = 16 angle units = 22.5°"
 msgstr ""
-
-#: website/public/get-started/index.html:1113
-msgctxt "page:get-started/index.html"
-msgid ""
-"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
-"package matching your computer's architecture."
-msgstr ""
-
-#. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
-#: website/public/get-started/index.html:1118
-#, python-brace-format
-msgctxt "page:get-started/index.html"
-msgid ""
-"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
-"archive. Choose the release archive, not “Source code”."
-msgstr ""
-
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
-#. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
-#. >
-#. {ph3}: </a >
-#: website/public/get-started/index.html:1129
-#, python-brace-format
-msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
-msgstr ""
-
-#: website/public/get-started/index.html:1161
-msgctxt "page:get-started/index.html"
-msgid ""
-"Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
-"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
-msgstr ""
-
-#. {ph0}: <strong>
-#. {ph1}: </strong>
-#: website/public/guides/native/index.html:325
-#, python-brace-format
-msgctxt "page:guides/native/index.html"
-msgid ""
-"{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
-msgstr ""
-
-#~ msgctxt "page:get-started/index.html"
-#~ msgid ""
-#~ "Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
-#~ "package matching your computer's architecture."
-#~ msgstr ""
-
-#, python-brace-format
-#~ msgctxt "page:get-started/index.html"
-#~ msgid ""
-#~ "Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
-#~ "archive. Choose the release archive, not “Source code”."
-#~ msgstr ""
-
-#, python-brace-format
-#~ msgctxt "page:get-started/index.html"
-#~ msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-#~ msgstr ""
-
-#~ msgctxt "page:get-started/index.html"
-#~ msgid ""
-#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-#~ "applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
-#~ "Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
-#~ msgstr ""
-
-#, python-brace-format
-#~ msgctxt "page:guides/native/index.html"
-#~ msgid ""
-#~ "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-#~ "an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
-#~ msgstr ""
 
 #~ msgctxt "page:get-started/index.html"
 #~ msgid ""
