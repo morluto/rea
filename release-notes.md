@@ -351,6 +351,7 @@
 * **process:** classify macOS ownership helper capacity exhaustion as resource constraint ([#11771](https://github.com/morluto/rea/issues/11771)) ([bc8b3c4](https://github.com/morluto/rea/commit/bc8b3c4cfaf3904f47ae86b15e4bb4df4c9d05c7))
 * **process:** exonerate kernel threads from ownership token checks ([5bb6591](https://github.com/morluto/rea/commit/5bb6591d58840d1cf07874729d5870cbb5723a7f))
 * **process:** give process-command failures their own recovery instead of doctor ([#11101](https://github.com/morluto/rea/issues/11101)) ([8110c98](https://github.com/morluto/rea/commit/8110c98c728cc350aedc5ec986c819e1c4f28ff5))
+* **process:** keep provider waits bounded by the absolute deadline ([#11967](https://github.com/morluto/rea/issues/11967)) ([c338e54](https://github.com/morluto/rea/commit/c338e54c33213ca8dd157d30fbc922b65a04c49b))
 * **process:** relay a start abort missed during listener registration and expect owner-closed Rizin starts ([#11200](https://github.com/morluto/rea/issues/11200)) ([4c5f5a3](https://github.com/morluto/rea/commit/4c5f5a333897c94959c85a21b2f6f52bf8cd8cd4))
 * **process:** retain observed cleanup intervention ([#10481](https://github.com/morluto/rea/issues/10481)) ([672e214](https://github.com/morluto/rea/commit/672e2149636e09ffa5bdf2000b4217e20106606b))
 * **process:** retain wide descendant inventories ([#10386](https://github.com/morluto/rea/issues/10386)) ([4566e48](https://github.com/morluto/rea/commit/4566e483ab5c15857ee0486be2121c277883cc81))
