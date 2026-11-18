@@ -5,7 +5,6 @@ import { ZipReader } from "@zip.js/zip.js";
 import { expect, vi } from "vitest";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { contractNamed } from "../../../src/cli/contractCliDescription.js";
-import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/index.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -114,11 +113,11 @@ mcpTest(
         retryable: false,
       });
       expect(error.remediation.action).toContain(
-        ZIP_ZSTANDARD_WINDOW_CEILING.name,
+        "Recompress the member with a window of at most 128 MiB",
       );
       expect(error.details?.refusal).toMatchObject({
         kind: "fixed_ceiling",
-        limit: ZIP_ZSTANDARD_WINDOW_CEILING.limit,
+        limit: 128 * 1024 * 1024,
         unit: "bytes",
       });
     } finally {

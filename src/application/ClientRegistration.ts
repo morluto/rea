@@ -31,6 +31,7 @@ import {
   type ClientRegistrationCommandIdentity,
 } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { dshToolCallTimeout } from "./DshCordisPatch.js";
 
 const tomlTimeoutSchema = z.union([
   z.number().positive(),
@@ -194,6 +195,9 @@ export const parseClientRegistrationPolicy = (
   if (client.format === "dsh") {
     const parsed = registrationSchema
       .pick({ command: true, args: true, serverName: true, transport: true })
+      .extend({
+        toolCallTimeoutMs: z.unknown().transform(dshToolCallTimeout).optional(),
+      })
       .strip()
       .safeParse(value);
     return parsed.success

@@ -12,6 +12,7 @@ import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
+import { resolveGhidraComImport } from "./GhidraComImport.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -267,6 +268,13 @@ export const resolveGhidraAnalysisProfile = async (
         ),
       ),
     );
+  // ComLoader's acceptance depends on the provider name and the image bytes.
+  // Read them once here; the launcher uses this committed selection.
+  const comImport = dosCom
+    ? await resolveGhidraComImport(target, resources, signal)
+    : undefined;
+  if (comImport !== undefined && !comImport.ok) return comImport;
+  const com = comImport?.ok === true ? comImport.value : undefined;
   return Promise.resolve(
     ok({
       profile: createProfile({
@@ -319,8 +327,8 @@ export const resolveGhidraAnalysisProfile = async (
         decompiler_jump_loads: true,
         loader: dosMz
           ? "MzLoader"
-          : dosCom
-            ? "BinaryLoader"
+          : com !== undefined
+            ? com.loader
             : "auto-from-header",
         language_id: dos
           ? "x86:LE:16:Real Mode"
@@ -337,21 +345,25 @@ export const resolveGhidraAnalysisProfile = async (
           : { language_selection: "configured" }),
         ...(dos
           ? {
-              load_segment: "0x1000",
+              load_segment: com?.loadSegment ?? "0x1000",
               address_coordinates: "linear-byte-offset",
+              ...(com === undefined ? {} : { load_address: com.loadAddress }),
             }
           : {}),
-        ...(dosCom
-          ? {
+        ...(com === undefined
+          ? {}
+          : {
               entry_offset: "0x100",
               register_context: {
-                CS: "0x1000",
-                DS: "0x1000",
-                ES: "0x1000",
-                SS: "0x1000",
+                CS: com.segmentRegister,
+                DS: com.segmentRegister,
+                ES: com.segmentRegister,
+                SS: com.segmentRegister,
               },
-            }
-          : {}),
+              ...(com.fallback === undefined
+                ? {}
+                : { loader_fallback: com.fallback }),
+            }),
         ...analyzerParameters,
         ...ghidraMipsProfileParameters(target, languageOverride),
         ...ghidraRiscvProfileParameters(target),

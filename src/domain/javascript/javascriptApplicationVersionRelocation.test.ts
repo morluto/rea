@@ -135,40 +135,35 @@ const partialCoverage: JavaScriptApplicationGraph["coverage"] = {
   omitted_count: null,
 };
 
-it("does not report a candidate-only IPC edge as a definite relationship change", () => {
-  const result = compare(
-    graph("a".repeat(64), 10, partialCoverage, { candidate: true }),
-    graph("b".repeat(64), 50, partialCoverage, {
-      noEdge: true,
-      permission: "changed",
-    }),
-  );
-  const channel = result.items.find((item) => item.node_kind === "ipc-channel");
-  expect(channel?.status).toBe("changed");
-  expect(channel?.dimensions).toContain("properties");
-  expect(channel?.dimensions).not.toContain("relationships");
-  expect(channel?.limitations.length).toBeGreaterThan(0);
-});
-
-it.each([false, true])(
-  "keeps a candidate and a definite equivalent uncertain when reversed: %s",
-  (reverse) => {
-    const candidate = graph("a".repeat(64), 10, partialCoverage, {
-      candidate: true,
-    });
-    const definite = graph("b".repeat(64), 50, partialCoverage, {
-      permission: "changed",
-    });
-    const result = reverse
-      ? compare(definite, candidate)
-      : compare(candidate, definite);
+it("keeps candidate edges uncertain against missing and definite counterparts", () => {
+  const candidate = graph("a".repeat(64), 10, partialCoverage, {
+    candidate: true,
+  });
+  const absent = graph("b".repeat(64), 50, partialCoverage, {
+    noEdge: true,
+    permission: "changed",
+  });
+  const definite = graph("b".repeat(64), 50, partialCoverage, {
+    permission: "changed",
+  });
+  for (const [left, right] of [
+    [candidate, absent],
+    [candidate, definite],
+    [definite, candidate],
+  ] as const) {
+    const result = compare(left, right);
     const channel = result.items.find(
-      (item) => item.node_kind === "ipc-channel",
+      ({ node_kind }) => node_kind === "ipc-channel",
     );
-    expect(channel?.status).toBe("changed");
-    expect(channel?.dimensions).not.toContain("relationships");
-  },
-);
+    expect(channel).toMatchObject({
+      status: "changed",
+      dimensions: ["location", "properties"],
+      limitations: expect.arrayContaining([
+        "Incomplete source coverage leaves some candidate relationships unconfirmed.",
+      ]),
+    });
+  }
+});
 
 it("retains an independent definite relationship change beside candidate edges", () => {
   const result = compare(
@@ -180,8 +175,10 @@ it("retains an independent definite relationship change beside candidate edges",
     }),
   );
   const channel = result.items.find((item) => item.node_kind === "ipc-channel");
-  expect(channel?.status).toBe("changed");
-  expect(channel?.dimensions).toContain("relationships");
+  expect(channel).toMatchObject({
+    status: "changed",
+    dimensions: ["location", "properties", "relationships"],
+  });
 });
 
 it("keeps relocated exact modules and inferred channels unchanged while retaining both coordinates", () => {
@@ -257,34 +254,31 @@ it("still classifies complete relationship changes beside relocation as changed"
     expect(item.dimensions).toEqual(["location", "relationships"]);
 });
 
-it("retains definite content changes under partial coverage alongside relocation", () => {
+it("retains independent content and property changes beside relocation under partial coverage", () => {
   const result = compare(
     graph("a".repeat(64), 10, completeCoverage),
-    graph("b".repeat(64), 50, partialCoverage, { content: "e".repeat(64) }),
+    graph("b".repeat(64), 50, partialCoverage, {
+      content: "e".repeat(64),
+      permission: "changed",
+    }),
   );
+  expect(result.summary).toEqual({
+    unchanged: 0,
+    added: 0,
+    removed: 0,
+    changed: 2,
+    unknown: 0,
+  });
   expect(
-    result.items.find((item) => item.node_kind === "javascript-module"),
+    result.items.find(({ node_kind }) => node_kind === "javascript-module"),
   ).toMatchObject({
     status: "changed",
     dimensions: ["content", "location", "properties"],
   });
   expect(
-    result.items.find((item) => item.node_kind === "ipc-channel")?.status,
-  ).toBe("unknown");
-});
-
-it("retains definite property changes beside relocation", () => {
-  const result = compare(
-    graph("a".repeat(64), 10, completeCoverage),
-    graph("b".repeat(64), 50, partialCoverage, { permission: "changed" }),
-  );
-  expect(
-    result.items.find((item) => item.node_kind === "ipc-channel"),
+    result.items.find(({ node_kind }) => node_kind === "ipc-channel"),
   ).toMatchObject({
     status: "changed",
     dimensions: ["location", "properties"],
   });
-  expect(
-    result.items.find((item) => item.node_kind === "javascript-module")?.status,
-  ).toBe("unknown");
 });
