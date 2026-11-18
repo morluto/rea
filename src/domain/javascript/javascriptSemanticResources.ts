@@ -257,6 +257,27 @@ type StreamMemberValue =
   | { readonly kind: "number"; readonly value: number }
   | undefined;
 
+/**
+ * The BigInt literal a `+`/`-`/`~` chain ends at, or `undefined`.
+ *
+ * `-(-1n)` and `~0n` are still BigInts, so a member that accepts only numbers refuses
+ * them just as it refuses `-1n`. `unaryOperandNumber` cannot price that operand, which is
+ * why the chain is read here instead of only its immediate argument.
+ */
+const unaryBigIntOperand = (
+  value: t.UnaryExpression,
+): t.BigIntLiteral | undefined => {
+  let current: t.Node = value;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const node: t.Node = unwrapJavaScriptExpression(current).node;
+    if (t.isBigIntLiteral(node)) return node;
+    if (!t.isUnaryExpression(node) || !["+", "-", "~"].includes(node.operator))
+      return undefined;
+    current = node.argument;
+  }
+  return undefined;
+};
+
 const streamMemberValue = (
   value: t.Node,
   context: DataEffectTraversalContext,
@@ -270,6 +291,10 @@ const streamMemberValue = (
       value.operator === "delete"
     )
       return { kind: "refused" };
+    // A unary operator over a BigInt literal is still a BigInt, which Node refuses
+    // before a handle exists. `unaryOperandNumber` cannot read that operand, so
+    // without this the member would stay undecided and keep the acquisition.
+    if (unaryBigIntOperand(value) !== undefined) return { kind: "refused" };
     const number = unaryOperandNumber(value, context, 0);
     return number === undefined ? undefined : { kind: "number", value: number };
   }
@@ -300,7 +325,10 @@ const streamMemberValue = (
     t.isFunctionExpression(value) ||
     t.isArrowFunctionExpression(value) ||
     t.isClassExpression(value) ||
-    t.isRegExpLiteral(value)
+    t.isRegExpLiteral(value) ||
+    // `import.meta` is always an object in a module, so a numeric member rejects it just
+    // as it rejects a literal object. `fd` is the exception and is handled by its caller.
+    (t.isMetaProperty(value) && value.meta.name === "import")
   )
     return { kind: "refused" };
   return undefined;
@@ -377,6 +405,16 @@ const rejectsStreamOptionsLiteral = (
     if (read.status !== "explicit") return undefined;
     const memberValue = unwrapJavaScriptExpression(read.value as t.Node).node;
     if (name === "fd" && t.isNewExpression(memberValue)) return undefined;
+    // `import.meta` is an object, so a `FileHandle` prototype makes it a usable descriptor:
+    // measured on Node 24.22.1 with a real `FileHandle` as its prototype,
+    // `createReadStream(p, {fd: import.meta, autoClose: false})` constructs and reads. Without
+    // that mutation it is refused like any other object.
+    if (
+      name === "fd" &&
+      t.isMetaProperty(memberValue) &&
+      prototypeMutationMayPrecede(context.state, "Object", node)
+    )
+      return undefined;
     // A FileHandle can be the prototype of an object literal, so the literal's
     // shape alone does not prove that Node rejects it as a descriptor.
     if (
@@ -537,7 +575,10 @@ const encodingTruthiness = (
     t.isObjectMethod(value) ||
     t.isClassExpression(value) ||
     t.isRegExpLiteral(value) ||
-    t.isNewExpression(value)
+    t.isNewExpression(value) ||
+    // `import.meta` is always an object in a module. Measured on Node 24.22.1,
+    // `createReadStream(p, {encoding: import.meta})` throws `ERR_INVALID_ARG_VALUE`.
+    (t.isMetaProperty(value) && value.meta.name === "import")
   )
     return true;
   if (
@@ -563,6 +604,14 @@ const encodingTruthiness = (
   }
   // `-`, `+` and `~` chains resolve to a number exactly, so `~0` is `-1` and truthy
   // while `~-1` is `0` and falsy. A non-finite result is truthy except for `NaN`.
+  // A `+`/`-` chain over a BigInt literal is a BigInt: `-0n` is falsy like `0n`, and any
+  // other value is truthy. Measured on Node 24.22.1, `{encoding: -1n}` throws
+  // `ERR_INVALID_ARG_VALUE` while `{encoding: -0n}` is accepted as "not given".
+  const bigint = unaryBigIntOperand(value);
+  if (bigint !== undefined) {
+    const digits = String(bigint.value).replace(/_/gu, "");
+    return digits.replace(/^0+/u, "").length > 0;
+  }
   const number = unaryOperandNumber(value, context, 0);
   if (number === undefined) return undefined;
   return number !== 0 && !Number.isNaN(number);
