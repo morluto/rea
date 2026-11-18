@@ -38,11 +38,13 @@ const GO_FLAG_PATH =
  * Go's own tools reuse those letters: `-ldflags` takes `-B gobuildid` and
  * `-T 0x1000`, so their relative arguments are not paths. The exact field
  * `-I-` is GCC's include barrier, the same as `--include-barrier`, and names
- * no directory.
+ * no directory. GCC profile directory options name a path in their explicit
+ * equals form. The bare profile-use and profile-generate switches take no
+ * following operand.
  */
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
-  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFLT]|I(?!-$))=?\s*|--sysroot(?:=|\s+|$))(.*)$/su;
+  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFLT]|I(?!-$))=?\s*|--sysroot(?:=|\s+|$)|-fprofile-(?:dir|generate|use)=)(.*)$/su;
 /**
  * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
  * linker reads its own letters: `-L`, `-T` and `-I` (the ELF interpreter) take
