@@ -1,3 +1,4 @@
+import { captureBudgets } from "../CaptureBudgets.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import {
   createFileRegistry,
@@ -18,7 +19,6 @@ import {
 } from "@bufbuild/protobuf/wkt";
 import { BinaryReader } from "@bufbuild/protobuf/wire";
 import type { ProtobufField } from "../../../domain/protobufWire.js";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "../CaptureFormatError.js";
 import {
   decodeProtobufWire,
@@ -26,6 +26,7 @@ import {
   type ProtobufBudget,
   type WireSchema,
 } from "./ProtobufWire.js";
+import { errorMessage } from "../../../kernel/errorMessage.js";
 
 export type ProtobufSchemaAdmissionFailure =
   | {
@@ -260,13 +261,13 @@ export class ProtobufSchema implements WireSchema {
     try {
       descriptor = fromBinary(FileDescriptorSetSchema, bytes, {
         readUnknownFields: true,
-        recursionLimit: WEB_NETWORK_CAPTURE_LIMITS.depth,
+        recursionLimit: captureBudgets().depth,
       });
     } catch (cause) {
       return err({
         kind: "malformed-descriptor",
         field: "descriptor_set_path",
-        message: `Malformed FileDescriptorSet: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `Malformed FileDescriptorSet: ${errorMessage(cause)}`,
       });
     }
     const admitted = await admitRegistryDescriptor(descriptor, budget);
@@ -280,7 +281,7 @@ export class ProtobufSchema implements WireSchema {
       return err({
         kind: "malformed-descriptor",
         field: "descriptor_set_path",
-        message: `Invalid FileDescriptorSet declaration: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `Invalid FileDescriptorSet declaration: ${errorMessage(cause)}`,
       });
     }
     if (message === undefined)

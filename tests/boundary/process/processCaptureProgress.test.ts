@@ -10,6 +10,7 @@ import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSche
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
+import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -17,6 +18,15 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
 const PROGRESS_INTERVAL_MS = 100;
+
+const captureResult = (value: unknown): ProcessCapture => {
+  const normalized = toolContract(
+    "capture_process_scenario",
+  ).outputSchema.parse(value).normalized_result;
+  if ("status" in normalized && normalized.status === "planned")
+    throw new Error("expected process capture output");
+  return normalized as ProcessCapture;
+};
 
 const progressLineSchema = z.object({
   rea_progress: z.object({
@@ -311,6 +321,9 @@ itWithCaptureCapability(
         TMPDIR: missingTempRoot,
         TMP: missingTempRoot,
         TEMP: missingTempRoot,
+        // Select caller-owned compilation so a shared Darwin helper cannot
+        // bypass the preparation failure this case exercises.
+        REA_DARWIN_MODULE_CACHE_PATH: join(missingTempRoot, "modules"),
       },
     });
 
@@ -322,18 +335,16 @@ itWithCaptureCapability(
       code: "process_capture_failed",
       details: { execution_failure: expect.stringContaining(missingTempRoot) },
     });
-    // Darwin prepares its native inspector before acquiring capture resources.
-    // Other hosts reach the capture root allocation, whose failure is accounted.
-    const cleanupState =
-      process.platform === "darwin" ? "unverified" : "not_required";
+    // Inspector preparation or temporary-root allocation failed before any
+    // capture resources were acquired, so no capture cleanup is required.
     expect(capture.lines.at(-1)?.update).toMatchObject({
       phase: "cleanup",
       terminal: true,
       details: {
         disposition: "failed",
-        owned_process_group: cleanupState,
-        terminal_renderer: cleanupState,
-        temporary_root: cleanupState,
+        owned_process_group: "not_required",
+        terminal_renderer: "not_required",
+        temporary_root: "not_required",
       },
     });
   },
@@ -462,7 +473,9 @@ itWithCaptureCapability(
       "capture_process_scenario",
     ).outputSchema.parse(silent.structuredContent);
     expect(
-      evidence.normalized_result.frames.map((frame) => frame.data).join(""),
+      captureResult(evidence)
+        .frames.map((frame) => frame.data)
+        .join(""),
     ).toContain("SILENT_CHILD_OK");
 
     const progress: Array<{
@@ -518,12 +531,11 @@ itWithCaptureCapability(
     const tokenEvidence = toolContract(
       "capture_process_scenario",
     ).outputSchema.parse(captured.structuredContent);
-    const output = tokenEvidence.normalized_result.frames
-      .map((frame) => frame.data)
-      .join("");
+    const tokenCapture = captureResult(tokenEvidence);
+    const output = tokenCapture.frames.map((frame) => frame.data).join("");
     expect(output).toContain("TOKEN_CHILD_STARTED");
     expect(output).toContain("TOKEN_CHILD_DONE");
-    expect(tokenEvidence.normalized_result.exit).toMatchObject({
+    expect(tokenCapture.exit).toMatchObject({
       reason: "exited",
       code: 0,
     });
@@ -562,7 +574,7 @@ itWithCaptureCapability(
     const timedOutEvidence = toolContract(
       "capture_process_scenario",
     ).outputSchema.parse(timedOut.structuredContent);
-    expect(timedOutEvidence.normalized_result.exit.reason).toBe("timeout");
+    expect(captureResult(timedOutEvidence).exit.reason).toBe("timeout");
     expect(timeoutProgress.every(({ total }) => total === undefined)).toBe(
       true,
     );
@@ -596,12 +608,10 @@ itWithCaptureCapability(
     );
     try {
       await expect
-        .poll(
-          () =>
-            cancelling.notifications.some((note) =>
-              note.params.message?.startsWith("running:"),
-            ),
-          { timeout: 4_000 },
+        .poll(() =>
+          cancelling.notifications.some((note) =>
+            note.params.message?.startsWith("running:"),
+          ),
         )
         .toBe(true);
       controller.abort();
@@ -622,7 +632,7 @@ itWithCaptureCapability(
       cancelling.notifications
         .map((note) => note.params.message)
         .find((message) => message?.startsWith("cleanup:"));
-    await expect.poll(cleanupMessage, { timeout: 15_000 }).toBeDefined();
+    await expect.poll(cleanupMessage).toBeDefined();
     expect(cleanupMessage()).toContain("disposition=cancelled");
     expect(cleanupMessage()).toContain("owned_process_group=cleaned");
     expect(JSON.stringify(cancelling.notifications)).not.toMatch(

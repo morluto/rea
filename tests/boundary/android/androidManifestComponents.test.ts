@@ -35,8 +35,8 @@ it.each([
   },
 );
 
-it("keeps pre-projection package parses independent", () => {
-  const older = {
+it("refuses package results without the component projection", () => {
+  const unprojected = {
     engine: {
       name: "jadx",
       version: null,
@@ -60,15 +60,10 @@ it("keeps pre-projection package parses independent", () => {
     resource_count: 0,
     signature_verification: "not_performed",
   };
-  const first = androidResultSchemas.inspect_android_package.parse(older);
-  expect(first.components).toMatchObject({ status: "unavailable", items: [] });
-  first.components.limitations.push("local parse mutation");
-  try {
-    const second = androidResultSchemas.inspect_android_package.parse(older);
-    expect(second.components.limitations).not.toContain("local parse mutation");
-  } finally {
-    first.components.limitations.pop();
-  }
+  expect(
+    androidResultSchemas.inspect_android_package.safeParse(unprojected).error
+      ?.issues,
+  ).toEqual([expect.objectContaining({ path: ["components"] })]);
 });
 
 it("projects exact declared component attributes without inferring runtime defaults", () => {
@@ -151,9 +146,9 @@ it("enforces the process copy budget across individually valid components", () =
   ).toBeLessThanOrEqual(ANDROID_MANIFEST_LIMITS.processBytes);
 });
 
-it("keeps historical declaration omissions unknown rather than absent", () => {
+it("refuses components without their declaration facets", () => {
   const parsed =
-    androidResultSchemas.inspect_android_package.shape.components.parse({
+    androidResultSchemas.inspect_android_package.shape.components.safeParse({
       status: "complete",
       items: [
         {
@@ -174,17 +169,20 @@ it("keeps historical declaration omissions unknown rather than absent", () => {
       ],
       limitations: [],
     });
-  expect(parsed.status).toBe("complete");
-  expect(parsed.items[0]?.declaration_coverage).toBe("unknown");
-  for (const field of [
-    "enabled",
-    "process",
-    "grant_uri_permissions",
-    "intent_filters",
-    "meta_data",
-    "location",
-  ])
-    expect(parsed.items[0]).not.toHaveProperty(field);
+  expect(new Set(parsed.error?.issues.map(({ path }) => path.at(-1)))).toEqual(
+    new Set([
+      "declaration_coverage",
+      "declaration_index",
+      "location",
+      "enabled",
+      "enabled_declaration",
+      "process",
+      "grant_uri_permissions",
+      "grant_uri_permissions_declaration",
+      "intent_filters",
+      "meta_data",
+    ]),
+  );
 });
 
 const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
@@ -687,6 +685,60 @@ it("leaves target-31-or-later filtered components without an inferred export def
   expect(
     parseAndroidManifestComponents(manifest, "complete", "Preview").items[0],
   ).toMatchObject({ exported_default: null });
+});
+
+it("ignores action-less activity, alias and receiver filters for export defaults", () => {
+  // Android's package parser drops these filters; a service keeps them.
+  const manifest = [
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application>',
+    '<activity android:name=".Main"><intent-filter><category android:name="android.intent.category.DEFAULT"/></intent-filter></activity>',
+    '<activity-alias android:name=".Alias" android:targetActivity=".Main"><intent-filter><data android:scheme="https"/></intent-filter></activity-alias>',
+    '<receiver android:name=".Receiver"><intent-filter android:priority="1"/></receiver>',
+    '<service android:name=".Service"><intent-filter><category android:name="example.BIND"/></intent-filter></service>',
+    '<activity android:name=".Mixed"><intent-filter/><intent-filter><action android:name="example.OPEN"/></intent-filter></activity>',
+    "</application></manifest>",
+  ].join("");
+  const defaults = (sdk: string) =>
+    parseAndroidManifestComponents(manifest, "complete", sdk).items.map(
+      (item) => [item.intent_filter_count, item.exported_default],
+    );
+  expect(defaults("30")).toEqual([
+    [1, false],
+    [1, false],
+    [1, false],
+    [1, true],
+    [2, true],
+  ]);
+  const modern = parseAndroidManifestComponents(manifest, "complete", "31");
+  expect(modern.items.map((item) => item.exported_default)).toEqual([
+    false,
+    false,
+    false,
+    null,
+    null,
+  ]);
+  expect(modern.limitations.join(" ")).toContain(
+    "2 component(s) with intent filters target API 31",
+  );
+  expect(defaults("Preview").map(([, value]) => value)).toEqual([
+    false,
+    false,
+    false,
+    null,
+    null,
+  ]);
+  const filters = "<intent-filter/>".repeat(
+    ANDROID_MANIFEST_LIMITS.intentFilters,
+  );
+  const late = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Late">${filters}<intent-filter><action android:name="example.OPEN"/></intent-filter></activity></application></manifest>`,
+    "complete",
+    "30",
+  );
+  expect(late.items[0]).toMatchObject({
+    intent_filter_count: ANDROID_MANIFEST_LIMITS.intentFilters + 1,
+    exported_default: true,
+  });
 });
 
 it("ignores same-local-name attributes from other namespaces", () => {

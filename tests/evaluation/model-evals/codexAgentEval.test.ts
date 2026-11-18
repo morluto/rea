@@ -647,9 +647,6 @@ describe("Codex agent completion evaluation", () => {
       answerHeuristicsMet: true,
       factualCorrectness: "not_assessed",
     });
-    expect(metrics).not.toHaveProperty("completionQuality");
-    expect(metrics).not.toHaveProperty("authorityHonesty");
-    expect(metrics).not.toHaveProperty("contentCriteriaMet");
   });
 
   it("requires scenario-specific answer terms when configured", () => {

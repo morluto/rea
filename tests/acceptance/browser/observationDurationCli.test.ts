@@ -69,7 +69,7 @@ cliTest(
             default: 500,
             anyOf: [
               { type: "integer", minimum: 0 },
-              { type: "string", pattern: "\\S" },
+              { type: "string", pattern: "^[0-9]+$" },
             ],
           },
         },

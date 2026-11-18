@@ -37,7 +37,7 @@ cliTest(
         ],
       ] as const) {
         const selected = operation === "inspect_managed_members";
-        const output = await cli.sharedCliRun!({
+        const output = await cli.run({
           arguments: [
             command,
             path,
@@ -138,7 +138,9 @@ cliTest(
     const report = managedMemberComparisonResultSchema.parse(
       parseEvidence(compared.structuredContent).normalized_result,
     );
-    expect(report.coverage.status).toBe("partial");
+    // The delta's baseline-dependent selection cannot establish its scope, so
+    // the comparison's coverage is unknown rather than a known gap.
+    expect(report.coverage.status).toBe("unknown");
     expect(report.summary).toMatchObject({ added: 0, removed: 0, unknown: 2 });
     expect(report.evidence_links).toEqual(
       sources.map(({ evidence_id }) => evidence_id),

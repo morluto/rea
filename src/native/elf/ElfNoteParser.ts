@@ -6,9 +6,14 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
+import {
+  readElfFixedHeader,
+  type ElfFixedHeader,
+} from "../../domain/elfFixedHeader.js";
 import {
   elfNoteAlignment as noteAlignment,
   elfNoteLayout,
@@ -19,18 +24,42 @@ import type {
   InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import {
+  androidNoteTypeName,
   coreNoteTypeName,
   elfObjectTypeName,
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+import { readElfTableDeclarationsFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import {
+  decodeElfSectionNameTable,
+  readElfSectionNameTableHeader,
+} from "../../domain/native/elfSectionNameTable.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
-const SHF_COMPRESSED = 0x800n;
 const HEX_DESCRIPTOR_LIMIT = 64;
+
+/** The existing Linux note layouts do not establish another declared ABI. */
+const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
+  (header.osAbi === 0 || header.osAbi === 3) && header.abiVersion === 0;
+
+/**
+ * The note text, hash, and scan ceiling. It equals the admitted image length
+ * plus decoded section names, so host memory cannot raise it.
+ */
+export const ELF_NOTE_TEXT_ALLOWANCE =
+  "The ELF note text, hash, and scan allowance (derived from the image length and section names)";
+
+const noteTextLimit = (budget: TextBudget): ParseFailureError<"limit"> =>
+  decodeLimit(
+    "elf-notes",
+    `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
+    { name: "note_text_bytes", maximum: budget.limit },
+  );
 
 interface TextBudget {
   limit: number;
@@ -39,22 +68,99 @@ interface TextBudget {
   scanned: number;
   readonly hashes: Map<string, string>;
   readonly scans: Map<string, number>;
+  /** GNU build-id descriptors above this many bytes are not hex-encoded. */
+  readonly maxGnuBuildIdBytes?: number | undefined;
 }
+
+/** Limit name of the caller's file budget, which also bounds decoded section names. */
+const SECTION_NAME_BUDGET_LIMIT = "max_file_bytes";
 
 /** Caller can raise max_file_bytes to admit the decoded section-name table. */
-export class ElfNoteSectionNameBudgetFailure extends Error {
-  readonly _tag = "ElfNoteSectionNameBudgetFailure";
+const sectionNameBudgetFailure = (
+  required: bigint,
+  selected: number,
+): ParseFailureError<"limit"> =>
+  decodeLimit(
+    "elf",
+    `ELF source and decoded section names require ${String(required)} bytes, above the selected max_file_bytes (${String(selected)}).`,
+    { name: SECTION_NAME_BUDGET_LIMIT, maximum: selected, required },
+  );
 
-  constructor(
-    readonly minimumMaxFileBytes: bigint,
-    readonly selectedMaxFileBytes: number,
-  ) {
-    super(
-      `ELF source and decoded section names require ${String(minimumMaxFileBytes)} bytes, above the selected max_file_bytes (${String(selectedMaxFileBytes)}).`,
+/**
+ * The section-name budget stop's limit: the selected max_file_bytes and the
+ * size the source plus decoded names require.
+ */
+export const elfNoteSectionNameBudget = (
+  cause: unknown,
+):
+  | {
+      readonly selected: number;
+      readonly required: bigint;
+      readonly detail: string;
+    }
+  | undefined => {
+  if (
+    !(cause instanceof ParseFailureError) ||
+    cause.failure.kind !== "limit" ||
+    cause.failure.format !== "elf" ||
+    cause.failure.limit.name !== SECTION_NAME_BUDGET_LIMIT
+  )
+    return undefined;
+  const { maximum, required } = cause.failure.limit;
+  return required === undefined
+    ? undefined
+    : {
+        selected: maximum,
+        required: BigInt(required),
+        detail: cause.failure.detail,
+      };
+};
+
+/**
+ * Refuse a compressed section-name table whose declared decoded size does not
+ * fit the source-plus-decoded-names budget, before any decoder inflates it.
+ * Only a compression header the owning decoder admits is charged; structural
+ * problems and unsupported compression are left to the decoders that own them.
+ */
+export const assertElfSectionNameBudget = (
+  bytes: Buffer,
+  maxFileBytes: number,
+): void => {
+  // The image directory's own declarations, so extended section counts and
+  // name indexes in section zero are charged exactly as the decoder sees them.
+  const declarations = readElfTableDeclarationsFromBuffer(bytes);
+  if (!declarations.ok) return;
+  const { header, sections } = declarations.value;
+  const little = header.byteOrder === "little";
+  const { offset, width, count, namesIndex } = sections;
+  if (count === 0 || namesIndex === 0) return;
+  const at = offset + BigInt(namesIndex) * BigInt(width);
+  if (at > BigInt(bytes.length - width)) return;
+  const parsed = readElfSectionHeader(
+    bytes.subarray(Number(at), Number(at) + width),
+    header.elfClass,
+    little,
+  );
+  if (!parsed.ok || parsed.value.offset > BigInt(bytes.length)) return;
+  const start = Number(parsed.value.offset);
+  const names = readElfSectionNameTableHeader(
+    bytes.subarray(
+      start,
+      parsed.value.size > BigInt(bytes.length - start)
+        ? bytes.length
+        : start + Number(parsed.value.size),
+    ),
+    parsed.value.flags,
+    header.elfClass,
+    little,
+  );
+  if (names.state !== "compressed") return;
+  if (names.declaredSize > BigInt(Math.max(0, maxFileBytes - bytes.length)))
+    throw sectionNameBudgetFailure(
+      BigInt(bytes.length) + names.declaredSize,
+      maxFileBytes,
     );
-    this.name = "ElfNoteSectionNameBudgetFailure";
-  }
-}
+};
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -70,16 +176,9 @@ const chargeText = (
     bytes < 0 ||
     bytes > budget.limit - budget[field]
   )
-    throw new ArtifactReaderFailure(
-      "limit",
-      `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
-      { boundary: "memory" },
-    );
+    throw noteTextLimit(budget);
   budget[field] += bytes;
 };
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const GNU_OS_NAMES: Readonly<Record<number, string>> = {
   0: "linux",
@@ -171,6 +270,7 @@ const parseNoteStream = (
   maxEntries: number,
   examined: { count: number },
   text: TextBudget,
+  signal?: AbortSignal,
 ): ParsedNote[] => {
   // Alignment padding is not read when a note's aligned size equals the
   // declared table. Require the whole table first so a short file is invalid
@@ -179,12 +279,13 @@ const parseNoteStream = (
   const notes: ParsedNote[] = [];
   let at = 0;
   while (at + 12 <= size) {
+    assertArtifactReadActive(signal);
     examined.count += 1;
     if (examined.count > maxEntries)
-      throw new ArtifactReaderFailure(
-        "limit",
+      throw decodeLimit(
+        "elf-notes",
         `ELF note tables exceed the ${String(maxEntries)}-entry budget.`,
-        { boundary: "capacity" },
+        { name: "max_entries", maximum: maxEntries, required: examined.count },
       );
     const header = offset + at;
     const parsedHeader = readElfNoteHeader(
@@ -242,6 +343,11 @@ const decodeGnu = (
 ): ElfNotes["entries"][number]["gnu"] => {
   if (owner !== "GNU") return null;
   if (type === 3 && descriptor.length > 0) {
+    if (
+      text.maxGnuBuildIdBytes !== undefined &&
+      descriptor.length > text.maxGnuBuildIdBytes
+    )
+      return { build_id_hex: null, abi_tag: null, gold_version: null };
     chargeText(text, descriptor.length * 2);
     return {
       build_id_hex: descriptor.toString("hex"),
@@ -411,11 +517,7 @@ const decodeCoreFile = (
 
   const rowBytes = count * (wide ? 54 : 30);
   if (rowBytes > text.limit - text.used) {
-    throw new ArtifactReaderFailure(
-      "limit",
-      `ELF note text exceeds the ${String(text.limit)}-byte budget.`,
-      { boundary: "memory" },
-    );
+    throw noteTextLimit(text);
   }
 
   const scanKey = `file:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
@@ -439,6 +541,13 @@ const decodeCoreFile = (
     }
     totalPathBytes += nullIdx - strPos;
     strPos = nullIdx + 1;
+  }
+  if (
+    cachedScan === undefined &&
+    descriptor.subarray(strPos).some((byte) => byte !== 0)
+  ) {
+    text.scans.set(scanKey, -1);
+    return null;
   }
   text.scans.set(scanKey, count);
 
@@ -606,11 +715,89 @@ const decodeCore = (
   return null;
 };
 
+/** Optional decoding bounds for consumers that retain only part of a note. */
+export interface ElfNoteParseOptions {
+  /** Leave larger GNU build-ids undecoded; `descsz` still reports their size. */
+  readonly maxGnuBuildIdBytes?: number;
+}
+
+const ANDROID_IDENT_SLOT_BYTES = 64;
+const ANDROID_IDENT_MODERN_MIN_BYTES = 4 + ANDROID_IDENT_SLOT_BYTES * 2;
+
+const scanAndroidIdentSlot = (descriptor: Buffer, start: number): number => {
+  const end = start + ANDROID_IDENT_SLOT_BYTES;
+  for (let i = start; i < end; i += 1) {
+    const byte = descriptor[i]!;
+    if (byte === 0) {
+      const length = i - start;
+      for (let j = i + 1; j < end; j += 1) {
+        if (descriptor[j] !== 0) return -1;
+      }
+      return length;
+    }
+    if (byte < 0x20 || byte > 0x7e) return -1;
+  }
+  return -1;
+};
+
+const decodeAndroid = (
+  owner: string,
+  type: number,
+  descriptor: Buffer,
+  little: boolean,
+  text: TextBudget,
+): ElfNotes["entries"][number]["android"] => {
+  if (owner !== "Android" || type !== 1) return null;
+  const readUInt32 = (offset: number): number =>
+    little ? descriptor.readUInt32LE(offset) : descriptor.readUInt32BE(offset);
+  if (descriptor.length === 4) {
+    return {
+      android_api: readUInt32(0),
+      ndk_version: null,
+      ndk_build_number: null,
+    };
+  }
+  if (descriptor.length < ANDROID_IDENT_MODERN_MIN_BYTES) return null;
+
+  const scanKey = `android:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
+  let packedLengths = text.scans.get(scanKey);
+  if (packedLengths === -1) return null;
+  if (packedLengths === undefined) {
+    chargeText(text, ANDROID_IDENT_SLOT_BYTES * 2, "scanned");
+    const versionLen = scanAndroidIdentSlot(descriptor, 4);
+    const buildLen =
+      versionLen < 0
+        ? -1
+        : scanAndroidIdentSlot(descriptor, 4 + ANDROID_IDENT_SLOT_BYTES);
+    if (versionLen < 0 || buildLen < 0) {
+      text.scans.set(scanKey, -1);
+      return null;
+    }
+    packedLengths = (versionLen << 8) | buildLen;
+    text.scans.set(scanKey, packedLengths);
+  }
+
+  const versionLen = packedLengths >> 8;
+  const buildLen = packedLengths & 0xff;
+  chargeText(text, versionLen + buildLen);
+
+  return {
+    android_api: readUInt32(0),
+    ndk_version: descriptor.toString("latin1", 4, 4 + versionLen),
+    ndk_build_number: descriptor.toString(
+      "latin1",
+      4 + ANDROID_IDENT_SLOT_BYTES,
+      4 + ANDROID_IDENT_SLOT_BYTES + buildLen,
+    ),
+  };
+};
+
 /** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
 export const parseElfNotes = (
   bytes: Buffer,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
+  options: ElfNoteParseOptions = {},
 ): ElfNotes => {
   const fixed = readElfFixedHeader(bytes);
   if (!fixed.ok) return fail(fixed.error);
@@ -662,6 +849,7 @@ export const parseElfNotes = (
     scanned: 0,
     hashes: new Map(),
     scans: new Map(),
+    maxGnuBuildIdBytes: options.maxGnuBuildIdBytes,
   };
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();
@@ -697,7 +885,7 @@ export const parseElfNotes = (
     );
     if (decoded.state === "malformed") return fail(decoded.message);
     if (decoded.state === "limit")
-      throw new ElfNoteSectionNameBudgetFailure(
+      throw sectionNameBudgetFailure(
         BigInt(bytes.length) + decoded.requiredBytes,
         input.max_file_bytes,
       );
@@ -756,17 +944,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(
-          toEntry(
-            note,
-            "program",
-            index,
-            reader.little,
-            wide,
-            header.machine,
-            text,
-          ),
-        );
+        parsed.push(toEntry(note, "program", index, header, text));
     }
   }
   if (shnum !== 0) {
@@ -791,7 +969,7 @@ export const parseElfNotes = (
       const fileOffset = Number(section.offset);
       const fileSize = Number(section.size);
       reader.require(fileOffset, fileSize);
-      if ((section.flags & SHF_COMPRESSED) !== 0n)
+      if (section.compressed)
         throw new BinaryFormatFailure(
           "unsupported",
           "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",
@@ -821,17 +999,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(
-          toEntry(
-            note,
-            "section",
-            index,
-            reader.little,
-            wide,
-            header.machine,
-            text,
-          ),
-        );
+        parsed.push(toEntry(note, "section", index, header, text));
     }
   }
   const absent = tables.length === 0;
@@ -852,6 +1020,13 @@ export const parseElfNotes = (
     limitations: [
       ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
       ...sectionNameLimitations,
+      ...(parsed.some(({ owner }) => owner === "CORE")
+        ? [
+            isLinuxCoreProfile(header)
+              ? "Linux CORE decoding assumes System V/unspecified or GNU/Linux OSABI with ABI version zero; an unspecified OSABI alone does not establish operating-system origin."
+              : `Linux CORE note payloads were not interpreted for ELF OSABI ${String(header.osAbi)}, ABI version ${String(header.abiVersion)}; raw note identities, descriptor ranges and hashes remain available.`,
+          ]
+        : []),
     ],
   };
 };
@@ -860,18 +1035,18 @@ const toEntry = (
   note: ParsedNote,
   tableKind: "program" | "section",
   tableIndex: number,
-  little: boolean,
-  wide: boolean,
-  machine: number,
+  header: ElfFixedHeader,
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
+  const little = header.byteOrder === "little";
   const gnuOwner = note.owner === "GNU";
-  const coreOwner = note.owner === "CORE";
+  const coreOwner = note.owner === "CORE" && isLinuxCoreProfile(header);
+  const androidOwner = note.owner === "Android";
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
     chargeText(text, note.descriptor.length, "hashed");
-    digest = sha256(note.descriptor);
+    digest = sha256Hex(note.descriptor);
     text.hashes.set(range, digest);
   }
   return {
@@ -885,7 +1060,9 @@ const toEntry = (
       ? gnuNoteTypeName(note.type)
       : coreOwner
         ? coreNoteTypeName(note.type)
-        : "unknown",
+        : androidOwner
+          ? androidNoteTypeName(note.type)
+          : "unknown",
     owner: note.owner,
     owner_bytes_hex: note.owner_bytes_hex,
     descriptor: {
@@ -898,14 +1075,137 @@ const toEntry = (
           : null,
     },
     gnu: decodeGnu(note.owner, note.type, note.descriptor, little, text),
-    core: decodeCore(
+    core: coreOwner
+      ? decodeCore(
+          note.owner,
+          note.type,
+          note.descriptor,
+          little,
+          header.elfClass === 64,
+          header.machine,
+          text,
+        )
+      : null,
+    android: decodeAndroid(
       note.owner,
       note.type,
       note.descriptor,
       little,
-      wide,
-      machine,
       text,
     ),
   };
+};
+
+const NT_GNU_PROPERTY_TYPE_0 = 5;
+const GNU_PROPERTY_AARCH64_FEATURE_1_AND = 0xc0000000;
+const GNU_PROPERTY_X86_FEATURE_1_AND = 0xc0000002;
+
+/** One note table. `alignment` is the declared `sh_addralign` or `p_align`. */
+export interface ElfNoteTableWalk {
+  readonly offset: number;
+  readonly size: number;
+  readonly alignment: number | bigint;
+}
+
+export interface ElfWalkedNote {
+  readonly owner: string;
+  readonly type: number;
+  readonly descriptor: Buffer;
+  readonly descriptorOffset: number;
+}
+
+export interface GnuPropertyWord {
+  readonly value: number;
+  readonly offset: number;
+  readonly conflict: boolean;
+}
+
+/** Walk note tables with the owner's alignment, entry budget, and cancellation. */
+export const walkElfNoteTables = (
+  bytes: Buffer,
+  little: boolean,
+  tables: readonly ElfNoteTableWalk[],
+  maxEntries: number,
+  signal?: AbortSignal,
+): ElfWalkedNote[] => {
+  const reader = new ElfReader(bytes, little);
+  const text: TextBudget = {
+    limit: Math.max(bytes.length, 1),
+    used: 0,
+    hashed: 0,
+    scanned: 0,
+    hashes: new Map(),
+    scans: new Map(),
+  };
+  const examined = { count: 0 };
+  const notes: ElfWalkedNote[] = [];
+  for (const table of tables) {
+    assertArtifactReadActive(signal);
+    for (const note of parseNoteStream(
+      reader,
+      table.offset,
+      table.size,
+      noteAlignment(table.alignment),
+      maxEntries,
+      examined,
+      text,
+      signal,
+    ))
+      notes.push({
+        owner: note.owner,
+        type: note.type,
+        descriptor: note.descriptor,
+        descriptorOffset: note.descriptor_offset,
+      });
+  }
+  return notes;
+};
+
+/** GNU property feature words from notes the owner already walked. */
+export const readGnuPropertyWords = (
+  notes: readonly ElfWalkedNote[],
+  little: boolean,
+  propertyAlign: number,
+): Map<number, GnuPropertyWord> => {
+  const found = new Map<number, GnuPropertyWord>();
+  for (const note of notes) {
+    if (note.owner !== "GNU" || note.type !== NT_GNU_PROPERTY_TYPE_0) continue;
+    const descriptor = note.descriptor;
+    let cursor = 0;
+    while (cursor < descriptor.length) {
+      if (descriptor.length - cursor < 8)
+        fail("ELF GNU property record is truncated.");
+      const type = little
+        ? descriptor.readUInt32LE(cursor)
+        : descriptor.readUInt32BE(cursor);
+      const dataSize = little
+        ? descriptor.readUInt32LE(cursor + 4)
+        : descriptor.readUInt32BE(cursor + 4);
+      if (dataSize > descriptor.length - cursor - 8)
+        fail("ELF GNU property data extends outside the note descriptor.");
+      const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
+      if (!Number.isSafeInteger(step) || cursor + step > descriptor.length)
+        fail("ELF GNU property record is truncated.");
+      if (
+        type === GNU_PROPERTY_X86_FEATURE_1_AND ||
+        type === GNU_PROPERTY_AARCH64_FEATURE_1_AND
+      ) {
+        if (dataSize !== 4)
+          fail("ELF GNU feature property is not a 4-byte word.");
+        const value = little
+          ? descriptor.readUInt32LE(cursor + 8)
+          : descriptor.readUInt32BE(cursor + 8);
+        const previous = found.get(type);
+        found.set(type, {
+          value: previous === undefined ? value : previous.value,
+          offset: previous?.offset ?? note.descriptorOffset + cursor + 8,
+          conflict:
+            previous !== undefined &&
+            (previous.conflict || previous.value !== value),
+        });
+      }
+      cursor += step;
+    }
+  }
+  return found;
 };

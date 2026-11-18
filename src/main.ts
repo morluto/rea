@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
-import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
-import { pathToFileURL } from "node:url";
-import { realpathSync } from "node:fs";
+import { HOST_PLATFORM } from "./platform/HostPlatform.js";
+import {
+  CURRENT_ENTRYPOINT_PATH,
+  isDirectEntrypoint,
+} from "./process/CurrentEntrypointPath.js";
 
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
@@ -89,15 +91,19 @@ const httpRuntimeDependencies = (
 export const run = async (
   dependencies: RuntimeDependencies = runtimeDependencies(),
 ): Promise<number> => {
-  const environment = snapshotEnvironment(dependencies.env);
+  const environment = snapshotEnvironment(
+    dependencies.env,
+    HOST_PLATFORM.platform,
+  );
   const config = parseConfig(environment);
   if (!config.ok) {
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  const fullOutputCatalog =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
+  // The deferred server omits the recorded output schemas from listings, the
+  // default `off` profile; `compact` composes its bounded presentation.
+  const recordedOutputCatalog =
+    config.value.mcpOutputSchemaProfile !== "compact";
   // The recorded catalog holds the complete inventory and its full-catalog
   // identity, so only an unscoped registration can be served from it. A
   // scoped one composes the canonical scope itself instead of advertising
@@ -107,7 +113,7 @@ export const run = async (
     RECORDED_MCP_CATALOG_SHA256 !== undefined &&
     dependencies.transport !== "http" &&
     config.value.hopperTargetPath === undefined &&
-    fullOutputCatalog &&
+    recordedOutputCatalog &&
     !scopedToolFamilies &&
     dependencies.createServer === undefined &&
     dependencies.loadOptionalProviders === undefined
@@ -172,13 +178,16 @@ export const runMcpHttpEntrypoint = async (
     io.setExitCode(1);
     return;
   }
-  const endpoint = parseMcpHttpEndpoint(snapshotEnvironment(process.env), {
-    ...(parsed.host === undefined ? {} : { host: parsed.host }),
-    ...(parsed.port === undefined ? {} : { port: parsed.port }),
-    ...(parsed.allowedHosts === undefined
-      ? {}
-      : { allowedHosts: [...parsed.allowedHosts] }),
-  });
+  const endpoint = parseMcpHttpEndpoint(
+    snapshotEnvironment(process.env, HOST_PLATFORM.platform),
+    {
+      ...(parsed.host === undefined ? {} : { host: parsed.host }),
+      ...(parsed.port === undefined ? {} : { port: parsed.port }),
+      ...(parsed.allowedHosts === undefined
+        ? {}
+        : { allowedHosts: [...parsed.allowedHosts] }),
+    },
+  );
   if (!endpoint.ok) {
     io.writeStderr(`${projectAnalysisError(endpoint.error).message}\n`);
     io.setExitCode(1);
@@ -195,19 +204,6 @@ export const runMcpHttpEntrypoint = async (
     );
   } finally {
     latch.release();
-  }
-};
-
-/** Return false when the runtime's argv path is synthetic or no longer exists. */
-const isDirectEntrypoint = (
-  entryPath: string | undefined,
-  moduleUrl: string,
-): boolean => {
-  if (entryPath === undefined) return false;
-  try {
-    return pathToFileURL(realpathSync(entryPath)).href === moduleUrl;
-  } catch {
-    return false;
   }
 };
 

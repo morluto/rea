@@ -9,6 +9,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
+  createRustHashOverflowImage,
   createRustImage,
   createRustImageWithGoSection,
   RUSTC_HASH,
@@ -16,9 +17,11 @@ import {
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "rejects misaligned 64-bit Mach-O through Rust CLI and stdio MCP",
@@ -73,7 +76,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -239,7 +241,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
@@ -298,8 +299,8 @@ cliTest(
         });
       } else {
         expect(report.auditable_metadata).toBeNull();
-        expect(report.limitations.join("\n")).toContain(
-          "ELF section names are unavailable because compression type 3 is unsupported",
+        expect(report.limitations.join("\n")).toMatch(
+          /section names.*unavailable.*compression type 3.*unsupported/iu,
         );
         expect(report.limitations.join("\n")).toContain(
           "The presence of .dep-v0 could not be determined",
@@ -334,8 +335,7 @@ cliTest(
       result.json,
     );
     expect(evidence.subject).toMatchObject({
-      format: "mach-o",
-      architecture: "arm64_32",
+      identity: { format: "mach-o", architecture: "arm64_32" },
     });
     expect(rustBinarySchema.parse(evidence.normalized_result)).toMatchObject({
       architecture: "arm64_32",
@@ -375,7 +375,7 @@ cliTest(
   },
 );
 
-cliTest("reports malformed zlib as invalid input", async ({ cli }) => {
+cliTest("rejects malformed dependency JSON", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-zlib-");
   const path = join(root, "broken.elf");
   await writeFile(
@@ -426,7 +426,6 @@ cliTest(
     });
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -465,6 +464,15 @@ cliTest(
     expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
       (metadata?.compressed_bytes ?? 0) * 64,
     );
+    // Padding separates the section size from the consumed stream that the
+    // inflate guidance names.
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        ),
+      ]),
+    );
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -475,7 +483,6 @@ cliTest(
     expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -522,7 +529,6 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -679,5 +685,94 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
+);
+
+cliTest(
+  "retrieves a larger compiler-path prefix through the CLI without losing dependencies",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-overflow-");
+    const path = join(root, "overflow.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-rustc-hashes",
+        "65",
+        "--producer-limits",
+        '{"input_bytes":8192,"output_bytes":16384}',
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(evidence.parameters).toMatchObject({
+      max_rustc_hashes: 65,
+      producer_limits: { input_bytes: 8192, output_bytes: 16384 },
+    });
+    expect(report.rustc_commit?.hashes).toHaveLength(65);
+    expect(report.rustc_commit).not.toHaveProperty("coverage");
+    expect(report.auditable_metadata?.packages).toHaveLength(2);
+  },
+);
+
+cliTest(
+  "names the option of the recorded compiler-path control in the full-output envelope",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-controls-");
+    const path = join(root, "overflow.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--full-output", "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const envelope = result.json as {
+      data: unknown;
+      meta: { cli_controls?: unknown };
+    };
+    const report = rustBinarySchema.parse(
+      toolContract("inspect_rust_binary").outputSchema.parse(envelope.data)
+        .normalized_result,
+    );
+    expect(report.rustc_commit?.coverage?.limit).toMatchObject({
+      parameter: "max_rustc_hashes",
+    });
+    expect(envelope.meta.cli_controls).toEqual({
+      max_rustc_hashes: "--max-rustc-hashes",
+    });
+  },
+);
+
+cliTest(
+  "rejects malformed Rust view JSON before opening the selected path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-view-json-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        join(root, "missing"),
+        "--view",
+        "{",
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_rust_binary",
+        issues: [
+          {
+            path: ["view"],
+            reason: "invalid_format",
+            message: "view must be a JSON package or edge selection",
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+  },
 );

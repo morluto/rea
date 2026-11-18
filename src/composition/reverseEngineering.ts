@@ -1,45 +1,83 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ReverseEngineeringServiceRuntimeOptions } from "../application/reverse/ReverseEngineeringService.js";
-import type { ReverseEngineeringCommandPort } from "../application/reverse/ReverseEngineeringCommandPort.js";
+import type {
+  ReverseEngineeringCommandPort,
+  ReverseEngineeringCommandSelection,
+  ReverseEngineeringProviderCommand,
+} from "../application/reverse/ReverseEngineeringCommandPort.js";
+import { err, ok } from "../domain/result.js";
 import { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
-import { objdumpCommand } from "../objdump/ObjdumpCommand.js";
-import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
-import { rizinCommand } from "../rizin/RizinCommand.js";
-import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
+import {
+  objdumpCommand,
+  objdumpCommandLimitations,
+} from "../objdump/ObjdumpCommand.js";
+import {
+  OBJDUMP_COMMAND_REPAIR,
+  OBJDUMP_PROVIDER_IDENTITY,
+} from "../objdump/ObjdumpProviderIdentity.js";
+import {
+  rizinCommand,
+  rizinCommandLimitations,
+  rizinCommandRejection,
+} from "../rizin/RizinCommand.js";
+import {
+  RIZIN_COMMAND_REPAIR,
+  RIZIN_PROVIDER_IDENTITY,
+} from "../rizin/RizinProviderIdentity.js";
 import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
 
 export const createReverseEngineeringCommandPort = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): ReverseEngineeringCommandPort => ({
-  objdump: (input) => ({
-    executable: providerExecutable(
+  objdump: (input) =>
+    selectCommand(
       environment.REA_OBJDUMP_COMMAND ?? "objdump",
       environment,
       platform,
+      {
+        arguments: objdumpCommand(input),
+        limitations: objdumpCommandLimitations(input),
+        identity: OBJDUMP_PROVIDER_IDENTITY,
+        repair: OBJDUMP_COMMAND_REPAIR,
+        environmentOverrides: { DEBUGINFOD_URLS: "" },
+      },
     ),
-    arguments: objdumpCommand(input),
-    identity: OBJDUMP_PROVIDER_IDENTITY,
-    environmentOverrides: { DEBUGINFOD_URLS: "" },
-  }),
-  rizin: (input) => ({
-    executable: providerExecutable(
+  rizin: (input) =>
+    selectCommand(
       environment.REA_RIZIN_COMMAND ?? "rizin",
       environment,
       platform,
+      {
+        arguments: rizinCommand(input),
+        limitations: rizinCommandLimitations(input),
+        rejection: rizinCommandRejection,
+        identity: RIZIN_PROVIDER_IDENTITY,
+        repair: RIZIN_COMMAND_REPAIR,
+      },
     ),
-    arguments: rizinCommand(input),
-    identity: RIZIN_PROVIDER_IDENTITY,
-  }),
 });
 
-const providerExecutable = (
-  executable: string,
+/** Bind the configured executable, resolving Windows bare names on PATH. */
+const selectCommand = (
+  command: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string =>
-  platform === "win32"
-    ? resolveWindowsProviderExecutable(executable, environment)
-    : executable;
+  profile: Omit<ReverseEngineeringProviderCommand, "executable">,
+): ReverseEngineeringCommandSelection => {
+  if (platform !== "win32") return ok({ ...profile, executable: command });
+  const resolved = resolveWindowsProviderExecutable(command, environment);
+  if (resolved.ok) return ok({ ...profile, executable: resolved.value });
+  return err({
+    identity: profile.identity,
+    repair: profile.repair,
+    command,
+    reason:
+      resolved.error.kind === "not_found"
+        ? { kind: "not_found" }
+        : { kind: "invalid_pathext", extension: resolved.error.extension },
+  });
+};
 
 /** Compose BYO reverse-engineering commands without acquiring tools at import time. */
 export const createReverseEngineeringService = (

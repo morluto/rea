@@ -176,4 +176,4 @@ including five documentation consistency tests: 128.732 s wall, 115.518920 s CPU
 4,301,684,736 B peak cgroup memory, clean owned exit and no OOM.
 
 Final public and static/docs outcomes are recorded in the
-[compact measurements and source pins](javascript-native-handoff-identity-2026-10-15.json).
+[compact measurements and source pins](https://github.com/morluto/rea/blob/main/docs/verification/javascript-native-handoff-identity-2026-10-15.json).

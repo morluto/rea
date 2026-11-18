@@ -152,7 +152,7 @@ cliTest(
     });
     await writeFile(path, bytes);
 
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -166,7 +166,7 @@ cliTest(
       const evidence = schema.parse(raw);
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256: descriptorHash(bytes) },
+        identity: { sha256: descriptorHash(bytes) },
       });
       const report = evidence.normalized_result;
       expect(report).toMatchObject({

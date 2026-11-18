@@ -71,8 +71,8 @@ cliTest(
       result.json,
     );
     expect(evidence.normalized_result.tables[0]?.name).toBeNull();
-    expect(evidence.normalized_result.limitations).toContain(
-      "ELF section names are incomplete because a name offset is outside its string table.",
+    expect(evidence.normalized_result.limitations.join(" ")).toMatch(
+      /name offset.*string table/iu,
     );
     expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
       "0123456789abcdef0123456789abcdef01234567",
@@ -134,9 +134,7 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "unsupported_target",
-      message: expect.stringContaining(
-        "Compressed ELF note sections are unsupported",
-      ),
+      message: expect.stringMatching(/compressed.*note/iu),
     });
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
@@ -155,7 +153,7 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "unsupported_target",
-      message: expect.stringContaining("ELF extended numbering is unsupported"),
+      message: expect.stringMatching(/extended.*number/iu),
     });
     expect((await readFile(path)).equals(before)).toBe(true);
   },

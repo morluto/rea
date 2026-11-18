@@ -1,45 +1,45 @@
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
-import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
-import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
-import { z } from "incur";
 import {
   createByteEntropyService,
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createDwarfUnitsService,
+  createElfDebugLinkService,
+  createNativeInitializersService,
+  createElfUnwindRangesService,
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
+  createKernelBuildConfigService,
   createPeLoadConfigService,
+  createBinaryHardeningService,
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
+  createWindowsShortcutService,
   createNativeExportsService,
+  createElfDependenciesService,
 } from "../composition/binaryDiagnostics.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { inspectBinaryLayoutInputSchema } from "../domain/native/binaryLayout.js";
-import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.js";
-import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
-import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificates.js";
-import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
-import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
-import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
-import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
-import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
 import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
+  callerTargetPath,
+  deliverWithService,
+  inspectWithService,
+  registerContractCommand,
+} from "./contractCommand.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
+
+type BinaryDiagnosticsOperation =
+  (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number]["name"];
+
+const contract = <Name extends BinaryDiagnosticsOperation>(name: Name) =>
+  contractNamed(BINARY_DIAGNOSTICS_TOOL_CONTRACTS, name);
 
 /** Inspect operator-selected files through the same shared workflow as MCP. */
 export const registerBinaryDiagnosticsCommands = (
@@ -47,462 +47,370 @@ export const registerBinaryDiagnosticsCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectElfNotes, {
-    description:
-      "Inspect ELF PT_NOTE and SHT_NOTE identities without executing the image",
-    args: z.object({
-      path: localPathStringSchema.describe("Local ELF32/ELF64 image"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectElfNotesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectElfNotesInputSchema.shape.max_entries,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const elf = createElfNotesService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectElfNotes,
-          async () =>
-            finishCliEvidenceCommand(
-              args.path,
-              () =>
-                elf.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_entries: options.maxEntries,
-                  },
-                  { signal },
-                ),
-              elf,
-              "rea-elf-notes",
-              "inspect_elf_notes",
-              signal,
-            ).then(projectCliAnalysisResult),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectAppleIps, {
-    description:
-      "Inspect an Apple .ips crash report without executing a target",
-    args: z.object({
-      path: localPathStringSchema.describe("Local Apple .ips crash report"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectAppleIpsInputSchema.shape.max_file_bytes,
-      maxThreads: inspectAppleIpsInputSchema.shape.max_threads,
-      maxFrames: inspectAppleIpsInputSchema.shape.max_frames,
-      maxImages: inspectAppleIpsInputSchema.shape.max_images,
-      maxRegisters: inspectAppleIpsInputSchema.shape.max_registers,
-      maxIntegerTextBytes:
-        inspectAppleIpsInputSchema.shape.max_integer_text_bytes,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const ips = createAppleIpsService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectAppleIps,
-          async () =>
-            finishCliEvidenceCommand(
-              args.path,
-              () =>
-                ips.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_threads: options.maxThreads,
-                    max_frames: options.maxFrames,
-                    max_images: options.maxImages,
-                    max_registers: options.maxRegisters,
-                    max_integer_text_bytes: options.maxIntegerTextBytes,
-                  },
-                  { signal },
-                ),
-              ips,
-              "rea-apple-ips",
-              "inspect_apple_ips",
-              signal,
-            ).then(projectCliAnalysisResult),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectKernelModule, {
-    description:
-      "Inspect Linux kernel module metadata without executing the module",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local ELF32/ELF64 kernel module or compressed .ko container",
-      ),
-    }),
-    options: z.object({
-      maxFileBytes: inspectKernelModuleInputSchema.shape.max_file_bytes,
-      maxEntries: inspectKernelModuleInputSchema.shape.max_entries,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const kernelModule = createKernelModuleService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectKernelModule,
-          async () =>
-            finishCliEvidenceCommand(
-              args.path,
-              () =>
-                kernelModule.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_entries: options.maxEntries,
-                  },
-                  { signal },
-                ),
-              kernelModule,
-              "rea-kernel-module",
-              "inspect_kernel_module",
-              signal,
-            ).then(projectCliAnalysisResult),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectPeLoadConfig, {
-    description:
-      "Inspect PE TLS callbacks and load configuration without executing the image",
-    args: z.object({
-      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectPeLoadConfigInputSchema.shape.max_file_bytes,
-      maxCallbacks: inspectPeLoadConfigInputSchema.shape.max_callbacks,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const elf = createPeLoadConfigService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectPeLoadConfig,
-          async () =>
-            finishCliEvidenceCommand(
-              args.path,
-              () =>
-                elf.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_callbacks: options.maxCallbacks,
-                  },
-                  { signal },
-                ),
-              elf,
-              "rea-pe-load-config",
-              "inspect_pe_load_config",
-              signal,
-            ).then(projectCliAnalysisResult),
-        );
-      }),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_elf_notes"),
+    {
+      description:
+        "Inspect ELF PT_NOTE and SHT_NOTE identities without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local ELF32/ELF64 image" } },
+    },
+    inspectWithService(createElfNotesService, "rea-elf-notes"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_dwarf_units"),
+    {
+      description: "Inspect DWARF compile units without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description:
+            "Local ELF, Mach-O, or PE image, or a DWARF file inside a .dSYM bundle",
+        },
+        architecture: {
+          description:
+            "CPU family of the slice to read from a universal Mach-O; required for universal files",
+        },
+      },
+    },
+    inspectWithService(createDwarfUnitsService, "rea-dwarf-units"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_elf_debug_link"),
+    {
+      description:
+        "Inspect ELF separate debug-file linkage without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path", "candidate_path"],
+      fields: {
+        path: { description: "Local ELF32/ELF64 image" },
+        candidate_path: {
+          description: "One caller-selected debug file to verify",
+        },
+      },
+    },
+    inspectWithService(createElfDebugLinkService, "rea-elf-debug-link"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_native_initializers"),
+    {
+      description:
+        "List ELF and Mach-O initializer and finalizer functions without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description:
+            "Local ELF32/ELF64, thin Mach-O or universal Mach-O image",
+        },
+        architecture: {
+          description:
+            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+        },
+      },
+    },
+    inspectWithService(
+      createNativeInitializersService,
+      "rea-native-initializers",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_elf_unwind_ranges"),
+    {
+      description:
+        "Inspect ELF unwind function ranges without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local ELF32/ELF64 image" } },
+    },
+    inspectWithService(createElfUnwindRangesService, "rea-elf-unwind-ranges"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_apple_ips"),
+    {
+      description:
+        "Inspect an Apple .ips crash report without executing a target",
+      positionals: ["path"],
+      callerPaths: ["path", "join_path"],
+      fields: {
+        path: { description: "Local Apple .ips crash report" },
+        join_path: {
+          description:
+            "Optional local Mach-O executable or dSYM whose slice LC_UUID matches report images",
+        },
+      },
+    },
+    inspectWithService(createAppleIpsService, "rea-apple-ips"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_kernel_module"),
+    {
+      description:
+        "Inspect Linux kernel module metadata without executing the module",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description:
+            "Local ELF32/ELF64 kernel module or compressed .ko container",
+        },
+      },
+    },
+    inspectWithService(createKernelModuleService, "rea-kernel-module"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_kernel_build_config"),
+    {
+      description:
+        "Inspect a Linux kernel image's version banner and embedded build config without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description:
+            "Local vmlinux ELF, raw Image, x86 bzImage/zImage, or configs.ko",
+        },
+      },
+    },
+    inspectWithService(
+      createKernelBuildConfigService,
+      "rea-kernel-build-config",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_load_config"),
+    {
+      description:
+        "Inspect PE TLS callbacks and load configuration without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(createPeLoadConfigService, "rea-pe-load-config"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_binary_hardening"),
+    {
+      description:
+        "Inspect ELF, PE, and Mach-O hardening without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local ELF, PE, or Mach-O image" } },
+    },
+    inspectWithService(createBinaryHardeningService, "rea-binary-hardening"),
+  );
   const entropy = createByteEntropyService();
-  cli.command(CLI_COMMANDS.inspectByteEntropy, {
-    description:
-      "Inspect file-wide and block byte entropy without executing the file",
-    args: z.object({ path: localPathStringSchema.describe("Local file") }),
-    options: z.object({
-      blockSize: inspectByteEntropyInputSchema.shape.block_size.describe(
-        "Power-of-two block size from 256 to 65536 bytes (default 4096)",
-      ),
-      offset: inspectByteEntropyInputSchema.shape.offset.describe(
-        "Window start as a decimal file byte offset (default 0)",
-      ),
-      length: inspectByteEntropyInputSchema.shape.length.describe(
-        "Window length in bytes; omit to extend through EOF",
-      ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectByteEntropy, async () => {
-          return await finishCliEvidenceCommand(
-            args.path,
-            () =>
-              entropy.inspect(
-                {
-                  path: absoluteCallerPath(args.path),
-                  block_size: options.blockSize,
-                  offset: options.offset,
-                  length: options.length,
-                },
-                { signal },
-              ),
-            entropy,
-            "rea-byte-entropy",
-            "inspect_byte_entropy",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
-  cli.command(CLI_COMMANDS.inspectPeCertificates, {
-    description:
-      "Inspect PE Authenticode certificate table identities without verifying signatures",
-    args: z.object({
-      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectPeCertificatesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectPeCertificatesInputSchema.shape.max_entries,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const pe = createPeCertificatesService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectPeCertificates,
-          async () =>
-            finishCliEvidenceCommand(
-              args.path,
-              () =>
-                pe.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_entries: options.maxEntries,
-                  },
-                  { signal },
-                ),
-              pe,
-              "rea-pe-certificates",
-              "inspect_pe_certificates",
-              signal,
-            ).then(projectCliAnalysisResult),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectPeImports, {
-    description:
-      "Inspect PE import and delay-load table identities without executing the image",
-    args: z.object({
-      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectPeImportsInputSchema.shape.max_file_bytes,
-      maxDlls: inspectPeImportsInputSchema.shape.max_dlls,
-      maxFunctions: inspectPeImportsInputSchema.shape.max_functions,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const pe = createPeImportsService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectPeImports,
-          async () =>
-            finishCliEvidenceCommand(
-              args.path,
-              () =>
-                pe.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_dlls: options.maxDlls,
-                    max_functions: options.maxFunctions,
-                  },
-                  { signal },
-                ),
-              pe,
-              "rea-pe-imports",
-              "inspect_pe_imports",
-              signal,
-            ).then(projectCliAnalysisResult),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectPeResources, {
-    description:
-      "Inspect PE resource identities, payload ranges, hashes and icon-group relationships",
-    args: z.object({
-      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectPeResourcesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectPeResourcesInputSchema.shape.max_entries,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const pe = createPeResourcesService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectPeResources,
-          async () =>
-            finishCliEvidenceCommand(
-              args.path,
-              () =>
-                pe.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_entries: options.maxEntries,
-                  },
-                  { signal },
-                ),
-              pe,
-              "rea-pe-resources",
-              "inspect_pe_resources",
-              signal,
-            ).then(projectCliAnalysisResult),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectDevicetree, {
-    description: "Inspect a flattened devicetree blob without executing it",
-    args: z.object({
-      path: localPathStringSchema.describe("Local flattened devicetree image"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectDevicetreeInputSchema.shape.max_file_bytes.describe(
-        "Maximum FDT file size in bytes (default 4194304)",
-      ),
-      maxNodes: inspectDevicetreeInputSchema.shape.max_nodes.describe(
-        "Maximum number of device-tree nodes (default 8192)",
-      ),
-      maxProperties: inspectDevicetreeInputSchema.shape.max_properties.describe(
-        "Maximum number of device-tree properties (default 32768)",
-      ),
-      maxDepth: inspectDevicetreeInputSchema.shape.max_depth.describe(
-        "Maximum device-tree nesting depth (default 64)",
-      ),
-      ...analysisEvidenceDeliveryOptions,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const devicetree = createDevicetreeService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectDevicetree,
-          async () =>
-            deliverCliAnalysisEvidence({
-              callerInputPath: args.path,
-              run: () =>
-                devicetree.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_nodes: options.maxNodes,
-                    max_properties: options.maxProperties,
-                    max_depth: options.maxDepth,
-                  },
-                  { signal },
-                ),
-              service: devicetree,
-              providerId: "rea-devicetree",
-              operation: "inspect_devicetree",
-              signal,
-              detail: options.detail,
-              evidenceOutput: options.evidence_output,
-            }),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectNativeExports, {
-    description:
-      "Inspect a PE or ELF image's export table without executing it",
-    args: z.object({
-      path: localPathStringSchema.describe("Local PE or ELF image"),
-    }),
-    options: z.object({
-      maxFileBytes: inspectNativeExportsInputSchema.shape.max_file_bytes,
-      ...analysisEvidenceDeliveryOptions,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const exports = createNativeExportsService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectNativeExports,
-          async () =>
-            deliverCliAnalysisEvidence({
-              callerInputPath: args.path,
-              run: () =>
-                exports.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                  },
-                  { signal },
-                ),
-              service: exports,
-              providerId: "rea-native-exports",
-              operation: "inspect_native_exports",
-              signal,
-              detail: options.detail,
-              evidenceOutput: options.evidence_output,
-            }),
-        );
-      }),
-  });
-  const service = createBinaryLayoutService(environment);
-  cli.command(CLI_COMMANDS.inspectBinaryLayout, {
-    description:
-      "Inspect binary file/linked layout without executing the selected object",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local ELF binary or relocatable object",
-      ),
-    }),
-    options: z.object({
-      pwntoolsTimeoutMs:
-        inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectBinaryLayout, async () => {
-          const result = await service.inspectAndClose(
-            {
-              path: absoluteCallerPath(args.path),
-              ...(options.pwntoolsTimeoutMs === undefined
-                ? {}
-                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
-            },
-            { signal },
-          );
-          return result.ok
-            ? withEvidenceCallerInputPath(result.value, args.path)
-            : projectAnalysisError(result.error);
-        }),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_byte_entropy"),
+    {
+      description:
+        "Inspect file-wide and block byte entropy without executing the file",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: { description: "Local file" },
+        block_size: {
+          description: "Power-of-two block size from 256 to 65536 bytes",
+        },
+        offset: { description: "Window start as a decimal file byte offset" },
+        length: {
+          description: "Window length in bytes; omit to extend through EOF",
+        },
+      },
+      omit: {
+        detail:
+          "One-shot output is complete Evidence; this command has no summary delivery",
+      },
+    },
+    inspectWithService(() => entropy, BYTE_ENTROPY_PROVIDER.id),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_certificates"),
+    {
+      description:
+        "Inspect PE Authenticode certificate table identities without verifying signatures",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(createPeCertificatesService, "rea-pe-certificates"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_imports"),
+    {
+      description:
+        "Inspect PE import and delay-load table identities without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(createPeImportsService, "rea-pe-imports"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_windows_shortcut"),
+    {
+      description:
+        "Inspect a Windows Shell Link (.lnk) without resolving or executing the target",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: { description: "Local Windows Shell Link (.lnk) file" },
+      },
+    },
+    inspectWithService(createWindowsShortcutService, "rea-windows-shortcut"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_resources"),
+    {
+      description:
+        "Inspect PE resource identities, payload ranges, hashes and icon-group relationships",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(createPeResourcesService, "rea-pe-resources"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_devicetree"),
+    {
+      description: "Inspect a flattened devicetree blob without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local flattened devicetree image" },
+        max_file_bytes: { description: "Maximum FDT file size in bytes" },
+        max_nodes: { description: "Maximum number of device-tree nodes" },
+        max_properties: {
+          description: "Maximum number of device-tree properties",
+        },
+        max_depth: { description: "Maximum device-tree nesting depth" },
+      },
+    },
+    deliverWithService(createDevicetreeService, "rea-devicetree"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_native_exports"),
+    {
+      description:
+        "Inspect a PE or ELF image's export table without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: { path: { description: "Local PE or ELF image" } },
+    },
+    deliverWithService(createNativeExportsService, "rea-native-exports"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_elf_dependencies"),
+    {
+      description:
+        "Inspect ELF needed libraries and required symbol versions without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local ELF32/ELF64 ET_EXEC or ET_DYN image" },
+      },
+    },
+    deliverWithService(createElfDependenciesService, "rea-elf-dependencies"),
+  );
+  const layout = createBinaryLayoutService(environment);
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_binary_layout"),
+    {
+      description:
+        "Inspect binary file/linked layout without executing the selected object",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      fields: {
+        path: { description: "Local ELF binary or relocatable object" },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+      },
+      omit: {
+        detail:
+          "One-shot output is complete Evidence; this command has no summary delivery",
+      },
+    },
+    async (input, context) => {
+      const result = await layout.inspectAndClose(input, {
+        signal: context.signal,
+      });
+      return result.ok
+        ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
+        : projectAnalysisError(result.error);
+    },
+  );
   const recorded = createRecordedCrashService(environment);
-  cli.command(CLI_COMMANDS.inspectRecordedCrash, {
-    description:
-      "Inspect supplied core registers/signals and optional debugger mapping evidence",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local Linux ELF64 amd64 or AArch64 little-endian core",
-      ),
-    }),
-    options: z.object({
-      debuggerContext: z
-        .boolean()
-        .default(false)
-        .describe("Add BYO core-only GDB/pwndbg mapping candidates"),
-      pwntoolsTimeoutMs:
-        inspectRecordedCrashInputSchema.shape.pwntools_timeout_ms,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectRecordedCrash, async () => {
-          const result = await recorded.inspectAndClose(
-            {
-              path: absoluteCallerPath(args.path),
-              include_debugger_context: options.debuggerContext,
-              ...(options.pwntoolsTimeoutMs === undefined
-                ? {}
-                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
-            },
-            { signal },
-          );
-          return result.ok
-            ? withEvidenceCallerInputPath(result.value, args.path)
-            : projectAnalysisError(result.error);
-        }),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_recorded_crash"),
+    {
+      description:
+        "Inspect supplied core registers/signals and optional debugger mapping evidence",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      fields: {
+        path: {
+          description: "Local Linux ELF64 amd64 or AArch64 little-endian core",
+        },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+        include_debugger_context: {
+          name: "debuggerContext",
+          description: "Add BYO core-only GDB/pwndbg mapping candidates",
+        },
+      },
+    },
+    async (input, context) => {
+      const result = await recorded.inspectAndClose(input, {
+        signal: context.signal,
+      });
+      return result.ok
+        ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
+        : projectAnalysisError(result.error);
+    },
+  );
 };

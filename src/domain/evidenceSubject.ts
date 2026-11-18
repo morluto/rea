@@ -27,7 +27,10 @@ export const evidenceSubjectFormatSchema = z.enum([
   "ines",
   "godot-pck",
   "unityfs",
+  "wxapkg",
   "uimage",
+  "android-boot-image",
+  "android-ota-payload",
   "dmg",
   "pkg",
   "plist",
@@ -43,6 +46,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "node-sea",
   "dotnet-bundle",
   "bun-standalone",
+  "deno-standalone",
   "intel-hex",
   "srec",
   "esp-image",
@@ -50,6 +54,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "dfuse",
   "esp-flash-image",
   "fit",
+  "ntfs-mft",
 ]);
 
 /** Format-owned architecture declarations shared by Evidence and persisted executions. */
