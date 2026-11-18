@@ -353,3 +353,32 @@ it("fails closed on truncation and overlapping ranges", async () => {
     ),
   ).rejects.toThrow(/overlaps entry/u);
 });
+
+it("finds an AVB footer before the final boot page boundary", async () => {
+  const pageSize = 32 * 1024;
+  const kernel = Buffer.alloc(64, 0x4b);
+  const padded = buildBootImage({
+    version: 0,
+    pageSize,
+    kernel,
+    ramdisk: Buffer.alloc(0),
+  });
+  const unpadded = padded.subarray(0, pageSize + kernel.length);
+  // avbtool append_vbmeta_image uses 4 KiB blocks independently of boot pages.
+  const path = await writeCarrier(
+    "early-footer.img",
+    appendAvbFooter(unpadded, {
+      vbmeta: Buffer.alloc(256),
+      vbmetaOffset: 36 * 1024,
+      partitionSize: 44 * 1024,
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+  expect(root?.format_metadata).toMatchObject({
+    avb_footer_present: true,
+    avb_original_image_size: unpadded.length,
+    avb_vbmeta_offset: 36 * 1024,
+    avb_vbmeta_size: 256,
+  });
+});

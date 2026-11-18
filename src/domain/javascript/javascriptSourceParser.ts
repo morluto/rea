@@ -179,6 +179,19 @@ const COMMONJS_WRAPPER_PARAMETERS = new Set([
   "__dirname",
 ]);
 
+/** Token recovery drops syntax. A wrapper redeclaration does not. */
+export const recoveredJavaScriptSyntaxErrorCount = (
+  errors: readonly ParsedJavaScriptSource["errors"][number][],
+): number =>
+  errors.filter((error) => !(error instanceof JavaScriptLoaderSyntaxError))
+    .length;
+
+/** Top-level lexical names that collide with Node's CommonJS parameters. */
+export const commonJsWrapperRedeclarationCount = (
+  errors: readonly ParsedJavaScriptSource["errors"][number][],
+): number =>
+  errors.filter((error) => error instanceof JavaScriptLoaderSyntaxError).length;
+
 /** Only top-level lexical bindings conflict with the wrapper's parameters. */
 const lexicalWrapperBindings = (program: t.Program): t.Identifier[] => {
   const bindings = new Map<string, t.Identifier>();

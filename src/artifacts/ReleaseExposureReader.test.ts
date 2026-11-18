@@ -32,7 +32,6 @@ import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTa
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
-import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -207,6 +206,30 @@ const ignoreText = (): void => undefined;
 // Keep the marker separate so Vite does not treat fixture text as this file's source map.
 const INLINE_MAP_PREFIX = "# sourceMappingURL=data:application/json;base64,";
 
+it.each([80, 200])(
+  "keeps a PE header truncated at %s bytes unclassified with PDB coverage unresolved",
+  async (length) => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-truncated-header-",
+    );
+    const path = join(root, "app.exe");
+    const bytes = pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" });
+    await writeFile(path, bytes.subarray(0, length));
+    for (const input of [root, path]) {
+      const scanned = await inspect(input);
+      expect(scanned.native_images).toEqual([]);
+      expect(scanned.pdb).toMatchObject({
+        examined: 0,
+        failed: 1,
+        paths: [],
+      });
+      expect(scanned.limitations).toContain(
+        `Could not decode the PE header in ${path} to inspect debug records.`,
+      );
+    }
+  },
+);
+
 describe("ReleaseExposureReader review regressions", () => {
   it("keeps inline CSS source-map coverage unknown in files and packages", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-css-");
@@ -254,8 +277,8 @@ describe("ReleaseExposureReader review regressions", () => {
     },
   );
 
-  it.each([80, 200, 520, 550])(
-    "preserves CodeView parsing truncated at %s bytes as unresolved",
+  it.each([520, 550])(
+    "preserves CodeView data truncated at %s bytes as unresolved",
     async (length) => {
       const root = await createTestTempDirectory(
         "rea-release-exposure-truncated-",
@@ -265,7 +288,10 @@ describe("ReleaseExposureReader review regressions", () => {
       });
       await writeFile(join(root, "app.exe"), bytes.subarray(0, length));
       const scanned = await inspect(root);
-      expect(scanned.pdb).toMatchObject({ failed: 1, paths: [] });
+      expect(scanned.native_images).toMatchObject([
+        { path: join(root, "app.exe"), format: "pe" },
+      ]);
+      expect(scanned.pdb).toMatchObject({ examined: 1, failed: 1, paths: [] });
     },
   );
 
@@ -432,11 +458,11 @@ describe("ReleaseExposureReader", () => {
     const elf = Buffer.alloc(300 * 1024);
     writeMinimalElfHeader(elf);
     await writeFile(join(root, "app.elf"), elf);
-    const pe = Buffer.concat([
-      windowsNativeArtifactFixture().bytes,
+    const peImage = Buffer.concat([
+      pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" }),
       Buffer.alloc(300 * 1024),
     ]);
-    await writeFile(join(root, "app.exe"), pe);
+    await writeFile(join(root, "app.exe"), peImage);
     const calls: string[] = [];
     const real = stableRead.impl;
     stableRead.impl = async (...args) => {
@@ -451,7 +477,14 @@ describe("ReleaseExposureReader", () => {
           (image) => image.format === "elf" && image.path.endsWith("app.elf"),
         ),
       ).toBe(true);
-      expect(scanned.pdb.examined).toBeGreaterThanOrEqual(1);
+      expect(scanned.native_images).toContainEqual(
+        expect.objectContaining({ path: join(root, "app.exe"), format: "pe" }),
+      );
+      expect(scanned.pdb).toMatchObject({
+        examined: 1,
+        failed: 0,
+        paths: ["app.pdb"],
+      });
       expect(calls.some((path) => path.endsWith("app.elf"))).toBe(false);
       expect(calls.some((path) => path.endsWith("app.exe"))).toBe(true);
     } finally {
@@ -1949,6 +1982,38 @@ describe("ReleaseExposureReader unread packaged maps", () => {
 });
 
 describe("ReleaseExposureReader undecided PE members", () => {
+  it("keeps a malformed complete member separate from an unexamined header", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-pe-");
+    const bytes = pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" });
+    const image = Buffer.concat([bytes, Buffer.alloc(2 * 1024 * 1024)]);
+    // The complete optional header lies in the probe, but its magic is invalid.
+    image.writeUInt16LE(0, 64 + 24);
+    await writeFile(
+      join(root, "app.exe"),
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "malformed.bin",
+            typeCode: "x",
+            compress: false,
+            payload: image,
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.pdb).toMatchObject({ examined: 1, failed: 1, paths: [] });
+    expect(scanned.omitted).not.toContainEqual(
+      expect.objectContaining({ subject: PACKAGED_NATIVE_IMAGES }),
+    );
+    expect(scanned.limitations.join("\n")).toContain(
+      "malformed.bin to inspect debug records.",
+    );
+  });
+
   it.each(["payload.map", "payload.bin", "payload.json"])(
     "keeps a large PE member named %s with a late header undecided",
     async (name) => {
