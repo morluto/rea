@@ -3,16 +3,9 @@ description: Install the POSIX MinGW x64 toolchain from the signed Ubuntu archiv
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/ubuntu-archive
     - shell: bash
       run: |
-        # Hosted runners can use either Azure or regional EC2 Ubuntu mirrors.
-        # Both are replaced before apt resolves any package URL.
-        for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-          if [ -f "$source" ]; then
-            sudo sed -Ei.bak 's|https?://([[:alnum:]-]+\.)*archive\.ubuntu\.com/|https://archive.ubuntu.com/|g' "$source"
-          fi
-        done
-        sudo apt-get update
         # The addon uses std::mutex. Install one threading model and select
         # it explicitly so preinstalled alternatives cannot choose another.
         sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64-posix

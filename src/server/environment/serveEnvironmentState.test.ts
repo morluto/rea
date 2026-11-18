@@ -99,14 +99,16 @@ const dataPlane = (
     },
   ).find((entry) => entry.path === ENVIRONMENT_RPC_PATH);
   if (route === undefined) throw new Error("No data-plane route");
-  const post = async (body: unknown, signal?: AbortSignal) => {
-    const response = await route.handle(
+  const postRaw = (body: unknown, signal?: AbortSignal) =>
+    route.handle(
       new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
         method: "POST",
         body: typeof body === "string" ? body : JSON.stringify(body),
         ...(signal === undefined ? {} : { signal }),
       }),
     );
+  const post = async (body: unknown, signal?: AbortSignal) => {
+    const response = await postRaw(body, signal);
     return {
       status: response.status,
       json: response.status === 202 ? undefined : await response.json(),
@@ -122,7 +124,7 @@ const dataPlane = (
       })
     ).json;
   const add = (part: unknown) => call("data/add", { parts: [part] });
-  return { store, post, call, add };
+  return { store, postRaw, post, call, add };
 };
 
 const loginOf = (store: EnvironmentStateStore) =>
@@ -610,7 +612,7 @@ describe("state data plane cancellation", () => {
 });
 
 describe("state data plane response budget", () => {
-  it("answers replies past the response budget with an error stating it instead of building the body", async () => {
+  it("measures oversized batch replies without stringifying them whole and leaves room for reset", async () => {
     const document = renamedDocument();
     const large = {
       rea_state: {
@@ -636,89 +638,53 @@ describe("state data plane response budget", () => {
       plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } }),
     ).resolves.toMatchObject({ result: {} });
     const get = (id: number) => ({ jsonrpc: "2.0", id, method: "data/get" });
-    const batch = await plane.post([
-      get(1),
-      get(2),
-      get(3),
-      get(4),
-      { jsonrpc: "2.0", id: 5, method: "data/reset" },
-    ]);
-    // Two reads fit; the third and fourth would pass the budget, and the reset's small reply is kept.
-    expect(batch.json).toMatchObject([
-      { id: 1, result: { parts: [{ kind: "data" }] } },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
-      {
+    const replyBytes = Buffer.byteLength(
+      JSON.stringify({
+        jsonrpc: "2.0",
         id: 3,
-        error: {
-          code: -32000,
-          data: {
-            max_response_bytes: MAX_RPC_RESPONSE_BYTES,
-            reply_bytes: expect.any(Number),
-          },
-        },
-      },
-      { id: 4, error: { code: -32000 } },
-      { id: 5, result: {} },
-    ]);
-    expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
-      MAX_RPC_RESPONSE_BYTES,
+        result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
+      }),
     );
-    expect(loginOf(plane.store)).toBe("probe");
-  });
-
-  it("measures each reply before building it, so one past the budget is never serialized whole", async () => {
-    const document = renamedDocument();
-    const login = "x".repeat(Math.ceil(MAX_RPC_RESPONSE_BYTES / 3));
-    const large = {
-      rea_state: {
-        ...document.rea_state,
-        entities: document.rea_state.entities.map((entity) =>
-          entity.type === "/api/users" && entity.id === "2"
-            ? { ...entity, fields: { ...entity.fields, login } }
-            : entity,
-        ),
-      },
-    };
-    const root = await createTestTempDirectory(
-      "rea-environment-state-measure-",
-    );
-    const path = join(root, "large.json");
-    await writeFile(path, JSON.stringify(large));
-    const plane = dataPlane();
-    await plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } });
-    const reply = (id: number) => ({
-      jsonrpc: "2.0",
-      id,
-      result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
-    });
-    const replyBytes = Buffer.byteLength(JSON.stringify(reply(3)));
     const stringify = vi.spyOn(JSON, "stringify");
     try {
-      const batch = await plane.post(
-        [1, 2, 3].map((id) => ({ jsonrpc: "2.0", id, method: "data/get" })),
-      );
-      // A refused read is measured exactly, from bounded parts.
-      expect(batch.json).toMatchObject([
-        { id: 1 },
-        { id: 2 },
-        {
-          id: 3,
-          error: {
-            data: { reply_bytes: replyBytes },
-          },
-        },
+      const response = await plane.postRaw([
+        get(1),
+        get(2),
+        get(3),
+        get(4),
+        { jsonrpc: "2.0", id: 5, method: "data/reset" },
       ]);
-      // No whole reply was handed to JSON.stringify by the server.
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(
+        MAX_RPC_RESPONSE_BYTES,
+      );
+      const refusal = {
+        code: -32000,
+        data: {
+          max_response_bytes: MAX_RPC_RESPONSE_BYTES,
+          reply_bytes: replyBytes,
+        },
+      };
       expect(
         stringify.mock.calls.some(
           ([value]) =>
             typeof value === "object" &&
             value !== null &&
             "result" in value &&
-            typeof (value as { result?: unknown }).result === "object" &&
-            (value as { id?: unknown }).id === 3,
+            typeof value.result === "object" &&
+            "id" in value &&
+            (value.id === 3 || value.id === 4),
         ),
       ).toBe(false);
+      expect(JSON.parse(text)).toMatchObject([
+        { id: 1, result: { parts: [{ kind: "data" }] } },
+        { id: 2, result: { parts: [{ kind: "data" }] } },
+        { id: 3, error: refusal },
+        { id: 4, error: refusal },
+        { id: 5, result: {} },
+      ]);
+      expect(loginOf(plane.store)).toBe("probe");
     } finally {
       stringify.mockRestore();
     }
