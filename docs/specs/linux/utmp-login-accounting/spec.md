@@ -92,6 +92,10 @@ that reachable, and rounding it would collapse two distinct records onto one
 value. The record keeps the rounded number every consumer reads and the exact
 decimal in `imprecise_field`, so the source fact is never lost silently.
 
+A supplied profile is resolved by name to the published layout, so a mutated copy
+cannot supply a `recordBytes` the parser then divides by; a name that is not
+published is `unknown_format` rather than a decode.
+
 `maxRecords` is admitted only as a nonnegative safe integer. `NaN`, a fraction, a
 negative value and `Infinity` are all `number` but none is a record count:
 accepting them would make the retained records, `omitted`, and the

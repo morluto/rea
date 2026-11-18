@@ -194,6 +194,11 @@ export type UtmpIssue =
       readonly exact: string;
     }
   | {
+      readonly kind: "unknown_format";
+      /** The unpublised profile name the caller supplied. */
+      readonly name: string;
+    }
+  | {
       readonly kind: "invalid_record_budget";
       /** The rejected value as the caller supplied it, including `NaN`. */
       readonly value: string;
@@ -405,29 +410,11 @@ export const parseUtmpFile = (
   },
 ): Result<UtmpParseResult, readonly UtmpIssue[]> => {
   const issues: UtmpIssue[] = [];
-  if (input.byteLength === 0)
-    return ok({
-      profile: options.profile ?? null,
-      source: options.source,
-      records: [],
-      issues,
-    });
-
-  // A truncated tail lets a larger record explain any shorter length, so the
-  // length never proves the ABI on its own. Every profile stays a candidate —
-  // narrowing by divisibility would advertise an ABI the bytes do not establish.
-  if (options.profile === undefined) {
-    issues.push({
-      kind: "ambiguous_format",
-      candidates: UTMP_FORMAT_PROFILES.map((candidate) => candidate.name),
-    });
-    return { ok: false, error: issues };
-  }
-
   // A count allowed by `number` but not by record semantics makes coverage and
   // the retention ceiling lie: `NaN` retains nothing, `1.5` keeps two records and
   // reports a fractional omission, `Infinity` removes the bound. Reject it instead
-  // of clamping, so the diagnostics stay truthful.
+  // of clamping, so the diagnostics stay truthful — including for an empty file,
+  // whose result must not depend on whether the log happened to carry bytes.
   const requestedLimit = options.maxRecords;
   if (
     requestedLimit !== undefined &&
@@ -440,7 +427,39 @@ export const parseUtmpFile = (
     return { ok: false, error: issues };
   }
 
-  const profile = options.profile;
+  // A caller can hold a structurally valid profile whose fields do not describe
+  // any published layout. The name is the identity, so resolve it and reject a
+  // name that is not published rather than dividing by its `recordBytes`.
+  const requested = options.profile;
+  const canonical =
+    requested === undefined
+      ? undefined
+      : UTMP_FORMAT_PROFILES.find(({ name }) => name === requested.name);
+  if (requested !== undefined && canonical === undefined) {
+    issues.push({ kind: "unknown_format", name: String(requested.name) });
+    return { ok: false, error: issues };
+  }
+
+  if (input.byteLength === 0)
+    return ok({
+      profile: canonical === undefined ? null : canonical,
+      source: options.source,
+      records: [],
+      issues,
+    });
+
+  // A truncated tail lets a larger record explain any shorter length, so the
+  // length never proves the ABI on its own. Every profile stays a candidate —
+  // narrowing by divisibility would advertise an ABI the bytes do not establish.
+  const profile = canonical;
+  if (profile === undefined) {
+    issues.push({
+      kind: "ambiguous_format",
+      candidates: UTMP_FORMAT_PROFILES.map((candidate) => candidate.name),
+    });
+    return { ok: false, error: issues };
+  }
+
   const little = profile.byteOrder === "little";
   const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
   const reader = new BinaryReader(bytes, little, UTMP_FORMAT);

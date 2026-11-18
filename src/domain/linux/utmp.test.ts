@@ -468,3 +468,50 @@ describe("utmp caller-supplied bounds and wide fields", () => {
     expect(result.value.issues).toEqual([]);
   });
 });
+
+describe("utmp option validation before decoding", () => {
+  it("rejects an impossible budget for an empty file too", () => {
+    // The option is invalid regardless of whether the log carried bytes, so the
+    // verdict must not depend on the file contents.
+    const result = parseUtmpFile(new Uint8Array(0), {
+      source: "utmp",
+      maxRecords: Number.NaN,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toEqual([
+      { kind: "invalid_record_budget", value: "NaN" },
+    ]);
+  });
+
+  it("resolves a supplied profile by name instead of trusting its fields", () => {
+    // `recordBytes: 0` would divide by zero and return 10,000 copies of offset 0.
+    const mutated = { ...glibc32, recordBytes: 0 };
+    const result = parseUtmpFile(recordBytes(glibc32, login()), {
+      source: "utmp",
+      profile: mutated,
+    });
+    if (!result.ok) throw new Error("expected the canonical layout to decode");
+    expect(result.value.profile?.recordBytes).toBe(384);
+    expect(result.value.records).toHaveLength(1);
+    expect(result.value.records[0]?.user).toBe("analyst");
+  });
+
+  it("names an unpublished profile rather than decoding under it", () => {
+    // A name outside the published union: type-correct callers reach this once a
+    // profile arrives from JSON rather than from this module.
+    const invented = {
+      ...glibc32,
+      name: "glibc-time32-be",
+    } as unknown as UtmpFormatProfile;
+    const result = parseUtmpFile(recordBytes(glibc32, login()), {
+      source: "utmp",
+      profile: invented,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toEqual([
+      { kind: "unknown_format", name: "glibc-time32-be" },
+    ]);
+  });
+});
