@@ -1491,6 +1491,9 @@ failed `cleanup` check with the reason and retained run identifier.
 The default terminal format is TOON. Complete TOON results are validated
 before stdout receives the document. Large results use a private file in the
 system temporary directory until delivery finishes and need free space there.
+If closing or removing that stage fails, CLI shutdown retains and retries its
+cleanup in order. The reported cleanup failure preserves any original formatting
+or temporary-storage refusal.
 A document can exceed the runtime's string limit when each encoded line fits.
 Token counting and token windows still require a complete formatted string.
 Use `--json` to stream the result without TOON staging or to save it for a

@@ -90,7 +90,7 @@ class Elf:
                     kind = row[1] & (0xFFFFFFFF if self.width == 8 else 255)
                     if kind == relative:
                         self.overlay[row[0]] = (row[2] if rela else self.pointer(row[0]), encoding)
-            elif section["type"] == 19:
+            elif section["type"] in (19, 0x6FFFFF00):
                 self.encodings.add("RELR")
                 cursor = 0
                 for offset in range(section["offset"], section["offset"] + section["size"], self.width):
