@@ -61,6 +61,7 @@ import {
 } from "../domain/webTraceProviders.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../erlang/ErlangBeamProviderIdentity.js";
+import { UNREAL_PAK_PROVIDER_IDENTITY } from "../unreal/UnrealPakProviderIdentity.js";
 import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "../v8/V8CodeCacheProviderIdentity.js";
 import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "../java/MavenGradleMetadataProviderIdentity.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "../evm/EvmoleProviderIdentity.js";
@@ -300,6 +301,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(ERLANG_BEAM_PROVIDER_IDENTITY, {
         group: "ERLANG_BEAM_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  unrealPak: {
+    providers: [
+      providerBinding(UNREAL_PAK_PROVIDER_IDENTITY, {
+        group: "UNREAL_TOOL_CONTRACTS",
       }),
     ],
   },

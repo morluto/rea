@@ -16,6 +16,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "python",
   "nuget",
   "rust",
+  "unreal",
   "wasm",
   "captures",
   "signals",

@@ -155,6 +155,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   signalRecording: { cases: ["tests/boundary/mcp/signalRecordingMcp.test.ts"] },
   sqliteDatabase: { cases: ["tests/acceptance/sqliteDatabaseCli.test.ts"] },
   v8CodeCache: { cases: ["tests/acceptance/v8CodeCacheCli.test.ts"] },
+  unrealPak: { cases: ["tests/acceptance/unrealPakCli.test.ts"] },
   wasmArtifact: { cases: ["tests/boundary/mcp/wasmArtifactMcp.test.ts"] },
   webModuleTrace: { cases: ["tests/boundary/mcp/webModuleTraceMcp.test.ts"] },
   webNetworkCapture: {

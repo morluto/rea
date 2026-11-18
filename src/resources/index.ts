@@ -108,6 +108,7 @@ export {
   completedStableArtifact,
   completedStableArtifactStream,
   readStableArtifact,
+  readStableArtifactRanges,
   streamStableArtifact,
 } from "./readStableArtifact.js";
 export type {

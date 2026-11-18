@@ -160,6 +160,24 @@ export const fixedCeilingConstraint = (
     fixedAllowance: ceiling,
   });
 
+/**
+ * Refuse while a single-admission owner is occupied. The request is unchanged
+ * and retryable once the active work completes.
+ */
+export const occupiedCapacityConstraint = (
+  operation: string,
+  reason: string,
+  reportedLimits: Readonly<Record<string, number>>,
+  remediationAction: string,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    "capacity",
+    reason,
+    reportedLimits,
+    { retryable: true, measuredExhaustion: true, remediationAction },
+  );
+
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,

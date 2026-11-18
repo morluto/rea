@@ -54,6 +54,7 @@ import type { RecordedCrashService } from "../application/binaryDiagnostics/Reco
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
+import type { UnrealPakService } from "../application/unreal/UnrealPakService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { inspectDartAot } from "../application/flutter/DartAotInspection.js";
@@ -636,6 +637,12 @@ const SERVICE_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<BeamService>,
+  unrealPak: ((service, retention) => ({
+    inspect_unreal_pak: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<UnrealPakService>,
   v8CodeCache: ((service) => ({
     inspect_v8_code_cache: {
       admission: "sdk",

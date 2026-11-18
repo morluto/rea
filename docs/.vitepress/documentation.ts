@@ -725,6 +725,11 @@ export const documentationSections = [
         source: "unityfs.md",
         route: "/unityfs",
       },
+      {
+        text: "Unreal pak indexes",
+        source: "unreal-pak.md",
+        route: "/unreal-pak",
+      },
     ],
   },
 ];
