@@ -23,6 +23,7 @@ import {
   applicationGraphEvidenceSchema,
   isCompatibleApplicationGraphEvidenceLocation,
   isValidApplicationGraphEvidenceContext,
+  qualifyJavaScriptLoaderEvidence,
 } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
@@ -204,18 +205,7 @@ export class JavaScriptSemanticEvidenceContextRegistry {
           : locationValue?.kind === "artifact-path"
             ? locationValue.path
             : undefined) === condition.path
-        ? {
-            ...evidence,
-            confidence:
-              evidence.confidence === "exact" || evidence.confidence === "high"
-                ? "medium"
-                : evidence.confidence,
-            coverage:
-              evidence.coverage.status === "complete"
-                ? { ...evidence.coverage, status: "partial" }
-                : evidence.coverage,
-            limitations: [...evidence.limitations, condition.limitation],
-          }
+        ? qualifyJavaScriptLoaderEvidence(evidence, condition.limitation)
         : evidence,
     );
     const { location, ...context } = normalized;

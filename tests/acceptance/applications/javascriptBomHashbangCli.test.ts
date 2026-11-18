@@ -424,7 +424,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   "retains loader evidence for compiler dotfiles and semantic calls through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-bom-semantic-");
-    const callSource = "function marker(value) { return value; } marker(42);";
+    const callSource =
+      'function marker(value) { return value; } marker(42); fetch("https://example.test");';
     await writeFixtureFiles(root, {
       "package.json": '{"type":"commonjs"}',
       ".jsx": '\uFEFF#!/usr/bin/env node\nimport("./dep.mjs");',
@@ -450,6 +451,47 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           expect.stringContaining("BOM/hashbang"),
         ]),
       });
+    }
+    for (const path of ["main.cjs", "plain.cjs"]) {
+      const atSource = ({
+        evidence,
+      }: {
+        evidence: (typeof graph.edges)[number]["evidence"];
+      }) =>
+        evidence.location.available &&
+        evidence.location.value.kind === "source-range" &&
+        evidence.location.value.source === path;
+      const endpoint = graph.nodes.find(
+        ({ kind, observations }) =>
+          kind === "endpoint" && observations.some(atSource),
+      );
+      const observation = endpoint?.observations.find(atSource);
+      const edge = graph.edges.find(
+        (edge) =>
+          edge.relation === "calls" &&
+          edge.target_node_id === endpoint?.node_id &&
+          atSource(edge),
+      );
+      expect(observation).toBeDefined();
+      expect(edge).toBeDefined();
+      if (path === "main.cjs") {
+        for (const fact of [observation, edge])
+          expect.soft(fact?.evidence).toMatchObject({
+            coverage: { status: "partial" },
+            confidence: "medium",
+            limitations: expect.arrayContaining([
+              expect.stringContaining("BOM/hashbang"),
+            ]),
+          });
+      } else {
+        expect.soft(edge?.evidence).toMatchObject({
+          confidence: "high",
+          coverage: { status: "complete" },
+        });
+        expect
+          .soft(observation?.evidence.limitations)
+          .not.toContainEqual(expect.stringContaining("BOM/hashbang"));
+      }
     }
     for (const { path, status } of [
       { path: "main.cjs", status: "partial" },

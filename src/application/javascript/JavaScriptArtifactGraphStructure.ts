@@ -691,11 +691,9 @@ const createFileTarget = (
           operation: "inventory-relevant-file",
           coverage: completeApplicationCoverage(),
           limitations:
-            javascript?.analysis_coverage.semantics.uncertainty.includes(
-              "conditional-loader",
-            )
-              ? javascript.limitations
-              : [],
+            javascript?.loaderCondition === undefined
+              ? []
+              : [javascript.loaderCondition],
         }),
       },
     ],

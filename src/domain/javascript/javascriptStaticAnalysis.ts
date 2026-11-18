@@ -131,6 +131,7 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
     parse_error_count: parserErrors,
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
       ...(loaderCondition === undefined ? [] : [loaderCondition]),
       `${reason} Absence of findings is not evidence of absence.`,
@@ -442,6 +443,7 @@ const finalizeStaticAnalysis = (
         accumulator.moduleRangeIndex,
       ),
     },
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations,
   };
 };

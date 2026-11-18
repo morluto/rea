@@ -75,18 +75,8 @@ export function* addJavaScriptStaticFindingsSteps(
     const asset = context.assetNodes.get(file.path);
     if (javascript === null || asset === undefined) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
-    const loaderLimitations =
-      javascript.analysis_coverage.semantics.uncertainty.includes(
-        "conditional-loader",
-      )
-        ? javascript.limitations
-        : [];
     for (const value of javascript.references)
-      addReference(
-        context,
-        { file, asset, value, coverage, loaderLimitations },
-        omissions,
-      );
+      addReference(context, { file, asset, value, coverage }, omissions);
     for (const value of javascript.endpoints)
       addEndpoint(context, { file, asset, value, coverage });
     for (const value of javascript.storage)
@@ -204,9 +194,7 @@ function* propagateApplicationOwners(
 
 const addReference = (
   context: JavaScriptArtifactGraphContext,
-  input: FindingInput<StaticReference> & {
-    readonly loaderLimitations: readonly string[];
-  },
+  input: FindingInput<StaticReference>,
   omissions: { selfReferences: number; imports: Map<string, Set<string>> },
 ): void => {
   const source =
@@ -223,13 +211,8 @@ const addReference = (
       : resolveReference(context, input.file.path, input.value, input.coverage);
   const candidateLoader = input.value.loader_authority === "candidate";
   const loaderEvidence = {
-    confidence: candidateLoader
-      ? ("low" as const)
-      : input.loaderLimitations.length > 0
-        ? ("medium" as const)
-        : ("high" as const),
+    confidence: candidateLoader ? ("low" as const) : ("high" as const),
     limitations: [
-      ...input.loaderLimitations,
       ...(resolved?.limitations ??
         (candidateLoader
           ? [
