@@ -1876,7 +1876,7 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Home{ph1}{ph2}/{ph3}Dinosaur speed lab"
-msgstr "{ph0}Inicio{ph1}{ph2}/{ph3}Laboratorio de velocidad de dinosaurios"
+msgstr "{ph0}Inicio{ph1}{ph2}/{ph3}Laboratorio de velocidad del dinosaurio"
 
 #: website/public/examples/dino-lab/index.html:205
 msgctxt "page:examples/dino-lab/index.html"
@@ -1924,7 +1924,7 @@ msgstr "{ph0}Juega y cambia la velocidad{ph1}"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Read the recovered rule{ph1}"
-msgstr "{ph0}Lea la regla recuperada{ph1}"
+msgstr "{ph0}Lee la regla recuperada{ph1}"
 
 #. {ph0}: <a href="#check">
 #. {ph1}: </a>
@@ -1932,7 +1932,7 @@ msgstr "{ph0}Lea la regla recuperada{ph1}"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Check the reconstruction{ph1}"
-msgstr "{ph0}Compruebe la reconstrucción{ph1}"
+msgstr "{ph0}Comprueba la reconstrucción{ph1}"
 
 #. {ph0}: <a href="#inspect">
 #. {ph1}: </a>
@@ -1940,7 +1940,7 @@ msgstr "{ph0}Compruebe la reconstrucción{ph1}"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Try the analysis{ph1}"
-msgstr "{ph0}Pruebe el análisis{ph1}"
+msgstr "{ph0}Prueba el análisis{ph1}"
 
 #: website/public/examples/dino-lab/index.html:226
 msgctxt "page:examples/dino-lab/index.html"
@@ -1954,15 +1954,15 @@ msgid ""
 " or faster game; it switches to a fixed speed. Select the recovered rule to "
 "start at 6 and gradually accelerate again."
 msgstr ""
-"Presiona Play, luego salta sobre el cactus. Mueva el control deslizante de "
-"velocidad para probar un juego más lento o más rápido; cambia a una "
-"velocidad fija. Seleccione la regla recuperada para comenzar en 6 y acelerar"
-" gradualmente nuevamente."
+"Pulsa Jugar y después salta el cactus. Mueve el control deslizante de "
+"velocidad para probar un juego más lento o más rápido; pasa a una velocidad "
+"fija. Selecciona la regla recuperada para volver a empezar en 6 y acelerar "
+"poco a poco."
 
 #: website/public/examples/dino-lab/index.html:233
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Play the reconstruction"
-msgstr "Juega a la reconstrucción"
+msgstr "Juega con la reconstrucción"
 
 #: website/public/examples/dino-lab/index.html:265
 msgctxt "page:examples/dino-lab/index.html"
@@ -1987,19 +1987,19 @@ msgstr "Velocidad"
 #: website/public/examples/dino-lab/index.html:282
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Use the recovered acceleration rule"
-msgstr "Utilice la regla de aceleración recuperada"
+msgstr "Usar la regla de aceleración recuperada"
 
 #: website/public/examples/dino-lab/index.html:286
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Original rule: start at 6, then increase toward 13."
-msgstr "Regla original: comience en 6, luego aumente hacia 13."
+msgstr "Regla original: empieza en 6 y después aumenta hacia 13."
 
 #: website/public/examples/dino-lab/index.html:289
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Move the slider to set your own speed. Space or Jump clears a cactus."
 msgstr ""
-"Mueva el control deslizante para establecer su propia velocidad. Espaciar o "
-"saltar despeja un cactus."
+"Mueve el control deslizante para fijar tu propia velocidad. Con Espacio o "
+"Saltar se esquiva un cactus."
 
 #: website/public/examples/dino-lab/index.html:294
 msgctxt "page:examples/dino-lab/index.html"
@@ -2007,13 +2007,13 @@ msgid ""
 "Enable JavaScript to play the reconstruction. The code and explanation above"
 " remain readable."
 msgstr ""
-"Habilite JavaScript para reproducir la reconstrucción. El código y la "
-"explicación anteriores siguen siendo legibles."
+"Activa JavaScript para jugar con la reconstrucción. El código y la "
+"explicación de arriba siguen siendo legibles."
 
 #: website/public/examples/dino-lab/index.html:302
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Read the script REA returned"
-msgstr "Lea el script REA devuelto"
+msgstr "Lee el script que devolvió REA"
 
 #. {ph0}: <a href="https://wayou.github.io/t-rex-runner/" >
 #. {ph1}: </a >
@@ -2026,9 +2026,9 @@ msgid ""
 " returned the loaded {ph2}, including this branch in the game’s update "
 "function:"
 msgstr ""
-"Inspeccionamos {ph0}edición de navegador derivada de Chromium de wayou{ph1} "
-"con REA. Devolvió lo cargado {ph2}, incluyendo esta rama en la función de "
-"actualización del juego:"
+"Inspeccionamos la {ph0}edición para navegador de wayou, derivada de "
+"Chromium{ph1}, con REA. Devolvió el {ph2} cargado, incluida esta rama de la "
+"función de actualización del juego:"
 
 #. {ph0}: <code>SPEED: 6</code>
 #. {ph1}: <code>ACCELERATION: 0.001</code>
@@ -2062,10 +2062,10 @@ msgid ""
 "collision checks are new code for this teaching game; its simulation "
 "advances at 60 updates per second."
 msgstr ""
-"El minijuego utiliza esta función para la aceleración automática. Mover el "
-"control deslizante proporciona una velocidad fija en su lugar. El dibujo, la"
-" física de salto y las comprobaciones de colisión de rectángulos son un "
-"nuevo código para este juego de enseñanza; su simulación avanza a 60 "
+"El minijuego usa esta función para la aceleración automática. Al mover el "
+"control deslizante se aplica en su lugar una velocidad fija. El dibujo, la "
+"física del salto y las comprobaciones de colisión entre rectángulos son "
+"código nuevo para este juego didáctico; su simulación avanza a 60 "
 "actualizaciones por segundo."
 
 #. {ph0}: <a href="../../assets/dino-speed.js" download >
@@ -2083,7 +2083,7 @@ msgstr ""
 #: website/public/examples/dino-lab/index.html:357
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Check the reconstruction"
-msgstr "Compruebe la reconstrucción"
+msgstr "Comprueba la reconstrucción"
 
 #: website/public/examples/dino-lab/index.html:358
 msgctxt "page:examples/dino-lab/index.html"
@@ -2092,9 +2092,9 @@ msgid ""
 "scheduling disabled. Compare those recorded speeds with a replay of the "
 "recovered rule."
 msgstr ""
-"Llamamos desactivada la función de actualización del juego original con "
-"obstáculos y programación automática. Compare esas velocidades registradas "
-"con una repetición de la regla recuperada."
+"Llamamos a la función de actualización del juego original con los obstáculos"
+" y la programación automática desactivados. Compara esas velocidades "
+"registradas con una reproducción de la regla recuperada."
 
 #: website/public/examples/dino-lab/index.html:367
 msgctxt "page:examples/dino-lab/index.html"
@@ -2114,7 +2114,7 @@ msgstr "Regla reconstruida"
 #: website/public/examples/dino-lab/index.html:396
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Run the speed check"
-msgstr "Ejecute la verificación de velocidad"
+msgstr "Ejecutar la comprobación de velocidad"
 
 #: website/public/examples/dino-lab/index.html:399
 msgctxt "page:examples/dino-lab/index.html"
@@ -2122,14 +2122,13 @@ msgid ""
 "Values rounded to three decimals. The branch checks before adding, so the "
 "final increment can take speed just above 13."
 msgstr ""
-"Valores redondeados a tres decimales. La rama verifica antes de agregar, por"
-" lo que el incremento final puede tomar una velocidad justo por encima de "
-"13."
+"Valores redondeados a tres decimales. La rama comprueba antes de sumar, así "
+"que el último incremento puede dejar la velocidad justo por encima de 13."
 
 #: website/public/examples/dino-lab/index.html:405
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Try the analysis yourself"
-msgstr "Pruebe el análisis usted mismo"
+msgstr "Prueba el análisis tú mismo"
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
@@ -2137,7 +2136,7 @@ msgstr "Pruebe el análisis usted mismo"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Set up REA{ph1} with your coding agent."
-msgstr "{ph0}Configurar REA{ph1} con su agente de codificación."
+msgstr "{ph0}Configura REA{ph1} con tu agente de programación."
 
 #. {ph0}: <a href="../../guides/browser/#prepare" >
 #. {ph1}: </a >
@@ -2148,7 +2147,7 @@ msgctxt "page:examples/dino-lab/index.html"
 msgid ""
 "Follow the {ph0}browser connection steps{ph1}, using {ph2} as the page URL."
 msgstr ""
-"Siga el {ph0}pasos de conexión del navegador{ph1}, usando {ph2} como la URL "
+"Sigue los {ph0}pasos de conexión del navegador{ph1}, usando {ph2} como URL "
 "de la página."
 
 #: website/public/examples/dino-lab/index.html:418
@@ -2157,8 +2156,8 @@ msgid ""
 "Give your agent the page URL and local debugging endpoint, then copy this "
 "prompt."
 msgstr ""
-"Proporcione a su agente la URL de la página y el punto final de depuración "
-"local, luego copie este mensaje."
+"Dale a tu agente la URL de la página y el endpoint de depuración local, y "
+"después copia este prompt."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -2172,7 +2171,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -2188,9 +2187,9 @@ msgid ""
 "faster? Show the speed rule, then build a small version with an adjustable "
 "speed.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Utilice REA para inspeccionar este juego de dinosaurios. "
-"¿Por qué se vuelve más rápido? Muestre la regla de velocidad, luego cree una"
-" versión pequeña con una velocidad ajustable.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Usa REA para inspeccionar este juego del dinosaurio. ¿Por "
+"qué va cada vez más rápido? Muestra la regla de velocidad y después crea una"
+" versión pequeña con velocidad ajustable.{ph3}{ph4}{ph5}"
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -2201,8 +2200,8 @@ msgid ""
 "Ask a follow-up: {ph0}“Where is jump height calculated? Add a jump-height "
 "control to the new version.”{ph1}"
 msgstr ""
-"Solicite un seguimiento: {ph0}\"¿Dónde se calcula la altura del salto? "
-"Agregue un control de altura de salto a la nueva versión.”{ph1}"
+"Haz una pregunta de seguimiento: {ph0}“¿Dónde se calcula la altura del "
+"salto? Añade un control de altura de salto a la nueva versión.”{ph1}"
 
 #. {ph0}: <a href="https://github.com/wayou/t-rex-
 #. runner/blob/5455bfa408ec6b707c7300ff194b7390733a766d/index.js#L565-L571" >
@@ -2217,14 +2216,14 @@ msgid ""
 " BSD license{ph3}. REA 4.1.0 inspected the running HTTP edition in Chrome "
 "150."
 msgstr ""
-"Fuente: {ph0}código de velocidad inspeccionado{ph1}, Autores Chromium. "
-"{ph2}Derechos de autor y licencia BSD{ph3}. REA 4.1.0 inspeccionó la edición"
-" HTTP en ejecución en Chrome 150."
+"Fuente: {ph0}código de velocidad inspeccionado{ph1}, Autores de Chromium. "
+"{ph2}Copyright y licencia BSD{ph3}. REA 4.1.0 inspeccionó la edición HTTP en"
+" ejecución en Chrome 150."
 
 #: website/public/examples/dino-lab/index.html:6
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Chrome Dinosaur Game: Rebuild Its Speed Rule — REA"
-msgstr "Juego de Dinosaurios Chrome: Reconstruye su Regla de Velocidad-REA"
+msgstr "El juego del dinosaurio de Chrome: recrea su regla de velocidad — REA"
 
 #: website/public/examples/dino-lab/index.html:7
 msgctxt "page:examples/dino-lab/index.html"
@@ -2232,13 +2231,13 @@ msgid ""
 "Read the dinosaur game’s speed rule with REA, rebuild it, then change the "
 "speed and play."
 msgstr ""
-"Lee la regla de velocidad del juego de dinosaurios con REA, reconstrúyela, "
-"luego cambia la velocidad y juega."
+"Lee la regla de velocidad del juego del dinosaurio con REA, reconstrúyela y "
+"después cambia la velocidad y juega."
 
 #: website/public/examples/dino-lab/index.html:224
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Dinosaur speed reconstruction"
-msgstr "Reconstrucción de la velocidad de los dinosaurios"
+msgstr "Reconstrucción de la velocidad del dinosaurio"
 
 #: website/public/examples/dino-lab/index.html:255
 msgctxt "page:examples/dino-lab/index.html"
@@ -2246,18 +2245,18 @@ msgid ""
 "Dinosaur mini-game. Use the Jump button or press Space while the game is "
 "focused."
 msgstr ""
-"Minijuego de dinosaurios. Usa el botón de salto o presiona la barra "
-"espaciadora mientras el juego está enfocado."
+"Minijuego del dinosaurio. Usa el botón Saltar o pulsa Espacio mientras el "
+"juego tiene el foco."
 
 #: website/public/examples/dino-lab/index.html:330
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Copy reconstructed speed rule"
-msgstr "Copiar regla de velocidad reconstruida"
+msgstr "Copiar la regla de velocidad reconstruida"
 
 #: website/public/examples/dino-lab/index.html:429
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Copy dinosaur analysis prompt"
-msgstr "Copie el mensaje de análisis de dinosaurios"
+msgstr "Copiar el prompt de análisis del dinosaurio"
 
 #: website/public/examples/dino-lab/index.html:484
 msgctxt "page:examples/dino-lab/index.html"
@@ -2910,7 +2909,7 @@ msgstr "{ph0}Inicio{ph1} / Tu primera investigación"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "Find out where{ph0}exported notes go."
-msgstr "Averigüe dónde{ph0}las notas exportadas van."
+msgstr "Averigua adónde{ph0}van las notas exportadas."
 
 #: website/public/first-investigation/index.html:205
 msgctxt "page:first-investigation/index.html"
@@ -2918,8 +2917,8 @@ msgid ""
 "Use REA to inspect a small app, follow its Export notes button and check one"
 " detail yourself."
 msgstr ""
-"Use REA para inspeccionar una aplicación pequeña, siga su botón Exportar "
-"notas y verifique un detalle usted mismo."
+"Usa REA para inspeccionar una aplicación pequeña, sigue su botón Export "
+"notes y comprueba un detalle tú mismo."
 
 #: website/public/first-investigation/index.html:216
 msgctxt "page:first-investigation/index.html"
@@ -2932,7 +2931,7 @@ msgstr "En este ejercicio"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}1. Set up{ph1}"
-msgstr "{ph0}1. Configurar{ph1}"
+msgstr "{ph0}1. Configura{ph1}"
 
 #. {ph0}: <a href="#ask">
 #. {ph1}: </a>
@@ -2940,7 +2939,7 @@ msgstr "{ph0}1. Configurar{ph1}"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}2. Ask about export{ph1}"
-msgstr "{ph0}2. Pregunte sobre exportación{ph1}"
+msgstr "{ph0}2. Pregunta por la exportación{ph1}"
 
 #. {ph0}: <a href="#answer">
 #. {ph1}: </a>
@@ -2956,7 +2955,7 @@ msgstr "{ph0}3. Sigue la respuesta{ph1}"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}4. Check a prediction{ph1}"
-msgstr "{ph0}4. Comprobar una predicción{ph1}"
+msgstr "{ph0}4. Comprueba una predicción{ph1}"
 
 #. {ph0}: <a href="#next">
 #. {ph1}: </a>
@@ -2969,7 +2968,7 @@ msgstr "{ph0}5. Haz otra pregunta{ph1}"
 #: website/public/first-investigation/index.html:227
 msgctxt "page:first-investigation/index.html"
 msgid "1. Connect your agent to REA"
-msgstr "1. Conecte a su agente a REA"
+msgstr "1. Conecta tu agente a REA"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -2985,7 +2984,7 @@ msgstr "1. Conecte a su agente a REA"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #: website/public/first-investigation/index.html:241
 #: website/public/first-investigation/index.html:263
@@ -3000,7 +2999,7 @@ msgstr "Copiar"
 #: website/public/first-investigation/index.html:260
 msgctxt "page:first-investigation/index.html"
 msgid "Or run this command in your terminal:"
-msgstr "O ejecute este comando en su terminal:"
+msgstr "O ejecuta este comando en la terminal:"
 
 #: website/public/first-investigation/index.html:272
 msgctxt "page:first-investigation/index.html"
@@ -3008,13 +3007,13 @@ msgid ""
 "Review the plan, approve the setup, then restart your agent. Already "
 "connected? Continue below."
 msgstr ""
-"Revise el plan, apruebe la configuración y luego reinicie su agente. ¿Ya "
-"estás conectado? Continúe abajo."
+"Revisa el plan, aprueba la configuración y después reinicia tu agente. ¿Ya "
+"está conectado? Continúa abajo."
 
 #: website/public/first-investigation/index.html:278
 msgctxt "page:first-investigation/index.html"
 msgid "2. Ask where the CSV is written"
-msgstr "2. Pregunte dónde está escrito el CSV"
+msgstr "2. Pregunta dónde se escribe el CSV"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3026,9 +3025,9 @@ msgid ""
 "button. Your agent can inspect its code without installing or launching "
 "Electron."
 msgstr ""
-"El ejemplo es una aplicación Electron de seis archivos con un {ph0}Notas de "
-"exportación{ph1} botón. Su agente puede inspeccionar su código sin instalar "
-"ni iniciar Electron."
+"El ejemplo es una aplicación Electron de seis archivos con un botón "
+"{ph0}Export notes{ph1} (exportar notas). Tu agente puede inspeccionar su "
+"código sin instalar ni iniciar Electron."
 
 #: website/public/first-investigation/index.html:314
 msgctxt "page:first-investigation/index.html"
@@ -3036,8 +3035,8 @@ msgid ""
 "Your agent downloads the files and gives the unpacked folder to REA for "
 "inspection."
 msgstr ""
-"Su agente descarga los archivos y entrega la carpeta desempaquetada a REA "
-"para su inspección."
+"Tu agente descarga los archivos y entrega la carpeta descomprimida a REA "
+"para que la inspeccione."
 
 #. {ph0}: <a class="button" href="../examples/notes-example.zip"
 #. download="notes-example.zip" >
@@ -3056,18 +3055,18 @@ msgid ""
 "If your agent can’t download files, unzip this archive yourself. Give it the"
 " path to the {ph0} folder and the same export question."
 msgstr ""
-"Si su agente no puede descargar archivos, descomprímalo usted mismo. Dale el"
-" camino al {ph0} carpeta y la misma pregunta de exportación."
+"Si tu agente no puede descargar archivos, descomprime tú mismo este archivo."
+" Dale la ruta de la carpeta {ph0} y la misma pregunta sobre la exportación."
 
 #: website/public/first-investigation/index.html:333
 msgctxt "page:first-investigation/index.html"
 msgid "3. Follow the answer back to the code"
-msgstr "3. Siga la respuesta de regreso al código"
+msgstr "3. Sigue la respuesta hasta el código"
 
 #: website/public/first-investigation/index.html:334
 msgctxt "page:first-investigation/index.html"
 msgid "Look for a short explanation with file and line references:"
-msgstr "Busque una breve explicación con referencias de archivos y líneas:"
+msgstr "Busca una explicación breve con referencias a archivos y líneas:"
 
 #. {ph0}: <code>notes:export</code>
 #. {ph1}: <code>notes.csv</code>
@@ -3081,14 +3080,14 @@ msgid ""
 "and writes {ph1} in the user’s Downloads folder. The columns are {ph2} and "
 "{ph3}."
 msgstr ""
-"El botón envía un {ph0} mensaje. El proceso principal formatea las notas "
-"como CSV y escribe {ph1} en la carpeta de descargas del usuario. Las "
-"columnas son {ph2} y {ph3}."
+"El botón envía un mensaje {ph0}. El proceso principal da formato CSV a las "
+"notas y escribe {ph1} en la carpeta Descargas del usuario. Las columnas son "
+"{ph2} y {ph3}."
 
 #: website/public/first-investigation/index.html:344
 msgctxt "page:first-investigation/index.html"
 msgid "From the button to the file writer"
-msgstr "Del botón al escritor de archivos"
+msgstr "Del botón al código que escribe el archivo"
 
 #: website/public/first-investigation/index.html:373
 msgctxt "page:first-investigation/index.html"
@@ -3106,7 +3105,7 @@ msgid ""
 "your agent to show these lines if its answer leaves them out."
 msgstr ""
 "La ruta del archivo, el formateador y la llamada de escritura están juntos "
-"en este controlador. Pídale a su agente que muestre estas líneas si su "
+"en este controlador. Pide a tu agente que muestre estas líneas si su "
 "respuesta las omite."
 
 #. {ph0}: <a href="../guides/javascript/#follow" >
@@ -3116,13 +3115,13 @@ msgstr ""
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}See the full code trace and recorded REA result{ph1}."
 msgstr ""
-"{ph0}Vea el rastreo completo del código y el resultado registrado de "
+"{ph0}Ver el rastreo completo del código y el resultado registrado de "
 "REA{ph1}."
 
 #: website/public/first-investigation/index.html:401
 msgctxt "page:first-investigation/index.html"
 msgid "4. Check a prediction"
-msgstr "4. Comprobar una predicción"
+msgstr "4. Comprueba una predicción"
 
 #: website/public/first-investigation/index.html:402
 msgctxt "page:first-investigation/index.html"
@@ -3130,20 +3129,20 @@ msgid ""
 "A comma separates CSV columns. What happens when a note title itself "
 "contains a comma or quotation marks?"
 msgstr ""
-"Una coma separa las columnas CSV. ¿Qué sucede cuando el título de una nota "
-"contiene una coma o comillas?"
+"Una coma separa las columnas de un CSV. ¿Qué ocurre cuando el propio título "
+"de una nota contiene una coma o comillas?"
 
 #: website/public/first-investigation/index.html:446
 msgctxt "page:first-investigation/index.html"
 msgid "Run the check yourself"
-msgstr "Ejecute el cheque usted mismo"
+msgstr "Ejecuta la comprobación tú mismo"
 
 #. {ph0}: <code>notes-example</code>
 #: website/public/first-investigation/index.html:447
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "Open a terminal in the unpacked {ph0} folder:"
-msgstr "Abra una terminal en el desempaquetado {ph0} carpeta:"
+msgstr "Abre una terminal en la carpeta {ph0} descomprimida:"
 
 #: website/public/first-investigation/index.html:488
 msgctxt "page:first-investigation/index.html"
@@ -3153,7 +3152,7 @@ msgstr "5. Haz otra pregunta"
 #: website/public/first-investigation/index.html:489
 msgctxt "page:first-investigation/index.html"
 msgid "Try a follow-up in the same conversation:"
-msgstr "Prueba un seguimiento en la misma conversación:"
+msgstr "Prueba con una pregunta de seguimiento en la misma conversación:"
 
 #: website/public/first-investigation/index.html:491
 msgctxt "page:first-investigation/index.html"
@@ -3161,8 +3160,8 @@ msgid ""
 "What happens if the file can’t be written? Follow the error back to the "
 "page."
 msgstr ""
-"¿Qué sucede si el archivo no se puede escribir? Siga el error de regreso a "
-"la página."
+"¿Qué ocurre si no se puede escribir el archivo? Sigue el error hasta la "
+"página."
 
 #: website/public/first-investigation/index.html:496
 msgctxt "page:first-investigation/index.html"
@@ -3184,7 +3183,7 @@ msgid ""
 "{ph0}How Notion copies text and HTML{ph1}{ph2}Follow a clipboard feature in "
 "a packaged Electron app.{ph3}"
 msgstr ""
-"{ph0}Cómo Notion copia texto y HTML{ph1}{ph2}Siga una función del "
+"{ph0}Cómo copia Notion texto y HTML{ph1}{ph2}Sigue una función del "
 "portapapeles en una aplicación Electron empaquetada.{ph3}"
 
 #. {ph0}: <a href="../showcase/dx-ball/" >
@@ -3198,8 +3197,8 @@ msgid ""
 "{ph0}How DX-Ball calculates sound panning{ph1}{ph2}Read the original "
 "instructions and the reconstruction’s checks.{ph3}"
 msgstr ""
-"{ph0}Cómo calcula el DX-Ball el posicionamiento del sonido "
-"estéreo{ph1}{ph2}Lea las instrucciones originales y las revisiones de la "
+"{ph0}Cómo calcula DX-Ball la posición izquierda/derecha del "
+"sonido{ph1}{ph2}Lee las instrucciones originales y las comprobaciones de la "
 "reconstrucción.{ph3}"
 
 #. {ph0}: <a href="../faq/#troubleshooting" >
@@ -3213,13 +3212,13 @@ msgid ""
 "{ph0}Troubleshoot setup or analysis{ph1}{ph2}Update REA and check the "
 "connection if you get stuck.{ph3}"
 msgstr ""
-"{ph0}Solucionar problemas de configuración o análisis{ph1}{ph2}Actualice REA"
-" y verifique la conexión si se atasca.{ph3}"
+"{ph0}Solucionar problemas de configuración o análisis{ph1}{ph2}Actualiza REA"
+" y comprueba la conexión si te quedas atascado.{ph3}"
 
 #: website/public/first-investigation/index.html:6
 msgctxt "page:first-investigation/index.html"
 msgid "Your First Reverse Engineering Investigation — REA"
-msgstr "Su Primera Investigación de Ingeniería Inversa-REA"
+msgstr "Tu primera investigación de ingeniería inversa — REA"
 
 #: website/public/first-investigation/index.html:7
 msgctxt "page:first-investigation/index.html"
@@ -3227,9 +3226,9 @@ msgid ""
 "Try REA on a small Notes app. Set up your agent, ask where exported notes "
 "go, and check the CSV formatter with a sample title."
 msgstr ""
-"Pruebe REA en una pequeña aplicación de notas. Configure su agente, pregunte"
-" a dónde van las notas exportadas y verifique el formateador CSV con un "
-"título de muestra."
+"Prueba REA con una pequeña aplicación de notas. Configura tu agente, "
+"pregunta adónde van las notas exportadas y comprueba el formateador CSV con "
+"un título de ejemplo."
 
 #: website/public/first-investigation/index.html:215
 msgctxt "page:first-investigation/index.html"
@@ -3239,33 +3238,33 @@ msgstr "En esta página"
 #: website/public/first-investigation/index.html:225
 msgctxt "page:first-investigation/index.html"
 msgid "Your first REA investigation"
-msgstr "Su primera investigación sobre REA"
+msgstr "Tu primera investigación con REA"
 
 #: website/public/first-investigation/index.html:241
 msgctxt "page:first-investigation/index.html"
 msgid "Copy REA installation prompt"
-msgstr "Copie el mensaje de instalación de REA"
+msgstr "Copiar el prompt de instalación de REA"
 
 #: website/public/first-investigation/index.html:263
 msgctxt "page:first-investigation/index.html"
 msgid "Copy setup command"
-msgstr "Comando Copiar configuración"
+msgstr "Copiar el comando de configuración"
 
 #: website/public/first-investigation/index.html:291
 msgctxt "page:first-investigation/index.html"
 msgid "Copy Notes investigation prompt"
-msgstr "Aviso de investigación de Copy Notes"
+msgstr "Copiar el prompt de investigación de Notes"
 
 #: website/public/first-investigation/index.html:413
 msgctxt "page:first-investigation/index.html"
 msgid "Copy CSV check prompt"
-msgstr "Copie el mensaje de verificación CSV"
+msgstr "Copiar el prompt de comprobación del CSV"
 
 #: website/public/first-investigation/index.html:454
 #: website/public/first-investigation/index.html:471
 msgctxt "page:first-investigation/index.html"
 msgid "Copy formatter check command"
-msgstr "Comando Copiar comprobación del formateador"
+msgstr "Copiar el comando de comprobación del formateador"
 
 #: website/public/first-investigation/index.html:543
 msgctxt "page:first-investigation/index.html"
@@ -3283,17 +3282,17 @@ msgstr "Saltar al contenido"
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Home{ph1} / Get started"
-msgstr "{ph0}Inicio{ph1} / Empezar"
+msgstr "{ph0}Inicio{ph1} / Primeros pasos"
 
 #: website/public/get-started/index.html:202
 msgctxt "page:get-started/index.html"
 msgid "Set up REA."
-msgstr "Configure REA."
+msgstr "Configura REA."
 
 #: website/public/get-started/index.html:267
 msgctxt "page:get-started/index.html"
 msgid "Open a terminal and check:"
-msgstr "Abra una terminal y verifique:"
+msgstr "Abre una terminal y comprueba:"
 
 #: website/public/get-started/index.html:270
 msgctxt "page:get-started/index.html"
@@ -3347,8 +3346,8 @@ msgid ""
 "Type Y if asked to accept the terms. Close PowerShell, open it again, then "
 "run {ph0}."
 msgstr ""
-"Escriba Y si se le pide que acepte los términos. Cierre PowerShell, ábralo "
-"nuevamente y luego ejecute {ph0}."
+"Escribe Y si se te pide aceptar los términos. Cierra PowerShell, ábrelo de "
+"nuevo y después ejecuta {ph0}."
 
 #. {ph0}: <code>nodejs</code>
 #. {ph1}: <code>node -v</code>
@@ -3359,8 +3358,8 @@ msgid ""
 "Your distribution's own {ph0} package is often older than 22.23.4, so check "
 "{ph1} if you use it instead."
 msgstr ""
-"Tu propia distribución {ph0} el paquete suele ser anterior a 22.23.4, así "
-"que verifique {ph1} si lo usas en su lugar."
+"El paquete {ph0} de tu distribución suele ser anterior a 22.23.4, así que "
+"comprueba {ph1} si usas ese."
 
 #. {ph0}: <a href="https://nodejs.org/en/download">
 #. {ph1}: </a>
@@ -3371,7 +3370,7 @@ msgid ""
 "Prefer a regular installer? Download the LTS version from "
 "{ph0}nodejs.org{ph1}."
 msgstr ""
-"¿Prefiere un instalador regular? Descargue la versión LTS desde "
+"¿Prefieres un instalador convencional? Descarga la versión LTS desde "
 "{ph0}nodejs.org{ph1}."
 
 #. {ph0}: <a href="#terminal">
@@ -3380,7 +3379,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Use the CLI{ph1}"
-msgstr "{ph0}Utilice el CLI{ph1}"
+msgstr "{ph0}Usa la CLI{ph1}"
 
 #. {ph0}: <a href="#help">
 #. {ph1}: </a>
@@ -3407,7 +3406,7 @@ msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 #: website/public/get-started/index.html:828
 msgctxt "page:get-started/index.html"
 msgid "Or run setup yourself"
-msgstr "O ejecute la configuración usted mismo"
+msgstr "O ejecuta la configuración tú mismo"
 
 #: website/public/get-started/index.html:233
 msgctxt "page:get-started/index.html"
@@ -3425,8 +3424,8 @@ msgid ""
 "{ph0}Windows:{ph1} open the Start menu, type {ph2}PowerShell{ph3} and press "
 "Enter."
 msgstr ""
-"{ph0}Windows:{ph1} abra el menú Inicio, escriba {ph2}PowerShell{ph3} y "
-"presione Entrar."
+"{ph0}Windows:{ph1} abre el menú Inicio, escribe {ph2}PowerShell{ph3} y pulsa"
+" Enter."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3469,8 +3468,8 @@ msgid ""
 "Paste a command with {ph0} {ph1} (macOS: {ph2} {ph3}; Linux terminals: {ph4}"
 " {ph5} {ph6}), then press Enter."
 msgstr ""
-"Pegue un comando con {ph0} {ph1} (macOS: {ph2} {ph3}; Terminales Linux: "
-"{ph4} {ph5} {ph6}), luego presione Entrar."
+"Pega un comando con {ph0} {ph1} (macOS: {ph2} {ph3}; terminales de Linux: "
+"{ph4} {ph5} {ph6}) y después pulsa Enter."
 
 #: website/public/get-started/index.html:864
 msgctxt "page:get-started/index.html"
@@ -3479,9 +3478,9 @@ msgid ""
 "and the matching investigation skill, keeping a backup of existing "
 "configuration. It asks before applying the changes."
 msgstr ""
-"Elija su cliente y revise el plan de configuración. REA agrega su conexión "
-"MCP y la habilidad de investigación correspondiente, manteniendo una copia "
-"de seguridad de la configuración existente. Pregunta antes de aplicar los "
+"Elige tu cliente y revisa el plan de configuración. REA añade su conexión "
+"MCP y la skill de investigación correspondiente, y conserva una copia de "
+"seguridad de la configuración existente. Pregunta antes de aplicar los "
 "cambios."
 
 #: website/public/get-started/index.html:878
@@ -3502,10 +3501,10 @@ msgid ""
 "macOS press {ph2} {ph3}; on Windows, also quit from the tray icon if there "
 "is one."
 msgstr ""
-"{ph0}Aplicaciones de escritorio{ph1} (Escritorio Claude, Cursor, Windsurf, "
-"VS Code): salga de la aplicación por completo y luego ábrala nuevamente. "
-"Cerrar la ventana no es suficiente. En prensa macOS {ph2} {ph3}; en Windows,"
-" también salga del icono de la bandeja, si lo hay."
+"{ph0}Aplicaciones de escritorio{ph1} (Claude Desktop, Cursor, Windsurf, VS "
+"Code): cierra la aplicación por completo y vuelve a abrirla. Cerrar la "
+"ventana no basta. En macOS pulsa {ph2} {ph3}; en Windows, ciérrala también "
+"desde el icono de la bandeja, si lo hay."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3516,8 +3515,8 @@ msgid ""
 "{ph0}Terminal agents{ph1} (Claude Code, Codex, Gemini CLI): exit the session"
 " and start it again."
 msgstr ""
-"{ph0}Agentes terminales{ph1} (Claude Code, Codex, Gemini CLI ): salga de la "
-"sesión y vuelva a iniciarla."
+"{ph0}Agentes de terminal{ph1} (Claude Code, Codex, Gemini CLI): sal de la "
+"sesión y vuelve a iniciarla."
 
 #: website/public/get-started/index.html:990
 msgctxt "page:get-started/index.html"
@@ -3535,9 +3534,9 @@ msgid ""
 "{ph0}Windows:{ph1} in File Explorer, right-click the folder and choose "
 "{ph2}Copy as path{ph3}. On Windows 10, hold Shift while right-clicking."
 msgstr ""
-"{ph0}Windows:{ph1} en el Explorador de archivos, haga clic con el botón "
-"derecho en la carpeta y elija {ph2}Copiar como ruta{ph3}. En Windows 10, "
-"mantenga presionada la tecla Mayús mientras hace clic con el botón derecho."
+"{ph0}Windows:{ph1} en el Explorador de archivos, haz clic derecho en la "
+"carpeta y elige {ph2}Copiar como ruta de acceso{ph3}. En Windows 10, mantén "
+"pulsada la tecla Mayús mientras haces clic derecho."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3562,16 +3561,14 @@ msgid ""
 "{ph0}Any system:{ph1} drag the folder into a terminal window and its path "
 "appears."
 msgstr ""
-"{ph0}Cualquier sistema:{ph1} arrastre la carpeta a una ventana de terminal y"
+"{ph0}Cualquier sistema:{ph1} arrastra la carpeta a una ventana de terminal y"
 " aparecerá su ruta."
 
 #: website/public/get-started/index.html:1006
 #: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "In a terminal, put quotes around a path that contains spaces."
-msgstr ""
-"En una terminal, coloque comillas alrededor de una ruta que contenga "
-"espacios."
+msgstr "En una terminal, pon entre comillas las rutas que contengan espacios."
 
 #: website/public/get-started/index.html:1594
 msgctxt "page:get-started/index.html"
@@ -3579,8 +3576,8 @@ msgid ""
 "Analyze a JavaScript or Electron application folder or ASAR archive without "
 "running the app:"
 msgstr ""
-"Analice una carpeta de aplicación JavaScript o Electron o un archivo ASAR "
-"sin ejecutar la aplicación:"
+"Analiza la carpeta de una aplicación JavaScript o Electron, o un archivo "
+"ASAR, sin ejecutar la aplicación:"
 
 #: website/public/get-started/index.html:1600
 msgctxt "page:get-started/index.html"
@@ -3596,8 +3593,8 @@ msgid ""
 "Replace the path with your extracted app directory or {ph0} file. On "
 "Windows, a path such as {ph1} works here."
 msgstr ""
-"Reemplace la ruta con el directorio de la aplicación extraída o {ph0} "
-"archivo. En Windows, una ruta como {ph1} trabaja aquí."
+"Sustituye la ruta por el directorio de tu aplicación extraída o por tu "
+"archivo {ph0}. En Windows, aquí funciona una ruta como {ph1}."
 
 #: website/public/get-started/index.html:1618
 msgctxt "page:get-started/index.html"
@@ -3609,8 +3606,7 @@ msgstr "¿Dónde encuentro el archivo .asar de una aplicación?"
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Electron apps usually keep it in a {ph0} folder:"
-msgstr ""
-"Las aplicaciones Electron generalmente lo mantienen en un {ph0} carpeta:"
+msgstr "Las aplicaciones Electron suelen guardarlo en una carpeta {ph0}:"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3636,8 +3632,8 @@ msgid ""
 "{ph0}macOS:{ph1} {ph2} (right-click the app and choose {ph3}Show Package "
 "Contents{ph4})"
 msgstr ""
-"{ph0}macOS:{ph1} {ph2} (haga clic con el botón derecho en la aplicación y "
-"elija {ph3}Mostrar Contenido del Paquete{ph4})"
+"{ph0}macOS:{ph1} {ph2} (haz clic derecho en la aplicación y elige "
+"{ph3}Mostrar contenido del paquete{ph4})"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3654,8 +3650,8 @@ msgstr "{ph0}Linux:{ph1} a menudo {ph2}"
 msgctxt "page:get-started/index.html"
 msgid "Some apps install elsewhere. Search the app's folder for {ph0}."
 msgstr ""
-"Algunas aplicaciones se instalan en otro lugar. Busque en la carpeta de la "
-"aplicación {ph0}."
+"Algunas aplicaciones se instalan en otro lugar. Busca {ph0} en la carpeta de"
+" la aplicación."
 
 #: website/public/get-started/index.html:1648
 msgctxt "page:get-started/index.html"
@@ -3665,20 +3661,20 @@ msgid ""
 "result."
 msgstr ""
 "El resultado identifica la aplicación, muestra las conexiones entre los "
-"módulos y proporciona sus ubicaciones de origen. Las conexiones REA que no "
-"se pueden resolver están marcadas en el resultado."
+"módulos e indica sus ubicaciones en el código fuente. Las conexiones que REA"
+" no puede resolver quedan marcadas en el resultado."
 
 #. {ph0}: <code>rea</code>
 #: website/public/get-started/index.html:1653
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "If you'd like a permanent {ph0} command in your shell:"
-msgstr "Si desea un permanente {ph0} comando en tu shell:"
+msgstr "Si quieres un comando {ph0} permanente en tu shell:"
 
 #: website/public/get-started/index.html:1659
 msgctxt "page:get-started/index.html"
 msgid "Install the CLI"
-msgstr "Instale el CLI"
+msgstr "Instalar la CLI"
 
 #. {ph0}: <a href="../guides/javascript/" >
 #. {ph1}: </a >
@@ -3686,17 +3682,17 @@ msgstr "Instale el CLI"
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Continue with the JavaScript application guide{ph1}"
-msgstr "{ph0}Continúe con la guía de aplicación del JavaScript{ph1}"
+msgstr "{ph0}Continúa con la guía de aplicaciones JavaScript{ph1}"
 
 #: website/public/get-started/index.html:1188
 msgctxt "page:get-started/index.html"
 msgid "Connect your Ghidra installation"
-msgstr "Conecte su instalación de Ghidra"
+msgstr "Conecta tu instalación de Ghidra"
 
 #: website/public/get-started/index.html:1158
 msgctxt "page:get-started/index.html"
 msgid "Connect Ghidra on Windows"
-msgstr "Conecte Ghidra en Windows"
+msgstr "Conecta Ghidra en Windows"
 
 #: website/public/get-started/index.html:1159
 msgctxt "page:get-started/index.html"
@@ -3715,8 +3711,8 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "Replace the two paths with your installations, then review setup's plan."
 msgstr ""
-"Reemplace las dos rutas con sus instalaciones, luego revise el plan de "
-"configuración."
+"Sustituye las dos rutas por las de tus instalaciones y después revisa el "
+"plan de configuración."
 
 #: website/public/get-started/index.html:1061
 msgctxt "page:get-started/index.html"
@@ -3724,9 +3720,9 @@ msgid ""
 "Connect Hopper on macOS or Linux. Run the setup command above; it detects an"
 " existing installation or offers an installation plan for your approval."
 msgstr ""
-"Conecte Hopper en macOS o Linux. Ejecute el comando de instalación anterior;"
-" detecta una instalación existente u ofrece un plan de instalación para su "
-"aprobación."
+"Conecta Hopper en macOS o Linux. Ejecuta el comando de configuración de "
+"arriba; detecta una instalación existente o propone un plan de instalación "
+"para que lo apruebes."
 
 #: website/public/get-started/index.html:1725
 msgctxt "page:get-started/index.html"
@@ -3736,7 +3732,7 @@ msgstr "Cómo obtener ayuda"
 #: website/public/get-started/index.html:1727
 msgctxt "page:get-started/index.html"
 msgid "If your agent doesn't see REA"
-msgstr "Si su agente no ve REA"
+msgstr "Si tu agente no ve REA"
 
 #. {ph0}: <code>doctor</code>
 #: website/public/get-started/index.html:1728
@@ -3746,8 +3742,8 @@ msgid ""
 "Restart or reconnect the client after setup. Check its REA connection with "
 "{ph0}; for Codex:"
 msgstr ""
-"Reinicie o vuelva a conectar el cliente después de la configuración. "
-"Compruebe su conexión REA con {ph0}; para Codex:"
+"Reinicia o vuelve a conectar el cliente después de la configuración. "
+"Comprueba su conexión con REA mediante {ph0}; para Codex:"
 
 #: website/public/get-started/index.html:1739
 msgctxt "page:get-started/index.html"
@@ -3757,18 +3753,18 @@ msgstr "Si un proveedor necesita atención"
 #: website/public/get-started/index.html:1740
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
-msgstr "Verifique el proveedor que está usando. Para Ghidra:"
+msgstr "Comprueba el proveedor que estás usando. Para Ghidra:"
 
 #: website/public/get-started/index.html:1743
 msgctxt "page:get-started/index.html"
 msgid "Check one provider"
-msgstr "Consulte a un proveedor"
+msgstr "Comprobar un proveedor"
 
 #: website/public/get-started/index.html:1755
 msgctxt "page:get-started/index.html"
 msgid "The report gives the failed check and a suggested next step."
 msgstr ""
-"El informe proporciona la verificación fallida y un siguiente paso sugerido."
+"El informe indica la comprobación fallida y sugiere un siguiente paso."
 
 #. {ph0}: <a href="../faq/">
 #. {ph1}: </a >
@@ -3780,7 +3776,7 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "{ph0}REA FAQ{ph1}{ph2}Quick answers on updates, agents and analysis.{ph3}"
 msgstr ""
-"{ph0}Preguntas FRECUENTES SOBRE REA{ph1}{ph2}Respuestas rápidas sobre "
+"{ph0}Preguntas frecuentes sobre REA{ph1}{ph2}Respuestas rápidas sobre "
 "actualizaciones, agentes y análisis.{ph3}"
 
 #. {ph0}: <a href="../guides/">
@@ -3794,7 +3790,7 @@ msgid ""
 "{ph0}Choose an investigation guide{ph1}{ph2}Worked examples for a binary, an"
 " Electron app and a browser.{ph3}"
 msgstr ""
-"{ph0}Elija una guía de investigación{ph1}{ph2}Ejemplos trabajados para un "
+"{ph0}Elige una guía de investigación{ph1}{ph2}Ejemplos resueltos para un "
 "binario, una aplicación Electron y un navegador.{ph3}"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/issues">
@@ -3808,8 +3804,8 @@ msgid ""
 "{ph0}GitHub issues{ph1}{ph2}Report a problem with the command and "
 "diagnostics.{ph3}"
 msgstr ""
-"{ph0}Problemas de GitHub{ph1}{ph2}Informe de un problema con el comando y "
-"los diagnósticos.{ph3}"
+"{ph0}GitHub Issues{ph1}{ph2}Informa de un problema con el comando y los "
+"diagnósticos.{ph3}"
 
 #. {ph0}: <a href="https://discord.gg/GkcryMnJDM">
 #. {ph1}: </a >
@@ -3822,13 +3818,13 @@ msgid ""
 "{ph0}REA community{ph1}{ph2}Questions, investigations and work in "
 "progress.{ph3}"
 msgstr ""
-"{ph0}Comunidad REA{ph1}{ph2}Preguntas, investigaciones y trabajo en "
-"progreso.{ph3}"
+"{ph0}Comunidad de REA{ph1}{ph2}Preguntas, investigaciones y trabajo en "
+"curso.{ph3}"
 
 #: website/public/get-started/index.html:6
 msgctxt "page:get-started/index.html"
 msgid "Install REA and Set Up Your Coding Agent"
-msgstr "Instale REA y Configure Su Agente de Codificación"
+msgstr "Instala REA y configura tu agente de programación"
 
 #: website/public/get-started/index.html:7
 msgctxt "page:get-started/index.html"
@@ -3836,34 +3832,34 @@ msgid ""
 "Connect REA to your coding agent or inspect a local JavaScript or Electron "
 "app from the terminal. Setup, first questions and native provider guides."
 msgstr ""
-"Conecte REA a su agente de codificación o inspeccione una aplicación "
+"Conecta REA a tu agente de programación o inspecciona una aplicación "
 "JavaScript o Electron local desde la terminal. Configuración, primeras "
-"preguntas y guías nativas para proveedores."
+"preguntas y guías de los proveedores de análisis nativo."
 
 #: website/public/get-started/index.html:271
 msgctxt "page:get-started/index.html"
 msgid "Copy Node.js version check"
-msgstr "Copiar comprobación de la versión Node.js"
+msgstr "Copiar la comprobación de la versión de Node.js"
 
 #: website/public/get-started/index.html:294
 msgctxt "page:get-started/index.html"
 msgid "Copy Node.js installation command for Windows"
-msgstr "Copie el comando de instalación de Node.js para Windows"
+msgstr "Copiar el comando de instalación de Node.js para Windows"
 
 #: website/public/get-started/index.html:349
 msgctxt "page:get-started/index.html"
 msgid "Copy Homebrew Node.js installation command"
-msgstr "Copie el comando de instalación Homebrew Node.js"
+msgstr "Copiar el comando de instalación de Node.js con Homebrew"
 
 #: website/public/get-started/index.html:372
 msgctxt "page:get-started/index.html"
 msgid "Copy fnm installation command for Linux"
-msgstr "Copie el comando de instalación fnm para Linux"
+msgstr "Copiar el comando de instalación de fnm para Linux"
 
 #: website/public/get-started/index.html:387
 msgctxt "page:get-started/index.html"
 msgid "Copy Node.js 24 commands for Linux"
-msgstr "Copie los 24 comandos Node.js para Linux"
+msgstr "Copiar los comandos de Node.js 24 para Linux"
 
 #: website/public/get-started/index.html:214
 #: website/public/get-started/index.html:213
@@ -3874,27 +3870,27 @@ msgstr "En esta página"
 #: website/public/get-started/index.html:225
 msgctxt "page:get-started/index.html"
 msgid "REA getting started guide"
-msgstr "Guía de introducción al REA"
+msgstr "Guía de primeros pasos de REA"
 
 #: website/public/get-started/index.html:807
 msgctxt "page:get-started/index.html"
 msgid "Copy REA installation prompt"
-msgstr "Copie el mensaje de instalación de REA"
+msgstr "Copiar el prompt de instalación de REA"
 
 #: website/public/get-started/index.html:1601
 msgctxt "page:get-started/index.html"
 msgid "Copy JavaScript analysis command"
-msgstr "Copie el comando de análisis JavaScript"
+msgstr "Copiar el comando de análisis de JavaScript"
 
 #: website/public/get-started/index.html:1660
 msgctxt "page:get-started/index.html"
 msgid "Copy CLI installation command"
-msgstr "Copie el comando de instalación de CLI"
+msgstr "Copiar el comando de instalación de la CLI"
 
 #: website/public/get-started/index.html:1744
 msgctxt "page:get-started/index.html"
 msgid "Copy provider diagnosis command"
-msgstr "Copie el comando de diagnóstico del proveedor"
+msgstr "Copiar el comando de diagnóstico del proveedor"
 
 #: website/public/get-started/index.html:1860
 msgctxt "page:get-started/index.html"
@@ -5595,7 +5591,7 @@ msgstr "{ph0}Configurar REA{ph1}"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Dinosaur game{ph1}"
-msgstr "{ph0}Juego de dinosaurios{ph1}"
+msgstr "{ph0}Juego del dinosaurio{ph1}"
 
 #. {ph0}: <a href="#calculator">
 #. {ph1}: </a>
@@ -5624,7 +5620,7 @@ msgstr "{ph0}Profundiza{ph1}"
 #: website/public/index.html:205
 msgctxt "page:index.html"
 msgid "Reverse engineering, with your coding agent"
-msgstr "Ingeniería inversa, con su agente de codificación"
+msgstr "Ingeniería inversa, con tu agente de programación"
 
 #. {ph0}: <br />
 #: website/public/index.html:206
@@ -5650,7 +5646,7 @@ msgstr "Copia este prompt en tu agente de programación:"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Tu agente de programación"
 
 #: website/public/index.html:227 website/public/index.html:251
 #: website/public/index.html:539 website/public/index.html:620
@@ -5707,7 +5703,7 @@ msgstr "{ph0}Original x64 · instrucciones seleccionadas{ph1} {ph2}{ph3}"
 #: website/public/index.html:457
 msgctxt "page:index.html"
 msgid "01 · Which branch?"
-msgstr "01 · ¿Qué sucursal?"
+msgstr "01 · ¿Qué rama?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5724,12 +5720,12 @@ msgstr ""
 #: website/public/index.html:462
 msgctxt "page:index.html"
 msgid "Look up the command IDs, then label the branch."
-msgstr "Busque los ID de comando y luego etiquete la rama."
+msgstr "Busca los ID de comando y después etiqueta la rama."
 
 #: website/public/index.html:468
 msgctxt "page:index.html"
 msgid "Divide ÷"
-msgstr "Divide ÷"
+msgstr "Dividir ÷"
 
 #: website/public/index.html:472
 msgctxt "page:index.html"
@@ -5750,19 +5746,19 @@ msgid ""
 "“100 is clear. The calls are just addresses. {ph0}Which one divides? Which "
 "value goes in?{ph1}”"
 msgstr ""
-"\"100 está claro. Las llamadas son solo direcciones. {ph0}¿Cuál divide? ¿Qué"
-" valor entra?{ph1}”"
+"“100 está claro. Las llamadas son solo direcciones. {ph0}¿Cuál divide? ¿Qué "
+"valor entra?{ph1}”"
 
 #: website/public/index.html:484
 msgctxt "page:index.html"
 msgid "Inspect the helpers and trace the stored values."
 msgstr ""
-"Inspeccione las funciones auxiliares y rastree los valores almacenados."
+"Inspecciona las funciones auxiliares y rastrea los valores almacenados."
 
 #: website/public/index.html:494
 msgctxt "page:index.html"
 msgid "Divide"
-msgstr "Divide"
+msgstr "Dividir"
 
 #: website/public/index.html:499
 msgctxt "page:index.html"
@@ -5778,14 +5774,13 @@ msgid ""
 "“This path multiplies by the other input. So {ph0}10% means 10% of 200{ph1} "
 "after +.”"
 msgstr ""
-"\"Esta ruta se multiplica por la otra entrada. Entonces {ph0}10% significa "
-"10% de 200{ph1} después de +.”"
+"“Esta ruta multiplica por la otra entrada. Así que {ph0}10% significa el 10%"
+" de 200{ph1} después de +.”"
 
 #: website/public/index.html:504
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
-msgstr ""
-"Asigne un nombre a los operandos y verifique ambas rutas de operadores."
+msgstr "Nombra los operandos y comprueba las rutas de ambos operadores."
 
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
@@ -5817,7 +5812,7 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Calculator"
 msgstr ""
-"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ejemplo de indicador · Calculadora"
+"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Prompt de ejemplo · Calculadora"
 
 #: website/public/index.html:556
 msgctxt "page:index.html"
@@ -5842,7 +5837,8 @@ msgstr "REA proporciona"
 #: website/public/index.html:573
 msgctxt "page:index.html"
 msgid "The handler’s instructions, decompiled code and calls."
-msgstr "Instrucciones del manejador, código descompilado y llamadas."
+msgstr ""
+"Las instrucciones del controlador, el código descompilado y las llamadas."
 
 #: website/public/index.html:578
 msgctxt "page:index.html"
@@ -5857,7 +5853,7 @@ msgstr "Qué rama se aplica, qué calcula y cómo reconstruirla."
 #: website/public/index.html:603
 msgctxt "page:index.html"
 msgid "Example 01 · Chrome’s dinosaur game"
-msgstr "Ejemplo 01 · Juego de dinosaurios de Chrome"
+msgstr "Ejemplo 01 · El juego del dinosaurio de Chrome"
 
 #: website/public/index.html:604
 msgctxt "page:index.html"
@@ -5887,19 +5883,19 @@ msgstr "Velocidad"
 #: website/public/index.html:700
 msgctxt "page:index.html"
 msgid "Use the recovered acceleration rule"
-msgstr "Utilice la regla de aceleración recuperada"
+msgstr "Usar la regla de aceleración recuperada"
 
 #: website/public/index.html:704
 msgctxt "page:index.html"
 msgid "Original rule: start at 6, then increase toward 13."
-msgstr "Regla original: comience en 6, luego aumente hacia 13."
+msgstr "Regla original: empieza en 6 y después aumenta hacia 13."
 
 #: website/public/index.html:707
 msgctxt "page:index.html"
 msgid "Move the slider to set your own speed. Space or Jump clears a cactus."
 msgstr ""
-"Mueva el control deslizante para establecer su propia velocidad. Espaciar o "
-"saltar despeja un cactus."
+"Mueve el control deslizante para fijar tu propia velocidad. Con Espacio o "
+"Saltar se esquiva un cactus."
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -5915,9 +5911,9 @@ msgid ""
 "faster? Show the speed rule, then build a small version with an adjustable "
 "speed.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Utilice REA para inspeccionar este juego de dinosaurios. "
-"¿Por qué se vuelve más rápido? Muestre la regla de velocidad, luego cree una"
-" versión pequeña con una velocidad ajustable.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Usa REA para inspeccionar este juego del dinosaurio. ¿Por "
+"qué va cada vez más rápido? Muestra la regla de velocidad y después crea una"
+" versión pequeña con velocidad ajustable.{ph3}{ph4}{ph5}"
 
 #. {ph0}: <a href="https://wayou.github.io/t-rex-runner/" >
 #. {ph1}: </a >
@@ -5926,13 +5922,13 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "Inspected target: {ph0}wayou’s Chromium-derived browser edition{ph1}."
 msgstr ""
-"Objetivo inspeccionado: {ph0}edición de navegador derivada de Chromium de "
-"wayou{ph1}."
+"Objetivo inspeccionado: {ph0}la edición para navegador de wayou, derivada de"
+" Chromium{ph1}."
 
 #: website/public/index.html:718
 msgctxt "page:index.html"
 msgid "Open the speed lab →"
-msgstr "Abra el laboratorio de velocidad →"
+msgstr "Abre el laboratorio de velocidad →"
 
 #: website/public/index.html:749
 msgctxt "page:index.html"
@@ -5952,8 +5948,9 @@ msgid ""
 "{ph0}01 · REA{ph1}{ph2}Read the running game’s script{ph3}{ph4}Return its "
 "actual code and settings to the agent.{ph5}"
 msgstr ""
-"{ph0}01 · REA{ph1}{ph2}Lee el guión del juego de carrera{ph3}{ph4}Devuelva "
-"su código y configuración reales al agente.{ph5}"
+"{ph0}01 · REA{ph1}{ph2}Lee el script del juego en "
+"ejecución{ph3}{ph4}Devuelve al agente su código y su configuración "
+"reales.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5968,9 +5965,9 @@ msgid ""
 "{ph0}02 · Your agent{ph1}{ph2}Rebuild the rule, add a control{ph3}{ph4}Use "
 "the recovered acceleration in a small game with a speed slider.{ph5}"
 msgstr ""
-"{ph0}02 · Su agente{ph1}{ph2}Vuelva a generar la regla, agregue un "
-"control{ph3}{ph4}Usa la aceleración recuperada en un juego pequeño con un "
-"control deslizante de velocidad.{ph5}"
+"{ph0}02 · Tu agente{ph1}{ph2}Recrea la regla y añade un control{ph3}{ph4}Usa"
+" la aceleración recuperada en un juego pequeño con un control deslizante de "
+"velocidad.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5991,7 +5988,7 @@ msgstr ""
 #: website/public/index.html:724
 msgctxt "page:index.html"
 msgid "See the script, checks and how to try the analysis"
-msgstr "Vea el script, las comprobaciones y cómo probar el análisis"
+msgstr "Ver el script, las comprobaciones y cómo probar el análisis"
 
 #. {ph0}: <code>index.js</code>
 #: website/public/index.html:776
@@ -6001,9 +5998,9 @@ msgid ""
 "REA inspected the HTTP browser edition through a local debugging connection "
 "and returned the loaded {ph0}, including its source and digest."
 msgstr ""
-"REA inspeccionó la edición del navegador HTTP a través de una conexión de "
-"depuración local y devolvió el archivo cargado {ph0}, incluyendo su fuente y"
-" resumen."
+"REA inspeccionó la edición para navegador servida por HTTP mediante una "
+"conexión de depuración local y devolvió el {ph0} cargado, con su código "
+"fuente y su hash."
 
 #: website/public/index.html:789
 msgctxt "page:index.html"
@@ -6015,7 +6012,7 @@ msgstr ""
 "Llamamos a la función de actualización del juego original en una "
 "verificación controlada del navegador, con obstáculos y programación "
 "automática deshabilitados. Después de 4.000 actualizaciones, la velocidad "
-"era de 10,0; después de 10.000, era de 13,0, redondeado a un decimal."
+"era de 10,0; después de 10.000, era de 13,0, redondeada a un decimal."
 
 #. {ph0}: <a href="examples/dino-lab/">
 #. {ph1}: </a>
@@ -6028,7 +6025,7 @@ msgid ""
 "new code and run the same speed check."
 msgstr ""
 "El nuevo minijuego mantiene esa regla de velocidad. Su código de dibujo, "
-"salto y colisión es una pequeña implementación de enseñanza. {ph0}Abra el "
+"salto y colisión es una pequeña implementación didáctica. {ph0}Abre el "
 "laboratorio{ph1} para ver el nuevo código y ejecutar la misma comprobación "
 "de velocidad."
 
@@ -6044,10 +6041,10 @@ msgid ""
 "steps{ph1} using {ph2}the dinosaur page{ph3}. Give your agent that page URL "
 "and your local debugging endpoint, then copy the prompt above."
 msgstr ""
-"Para inspeccionar el objetivo usted mismo, siga las instrucciones {ph0}pasos"
-" de conexión del navegador{ph1} usando {ph2}la página del dinosaurio{ph3}. "
-"Proporcione a su agente la URL de esa página y su punto final de depuración "
-"local, luego copie el mensaje anterior."
+"Para inspeccionar el objetivo por tu cuenta, sigue los {ph0}pasos de "
+"conexión del navegador{ph1} con {ph2}la página del dinosaurio{ph3}. Dale a "
+"tu agente la URL de esa página y tu endpoint de depuración local, y después "
+"copia el prompt de arriba."
 
 #. {ph0}: <a href="https://github.com/wayou/t-rex-
 #. runner/blob/5455bfa408ec6b707c7300ff194b7390733a766d/index.js#L565-L571" >
@@ -6060,18 +6057,18 @@ msgctxt "page:index.html"
 msgid ""
 "{ph0}Inspected speed code{ph1} · {ph2}Chromium Authors · BSD license{ph3}"
 msgstr ""
-"{ph0}Código de velocidad inspeccionado{ph1} · {ph2}Chromium Autores * "
+"{ph0}Código de velocidad inspeccionado{ph1} · {ph2}Autores de Chromium · "
 "Licencia BSD{ph3}"
 
 #: website/public/index.html:827
 msgctxt "page:index.html"
 msgid "Example 02 · Windows Calculator"
-msgstr "Ejemplo 02 · Calculadora Windows"
+msgstr "Ejemplo 02 · Calculadora de Windows"
 
 #: website/public/index.html:828
 msgctxt "page:index.html"
 msgid "Rebuild Calculator’s % button."
-msgstr "Recrea el botón % de la calculadora."
+msgstr "Recrea el botón % de la Calculadora."
 
 #: website/public/index.html:933
 msgctxt "page:index.html"
@@ -6086,7 +6083,7 @@ msgstr "10% de 200 = 20. Entonces 200 + 20 = 220."
 #: website/public/index.html:944
 msgctxt "page:index.html"
 msgid "Interactive illustration of the inspected percentage rule."
-msgstr "Ilustración interactiva de la regla de porcentaje inspeccionado."
+msgstr "Ilustración interactiva de la regla de porcentaje inspeccionada."
 
 #. {ph0}: <code>previous = 200</code>
 #. {ph1}: <code>current = 10</code>
@@ -6110,9 +6107,9 @@ msgid ""
 "the rules after + and ×, then build a small calculator that uses "
 "both.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Use REA para inspeccionar el botón % de la calculadora "
-"Windows. Recupere las reglas después de + y×, luego construya una pequeña "
-"calculadora que use ambas.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Usa REA para inspeccionar el botón % de la Calculadora de "
+"Windows. Recupera las reglas después de + y ×, y después crea una "
+"calculadora pequeña que use ambas.{ph3}{ph4}{ph5}"
 
 #: website/public/index.html:869
 msgctxt "page:index.html"
@@ -6140,7 +6137,7 @@ msgstr "Con ×"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Turn 10% into 0.1.{ph1}{ph2}"
-msgstr "{ph0}Convierta el 10% en 0.1.{ph1}{ph2}"
+msgstr "{ph0}Convierte el 10% en 0.1.{ph1}{ph2}"
 
 #: website/public/index.html:967
 msgctxt "page:index.html"
@@ -6179,14 +6176,14 @@ msgid ""
 "rules{ph3}{ph4}Crosscheck the branch with Microsoft’s source, then try + and"
 " × above.{ph5}"
 msgstr ""
-"{ph0}03 · Su agente lo interpreta{ph1}{ph2}Explicar y reproducir las "
-"reglas{ph3}{ph4}Verifique la sucursal con la fuente de Microsoft, luego "
-"intente + y × arriba.{ph5}"
+"{ph0}03 · Tu agente lo interpreta{ph1}{ph2}Explica y reproduce las "
+"reglas{ph3}{ph4}Contrasta la rama con el código fuente de Microsoft y "
+"después prueba + y × arriba.{ph5}"
 
 #: website/public/index.html:951
 msgctxt "page:index.html"
 msgid "See the real code and how the answer was checked"
-msgstr "Vea el código real y cómo se verificó la respuesta"
+msgstr "Ver el código real y cómo se comprobó la respuesta"
 
 #: website/public/index.html:1023
 msgctxt "page:index.html"
@@ -6195,9 +6192,9 @@ msgid ""
 "summary uses names from Microsoft’s public source to explain the recovered "
 "branch."
 msgstr ""
-"Inspeccionado con REA 4.1.0: Calculadora Windows 11.2508.4.0, x64. El "
-"resumen legible usa nombres de la fuente pública de Microsoft para explicar "
-"la rama recuperada."
+"Inspeccionado con REA 4.1.0: Calculadora de Windows 11.2508.4.0, x64. El "
+"resumen legible usa nombres del código fuente público de Microsoft para "
+"explicar la rama recuperada."
 
 #. {ph0}: <a
 #. href="https://github.com/microsoft/calculator/blob/d125246a4e19842ce1332e6c7839cf0e110027d8/src/CalcManager/CEngine/scifunc.cpp#L98-L111"
@@ -6216,18 +6213,18 @@ msgid ""
 "{ph0}Percentage implementation{ph1} · {ph2}Microsoft’s test cases{ph3} · "
 "{ph4}Native setup guide{ph5}"
 msgstr ""
-"{ph0}Porcentaje de implementación{ph1} · {ph2}Casos de prueba de "
+"{ph0}Implementación del porcentaje{ph1} · {ph2}Casos de prueba de "
 "Microsoft{ph3} · {ph4}Guía de configuración nativa{ph5}"
 
 #: website/public/index.html:1162
 msgctxt "page:index.html"
 msgid "Your first investigation"
-msgstr "Su primera investigación"
+msgstr "Tu primera investigación"
 
 #: website/public/index.html:1163
 msgctxt "page:index.html"
 msgid "Try REA on a small app."
-msgstr "Pruebe REA en una aplicación pequeña."
+msgstr "Prueba REA en una aplicación pequeña."
 
 #: website/public/index.html:1164
 msgctxt "page:index.html"
@@ -6235,13 +6232,13 @@ msgid ""
 "Download our Notes example, trace its CSV export, and check one changed "
 "input."
 msgstr ""
-"Descargue nuestro ejemplo de Notes, rastree su exportación CSV y verifique "
-"una entrada modificada."
+"Descarga nuestro ejemplo Notes, sigue su exportación a CSV y comprueba una "
+"entrada modificada."
 
 #: website/public/index.html:1169
 msgctxt "page:index.html"
 msgid "Try the guided example"
-msgstr "Pruebe el ejemplo guiado"
+msgstr "Prueba el ejemplo guiado"
 
 #: website/public/index.html:1186
 msgctxt "page:index.html"
@@ -6254,7 +6251,7 @@ msgid ""
 "Inspect functions, strings, references and call relationships in executables"
 " and libraries."
 msgstr ""
-"Inspeccione funciones, cadenas, referencias y relaciones función-llamada en "
+"Inspecciona funciones, cadenas, referencias y relaciones de llamada en "
 "ejecutables y bibliotecas."
 
 #: website/public/index.html:1191
@@ -6283,8 +6280,8 @@ msgid ""
 "Capture selected browser or process activity, then compare the results "
 "across runs."
 msgstr ""
-"Capture la actividad seleccionada del navegador o del proceso y, a "
-"continuación, compare los resultados entre ejecuciones."
+"Captura la actividad seleccionada del navegador o de un proceso y después "
+"compara los resultados entre ejecuciones."
 
 #: website/public/index.html:1204
 msgctxt "page:index.html"
@@ -6302,29 +6299,29 @@ msgid ""
 "Reverse engineer apps, binaries and browser behavior with your coding agent."
 " Follow clear guides and try interactive examples with REA."
 msgstr ""
-"Realice ingeniería inversa de aplicaciones, archivos binarios y "
-"comportamiento del navegador con su agente de codificación. Siga guías "
-"claras y pruebe ejemplos interactivos con REA."
+"Haz ingeniería inversa de aplicaciones, binarios y comportamiento del "
+"navegador con tu agente de programación. Sigue guías claras y prueba "
+"ejemplos interactivos con REA."
 
 #: website/public/index.html:227
 msgctxt "page:index.html"
 msgid "Copy REA installation prompt"
-msgstr "Copie el mensaje de instalación de REA"
+msgstr "Copiar el prompt de instalación de REA"
 
 #: website/public/index.html:251
 msgctxt "page:index.html"
 msgid "Copy setup command"
-msgstr "Comando Copiar configuración"
+msgstr "Copiar el comando de configuración"
 
 #: website/public/index.html:383
 msgctxt "page:index.html"
 msgid "Follow the manual Calculator analysis"
-msgstr "Siga el análisis manual de la calculadora"
+msgstr "Sigue el análisis manual de la Calculadora"
 
 #: website/public/index.html:539
 msgctxt "page:index.html"
 msgid "Copy Calculator percentage question"
-msgstr "Copiar pregunta de porcentaje de la calculadora"
+msgstr "Copiar la pregunta sobre el porcentaje de la Calculadora"
 
 #: website/public/index.html:673
 msgctxt "page:index.html"
@@ -6332,23 +6329,23 @@ msgid ""
 "Dinosaur mini-game. Use the Jump button or press Space while the game is "
 "focused."
 msgstr ""
-"Minijuego de dinosaurios. Usa el botón de salto o presiona la barra "
-"espaciadora mientras el juego está enfocado."
+"Minijuego del dinosaurio. Usa el botón Saltar o pulsa Espacio mientras el "
+"juego tiene el foco."
 
 #: website/public/index.html:620
 msgctxt "page:index.html"
 msgid "Copy dinosaur analysis prompt"
-msgstr "Copie el mensaje de análisis de dinosaurios"
+msgstr "Copiar el prompt de análisis del dinosaurio"
 
 #: website/public/index.html:890
 msgctxt "page:index.html"
 msgid "Choose the calculation"
-msgstr "Elija el cálculo"
+msgstr "Elige el cálculo"
 
 #: website/public/index.html:844
 msgctxt "page:index.html"
 msgid "Copy Calculator analysis prompt"
-msgstr "Copie el mensaje de análisis de la calculadora"
+msgstr "Copiar el prompt de análisis de la Calculadora"
 
 #: website/public/index.html:1312
 msgctxt "page:index.html"
@@ -10351,7 +10348,7 @@ msgstr "Copiado"
 #: website/public/assets/main.js:32
 msgctxt "runtime"
 msgid "Selected"
-msgstr "Seleccionados"
+msgstr "Seleccionado"
 
 #: website/public/assets/main.js:23
 msgctxt "runtime"
@@ -10378,17 +10375,17 @@ msgstr "Distancia {distance}"
 #: website/public/assets/dino-demo.js:87
 msgctxt "runtime"
 msgid "Hit a cactus. Try another speed."
-msgstr "Golpea un cactus. Prueba con otra velocidad."
+msgstr "Has chocado con un cactus. Prueba con otra velocidad."
 
 #: website/public/assets/dino-demo.js:87
 msgctxt "runtime"
 msgid "Space or Jump ↑"
-msgstr "Espacio o Salto ↑"
+msgstr "Espacio o Saltar ↑"
 
 #: website/public/assets/dino-demo.js:97
 msgctxt "runtime"
 msgid "Play again"
-msgstr "Juega de nuevo"
+msgstr "Jugar de nuevo"
 
 #: website/public/assets/dino-demo.js:97
 #: website/public/assets/dino-demo.js:111
@@ -10399,48 +10396,48 @@ msgstr "Jugar"
 #: website/public/assets/dino-demo.js:171
 msgctxt "runtime"
 msgid "Pause"
-msgstr "Pausa"
+msgstr "Pausar"
 
 #: website/public/assets/dino-demo.js:112
 msgctxt "runtime"
 msgid "Press Play, then jump over the cactus."
-msgstr "Presiona Play, luego salta sobre el cactus."
+msgstr "Pulsa Jugar y después salta el cactus."
 
 #: website/public/assets/dino-demo.js:147
 msgctxt "runtime"
 msgid "Hit a cactus. Press Play again, or change the speed and restart."
 msgstr ""
-"Golpea un cactus. Presione Reproducir nuevamente, o cambie la velocidad y "
-"reinicie."
+"Has chocado con un cactus. Pulsa Jugar de nuevo, o cambia la velocidad y "
+"reinicia."
 
 #: website/public/assets/dino-demo.js:172
 msgctxt "runtime"
 msgid "Running. Space or Jump clears a cactus."
-msgstr "Corriendo. Espaciar o saltar despeja un cactus."
+msgstr "En marcha. Con Espacio o Saltar se esquiva un cactus."
 
 #: website/public/assets/dino-demo.js:183
 #: website/public/assets/dino-demo.js:219
 #: website/public/assets/dino-demo.js:224
 msgctxt "runtime"
 msgid "Paused. Press Play to continue."
-msgstr "En pausa. Presione Reproducir para continuar."
+msgstr "En pausa. Pulsa Jugar para continuar."
 
 #: website/public/assets/dino-demo.js:203
 #, python-brace-format
 msgctxt "runtime"
 msgid "Fixed speed: {speed}. Space or Jump clears a cactus."
-msgstr "Velocidad fija: {speed}. Espaciar o saltar despeja un cactus."
+msgstr "Velocidad fija: {speed}. Con Espacio o Saltar se esquiva un cactus."
 
 #: website/public/assets/dino-demo.js:206
 #, python-brace-format
 msgctxt "runtime"
 msgid "Fixed speed: {speed}. Press Play to try it."
-msgstr "Velocidad fija: {speed}. Presiona Play para probarlo."
+msgstr "Velocidad fija: {speed}. Pulsa Jugar para probarla."
 
 #: website/public/assets/dino-demo.js:215
 msgctxt "runtime"
 msgid "Recovered rule: start at 6, then increase toward 13."
-msgstr "Regla recuperada: comience en 6, luego aumente hacia 13."
+msgstr "Regla recuperada: empieza en 6 y después aumenta hacia 13."
 
 #: website/public/assets/dino-demo.js:216
 #, python-brace-format
@@ -10464,8 +10461,8 @@ msgid ""
 "The replay differs from the recorded original-game values. Compare the speed"
 " rule and settings above."
 msgstr ""
-"La repetición difiere de los valores grabados del juego original. Compare la"
-" regla de velocidad y la configuración anteriores."
+"La reproducción difiere de los valores registrados del juego original. "
+"Compara la regla de velocidad y la configuración de arriba."
 
 #: website/public/assets/aegis-demo.js:22
 #, python-brace-format
@@ -10491,7 +10488,7 @@ msgstr ""
 #: website/public/assets/aegis-demo.js:62
 msgctxt "runtime"
 msgid "Checking…"
-msgstr "Comprobación…"
+msgstr "Comprobando…"
 
 #: website/public/assets/aegis-demo.js:76
 #, python-brace-format
@@ -10500,8 +10497,8 @@ msgid ""
 "{passed} / {total} checks passed (six reference cases, at six and eight "
 "digits)."
 msgstr ""
-"{passed} / {total} cheques aprobados (seis casos de referencia, de seis y "
-"ocho dígitos)."
+"{passed} / {total} comprobaciones superadas (seis casos de referencia, con "
+"seis y ocho dígitos)."
 
 #: website/public/assets/aegis-demo.js:81
 msgctxt "runtime"
@@ -10686,10 +10683,9 @@ msgid ""
 "analysis adapters, returns evidence, and supports follow-up questions as "
 "your agent explains, implements and tests."
 msgstr ""
-"Haga una pregunta sobre un objetivo local. REA inspecciona y rastrea a "
-"través de adaptadores de análisis locales, devuelve evidencia y admite "
-"preguntas de seguimiento a medida que su agente explica, implementa y "
-"prueba."
+"Haz una pregunta sobre un objetivo local. REA inspecciona y rastrea mediante"
+" adaptadores de análisis locales, devuelve evidencia y admite preguntas de "
+"seguimiento mientras tu agente explica, implementa y prueba."
 
 # Reviewed for technical meaning and concise diagram labels.
 #: website/public/assets/figures/rea-investigation-flow.svg:31
@@ -11017,7 +11013,7 @@ msgstr "Síguenos en X"
 #: website/public/examples/dino-lab/index.html:313
 msgctxt "page:examples/dino-lab/index.html"
 msgid "REA · selected script source"
-msgstr "REA · fuente de script seleccionada"
+msgstr "REA · código fuente seleccionado del script"
 
 #: website/public/first-investigation/index.html:381
 msgctxt "page:first-investigation/index.html"
@@ -11112,7 +11108,7 @@ msgstr "Extracto recuperado de C *"
 #: website/public/index.html:300 website/public/index.html:1054
 msgctxt "page:index.html"
 msgid "Showcases →"
-msgstr "Vitrinas →"
+msgstr "Casos prácticos →"
 
 #: website/public/index.html:783
 msgctxt "page:index.html"
@@ -11132,7 +11128,7 @@ msgstr "REA · instrucciones originales seleccionadas"
 #: website/public/index.html:1013
 msgctxt "page:index.html"
 msgid "Operator IDs · Microsoft’s source"
-msgstr "ID de operador · Fuente de Microsoft"
+msgstr "ID de operador · Código fuente de Microsoft"
 
 #: website/public/showcase/aegis/index.html:406
 #: website/public/showcase/aegis/index.html:438
@@ -11436,24 +11432,24 @@ msgstr "Ángulo y velocidad · extracto de la fuente"
 #: website/public/assets/home.js:29
 msgctxt "runtime"
 msgid "Press % to see what happens to 10."
-msgstr "Presione % para ver qué sucede con 10."
+msgstr "Pulsa % para ver qué pasa con el 10."
 
 #: website/public/assets/home.js:32
 msgctxt "runtime"
 msgid "10% of 200 is 20. Press = to add it."
-msgstr "el 10% de 200 es 20. Presione = para agregarlo."
+msgstr "El 10% de 200 es 20. Pulsa = para sumarlo."
 
 #: website/public/assets/home.js:33
 msgctxt "runtime"
 msgid "For multiplication, 10 becomes 0.1. Press = to multiply."
 msgstr ""
-"Para la multiplicación, 10 se convierte en 0.1. Presione = para multiplicar."
+"En la multiplicación, 10 se convierte en 0.1. Pulsa = para multiplicar."
 
 #: scripts/website_i18n.py
 msgctxt "runtime"
 msgid "Translation is being updated. Read this page in English for now."
 msgstr ""
-"La traducción está siendo actualizada. Lea esta página en inglés por ahora."
+"La traducción se está actualizando. Por ahora, lee esta página en inglés."
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -11510,10 +11506,10 @@ msgid ""
 "written, which fields it contains, and the relevant files and "
 "lines.{ph5}{ph6}{ph7}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Descargar {ph3} en una nueva carpeta de ejemplo y "
-"descomprímala. Use REA para averiguar qué sucede cuando hago clic en "
-"Exportar notas. Mostrar dónde {ph4} está escrito, qué campos contiene y los "
-"archivos y líneas relevantes.{ph5}{ph6}{ph7}"
+"{ph0}›{ph1}{ph2}Descarga {ph3} en una carpeta de ejemplo nueva y "
+"descomprímelo. Usa REA para averiguar qué ocurre cuando hago clic en Export "
+"notes. Muestra dónde se escribe {ph4}, qué campos contiene y los archivos y "
+"las líneas relevantes.{ph5}{ph6}{ph7}"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -11576,7 +11572,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "A supplied example · {ph0} and npm · Your coding agent"
-msgstr "Un ejemplo proporcionado · {ph0} y npm * Su agente de codificación"
+msgstr "Un ejemplo incluido · {ph0} y npm · Tu agente de programación"
 
 #. {ph0}: <span translate="no">Node.js</span>
 #. {ph1}: <a href="../get-started/">
@@ -11588,8 +11584,8 @@ msgid ""
 "Use a coding agent such as Claude Code, Codex or Cursor. You’ll need {ph0} "
 "and npm; the {ph1}setup guide lists supported versions{ph2}."
 msgstr ""
-"Use un agente de codificación como Claude Code, Codex o Cursor. Necesitarás "
-"{ph0} y npm; el {ph1}la guía de configuración enumera las versiones "
+"Usa un agente de programación como Claude Code, Codex o Cursor. Necesitarás "
+"{ph0} y npm; {ph1}la guía de configuración enumera las versiones "
 "compatibles{ph2}."
 
 #. {ph0}: <span class="flow-label" >
@@ -11605,8 +11601,7 @@ msgstr ""
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}Page · {ph1}{ph2}{ph3}Export notes{ph4}{ph5}Calls {ph6}.{ph7}"
 msgstr ""
-"{ph0}Página · {ph1}{ph2}{ph3}Notas de exportación{ph4}{ph5}Llamadas "
-"{ph6}.{ph7}"
+"{ph0}Página · {ph1}{ph2}{ph3}Export notes{ph4}{ph5}Llama a {ph6}.{ph7}"
 
 #. {ph0}: <span class="flow-label" >
 #. {ph1}: <span translate="no">preload.js</span>
@@ -11642,15 +11637,15 @@ msgid ""
 "{ph0}Handler · {ph1}{ph2}{ph3}Write {ph4}{ph5}{ph6}Calls the formatter in "
 "{ph7} and writes the file.{ph8}"
 msgstr ""
-"{ph0}Manejador · {ph1}{ph2}{ph3}Escribir {ph4}{ph5}{ph6}Llama al formateador"
-" en {ph7} y escribe el archivo.{ph8}"
+"{ph0}Controlador · {ph1}{ph2}{ph3}Escribe {ph4}{ph5}{ph6}Llama al "
+"formateador de {ph7} y escribe el archivo.{ph8}"
 
 #. {ph0}: <span translate="no">main.js</span>
 #: website/public/first-investigation/index.html:380
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0} · lines 8–12"
-msgstr "{ph0} · líneas 8-12"
+msgstr "{ph0} · líneas 8–12"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -11669,9 +11664,9 @@ msgid ""
 "run the example’s {ph4} formatter with {ph5} to check it. Show the "
 "prediction and actual output.{ph6}{ph7}{ph8}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Predecir el CSV para una nota con id 1 y título {ph3}. Luego"
-" ejecute el ejemplo {ph4} formateador con {ph5} para comprobarlo. Muestra la"
-" predicción y la salida real.{ph6}{ph7}{ph8}"
+"{ph0}›{ph1}{ph2}Predice el CSV de una nota con id 1 y título {ph3}. Después "
+"ejecuta el formateador {ph4} del ejemplo con {ph5} para comprobarlo. Muestra"
+" la predicción y la salida real.{ph6}{ph7}{ph8}"
 
 #. {ph0}: <span translate="no">Node.js</span>
 #: website/public/first-investigation/index.html:440
@@ -11681,8 +11676,8 @@ msgid ""
 "The title stays in one quoted field; each quotation mark is doubled. This "
 "checks the formatter directly with {ph0}."
 msgstr ""
-"El título permanece en un campo entrecomillado; cada comilla se duplica. "
-"Esto verifica el formateador directamente con {ph0}."
+"El título queda en un único campo entre comillas; cada comilla se duplica. "
+"Esto comprueba el formateador directamente con {ph0}."
 
 #. {ph0}: <span translate="no">Node.js</span>
 #. {ph1}: <span translate="no">Node.js</span>
@@ -11701,7 +11696,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Don't have {ph0}, or not sure?"
-msgstr "No tengo {ph0}, ¿ o no estás seguro?"
+msgstr "¿No tienes {ph0} o no estás seguro?"
 
 #. {ph0}: <code>node -v</code>
 #. {ph1}: <span translate="no">Node.js</span>
@@ -11775,8 +11770,8 @@ msgid ""
 "First time, or missing {ph0} or a coding agent? {ph1}Follow the step-by-step"
 " setup guide →{ph2}"
 msgstr ""
-"Primera vez, o falta {ph0} ¿o un agente de codificación? {ph1}Siga la guía "
-"de configuración paso a paso →{ph2}"
+"¿Es tu primera vez, o te falta {ph0} o un agente de programación? {ph1}Sigue"
+" la guía de configuración paso a paso →{ph2}"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -11792,15 +11787,15 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to inspect Windows Calculator. Why does {ph3} give "
 "220?{ph4}{ph5}{ph6}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Uso REA para inspeccionar Windows Calculadora. ¿Por qué "
-"{ph3} da 220?{ph4}{ph5}{ph6}"
+"{ph0}›{ph1}{ph2}Usa REA para inspeccionar la Calculadora de Windows. ¿Por "
+"qué {ph3} da 220?{ph4}{ph5}{ph6}"
 
 #. {ph0}: <span translate="no">index.js</span>
 #: website/public/index.html:735
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "REA · loaded {ph0} · selected lines"
-msgstr "REA · cargado {ph0} · líneas seleccionadas"
+msgstr "REA · {ph0} cargado · líneas seleccionadas"
 
 #. {ph0}: <span class="flow-label" >
 #. {ph1}: <span translate="no">calc.exe</span>
@@ -11818,9 +11813,9 @@ msgid ""
 "app{ph4}{ph5}The code opens {ph6}. The agent then selects the installed "
 "app’s library.{ph7}"
 msgstr ""
-"{ph0}01 · REA lee {ph1}{ph2}{ph3}Lanza la aplicación Calculadora{ph4}{ph5}Se"
-" abre el código {ph6}. A continuación, el agente selecciona la biblioteca de"
-" la aplicación instalada.{ph7}"
+"{ph0}01 · REA lee {ph1}{ph2}{ph3}Inicia la aplicación "
+"Calculadora{ph4}{ph5}El código abre {ph6}. Después, el agente selecciona la "
+"biblioteca de la aplicación instalada.{ph7}"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -13299,12 +13294,12 @@ msgstr "{ph0}Casos prácticos{ph1}"
 #: website/public/index.html:1048
 msgctxt "page:index.html"
 msgid "REA case studies."
-msgstr "Estudios de caso de REA."
+msgstr "Casos prácticos de REA."
 
 #: website/public/index.html:1058
 msgctxt "page:index.html"
 msgid "Android · APK analysis"
-msgstr "Análisis de Android · APK"
+msgstr "Android · Análisis de APK"
 
 #: website/public/index.html:1059
 msgctxt "page:index.html"
@@ -13314,7 +13309,7 @@ msgstr "Cómo genera un autenticador un código de inicio de sesión"
 #: website/public/index.html:1064
 msgctxt "page:index.html"
 msgid "Read the Android case study"
-msgstr "Lea el caso práctico de Android"
+msgstr "Lee el caso práctico de Android"
 
 #: website/public/index.html:1069
 msgctxt "page:index.html"
@@ -13329,12 +13324,12 @@ msgstr "Cómo Notion copia texto y HTML"
 #: website/public/index.html:1075
 msgctxt "page:index.html"
 msgid "Read the Notion case study"
-msgstr "Lea el caso práctico de Notion"
+msgstr "Lee el caso práctico de Notion"
 
 #: website/public/index.html:1080
 msgctxt "page:index.html"
 msgid "Native · Reconstruction"
-msgstr "Reconstrucción nativa ·"
+msgstr "Código nativo · Reconstrucción"
 
 #: website/public/index.html:1081
 msgctxt "page:index.html"
@@ -13344,7 +13339,7 @@ msgstr "Cálculo de la posición del sonido izquierdo/derecho de DX-Ball"
 #: website/public/index.html:1086
 msgctxt "page:index.html"
 msgid "Read the DX-Ball case study"
-msgstr "Lea el caso práctico de DX-Ball"
+msgstr "Lee el caso práctico de DX-Ball"
 
 #: website/public/index.html:265 website/public/index.html:266
 msgctxt "page:index.html"
@@ -13739,9 +13734,9 @@ msgid ""
 "button. Your agent can inspect its code without installing or launching "
 "Electron."
 msgstr ""
-"El ejemplo es una aplicación Electron de seis archivos con un {ph0}Notas de "
-"exportación{ph1} botón. Su agente puede inspeccionar su código sin instalar "
-"ni iniciar Electron."
+"El ejemplo es una aplicación Electron de seis archivos con un botón "
+"{ph0}Export notes{ph1} (exportar notas). Tu agente puede inspeccionar su "
+"código sin instalar ni iniciar Electron."
 
 #: website/public/get-started/index.html:927
 msgctxt "page:get-started/index.html"
@@ -13766,15 +13761,15 @@ msgid ""
 "written, which fields it contains, and the relevant files and "
 "lines.{ph5}{ph6}{ph7}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Descargar {ph3} en una nueva carpeta de ejemplo y "
-"descomprímala. Use REA para averiguar qué sucede cuando hago clic en "
-"Exportar notas. Mostrar dónde {ph4} está escrito, qué campos contiene y los "
-"archivos y líneas relevantes.{ph5}{ph6}{ph7}"
+"{ph0}›{ph1}{ph2}Descarga {ph3} en una carpeta de ejemplo nueva y "
+"descomprímelo. Usa REA para averiguar qué ocurre cuando hago clic en Export "
+"notes. Muestra dónde se escribe {ph4}, qué campos contiene y los archivos y "
+"las líneas relevantes.{ph5}{ph6}{ph7}"
 
 #: website/public/get-started/index.html:951
 msgctxt "page:get-started/index.html"
 msgid "Look for a short explanation with file and line references:"
-msgstr "Busque una breve explicación con referencias de archivos y líneas:"
+msgstr "Busca una explicación breve con referencias a archivos y líneas:"
 
 #. {ph0}: <code>notes:export</code>
 #. {ph1}: <code>notes.csv</code>
@@ -13788,9 +13783,9 @@ msgid ""
 "and writes {ph1} in the user’s Downloads folder. The columns are {ph2} and "
 "{ph3}."
 msgstr ""
-"El botón envía un {ph0} mensaje. El proceso principal formatea las notas "
-"como CSV y escribe {ph1} en la carpeta de descargas del usuario. Las "
-"columnas son {ph2} y {ph3}."
+"El botón envía un mensaje {ph0}. El proceso principal da formato CSV a las "
+"notas y escribe {ph1} en la carpeta Descargas del usuario. Las columnas son "
+"{ph2} y {ph3}."
 
 #. {ph0}: <a href="../first-investigation/#check" >
 #. {ph1}: </a >
@@ -13822,8 +13817,8 @@ msgid ""
 "If your agent can’t download files, unzip this archive yourself. Give it the"
 " path to the {ph0} folder and the same export question."
 msgstr ""
-"Si su agente no puede descargar archivos, descomprímalo usted mismo. Dale el"
-" camino al {ph0} carpeta y la misma pregunta de exportación."
+"Si tu agente no puede descargar archivos, descomprime tú mismo este archivo."
+" Dale la ruta de la carpeta {ph0} y la misma pregunta sobre la exportación."
 
 #. {ph0}: <code>/absolute/path/to/app</code>
 #: website/public/get-started/index.html:983
@@ -14368,7 +14363,7 @@ msgstr "Copiar comando"
 #: website/public/get-started/index.html:928
 msgctxt "page:get-started/index.html"
 msgid "Copy Notes investigation prompt"
-msgstr "Aviso de investigación de Copy Notes"
+msgstr "Copiar el prompt de investigación de Notes"
 
 #. {ph0}: <code>sudo apt install curl unzip</code>
 #: website/public/get-started/index.html:364
@@ -14679,8 +14674,8 @@ msgid ""
 "Start at 6. Add 0.001 each update without a collision, while speed is below "
 "13."
 msgstr ""
-"Comience a las 6. Añadir 0.001 cada actualización sin colisión, mientras que"
-" la velocidad es inferior 13."
+"Empieza en 6. Suma 0.001 en cada actualización sin colisión mientras la "
+"velocidad sea inferior a 13."
 
 #: website/public/index.html:1049
 msgctxt "page:index.html"
@@ -14741,8 +14736,8 @@ msgid ""
 "Selected assembly from the installed Calculator DLL. The thoughts and reply "
 "illustrate the findings. {ph0}Continue with the Calculator example ↓{ph1}"
 msgstr ""
-"Ensamblado seleccionado de la DLL de la calculadora instalada. Los "
-"pensamientos y la respuesta ilustran los hallazgos. {ph0}Continúe con el "
+"Código ensamblador seleccionado de la DLL de la Calculadora instalada. Los "
+"pensamientos y la respuesta ilustran los hallazgos. {ph0}Continúa con el "
 "ejemplo de la Calculadora ↓{ph1}"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
@@ -14757,8 +14752,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Website"
-msgstr ""
-"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ejemplo de solicitud · Sitio web"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Prompt de ejemplo · Sitio web"
 
 #: website/public/index.html:1236
 msgctxt "page:index.html"
@@ -14779,8 +14773,8 @@ msgctxt "page:index.html"
 msgid ""
 "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Game reconstruction"
 msgstr ""
-"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Mensaje de ejemplo · Reconstrucción "
-"del juego"
+"{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Prompt de ejemplo · Reconstrucción "
+"de un juego"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -14806,17 +14800,17 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}See the DX-Ball case study →{ph1}"
-msgstr "{ph0}Vea el estudio de caso de DX-Ball →{ph1}"
+msgstr "{ph0}Ver el caso práctico de DX-Ball →{ph1}"
 
 #: website/public/index.html:1218
 msgctxt "page:index.html"
 msgid "Copy website project prompt"
-msgstr "Copie el mensaje del proyecto del sitio web"
+msgstr "Copiar el prompt del proyecto de sitio web"
 
 #: website/public/index.html:1246
 msgctxt "page:index.html"
 msgid "Copy game reconstruction prompt"
-msgstr "Copiar mensaje de reconstrucción del juego"
+msgstr "Copiar el prompt de reconstrucción del juego"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -14832,13 +14826,13 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to inspect {ph3}. Clone this website for "
 "me.{ph4}{ph5}{ph6}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Utilice REA para inspeccionar {ph3}. Clona este sitio web "
-"por mí.{ph4}{ph5}{ph6}"
+"{ph0}›{ph1}{ph2}Usa REA para inspeccionar {ph3}. Clona este sitio web para "
+"mí.{ph4}{ph5}{ph6}"
 
 #: website/public/index.html:1208
 msgctxt "page:index.html"
 msgid "Try a larger project"
-msgstr "Probar un proyecto más grande"
+msgstr "Prueba un proyecto más grande"
 
 #: website/public/index.html:598
 msgctxt "page:index.html"
@@ -15009,9 +15003,9 @@ msgid ""
 "build{ph1} or a release containing those changes. npm {ph2} does not include"
 " them."
 msgstr ""
-"El perfil sin interfaz de macOS y el puente GUI nativo requieren una "
-"{ph0}compilación de REA desde el código fuente{ph1} o una versión que "
-"incluya estos cambios. npm {ph2} no los incluye."
+"El perfil sin interfaz gráfica de macOS y el puente nativo de la interfaz "
+"gráfica requieren una {ph0}compilación de REA desde el código fuente{ph1} o "
+"una versión que incluya estos cambios. npm {ph2} no los incluye."
 
 #. {ph0}: <code>node scripts/rea.mjs doctor --provider ida --json</code>
 #. {ph1}: <code>node scripts/rea.mjs setup</code>
@@ -15730,7 +15724,7 @@ msgstr "{ph0}Entornos de RL{ph1}"
 #: website/public/index.html:1098
 msgctxt "page:index.html"
 msgid "Build RL environments."
-msgstr "Crear entornos de RL"
+msgstr "Crea entornos de RL."
 
 #: website/public/index.html:1099
 msgctxt "page:index.html"
@@ -15842,9 +15836,7 @@ msgstr "{ph0}Guía para crear un entorno{ph1} · {ph2}Ver la demo en X{ph3}"
 #: website/public/index.html:1124
 msgctxt "page:index.html"
 msgid "With REA set up in your agent, give it a task like this:"
-msgstr ""
-"Configura REA en tu agente y sustituye la URL y las tareas de carpetas del "
-"ejemplo por las tuyas:"
+msgstr "Con REA configurado en tu agente, dale una tarea como esta:"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -15946,8 +15938,8 @@ msgid ""
 "REA: Find out how software works. Reverse engineering with your coding "
 "agent."
 msgstr ""
-"REA: Descubra cómo funciona el software. Ingeniería inversa con su agente de"
-" codificación."
+"REA: Descubre cómo funciona el software. Ingeniería inversa con tu agente de"
+" programación."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -16016,7 +16008,7 @@ msgstr ""
 #: website/public/index.html:6
 msgctxt "page:index.html"
 msgid "REA: Reverse Engineering for Your Coding Agent"
-msgstr "REA-Ingeniería Inversa para su Agente de Codificación"
+msgstr "REA: ingeniería inversa para tu agente de programación"
 
 #: website/public/index.html:370
 msgctxt "page:index.html"
@@ -16043,7 +16035,7 @@ msgid ""
 "Use the ID with {ph0} when choosing a client explicitly. These clients are "
 "supported in npm 6.8.0 and later."
 msgstr ""
-"Use el identificador con {ph0} cuando elija un cliente de forma explícita. "
+"Usa el identificador con {ph0} cuando elijas un cliente de forma explícita. "
 "Estos clientes se admiten a partir de npm 6.8.0."
 
 #. {ph0}: <code>droid</code>
@@ -16119,7 +16111,7 @@ msgstr ""
 "La configuración automatizada en Linux requiere un host x86_64 con Ubuntu "
 "24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS u Omarchy. También se "
 "puede configurar un lanzador de Hopper existente en otras distribuciones de "
-"Linux compatibles. En Linux arm64, use Ghidra. Hopper es software comercial;"
+"Linux compatibles. En Linux arm64, usa Ghidra. Hopper es software comercial;"
 " su demostración tiene límites definidos por el fabricante."
 
 #. {ph0}: <strong>
