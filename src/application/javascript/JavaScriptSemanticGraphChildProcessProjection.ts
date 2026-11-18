@@ -27,6 +27,7 @@ interface ChildUnknownInput {
     | "forwards-signal"
     | "listens-exit"
     | "listens-error"
+    | "supplies-env"
     | "connects-stdio"
   )[];
   readonly reason?: "unknown-value";
@@ -115,15 +116,28 @@ const projectSpawn = (
         : { evidence: candidateEvidence }),
       properties: { argument_count: spawn.argvCount },
     });
-  if (spawn.environmentSupplied)
+  if (spawn.environmentSupplied !== false)
     addSemanticGraphRelation(context.state, {
       source: callSite,
       target: child,
       relation: "supplies-env",
-      resolution: candidateEvidence === undefined ? "resolved" : "candidate",
+      resolution:
+        candidateEvidence === undefined && spawn.environmentSupplied === true
+          ? "resolved"
+          : "candidate",
       ...(candidateEvidence === undefined
         ? {}
         : { evidence: candidateEvidence }),
+    });
+  if (spawn.environmentSupplied === null)
+    addChildUnknown({
+      context,
+      node: child,
+      location: spawn.location,
+      relationKinds: ["supplies-env"],
+      reason: "unknown-value",
+      detail: `Static ${spawn.method} environment options remain unresolved.`,
+      candidateNodeIds: [],
     });
   const stdio = addStdioNode(context, spawn, child);
   addSemanticGraphRelation(context.state, {

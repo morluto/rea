@@ -470,9 +470,10 @@ const environmentSupplied = (
   readOption: ChildSpawnArguments["readOption"],
   context: ChildSpawnContext,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
+): boolean | null => {
   const lookup = readOption("env");
-  if (lookup.status !== "explicit") return false;
+  if (lookup.status !== "explicit")
+    return lookup.status === "missing" ? false : null;
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value)) return false;
   if (
@@ -480,7 +481,7 @@ const environmentSupplied = (
     isUnshadowedGlobal(value, state, "NaN")
   )
     return false;
-  return staticJavaScriptTruthiness(value) !== false;
+  return staticJavaScriptTruthiness(value) ?? null;
 };
 
 /**

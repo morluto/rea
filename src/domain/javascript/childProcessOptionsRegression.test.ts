@@ -138,14 +138,18 @@ describe("child-process options detection", () => {
       ["bigint-zero", `spawn("tool", [], { env: 0n })`, false],
       ["zero-float", `spawn("tool", [], { env: 0.0 })`, false],
       ["nan", `spawn("tool", [], { env: NaN })`, false],
-      ["shadowed-nan", `((NaN) => spawn("tool", [], { env: NaN }))({})`, true],
+      ["shadowed-nan", `((NaN) => spawn("tool", [], { env: NaN }))({})`, null],
       ["empty-string", `spawn("tool", [], { env: "" })`, false],
       ["false", `spawn("tool", [], { env: false })`, false],
       ["empty-object", `spawn("tool", [], { env: {} })`, true],
       ["with-key", `spawn("tool", [], { env: { A: "1" } })`, true],
       ["inline-spread", `spawn("tool", [], { ...{ env: { A: "1" } } })`, true],
-      ["unresolved-value", `spawn("tool", [], { env: input })`, true],
-      ["unresolved-options", `spawn("tool", [], input)`, false],
+      ["unresolved-value", `spawn("tool", [], { env: input })`, null],
+      ["unresolved-options", `spawn("tool", [], input)`, null],
+      ["getter", `spawn("tool", [], { get env() { return input } })`, null],
+      ["later-spread", `spawn("tool", [], { env: {}, ...input })`, null],
+      ["known-last", `spawn("tool", [], { ...input, env: {} })`, true],
+      ["known-null-last", `spawn("tool", [], { ...input, env: null })`, false],
     ] as const;
 
     for (const [label, call, supplied] of cases) {

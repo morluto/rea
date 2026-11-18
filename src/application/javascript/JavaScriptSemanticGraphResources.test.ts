@@ -64,7 +64,7 @@ it("projects child-process creation, I/O, listeners, and signals", () => {
     method: "spawn",
     command: null,
     argv_count: 2,
-    environment_supplied: true,
+    environment_supplied: null,
     stdio_mode: "pipe",
   });
   expect(
@@ -96,6 +96,60 @@ it("projects child-process creation, I/O, listeners, and signals", () => {
   expect(
     graph.coverage.families.find(({ family }) => family === "child-process"),
   ).toMatchObject({ status: "partial" });
+});
+
+it.each([
+  ['spawn("tool", [], { env: input })'],
+  ['spawn("tool", [], options)'],
+] as const)("retains uncertainty about the child environment: %s", (call) => {
+  const graph = graphFor(`
+    import { spawn } from "node:child_process";
+    function run(input, options) { ${call}; }
+  `);
+  const child = graph.nodes.find(({ kind }) => kind === "child-process");
+  if (child === undefined) throw new Error("Expected a child candidate");
+  expect(child.properties.environment_supplied).toBeNull();
+  expect(graph.relations).toContainEqual(
+    expect.objectContaining({
+      target_node_id: child.node_id,
+      relation: "supplies-env",
+      resolution: "candidate",
+    }),
+  );
+  expect(graph.unknowns).toContainEqual(
+    expect.objectContaining({
+      node_id: child.node_id,
+      family: "child-process",
+      reason: "unknown-value",
+      relation_kinds: ["supplies-env"],
+    }),
+  );
+});
+
+it.each([
+  ['spawn("tool")', false],
+  ['spawn("tool", [], { env: null })', false],
+  ['spawn("tool", [], { env: {} })', true],
+] as const)("keeps known child environment facts: %s", (call, supplied) => {
+  const graph = graphFor(`
+    import { spawn } from "node:child_process";
+    ${call};
+  `);
+  const child = graph.nodes.find(({ kind }) => kind === "child-process");
+  if (child === undefined) throw new Error("Expected a child candidate");
+  expect(child.properties.environment_supplied).toBe(supplied);
+  const relations = graph.relations.filter(
+    ({ target_node_id, relation }) =>
+      target_node_id === child.node_id && relation === "supplies-env",
+  );
+  expect(relations).toHaveLength(supplied ? 1 : 0);
+  if (supplied) expect(relations[0]?.resolution).toBe("resolved");
+  expect(
+    graph.unknowns.some(
+      ({ node_id, relation_kinds }) =>
+        node_id === child.node_id && relation_kinds.includes("supplies-env"),
+    ),
+  ).toBe(false);
 });
 
 it("keeps destructured request, spawn, and timer results as projections", () => {
