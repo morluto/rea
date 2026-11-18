@@ -431,6 +431,7 @@
 * **setup:** derive client config roots from each client's own reader ([#10596](https://github.com/morluto/rea/issues/10596)) ([f5c8c1f](https://github.com/morluto/rea/commit/f5c8c1f9e0d25ed9317e79cd39fed4ef811e7d29))
 * **setup:** disclose manual connector steps before approval ([4d02bc8](https://github.com/morluto/rea/commit/4d02bc82b3de9cba642086955506dfdd848d15a2)), closes [#7692](https://github.com/morluto/rea/issues/7692) [#7792](https://github.com/morluto/rea/issues/7792)
 * **setup:** honor retained Kilo activation during uninstall ([#11795](https://github.com/morluto/rea/issues/11795)) ([41cf965](https://github.com/morluto/rea/commit/41cf9654da43a3050cc7142a574b3c3802d85041))
+* **setup:** name an unresolved client location in the picker ([#11699](https://github.com/morluto/rea/issues/11699)) ([a43a1b6](https://github.com/morluto/rea/commit/a43a1b64536b0e14c00068b57ae6459034b34b26))
 * **setup:** name client configuration syntax from one reader table ([#10586](https://github.com/morluto/rea/issues/10586)) ([9ca6b41](https://github.com/morluto/rea/commit/9ca6b41ee0f762cdf80c4ec06cee9c77662e1355))
 * **setup:** normalize Gemini trust rules before selection ([#10378](https://github.com/morluto/rea/issues/10378)) ([bf63760](https://github.com/morluto/rea/commit/bf63760cb42c74eac388a314519c7ac01c6f2fc8))
 * **setup:** read MCPorter's XDG folder in the client configuration-root owner ([#11193](https://github.com/morluto/rea/issues/11193)) ([ec5cb5e](https://github.com/morluto/rea/commit/ec5cb5ec516a2129e08bbc20f3f6627341ef7b2d))
