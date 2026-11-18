@@ -44,7 +44,11 @@ import {
   type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import type { EvidenceLocation } from "../domain/evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceLocation,
+} from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -209,6 +213,7 @@ interface Answer {
   readonly locations: readonly EvidenceLocation[];
   readonly limitations: readonly string[];
   readonly referenceSource?: JsonValue;
+  readonly callDestinationEvidence?: Evidence;
   readonly requiresSourceEvidence?: true;
   readonly stringSource?: JsonValue;
   readonly relationshipCoverage?: RelationshipCoverage;
@@ -608,8 +613,13 @@ export class KunaSessionClient implements AnalysisClient {
       );
       if (!answer.ok)
         return err(kunaQueryFailureForCaller(answer.error, operation));
-      if (isAborted(options.signal))
-        return err(cancelledBy(operation, options.signal));
+      if (isAborted(options.signal)) {
+        const cancellation = cancelledBy(operation, options.signal);
+        const completed = answer.value.callDestinationEvidence;
+        if (completed !== undefined)
+          cancellation.retainPartialObservation(completed);
+        return err(cancellation);
+      }
       return ok(
         this.#execution(
           kunaLimitations(operation, this.#deadline, this.#heapRequest),
@@ -790,6 +800,9 @@ export class KunaSessionClient implements AnalysisClient {
         ...(answer.requiresSourceEvidence === undefined
           ? {}
           : { requiresSourceEvidence: answer.requiresSourceEvidence }),
+        ...(answer.callDestinationEvidence === undefined
+          ? {}
+          : { sourceEvidence: [answer.callDestinationEvidence] }),
         ...(answer.referenceCoverageGaps === undefined
           ? {}
           : { referenceCoverageGaps: answer.referenceCoverageGaps }),
@@ -1024,11 +1037,13 @@ export class KunaSessionClient implements AnalysisClient {
       this.#target.architecture !== "arm64"
     )
       return err(
-        new AnalysisCapabilityUnavailableError(
-          KUNA_PROVIDER_ID,
-          operation,
-          "Kuna call-destination decompilation is available for arm64 Mach-O targets.",
-        ),
+        new AnalysisInputError(operation, {
+          userMessage:
+            "Kuna call-destination decompilation requires an arm64 Mach-O target.",
+          conformsToInputContract: true,
+          remediationAction:
+            "Omit analysis to decompile a discovered procedure, or open an arm64 Mach-O target.",
+        }),
       );
     const address = normalizeKunaAddress(raw);
     if (address === undefined)
@@ -1097,19 +1112,48 @@ export class KunaSessionClient implements AnalysisClient {
             "Inspect xrefs for this exact address. Absence of a usable call does not establish that the address holds data.",
         }),
       );
+    const referenceSource = {
+      kind: "kuna-direct-call-destination",
+      section: region,
+      call: { ...call },
+      xrefs_sha256: references.value.sha256,
+      xrefs_bytes: references.value.bytes,
+    };
+    const evidence = createEvidence(
+      this.#target,
+      { id: KUNA_PROVIDER_ID, name: "Kuna", version: installation.version },
+      {
+        operation: "kuna:direct-call-destination",
+        parameters: { address },
+        result: referenceSource,
+        ...(this.#profile === undefined
+          ? {}
+          : { analysisProfile: this.#profile }),
+        limitations: [
+          ...kunaVerificationLimitations(installation),
+          "This observation establishes one direct call to the selected address. Procedure boundaries and pseudocode are outside this observation.",
+        ],
+        locations: [
+          { kind: "address", address: call.from_address },
+          { kind: "address", address },
+        ],
+      },
+    );
     const answer = await this.#freshPseudocode(address, installation, options, [
       "Kuna decoded a reported direct-call destination outside the procedure inventory. This observation does not establish a discovered procedure, function boundaries, or a project export body.",
-    ]);
-    if (!answer.ok) return answer;
+    ]).catch((cause: unknown) =>
+      err(classifyProviderFailure(cause, kunaSessionDialect(operation))),
+    );
+    if (!answer.ok) {
+      if (answer.error.partialObservation === undefined)
+        answer.error.retainPartialObservation(evidence);
+      else answer.error.retainArgumentObservation("procedure", evidence);
+      return answer;
+    }
     return ok({
       ...answer.value,
-      referenceSource: {
-        kind: "kuna-direct-call-destination",
-        section: region,
-        call: { ...call },
-        xrefs_sha256: references.value.sha256,
-        xrefs_bytes: references.value.bytes,
-      },
+      referenceSource,
+      callDestinationEvidence: evidence,
       requiresSourceEvidence: true,
     });
   }

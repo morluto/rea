@@ -255,6 +255,20 @@ test("recovers only an explicitly selected, evidenced Mach-O call destination", 
   expect(first.normalized_result).toEqual(
     expect.stringContaining("int called(void)"),
   );
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.structuredContent).toMatchObject({
+    result: {
+      records: expect.arrayContaining([
+        expect.objectContaining({
+          evidence_id: first.evidence_links[0],
+          operation: "kuna:direct-call-destination",
+        }),
+      ]),
+    },
+  });
   expect(first.raw_result).toMatchObject({
     source: { kind: "single-function" },
     project_export: { state: "not-started" },
@@ -308,3 +322,72 @@ test("recovers only an explicitly selected, evidenced Mach-O call destination", 
       .map(({ argv }) => argv[2]),
   ).toEqual([destination, destination]);
 });
+
+test.for([
+  { failure: "command failure", hang: false },
+  { failure: "timeout", hang: true },
+])(
+  "preserves the admitted direct call after a standalone $failure",
+  async ({ hang }, { mcp }) => {
+    const destination = "0x1000004a4";
+    const { client } = await machoSession(
+      mcp,
+      "rea-kuna-call-destination-failure-",
+      machoInventoryImage(),
+      {
+        ...(hang ? { decompile: "hang" } : {}),
+        incomingRows: {
+          [destination]: [
+            {
+              caller: 0x100000400,
+              from: 0x100000408,
+              kind: "call",
+              instruction: `bl ${destination}`,
+            },
+          ],
+        },
+      },
+    );
+    if (hang) {
+      for (const [name, arguments_] of [
+        ["list_procedures", {}],
+        ["xrefs", { address: destination }],
+      ] as const) {
+        expect(
+          (await client.callTool({ name, arguments: arguments_ })).isError,
+        ).not.toBe(true);
+      }
+      const updated = await client.callTool({
+        name: "update_analysis_settings",
+        arguments: {
+          changes: [
+            { setting: "kuna.function_timeout_ms", action: "set", value: 300 },
+          ],
+        },
+      });
+      expect(updated.isError).not.toBe(true);
+    }
+    const failed = await client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: destination, analysis: "call_destination" },
+    });
+    expect(failed.isError).toBe(true);
+    const error = parseMcpToolError(failed).error;
+    if (hang) expect(error).toMatchObject({ code: "provider_timeout" });
+    else expect(error.message).toContain("no function at");
+    expect(error).toMatchObject({
+      details: {
+        partial_observation: {
+          operation: "kuna:direct-call-destination",
+          normalized_result: {
+            call: {
+              from_address: "0x100000408",
+              to_address: destination,
+            },
+            xrefs_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          },
+        },
+      },
+    });
+  },
+);
