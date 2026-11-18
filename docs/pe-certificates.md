@@ -87,7 +87,9 @@ and exactly two fields (type and value) in each attribute, as defined in
 Malformed name structures fail before their text is reported. Decoded
 certificate name text, serials, validity spellings, and subject key identifiers
 share a 64 KiB budget per PKCS#7 payload, and each payload decodes at most
-16,384 ASN.1 values. Exhausting either fixed allowance returns a nonretryable
+16,384 ASN.1 values nested at most 64 levels deep. Dual-signed Windows binaries
+embed a nested signature and its RFC 3161 timestamp in unsigned attributes, and
+each embedding adds eight levels. Exhausting a fixed allowance returns a nonretryable
 `resource_constraint` error naming it, not an invalid-input error; this release
 has no runtime override, and `max_file_bytes` and `max_entries` do not raise
 it. Unsupported certificate name

@@ -109,6 +109,12 @@ rules, including grouped offsets, signed addend deltas and zero-addend groups.
 Their relative slots use `relative_addend`; unresolved symbolic or indirect
 values remain unresolved. APS2 and standard RELR tables can coexist.
 
+RELR address/bitmap tables support both standard `DT_RELR`/`DT_RELRSZ`/
+`DT_RELRENT` and Android's older `DT_ANDROID_RELR`/`DT_ANDROID_RELRSZ`/
+`DT_ANDROID_RELRENT` tags. Both retain `relr` slot provenance and the original
+record file offsets. Repeated declarations and mixtures of the two tag
+families are refused instead of choosing, combining or applying tables twice.
+
 A `COPY` relocation writes as many bytes as the image's own dynamic symbol
 records, and a TLS descriptor relocation writes two words. A slot outside
 those bytes keeps its stored word, so a non-PIE executable that copies `stdout`
