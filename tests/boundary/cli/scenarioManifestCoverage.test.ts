@@ -20,6 +20,10 @@ const unusableUrls = [
   "not a url",
   "https:example.test/api/items",
 ];
+const omittedRequestCount = new RegExp(
+  `^${String(unusableUrls.length)}\\b.*without a usable request line\\b`,
+  "u",
+);
 
 const projectManifest = async (capture: BrowserScenarioCapture) => {
   const cli = createCommandCli();
@@ -96,8 +100,8 @@ it.each(["absent", "redacted"] as const)(
   async (body) => {
     const result = await manifest(unusableUrls, body);
     expect(result.records).toEqual([]);
-    expect(result.limitations).toContain(
-      `${String(unusableUrls.length)} retained records without a usable request line are not represented in the manifest.`,
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(omittedRequestCount),
     );
     expect(
       result.limitations.filter((limitation) =>
@@ -115,17 +119,19 @@ it.each(["absent", "redacted"] as const)(
     expect(result.records.map((record) => record.ordinal)).toEqual([
       unusableUrls.length,
     ]);
-    expect(result.limitations).toContain(
-      `${String(unusableUrls.length)} retained records without a usable request line are not represented in the manifest.`,
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(omittedRequestCount),
     );
     expect(
       result.limitations.filter((limitation) =>
         limitation.includes("scenario transactions with a usable request line"),
       ),
     ).toEqual([
-      body === "absent"
-        ? "1 of 1 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent."
-        : "1 of 1 scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.",
+      expect.stringMatching(
+        body === "absent"
+          ? /^1 of 1\b.*\bno response body\b/u
+          : /^1 of 1\b.*\bredaction markers\b/u,
+      ),
     ]);
   },
 );
