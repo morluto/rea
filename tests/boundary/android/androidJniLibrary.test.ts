@@ -114,7 +114,7 @@ it.each([
   [32, 3, "relr", false, "android"],
 ] as const)(
   "decodes %s-bit machine %s %s static tables (APS2: %s) with complete slot provenance",
-  async (bits, machine, encoding, packed, relrTags) => {
+  async (bits, machine, encoding, packed, relrTags?: "android") => {
     const fixture = jniElfFixture({
       bits,
       machine,
