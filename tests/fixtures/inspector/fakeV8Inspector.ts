@@ -2,6 +2,14 @@ import { createServer } from "node:http";
 
 import { WebSocket, WebSocketServer } from "ws";
 
+/**
+ * Spell a script pathname the way Node's `/json/list` reports a target URL:
+ * `file://` plus the raw pathname, with quotes and backslashes replaced by
+ * underscores. It is not a WHATWG file URL, so spaces and `%` stay literal.
+ */
+export const nodeDiscoveryTargetUrl = (path: string): string =>
+  `file://${path.replace(/["\\]/gu, "_")}`;
+
 interface InspectorCommand {
   readonly id: number;
   readonly method: string;
