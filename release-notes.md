@@ -869,6 +869,7 @@
 * **browser:** consolidate navigation timeline coverage ([005a61c](https://github.com/morluto/rea/commit/005a61cf4ccc16afbca88b50031b4b8a51faca2c))
 * **browser:** consolidate source map evidence checks ([1b0de47](https://github.com/morluto/rea/commit/1b0de477144391f0a5e471a7871134297ef65af3))
 * **browser:** expect a WebMCP root loader replacement to report target_changed ([#11255](https://github.com/morluto/rea/issues/11255)) ([32a851e](https://github.com/morluto/rea/commit/32a851e048ca98991a6d1fb3cadda0282cf83690))
+* **browser:** track the platform-specific lifecycle coverage case ([#12093](https://github.com/morluto/rea/issues/12093)) ([a51ce13](https://github.com/morluto/rea/commit/a51ce1390d9565c26339aae625d65e63716b841d))
 * **browser:** wait on discovery and cleanup barriers instead of fixed sleeps and tight elapsed bounds ([#10974](https://github.com/morluto/rea/issues/10974)) ([9a3a703](https://github.com/morluto/rea/commit/9a3a7032cb9d55fe245d46a8bc873be1b5579f7a))
 * **cdp:** consolidate observation and deadline coverage ([4d8bc61](https://github.com/morluto/rea/commit/4d8bc610beac286570c5193b4a7361c2d59051d9))
 * **cdp:** verify wire admission and cleanup behavior ([39ab985](https://github.com/morluto/rea/commit/39ab9852777637597a915c329bc0c9a08b9963ba))
