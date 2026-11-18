@@ -1564,9 +1564,7 @@ describe("Ghidra client projection", () => {
       expect.stringContaining("The bridge is verified against"),
     );
     expect(result.value.limitations).toEqual(
-      expect.arrayContaining([
-        ...ghidraKnownProviderDefectLimitations("12.2"),
-      ]),
+      expect.arrayContaining([...ghidraKnownProviderDefectLimitations("12.2")]),
     );
     expect(startCount).toBe(1);
   });
@@ -4575,12 +4573,17 @@ describe("compatible Ghidra builds", () => {
     });
     expect(health.ok && health.value.provider.version).toBe("12.3");
     const unverified = unverifiedGhidraBuildLimitation("12.3");
+    const openDefects = ghidraKnownProviderDefectLimitations("12.3");
     expect(unverified).toBeTypeOf("string");
+    expect(openDefects).toHaveLength(1);
     expect(health.ok && health.value.limitations).toEqual(
-      expect.arrayContaining([unverified]),
+      expect.arrayContaining([unverified, ...openDefects]),
+    );
+    expect(health.ok && health.value.limitations?.join("\n")).not.toContain(
+      "ghidra-9996",
     );
     expect(procedures.ok && procedures.value.limitations).toEqual(
-      expect.arrayContaining([unverified]),
+      expect.arrayContaining([unverified, ...openDefects]),
     );
     expect(procedures.ok && procedures.value.provider.version).toBe("12.3");
   });

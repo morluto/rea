@@ -75,9 +75,13 @@ describe("Ghidra release admission", () => {
         `${raw}; compatible ${ghidraReleaseLine()} release (verified build ${SUPPORTED_GHIDRA_VERSION})`,
       );
     }
+    const openDefect = ghidraKnownProviderDefectLimitations("12.2")[1];
     for (const raw of ["12.2.0", "12.2.1", "12.2-DEV", "12.3"]) {
-      expect(ghidraKnownProviderDefects(raw)).toEqual([]);
-      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([]);
+      expect(ghidraKnownProviderDefects(raw)).toEqual([
+        GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+      ]);
+      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([openDefect]);
+      expect(openDefect).not.toContain(GHIDRA_CLANG_O0_SWITCH_DEFECT.id);
     }
     expect(ghidraReleaseLine()).toBe("12.x (>=12.2)");
   });
@@ -87,6 +91,8 @@ describe("Ghidra release admission", () => {
       expect(ghidraReleaseCompatibility(raw).status).toBe("unsupported");
       expect(ghidraReleaseAccepted(raw)).toBe(false);
       expect(unverifiedGhidraBuildLimitation(raw)).toBeUndefined();
+      expect(ghidraKnownProviderDefects(raw)).toEqual([]);
+      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([]);
       expect(ghidraVersionDetail(raw)).toBe(
         `${raw}; accepted releases are ${ghidraReleaseLine()} (verified build ${SUPPORTED_GHIDRA_VERSION})`,
       );
@@ -102,5 +108,7 @@ describe("Ghidra release admission", () => {
     expect(ghidraReleaseAccepted(undefined)).toBe(false);
     expect(ghidraVersionDetail(undefined)).toBe("unknown");
     expect(ghidraVersionDetail("latest")).toBe("latest");
+    expect(ghidraKnownProviderDefects("latest")).toEqual([]);
+    expect(ghidraKnownProviderDefectLimitations("latest")).toEqual([]);
   });
 });

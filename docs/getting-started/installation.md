@@ -1201,14 +1201,15 @@ closed by `c93917a622211349998f641de54cfdbe0e0e5bee` and milestoned for 12.2.1,
 which is not yet released. The limitation is attached to that exact build's
 session and decompile results and is absent from `12.2.1` and every other
 version string. REA's switch verifier compiles with `-O2`, so it does not
-detect this shape. That same exact `12.2` session also records `ghidra-10154`.
+detect this shape. Every admitted session also records `ghidra-10154`.
 [Ghidra #10154](https://github.com/NationalSecurityAgency/ghidra/issues/10154)
 is open: an AArch64 byte-offset switch bounded only by `and #0xff` loses its
 jump table and the function body stops at the indirect branch. The report's
 example is an optimized Swift enum switch. REA reproduced that instruction
 shape on 12.2 with an AArch64 ELF object; compare-bounded byte tables in the
 AArch64 jump-table lane still recover. The issue has no fix commit and no
-milestone, so this record does not clear on 12.2.1.
+milestone, so the record stays on `12.2.1` and every other admitted build
+until a release is known to clear it.
 
 Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding

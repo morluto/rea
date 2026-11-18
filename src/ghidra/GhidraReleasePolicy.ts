@@ -83,9 +83,9 @@ export const GHIDRA_CLANG_O0_SWITCH_DEFECT = {
 } as const;
 
 /**
- * Exact Ghidra 12.2 PUBLIC build. Open upstream issue #10154 has no fix
- * commit and no milestone. REA reproduced the unrecovered jump table on
- * this build with an AArch64 ELF object of the reported instruction shape.
+ * Open upstream issue #10154 has no fix commit and no milestone. REA
+ * reproduced the unrecovered jump table on exact 12.2. Every admitted build
+ * keeps the record until a release is known to clear it.
  */
 export const GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT = {
   kind: "known-provider-defect",
@@ -113,10 +113,17 @@ export type GhidraKnownProviderDefect =
 /** Defects recorded for one observed application version. */
 export const ghidraKnownProviderDefects = (
   providerVersion: string,
-): readonly GhidraKnownProviderDefect[] =>
-  providerVersion === "12.2"
+): readonly GhidraKnownProviderDefect[] => {
+  const compatibility = ghidraReleaseCompatibility(providerVersion);
+  if (
+    compatibility.status !== "verified" &&
+    compatibility.status !== "compatible"
+  )
+    return [];
+  return compatibility.status === "verified"
     ? [GHIDRA_CLANG_O0_SWITCH_DEFECT, GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT]
-    : [];
+    : [GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT];
+};
 
 const formatClosedSwitchDefect = (
   defect: typeof GHIDRA_CLANG_O0_SWITCH_DEFECT,
@@ -126,7 +133,7 @@ const formatClosedSwitchDefect = (
 const formatOpenSwitchDefect = (
   defect: typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
 ): string =>
-  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} leaves an ${defect.scope.architecture} ${defect.scope.construct} unrecovered when it is a ${defect.scope.table} bounded by ${defect.scope.bound}. The function body stops at the indirect branch. Upstream issue ${defect.upstream_issue} is ${defect.status} and names a Swift ${defect.scope.optimization} ${defect.scope.source} switch; it has no fix commit and no milestone. REA reproduced the unrecovered jump table on the exact ${defect.release} build with an AArch64 ELF object of that instruction shape. A compare-bounded byte table still recovers. This record is attached only to the exact ${defect.release} build, and no later release is known to clear it.`;
+  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} leaves an ${defect.scope.architecture} ${defect.scope.construct} unrecovered when it is a ${defect.scope.table} bounded by ${defect.scope.bound}. The function body stops at the indirect branch. Upstream issue ${defect.upstream_issue} is ${defect.status} and names a Swift ${defect.scope.optimization} ${defect.scope.source} switch; it has no fix commit and no milestone. REA reproduced the unrecovered jump table on the exact ${defect.release} build with an AArch64 ELF object of that instruction shape. A compare-bounded byte table still recovers. This record stays on every admitted build until a release is known to clear it.`;
 
 /** Session and decompile limitations for the observed Ghidra build. */
 export const ghidraKnownProviderDefectLimitations = (
