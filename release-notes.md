@@ -131,6 +131,7 @@
 * **android:** preserve SDK-gated manifest permissions ([#10236](https://github.com/morluto/rea/issues/10236)) ([4d15b7f](https://github.com/morluto/rea/commit/4d15b7f50957e0870ddd05fbdf794b3bb1e45cfa))
 * **android:** qualify the JNI library inventory by required splits ([18b72ca](https://github.com/morluto/rea/commit/18b72ca4610d8ee1d9c75205bf0f78b07858704c)), closes [#9756](https://github.com/morluto/rea/issues/9756)
 * **android:** reject invoke coverage without site evidence ([#10679](https://github.com/morluto/rea/issues/10679)) ([fbd6fd1](https://github.com/morluto/rea/commit/fbd6fd1c4fd8be7ec00d1f12fb73a240e87a9c71))
+* **apk:** preserve ambiguous v1 certificate identity ([#11835](https://github.com/morluto/rea/issues/11835)) ([e7ed930](https://github.com/morluto/rea/commit/e7ed93004a734d156d6165f6dd5d2094a39daa94))
 * **apktool:** report the decoder JVM's heap exhaustion as memory, not a target refusal ([#10634](https://github.com/morluto/rea/issues/10634)) ([c296c91](https://github.com/morluto/rea/commit/c296c91770a0ac8d14d8773ae0e2d0699ab56888))
 * **apktool:** treat an EPERM launcher spawn as not executable ([4bf5226](https://github.com/morluto/rea/commit/4bf522672468cf21ff09a804ff287f0195501712))
 * **apk:** validate classic ZIP disk declarations ([5e1ddec](https://github.com/morluto/rea/commit/5e1ddec2daf78c417773a2e2124d28426d19d484)), closes [#7433](https://github.com/morluto/rea/issues/7433) [#7471](https://github.com/morluto/rea/issues/7471)
@@ -150,6 +151,8 @@
 * **artifacts:** classify ELF and thin Mach-O only when their headers decode ([#10650](https://github.com/morluto/rea/issues/10650)) ([0e662ac](https://github.com/morluto/rea/commit/0e662ac8bda89460336e2649bee7395860ac84cf))
 * **artifacts:** detect AVB footers before boot page padding ends ([#12046](https://github.com/morluto/rea/issues/12046)) ([90550aa](https://github.com/morluto/rea/commit/90550aa22307f6c01245dbbd244d7b3984852d50))
 * **artifacts:** honor record-and-continue for lipo and FAT slice disagreement ([#10732](https://github.com/morluto/rea/issues/10732)) ([12dd3d3](https://github.com/morluto/rea/commit/12dd3d38ac5e5c13730f290db2b9d5357418f3bc))
+* **artifacts:** keep virtual directory identities distinct from file content ([#8574](https://github.com/morluto/rea/issues/8574)) ([fd9989e](https://github.com/morluto/rea/commit/fd9989eadbb5c84a0319972f6f0f99101e81c331)), closes [#8551](https://github.com/morluto/rea/issues/8551)
+* **artifacts:** preserve PyInstaller retirement and map identity ([#11830](https://github.com/morluto/rea/issues/11830)) ([6d66f3a](https://github.com/morluto/rea/commit/6d66f3a8ee77e9f91e7aaa9bb8b16349bd07e22d))
 * **artifacts:** read Maven and Gradle metadata with a UTF-8 BOM ([#12009](https://github.com/morluto/rea/issues/12009)) ([2aaf76c](https://github.com/morluto/rea/commit/2aaf76c5c1f7617adfbc15ae0dbb38a1571d11b0))
 * **artifacts:** refuse an ASAR header that declares one member name twice ([#10552](https://github.com/morluto/rea/issues/10552)) ([9a2aff2](https://github.com/morluto/rea/commit/9a2aff2beaa0def1ae4917fef73e9e1a6a945338))
 * **artifacts:** report ZIP bytes the central directory does not account for ([#10580](https://github.com/morluto/rea/issues/10580)) ([a395104](https://github.com/morluto/rea/commit/a395104168e124b62595a954c91e9b0ebdd6842c))
@@ -433,6 +436,7 @@
 * **process:** settle an observed exit in progress before reporting a process present ([#10620](https://github.com/morluto/rea/issues/10620)) ([f270a5c](https://github.com/morluto/rea/commit/f270a5cac12020864b24e75f77375c09d3a2d09d))
 * **process:** stop execFileOutput's process group, not only its root ([#10733](https://github.com/morluto/rea/issues/10733)) ([d3db225](https://github.com/morluto/rea/commit/d3db2254bb91cc1eb3b88bfaf63a213ea9732163))
 * **process:** tolerate missing observer roots ([37ca2bc](https://github.com/morluto/rea/commit/37ca2bcc0ca33554a1c39762336baa11d9ba8994)), closes [#7281](https://github.com/morluto/rea/issues/7281) [#7287](https://github.com/morluto/rea/issues/7287)
+* **protobuf:** preserve descriptor string identity ([#11834](https://github.com/morluto/rea/issues/11834)) ([0db5f93](https://github.com/morluto/rea/commit/0db5f93df695a89169d2c51f82bf730e81ed9d3a))
 * **providers:** decode MCP text replies by declared kind instead of guessing ([#10654](https://github.com/morluto/rea/issues/10654)) ([5f98047](https://github.com/morluto/rea/commit/5f98047a88a79a9505ce5a4f3658212f121ac053))
 * **providers:** treat undeclared bridge coverage and completion as unknown ([#10651](https://github.com/morluto/rea/issues/10651)) ([a11a54e](https://github.com/morluto/rea/commit/a11a54e797370bd794ed72ba295cff7e78c3543c))
 * **python:** pin only the 3.14 and 3.15 magics checked locally ([9d3eb08](https://github.com/morluto/rea/commit/9d3eb083dda494fa44af8ef3ce022fb48c61dcd8))
@@ -510,6 +514,7 @@
 * **windows:** preserve pre-epoch shortcut timestamp milliseconds ([#10305](https://github.com/morluto/rea/issues/10305)) ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
 * **windows:** report bytes appended after a Shell Link TerminalBlock ([#11745](https://github.com/morluto/rea/issues/11745)) ([ce9635b](https://github.com/morluto/rea/commit/ce9635bcb410416dc7960abf75e003f727c9f261))
 * **zip:** account 64-bit data descriptors that MSIX packages write ([#11733](https://github.com/morluto/rea/issues/11733)) ([43aaa9f](https://github.com/morluto/rea/commit/43aaa9f1903cd11826fd261794b5514da0bb6162))
+* **zip:** corroborate member extents before claiming complete coverage ([#11855](https://github.com/morluto/rea/issues/11855)) ([ad02201](https://github.com/morluto/rea/commit/ad02201d0b63d5a51830459f8669e5d6512fe875))
 
 
 ### Performance Improvements
