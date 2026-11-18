@@ -248,6 +248,7 @@ const PATH_SCOPES = {
     "scripts/verify-packed-bridge.*",
     "scripts/verify-windows-*.mjs",
     ".github/actions/windows-cross-compiler/action.yml",
+    ".github/actions/ubuntu-archive/action.yml",
     "scripts/build-windows-native.mjs",
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
@@ -437,6 +438,7 @@ const PATH_SCOPES = {
   ],
   binary_layout: [
     ".github/workflows/real-binary-layout.yml",
+    ".github/actions/ubuntu-archive/action.yml",
     "bridge/pwntools/**",
     "src/native/pwntools/**",
     "src/config/pwntoolsInputLimit*.ts",
