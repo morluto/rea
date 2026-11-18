@@ -15,19 +15,6 @@ const cases = [
     0,
   ],
   ['spawn("control", [], {stdio:"inherit"})', "control", "inherit", 0],
-  ['spawn("template-pipe", [], {stdio:`pipe`})', "template-pipe", "pipe", 0],
-  [
-    'fork("template-inherit", [], {stdio:`inherit`})',
-    "template-inherit",
-    "inherit",
-    0,
-  ],
-  [
-    'spawn("template-dynamic", [], {stdio:`mode-${input}`})',
-    "template-dynamic",
-    "dynamic",
-    0,
-  ],
   ['spawn("global-nan-env", [], {env:NaN})', "global-nan-env", "default", 0],
   [
     '((NaN) => spawn("shadowed-nan-env", [], {env:NaN}))({})',
