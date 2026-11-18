@@ -243,6 +243,7 @@
 * **desktop:** point the packing blocker at the moved guide ([#10255](https://github.com/morluto/rea/issues/10255)) ([002716a](https://github.com/morluto/rea/commit/002716a99879d1170696847a478036d9c3a79990))
 * **desktop:** preserve commas in apt source fields ([#11926](https://github.com/morluto/rea/issues/11926)) ([7d357b8](https://github.com/morluto/rea/commit/7d357b8325414f281a487398ba48fd0c285599e0))
 * **desktop:** preserve distinct JSON record selector identities ([#12072](https://github.com/morluto/rea/issues/12072)) ([c0ad2c1](https://github.com/morluto/rea/commit/c0ad2c1a222afad78611a1106864bb44b36ecced))
+* **desktop:** preserve env option boundaries in launch commands ([#12033](https://github.com/morluto/rea/issues/12033)) ([5fd6c0d](https://github.com/morluto/rea/commit/5fd6c0db710087cb37d26b8592ce11164625f260))
 * **desktop:** preserve literal directories in ELF origin expansion ([#10215](https://github.com/morluto/rea/issues/10215)) ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
 * **desktop:** preserve multiline apt-config locations ([#10241](https://github.com/morluto/rea/issues/10241)) ([0f5ac9d](https://github.com/morluto/rea/commit/0f5ac9d5f3d750e017456fa5e9b9f955f497a8b1))
 * **desktop:** preserve own JSON keys in task grading ([#10331](https://github.com/morluto/rea/issues/10331)) ([cd96c5e](https://github.com/morluto/rea/commit/cd96c5e9ebc96b1ac03f384f83eb55ba8580e433))
@@ -266,6 +267,7 @@
 * **environment:** preserve HAR body source identity and scan coverage ([#11829](https://github.com/morluto/rea/issues/11829)) ([5ccb7c5](https://github.com/morluto/rea/commit/5ccb7c59c84e2297fd2c0ecb691154e410b285f2))
 * **errors:** name rea doctor only for providers it can check ([#10565](https://github.com/morluto/rea/issues/10565)) ([4aefe2d](https://github.com/morluto/rea/commit/4aefe2daec12bbf7e9e4ed7e994d92ac245dea28))
 * **errors:** rethrow internal invariant violations from plist consumers and the native output projection ([#11029](https://github.com/morluto/rea/issues/11029)) ([63b0426](https://github.com/morluto/rea/commit/63b0426e409339a5efbc8ea7bbdea0b4502ec935))
+* **evidence:** derive default authority from subject binding ([#10321](https://github.com/morluto/rea/issues/10321)) ([b99e773](https://github.com/morluto/rea/commit/b99e7737de1d6813e698759e2b024e155e8d1776))
 * **evidence:** name the noncanonical bundle sections ([3ae21f9](https://github.com/morluto/rea/commit/3ae21f9ff8af38611adc796bd180c917f082ea42))
 * **evidence:** require ESP flash_dump and PE unsigned attribute OIDs ([#11595](https://github.com/morluto/rea/issues/11595)) ([459553b](https://github.com/morluto/rea/commit/459553b901ec4ef27db58e1c933f033d5e6e02a3))
 * **filesystem:** close file handles only through the owned-handle owners ([#10578](https://github.com/morluto/rea/issues/10578)) ([428e006](https://github.com/morluto/rea/commit/428e006f66a0417b28c4f40c865c819d23edaf4a))
@@ -805,6 +807,7 @@
 * **readme:** retain packet-summary verification scope ([eb0cdab](https://github.com/morluto/rea/commit/eb0cdabfa1c3bfb76508048f5c0e56936e0818aa))
 * refuse literal tool counts in living prose ([#10585](https://github.com/morluto/rea/issues/10585)) ([959af00](https://github.com/morluto/rea/commit/959af004df855ee82d826e4fb2423cad402e931d))
 * **skill:** regenerate the Cursor plugin skill for the pyc range ([ca147d7](https://github.com/morluto/rea/commit/ca147d7c4db8ddaf6b76c9cab9468336f7773b3e))
+* **third-party:** cite the ApiDemos provenance file at its current path ([#11698](https://github.com/morluto/rea/issues/11698)) ([a0e5a5d](https://github.com/morluto/rea/commit/a0e5a5db2cd1d4fdb73134f949a22cacd6e0bd90))
 * **web:** state the segment limit in the template_rules description ([41625d7](https://github.com/morluto/rea/commit/41625d7d1b3287ac1c33d62c135ff3e51258aa18))
 
 
