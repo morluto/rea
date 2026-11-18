@@ -138,6 +138,10 @@ const parseWithRuntimeContext = (
     signedHashbang &&
     !compilerSource &&
     (filenameMode === "commonjs" || signaturePackageContext === "commonjs");
+  const compilerCommonJsDotfile =
+    compilerSource &&
+    suffixOnlySource &&
+    signaturePackageContext === "commonjs";
   const observedModuleDotfile =
     suffixOnlySource && signaturePackageContext === "module";
   const ambiguousLoader =
@@ -146,13 +150,16 @@ const parseWithRuntimeContext = (
     (signaturePackageContext === undefined ||
       signaturePackageContext === "unknown" ||
       signaturePackageContext === "unspecified" ||
-      observedModuleDotfile);
+      observedModuleDotfile ||
+      compilerCommonJsDotfile);
   const loaderCondition = conditionalCommonJs
     ? `Source in ${sourcePath ?? "<unknown>"} is recovered as CommonJS when imported through the ES module loader. Direct execution and require can reject this BOM/hashbang.`
     : ambiguousLoader
       ? observedModuleDotfile
         ? `Source in ${sourcePath ?? "<unknown>"} is recovered under an ES module interpretation. Its loader invocation is unknown; direct entrypoint and module import can differ.`
-        : `Source in ${sourcePath ?? "<unknown>"} is recovered under a conditional loader interpretation. Its package loader mode is unknown.`
+        : compilerCommonJsDotfile
+          ? `Source in ${sourcePath ?? "<unknown>"} is recovered with compiler syntax. Its loader invocation is conditional: direct CommonJS loading can reject this BOM/hashbang.`
+          : `Source in ${sourcePath ?? "<unknown>"} is recovered under a conditional loader interpretation. Its package loader mode is unknown.`
       : undefined;
   const hashbangSignature =
     signedHashbang &&

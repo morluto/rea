@@ -349,6 +349,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     coverage: derived.expressionFlowsTruncated
       ? { ...coverage, status: "partial", omittedCount: null }
       : coverage,
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
       ...(loaderCondition === undefined ? [] : [loaderCondition]),
       ...(derived.expressionFlowsTruncated

@@ -419,3 +419,59 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains loader evidence for compiler dotfiles and semantic calls through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-bom-semantic-");
+    const callSource = "function marker(value) { return value; } marker(42);";
+    await writeFixtureFiles(root, {
+      "package.json": '{"type":"commonjs"}',
+      ".jsx": '\uFEFF#!/usr/bin/env node\nimport("./dep.mjs");',
+      ".tsx": '\uFEFF#!/usr/bin/env node\nimport("./dep.mjs");',
+      "main.cjs": `\uFEFF#!/usr/bin/env node\n${callSource}`,
+      "plain.cjs": callSource,
+      "dep.mjs": "export {};",
+    });
+    const { graph, semantic_graph: semantic } =
+      await analyzeJavaScriptDirectory(surface, cli, root);
+    for (const path of [".jsx", ".tsx"]) {
+      const edge = graph.edges.find(
+        ({ relation, evidence }) =>
+          relation === "imports" &&
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === path,
+      );
+      expect.soft(edge?.evidence).toMatchObject({
+        coverage: { status: "partial" },
+        confidence: "medium",
+        limitations: expect.arrayContaining([
+          expect.stringContaining("BOM/hashbang"),
+        ]),
+      });
+    }
+    for (const { path, status } of [
+      { path: "main.cjs", status: "partial" },
+      { path: "plain.cjs", status: "complete" },
+    ]) {
+      const relations = semantic.relations.filter(
+        ({ evidence }) =>
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === path,
+      );
+      expect(relations.length).toBeGreaterThan(0);
+      for (const { evidence } of relations) {
+        const context = semantic.evidence_contexts.find(
+          ({ context_id }) => context_id === evidence.context_id,
+        );
+        expect.soft(context?.coverage.status).toBe(status);
+        if (status === "partial")
+          expect
+            .soft(context?.limitations)
+            .toContainEqual(expect.stringContaining("BOM/hashbang"));
+      }
+    }
+  },
+);
