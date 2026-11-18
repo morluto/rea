@@ -6,9 +6,10 @@ import {
 import { ExecFileOutputCancelledError } from "./ExecFileOutput.js";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RetainedCommandCleanup } from "./RetainedCommandCleanup.js";
 
@@ -133,9 +134,9 @@ it.each(["failure", "abort", "cleanup", "abort-error"] as const)(
       fixture.release();
       await Promise.allSettled([first, second, reader.close()]);
     });
-    await fixture.started;
+    await awaitAcknowledgement(fixture.started, first, "compiler startup");
     controller.abort(new Error("first caller left"));
-    await fixture.stopped;
+    await awaitAcknowledgement(fixture.stopped, first, "compiler cancellation");
     second = reader.prepare();
     fixture.release();
     if (mode === "cleanup")
@@ -212,14 +213,15 @@ it.each(["failure", "abort", "cleanup", "abort-error"] as const)(
 it("transfers the same helper root after a second failed cleanup", async () => {
   fixture.configure("failure", 2);
   const reader = createFixtureReader();
-  const first = reader.prepare().catch((cause: unknown) => cause);
+  const prepare = reader.prepare();
+  const first = prepare.catch((cause: unknown) => cause);
   onTestFinished(async () => {
     fixture.release();
     await first;
     fixture.allowRemoval();
     await reader.close();
   });
-  await fixture.started;
+  await awaitAcknowledgement(fixture.started, prepare, "compiler startup");
   fixture.release();
   const initialFailure = await first;
   if (!(initialFailure instanceof DarwinProcessOwnershipInspectionError))
@@ -245,10 +247,19 @@ it("transfers the same helper root after a second failed cleanup", async () => {
   expect(retryFailure.cleanupFailure?.cleanupIncomplete).toBe(true);
   expect(fixture.calls).toBe(1);
 
-  const scratch = await createTestTempDirectory("rea-retained-command-");
+  const fixtureDirectory = await createTestTempDirectory(
+    "rea-retained-command-",
+  );
+  const scratch = join(fixtureDirectory, "command");
+  await mkdir(scratch);
   const retained = new RetainedCommandCleanup(scratch, retryFailure);
-  expect(retained.cleanupResources).toEqual([root, scratch]);
-  await retained.close();
+  try {
+    expect(retained.cleanupResources).toEqual([root, scratch]);
+  } finally {
+    await retained.close();
+  }
+  await expect(access(fixtureDirectory)).resolves.toBeUndefined();
+  await expect(access(scratch)).rejects.toMatchObject({ code: "ENOENT" });
   await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
   expect(initialFailure.cleanupFailure?.cleanupIncomplete).toBe(false);
   expect(retryFailure.cleanupFailure?.cleanupIncomplete).toBe(false);
