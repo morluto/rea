@@ -673,6 +673,55 @@ export const machoX8664ObjectInitializers = (): Buffer => {
   return file;
 };
 
+/**
+ * LLVM 19.1.7 golden: llvm-mc -triple=x86_64-apple-macosx -filetype=obj input.s.
+ * Producer source (Lstartup is a temporary label, absent from the symbol table):
+ *   .text
+ *   .space 8, 0x90
+ *   Lstartup: ret
+ *   .globl _alias
+ *   .set _alias, _external
+ *   .section __DATA,__mod_init_func,mod_init_funcs
+ *   .p2align 3
+ *   .quad Lstartup
+ * llvm-readobj --symbols --relocations confirms N_INDR _alias has n_value=8
+ * (the string index of _external), and the slot has a section-relative relocation.
+ */
+export const machoIndirectInitializerGolden = (): Buffer =>
+  Buffer.from(
+    "z/rt/gcAAAEDAAAAAQAAAAMAAABQAQAAAAAAAAAAAAAZAAAA6AAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAABgAAAAAAAAAcAEAAAAAAAAYAAAAAAAAAAcAAAAHAAAAAgAAAAAAAABfX3RleHQAAAAA" +
+      "AAAAAAAAX19URVhUAAAAAAAAAAAAAAAAAAAAAAAACQAAAAAAAABwAQAAAAAAAAAAAAAAAAAAAAQA" +
+      "gAAAAAAAAAAAAAAAAF9fbW9kX2luaXRfZnVuYwBfX0RBVEEAAAAAAAAAAAAAEAAAAAAAAAAIAAAA" +
+      "AAAAAIABAAADAAAAiAEAAAEAAAAJAAAAAAAAAAAAAAAAAAAAAgAAABgAAACQAQAAAgAAALABAAAY" +
+      "AAAACwAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQkJCQkJCQkMMAAAAAAAAACAAAAAAAAAAAAAAAAQAA" +
+      "BgEAAAALAAAACAAAAAAAAAAIAAAAAQAAAAAAAAAAAAAAAF9hbGlhcwBfZXh0ZXJuYWwAAAAAAAAA",
+    "base64",
+  );
+
+/** An n_value string index collides with a real initializer address. */
+export const machoInitializerSymbolKinds = (type: number): Buffer => {
+  const file = Buffer.alloc(0x400);
+  machoX8664ObjectInitializers().copy(file);
+  // The second, section-relative pointer also selects _startup at 0x10.
+  file.writeBigUInt64LE(0x10n, 0x228);
+  // First symbol: an indirect alias to the unresolved _external, whose string
+  // index (0x10) is not the address of _startup. Defined kinds serve as controls.
+  file.writeUInt8(type | 1, 0x254);
+  file.writeUInt8(type === 0x0e ? 1 : 0, 0x255);
+  file.writeBigUInt64LE(0x10n, 0x258);
+  file.writeUInt32LE(0x20, 0x260);
+  const strings = Buffer.alloc(0x30);
+  strings.write("_alias", 1);
+  strings.write("_external", 0x10);
+  strings.write("_startup", 0x20);
+  file.writeUInt32LE(0x300, 280);
+  file.writeUInt32LE(strings.length, 284);
+  strings.copy(file, 0x300);
+  return file;
+};
+
 /** Sparse bind runs bracket the initializer slots without binding any of them. */
 export const machoSparseBindInitializers = (count: number): Buffer => {
   const uleb = (value: number): Buffer => {
