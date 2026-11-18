@@ -159,6 +159,7 @@
 * **audit:** charge range-read progress before a read fails ([b3c0ac4](https://github.com/morluto/rea/commit/b3c0ac4bc46f3de05ea3f3c163cbabcc0ed204b6)), closes [#10443](https://github.com/morluto/rea/issues/10443) [#9703](https://github.com/morluto/rea/issues/9703)
 * **audit:** report GCC profile paths retained in Go build flags ([#12029](https://github.com/morluto/rea/issues/12029)) ([180e97f](https://github.com/morluto/rea/commit/180e97f86f0a0ca2df6b6eee4eabf6e17da0bbe5))
 * **audit:** split ELF linker search lists at every colon ([#12035](https://github.com/morluto/rea/issues/12035)) ([0ba3b60](https://github.com/morluto/rea/commit/0ba3b6049d1e8687a470bd547e29c14ea97d843d))
+* **bridge:** remove unused resource module import on Windows ([#10535](https://github.com/morluto/rea/issues/10535)) ([7005e27](https://github.com/morluto/rea/commit/7005e2780bf2450d6c928a4903db1a8beea6e2c6))
 * **browser:** bound cached responses with zero-padded lengths ([#10237](https://github.com/morluto/rea/issues/10237)) ([0084810](https://github.com/morluto/rea/commit/0084810ef704c6c70e25cdeedcca95d622ffcd16))
 * **browser:** interpret agent link relations once per element ([#10345](https://github.com/morluto/rea/issues/10345)) ([ea101db](https://github.com/morluto/rea/commit/ea101dbe30e1bace122456c05e83f4a50145bc15))
 * **browser:** keep duplicated scenario step ids from being classified as absent ([b2b178a](https://github.com/morluto/rea/commit/b2b178aa364d744c80a4728fab924bbbf76e5214)), closes [#7415](https://github.com/morluto/rea/issues/7415)
