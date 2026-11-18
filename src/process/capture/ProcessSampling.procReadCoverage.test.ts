@@ -321,6 +321,14 @@ const deferred = (): { readonly promise: Promise<void>; resolve(): void } => {
   return { promise, resolve };
 };
 
+const waitForSampledPids = (
+  samples: readonly ProcessSample[],
+  expectedPids: readonly number[],
+): Promise<void> =>
+  waitFor(() =>
+    expectedPids.every((pid) => samples.some((row) => row.pid === pid)),
+  );
+
 const expectPartialFailure = async (
   path: string,
   code: string,
@@ -329,8 +337,8 @@ const expectPartialFailure = async (
   setUpFixture();
   fixture.failures.set(path, code);
   const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes(path));
-  await flushImmediateProcPass();
+  // A failed read can precede asynchronous fallback discovery and row publication.
+  await waitForSampledPids(samples, expectedPids);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([...expectedPids]),
@@ -435,8 +443,7 @@ it("retains children from readable threads while reporting another thread's EIO"
   fixture.children.set("100:101", "");
   fixture.failures.set("/proc/100/task/101/children", "EIO");
   const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/100/task/101/children"));
-  await flushImmediateProcPass();
+  await waitForSampledPids(samples, [100, 200, 300, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([100, 200, 300, 400]),
@@ -486,8 +493,7 @@ it("does not swallow an unrelated filesystem AbortError as sampler cancellation"
   setUpFixture();
   fixture.abortErrors.add("/proc/200/stat");
   const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/200/stat"));
-  await flushImmediateProcPass();
+  await waitForSampledPids(samples, [100, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([100, 400]),
@@ -564,8 +570,7 @@ it("retains a stable root row when child enumeration and its ps fallback both fa
   fixture.failures.set("/proc/100/task/101/children", "EIO");
   fixture.psFailure = "EIO";
   const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/100/task/101/children"));
-  await flushImmediateProcPass();
+  await waitForSampledPids(samples, [100]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toContain(100);
   expect(result.partial).toBe(true);
