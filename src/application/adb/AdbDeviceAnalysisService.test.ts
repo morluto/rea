@@ -127,6 +127,8 @@ it("composes observed Evidence with the caller parameters inline", async () => {
   expect(evidence.operation).toBe("list_adb_devices");
   expect(evidence.parameters).toEqual({});
   expect(evidence.confidence).toBe("observed");
+  // A device REA attaches to is not one it owns, so the observation names the service rather than a replay.
+  expect(evidence.authority).toBe("external-service");
 });
 
 it("preserves cancellation before execution", async () => {
