@@ -219,8 +219,7 @@ const observedExecution = (
   result.ok
     ? ok({
         ...result.value,
-        authority:
-          result.value.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
+        authority: result.value.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
       })
     : result;
 
@@ -1273,9 +1272,7 @@ export class AdbProvider {
         jsonObjectSchema.parse(request.input),
       );
       if (!retried.ok) return retried;
-      return observedExecution(
-        await this.#executeOperation(request, options),
-      );
+      return observedExecution(await this.#executeOperation(request, options));
     } finally {
       release();
     }
