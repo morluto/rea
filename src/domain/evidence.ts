@@ -3,7 +3,7 @@ import {
   EVIDENCE_FORMAT_REVISION,
   evidenceFormatSchema,
 } from "./evidenceFormat.js";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, types } from "node:util";
 import { basename } from "node:path";
 import { z } from "zod";
 
@@ -35,6 +35,7 @@ import {
   jsonValueSchema,
   jsonValueValidationIssue,
   jsonValueValidationSteps,
+  MAX_JSON_DEPTH,
   type JsonValue,
 } from "./jsonValue.js";
 import {
@@ -49,6 +50,41 @@ import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
+
+/** Record and analysis-profile envelopes around independently bounded JSON payloads. */
+export const MAX_EVIDENCE_JSON_DEPTH = MAX_JSON_DEPTH + 2;
+
+/** Check independently bounded payloads without cloning the borrowed Evidence envelope. */
+export const evidencePayloadValidationIssue = (
+  input: unknown,
+): string | undefined => {
+  for (const field of [
+    "parameters",
+    "raw_result",
+    "normalized_result",
+  ] as const) {
+    const issue = jsonValueValidationIssue(evidenceDataProperty(input, field));
+    if (issue !== undefined) return `${field}: ${issue}`;
+  }
+  const profile = evidenceDataProperty(input, "analysis_profile");
+  if (profile === null) return undefined;
+  const issue = jsonValueValidationIssue(
+    evidenceDataProperty(profile, "parameters"),
+  );
+  return issue === undefined
+    ? undefined
+    : `analysis_profile.parameters: ${issue}`;
+};
+
+/** Invalid containers/accessors yield undefined, which is not an admissible JSON payload. */
+const evidenceDataProperty = (input: unknown, key: string): unknown => {
+  if (typeof input !== "object" || input === null || types.isProxy(input))
+    return undefined;
+  const property = Object.getOwnPropertyDescriptor(input, key);
+  return property !== undefined && Object.hasOwn(property, "value")
+    ? property.value
+    : undefined;
+};
 
 /** Predicate shared by ordinary provider analysis observations. */
 export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";

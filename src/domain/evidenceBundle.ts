@@ -17,6 +17,7 @@ import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import {
   evidenceFileTarget,
   evidenceSchema,
+  MAX_EVIDENCE_JSON_DEPTH,
   immutableEvidence,
   parseEvidence,
   providerSchema,
@@ -35,6 +36,9 @@ import {
   isUnsupportedEvidenceFormat,
   type UnsupportedEvidenceFormat,
 } from "./evidenceFormat.js";
+
+/** Bundle object and records array around independently bounded Evidence. */
+export const MAX_EVIDENCE_BUNDLE_JSON_DEPTH = MAX_EVIDENCE_JSON_DEPTH + 2;
 
 const artifactManifestBaseSchema = z.strictObject({
   digest: z.strictObject({ sha256: digestSchema }),

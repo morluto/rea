@@ -6,6 +6,7 @@ import {
   evidenceDisplayMetadataAgree,
   evidenceSchema,
   isImmutableEvidence,
+  MAX_EVIDENCE_JSON_DEPTH,
   type Evidence,
 } from "../../domain/evidence.js";
 import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
@@ -30,6 +31,8 @@ export const preserveCompletedSourceEvidence = (
       evidence,
       evidence.operation,
       {},
+      undefined,
+      MAX_EVIDENCE_JSON_DEPTH,
     );
     if (!headroom.ok) {
       error.retainSourcePublication({

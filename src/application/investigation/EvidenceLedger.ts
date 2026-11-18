@@ -5,6 +5,7 @@ import { invariantViolation } from "../../domain/internalInvariant.js";
 
 import {
   createEvidenceBundle,
+  MAX_EVIDENCE_BUNDLE_JSON_DEPTH,
   createImmutableEvidenceBundle,
   isImmutableEvidenceBundle,
   safeParseImmutableEvidenceBundle,
@@ -20,6 +21,7 @@ import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import {
   isImmutableEvidence,
+  MAX_EVIDENCE_JSON_DEPTH,
   evidenceDisplayMetadataAgree,
   evidenceFileTarget,
   type Evidence,
@@ -133,6 +135,8 @@ export class EvidenceLedger {
         input,
         "import_evidence_bundle",
         this.retentionPolicy,
+        undefined,
+        MAX_EVIDENCE_BUNDLE_JSON_DEPTH,
       );
       if (!headroom.ok) return headroom;
     }
@@ -639,6 +643,8 @@ export class EvidenceLedger {
         input,
         operation,
         this.retentionPolicy,
+        undefined,
+        MAX_EVIDENCE_JSON_DEPTH,
       );
       if (!headroom.ok) return headroom;
     }
