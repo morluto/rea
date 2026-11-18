@@ -10579,7 +10579,7 @@ msgstr "Resuélvelas juntas para encontrar la bandera."
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:20
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "DX-Ball sound-pan investigation"
-msgstr "Investigación de la posición estéreo del sonido en DX-Ball"
+msgstr "DX-Ball: posición estéreo del sonido"
 
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:3
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
@@ -10635,7 +10635,7 @@ msgstr "C mantenido"
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:48
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Brick-hit caller"
-msgstr "Llamador: golpe a ladrillo"
+msgstr "Llamador (golpe)"
 
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:49
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
@@ -10671,7 +10671,7 @@ msgstr "Compilación VC4.0"
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:55
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "63 matching bytes"
-msgstr "63 bytes coincidentes"
+msgstr "63 bytes iguales"
 
 #: website/public/assets/figures/rea-investigation-flow.svg:2
 #: website/public/assets/figures/rea-investigation-flow.svg:22
