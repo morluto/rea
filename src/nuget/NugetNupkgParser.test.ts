@@ -525,6 +525,23 @@ it("reads manifest text written as CDATA and as mixed text and CDATA", async () 
   });
 });
 
+it("applies XML end-of-line handling to manifest text", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec
+      .replaceAll("\n", "\r\n")
+      .replace(
+        /<description>[^<]*<\/description>/u,
+        "<description>First line.\r\nSecond line.\rThird line.</description>",
+      ),
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.identity?.description).toBe(
+    "First line.\nSecond line.\nThird line.",
+  );
+});
+
 it.for(["constructor/file.txt", "__proto__/file.txt", "toString/file.txt"])(
   "keeps payload folder %s at the unknown role",
   async (name) => {
