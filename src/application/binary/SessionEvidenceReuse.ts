@@ -1,4 +1,9 @@
-import { evidenceSubjectDisplay } from "../../domain/evidence.js";
+import {
+  evidenceSubjectDisplay,
+  evidenceSubjectTarget,
+  evidenceSubjectTargetIdentity,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import { basename } from "node:path";
 import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -7,6 +12,10 @@ import { equalJsonText } from "../../domain/jsonSerialization.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import {
+  binaryTargetIdentity,
+  sameTargetIdentity,
+} from "../../domain/targetIdentity.js";
 import { ok, type Result } from "../../domain/result.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
@@ -18,11 +27,12 @@ const issued = new WeakMap<AnalysisExecution, Evidence>();
 export const bindSessionEvidenceExecution = (
   execution: AnalysisExecution,
   evidence: Evidence,
+  callerInputPath: string | undefined,
 ): AnalysisExecution => {
   if (
     (execution.sourceEvidence !== undefined &&
       execution.sourceEvidence.length > 0) ||
-    evidence.caller_input_path !== undefined
+    evidence.caller_input_path !== callerInputPath
   )
     return execution;
   // Semantic IDs intentionally omit display paths and names. A duplicate in
@@ -77,6 +87,23 @@ const sessionEvidenceForExecution = (
   return evidence;
 };
 
+/** Bind selection provenance only to an observation of the active file identity. */
+export const bindSessionEvidenceCallerPath = (
+  evidence: Evidence,
+  target: BinaryTarget | null,
+): Evidence => {
+  if (target?.callerInputPath === undefined) return evidence;
+  const subject = evidenceSubjectTarget(evidence.subject);
+  return subject !== undefined &&
+    subject.path === target.path &&
+    sameTargetIdentity(
+      evidenceSubjectTargetIdentity(subject),
+      binaryTargetIdentity(target),
+    )
+    ? withEvidenceCallerInputPath(evidence, target.callerInputPath)
+    : evidence;
+};
+
 /** How one completed session execution becomes Evidence. */
 export interface CompletedOperationEvidenceOptions {
   /** The subject when the provider names none. */
@@ -107,7 +134,8 @@ export const completedOperationEvidence = (
           parameters,
           options.evidenceById,
         );
-  if (reusable !== undefined) return ok(reusable);
+  if (reusable !== undefined)
+    return ok(bindSessionEvidenceCallerPath(reusable, options.target));
   const observation = {
     ...execution,
     subject:
@@ -121,11 +149,14 @@ export const completedOperationEvidence = (
   );
   if (!admitted.ok) return admitted;
   return ok(
-    createAnalysisExecutionEvidence(
-      operation,
-      parameters,
-      observation,
-      "observed",
+    bindSessionEvidenceCallerPath(
+      createAnalysisExecutionEvidence(
+        operation,
+        parameters,
+        observation,
+        "observed",
+      ),
+      options.target,
     ),
   );
 };
