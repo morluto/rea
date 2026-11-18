@@ -3,7 +3,7 @@ import {
   FSEVENTS_INLINE_BLOCK_LIMIT,
   FSEVENTS_INLINE_DIAGNOSTIC_LIMIT,
   FSEVENTS_INLINE_EVENT_LIMIT,
-} from "../apple/macosFsevents.js";
+} from "../apple/macosFseventsFlags.js";
 import { offset, uint32 } from "./primitives.js";
 
 const macosFseventsVersionSchema = z.enum(["1SLD", "2SLD", "3SLD"]);
