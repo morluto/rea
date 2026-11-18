@@ -54,7 +54,7 @@ let report;
 const installDir = process.env.GHIDRA_INSTALL_DIR;
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
-    "Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra 12.1.4 release.",
+    `Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra ${SUPPORTED_GHIDRA_VERSION} release.`,
   );
 const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,

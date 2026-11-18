@@ -17,7 +17,7 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   call-site oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
   discovery, decompilation, argument storage, output schemas, profile and
   snapshot identity, admission and refusal diagnostics, immutable source bytes,
-  and owned cleanup. It requires BYO Ghidra 12.1.4/JDK 21+ and RISC-V
+  and owned cleanup. It requires BYO Ghidra 12.2/JDK 25+ and RISC-V
   Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
   `REA_RISCV_READELF` and `REA_RISCV_OBJDUMP` select existing tool commands.
 
@@ -106,9 +106,9 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The
-verifier requires the verified bring-your-own Ghidra 12.1.4 installation through
+verifier requires the verified bring-your-own Ghidra 12.2 installation through
 `GHIDRA_INSTALL_DIR` and validates header classification before starting the
-provider. Provider admission accepts newer 12.x (>=12.1) builds with an unverified-build limitation; this lane does
+provider. Provider admission accepts other 12.x (>=12.2) builds with an unverified-build limitation; this lane does
 not.
 
 Conformance compares semantic facts: provider/profile identity, function

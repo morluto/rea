@@ -1,7 +1,14 @@
 /** Ghidra build whose bridge behavior this REA release verifies. */
-export const SUPPORTED_GHIDRA_VERSION = "12.1.4";
+export const SUPPORTED_GHIDRA_VERSION = "12.2";
 /** Verified JDK major; admission uses the installation's declared bounds. */
-export const SUPPORTED_GHIDRA_JAVA_MAJOR = 21;
+export const SUPPORTED_GHIDRA_JAVA_MAJOR = 25;
+/**
+ * Oldest minor on the verified major that can compile the packaged bridge.
+ * Ghidra 12.2 replaced `PrototypeModel.getStorageLocations(Program, DataType[], boolean)`
+ * with a four-argument form. 12.1.x has only the three-argument method, so the
+ * bridge does not compile there.
+ */
+export const ADMITTED_GHIDRA_MINOR_FLOOR = 2;
 
 /** Numeric Ghidra release read from `application.version`. */
 interface GhidraReleaseVersion {
@@ -43,11 +50,11 @@ export const ghidraReleaseCompatibility = (
   if (raw === SUPPORTED_GHIDRA_VERSION)
     return { status: "verified", version, raw };
   const verified = verifiedGhidraRelease();
-  // Admit the verified line and anything newer on this major: the observed
-  // version is reported on the provider identity and sessions run with the
-  // unverified-build limitation, so a newer release like 12.2 is usable
-  // while the verified build stays pinned.
-  return version.major === verified.major && version.minor >= verified.minor
+  // Admit this major from the compile floor upward. The observed version stays
+  // on the provider identity, and anything other than the verified build runs
+  // with the unverified-build limitation.
+  return version.major === verified.major &&
+    version.minor >= ADMITTED_GHIDRA_MINOR_FLOOR
     ? { status: "compatible", version, raw }
     : { status: "unsupported", version, raw };
 };
@@ -64,10 +71,10 @@ export const unverifiedGhidraBuildLimitation = (
   return `This session uses Ghidra ${providerVersion}. The bridge is verified against ${SUPPORTED_GHIDRA_VERSION}; other ${ghidraReleaseLine()} builds are accepted and the observed version is reported.`;
 };
 
-/** Accepted release floor on this major, such as `12.x (>=12.1)`. */
+/** Accepted release floor on this major, such as `12.x (>=12.2)`. */
 export const ghidraReleaseLine = (): string => {
   const verified = verifiedGhidraRelease();
-  return `${String(verified.major)}.x (>=${String(verified.major)}.${String(verified.minor)})`;
+  return `${String(verified.major)}.x (>=${String(verified.major)}.${String(ADMITTED_GHIDRA_MINOR_FLOOR)})`;
 };
 
 /** Detail for the installation version check, including the accepted line. */
@@ -99,9 +106,9 @@ export const ghidraReleaseAccepted = (
 
 const verifiedGhidraRelease = (): GhidraReleaseVersion => {
   const version = parseGhidraRelease(SUPPORTED_GHIDRA_VERSION);
-  if (version === undefined)
+  if (version === undefined || version.minor < ADMITTED_GHIDRA_MINOR_FLOOR)
     throw new TypeError(
-      `SUPPORTED_GHIDRA_VERSION ${SUPPORTED_GHIDRA_VERSION} is not a Ghidra release`,
+      `SUPPORTED_GHIDRA_VERSION ${SUPPORTED_GHIDRA_VERSION} is not an admitted Ghidra release`,
     );
   return version;
 };

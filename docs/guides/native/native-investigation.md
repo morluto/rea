@@ -1376,7 +1376,7 @@ is present. A denied trace reports the `debugger-attach-denied` reason.
 
 ## Provider and verification boundaries
 
-Install a Ghidra 12.x (>=12.1) release and the 64-bit full JDK it declares, then configure REA to
+Install a Ghidra 12.x (>=12.2) release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
 x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ

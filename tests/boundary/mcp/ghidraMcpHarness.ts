@@ -24,7 +24,7 @@ import {
   ghidraReferenceEdge,
 } from "../../../src/domain/ghidraValues.fixture.js";
 
-const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
+const INSTALL = "/opt/ghidra_12.2_PUBLIC";
 
 export const connectGhidraMcp = async (
   name: string,
@@ -123,15 +123,15 @@ export const sessionEvidence = (session: BinarySession, value: unknown) => {
 export const ghidraInstallationHost = (): GhidraInstallationHost => ({
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => "application.version=12.2\napplication.java.min=25\n",
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
       osArch: "amd64",
       osName: "Linux",
-      version: "21.0.11",
-      major: 21,
-      home: "/usr/lib/jvm/jdk-21",
+      version: "25.0.1",
+      major: 25,
+      home: "/usr/lib/jvm/jdk-25",
       bits: 64,
       runtime: "jdk",
     }),
@@ -141,7 +141,7 @@ const sessionInfo = (profileDigest: string, targetSha256: string) => ({
   name: "REA Ghidra bridge" as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: profileDigest,
-  provider: { id: "ghidra" as const, version: "12.1.4" },
+  provider: { id: "ghidra" as const, version: "12.2" },
   read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,

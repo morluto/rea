@@ -16,13 +16,13 @@ import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 export const ghidraProfileInstallationHost: GhidraInstallationHost = {
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => "application.version=12.2\napplication.java.min=25\n",
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
-      version: "21.0.11",
-      major: 21,
-      home: "/jdk-21",
+      version: "25.0.1",
+      major: 25,
+      home: "/jdk-25",
       bits: 64,
       runtime: "jdk",
       osArch: "amd64",

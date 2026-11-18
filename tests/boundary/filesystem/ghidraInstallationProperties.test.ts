@@ -39,7 +39,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const properties = "application.version=12.1.4\napplication.java.min=21\n";
+const properties = "application.version=12.2\napplication.java.min=25\n";
 
 it("preserves a descriptor read failure instead of reporting absent metadata", async () => {
   const root = await createTestTempDirectory(
