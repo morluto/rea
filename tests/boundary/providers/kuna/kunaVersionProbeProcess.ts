@@ -6,6 +6,7 @@ import type {
   OwnedProviderProcessSpawnOptions,
   SpawnedOwnedProviderProcess,
 } from "../../../../src/process/ProviderProcess.js";
+import { processGroupHasStopped } from "../../../support/process/observePosixProcess.js";
 
 /** Cleanup authority for the exact detached group created by this test launcher. */
 export const ownedGroupCleanup = async (
@@ -27,9 +28,7 @@ export const ownedGroupCleanup = async (
   }
   const deadline = Date.now() + 1_000;
   while (Date.now() < deadline) {
-    try {
-      process.kill(-pid, 0);
-    } catch {
+    if (await processGroupHasStopped(pid)) {
       return { cleaned: true, signaled };
     }
     await delay(10);
