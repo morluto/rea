@@ -55,15 +55,36 @@ it("keeps unrelated properties and writes after the release complete", () => {
   ).toMatchObject([{ resolution: "complete" }]);
 });
 
-it("keeps a function-value escape from replacing its callable identity", () => {
-  expect(
-    releases(`
+it.each(["stream.destroy", "stream.__proto__.destroy"])(
+  "keeps the callable identity after observing %s",
+  (observed) => {
+    expect(
+      releases(`
     import { createReadStream } from "node:fs";
     const stream = createReadStream("fixture.txt");
-    observe(stream.destroy);
+    observe(${observed});
     stream.destroy();
   `),
-  ).toMatchObject([{ resolution: "complete" }]);
+    ).toMatchObject([{ resolution: "complete" }]);
+  },
+);
+
+it.each([
+  ["createReadStream", "stream.destroy = () => {}; stream.close()", "partial"],
+  [
+    "createReadStream",
+    "stream.close(stream.destroy = () => stream)",
+    "partial",
+  ],
+  ["createWriteStream", "stream.end = () => {}; stream.close()", "partial"],
+  ["createReadStream", "observe(stream.__proto__); stream.close()", "partial"],
+  ["createReadStream", "stream.end = () => {}; stream.close()", "complete"],
+])("checks %s release dependencies in %s", (factory, body, resolution) => {
+  expect(
+    releases(
+      `import { ${factory} } from "node:fs"; const stream = ${factory}("fixture.txt"); ${body};`,
+    ),
+  ).toMatchObject([{ method: "close", resolution }]);
 });
 
 it.each([

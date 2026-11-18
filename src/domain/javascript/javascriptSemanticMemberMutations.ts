@@ -1,4 +1,4 @@
-import { BUILTIN_RESOURCE_RELEASE_METHODS } from "./javascriptBuiltinResourceMethods.js";
+import { builtinResourceReleases } from "./javascriptBuiltinResourceMethods.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
@@ -2428,8 +2428,6 @@ const observableMutationPaths = (
           t.isCallExpression(expression) ||
           t.isOptionalCallExpression(expression)
         ) {
-          const methods: Readonly<Record<string, readonly string[]>> =
-            BUILTIN_RESOURCE_RELEASE_METHODS;
           // Retain possible resource slots from provenance alone. Final built-in
           // admission depends on the mutations this pass is still collecting.
           if (
@@ -2445,8 +2443,10 @@ const observableMutationPaths = (
               );
               return (
                 identity.path.length === 1 &&
-                (methods[`${identity.specifier}:${identity.path[0]}`]?.length ??
-                  0) > 0
+                builtinResourceReleases(
+                  identity.specifier,
+                  identity.path[0]!,
+                ) !== undefined
               );
             })
           )

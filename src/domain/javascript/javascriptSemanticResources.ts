@@ -4,7 +4,7 @@ import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.j
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
   BUILTIN_RESOURCE_METHODS,
-  BUILTIN_RESOURCE_RELEASE_METHODS,
+  builtinResourceReleases,
 } from "./javascriptBuiltinResourceMethods.js";
 import type {
   JavaScriptSemanticCallable,
@@ -43,20 +43,6 @@ import {
 import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
-
-/**
- * Release methods the value from this acquisition actually has. An unlisted
- * specifier/method pair admits none, so a call to it emits no release fact.
- */
-const releaseMethodsFor = (
-  acquisition: ResourceCandidate,
-): readonly ("close" | "destroy" | "end")[] => {
-  const key = `${acquisition.specifier}:${acquisition.method}`;
-  const table: Readonly<
-    Record<string, readonly ("close" | "destroy" | "end")[]>
-  > = BUILTIN_RESOURCE_RELEASE_METHODS;
-  return table[key] ?? [];
-};
 
 interface ResourceCandidate {
   readonly builtinAuthority?: "candidate";
@@ -472,9 +458,13 @@ const collectReleases = (
         .filter(({ builtinAuthority }) => builtinAuthority === undefined)
         .map(({ node }) => node),
     );
+    const dependenciesFor = (acquisition: ResourceCandidate) =>
+      builtinResourceReleases(acquisition.specifier, acquisition.method)?.[
+        method
+      ];
     const linked = candidates.filter(
       (acquisition) =>
-        releaseMethodsFor(acquisition).includes(method) &&
+        dependenciesFor(acquisition) !== undefined &&
         (!acquisition.resultIsPromise ||
           opaqueReceiver ||
           mayReceiveFulfilledHandle(
@@ -487,6 +477,9 @@ const collectReleases = (
     // No linked acquisition exposes this release method, so the call is not a
     // release of it at all: Node throws at the call site instead.
     if (linked.length === 0) return;
+    const [first] = linked;
+    const dependencies =
+      linked.length === 1 && first ? dependenciesFor(first) : undefined;
     output.push({
       resourceId: `resource:release:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "release",
@@ -500,6 +493,7 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
+        dependencies !== undefined &&
         !releaseMethodMayHaveChanged(
           binding,
           method,
@@ -507,7 +501,15 @@ const collectReleases = (
           context.state,
           knownAcquisitions,
         ) &&
-        linked.length === 1 &&
+        !dependencies.some((dependency) =>
+          releaseMethodMayHaveChanged(
+            binding,
+            dependency,
+            node,
+            context.state,
+            knownAcquisitions,
+          ),
+        ) &&
         (binding.kind !== "parameter" ||
           semanticBindingAtRead(binding, member.object, context.state)
             .hasDefiniteInitializer) &&

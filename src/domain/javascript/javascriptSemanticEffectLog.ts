@@ -645,7 +645,7 @@ export const bindingMethodMayHaveChanged = (
     binding.escapedPaths.some(
       (effect) =>
         targets(effect) &&
-        (effect.path.length === 0 || prototype(effect.path[0]!)) &&
+        effect.path.every(prototype) &&
         effect.node !== state.parentsByNode.get(read) &&
         mayPrecede(effect.node),
     )
