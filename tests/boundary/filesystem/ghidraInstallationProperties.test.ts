@@ -14,7 +14,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { verifiedGhidraApplicationProperties } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { readGhidraInstallationProperties } from "../../../src/ghidra/GhidraInstallationProperties.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -39,7 +41,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const properties = "application.version=12.2\napplication.java.min=25\n";
+const properties = verifiedGhidraApplicationProperties;
 
 it("preserves a descriptor read failure instead of reporting absent metadata", async () => {
   const root = await createTestTempDirectory(
@@ -272,7 +274,7 @@ it.each(["read", "capacity", "completed"] as const)(
           diagnostics: {
             completed_properties: {
               bytes: Buffer.byteLength(properties),
-              properties: { providerVersion: "12.1.4" },
+              properties: { providerVersion: SUPPORTED_GHIDRA_VERSION },
             },
           },
         });
