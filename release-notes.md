@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** Ghidra 12.1.x is rejected. Use Ghidra 12.2 or another 12.x build at or above minor 2, and a JDK inside that installation's declared range (25 or newer for the verified 12.2 build).
 * **cli:** Markdown argument diagnostics use REA's literal escaping, table widths and token counts. Flag-shaped unknown MCP subcommands honor the selected format. Completion --schema/--version routes use the canonical REA-owned hook rather than the retired SDK generator. Refresh affected literal snapshots and regenerate completion hooks with rea completions <shell>.
 * **cli:** rea <command> --mcp is removed. Start REA's MCP server with rea mcp or rea --mcp.
 * **mcp:** MCP calls to inspect_pcap_capture, start_rizin_debug_session and start_gdb_session with a relative path or inferior_tty are refused with invalid_request. Pass absolute paths.
@@ -86,6 +87,7 @@
 * **flutter:** carry the value of each fixed Flutter allowance ([#11641](https://github.com/morluto/rea/issues/11641)) ([2a31e06](https://github.com/morluto/rea/commit/2a31e064f35e53b40915cfc3ee3d698295d93715))
 * **gdb:** bind sessions to an optional executable ([230db70](https://github.com/morluto/rea/commit/230db70fb473dd15928ae6c1a885f7e8a5507dae))
 * **gdb:** name why close requires an explicit inferior disposition ([#11652](https://github.com/morluto/rea/issues/11652)) ([162097b](https://github.com/morluto/rea/commit/162097b95add4a14110e32b1d55010c354c2ac82))
+* **ghidra:** verify the bridge on Ghidra 12.2 ([#12081](https://github.com/morluto/rea/issues/12081)) ([5c59bdc](https://github.com/morluto/rea/commit/5c59bdc8a6635fe51eabc6d3eb8b71273419cc3f))
 * **ida:** require an explicit protocol for attached IDA registrations ([#10846](https://github.com/morluto/rea/issues/10846)) ([8428de1](https://github.com/morluto/rea/commit/8428de13d3e9b2faadfeac8bca0e60eb28d7b674))
 * **javascript:** make the member-mutation work allowance a runtime setting ([#11181](https://github.com/morluto/rea/issues/11181)) ([0f53849](https://github.com/morluto/rea/commit/0f53849160d48026d885aa90948020eeaaa867f1))
 * **javascript:** require JavaScript application and source-map fields that were optional only for historical Evidence ([#10958](https://github.com/morluto/rea/issues/10958)) ([6597729](https://github.com/morluto/rea/commit/659772952ded743c637b8ea8ef2db0ad0ec4597a))
