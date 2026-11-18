@@ -87,6 +87,7 @@ processTest.skipIf(process.platform === "win32")(
         version,
         type: "module",
         files: ["scripts"],
+        scripts: { preinstall: 'node -e "process.exit(42)"' },
       }),
     );
     await copyFile(

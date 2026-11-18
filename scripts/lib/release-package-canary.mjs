@@ -16,10 +16,9 @@ export async function installCanaryPackage(
   commands,
 ) {
   const prefix = join(workspace, "installed");
-  await commands.execNpm(
+  await commands.installWithoutScripts(
+    "install",
     [
-      "install",
-      "--ignore-scripts",
       "--no-save",
       "--no-package-lock",
       "--no-audit",
