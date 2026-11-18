@@ -461,6 +461,7 @@
 * **source-maps:** reject empty comma-delimited mappings ([#11970](https://github.com/morluto/rea/issues/11970)) ([224856b](https://github.com/morluto/rea/commit/224856bf62c3f232a015e9823943303fc065c0b6))
 * **source-maps:** retain all candidates at shared section boundaries ([#12026](https://github.com/morluto/rea/issues/12026)) ([919531c](https://github.com/morluto/rea/commit/919531c7c173e9b1bb056c768ff1f96069972232))
 * **sqlite:** page via declared rowid aliases ([#11963](https://github.com/morluto/rea/issues/11963)) ([090d566](https://github.com/morluto/rea/commit/090d5668c85954ccaece0884ef05992c33f95cba))
+* **sqlite:** refuse one-byte files instead of reporting an empty schema ([#8727](https://github.com/morluto/rea/issues/8727)) ([f64433c](https://github.com/morluto/rea/commit/f64433c93e9d33173cf3dfd0d226f1a5a4d8f446))
 * **test:** resolve filesystem aliases before planning prerequisites ([#10213](https://github.com/morluto/rea/issues/10213)) ([7c9d65f](https://github.com/morluto/rea/commit/7c9d65fe973c7d2a9e04985ba4e0dcc63ada9a8b))
 * **test:** run the Hopper launch-failure CLI case in fresh processes on macOS CI ([#10825](https://github.com/morluto/rea/issues/10825)) ([4e84af7](https://github.com/morluto/rea/commit/4e84af75317012accba05167e68e3a65c5c7b104))
 * **test:** serve fake Hopper segments in the bridge's reply contract ([#10734](https://github.com/morluto/rea/issues/10734)) ([2237f93](https://github.com/morluto/rea/commit/2237f936f0059ccba1d02afb0f1ba134d375ed62))
