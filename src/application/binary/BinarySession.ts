@@ -1,7 +1,4 @@
-import {
-  bindSessionEvidenceCallerPath,
-  bindSessionEvidenceExecution,
-} from "./SessionEvidenceReuse.js";
+import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -37,6 +34,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import { withEvidenceTargetCallerPath } from "../../domain/evidence.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
@@ -1586,7 +1584,7 @@ export class BinarySession
         this.admitRecoveryObservation.bind(this),
       );
       if (!admitted.ok) return admitted;
-      const evidence = bindSessionEvidenceCallerPath(
+      const evidence = withEvidenceTargetCallerPath(
         createAnalysisExecutionEvidence(
           name,
           arguments_,

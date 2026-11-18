@@ -1268,8 +1268,8 @@ admission path, and artifact selection and companions. Use the canonical `path`
 for an explicit provider `document` selector when that provider identifies its
 document by path.
 
-Inline provider Evidence for that file includes the current `caller_input_path`
-when the selection differs from the canonical path. The alias is outside the
+Inline provider and composed workflow Evidence for that file includes the
+current `caller_input_path` when the selection differs from the canonical path. The alias is outside the
 Evidence ID and snapshot binding. Ordinary recording of a duplicate retains the
 first record, including its selection metadata, so later inline responses may
 carry a different alias from the bundled record with the same ID. The bundle

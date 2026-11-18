@@ -25,7 +25,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
-  evidenceSubjectTarget,
+  withEvidenceTargetCallerPath,
   type Evidence,
   type EvidenceLocation,
 } from "../domain/evidence.js";
@@ -248,30 +248,33 @@ const workflowSubject = (target: BinaryTarget | undefined) =>
 export const createWorkflowEvidence = (
   input: WorkflowEvidenceInput,
 ): Evidence =>
-  createEvidence(workflowSubject(input.target), REA_WORKFLOW_PROVIDER, {
-    operation: input.operation,
-    parameters: input.parameters,
-    result: input.result,
-    ...(input.upstreamProfile === undefined
-      ? {}
-      : {
-          analysisProfile: workflowAnalysisProfile(
-            input.upstreamProfile,
-            input.operation,
-          ),
-        }),
-    confidence: "derived",
-    ...(input.upstreamEvidenceLinks === undefined
-      ? {}
-      : { evidenceLinks: input.upstreamEvidenceLinks }),
-    limitations: [
-      ...workflowLimitations(input.operation),
-      ...input.upstreamLimitations,
-    ],
-    ...(input.operation === "batch_decompile"
-      ? { locations: batchProcedureLocations(input.result) }
-      : {}),
-  });
+  withEvidenceTargetCallerPath(
+    createEvidence(workflowSubject(input.target), REA_WORKFLOW_PROVIDER, {
+      operation: input.operation,
+      parameters: input.parameters,
+      result: input.result,
+      ...(input.upstreamProfile === undefined
+        ? {}
+        : {
+            analysisProfile: workflowAnalysisProfile(
+              input.upstreamProfile,
+              input.operation,
+            ),
+          }),
+      confidence: "derived",
+      ...(input.upstreamEvidenceLinks === undefined
+        ? {}
+        : { evidenceLinks: input.upstreamEvidenceLinks }),
+      limitations: [
+        ...workflowLimitations(input.operation),
+        ...input.upstreamLimitations,
+      ],
+      ...(input.operation === "batch_decompile"
+        ? { locations: batchProcedureLocations(input.result) }
+        : {}),
+    }),
+    input.target,
+  );
 
 const admitWorkflowRecovery = (
   observation: ComposedWorkflowObservation,
@@ -289,6 +292,9 @@ const admitWorkflowRecovery = (
         ? null
         : {
             path: evidenceInput.target.path,
+            ...(evidenceInput.target.callerInputPath === undefined
+              ? {}
+              : { callerInputPath: evidenceInput.target.callerInputPath }),
             sha256: evidenceInput.target.sha256,
             format: evidenceInput.target.format,
             architecture: evidenceInput.target.architecture ?? null,

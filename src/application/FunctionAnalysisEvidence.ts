@@ -9,7 +9,10 @@ import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.j
 import { parseFunctionDossier } from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
-import type { Evidence } from "../domain/evidence.js";
+import {
+  withEvidenceTargetCallerPath,
+  type Evidence,
+} from "../domain/evidence.js";
 import { EvidenceLedger } from "./investigation/EvidenceLedger.js";
 import {
   recordEvidenceSources,
@@ -57,30 +60,21 @@ export const executeFunctionAnalysisEvidence = async (
       : {}),
   };
   const dossier = parseFunctionDossier(execution.value.result);
+  const evidence = withEvidenceTargetCallerPath(
+    createAnalysisExecutionEvidence(
+      "analyze_function",
+      arguments_,
+      dossier.ok ? { ...observation, result: dossier.value } : observation,
+      "observed",
+    ),
+    target,
+  );
   if (!dossier.ok) {
-    dossier.error.retainPartialObservation(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        observation,
-        "observed",
-      ),
-    );
+    dossier.error.retainPartialObservation(evidence);
     return withEvidenceSources(dossier, sources);
   }
   return withEvidenceSources(
-    completeProviderEvidence(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        {
-          ...observation,
-          result: dossier.value,
-        },
-        "observed",
-      ),
-      options?.signal,
-    ),
+    completeProviderEvidence(evidence, options?.signal),
     sources,
   );
 };

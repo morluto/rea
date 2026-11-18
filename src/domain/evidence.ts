@@ -504,6 +504,18 @@ export const withEvidenceCallerInputPath = (
   return rememberReboundEvidence(owned, rebound);
 };
 
+/** Attach the selected spelling only to an observation of that exact target. */
+export const withEvidenceTargetCallerPath = (
+  evidence: Evidence,
+  target: BinaryTarget | null | undefined,
+): Evidence =>
+  target?.callerInputPath !== undefined &&
+  isFileSubject(evidence.subject) &&
+  evidence.subject.local_path === target.path &&
+  sameTargetIdentity(evidence.subject.identity, binaryTargetIdentity(target))
+    ? withEvidenceCallerInputPath(evidence, target.callerInputPath)
+    : evidence;
+
 /** Carry the source's sealing proof before sealing only the changed envelope. */
 const rememberReboundEvidence = (
   source: Evidence,
