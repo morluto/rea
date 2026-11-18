@@ -45,6 +45,7 @@ import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
+import { MacosFseventsArtifactReader } from "./MacosFseventsArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
@@ -503,6 +504,14 @@ const NON_ZIP_FORMATS = {
       "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
+  }),
+  "macos-fsevents": described("macos-fsevents", {
+    ...plain,
+    retainClassifiedSource: true,
+    readerLimitation:
+      "macOS FSEvents store inventory reports DLS (1SLD, 2SLD, 3SLD) stream headers, event totals, continuity diagnostics, decoded Darwin disk flag counts and up to 32 sampled records while preserving raw paths and flag bitmasks. Directory-wide rotation correlation, record filtering and live FSEvents streams are not included; records reflect logged notifications rather than proof of file contents or log completeness.",
+    createReader: (path, options) =>
+      new MacosFseventsArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

@@ -83,6 +83,7 @@ export const liveBinaryTargetSummaryVariants = [
       "dfuse",
       "fit",
       "ntfs-mft",
+      "macos-fsevents",
     ]),
     architecture: z.null(),
   }),
