@@ -805,6 +805,7 @@
 * **environment:** consolidate clock parsing and formatting checks ([#11902](https://github.com/morluto/rea/issues/11902)) ([f687b68](https://github.com/morluto/rea/commit/f687b68d12658267c77b1ce30b4461301e20a2f7))
 * **environment:** consolidate list query contracts ([#11916](https://github.com/morluto/rea/issues/11916)) ([d72dfb8](https://github.com/morluto/rea/commit/d72dfb8c69376c14a0fcc386dc3f7d639b4abc97))
 * **environment:** consolidate manifest sibling coverage ([#11917](https://github.com/morluto/rea/issues/11917)) ([476e96e](https://github.com/morluto/rea/commit/476e96e844e3ee505a5bc8efd3abb2b43ce26a25))
+* **environment:** consolidate scenario manifest exclusions ([#11919](https://github.com/morluto/rea/issues/11919)) ([20e932f](https://github.com/morluto/rea/commit/20e932fac7f6daa093668ab752a48e9ed24a8929))
 * **environment:** consolidate state reply budget proofs ([#11921](https://github.com/morluto/rea/issues/11921)) ([7ea9a22](https://github.com/morluto/rea/commit/7ea9a229e9a65a3cd9efff576177dceab5f85d55))
 * **environment:** consolidate write body and pointer checks ([#11910](https://github.com/morluto/rea/issues/11910)) ([70d9693](https://github.com/morluto/rea/commit/70d9693a01c7faf1a54174a74ef2ee05c1446f28))
 * **environment:** distinguish write cutoffs from record ordering ([#11908](https://github.com/morluto/rea/issues/11908)) ([c5d197b](https://github.com/morluto/rea/commit/c5d197b1b4e3adeaad8d6e15c9becddab5843217))
