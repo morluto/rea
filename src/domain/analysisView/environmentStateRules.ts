@@ -1,3 +1,4 @@
+import { isRecord } from "../../kernel/isRecord.js";
 import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
 import {
   iterateUrlQueryParameters,
@@ -319,7 +320,7 @@ export const segmentsOf = (path: string): string[] => {
 export const isParam = (segment: string): boolean =>
   segment.startsWith("{") && segment.endsWith("}");
 export const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  isRecord(value);
 export const scalarText = (value: JsonValue | undefined): string | undefined =>
   typeof value === "string"
     ? value

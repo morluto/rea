@@ -1,10 +1,6 @@
 import { isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
 
-// Declared layer exception (scripts/lib/module-layers.mjs LAYER_EXCEPTIONS):
-// which paths are absolute is a fact about the running host's path rules.
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-
 import { rejectUnpairedSurrogates } from "./stringPatterns.js";
 
 /**
@@ -35,16 +31,32 @@ export const localPathStringSchema = rejectUnpairedSurrogates(
 /**
  * A Windows absolute path: rooted, UNC, or drive-qualified. The classes spell
  * backslash and slash as `\x5C` and `\x2F` because `v` mode rejects an
- * unescaped `/` inside a class, and Windows hosts advertise this pattern.
+ * unescaped `/` inside a class. This also admits every POSIX absolute path,
+ * so it is a portable envelope for catalogs built once and shipped to any host.
  */
 export const windowsAbsolutePathPattern =
   /^(?:[\x5C\x2F]|[A-Za-z]:[\x5C\x2F])/u;
 
-/** A caller-selected path that is absolute on the host running REA. */
-export const absoluteLocalPathStringSchema = localPathStringSchema.regex(
-  HOST_PLATFORM.platform === "win32" ? windowsAbsolutePathPattern : /^\//u,
-  "must be an absolute local filesystem path",
-);
+/**
+ * A caller-selected path that is absolute on the host running REA.
+ * Advertise the host-independent envelope: choosing a regex on the build host
+ * bakes that host's rules into the recorded CLI/MCP catalogs. Runtime admission
+ * still uses the executing host's path rules, without serializing that choice.
+ */
+export const absoluteLocalPathStringSchema = localPathStringSchema
+  .regex(windowsAbsolutePathPattern, {
+    message: "must be an absolute local filesystem path",
+    abort: true,
+  })
+  .superRefine((value, context) => {
+    if (!isAbsolute(value))
+      context.addIssue({
+        code: "invalid_format",
+        format: "regex",
+        message: "must be an absolute local filesystem path",
+        input: value,
+      });
+  });
 
 /** Test lexical containment on the host platform; callers must resolve symlinks first. */
 export const isPathWithinRoot = (root: string, path: string): boolean => {

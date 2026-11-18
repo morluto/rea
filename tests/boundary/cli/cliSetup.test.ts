@@ -168,9 +168,7 @@ cliTest(
     expect(result.exitCode).not.toBe(0);
     expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
     expect(result.stdout).toContain("--dry-run");
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain(
-      "Incur.ParseError",
-    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
     await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

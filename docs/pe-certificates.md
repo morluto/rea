@@ -73,10 +73,13 @@ input. `inspect-pe-resources` uses the same header admission and classifications
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 eight `WIN_CERTIFICATE` entries are examined by default. Malformed PE headers,
 truncated certificate entries, and PKCS#7 that is not structurally signedData
-fail without partial success. A security directory that ends in fewer than
-eight header bytes, including zeros, is a truncated `WIN_CERTIFICATE` and
-fails the same way. SignedData must contain at least one `SignerInfo`, and
-each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
+fail without partial success. A security directory that ends before an entry's
+next eight-byte boundary, or leaves fewer than eight header bytes including
+zeros, is truncated and fails the same way. The
+[PE format specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-attribute-certificate-table-image-only)
+requires the sum of the rounded entry lengths to equal the directory size.
+SignedData must contain at least one `SignerInfo`, and each `SignerInfo` must
+carry a non-empty signature value. Each embedded X.509
 certificate must include `subjectPublicKeyInfo` and `signatureValue`.
 Certificate issuer/subject and signer issuer names require nonempty RDN sets
 and exactly two fields (type and value) in each attribute, as defined in

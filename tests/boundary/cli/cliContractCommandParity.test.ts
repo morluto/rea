@@ -1,4 +1,4 @@
-import { Parser } from "incur";
+import { parseCliArgv } from "../../../src/cli/argvParser.js";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
@@ -13,36 +13,29 @@ import {
 } from "../../../src/cli/contractCliDescription.js";
 import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
 import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
-import {
-  contractCommandDescriptions,
-  contractInputBranch,
-  contractDocumentCommandDescriptions,
-  routedCommandDescriptions,
-} from "../../../src/cli/contractCommand.js";
+import { contractInputBranch } from "../../../src/cli/contractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
-  visitRegisteredCommands,
-  type RegisteredCommand,
-} from "../../../src/cli/visitRegisteredCommands.js";
+  cliCommands,
+  type CliCommandEntry,
+} from "../../../src/cli/commandRegistry.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { presentRootDiscriminator } from "../../../src/domain/schemaAnnotations.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
+import { registeredContractDescriptions } from "../../support/cli/commandCli.js";
 
 const DECIMAL_TOKEN = /^[0-9]+$/u;
 
 const cli = createCli({});
-const registered = new Map<string, RegisteredCommand>();
-visitRegisteredCommands(cli, (command, path) => {
+const registered = new Map<string, CliCommandEntry["definition"]>();
+cliCommands(cli).forEach(({ definition: command, name: path }) => {
   registered.set(path, command);
 });
-// A routed command contributes one description per contract it runs.
-const descriptions = [
-  ...contractCommandDescriptions(cli),
-  ...routedCommandDescriptions(cli),
-];
+const { commands: descriptions, documents: documentDescriptions } =
+  registeredContractDescriptions(cli);
 
 const inputJsonSchema = (field: z.ZodType): Record<string, unknown> =>
   z.toJSONSchema(field, { io: "input", unrepresentable: "any" });
@@ -410,9 +403,7 @@ const each = descriptions.map(
 
 /** Every command the contract builders registered, from their registry. */
 const contractBuilt: ReadonlySet<string> = new Set(
-  [...descriptions, ...contractDocumentCommandDescriptions(cli)].map(
-    ({ command }) => command,
-  ),
+  [...descriptions, ...documentDescriptions].map(({ command }) => command),
 );
 
 /** Contract-built commands whose name differs from their contract's. */
@@ -588,8 +579,9 @@ describe("CLI commands projected from tool contracts", () => {
           [parameter.key]: registeredField(description, parameter),
         });
         const flag = `--${parameter.key.replaceAll(/[A-Z]/gu, (c) => `-${c.toLowerCase()}`)}`;
-        expect(Parser.parse([flag], { options }).options, flag).toEqual({
-          [parameter.key]: true,
+        expect(parseCliArgv([flag], { options }), flag).toMatchObject({
+          ok: true,
+          value: { options: { [parameter.key]: true } },
         });
       }
     },
@@ -1390,7 +1382,9 @@ describe("Evidence delivery of contract commands", () => {
       { name: "probe", inputSchema },
       { command: "probe", description: "Probe" },
     ).parameters;
-    expect(format!.schema.parse(undefined)).toBe("json");
+    expect(format!.schema.parse(undefined)).toBeUndefined();
+    expect(inputJsonSchema(format!.schema).default).toBe("json");
+    expect(inputSchema.parse({})).toEqual({ format: "json" });
     expect(format!.schema.safeParse("graphql").success).toBe(true);
     expect(format!.schema.safeParse("xml").success).toBe(false);
   });
@@ -1450,7 +1444,7 @@ describe("Evidence delivery of contract commands", () => {
   });
 });
 
-const documents = contractDocumentCommandDescriptions(cli).map(
+const documents = documentDescriptions.map(
   (description) => [description.command, description] as const,
 );
 
@@ -1688,6 +1682,40 @@ const selecting = each.flatMap(([command, description]) =>
       : [[command, description, parameter, parameter.selectorOption] as const],
   ),
 );
+
+describe("Selector agreement in registered commands", () => {
+  const xrefs = descriptions.find(({ command }) => command === "xrefs")!;
+
+  it.each([
+    ["ram%2f:0X0001A", "ram%2F:0x1a"],
+    ["0x20000000000001", "0x020000000000001"],
+  ])("preserves the named address when %s and %s agree", (left, right) => {
+    const result = xrefs.admit({
+      [xrefs.sessionTarget!.key]: "rel/app",
+      address: left,
+      "--address": right,
+    });
+    expect(result.ok && result.value.input.address).toBe(right);
+  });
+
+  it.each([
+    ["0x1", "ram:0x1"],
+    ["0x20000000000000", "0x20000000000001"],
+    ["0xinvalid", "0XINVALID"],
+  ])(
+    "refuses different or unrecognized coordinates %s and %s",
+    (left, right) => {
+      const result = xrefs.admit({
+        [xrefs.sessionTarget!.key]: "rel/app",
+        address: left,
+        "--address": right,
+      });
+      expect(result.ok ? [] : result.error.issues).toEqual([
+        expect.objectContaining({ path: ["address"], reason: "invalid_value" }),
+      ]);
+    },
+  );
+});
 
 describe("Positional selectors with a named option", () => {
   it.each(selecting)(

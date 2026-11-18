@@ -98,6 +98,9 @@ const RETRYABLE_CAPABILITY_UNAVAILABLE = classified(
 
 const ARTIFACT_OPERATION_CLASSIFICATIONS = {
   cancelled: classified("cancelled", "cancelled"),
+  malformed: classified("invalid_request", "invalid_input"),
+  truncated: classified("truncated", "truncated"),
+  unsupported: classified("unsupported_target", "unsupported_target"),
   format: classified("artifact_operation_failed", "execution_failure"),
   integrity: classified("artifact_operation_failed", "integrity_mismatch"),
   limit: classified("truncated", "truncated"),

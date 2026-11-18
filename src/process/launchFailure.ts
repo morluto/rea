@@ -69,7 +69,7 @@ export type LaunchFailure =
   | { readonly kind: "failed"; readonly code: string | undefined };
 
 /** Classify any spawn errno; see `LaunchFailure`. */
-export const classifyLaunchErrno = (code: unknown): LaunchFailure => {
+const classifyLaunchErrno = (code: unknown): LaunchFailure => {
   const refusal = classifyLaunchFailureCode(code);
   if (refusal !== undefined) return refusal;
   const resource = launchExhaustedResource(code);

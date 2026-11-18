@@ -358,6 +358,21 @@ whether Ghidra recovered the original source layout.
 
 ### Hopper analysis behavior
 
+Hopper Evidence commits `analysis_profile.parameters.producer` as
+`{ rea_version, sources_sha256 }`. It replaces the former
+`function_dossier_coverage` marker. The source digest covers the packaged
+`bridge/hopper_bridge.py` that REA launches; changing that script or the REA
+release changes the profile digest and Evidence identity. A snapshot with the
+earlier profile is refused with `evidence_integrity_mismatch` before starting
+Hopper. Open the target without the old snapshot and save a fresh one; REA does
+not rewrite the old file. A matching profile does not enable Hopper snapshot
+replay: document observations remain live because Hopper has no revision token.
+
+Producer identity is computed once per REA process, so restart REA after editing
+packaged bridge files. Between releases, TypeScript-only edits within the same
+REA version do not change this identity. Regenerate observations after such
+development changes; the bridge digest does not fingerprint REA's TypeScript.
+
 Cursor navigation returns the observed object start when Hopper snaps an interior
 address; adjacent-object navigation rejects unmapped inputs and document ends.
 Native API text rejects NUL characters and unpaired Unicode surrogates before
@@ -705,12 +720,12 @@ bound. The XML estimate charges every element and every text, comment or CDATA
 node of the decoder's DOM at a measured upper bound, so a plist made of many
 small elements reaches it at a few MiB of source. JSON decode memory has not
 been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
-`reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
+`reported_limits.maximum_input_bytes` for the input ceiling or `reported_limits: { boundary: "plist-decode-bytes", maximum: 67108864 }` for the decode budget (with `details.refusal.unit: "bytes"`).
 Ordinary direct-source decoding has a ceiling of 997 source nesting levels,
 derived from the existing 1000-level JSON result capacity. Three levels are
 reserved for typed scalar fields, the report value and its Evidence envelope.
 Deeper input reports `resource_constraint` with
-`reported_limits.maximum_nesting_depth: 997` and names the fixed nesting allowance.
+`reported_limits: { boundary: "plist-nesting-depth", maximum: 997 }` and `details.refusal` naming the fixed nesting allowance and its `unit` (`"levels"`).
 XML admission also requires native validation, which
 can refuse input below this decoding ceiling. Compatibility conversions can
 likewise encounter an earlier native utility refusal; both retain native
