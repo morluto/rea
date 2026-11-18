@@ -433,6 +433,7 @@ const expectSuffixOnlyRenderersUnresolved = (graph: ApplicationGraph): void => {
   expect(
     renderers.get("file:///renderer/index.html")?.observations[0]?.properties,
   ).toMatchObject({
+    resolution_context: "module-specifier",
     resolved_path: "renderer/index.html",
     resolution_status: "resolved",
   });

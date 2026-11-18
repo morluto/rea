@@ -159,6 +159,19 @@ it("distinguishes unavailable and unselected JSON while preserving unknown key c
       json_parse_status: "unavailable",
       omitted_json_top_level_keys: null,
     });
+    const scopes = graph.nodes
+      .filter(({ kind }) => kind === "unknown")
+      .flatMap(({ observations }) => observations)
+      .filter(({ properties }) => properties.path === unavailable);
+    expect(scopes).toMatchObject([
+      {
+        properties: {
+          operation: "parse-json-module",
+          limitation: expect.stringContaining("invalid-utf8"),
+        },
+        evidence: { authority: "artifact-bytes", state: "unavailable" },
+      },
+    ]);
     for (const path of unselected)
       expect(
         observations.find(
