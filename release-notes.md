@@ -817,6 +817,7 @@
 * **environment:** consolidate serve refusals at the CLI ([#11930](https://github.com/morluto/rea/issues/11930)) ([e2e3881](https://github.com/morluto/rea/commit/e2e3881c0eb3f9010110796c8e8d3f3b1068b69e))
 * **environment:** consolidate state reply budget proofs ([#11921](https://github.com/morluto/rea/issues/11921)) ([7ea9a22](https://github.com/morluto/rea/commit/7ea9a229e9a65a3cd9efff576177dceab5f85d55))
 * **environment:** consolidate terminal destination safety ([#11952](https://github.com/morluto/rea/issues/11952)) ([1584d90](https://github.com/morluto/rea/commit/1584d908b405672da8b435f76187db56527e509a))
+* **environment:** consolidate write address contracts ([#11956](https://github.com/morluto/rea/issues/11956)) ([b7d32f8](https://github.com/morluto/rea/commit/b7d32f8850038248253cd84c2c666f209ba3a0ac))
 * **environment:** consolidate write body and pointer checks ([#11910](https://github.com/morluto/rea/issues/11910)) ([70d9693](https://github.com/morluto/rea/commit/70d9693a01c7faf1a54174a74ef2ee05c1446f28))
 * **environment:** consolidate write description sampling ([#11955](https://github.com/morluto/rea/issues/11955)) ([6b762c6](https://github.com/morluto/rea/commit/6b762c6e723e0c9936d27395b5349c0fcc00cdbf))
 * **environment:** distinguish write cutoffs from record ordering ([#11908](https://github.com/morluto/rea/issues/11908)) ([c5d197b](https://github.com/morluto/rea/commit/c5d197b1b4e3adeaad8d6e15c9becddab5843217))
