@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  ReferenceSourceEntry,
-  TraversalState,
-} from "./ReferenceSourceReaderTypes.js";
-import { reconcileUnobservedSymlinkTargets } from "./ReferenceSourceReader.js";
+import type { ReferenceSourceEntry } from "./ReferenceSourceReaderTypes.js";
+import type { TraversalState } from "./ReferenceSourceReaderTraversal.js";
+import { reconcileUnobservedSymlinkTargets } from "./ReferenceSourceSymlinkTargets.js";
 
 const failedDirectory = (
   path: string,
@@ -57,7 +55,7 @@ describe("unobserved internal symlink reconciliation", () => {
     ]);
   });
 
-  it("retains unreadable targets below the nearest failed directory", () => {
+  it("retains unreadable targets below a failed directory", () => {
     const entries: ReferenceSourceEntry[] = [
       internalLink("alias.txt", "hidden/target.txt"),
       failedDirectory("hidden", "io"),

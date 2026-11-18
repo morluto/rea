@@ -12,9 +12,9 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import { openRegularFile } from "../../src/filesystem/RegularFile.js";
-import { ZipArtifactReader } from "../../src/artifacts/ZipArtifactReader.js";
 import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { ZipArtifactReader } from "../../src/resources/index.js";
 
 it("rejects a symlink when O_NOFOLLOW is unavailable and still follows when requested", async () => {
   const root = await createTestTempDirectory("rea-no-nofollow-");
@@ -46,9 +46,13 @@ it("rejects a symlink when O_NOFOLLOW is unavailable and still follows when requ
     await linkedReader.close();
   }
 
-  const followed = await openRegularFile(link, { symlinks: "follow" });
+  const { handle: followed } = await openRegularFile(link, {
+    symlinks: "follow",
+  });
   try {
-    await expect(readFile(followed)).resolves.toEqual(await readFile(target));
+    expect(
+      Buffer.compare(await readFile(followed), await readFile(target)),
+    ).toBe(0);
   } finally {
     await followed.close();
   }

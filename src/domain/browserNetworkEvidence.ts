@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export const PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION =
   "Captured response-body bytes are the result of Playwright's Response.body() API. Playwright may satisfy that API with a credentialed follow-up load of the request URL when CDP has no body, so transaction and event links do not verify that retained bytes came from the original network transaction.";
@@ -43,15 +43,15 @@ const unavailableBrowserNetworkBodySchema = z.discriminatedUnion("reason", [
     state: z.literal("unavailable"),
     reason: z.literal("body-size-limit"),
     message: z.string().min(1),
-    limit_bytes: z.number().int().positive().safe(),
-    observed_bytes: z.number().int().positive().safe(),
+    limit_bytes: z.int().positive().safe(),
+    observed_bytes: z.int().positive().safe(),
   }),
   z.strictObject({
     state: z.literal("unavailable"),
     reason: z.literal("body-allocation-limit"),
     message: z.string().min(1),
-    limit_allocation_bytes: z.number().int().positive().safe(),
-    observed_allocation_bytes: z.number().int().positive().safe(),
+    limit_allocation_bytes: z.int().positive().safe(),
+    observed_allocation_bytes: z.int().positive().safe(),
   }),
 ]);
 
@@ -71,7 +71,7 @@ export const browserNetworkBodySchema = z.union([
       ]),
       encoding: z.literal("base64"),
       content: z.string(),
-      bytes: z.number().int().min(0),
+      bytes: z.int().min(0),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       media_type: z.string().nullable(),
       redacted: z.boolean(),
@@ -90,7 +90,7 @@ export const browserNetworkBodySchema = z.union([
           path: ["bytes"],
           message: "Network body byte count disagrees with retained bytes",
         });
-      if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256)
+      if (sha256Hex(bytes) !== artifact.sha256)
         context.addIssue({
           code: "custom",
           path: ["sha256"],

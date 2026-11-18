@@ -15,6 +15,8 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
         'import "./static";',
         'require("./common");',
         'const lazy = import("./lazy");',
+        "const templated = import(`./template-lazy.mjs`);",
+        'const wrapped = import("./wrapped-lazy.mjs" as const);',
         'async function load() { return await import("./data.json", { with: { type: "json" } }); }',
         'const name = "./not-guessed.js"; import(name);',
         "import(`./${name}.js`);",
@@ -22,6 +24,9 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
       ].join("\n"),
     ),
     ...["static.ts", "common.js", "lazy.ts"].map((path) =>
+      writeFile(join(root, path), "export {};\n"),
+    ),
+    ...["template-lazy.mjs", "wrapped-lazy.mjs"].map((path) =>
       writeFile(join(root, path), "export {};\n"),
     ),
     writeFile(join(root, "data.json"), '{"value":1}\n'),
@@ -34,11 +39,12 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
   });
   if (!result.ok) throw result.error;
   expect(result.value.parse_failures).toEqual([]);
-  expect(result.value.relationships).toHaveLength(6);
+  expect(result.value.relationships).toHaveLength(7);
   for (const [to, kind] of [
     ["static.ts", "imports"],
-    ["common.js", "requires"],
     ["lazy.ts", "imports"],
+    ["template-lazy.mjs", "imports"],
+    ["wrapped-lazy.mjs", "imports"],
     ["data.json", "imports"],
   ])
     expect(result.value.relationships).toContainEqual({

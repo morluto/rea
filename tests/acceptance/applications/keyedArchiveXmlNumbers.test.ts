@@ -7,7 +7,6 @@ import { expect } from "vitest";
 
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -73,10 +72,8 @@ cliTest.for([
     );
     const path = join(root, "archive.plist");
     await writeFile(path, bytes);
-    const { call } = await connectLocalToolsMcp({
-      HOME: root,
-      USERPROFILE: root,
-    });
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Missing file-scoped MCP session");
     const output = await cli.run({
       arguments: [
         "inspect-keyed-archive",
@@ -89,7 +86,7 @@ cliTest.for([
         "1",
         "--json",
       ],
-      environment: { HOME: root, USERPROFILE: root, REA_LOG_LEVEL: "silent" },
+      environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const result = keyedArchiveResultSchema.parse(
@@ -133,7 +130,7 @@ cliTest.for([
         /non-finite|completely observed/u.test(note),
       ),
     ).toBe(false);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -141,10 +138,8 @@ cliTest(
   "refuses invalid data without publishing observed bytes through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-keyed-data-refusal-");
-    const { call } = await connectLocalToolsMcp({
-      HOME: root,
-      USERPROFILE: root,
-    });
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Missing file-scoped MCP session");
     for (const [name, element, reason] of [
       ["non-ascii", "<data>AQ\u0085ID</data>", "non-ascii"],
       ["markup", "<data>A<!-- ignored -->QID</data>", "markup"],
@@ -162,7 +157,7 @@ cliTest(
       await writeFile(path, bytes);
       const output = await cli.run({
         arguments: ["inspect-keyed-archive", path, "--json"],
-        environment: { HOME: root, USERPROFILE: root, REA_LOG_LEVEL: "silent" },
+        environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(output.exitCode).toBe(1);
       expect(output.json).toMatchObject({
@@ -183,7 +178,7 @@ cliTest(
           },
         },
       });
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
   },
 );

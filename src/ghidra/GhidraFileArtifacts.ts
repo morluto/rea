@@ -1,22 +1,21 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { open } from "node:fs/promises";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   mapArtifactFileFailure,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   readStableFileBytes,
   RegularFileCapacityError,
 } from "../filesystem/readStableFileBytes.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
@@ -24,8 +23,10 @@ import {
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Bounded serial read; the caller owns admission and final descriptor cleanup. */
 export const readGhidraProfileArtifact = <Value>(
@@ -35,7 +36,7 @@ export const readGhidraProfileArtifact = <Value>(
   signal: AbortSignal | undefined,
   interpret: (bytes: Buffer) => Value,
 ): Promise<Value> =>
-  withArtifactRegularFile(path, resources, signal, async (file) => {
+  withArtifactRegularFile(path, resources, signal, async ({ handle: file }) => {
     const bytes = await readStableFileBytes(file, path, maximumBytes, {
       symlinks: "reject",
       ...(signal === undefined ? {} : { signal }),
@@ -57,99 +58,108 @@ export const writeGhidraProfileArtifact = async (
   );
 };
 
-/** Preserve physical failure, exact cancellation, and all retained file leases. */
-export const ghidraFileFailure = (
-  cause: unknown,
+/** Ghidra's typed meaning for one physical file failure, else the failure. */
+const ghidraPhysicalFailure = (
+  primary: unknown,
+  operation: string,
+  diagnostics: Readonly<Record<string, JsonValue>>,
+): unknown => {
+  if (primary instanceof RegularFileCapacityError)
+    return new AnalysisResourceConstraintError(
+      operation,
+      "file-size",
+      primary.message,
+      {
+        maximum_bytes: primary.maximumBytes,
+        observed_bytes: primary.observedBytes.toString(),
+      },
+      { cause: primary, diagnostics, retryable: false },
+    );
+  if (primary instanceof RegularFileChangedError)
+    return new AnalysisArtifactChangedError(
+      operation,
+      primary.path,
+      primary.message,
+      { cause: primary, diagnostics },
+    );
+  if (
+    primary instanceof Error &&
+    "code" in primary &&
+    (primary.code === "EACCES" || primary.code === "EPERM")
+  ) {
+    const path =
+      "path" in primary && typeof primary.path === "string"
+        ? primary.path
+        : diagnostics.path;
+    if (typeof path === "string")
+      return new AnalysisAccessDeniedError(operation, path, primary.code, {
+        cause: primary,
+        diagnostics,
+      });
+  }
+  return primary;
+};
+
+/**
+ * Ghidra's dialect for a file it reads or writes: its typed physical
+ * failures, composed with the file's unresolved cleanup, and an adapter
+ * report that keeps that cleanup for anything else. The shared owner reports
+ * the read's cancellation with these diagnostics.
+ */
+export const ghidraFileDialect = (
   operation: string,
   diagnostics: Readonly<Record<string, JsonValue>> = {},
-): AnalysisError => {
-  cause = mapArtifactFileFailure(cause, (primary) => {
-    if (primary instanceof RegularFileCapacityError)
-      return new AnalysisResourceConstraintError(
-        operation,
-        "file-size",
-        primary.message,
-        {
-          maximum_bytes: primary.maximumBytes,
-          observed_bytes: primary.observedBytes.toString(),
-        },
-        { cause: primary, diagnostics, retryable: false },
-      );
-    if (primary instanceof RegularFileChangedError)
-      return new AnalysisArtifactChangedError(
-        operation,
-        primary.path,
-        primary.message,
-        { cause: primary, diagnostics },
-      );
-    if (
-      primary instanceof Error &&
-      "code" in primary &&
-      (primary.code === "EACCES" || primary.code === "EPERM")
-    ) {
-      const path =
-        "path" in primary && typeof primary.path === "string"
-          ? primary.path
-          : diagnostics.path;
-      if (typeof path === "string")
-        return new AnalysisAccessDeniedError(operation, path, primary.code, {
-          cause: primary,
-          diagnostics,
-        });
-    }
-    return primary;
-  });
-  if (cause instanceof AnalysisError) return cause;
-  const primary = artifactFilePrimaryFailure(cause);
-  const reason = primary instanceof Error ? primary.message : String(primary);
-  const cleanup =
-    cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  if (primary instanceof AnalysisError) {
+): ProviderFailureDialect => ({
+  providerId: "ghidra",
+  operation,
+  diagnostics,
+  recognise: (cause) => {
+    const mapped = mapArtifactFileFailure(cause, (primary) =>
+      ghidraPhysicalFailure(primary, operation, diagnostics),
+    );
+    const { cause: primary, origin } = artifactFilePrimaryFacts(mapped);
+    if (origin !== "owned-or-classified" || !(primary instanceof AnalysisError))
+      return undefined;
+    const cleanup =
+      mapped instanceof ArtifactReaderFailure ? mapped.cleanup : undefined;
     if (cleanup === undefined) return primary;
     const failure = new ProviderCleanupError(
       "ghidra",
       cleanup.resources,
-      {
-        reason: cleanup.reason,
-      },
-      { cause },
+      { reason: cleanup.reason },
+      { cause: mapped },
     );
-    bindArtifactFileCleanup(cause, failure);
-    return analysisErrorWithCleanupFailure(
-      primary,
-      failure,
-      operation,
-    ).bindCleanupDependencies([
-      ...(primary.cleanupIncomplete ? [primary] : []),
-      failure,
-    ]);
-  }
-  const error =
-    cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
-          cleanup,
-          diagnostics,
-        })
-      : new ProviderAdapterError("ghidra", operation, {
-          cause,
-          cleanup,
-          diagnostics: {
-            ...diagnostics,
-            ...(primary instanceof Error &&
-            "code" in primary &&
-            typeof primary.code === "string"
-              ? { system_code: primary.code }
-              : {}),
-            ...(primary instanceof Error &&
-            "syscall" in primary &&
-            typeof primary.syscall === "string"
-              ? { syscall: primary.syscall }
-              : {}),
-            reason,
-          },
-          userMessage: reason,
-        });
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
+    bindArtifactFileCleanup(mapped, failure);
+    return analysisErrorWithCleanupDependencies(primary, failure, operation);
+  },
+  unclassified: (cause, details) => {
+    const { cause: primary } = artifactFilePrimaryFacts(cause);
+    const admission =
+      primary instanceof GhidraAdmissionError ? primary : undefined;
+    const reason = admission?.code ?? errorMessage(primary);
+    const systemCode =
+      admission === undefined &&
+      primary instanceof Error &&
+      "code" in primary &&
+      typeof primary.code === "string"
+        ? primary.code
+        : undefined;
+    return new ProviderAdapterError("ghidra", operation, {
+      ...details,
+      cause,
+      diagnostics: {
+        ...admission?.detail,
+        ...diagnostics,
+        ...(admission === undefined ? {} : { code: admission.code }),
+        ...(systemCode === undefined ? {} : { system_code: systemCode }),
+        ...(primary instanceof Error &&
+        "syscall" in primary &&
+        typeof primary.syscall === "string"
+          ? { syscall: primary.syscall }
+          : {}),
+        reason,
+      },
+      userMessage: reason,
+    });
+  },
+});

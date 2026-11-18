@@ -1,13 +1,20 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
+import {
+  snapshotExecution,
+  ANALYSIS_SNAPSHOT_PROFILE as PROFILE,
+  ANALYSIS_SNAPSHOT_PROVIDER as PROVIDER,
+  ANALYSIS_SNAPSHOT_TARGET as TARGET,
+} from "../../../src/domain/analysisSnapshot.fixture.js";
 import { join } from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import canonicalize from "canonicalize";
 
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
@@ -21,17 +28,12 @@ import {
   snapshotTarget,
   type AnalysisSnapshot,
 } from "../../../src/domain/analysisSnapshot.js";
-import {
-  ANALYSIS_SNAPSHOT_PROFILE as PROFILE,
-  ANALYSIS_SNAPSHOT_PROVIDER as PROVIDER,
-  ANALYSIS_SNAPSHOT_TARGET as TARGET,
-} from "../../../src/domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { readJsonObjectFile } from "../../../src/application/JsonInputFile.js";
 import { RegularFileChangedError } from "../../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
@@ -43,21 +45,23 @@ const snapshotFixture = (): AnalysisSnapshot => {
     binding,
     operation: "address_name",
     parameters: { address: "0x1000" },
-    execution: createAnalysisExecution(
-      { name: "main", "😀": { "\uE000": "unicode" } },
-      PROVIDER,
-      {
-        analysisProfile: PROFILE,
-        rawResult: { name: "main", "😀": { "\uE000": "unicode" } },
-        subject: {
-          path: TARGET.path,
-          sha256: TARGET.sha256,
-          format: TARGET.format,
-          ...(TARGET.architecture === undefined
-            ? {}
-            : { architecture: TARGET.architecture }),
+    execution: snapshotExecution(
+      createAnalysisExecution(
+        { name: "main", "😀": { "\uE000": "unicode" } },
+        PROVIDER,
+        {
+          analysisProfile: PROFILE,
+          rawResult: { name: "main", "😀": { "\uE000": "unicode" } },
+          subject: {
+            path: TARGET.path,
+            sha256: TARGET.sha256,
+            format: TARGET.format,
+            ...(TARGET.architecture === undefined
+              ? {}
+              : { architecture: TARGET.architecture }),
+          },
         },
-      },
+      ),
     ),
   });
   const evidence = createEvidence(TARGET, PROVIDER, {
@@ -130,7 +134,9 @@ describe("analysis snapshots: persistence", () => {
       writeAnalysisSnapshot(snapshot, path, false, resources),
     );
     if (!written.ok) throw written.error;
-    expect((await readFile(path, "utf8")).endsWith("\n")).toBe(true);
+    const encoded = await readFile(path, "utf8");
+    // RFC 8785 bytes are a storage contract, independent of snapshot decoding.
+    expect(encoded).toBe(`${canonicalize(snapshot)}\n`);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     const roundTrip = await readAnalysisSnapshot(path);
     if (!roundTrip.ok) throw roundTrip.error;
@@ -276,19 +282,24 @@ describe("analysis snapshot member decoding", () => {
       `${" ".repeat(9 * 1024 * 1024)}${JSON.stringify(snapshot)}`,
     );
     const controller = new AbortController();
+    const reason = { request: "cancel snapshot import" };
     const reads = await holdFirstFileRead(path);
     onTestFinished(() => {
       controller.abort();
       reads.release();
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
-    await reads.firstRead;
-    controller.abort();
+    await reads.reached(pending, "first file read");
+    controller.abort(reason);
     reads.release();
     try {
       expect(await pending).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisCancelledError" },
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "open_binary",
+          cause: reason,
+        },
       });
       expect(reads.readCount).toBe(1);
     } finally {
@@ -317,14 +328,17 @@ describe("analysis snapshot file ownership", () => {
         });
       let failure: unknown;
       try {
-        try {
-          await readAnalysisSnapshot(
-            path,
-            cancelDuringClose ? controller.signal : undefined,
-          );
-        } catch (cause: unknown) {
-          failure = cause;
-        }
+        const result = await readAnalysisSnapshot(
+          path,
+          cancelDuringClose ? controller.signal : undefined,
+        );
+        if (result.ok)
+          throw new Error("Expected typed snapshot cleanup failure");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        failure =
+          cancelDuringClose && result.error.cause instanceof AggregateError
+            ? result.error.cause.errors[1].cause
+            : result.error.cause;
         expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
         if (!(failure instanceof RegularFileCleanupFailure))
           throw new Error("Expected the retained snapshot file handle owner");
@@ -383,3 +397,40 @@ it("rejects copied preparation handles and prevents mutable caller values from c
     /not parsed in this realm/u,
   );
 });
+
+it.each([
+  new Error("Parser callback state is unavailable"),
+  new SyntaxError("selected member consumer failure"),
+  Object.assign(new TypeError("consumer text decoder failure"), {
+    code: "ERR_ENCODING_INVALID_ENCODED_DATA",
+  }),
+])(
+  "preserves a selected-member callback failure instead of blaming JSON: %s",
+  async (failure) => {
+    const directory = await createTestTempDirectory("rea-json-member-failure-");
+    const path = join(directory, "input.json");
+    const members = new Map([
+      [
+        "value",
+        {
+          mode: "value" as const,
+          begin: () => {
+            throw failure;
+          },
+          accept: () => {
+            throw new Error("Unexpected member acceptance");
+          },
+          reject: () => {
+            throw new Error("Unexpected member rejection");
+          },
+        },
+      ],
+    ]);
+    for (const padding of ["", " ".repeat(9 * 1024 * 1024)]) {
+      await writeFile(path, `${padding}{"value":1}`);
+      await expect(
+        readJsonObjectFile(path, "test-input", [members]),
+      ).rejects.toBe(failure);
+    }
+  },
+);

@@ -18,7 +18,7 @@ const archive = build({
 
 it("preflights repeated unterminated quoted declarations without suffix rescans", async () => {
   const preflightUrl = new URL(
-    "../../../dist/artifacts/apple/InterfaceBuilderDecodeBudget.js",
+    "../../../dist/domain/apple/propertyListDecodeBudget.js",
     import.meta.url,
   ).href;
   const { stdout } = await promisify(execFile)(
@@ -40,7 +40,7 @@ it("preflights repeated unterminated quoted declarations without suffix rescans"
     expected: number;
   };
   expect(result.observed.estimatedBytes).toBe(result.expected);
-}, 10000);
+});
 
 const fixture = async (declaration: string) => {
   const bundlePath = await createTestTempDirectory("rea-xml-declaration-");
@@ -104,3 +104,24 @@ it.each(["REA-UNSUPPORTED", "ISO-8859-1"])(
     expect(result.graph.truncated).toBe(true);
   },
 );
+
+it("reports a dictionary key an Interface Builder archive declares twice", async () => {
+  const bundlePath = await createTestTempDirectory("rea-ib-repeated-key-");
+  await writeFile(
+    join(bundlePath, "Panel.nib"),
+    archive.replace(
+      "<key>$objects</key>",
+      "<key>$archiver</key><string>NSKeyedArchiver</string><key>$objects</key>",
+    ),
+  );
+  const result = await analyzeInterfaceBuilderBundle({
+    bundlePath,
+    targetSha256: "a".repeat(64),
+  });
+  expect(result.documents).toHaveLength(1);
+  expect(result.limitations).toContainEqual(
+    expect.stringMatching(
+      /^Panel\.nib: 1 dictionary\(ies\) declare a key more than once \("\$archiver"\)\. REA kept the last value/u,
+    ),
+  );
+});

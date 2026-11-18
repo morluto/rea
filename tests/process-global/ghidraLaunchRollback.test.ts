@@ -1,3 +1,4 @@
+import { createTestArtifactResourceScope } from "../fixtures/artifactResourceScope.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -123,7 +124,9 @@ it
     const { launcher, session } = await fixture(async () => {
       throw rejection;
     });
-    const result = await launcher.launch(session);
+    const result = await launcher.launch(session, {
+      resourceScope: createTestArtifactResourceScope(),
+    });
     expect(result.ok).toBe(false);
     if (result.ok || !(result.error instanceof GhidraLaunchError))
       throw new Error("Expected launch failure");
@@ -143,7 +146,9 @@ it.skipIf(process.platform === "win32")(
   "retains structured mixed-member rollback evidence through session projection",
   async () => {
     const { launcher, session } = await fixture(async () => incomplete);
-    const result = await launcher.launch(session);
+    const result = await launcher.launch(session, {
+      resourceScope: createTestArtifactResourceScope(),
+    });
     if (result.ok || !(result.error instanceof GhidraLaunchError))
       throw new Error("Expected launch failure");
     expect(result.error.partialLaunch).toBeDefined();
@@ -215,6 +220,7 @@ it.skipIf(process.platform === "win32")(
       throw undefined;
     });
     const result = await launcher.launch(session, {
+      resourceScope: createTestArtifactResourceScope(),
       signal: controller.signal,
     });
     if (result.ok || !(result.error instanceof GhidraLaunchError))
@@ -226,9 +232,10 @@ it.skipIf(process.platform === "win32")(
     expect(result.error.cause).toBeInstanceOf(AggregateError);
     if (!(result.error.cause instanceof AggregateError))
       throw new Error("Expected composite failure");
-    expect(result.error.cause.errors[0]).toMatchObject({
-      cause: fault.failure,
-    });
+    const primary: unknown = result.error.cause.errors[0];
+    expect(primary).toBeInstanceOf(GhidraLaunchError);
+    if (!(primary instanceof GhidraLaunchError)) throw primary;
+    expect(primary.cause).toBe(fault.failure);
     expect(result.error.cause.errors[1]).toBeUndefined();
     expect(result.error.partialLaunch).toBeDefined();
     denyCleanup = false;
@@ -324,6 +331,7 @@ it.skipIf(process.platform === "win32").each([null, "stop after spawn"])(
       () => controller.abort(reason),
     );
     const result = await launcher.launch(session, {
+      resourceScope: createTestArtifactResourceScope(),
       signal: controller.signal,
     });
     if (result.ok || !(result.error instanceof GhidraLaunchError))

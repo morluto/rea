@@ -1,0 +1,1491 @@
+{
+  "tokenizer": "tiktoken==0.14.0/o200k_base",
+  "actual_model_usage": null,
+  "scope": "Estimates count a fixed analyst question, recorded server instructions once, every catalog snapshot or each unique tool input definition, all call arguments and all tool text replies. The SDK-wire proxy additionally counts output schemas and structuredContent duplication. No inference/model requests were made. Model rendering, catalog replay/caching, protocol framing and reasoning tokens are unmeasured.",
+  "runtime": {
+    "node": "24.22.1",
+    "sdk_client": "2.3.1",
+    "sdk_server": "2.3.1",
+    "client_flags": ["--max-old-space-size=1024"],
+    "server_flags": ["--max-old-space-size=1024"],
+    "baseline": "1480a7c72e601f4444e21ecd50118c1afa774209"
+  },
+  "conditions": [
+    "Three alternating repetitions of the fixed six-case suite, sequential fresh MCP servers and Client/AJV instances; the Node harness and SDK code are reused across its six cases. Filesystem caches were not flushed; cold-disk behavior is unmeasured. All advertised output schemas remain full; stock SDK caching and normal JIT retained.",
+    "Two alternating cold-client batched retained controls, each in its own Node harness. Parser fixtures and oracles were acquired before profiling; oracle consumption and assertions are inside the measured harness.",
+    "All runs use two CPU affinity, a 4 GiB sampled process-family RSS guard at 200 ms, and 1 GiB Node heaps. Cleanup is awaited. All compared attempts completed without a guard stop.",
+    "Initial failed harness attempt used an incorrect GraphQL line-start oracle; descriptions start before field declaration lines. That failed attempt is retained but excluded. The corrected oracle requires declaration lines within source ranges, matching source digests.",
+    "The full default catalog is exactly equal across before/after at 241 tools and 4,257,925 bytes. Only opt-in hot-cold initial visibility changes."
+  ],
+  "comparisons": [
+    {
+      "name": "openapi",
+      "fact_digest": "8f03d4e3175e240be48845f3fdd571fb80dd6cf8c49d6ab8e57393e90f318b3e",
+      "before_repetitions": 3,
+      "after_repetitions": 3,
+      "milliseconds": {
+        "before_median": 13800.087245,
+        "before_range": [11737.716133, 13912.537394],
+        "after_median": 6464.514327,
+        "after_range": [5967.3796219999995, 6844.161873],
+        "change_percent": -53.155989435195785
+      },
+      "compile_milliseconds": {
+        "before_median": 7878.876172999997,
+        "before_range": [7050.097135, 7998.953358999999],
+        "after_median": 1380.081345999999,
+        "after_range": [1220.1001699999988, 1402.5490140000002],
+        "change_percent": -82.48377921296213
+      },
+      "catalog_wire_bytes": {
+        "before_median": 1602805,
+        "before_range": [1602805, 1602805],
+        "after_median": 220127,
+        "after_range": [220127, 220127],
+        "change_percent": -86.26613967388423
+      },
+      "snapshot_text_task_tokens": {
+        "before_median": 14764,
+        "before_range": [14764, 14764],
+        "after_median": 8098,
+        "after_range": [8098, 8098],
+        "change_percent": -45.15036575453807
+      },
+      "incremental_text_task_tokens": {
+        "before_median": 9669,
+        "before_range": [9669, 9669],
+        "after_median": 6336,
+        "after_range": [6336, 6336],
+        "change_percent": -34.470989761092156
+      },
+      "sdk_wire_tokens": {
+        "before_median": 423689,
+        "before_range": [423689, 423689],
+        "after_median": 65267,
+        "after_range": [65267, 65267],
+        "change_percent": -84.5955405969945
+      },
+      "catalog_count": {
+        "before_median": 2,
+        "before_range": [2, 2],
+        "after_median": 2,
+        "after_range": [2, 2],
+        "change_percent": 0.0
+      },
+      "call_count": {
+        "before_median": 3,
+        "before_range": [3, 3],
+        "after_median": 3,
+        "after_range": [3, 3],
+        "change_percent": 0.0
+      }
+    },
+    {
+      "name": "graphql",
+      "fact_digest": "4c3ab8e43f6fe8a0394333008edcd2b4c48d2f70c8eaf00bac09ad4ee18d3f2e",
+      "before_repetitions": 3,
+      "after_repetitions": 3,
+      "milliseconds": {
+        "before_median": 13415.565038,
+        "before_range": [12957.091652, 14744.741817],
+        "after_median": 7562.523673,
+        "after_range": [7395.386477999999, 8303.394408],
+        "change_percent": -43.62873534153113
+      },
+      "compile_milliseconds": {
+        "before_median": 6476.677151,
+        "before_range": [6433.232380999998, 7606.6485280000015],
+        "after_median": 1005.382477000001,
+        "after_range": [873.3461099999986, 1030.825600000002],
+        "change_percent": -84.47687828866428
+      },
+      "catalog_wire_bytes": {
+        "before_median": 1602805,
+        "before_range": [1602805, 1602805],
+        "after_median": 220127,
+        "after_range": [220127, 220127],
+        "change_percent": -86.26613967388423
+      },
+      "snapshot_text_task_tokens": {
+        "before_median": 16993,
+        "before_range": [16993, 16993],
+        "after_median": 10327,
+        "after_range": [10327, 10327],
+        "change_percent": -39.22791737774378
+      },
+      "incremental_text_task_tokens": {
+        "before_median": 11898,
+        "before_range": [11898, 11898],
+        "after_median": 8565,
+        "after_range": [8565, 8565],
+        "change_percent": -28.013111447302062
+      },
+      "sdk_wire_tokens": {
+        "before_median": 428170,
+        "before_range": [428170, 428170],
+        "after_median": 69748,
+        "after_range": [69748, 69748],
+        "change_percent": -83.71020856201976
+      },
+      "catalog_count": {
+        "before_median": 2,
+        "before_range": [2, 2],
+        "after_median": 2,
+        "after_range": [2, 2],
+        "change_percent": 0.0
+      },
+      "call_count": {
+        "before_median": 3,
+        "before_range": [3, 3],
+        "after_median": 3,
+        "after_range": [3, 3],
+        "change_percent": 0.0
+      }
+    },
+    {
+      "name": "trace",
+      "fact_digest": "ca36e480a4f4f0f13aaf1fd60415f571b53f630dba1aebcb901ad64d9c623cb4",
+      "before_repetitions": 3,
+      "after_repetitions": 3,
+      "milliseconds": {
+        "before_median": 12145.078334000002,
+        "before_range": [10803.033836000002, 12906.171000999999],
+        "after_median": 6746.290509999999,
+        "after_range": [6226.009792999999, 6969.350793999998],
+        "change_percent": -44.45247429064464
+      },
+      "compile_milliseconds": {
+        "before_median": 6087.562135000015,
+        "before_range": [6071.050374000002, 6374.3004250000085],
+        "after_median": 796.2965660000009,
+        "after_range": [696.1192190000002, 846.5835069999957],
+        "change_percent": -86.9192864345195
+      },
+      "catalog_wire_bytes": {
+        "before_median": 1594474,
+        "before_range": [1594474, 1594474],
+        "after_median": 211796,
+        "after_range": [211796, 211796],
+        "change_percent": -86.71687340151047
+      },
+      "snapshot_text_task_tokens": {
+        "before_median": 17041,
+        "before_range": [17041, 17041],
+        "after_median": 10375,
+        "after_range": [10375, 10375],
+        "change_percent": -39.11742268646206
+      },
+      "incremental_text_task_tokens": {
+        "before_median": 11946,
+        "before_range": [11946, 11946],
+        "after_median": 8613,
+        "after_range": [8613, 8613],
+        "change_percent": -27.900552486187845
+      },
+      "sdk_wire_tokens": {
+        "before_median": 424803,
+        "before_range": [424803, 424803],
+        "after_median": 66381,
+        "after_range": [66381, 66381],
+        "change_percent": -84.37369792586212
+      },
+      "catalog_count": {
+        "before_median": 2,
+        "before_range": [2, 2],
+        "after_median": 2,
+        "after_range": [2, 2],
+        "change_percent": 0.0
+      },
+      "call_count": {
+        "before_median": 3,
+        "before_range": [3, 3],
+        "after_median": 3,
+        "after_range": [3, 3],
+        "change_percent": 0.0
+      }
+    },
+    {
+      "name": "endpoints",
+      "fact_digest": "93cc0cd8829807f531e3b66d6c547e11ea8cf52d1927660e91aac2af46e04593",
+      "before_repetitions": 3,
+      "after_repetitions": 3,
+      "milliseconds": {
+        "before_median": 10606.162208000002,
+        "before_range": [9403.442415999998, 10791.434284999996],
+        "after_median": 5307.667614000002,
+        "after_range": [4955.987430000001, 5536.538309],
+        "change_percent": -49.956756177116155
+      },
+      "compile_milliseconds": {
+        "before_median": 6023.578876000014,
+        "before_range": [5398.957807999999, 6469.031580999996],
+        "after_median": 784.4235569999983,
+        "after_range": [762.5041139999994, 915.2510410000032],
+        "change_percent": -86.97745023103444
+      },
+      "catalog_wire_bytes": {
+        "before_median": 1588821,
+        "before_range": [1588821, 1588821],
+        "after_median": 206143,
+        "after_range": [206143, 206143],
+        "change_percent": -87.02541066614803
+      },
+      "snapshot_text_task_tokens": {
+        "before_median": 13391,
+        "before_range": [13391, 13391],
+        "after_median": 6725,
+        "after_range": [6725, 6725],
+        "change_percent": -49.77970278545292
+      },
+      "incremental_text_task_tokens": {
+        "before_median": 8296,
+        "before_range": [8296, 8296],
+        "after_median": 4963,
+        "after_range": [4963, 4963],
+        "change_percent": -40.17598842815815
+      },
+      "sdk_wire_tokens": {
+        "before_median": 416728,
+        "before_range": [416728, 416728],
+        "after_median": 58306,
+        "after_range": [58306, 58306],
+        "change_percent": -86.00861953120501
+      },
+      "catalog_count": {
+        "before_median": 2,
+        "before_range": [2, 2],
+        "after_median": 2,
+        "after_range": [2, 2],
+        "change_percent": 0.0
+      },
+      "call_count": {
+        "before_median": 3,
+        "before_range": [3, 3],
+        "after_median": 3,
+        "after_range": [3, 3],
+        "change_percent": 0.0
+      }
+    },
+    {
+      "name": "firmware",
+      "fact_digest": "262d18c202420e14fa43ab62a326edda0c7ebff44dd5a994bb4be1681e8b01ea",
+      "before_repetitions": 3,
+      "after_repetitions": 3,
+      "milliseconds": {
+        "before_median": 10206.227484000003,
+        "before_range": [10065.749725000001, 12356.191089],
+        "after_median": 6277.109490999999,
+        "after_range": [6096.664005999999, 6372.874781000002],
+        "change_percent": -38.49726061034367
+      },
+      "compile_milliseconds": {
+        "before_median": 5330.633561000017,
+        "before_range": [5208.604807999982, 6741.363641000011],
+        "after_median": 960.8874660000001,
+        "after_range": [950.9055049999988, 963.4927039999966],
+        "change_percent": -81.9742352385644
+      },
+      "catalog_wire_bytes": {
+        "before_median": 1643377,
+        "before_range": [1643377, 1643377],
+        "after_median": 260699,
+        "after_range": [260699, 260699],
+        "change_percent": -84.13638501694986
+      },
+      "snapshot_text_task_tokens": {
+        "before_median": 16563,
+        "before_range": [16563, 16563],
+        "after_median": 9897,
+        "after_range": [9897, 9897],
+        "change_percent": -40.24633218619815
+      },
+      "incremental_text_task_tokens": {
+        "before_median": 11468,
+        "before_range": [11468, 11468],
+        "after_median": 8135,
+        "after_range": [8135, 8135],
+        "change_percent": -29.06348099058249
+      },
+      "sdk_wire_tokens": {
+        "before_median": 437975,
+        "before_range": [437975, 437975],
+        "after_median": 79553,
+        "after_range": [79553, 79553],
+        "change_percent": -81.83617786403333
+      },
+      "catalog_count": {
+        "before_median": 2,
+        "before_range": [2, 2],
+        "after_median": 2,
+        "after_range": [2, 2],
+        "change_percent": 0.0
+      },
+      "call_count": {
+        "before_median": 6,
+        "before_range": [6, 6],
+        "after_median": 6,
+        "after_range": [6, 6],
+        "change_percent": 0.0
+      }
+    },
+    {
+      "name": "retained",
+      "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+      "before_repetitions": 3,
+      "after_repetitions": 3,
+      "milliseconds": {
+        "before_median": 10778.632697999994,
+        "before_range": [9488.293762000008, 11417.009704000004],
+        "after_median": 12789.786540000001,
+        "after_range": [11933.108044, 13520.854069],
+        "change_percent": 18.658710231151886
+      },
+      "compile_milliseconds": {
+        "before_median": 5363.864044000024,
+        "before_range": [5019.943965000013, 5759.699594000005],
+        "after_median": 7155.112841999995,
+        "after_range": [6501.408383000002, 7514.264855000001],
+        "change_percent": 33.394746460877364
+      },
+      "catalog_wire_bytes": {
+        "before_median": 1602805,
+        "before_range": [1602805, 1602805],
+        "after_median": 1041219,
+        "after_range": [1041219, 1041219],
+        "change_percent": -35.0376995330062
+      },
+      "snapshot_text_task_tokens": {
+        "before_median": 19468,
+        "before_range": [19468, 19468],
+        "after_median": 18509,
+        "after_range": [18509, 18509],
+        "change_percent": -4.926032463529895
+      },
+      "incremental_text_task_tokens": {
+        "before_median": 14373,
+        "before_range": [14373, 14373],
+        "after_median": 14583,
+        "after_range": [14583, 14583],
+        "change_percent": 1.4610728449175436
+      },
+      "sdk_wire_tokens": {
+        "before_median": 433098,
+        "before_range": [433098, 433098],
+        "after_median": 288340,
+        "after_range": [288340, 288340],
+        "change_percent": -33.423844026063385
+      },
+      "catalog_count": {
+        "before_median": 2,
+        "before_range": [2, 2],
+        "after_median": 3,
+        "after_range": [3, 3],
+        "change_percent": 50.0
+      },
+      "call_count": {
+        "before_median": 4,
+        "before_range": [4, 4],
+        "after_median": 5,
+        "after_range": [5, 5],
+        "change_percent": 25.0
+      }
+    },
+    {
+      "name": "retained-batch",
+      "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+      "before_repetitions": 2,
+      "after_repetitions": 2,
+      "milliseconds": {
+        "before_median": 12960.7983505,
+        "before_range": [12874.578895999999, 13047.017805],
+        "after_median": 13170.496023,
+        "after_range": [12574.366872999999, 13766.625173],
+        "change_percent": 1.6179379296639596
+      },
+      "compile_milliseconds": {
+        "before_median": 7359.362569500003,
+        "before_range": [7333.903944000005, 7384.8211949999995],
+        "after_median": 7463.924536999997,
+        "after_range": [7261.214694999997, 7666.634378999997],
+        "change_percent": 1.4208019582203857
+      },
+      "catalog_wire_bytes": {
+        "before_median": 1602805.0,
+        "before_range": [1602805, 1602805],
+        "after_median": 911466.0,
+        "after_range": [911466, 911466],
+        "change_percent": -43.133069836942106
+      },
+      "snapshot_text_task_tokens": {
+        "before_median": 19470.0,
+        "before_range": [19470, 19470],
+        "after_median": 16265.0,
+        "after_range": [16265, 16265],
+        "change_percent": -16.46122239342578
+      },
+      "incremental_text_task_tokens": {
+        "before_median": 14375.0,
+        "before_range": [14375, 14375],
+        "after_median": 14503.0,
+        "after_range": [14503, 14503],
+        "change_percent": 0.8904347826087067
+      },
+      "sdk_wire_tokens": {
+        "before_median": 433098.0,
+        "before_range": [433098, 433098],
+        "after_median": 254147.0,
+        "after_range": [254147, 254147],
+        "change_percent": -41.318823915141614
+      },
+      "catalog_count": {
+        "before_median": 2.0,
+        "before_range": [2, 2],
+        "after_median": 2.0,
+        "after_range": [2, 2],
+        "change_percent": 0.0
+      },
+      "call_count": {
+        "before_median": 4.0,
+        "before_range": [4, 4],
+        "after_median": 4.0,
+        "after_range": [4, 4],
+        "change_percent": 0.0
+      }
+    }
+  ],
+  "records": [
+    {
+      "cohort": "before",
+      "repetition": 2,
+      "resources": {
+        "label": "tools-opt-before-2-workflows",
+        "exit_code": 0,
+        "elapsed_seconds": 67.346,
+        "cpu_user_seconds": 67.885165,
+        "cpu_system_seconds": 4.171404,
+        "cpu_initial_user_seconds": 0.017537999999999998,
+        "cpu_initial_system_seconds": 0.003929,
+        "sampled_peak_family_rss_bytes": 1195388928,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "openapi",
+          "milliseconds": 11737.716133,
+          "compile_milliseconds": 7050.097135,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 165,
+          "text_reply_tokens": 3411,
+          "snapshot_text_task_tokens": 14764,
+          "incremental_text_task_tokens": 9669,
+          "sdk_wire_tokens": 423689,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "8f03d4e3175e240be48845f3fdd571fb80dd6cf8c49d6ab8e57393e90f318b3e",
+          "receipt_sha256": "d7e451171cf8aabde46d01802e5ce352362689d24e38c61df7082fb9f0fd8a0d"
+        },
+        {
+          "name": "graphql",
+          "milliseconds": 13415.565038,
+          "compile_milliseconds": 6433.232380999998,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 144,
+          "text_reply_tokens": 5661,
+          "snapshot_text_task_tokens": 16993,
+          "incremental_text_task_tokens": 11898,
+          "sdk_wire_tokens": 428170,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "4c3ab8e43f6fe8a0394333008edcd2b4c48d2f70c8eaf00bac09ad4ee18d3f2e",
+          "receipt_sha256": "fb687cd5409bcae27999581a5647a61feea4e8646fb240c6105ba3fa429a7821"
+        },
+        {
+          "name": "trace",
+          "milliseconds": 12145.078334000002,
+          "compile_milliseconds": 6087.562135000015,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 31,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 11255,
+          "catalog_input_incremental_tokens": 6160,
+          "argument_tokens": 138,
+          "text_reply_tokens": 5045,
+          "snapshot_text_task_tokens": 17041,
+          "incremental_text_task_tokens": 11946,
+          "sdk_wire_tokens": 424803,
+          "catalog_wire_bytes": 1594474,
+          "fact_digest": "ca36e480a4f4f0f13aaf1fd60415f571b53f630dba1aebcb901ad64d9c623cb4",
+          "receipt_sha256": "d8bc6285b3ccf4c5eb9f18a871253436a59415eeb5958c0d85f157bc3d316c6f"
+        },
+        {
+          "name": "endpoints",
+          "milliseconds": 9403.442415999998,
+          "compile_milliseconds": 5398.957807999999,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 20,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10733,
+          "catalog_input_incremental_tokens": 5638,
+          "argument_tokens": 223,
+          "text_reply_tokens": 1843,
+          "snapshot_text_task_tokens": 13391,
+          "incremental_text_task_tokens": 8296,
+          "sdk_wire_tokens": 416728,
+          "catalog_wire_bytes": 1588821,
+          "fact_digest": "93cc0cd8829807f531e3b66d6c547e11ea8cf52d1927660e91aac2af46e04593",
+          "receipt_sha256": "6482bced05b8c7bcc3e85ac615742e0b2538416906667fc9e71eb1ab95e8381d"
+        },
+        {
+          "name": "firmware",
+          "milliseconds": 10065.749725000001,
+          "compile_milliseconds": 5330.633561000017,
+          "catalog_count": 2,
+          "call_count": 6,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10815,
+          "catalog_input_incremental_tokens": 5720,
+          "argument_tokens": 218,
+          "text_reply_tokens": 4935,
+          "snapshot_text_task_tokens": 16563,
+          "incremental_text_task_tokens": 11468,
+          "sdk_wire_tokens": 437975,
+          "catalog_wire_bytes": 1643377,
+          "fact_digest": "262d18c202420e14fa43ab62a326edda0c7ebff44dd5a994bb4be1681e8b01ea",
+          "receipt_sha256": "37e36f899bd1e03f43a5d38cb932c446528d614732fc4de2baedf29a9f10af2a"
+        },
+        {
+          "name": "retained",
+          "milliseconds": 9488.293762000008,
+          "compile_milliseconds": 5019.943965000013,
+          "catalog_count": 2,
+          "call_count": 4,
+          "question_tokens": 21,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 268,
+          "text_reply_tokens": 8017,
+          "snapshot_text_task_tokens": 19468,
+          "incremental_text_task_tokens": 14373,
+          "sdk_wire_tokens": 433098,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "03de58677cf04dcdc287295bfcc0e7062a7cb369a007eb3b4312dda75d978d9d"
+        }
+      ]
+    },
+    {
+      "cohort": "before",
+      "repetition": 3,
+      "resources": {
+        "label": "tools-opt-before-3-workflows",
+        "exit_code": 0,
+        "elapsed_seconds": 70.618,
+        "cpu_user_seconds": 71.266879,
+        "cpu_system_seconds": 4.048731,
+        "cpu_initial_user_seconds": 0.0,
+        "cpu_initial_system_seconds": 0.0,
+        "sampled_peak_family_rss_bytes": 1224159232,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "openapi",
+          "milliseconds": 13912.537394,
+          "compile_milliseconds": 7878.876172999997,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 165,
+          "text_reply_tokens": 3411,
+          "snapshot_text_task_tokens": 14764,
+          "incremental_text_task_tokens": 9669,
+          "sdk_wire_tokens": 423689,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "8f03d4e3175e240be48845f3fdd571fb80dd6cf8c49d6ab8e57393e90f318b3e",
+          "receipt_sha256": "f76ad42b75ce6e660c8d484ae1f27fbd171cfe00033b5c2b7b3f4102ad81c011"
+        },
+        {
+          "name": "graphql",
+          "milliseconds": 12957.091652,
+          "compile_milliseconds": 6476.677151,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 144,
+          "text_reply_tokens": 5661,
+          "snapshot_text_task_tokens": 16993,
+          "incremental_text_task_tokens": 11898,
+          "sdk_wire_tokens": 428170,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "4c3ab8e43f6fe8a0394333008edcd2b4c48d2f70c8eaf00bac09ad4ee18d3f2e",
+          "receipt_sha256": "3b884a5b3b19357e6ff6854dbe31166b343a1d5b96225f9e51f5c563d058712c"
+        },
+        {
+          "name": "trace",
+          "milliseconds": 10803.033836000002,
+          "compile_milliseconds": 6071.050374000002,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 31,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 11255,
+          "catalog_input_incremental_tokens": 6160,
+          "argument_tokens": 138,
+          "text_reply_tokens": 5045,
+          "snapshot_text_task_tokens": 17041,
+          "incremental_text_task_tokens": 11946,
+          "sdk_wire_tokens": 424803,
+          "catalog_wire_bytes": 1594474,
+          "fact_digest": "ca36e480a4f4f0f13aaf1fd60415f571b53f630dba1aebcb901ad64d9c623cb4",
+          "receipt_sha256": "614c4104bc0572c4c4058d2bb97166f717ea4a3639af00f855c637eca8ba47b0"
+        },
+        {
+          "name": "endpoints",
+          "milliseconds": 10791.434284999996,
+          "compile_milliseconds": 6469.031580999996,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 20,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10733,
+          "catalog_input_incremental_tokens": 5638,
+          "argument_tokens": 223,
+          "text_reply_tokens": 1843,
+          "snapshot_text_task_tokens": 13391,
+          "incremental_text_task_tokens": 8296,
+          "sdk_wire_tokens": 416728,
+          "catalog_wire_bytes": 1588821,
+          "fact_digest": "93cc0cd8829807f531e3b66d6c547e11ea8cf52d1927660e91aac2af46e04593",
+          "receipt_sha256": "1618e05456bd77c193be80d49eb78fa5fb485cca4776e72293112db0b0a59e0f"
+        },
+        {
+          "name": "firmware",
+          "milliseconds": 10206.227484000003,
+          "compile_milliseconds": 5208.604807999982,
+          "catalog_count": 2,
+          "call_count": 6,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10815,
+          "catalog_input_incremental_tokens": 5720,
+          "argument_tokens": 218,
+          "text_reply_tokens": 4935,
+          "snapshot_text_task_tokens": 16563,
+          "incremental_text_task_tokens": 11468,
+          "sdk_wire_tokens": 437975,
+          "catalog_wire_bytes": 1643377,
+          "fact_digest": "262d18c202420e14fa43ab62a326edda0c7ebff44dd5a994bb4be1681e8b01ea",
+          "receipt_sha256": "a2bfac082071d00f53c0f9afe435f7d55460be20f7e81f94be673f08d171815a"
+        },
+        {
+          "name": "retained",
+          "milliseconds": 10778.632697999994,
+          "compile_milliseconds": 5363.864044000024,
+          "catalog_count": 2,
+          "call_count": 4,
+          "question_tokens": 21,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 268,
+          "text_reply_tokens": 8017,
+          "snapshot_text_task_tokens": 19468,
+          "incremental_text_task_tokens": 14373,
+          "sdk_wire_tokens": 433098,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "c8c6ee11f6d4bf1ff896471f912d41281992657cf6d643e2239b43db7f460a61"
+        }
+      ]
+    },
+    {
+      "cohort": "before",
+      "repetition": 4,
+      "resources": {
+        "label": "tools-opt-before-4-workflows",
+        "exit_code": 0,
+        "elapsed_seconds": 76.951,
+        "cpu_user_seconds": 77.627496,
+        "cpu_system_seconds": 4.267546,
+        "cpu_initial_user_seconds": 0.0,
+        "cpu_initial_system_seconds": 0.0,
+        "sampled_peak_family_rss_bytes": 1168723968,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "openapi",
+          "milliseconds": 13800.087245,
+          "compile_milliseconds": 7998.953358999999,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 165,
+          "text_reply_tokens": 3411,
+          "snapshot_text_task_tokens": 14764,
+          "incremental_text_task_tokens": 9669,
+          "sdk_wire_tokens": 423689,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "8f03d4e3175e240be48845f3fdd571fb80dd6cf8c49d6ab8e57393e90f318b3e",
+          "receipt_sha256": "bcafb72b9d7648df086c1eedd1a115b43ac378049f1ccac6b70fb214b5b32708"
+        },
+        {
+          "name": "graphql",
+          "milliseconds": 14744.741817,
+          "compile_milliseconds": 7606.6485280000015,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 144,
+          "text_reply_tokens": 5661,
+          "snapshot_text_task_tokens": 16993,
+          "incremental_text_task_tokens": 11898,
+          "sdk_wire_tokens": 428170,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "4c3ab8e43f6fe8a0394333008edcd2b4c48d2f70c8eaf00bac09ad4ee18d3f2e",
+          "receipt_sha256": "5b8ed8a8929ee5df6f07a43334973f586295c52386634fd3c8b4ac521c335f9f"
+        },
+        {
+          "name": "trace",
+          "milliseconds": 12906.171000999999,
+          "compile_milliseconds": 6374.3004250000085,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 31,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 11255,
+          "catalog_input_incremental_tokens": 6160,
+          "argument_tokens": 138,
+          "text_reply_tokens": 5045,
+          "snapshot_text_task_tokens": 17041,
+          "incremental_text_task_tokens": 11946,
+          "sdk_wire_tokens": 424803,
+          "catalog_wire_bytes": 1594474,
+          "fact_digest": "ca36e480a4f4f0f13aaf1fd60415f571b53f630dba1aebcb901ad64d9c623cb4",
+          "receipt_sha256": "30cd015eb69a1e75bb652f17fec68bd137046fe0b844796a69854abf945c2ad8"
+        },
+        {
+          "name": "endpoints",
+          "milliseconds": 10606.162208000002,
+          "compile_milliseconds": 6023.578876000014,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 20,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10733,
+          "catalog_input_incremental_tokens": 5638,
+          "argument_tokens": 223,
+          "text_reply_tokens": 1843,
+          "snapshot_text_task_tokens": 13391,
+          "incremental_text_task_tokens": 8296,
+          "sdk_wire_tokens": 416728,
+          "catalog_wire_bytes": 1588821,
+          "fact_digest": "93cc0cd8829807f531e3b66d6c547e11ea8cf52d1927660e91aac2af46e04593",
+          "receipt_sha256": "e37f8d277cff0106e9fffd6f7b75fcba07b4584841da9ae849fa479ed6036dbc"
+        },
+        {
+          "name": "firmware",
+          "milliseconds": 12356.191089,
+          "compile_milliseconds": 6741.363641000011,
+          "catalog_count": 2,
+          "call_count": 6,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10815,
+          "catalog_input_incremental_tokens": 5720,
+          "argument_tokens": 218,
+          "text_reply_tokens": 4935,
+          "snapshot_text_task_tokens": 16563,
+          "incremental_text_task_tokens": 11468,
+          "sdk_wire_tokens": 437975,
+          "catalog_wire_bytes": 1643377,
+          "fact_digest": "262d18c202420e14fa43ab62a326edda0c7ebff44dd5a994bb4be1681e8b01ea",
+          "receipt_sha256": "9335cd9eaba386a1c577b54b937063ec13e37c2563043cd78112b33a45a2f1b9"
+        },
+        {
+          "name": "retained",
+          "milliseconds": 11417.009704000004,
+          "compile_milliseconds": 5759.699594000005,
+          "catalog_count": 2,
+          "call_count": 4,
+          "question_tokens": 21,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 268,
+          "text_reply_tokens": 8017,
+          "snapshot_text_task_tokens": 19468,
+          "incremental_text_task_tokens": 14373,
+          "sdk_wire_tokens": 433098,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "c2be9075161f0fe31502616e5cb88e4c97f2d3815fe761c6c136c3dfbf37391d"
+        }
+      ]
+    },
+    {
+      "cohort": "after",
+      "repetition": 1,
+      "resources": {
+        "label": "tools-opt-after-1-workflows",
+        "exit_code": 0,
+        "elapsed_seconds": 46.181,
+        "cpu_user_seconds": 45.013929,
+        "cpu_system_seconds": 2.726881,
+        "cpu_initial_user_seconds": 0.0,
+        "cpu_initial_system_seconds": 0.0,
+        "sampled_peak_family_rss_bytes": 1051422720,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "openapi",
+          "milliseconds": 5967.3796219999995,
+          "compile_milliseconds": 1220.1001699999988,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 3924,
+          "catalog_input_incremental_tokens": 2162,
+          "argument_tokens": 165,
+          "text_reply_tokens": 3411,
+          "snapshot_text_task_tokens": 8098,
+          "incremental_text_task_tokens": 6336,
+          "sdk_wire_tokens": 65267,
+          "catalog_wire_bytes": 220127,
+          "fact_digest": "8f03d4e3175e240be48845f3fdd571fb80dd6cf8c49d6ab8e57393e90f318b3e",
+          "receipt_sha256": "fedbafc903f87d1f8c40c02f2bde5709f6ece8981549fc05344eafa253ed79bd"
+        },
+        {
+          "name": "graphql",
+          "milliseconds": 7395.386477999999,
+          "compile_milliseconds": 1005.382477000001,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 3924,
+          "catalog_input_incremental_tokens": 2162,
+          "argument_tokens": 144,
+          "text_reply_tokens": 5661,
+          "snapshot_text_task_tokens": 10327,
+          "incremental_text_task_tokens": 8565,
+          "sdk_wire_tokens": 69748,
+          "catalog_wire_bytes": 220127,
+          "fact_digest": "4c3ab8e43f6fe8a0394333008edcd2b4c48d2f70c8eaf00bac09ad4ee18d3f2e",
+          "receipt_sha256": "6d7d8f0d5a817d8499797a7b998df956f769c3648feeaced3aedc8342819a2e8"
+        },
+        {
+          "name": "trace",
+          "milliseconds": 6969.350793999998,
+          "compile_milliseconds": 846.5835069999957,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 31,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4589,
+          "catalog_input_incremental_tokens": 2827,
+          "argument_tokens": 138,
+          "text_reply_tokens": 5045,
+          "snapshot_text_task_tokens": 10375,
+          "incremental_text_task_tokens": 8613,
+          "sdk_wire_tokens": 66381,
+          "catalog_wire_bytes": 211796,
+          "fact_digest": "ca36e480a4f4f0f13aaf1fd60415f571b53f630dba1aebcb901ad64d9c623cb4",
+          "receipt_sha256": "719d7641b288ff9867d800a4249ea26c046130e706f7b90128485e912230ea3f"
+        },
+        {
+          "name": "endpoints",
+          "milliseconds": 5536.538309,
+          "compile_milliseconds": 915.2510410000032,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 20,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4067,
+          "catalog_input_incremental_tokens": 2305,
+          "argument_tokens": 223,
+          "text_reply_tokens": 1843,
+          "snapshot_text_task_tokens": 6725,
+          "incremental_text_task_tokens": 4963,
+          "sdk_wire_tokens": 58306,
+          "catalog_wire_bytes": 206143,
+          "fact_digest": "93cc0cd8829807f531e3b66d6c547e11ea8cf52d1927660e91aac2af46e04593",
+          "receipt_sha256": "9ad69d0e327df3cb16a88b37217c578f53a90e5a0e2ea7a13bf7b24f37f6fafe"
+        },
+        {
+          "name": "firmware",
+          "milliseconds": 6372.874781000002,
+          "compile_milliseconds": 960.8874660000001,
+          "catalog_count": 2,
+          "call_count": 6,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4149,
+          "catalog_input_incremental_tokens": 2387,
+          "argument_tokens": 218,
+          "text_reply_tokens": 4935,
+          "snapshot_text_task_tokens": 9897,
+          "incremental_text_task_tokens": 8135,
+          "sdk_wire_tokens": 79553,
+          "catalog_wire_bytes": 260699,
+          "fact_digest": "262d18c202420e14fa43ab62a326edda0c7ebff44dd5a994bb4be1681e8b01ea",
+          "receipt_sha256": "b12cf259423301aa506a6651b0c283525689ba42a5bd751df5747291c1612cb3"
+        },
+        {
+          "name": "retained",
+          "milliseconds": 12789.786540000001,
+          "compile_milliseconds": 7155.112841999995,
+          "catalog_count": 3,
+          "call_count": 5,
+          "question_tokens": 21,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 9421,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 283,
+          "text_reply_tokens": 8212,
+          "snapshot_text_task_tokens": 18509,
+          "incremental_text_task_tokens": 14583,
+          "sdk_wire_tokens": 288340,
+          "catalog_wire_bytes": 1041219,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "0c4412cd4cbb4f3794d2ef6760516f37cbf2748b4123c5d6af31459c7b1331c7"
+        }
+      ]
+    },
+    {
+      "cohort": "after",
+      "repetition": 2,
+      "resources": {
+        "label": "tools-opt-after-2-workflows",
+        "exit_code": 0,
+        "elapsed_seconds": 46.814,
+        "cpu_user_seconds": 45.982852,
+        "cpu_system_seconds": 2.926909,
+        "cpu_initial_user_seconds": 0.0,
+        "cpu_initial_system_seconds": 0.0,
+        "sampled_peak_family_rss_bytes": 1028833280,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "openapi",
+          "milliseconds": 6464.514327,
+          "compile_milliseconds": 1380.081345999999,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 3924,
+          "catalog_input_incremental_tokens": 2162,
+          "argument_tokens": 165,
+          "text_reply_tokens": 3411,
+          "snapshot_text_task_tokens": 8098,
+          "incremental_text_task_tokens": 6336,
+          "sdk_wire_tokens": 65267,
+          "catalog_wire_bytes": 220127,
+          "fact_digest": "8f03d4e3175e240be48845f3fdd571fb80dd6cf8c49d6ab8e57393e90f318b3e",
+          "receipt_sha256": "46553079481bb3593d16f53329f7675419ba483cc0450d41d2409578a4177cc6"
+        },
+        {
+          "name": "graphql",
+          "milliseconds": 7562.523673,
+          "compile_milliseconds": 873.3461099999986,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 3924,
+          "catalog_input_incremental_tokens": 2162,
+          "argument_tokens": 144,
+          "text_reply_tokens": 5661,
+          "snapshot_text_task_tokens": 10327,
+          "incremental_text_task_tokens": 8565,
+          "sdk_wire_tokens": 69748,
+          "catalog_wire_bytes": 220127,
+          "fact_digest": "4c3ab8e43f6fe8a0394333008edcd2b4c48d2f70c8eaf00bac09ad4ee18d3f2e",
+          "receipt_sha256": "0938ae580a7de9eca03a63bff61c99c05e272efd17c3499206b44f9f2a8114eb"
+        },
+        {
+          "name": "trace",
+          "milliseconds": 6746.290509999999,
+          "compile_milliseconds": 796.2965660000009,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 31,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4589,
+          "catalog_input_incremental_tokens": 2827,
+          "argument_tokens": 138,
+          "text_reply_tokens": 5045,
+          "snapshot_text_task_tokens": 10375,
+          "incremental_text_task_tokens": 8613,
+          "sdk_wire_tokens": 66381,
+          "catalog_wire_bytes": 211796,
+          "fact_digest": "ca36e480a4f4f0f13aaf1fd60415f571b53f630dba1aebcb901ad64d9c623cb4",
+          "receipt_sha256": "4dbb012a16b0d2427ef413a12baf0bdf4c19e9dedafd33cfd2690813be6ad6c1"
+        },
+        {
+          "name": "endpoints",
+          "milliseconds": 5307.667614000002,
+          "compile_milliseconds": 784.4235569999983,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 20,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4067,
+          "catalog_input_incremental_tokens": 2305,
+          "argument_tokens": 223,
+          "text_reply_tokens": 1843,
+          "snapshot_text_task_tokens": 6725,
+          "incremental_text_task_tokens": 4963,
+          "sdk_wire_tokens": 58306,
+          "catalog_wire_bytes": 206143,
+          "fact_digest": "93cc0cd8829807f531e3b66d6c547e11ea8cf52d1927660e91aac2af46e04593",
+          "receipt_sha256": "d651d5a5f17352d1619d9be3d1b43d5189f65fe9552f898fabd4d2fe2cdfbd30"
+        },
+        {
+          "name": "firmware",
+          "milliseconds": 6277.109490999999,
+          "compile_milliseconds": 963.4927039999966,
+          "catalog_count": 2,
+          "call_count": 6,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4149,
+          "catalog_input_incremental_tokens": 2387,
+          "argument_tokens": 218,
+          "text_reply_tokens": 4935,
+          "snapshot_text_task_tokens": 9897,
+          "incremental_text_task_tokens": 8135,
+          "sdk_wire_tokens": 79553,
+          "catalog_wire_bytes": 260699,
+          "fact_digest": "262d18c202420e14fa43ab62a326edda0c7ebff44dd5a994bb4be1681e8b01ea",
+          "receipt_sha256": "7ba0fbe19d0e26234f175e9736f681fd1f532f4f43bcff036c890b5a8051a77a"
+        },
+        {
+          "name": "retained",
+          "milliseconds": 13520.854069,
+          "compile_milliseconds": 7514.264855000001,
+          "catalog_count": 3,
+          "call_count": 5,
+          "question_tokens": 21,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 9421,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 283,
+          "text_reply_tokens": 8212,
+          "snapshot_text_task_tokens": 18509,
+          "incremental_text_task_tokens": 14583,
+          "sdk_wire_tokens": 288340,
+          "catalog_wire_bytes": 1041219,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "e99d6ef9f230105a7f022ae116a1fc5b5dd0b9dc226c2d31cd4d53e2c5310af3"
+        }
+      ]
+    },
+    {
+      "cohort": "after",
+      "repetition": 3,
+      "resources": {
+        "label": "tools-opt-after-3-workflows",
+        "exit_code": 0,
+        "elapsed_seconds": 45.414,
+        "cpu_user_seconds": 44.322896000000014,
+        "cpu_system_seconds": 2.9074579999999983,
+        "cpu_initial_user_seconds": 265.20459,
+        "cpu_initial_system_seconds": 33.979246,
+        "sampled_peak_family_rss_bytes": 1046691840,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "openapi",
+          "milliseconds": 6844.161873,
+          "compile_milliseconds": 1402.5490140000002,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 3924,
+          "catalog_input_incremental_tokens": 2162,
+          "argument_tokens": 165,
+          "text_reply_tokens": 3411,
+          "snapshot_text_task_tokens": 8098,
+          "incremental_text_task_tokens": 6336,
+          "sdk_wire_tokens": 65267,
+          "catalog_wire_bytes": 220127,
+          "fact_digest": "8f03d4e3175e240be48845f3fdd571fb80dd6cf8c49d6ab8e57393e90f318b3e",
+          "receipt_sha256": "a6bacdd8805a6ccdcb24b14f750851ccd427d56d2c2730e10b7ac5a9c9cc254b"
+        },
+        {
+          "name": "graphql",
+          "milliseconds": 8303.394408,
+          "compile_milliseconds": 1030.825600000002,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 26,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 3924,
+          "catalog_input_incremental_tokens": 2162,
+          "argument_tokens": 144,
+          "text_reply_tokens": 5661,
+          "snapshot_text_task_tokens": 10327,
+          "incremental_text_task_tokens": 8565,
+          "sdk_wire_tokens": 69748,
+          "catalog_wire_bytes": 220127,
+          "fact_digest": "4c3ab8e43f6fe8a0394333008edcd2b4c48d2f70c8eaf00bac09ad4ee18d3f2e",
+          "receipt_sha256": "6ca5f9910a67f66e1ed2585a8ec1842463fc57f46df2531e999b9967d7ee5e06"
+        },
+        {
+          "name": "trace",
+          "milliseconds": 6226.009792999999,
+          "compile_milliseconds": 696.1192190000002,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 31,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4589,
+          "catalog_input_incremental_tokens": 2827,
+          "argument_tokens": 138,
+          "text_reply_tokens": 5045,
+          "snapshot_text_task_tokens": 10375,
+          "incremental_text_task_tokens": 8613,
+          "sdk_wire_tokens": 66381,
+          "catalog_wire_bytes": 211796,
+          "fact_digest": "ca36e480a4f4f0f13aaf1fd60415f571b53f630dba1aebcb901ad64d9c623cb4",
+          "receipt_sha256": "7bdb887b8253bc6bb6769470af0fd4a117640dafc32f8e05dcd36cc17b75f24e"
+        },
+        {
+          "name": "endpoints",
+          "milliseconds": 4955.987430000001,
+          "compile_milliseconds": 762.5041139999994,
+          "catalog_count": 2,
+          "call_count": 3,
+          "question_tokens": 20,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4067,
+          "catalog_input_incremental_tokens": 2305,
+          "argument_tokens": 223,
+          "text_reply_tokens": 1843,
+          "snapshot_text_task_tokens": 6725,
+          "incremental_text_task_tokens": 4963,
+          "sdk_wire_tokens": 58306,
+          "catalog_wire_bytes": 206143,
+          "fact_digest": "93cc0cd8829807f531e3b66d6c547e11ea8cf52d1927660e91aac2af46e04593",
+          "receipt_sha256": "74ed65f0f40b05c7a0ae294f8c67cebc85f7bfe38b80376150e3a55f1f28012b"
+        },
+        {
+          "name": "firmware",
+          "milliseconds": 6096.664005999999,
+          "compile_milliseconds": 950.9055049999988,
+          "catalog_count": 2,
+          "call_count": 6,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 4149,
+          "catalog_input_incremental_tokens": 2387,
+          "argument_tokens": 218,
+          "text_reply_tokens": 4935,
+          "snapshot_text_task_tokens": 9897,
+          "incremental_text_task_tokens": 8135,
+          "sdk_wire_tokens": 79553,
+          "catalog_wire_bytes": 260699,
+          "fact_digest": "262d18c202420e14fa43ab62a326edda0c7ebff44dd5a994bb4be1681e8b01ea",
+          "receipt_sha256": "45f3e4e715b7a1147328dd948906fd9bdccc72b481cc60daba2659006a0b1e29"
+        },
+        {
+          "name": "retained",
+          "milliseconds": 11933.108044,
+          "compile_milliseconds": 6501.408383000002,
+          "catalog_count": 3,
+          "call_count": 5,
+          "question_tokens": 21,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 9421,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 283,
+          "text_reply_tokens": 8212,
+          "snapshot_text_task_tokens": 18509,
+          "incremental_text_task_tokens": 14583,
+          "sdk_wire_tokens": 288340,
+          "catalog_wire_bytes": 1041219,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "1e3d5a55042339f573de7cc74f6522ebbf8581e14dc1b9f493e8935c8ff0b2e7"
+        }
+      ]
+    },
+    {
+      "cohort": "before-batch",
+      "repetition": 1,
+      "resources": {
+        "label": "tools-opt-before-batch-1",
+        "exit_code": 0,
+        "elapsed_seconds": 13.612,
+        "cpu_user_seconds": 13.502546,
+        "cpu_system_seconds": 1.09891,
+        "cpu_initial_user_seconds": 0.0,
+        "cpu_initial_system_seconds": 0.0,
+        "sampled_peak_family_rss_bytes": 975155200,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "retained-batch",
+          "milliseconds": 13047.017805,
+          "compile_milliseconds": 7384.8211949999995,
+          "catalog_count": 2,
+          "call_count": 4,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 268,
+          "text_reply_tokens": 8017,
+          "snapshot_text_task_tokens": 19470,
+          "incremental_text_task_tokens": 14375,
+          "sdk_wire_tokens": 433098,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "8111ae1b4d5e4ca96a3a4777b4ed163a5df69f35cb45fe143ed737e47c510881"
+        }
+      ]
+    },
+    {
+      "cohort": "before-batch",
+      "repetition": 2,
+      "resources": {
+        "label": "tools-opt-before-batch-2",
+        "exit_code": 0,
+        "elapsed_seconds": 13.391,
+        "cpu_user_seconds": 12.692829,
+        "cpu_system_seconds": 1.044382,
+        "cpu_initial_user_seconds": 0.0,
+        "cpu_initial_system_seconds": 0.0,
+        "sampled_peak_family_rss_bytes": 971472896,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "retained-batch",
+          "milliseconds": 12874.578895999999,
+          "compile_milliseconds": 7333.903944000005,
+          "catalog_count": 2,
+          "call_count": 4,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 10590,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 268,
+          "text_reply_tokens": 8017,
+          "snapshot_text_task_tokens": 19470,
+          "incremental_text_task_tokens": 14375,
+          "sdk_wire_tokens": 433098,
+          "catalog_wire_bytes": 1602805,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "9c26e3e9c54a2733f97eb3e0869260061eb356c9ef4b7d051d5b6c6d3d7e8644"
+        }
+      ]
+    },
+    {
+      "cohort": "after-batch",
+      "repetition": 1,
+      "resources": {
+        "label": "tools-opt-after-batch-1",
+        "exit_code": 0,
+        "elapsed_seconds": 13.059,
+        "cpu_user_seconds": 13.387999,
+        "cpu_system_seconds": 1.02984,
+        "cpu_initial_user_seconds": 0.0,
+        "cpu_initial_system_seconds": 0.0,
+        "sampled_peak_family_rss_bytes": 981540864,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "retained-batch",
+          "milliseconds": 12574.366872999999,
+          "compile_milliseconds": 7261.214694999997,
+          "catalog_count": 2,
+          "call_count": 4,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 7257,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 272,
+          "text_reply_tokens": 8141,
+          "snapshot_text_task_tokens": 16265,
+          "incremental_text_task_tokens": 14503,
+          "sdk_wire_tokens": 254147,
+          "catalog_wire_bytes": 911466,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "9428e22be462fd1575c823dfaf3c2d9b4cef2346f73c3e72e8ca67f2cace5433"
+        }
+      ]
+    },
+    {
+      "cohort": "after-batch",
+      "repetition": 2,
+      "resources": {
+        "label": "tools-opt-after-batch-2",
+        "exit_code": 0,
+        "elapsed_seconds": 14.441,
+        "cpu_user_seconds": 13.627651,
+        "cpu_system_seconds": 1.1311650000000002,
+        "cpu_initial_user_seconds": 42.72465,
+        "cpu_initial_system_seconds": 5.985825,
+        "sampled_peak_family_rss_bytes": 969101312,
+        "sample_interval_seconds": 0.2,
+        "stop": null
+      },
+      "cases": [
+        {
+          "name": "retained-batch",
+          "milliseconds": 13766.625173,
+          "compile_milliseconds": 7666.634378999997,
+          "catalog_count": 2,
+          "call_count": 4,
+          "question_tokens": 23,
+          "instructions_tokens": 572,
+          "catalog_input_snapshot_tokens": 7257,
+          "catalog_input_incremental_tokens": 5495,
+          "argument_tokens": 272,
+          "text_reply_tokens": 8141,
+          "snapshot_text_task_tokens": 16265,
+          "incremental_text_task_tokens": 14503,
+          "sdk_wire_tokens": 254147,
+          "catalog_wire_bytes": 911466,
+          "fact_digest": "898ece83e260d8dad0f32fb5fe5f34958474e3114481c255d510b516c16d46fc",
+          "receipt_sha256": "953edaf7a37f6fbb16e02738b621eab71d7ef264e5ce6c631637bb1d58aa594f"
+        }
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "name": "petstore",
+      "bytes": 17106,
+      "sha256": "00441c05add60f28da55eb4563d3fb6bbda364ba8eb7b381e2e2c98613005c82"
+    },
+    {
+      "name": "github-openapi",
+      "bytes": 14151332,
+      "sha256": "02e621ca680e6b45acfb0088d9b7e1648b7c332c6778d18dee8762bb5ccbeb9f"
+    },
+    {
+      "name": "swapi",
+      "bytes": 35868,
+      "sha256": "ebc4d09b21e2aec2735d6f0d3c812fc017cd49a44900dd3ae34f49f6f8c25133"
+    },
+    {
+      "name": "github-sdl",
+      "bytes": 1562841,
+      "sha256": "0d71ca68a4e951599b2ea541a81cc259a843608fc22b8eb1713a1d03551b149e"
+    },
+    {
+      "name": "trace-small",
+      "bytes": 10643,
+      "sha256": "7a7e0210f0c815225b7b65e93a37f350e2e44061cd8cf6d8170479b79c0f0b87"
+    },
+    {
+      "name": "trace-large",
+      "bytes": 652278,
+      "sha256": "d9f2234e8338aab777c3dfb58c507d856947f9815b31653f0e5b34a97bdef3b6"
+    },
+    {
+      "name": "javascript-evidence",
+      "bytes": 173722,
+      "sha256": "fa35b8bab470284650fab41685228cc34a2d04f046e9323d196c178f03a1f539"
+    },
+    {
+      "name": "har-evidence",
+      "bytes": 24241,
+      "sha256": "767ac5e1b6d11dfb82548c73200efae9acc5a9d90313eab176c3debccdf5355b"
+    },
+    {
+      "name": "openwrt-24.10.0",
+      "bytes": 8519680,
+      "sha256": "083b174e81ed373f2d2f2ea5366f9291767d95375383528fd6b9955ad815b85a"
+    },
+    {
+      "name": "openwrt-24.10.1",
+      "bytes": 8585216,
+      "sha256": "41129cce68ad6269e5c8c48ef110f97682d6c4202ff2198bfd0d300c3dac132a"
+    }
+  ],
+  "independent_trace_network_oracle": "Every returned source line, method, URL and status agrees with raw original ZIP trace.network JSON, checked after profiling.",
+  "candidate_source_sha256": "3bacf5d50f60dc008a09e1b3deca8e4955b89f5a2d2eafa89c08734b7ca45a6c",
+  "policy_patch_sha256": "d9e0dd4dc5bd5227acb3ae00d444ff61c75621758fa17bb6179a5f3277fa73df",
+  "local_program_sha256": {
+    "workflows.mjs": "6db5797a3284e67f978cc5d238b819bdfd92905ca3a0fb13a044c1826e89dd8c",
+    "batched-workflow.mjs": "64c8d2542e129c729b2278abfa850bf10450f70f029dac50e87bf6488b44e518",
+    "count-costs.py": "34781f1da818d7127acb4aff481493ad8e80112d0e80ddae086fcd5c6c37296e"
+  },
+  "full_default_catalog": {
+    "tools": 241,
+    "bytes": 4257925,
+    "sha256": "3c2b50a047ad033b02335d03fc7315e8d8bcf16613abd13d402b1b1bc05ef915",
+    "exact_before_after_equality": true
+  },
+  "case_timing_scope": "Per-case milliseconds run through verified answer, excluding its final close. Suite resource receipts include every client/server close, all six completed tasks and receipt writes.",
+  "artifact_availability": "Raw harnesses, catalogs, calls, original local trace/HAR captures, profiler logs and receipts remain outside Git. This summary records their digests; exact timing reproduction requires the matching external fixtures. Public stdio regression is self-contained.",
+  "integration_verification": {
+    "base": "fbe7532fabb78de46bd00db845c1147b5325ad22",
+    "runtime_source_commit": "20e41b5ca03b2595a4a6fb39bf0816b3b29d5546",
+    "default_catalog": {
+      "tools": 241,
+      "bytes": 4257977,
+      "same_base_exact_equality": true,
+      "sha256": "d2b6232db43fb9d120fd2d99bd82dac010df83827d34fa331a0d39f8f22848de"
+    },
+    "public_workflow": "passed",
+    "real_workflows": "all six analysis Evidence digests match the pinned qualification",
+    "resources": {
+      "label": "tools-opt-rebased-workflows",
+      "exit_code": 0,
+      "elapsed_seconds": 48.151,
+      "cpu_user_seconds": 47.956187,
+      "cpu_system_seconds": 3.336528,
+      "cpu_initial_user_seconds": 0.0,
+      "cpu_initial_system_seconds": 0.0,
+      "sampled_peak_family_rss_bytes": 1024729088,
+      "sample_interval_seconds": 0.2,
+      "stop": null
+    },
+    "note": "The intervening main change modifies a managed comparison output schema. Default-catalog equality was checked against that same new base, separately from the pinned performance cohort."
+  }
+}

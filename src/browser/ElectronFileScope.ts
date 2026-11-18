@@ -2,9 +2,9 @@ import type { Stats } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -13,14 +13,24 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
+} from "../resources/index.js";
+import { asarNodeSchema } from "../domain/asarNode.js";
+import {
+  regularFileState,
+  sameRegularFileState,
+  type RegularFileState,
+} from "../filesystem/RegularFile.js";
 
 import {
-  admitAsarHeader,
-  MAX_ASAR_HEADER_BYTES,
-} from "../artifacts/AsarHeader.js";
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"
@@ -28,32 +38,59 @@ type ElectronFileOperation =
   | "observe_javascript_runtime"
   | "list_javascript_runtime_targets";
 
-// ASAR descriptor ownership outlives an individual provider call; every later
-// authorization retries retained close leases before admitting new work.
-const resources = new ArtifactResourceScope();
+/**
+ * ASAR descriptor ownership for one host. Authorization and shutdown share
+ * this scope so another host's file work does not block or fail this one.
+ */
+export class ElectronFileScope {
+  readonly #resources = new ArtifactResourceScope();
+
+  async authorize(
+    value: string,
+    signal?: AbortSignal,
+    operation: ElectronFileOperation = "inspect_electron_page",
+    asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  ): Promise<string | undefined> {
+    try {
+      return await this.#resources.run(
+        async () =>
+          await resolveAuthorizedElectronFile(
+            value,
+            signal,
+            asarHeaderAdmission,
+            this.#resources,
+          ),
+      );
+    } catch (cause: unknown) {
+      if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+        throw cause;
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
+      throw cause;
+    }
+  }
+
+  retryCleanup(): Promise<void> {
+    return this.#resources.retryCleanup();
+  }
+}
+
+/** Electron providers that do not pass a host scope. */
+const processElectronFiles = new ElectronFileScope();
 
 /** Resolve one local file URL while rejecting remote hosts and encoded separators. */
-export const authorizedElectronFile = async (
+export const authorizedElectronFile = (
   value: string,
   signal?: AbortSignal,
   operation: ElectronFileOperation = "inspect_electron_page",
-): Promise<string | undefined> => {
-  try {
-    return await resources.run(
-      async () => await resolveAuthorizedElectronFile(value, signal),
-    );
-  } catch (cause: unknown) {
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      throw cause;
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
-    throw cause;
-  }
-};
+  asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  files: ElectronFileScope = processElectronFiles,
+): Promise<string | undefined> =>
+  files.authorize(value, signal, operation, asarHeaderAdmission);
 
 /** Retry retained ASAR descriptor cleanup during provider shutdown. */
-export const retryElectronFileCleanup = async (): Promise<void> =>
-  await resources.retryCleanup();
+export const retryElectronFileCleanup = (
+  files: ElectronFileScope = processElectronFiles,
+): Promise<void> => files.retryCleanup();
 
 /** Translate a retained ASAR descriptor failure at its provider boundary. */
 export const mapElectronFileAuthorizationFailure = (
@@ -84,10 +121,7 @@ export const mapElectronFileAuthorizationFailure = (
     (physicalPrimary instanceof ArtifactReaderFailure &&
       physicalPrimary.reason === "cancelled");
   const primary = hasCancellation
-    ? new AnalysisCancelledError(operation, {
-        cause: cancellationReason,
-        ...(diagnostics === undefined ? {} : { diagnostics }),
-      })
+    ? cancelledBy(operation, carriedReason(cancellationReason))
     : physicalPrimary instanceof AnalysisError
       ? physicalPrimary
       : physicalPrimary === undefined
@@ -102,18 +136,25 @@ export const mapElectronFileAuthorizationFailure = (
     { operation, cause },
   );
   bindArtifactFileCleanup(cause, cleanup);
+  if (diagnostics !== undefined)
+    (primary ?? cleanup).retainDiagnostics(diagnostics);
   if (primary === undefined) return cleanup;
-  const composed = analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  const composed = analysisErrorWithCleanupDependencies(
+    primary,
+    cleanup,
+    operation,
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };
 
 const resolveAuthorizedElectronFile = async (
   value: string,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  asarHeaderAdmission: AsarHeaderAdmission,
+  resources: ArtifactResourceScope,
 ): Promise<string | undefined> => {
   throwIfAborted(signal);
-  if (/%(?:2f|5c)/iu.test(value)) return undefined;
   let url: URL;
   try {
     url = new URL(value);
@@ -126,7 +167,8 @@ const resolveAuthorizedElectronFile = async (
     url.protocol !== "file:" ||
     url.hostname !== "" ||
     url.username !== "" ||
-    url.password !== ""
+    url.password !== "" ||
+    /%(?:2f|5c)/iu.test(url.pathname)
   )
     return undefined;
   let path: string;
@@ -153,7 +195,12 @@ const resolveAuthorizedElectronFile = async (
     void cause;
   }
   throwIfAborted(signal);
-  return await authorizedAsarMember(path, signal);
+  return await authorizedAsarMember(
+    path,
+    signal,
+    asarHeaderAdmission,
+    resources,
+  );
 };
 
 /**
@@ -163,7 +210,9 @@ const resolveAuthorizedElectronFile = async (
  */
 const authorizedAsarMember = async (
   path: string,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  asarHeaderAdmission: AsarHeaderAdmission,
+  resources: ArtifactResourceScope,
 ): Promise<string | undefined> => {
   const segments = path.split(sep);
   for (let index = 1; index < segments.length - 1; index += 1) {
@@ -179,7 +228,13 @@ const authorizedAsarMember = async (
       if (!metadata.isFile()) continue;
       const canonical = await realpath(archive);
       throwIfAborted(signal);
-      const files = await asarFiles(canonical, metadata, signal, resources);
+      const files = await asarFiles(
+        canonical,
+        metadata,
+        asarHeaderAdmission,
+        signal,
+        resources,
+      );
       throwIfAborted(signal);
       return isAsarRegularFile(files, member)
         ? join(canonical, ...member)
@@ -197,32 +252,34 @@ const authorizedAsarMember = async (
   return undefined;
 };
 
-type ArchiveIdentity = Pick<Stats, "dev" | "ino" | "size" | "mtimeMs">;
-
 // This is a retained-memory budget for JSON headers, shared across all archives.
 const MAX_CACHED_HEADERS = 8;
 const headerCache = new Map<
   string,
   {
-    readonly identity: string;
+    readonly identity: RegularFileState;
     readonly files: unknown;
     readonly bytes: number;
+    readonly headerBytes: number;
   }
 >();
-const archiveIdentity = (metadata: ArchiveIdentity): string =>
-  `${String(metadata.dev)}:${String(metadata.ino)}:${String(metadata.size)}:${String(metadata.mtimeMs)}`;
-
 /** Read the two Chromium pickle headers on one handle before allocating JSON. */
 const asarFiles = async (
   archive: string,
-  metadata: ArchiveIdentity,
+  metadata: Stats,
+  admission: AsarHeaderAdmission,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<unknown> => {
   throwIfAborted(signal);
-  const identity = archiveIdentity(metadata);
+  const identity = regularFileState(metadata);
   const cached = headerCache.get(archive);
-  if (cached?.identity === identity) return cached.files;
+  if (cached !== undefined && sameRegularFileState(cached.identity, metadata)) {
+    // A header cached under a larger caller's admission stays refused here.
+    if (cached.headerBytes > admission.maximumBytes)
+      throw asarHeaderAdmissionFailure(admission, cached.headerBytes);
+    return cached.files;
+  }
   const handle = await open(archive, "r");
   const admitted = await withArtifactFileHandle(
     archive,
@@ -231,14 +288,16 @@ const asarFiles = async (
     signal,
     async (file) => {
       let jsonBytes: number;
+      let headerBytes: number;
       throwIfAborted(signal);
       const opened = await file.stat();
       throwIfAborted(signal);
-      if (!opened.isFile() || archiveIdentity(opened) !== identity)
+      if (!sameRegularFileState(identity, opened))
         throw new Error("ASAR identity changed before header read");
-      const header = await admitAsarHeader(file, signal);
+      const header = await admitAsarHeader(file, signal, admission);
       throwIfAborted(signal);
       jsonBytes = header.jsonBytes;
+      headerBytes = header.headerBytes;
       const json = Buffer.alloc(jsonBytes);
       let offset = 0;
       while (offset < json.length) {
@@ -255,14 +314,14 @@ const asarFiles = async (
       }
       const afterRead = await file.stat();
       throwIfAborted(signal);
-      if (archiveIdentity(afterRead) !== identity)
+      if (!sameRegularFileState(identity, afterRead))
         throw new Error("ASAR identity changed during header read");
       const parsed: unknown = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(json),
+        decodeStrictUtf8(json, "strip-signature"),
       );
       if (!isRecord(parsed) || !isRecord(parsed.files))
         throw new Error("ASAR header has no file tree");
-      return { files: parsed.files, jsonBytes };
+      return { files: parsed.files, jsonBytes, headerBytes };
     },
   );
   throwIfAborted(signal);
@@ -271,16 +330,23 @@ const asarFiles = async (
     identity,
     files: admitted.files,
     bytes: admitted.jsonBytes,
+    headerBytes: admitted.headerBytes,
   });
   const retainedBytes = () =>
     [...headerCache.values()].reduce((sum, entry) => sum + entry.bytes, 0);
   while (
     headerCache.size > MAX_CACHED_HEADERS ||
-    retainedBytes() > MAX_ASAR_HEADER_BYTES
+    retainedBytes() > admission.maximumBytes
   )
     headerCache.delete(headerCache.keys().next().value ?? archive);
   return admitted.files;
 };
+
+// File authorization interprets structure and size, not optional integrity or
+// executable declarations that belong to artifact analysis.
+const asarFileScopeNodeSchema = asarNodeSchema
+  .pick({ files: true, link: true, size: true })
+  .strip();
 
 const isAsarRegularFile = (
   files: unknown,
@@ -288,20 +354,22 @@ const isAsarRegularFile = (
 ): boolean => {
   let node: unknown = { files };
   for (const part of member) {
-    const children = isRecord(node) ? node.files : undefined;
+    // Electron follows a directory link before looking up its child. Its
+    // co-declared file tree cannot establish the requested member's identity;
+    // link resolution is outside this authorization boundary.
+    if (!isRecord(node) || Object.hasOwn(node, "link")) return false;
+    const children = node.files;
     if (!isRecord(children) || !Object.hasOwn(children, part)) return false;
     node = children[part];
   }
+  const parsed = asarFileScopeNodeSchema.safeParse(node);
   return (
-    isRecord(node) &&
-    typeof node.size === "number" &&
-    !("files" in node) &&
-    !("link" in node)
+    parsed.success &&
+    parsed.data.size !== undefined &&
+    parsed.data.files === undefined &&
+    parsed.data.link === undefined
   );
 };
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const throwIfAborted = (signal?: AbortSignal): void => {
   assertArtifactReadActive(signal);

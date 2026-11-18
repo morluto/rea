@@ -21,7 +21,8 @@ export const openProductionTarget = async (
     process.env,
   );
   onTestFinished(async () => {
-    await session.close();
+    const result = await session.close();
+    if (!result.ok) throw result.error;
   });
   const client = await mcp.connect(createServer({ kind: "session", session }));
   const opened = await client.callTool({

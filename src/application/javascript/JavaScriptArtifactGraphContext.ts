@@ -1,6 +1,9 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
+import {
+  compositeKey,
+  compareUnicodeCodePoints,
+} from "../../domain/unicodeCodePointOrder.js";
 import {
   completeApplicationCoverage,
   partialApplicationCoverage,
@@ -11,16 +14,16 @@ import type { ApplicationNode } from "../../domain/javascript/javascriptApplicat
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptHtmlInlineScriptsObservation,
-  JavaScriptModuleArtifactAnalysis,
+  JavaScriptArtifactAnalysis,
   JavaScriptArtifactAnalysisScope,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptUnanalyzedArtifactLookup } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import type {
+  JavaScriptUnanalyzedArtifactLookup,
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
   JavaScriptArtifactFileKind,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   artifactObservationEvidence,
@@ -30,7 +33,6 @@ import {
 } from "./JavaScriptArtifactGraphEvidence.js";
 import {
   artifactPathResolutionProperties,
-  resolveArtifactPathByContext,
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
 
@@ -39,7 +41,7 @@ export interface JavaScriptArtifactGraphContext {
   readonly accumulator: JavaScriptArtifactGraphAccumulator;
   readonly snapshot: ArtifactInventorySnapshot;
   readonly fileSet: JavaScriptArtifactFileSet;
-  readonly analysis: JavaScriptModuleArtifactAnalysis;
+  readonly analysis: JavaScriptArtifactAnalysis;
   readonly directoryPaths: ReadonlySet<string>;
   readonly root: ApplicationNode;
   readonly filesByPath: ReadonlyMap<string, JavaScriptArtifactFile>;
@@ -51,7 +53,112 @@ export interface JavaScriptArtifactGraphContext {
   readonly chunkNodes: Map<string, ApplicationNode>;
   readonly moduleNodes: Map<string, ApplicationNode>;
   readonly containerNodes: Map<string, ApplicationNode>;
+  /** Resolved entrypoints/imports retain unique or competing application owners. */
+  readonly applicationRootsBySource: Map<string, Set<string>>;
+  /** Incomplete package facts can hide competing launch declarations. */
+  readonly applicationOwnershipUnknownContainers: ReadonlySet<string>;
+  /** Gap origins retain possible owners separately from proven source owners. */
+  readonly applicationModuleGapSources: Map<string, Set<string>>;
+  readonly applicationPossibleRootsByContainer: Map<string, Set<string>>;
+  /** Sources with retained references; unchecked loads carry their own gaps. */
+  readonly applicationModuleReferencesRetained: ReadonlySet<string>;
 }
+
+/** Application manifests exclude dependency packages but retain nested app roots. */
+export const dependencyManifest = (path: string): boolean =>
+  path.split("/").slice(0, -1).includes("node_modules");
+
+/** Two distinct roots prove ambiguity; further roots cannot restore uniqueness. */
+export const addApplicationRootCandidate = (
+  roots: Set<string>,
+  root: string,
+): void => {
+  if (roots.size < 2) roots.add(root);
+};
+
+const applicationContainerRoot = (
+  fileSet: JavaScriptArtifactFileSet,
+  source: Pick<JavaScriptArtifactFile, "path" | "container_sha256">,
+): string =>
+  fileSet.containers.find(
+    ({ sha256, path }) =>
+      sha256 === source.container_sha256 && source.path.startsWith(`${path}/`),
+  )?.path ?? "";
+
+/** Equal archive bytes at different logical paths are distinct ownership scopes. */
+export const applicationContainerIdentity = (
+  fileSet: JavaScriptArtifactFileSet,
+  source: Pick<JavaScriptArtifactFile, "path" | "container_sha256">,
+): string =>
+  compositeKey([
+    source.container_sha256,
+    applicationContainerRoot(fileSet, source),
+  ]);
+
+/** Select the inventory's display root; this does not establish runtime ownership. */
+export const applicationManifestPath = (
+  context: JavaScriptArtifactGraphContext,
+): string | undefined =>
+  context.analysis.packages
+    .map(({ path }) => path)
+    .filter((path) => {
+      const file = context.filesByPath.get(path);
+      return file !== undefined && !dependencyManifest(path);
+    })
+    .sort(
+      (left, right) =>
+        left.split("/").length - right.split("/").length ||
+        compareUnicodeCodePoints(left, right),
+    )[0];
+
+/** Inspect inventoried ancestor packages; absent parsing is not absent ownership.
+ * Entry-bearing packages are candidates; multiple candidates stay unknown.
+ */
+export const applicationRootPath = (
+  context: JavaScriptArtifactGraphContext,
+  source: JavaScriptArtifactFile,
+): string | null => {
+  if (context.snapshot.coverage.status !== "complete") return null;
+  // Unread launch metadata can name a main in another inventoried container.
+  // Archive occurrence identity does not prove isolation from the Node loader.
+  if (context.applicationOwnershipUnknownContainers.size > 0) return null;
+  const entryRoots = context.applicationRootsBySource.get(source.path);
+  const container = applicationContainerIdentity(context.fileSet, source);
+  for (const root of context.applicationPossibleRootsByContainer.get(
+    container,
+  ) ?? [])
+    if (!entryRoots?.has(root)) return null;
+  if (
+    entryRoots === undefined &&
+    context.applicationModuleGapSources.has(container)
+  )
+    return null;
+  const roots = new Set<string>(entryRoots);
+  const directories = source.path.split("/").slice(0, -1);
+  for (let depth = directories.length; depth >= 0; depth -= 1) {
+    const root = directories.slice(0, depth).join("/");
+    const prefix = root === "" ? "" : `${root}/`;
+    const path = `${prefix}package.json`;
+    if (dependencyManifest(path)) continue;
+    const file =
+      context.filesByPath.get(path) ?? context.unanalyzedFiles?.get(path);
+    if (file?.container_sha256 !== source.container_sha256) continue;
+    const metadata = context.analysis.packages.find(
+      (value) => value.path === path,
+    );
+    if (metadata?.status !== "included") return null;
+    const defaultEntry = context.filesByPath.get(`${prefix}index.js`);
+    if (
+      entryRoots === undefined &&
+      (metadata.main_status === "declared" ||
+        defaultEntry?.container_sha256 === source.container_sha256)
+    )
+      addApplicationRootCandidate(roots, root);
+  }
+  if (roots.size > 1) return null;
+  for (const root of roots) return root;
+  return applicationContainerRoot(context.fileSet, source);
+};
 
 /** Evidence coverage shape shared by reconstruction graph helpers. */
 export type JavaScriptArtifactGraphCoverage =
@@ -109,7 +216,10 @@ export interface RoleAssetLinkInput {
 
 /** An explicit processing/selection gap with the applicable phase's authority. */
 export interface UnavailableParseInput {
-  readonly file: JavaScriptArtifactFile;
+  /** Missing source bytes are anchored to their observed inventory container. */
+  readonly file: Pick<JavaScriptArtifactFile, "path" | "container_sha256"> & {
+    readonly sha256: string | null;
+  };
   readonly asset: ApplicationNode;
   readonly operation: string;
   readonly authority: JavaScriptArtifactAnalysisScope["authority"];
@@ -212,10 +322,11 @@ export const addUnavailableStaticParseScope = (
   context: JavaScriptArtifactGraphContext,
   input: UnavailableParseInput,
 ): void => {
+  const artifactSha256 = input.file.sha256 ?? input.file.container_sha256;
   const node = context.accumulator.addNode({
     kind: "unknown",
     identity: artifactLocalIdentity(
-      input.file.sha256,
+      artifactSha256,
       "static-parse-scope",
       `${input.operation}:${input.file.path}`,
     ),
@@ -228,13 +339,16 @@ export const addUnavailableStaticParseScope = (
           path: input.file.path,
           operation: input.operation,
           limitation: input.limitation,
+          ...(input.file.sha256 === null
+            ? { source_bytes_available: false }
+            : {}),
           ...(input.failure === undefined
             ? {}
             : { analysis_failure: input.failure }),
         },
         evidence: unavailableStaticEvidence({
           authority: input.authority,
-          sha256: input.file.sha256,
+          sha256: artifactSha256,
           path: input.file.path,
           operation: input.operation,
           coverage:
@@ -255,7 +369,7 @@ export const addUnavailableStaticParseScope = (
     relation: "contains",
     properties: { scope: "unavailable-static-analysis" },
     evidence: artifactObservationEvidence({
-      sha256: input.file.sha256,
+      sha256: artifactSha256,
       path: input.file.path,
       operation: "associate-unavailable-parse-scope",
       coverage: completeApplicationCoverage(),
@@ -266,12 +380,19 @@ export const addUnavailableStaticParseScope = (
 /** Coverage for one bounded JavaScript AST analysis. */
 export const javascriptAnalysisCoverage = (
   analysis: NonNullable<
-    JavaScriptModuleArtifactAnalysis["files"][number]["javascript"]
+    JavaScriptArtifactAnalysis["files"][number]["javascript"]
   >,
 ): JavaScriptArtifactGraphCoverage =>
   analysis.parse_status === "complete"
     ? completeApplicationCoverage()
     : partialApplicationCoverage([], null);
+
+/** Parsed inventory identity shared by whole-file graph representations. */
+export const fileOccurrenceIdentity = (file: JavaScriptArtifactFile) => ({
+  container_sha256: file.container_sha256,
+  path: file.path,
+  sha256: file.sha256,
+});
 
 /** Stable identity for a fact scoped to one exact artifact. */
 export const artifactLocalIdentity = (
@@ -302,13 +423,25 @@ export const artifactFileNodeKind = (
 export const createElectronRoleNode = (
   context: JavaScriptArtifactGraphContext,
   input: RoleNodeInput,
-): ApplicationNode =>
-  context.accumulator.addNode({
+): ApplicationNode => {
+  const target =
+    input.resolution.resolved_path ??
+    (input.resolution.runtime_path_base_proven === true
+      ? input.resolution.candidate_path
+      : undefined) ??
+    input.resolution.declared_path;
+  // Raw application-relative declarations keep their source occurrence even
+  // when identical source bytes appear under separate application prefixes.
+  const identityPath =
+    input.resolution.runtime_path_base === "application-root"
+      ? compositeKey([input.anchor.path, target])
+      : target;
+  return context.accumulator.addNode({
     kind: input.kind,
     identity: artifactLocalIdentity(
       input.anchor.sha256,
       "electron-role",
-      `${input.kind}:${input.resolution.resolution_context}:${input.resolution.resolved_path ?? input.resolution.declared_path}`,
+      `${input.kind}:${input.resolution.resolution_context}:${identityPath}`,
     ),
     observations: [
       {
@@ -333,6 +466,7 @@ export const createElectronRoleNode = (
       },
     ],
   });
+};
 
 /** Resolve an Electron role to an inventoried asset when available. */
 export const linkElectronRoleToAsset = (
@@ -392,23 +526,6 @@ export const chunkLookupKey = (
   runtime: string,
   chunkKey: string,
 ): string => compositeKey([path, runtime, chunkKey]);
-
-/** Resolve a relative static specifier without escaping the artifact root. */
-export const resolveArtifactPath = (
-  specifier: string,
-  sourcePath: string,
-  files: ReadonlyMap<string, JavaScriptArtifactFile>,
-  moduleKind?: "import" | "require" | "compiler-dependent",
-  directoryPaths?: ReadonlySet<string>,
-): string | null =>
-  resolveArtifactPathByContext({
-    declaredPath: specifier,
-    sourcePath,
-    context: "module-specifier",
-    files,
-    ...(directoryPaths === undefined ? {} : { directoryPaths }),
-    ...(moduleKind === undefined ? {} : { moduleKind }),
-  }).resolved_path;
 
 /** Locate the recovered module that owns a static finding. */
 export const sourceNodeFor = (

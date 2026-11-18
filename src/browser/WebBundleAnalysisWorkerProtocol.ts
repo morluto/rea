@@ -1,17 +1,26 @@
+import { javaScriptMemberMutationAllowanceSchema } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { javaScriptSemanticPrecisionSchema } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { z } from "zod";
+import { JAVASCRIPT_STATIC_FACT_BYTES } from "../domain/javascript/javascriptAnalysisResourceControls.js";
 import { digestSchema } from "../domain/digests.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
 import { webTextArtifactSchema } from "../domain/webContentArtifact.js";
+import {
+  DEFAULT_WEB_BUNDLE_HEAP_MB,
+  DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
+  DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS,
+} from "../domain/webBundleAnalysis.js";
 
 /** Independent per-script worker limits for source records and control frames. */
 export const WEB_BUNDLE_WORKER_LIMITS = {
-  heapMb: 1024,
-  scriptTimeoutMs: 30_000,
-  totalTimeoutMs: 300_000,
+  heapMb: DEFAULT_WEB_BUNDLE_HEAP_MB,
+  scriptTimeoutMs: DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
+  totalTimeoutMs: DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS,
   protocolBytes: 64 * 1024,
   sourceBytes: 8 * WEB_RUNTIME_LIMITS.sourceBytes,
-  resultBytes: 8 * 1024 * 1024,
+  resultBytes: JAVASCRIPT_STATIC_FACT_BYTES,
 } as const;
 
 const includedSourceSchema = z.strictObject({
@@ -29,6 +38,8 @@ export const includedWebScriptSchema = browserScriptSchema
 
 export const webBundleWorkerRequestSchema = z.strictObject({
   kind: z.literal("analyze"),
+  semantic_precision: javaScriptSemanticPrecisionSchema.exactOptional(),
+  member_mutation_allowance: javaScriptMemberMutationAllowanceSchema,
   id: z.uuid(),
   source: z.strictObject({
     bytes: z.number().int().min(0).max(WEB_BUNDLE_WORKER_LIMITS.sourceBytes),
@@ -66,6 +77,8 @@ export const webBundleWorkerMessageSchema = z.discriminatedUnion("kind", [
     kind: z.literal("failure"),
     ...identity,
     reason: z.enum(["input", "resource", "output", "io"]),
+    /** Limits a typed resource refusal reported, such as a fixed work allowance. */
+    limits: z.record(z.string(), jsonValueSchema).exactOptional(),
     message: z.string(),
   }),
 ]);

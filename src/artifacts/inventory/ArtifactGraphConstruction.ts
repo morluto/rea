@@ -1,5 +1,10 @@
+import { artifactFormatDescriptor } from "../artifactFormats.js";
+import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  hasDestinationPath,
+  asarHeaderAdmissionFailure,
+} from "../../resources/index.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
@@ -11,8 +16,13 @@ import {
   artifactEdgeId,
   artifactIdForContent,
   occurrenceIdForLocation,
+  logicalPathNfc,
 } from "../../domain/artifactIdentity.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type {
+  ArtifactEntry,
+  ArtifactReader,
+  ArtifactReaderTraversal,
+} from "../../resources/index.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,
@@ -20,25 +30,24 @@ import type {
   ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
 import {
-  hasZipSignature,
-  isZipPackageFormat,
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
-  observeMzWindowsHeader,
-  parseDosMzHeader,
-} from "../../domain/dosMz.js";
-import {
-  classifyFatContainerIdentity,
+  classifyFatContainerEvidence,
   readFatContainerHeader,
 } from "../../domain/apple/machoContainer.js";
+import { readNativeHeaderFormat } from "../../domain/binaryTarget.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
   occurrence_id: string;
   artifact_id: string | null;
   parent_occurrence_id: string | null;
+  relationship_coverage?: NonNullable<
+    ArtifactOccurrence["relationship_coverage"]
+  >;
   logical_path: string;
   entry_kind: ArtifactOccurrence["entry_kind"];
   artifact_kind: ArtifactOccurrence["artifact_kind"];
@@ -47,17 +56,22 @@ export interface MutableOccurrence {
   compressed_size: number | null;
   executable: boolean;
   encrypted: boolean;
+  unpacked?: boolean;
   hash_status: ArtifactOccurrence["hash_status"];
   source_location: ArtifactOccurrence["source_location"];
+  source_path?: string;
+  declared_integrity?: NonNullable<ArtifactOccurrence["declared_integrity"]>;
+  format_metadata?: NonNullable<ArtifactOccurrence["format_metadata"]>;
   limitations: string[];
 }
 
-/** Index every occurrence by canonical logical path without choosing an owner. */
-export const indexOccurrencesByPath = (
+/** Index destination paths without mixing in declaration query names or choosing an owner. */
+export const indexDestinationOccurrencesByPath = (
   occurrences: readonly MutableOccurrence[],
 ): ReadonlyMap<string, readonly MutableOccurrence[]> => {
   const byPath = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
+    if (!hasDestinationPath(occurrence.entry_kind)) continue;
     const matches = byPath.get(occurrence.logical_path);
     if (matches === undefined)
       byPath.set(occurrence.logical_path, [occurrence]);
@@ -75,19 +89,25 @@ export const createOccurrence = (
   entry: ArtifactEntry,
   path: string,
   parent: string | null,
-  duplicateOrdinal = 0,
+  options: {
+    readonly duplicateOrdinal?: number;
+    readonly sourceFormat?: ArtifactReader["format"];
+  } = {},
 ): MutableOccurrence => {
+  const duplicateOrdinal = options.duplicateOrdinal ?? 0;
   const role =
-    entry.kind === "directory"
-      ? {
-          kind: path.toLowerCase().endsWith(".framework")
-            ? ("framework" as const)
-            : ("container" as const),
-          format: "directory" as const,
-        }
-      : containerSuffixFamily(path) === undefined
-        ? classifyArtifactPath(path)
-        : ({ kind: "unknown", format: "unknown" } as const);
+    entry.kind === "metadata"
+      ? { kind: "package-metadata" as const, format: "unknown" as const }
+      : entry.kind === "directory"
+        ? {
+            kind: path.toLowerCase().endsWith(".framework")
+              ? ("framework" as const)
+              : ("container" as const),
+            format: "directory" as const,
+          }
+        : containerSuffixFamily(path) === undefined
+          ? classifyArtifactPath(path)
+          : ({ kind: "unknown", format: "unknown" } as const);
   return {
     occurrence_id: `occ_${digestCanonicalValue(
       duplicateOrdinal === 0
@@ -98,6 +118,10 @@ export const createOccurrence = (
     artifact_id: null,
     parent_occurrence_id: parent,
     logical_path: path,
+    ...(entry.sourcePath !== undefined ||
+    entry.path !== logicalPathNfc(entry.path)
+      ? { source_path: entry.sourcePath ?? entry.path }
+      : {}),
     entry_kind: entry.kind,
     artifact_kind: role.kind,
     artifact_format: role.format,
@@ -105,12 +129,27 @@ export const createOccurrence = (
     compressed_size: entry.compressedSize,
     executable: entry.executable,
     encrypted: entry.encrypted,
+    ...(entry.unpacked ||
+    (options.sourceFormat === "asar" && entry.kind === "file")
+      ? { unpacked: entry.unpacked }
+      : {}),
     hash_status: entry.encrypted ? "unavailable" : "not-hashed",
     source_location:
-      entry.byteOffset === null || entry.declaredSize === null
+      entry.encrypted ||
+      entry.byteOffset === null ||
+      entry.declaredSize === null
         ? null
-        : { offset: entry.byteOffset, length: entry.declaredSize },
+        : {
+            offset: entry.byteOffset,
+            length: entry.byteLength ?? entry.declaredSize,
+          },
     limitations: [...entry.limitations],
+    ...(entry.declaredIntegrity === null
+      ? {}
+      : { declared_integrity: { ...entry.declaredIntegrity } }),
+    ...(entry.formatMetadata === undefined
+      ? {}
+      : { format_metadata: { ...entry.formatMetadata } }),
   };
 };
 
@@ -176,11 +215,12 @@ export const materializeDirectoryNodes = (
 };
 
 export const createRootNode = (input: {
-  readonly digest: {
-    readonly sha256: string;
-    readonly bytes: number;
-    readonly prefix: Buffer;
-  } | null;
+  readonly digest:
+    | ({
+        readonly sha256: string;
+        readonly bytes: number;
+      } & ArtifactClassificationEvidence)
+    | null;
   readonly occurrences: readonly MutableOccurrence[];
 }): ArtifactNode =>
   createArtifactNode({
@@ -204,7 +244,7 @@ export const createRootNode = (input: {
     format:
       input.digest === null
         ? "directory"
-        : classifyArtifactBytes(input.digest.prefix, input.digest.bytes),
+        : classifyArtifactBytes(input.digest, input.digest.bytes),
     contentState: "materialized",
   });
 
@@ -231,6 +271,7 @@ export const rootOccurrenceFor = (
     readonly executable: boolean;
     readonly format: ArtifactOccurrence["artifact_format"];
     readonly path: string;
+    readonly formatMetadata?: ArtifactOccurrence["format_metadata"];
   },
 ): MutableOccurrence => ({
   occurrence_id: occurrenceIdForLocation({
@@ -243,18 +284,23 @@ export const rootOccurrenceFor = (
   logical_path: ".",
   entry_kind: metadata.format === "directory" ? "directory" : "file",
   artifact_kind:
-    metadata.format === "directory" ||
-    isZipPackageFormat(metadata.format) ||
-    ["asar", "dmg", "pkg"].includes(metadata.format)
+    artifactFormatDescriptor(metadata.format)?.occurrenceContainer === true
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,
   declared_size: metadata.size,
   compressed_size: null,
   executable: metadata.executable,
-  encrypted: false,
+  encrypted:
+    (metadata.formatMetadata?.kind === "godot-pck" ||
+      metadata.formatMetadata?.kind === "unityfs" ||
+      metadata.formatMetadata?.kind === "wxapkg") &&
+    metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",
   source_location: null,
+  ...(metadata.formatMetadata === undefined
+    ? {}
+    : { format_metadata: metadata.formatMetadata }),
   limitations: [],
 });
 
@@ -290,23 +336,31 @@ export const rekeyOccurrences = (
 export const createArtifactEdges = (
   rootArtifactId: string,
   occurrences: MutableOccurrence[],
+  traversalStatus: ArtifactReaderTraversal["status"],
   producer?: ArtifactCommand,
 ): { readonly edges: ArtifactEdge[]; readonly limitations: string[] } => {
   const byId = new Map(occurrences.map((item) => [item.occurrence_id, item]));
-  const byPath = indexOccurrencesByPath(occurrences);
+  const byPath = indexDestinationOccurrencesByPath(occurrences);
   const edges: ArtifactEdge[] = [];
   const limitations: string[] = [];
   for (const occurrence of occurrences) {
+    let relationshipComplete =
+      occurrence.logical_path === "." ||
+      (occurrence.parent_occurrence_id !== null &&
+        occurrence.artifact_id !== null);
     // Use the occurrence's own classification: a directory named `x.map` is
     // a container, not a source map of its sibling.
     const isSourceMap = occurrence.artifact_kind === "source-map";
-    const sourcePath = isSourceMap
-      ? occurrence.logical_path.slice(0, -".map".length)
-      : undefined;
+    const sourcePath =
+      isSourceMap && occurrence.logical_path !== "."
+        ? occurrence.logical_path.slice(0, -".map".length)
+        : undefined;
     const sourceCandidates =
       sourcePath === undefined ? [] : (byPath.get(sourcePath) ?? []);
     const mappedSource =
-      sourceCandidates.length === 1 && sourceCandidates[0]?.artifact_id !== null
+      sourceCandidates.length === 1 &&
+      sourceCandidates[0]?.entry_kind === "file" &&
+      sourceCandidates[0].artifact_id !== null
         ? sourceCandidates[0]
         : undefined;
     if (sourcePath !== undefined) {
@@ -316,17 +370,24 @@ export const createArtifactEdges = (
               occurrence: `Source-map target is unknown because multiple occurrences share ${JSON.stringify(sourcePath)}.`,
               coverage: `Source-map relationships are unknown because multiple occurrences share ${JSON.stringify(sourcePath)}.`,
             }
-          : sourceCandidates.length === 1 && mappedSource === undefined
+          : sourceCandidates.length === 1 &&
+              sourceCandidates[0]?.entry_kind === "file" &&
+              mappedSource === undefined
             ? {
                 occurrence: `Source-map target identity is unknown because the matching occurrence at ${JSON.stringify(sourcePath)} has no content identity.`,
                 coverage: `Source-map relationships are unknown because the matching occurrence at ${JSON.stringify(sourcePath)} has no content identity.`,
               }
             : undefined;
       if (unknownMapping !== undefined) {
+        relationshipComplete = false;
         occurrence.limitations.push(unknownMapping.occurrence);
         limitations.push(unknownMapping.coverage);
       }
+      if (traversalStatus === "unknown") relationshipComplete = false;
     }
+    occurrence.relationship_coverage = relationshipComplete
+      ? "complete"
+      : "unknown";
     if (
       occurrence.parent_occurrence_id === null ||
       occurrence.artifact_id === null
@@ -341,11 +402,14 @@ export const createArtifactEdges = (
       relation:
         occurrence.entry_kind === "slice"
           ? ("slice-of" as const)
-          : isSourceMap
-            ? mappedSource === undefined
-              ? ("contains" as const)
-              : ("maps-source" as const)
-            : relationFor(occurrence.logical_path),
+          : occurrence.format_metadata?.kind === "pyinstaller-entry" &&
+              occurrence.format_metadata.bytecode_header === "derived"
+            ? ("derived-from" as const)
+            : isSourceMap
+              ? mappedSource === undefined
+                ? ("contains" as const)
+                : ("maps-source" as const)
+              : relationFor(occurrence.logical_path),
       occurrence_id: occurrence.occurrence_id,
     };
     edges.push({
@@ -363,15 +427,17 @@ interface ArtifactParentIndex {
   occurrences?: readonly MutableOccurrence[];
 }
 
+export interface ArtifactParentResolution {
+  readonly limitations: readonly string[];
+  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
+}
+
 /** Resolve strict observed ancestors without rebuilding every path prefix. */
 export const resolveOccurrenceParents = (
   occurrences: readonly MutableOccurrence[],
   byPath: ReadonlyMap<string, readonly MutableOccurrence[]>,
   expandedContainerIds: ReadonlySet<string>,
-): {
-  readonly limitations: readonly string[];
-  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
-} => {
+): ArtifactParentResolution => {
   const root: ArtifactParentIndex = { children: new Map() };
   for (const matches of byPath.values()) {
     const parents = matches.filter(
@@ -405,6 +471,9 @@ export const resolveOccurrenceParents = (
   const limitations = new Set<string>();
   const unknownParentOccurrences = new Set<MutableOccurrence>();
   for (const occurrence of occurrences) {
+    // Query paths do not imply filesystem containment. The scanner records
+    // the declaring container for metadata instead.
+    if (occurrence.entry_kind === "metadata") continue;
     const path = occurrence.logical_path;
     let branch = root;
     let parent: MutableOccurrence | undefined;
@@ -476,35 +545,38 @@ export const classifyArtifactPath = (
 export const classifyArtifactContent = (
   path: string,
   evidence: ArtifactClassificationEvidence,
-  fileSize = evidence.prefix.length,
+  fileSize: number,
 ): {
   readonly kind: ArtifactOccurrence["artifact_kind"];
   readonly format: ArtifactOccurrence["artifact_format"];
+  readonly contentFormat: ArtifactNode["format"];
 } => {
   const { prefix, asarHeader } = evidence;
-  const format = classifyArtifactBytes(prefix, fileSize);
+  const contentFormat = classifyArtifactBytes(evidence, fileSize);
   const byPath = classifyArtifactPath(path);
+  let role: ReturnType<typeof classifyArtifactPath>;
   if (
-    format === "plist" &&
+    contentFormat === "plist" &&
     !hasBinaryPlistSignature(prefix) &&
     (["javascript", "source-map", "entitlements"].includes(byPath.kind) ||
       path.toLowerCase().endsWith(".asar"))
   )
-    return byPath;
-  if (
-    format === "file" &&
+    role = byPath;
+  else if (
+    contentFormat === "file" &&
     path.toLowerCase().endsWith(".asar") &&
     asarHeader.state !== "rejected"
   ) {
     if (asarHeader.state === "limit")
-      throw new ArtifactReaderFailure(
-        "limit",
-        "ASAR header exceeds the bounded classification or decode budget",
+      throw asarHeaderAdmissionFailure(
+        asarHeader.admission,
+        asarHeader.extents?.headerBytes,
       );
     if (asarHeader.state === "matched")
-      return { kind: "container", format: "asar" };
-  }
-  return artifactRoleForFormat(path, format);
+      role = { kind: "container", format: "asar" };
+    else role = artifactRoleForFormat(path, contentFormat);
+  } else role = artifactRoleForFormat(path, contentFormat);
+  return { ...role, contentFormat };
 };
 
 const artifactRoleForFormat = (
@@ -520,6 +592,8 @@ const artifactRoleForFormat = (
       format: zipPackageFormatForPath(path) ?? format,
     };
   if (format === "plist") return { kind: "plist", format };
+  if (artifactFormatDescriptor(format)?.roleContainer === true)
+    return { kind: "container", format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
@@ -530,21 +604,35 @@ const artifactRoleForFormat = (
 
 /** Classify storage bytes independently of path names, roles, and permissions. */
 export const classifyArtifactBytes = (
-  prefix: Buffer,
-  fileSize = prefix.length,
+  evidence: ArtifactClassificationEvidence,
+  fileSize: number,
 ): ArtifactNode["format"] => {
-  if (hasZipSignature(prefix)) return "zip";
-  if (hasBinaryPlistSignature(prefix)) return "plist";
+  const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  // A refused claim falls through: a header-only iNES region, for example,
+  // has the signature but not the declared cartridge extent, so it stays a
+  // file instead of becoming another container. A claim that needs more
+  // bytes falls through too: the scan holds a bounded prefix and the trailer,
+  // so it cannot locate an ESP flash partition table, and a flash dump is
+  // classified by its first image.
+  const input = { prefix, fileSize, suffix };
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
+  )
+    if (
+      recognition.state === "recognized" &&
+      recognition.format !== "esp-flash-image"
+    )
+      return recognition.format;
   if (hasXmlPlistSignature(prefix)) return "plist";
-  const fatFormat = classifyFatArtifact(prefix, fileSize);
+  const fatFormat = classifyFatArtifact(evidence, fileSize);
   if (fatFormat !== null) return fatFormat;
-  if (prefix.length >= 4) {
-    const magic = prefix.readUInt32BE(0);
-    if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
-      return "mach-o";
-    if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-      return "elf";
-  }
+  // Admit ELF and thin Mach-O as target resolution does: a magic number
+  // whose header does not decode is not an executable REA can open.
+  const native = readNativeHeaderFormat(prefix, fileSize);
+  if (!native.ok) return "unknown";
+  if (native.value !== null) return native.value;
   if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
     if (
       !Number.isSafeInteger(fileSize) ||
@@ -552,37 +640,47 @@ export const classifyArtifactBytes = (
       prefix.length < Math.min(fileSize, 64)
     )
       return "unknown";
-    const windowsHeader = observeMzWindowsHeader(prefix, fileSize);
+    const mzEvidence = parseMzHeaderEvidence(
+      prefix,
+      fileSize,
+      mzWindowsHeaderSignature,
+    );
+    const { windowsHeader } = mzEvidence;
     if (windowsHeader.state === "signature-needed") return "unknown";
+    if (windowsHeader.state === "candidate") return "unknown";
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
       if (
         windowsHeader.signature === "PE" &&
         windowsOffset >= 64 &&
-        windowsOffset <= prefix.length - 4
+        (windowsOffset <= prefix.length - 4 ||
+          (mzWindowsHeaderSignature?.offset === windowsOffset &&
+            mzWindowsHeaderSignature.bytes.length >= 4))
       )
         return "pe";
       return "unknown";
     }
-    if (parseDosMzHeader(prefix, fileSize).ok) return "dos-mz";
+    if (mzEvidence.dos.ok) return "dos-mz";
     return "unknown";
   }
   return "file";
 };
 
 const classifyFatArtifact = (
-  prefix: Buffer,
+  evidence: ArtifactClassificationEvidence,
   fileSize: number,
 ): ArtifactNode["format"] | null => {
-  const fatHeader = readFatContainerHeader(prefix, fileSize);
+  const { prefix, fatSliceHeaders } = evidence;
+  const fatHeader =
+    fatSliceHeaders?.header ?? readFatContainerHeader(prefix, fileSize);
   if (fatHeader.state === "needs-data" || fatHeader.state === "malformed")
     return "unknown";
   if (fatHeader.state === "not-fat") return null;
-  const identity = classifyFatContainerIdentity(fatHeader, (offset) => {
-    if (offset >= prefix.length) return undefined;
-    if (offset + 4 > prefix.length) return null;
-    return prefix.readUInt32BE(offset);
-  });
+  const identity = classifyFatContainerEvidence(
+    fatHeader,
+    prefix,
+    fatSliceHeaders?.sliceHeadersByOffset,
+  );
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };
 

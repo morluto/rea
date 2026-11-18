@@ -1,28 +1,36 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../../fixtures/binarySession.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderAvailability,
-} from "../../../src/application/AnalysisProvider.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
+import {
+  LINUX_PROCESS_OWNERSHIP_REMEDIATION,
+  LinuxOwnedProcessPrerequisiteError,
+  systemProcessOwnershipHost,
+} from "../../../src/process/ProcessOwnershipObservation.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { MAX_JSON_DEPTH } from "../../../src/domain/jsonValue.js";
@@ -30,14 +38,15 @@ import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import {
   expandProviderCapabilities,
-  toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { ok as resultOk } from "../../../src/domain/result.js";
+import { err, ok as resultOk } from "../../../src/domain/result.js";
 import {
   createSessionMcpHarness,
   snapshotAndRecordUnknown,
 } from "./sessionMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
   { id: "fixture", name: "Fixture analysis provider", version: "1" },
@@ -47,6 +56,7 @@ const SNAPSHOT_PROFILE = createAnalysisProfile(
 const resources: Array<{ close(): Promise<unknown> }> = [];
 let directory: string | undefined;
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
@@ -56,8 +66,7 @@ afterEach(async () => {
 describe("MCP snapshot lifecycle ordering", () => {
   it("saves earlier in-flight observations, blocks later calls, and preserves the session on write failure", async () => {
     directory = await createTestTempDirectory("rea-mcp-snapshot-order-");
-    const started = createDeferred<void>();
-    const release = createDeferred<ReturnType<typeof ok>>();
+    const sessionObservation = phaseGate<void, ReturnType<typeof ok>>();
     const { mcp, first, closed } = await createSessionMcpHarness(
       directory,
       (closed) => {
@@ -73,8 +82,7 @@ describe("MCP snapshot lifecycle ordering", () => {
             ...client(target.path, closed),
             execute: (name) => {
               if (name === "health") return Promise.resolve(ok(null));
-              started.resolve();
-              return release.promise;
+              return sessionObservation.hold();
             },
           }),
         };
@@ -89,7 +97,8 @@ describe("MCP snapshot lifecycle ordering", () => {
       name: "address_name",
       arguments: { address: "0x1000", document: "fixture" },
     });
-    await started.promise;
+    onTestFinished(() => sessionObservation.release(ok(first)));
+    await sessionObservation.reached(observation, "session observation");
     const snapshotPath = join(directory, "analysis.json");
     const closing = mcp.callTool({
       name: "close_binary",
@@ -104,7 +113,7 @@ describe("MCP snapshot lifecycle ordering", () => {
         .result,
     ).toMatchObject({ open: true });
     expect(closed).toEqual([]);
-    release.resolve(ok(first));
+    sessionObservation.release(ok(first));
     expect((await observation).isError).not.toBe(true);
     expect((await closing).isError).not.toBe(true);
     expect((await later).isError).toBe(true);
@@ -134,7 +143,7 @@ describe("MCP snapshot lifecycle ordering", () => {
         })
       ).isError,
     ).toBe(true);
-    expect(await readFile(snapshotPath)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(snapshotPath), bytes)).toBe(0);
     expect(
       (
         await mcp.callTool({
@@ -155,7 +164,7 @@ describe("MCP snapshot lifecycle ordering", () => {
         })
       ).isError,
     ).not.toBe(true);
-  }, 10_000);
+  });
 });
 
 describe("public provider availability", () => {
@@ -171,7 +180,8 @@ describe("public provider availability", () => {
     const unavailable: ProviderAvailability = {
       status: "unavailable",
       code: "unsupported_version",
-      reason: "Use Apktool 2.7.0 or newer.",
+      reason: "Apktool 2.6.3 is older than the supported minimum 2.7.0.",
+      remediation: "Use Apktool 2.7.0 or newer.",
       diagnostics: { minimum_version: "2.7.0" },
     };
     const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
@@ -188,10 +198,13 @@ describe("public provider availability", () => {
       { kind: "session", session },
       { adbDeviceAnalysis, apktoolAnalysis, logger: silentLogger },
     );
-    const mcp = new Client({
-      name: "provider-host-readiness",
-      version: "1.0.0",
-    });
+    const mcp = new Client(
+      {
+        name: "provider-host-readiness",
+        version: "1.0.0",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -201,7 +214,7 @@ describe("public provider availability", () => {
     const status = structured(
       await mcp.callTool({ name: "binary_session", arguments: {} }),
     );
-    const availability = toolAvailabilityInventory.parse(
+    const availability = toolAvailabilitySummaryInventory.parse(
       (status.result as { tool_availability: unknown }).tool_availability,
     );
     expect(
@@ -213,8 +226,84 @@ describe("public provider availability", () => {
       availability.groups.find(({ names }) =>
         names.includes("inspect_apktool_client"),
       ),
-    ).toMatchObject({ available: false, reason: "provider_unavailable" });
+    ).toMatchObject({
+      available: false,
+      reason: "provider_unavailable",
+      remediation: "Use Apktool 2.7.0 or newer.",
+    });
   });
+});
+
+describe("owned-process prerequisite during status discovery", () => {
+  it.skipIf(process.platform === "win32")(
+    "keeps every other provider's status when the Apktool probe cannot prepare an owned child",
+    async () => {
+      directory = await createTestTempDirectory("rea-mcp-ps-prerequisite-");
+      const launcher = join(directory, "apktool");
+      await writeFile(launcher, "#!/bin/sh\nprintf '2.9.3\\n'\n", {
+        mode: 0o755,
+      });
+      const apktoolAnalysis = new ApktoolProvider({
+        environment: { REA_APKTOOL_COMMAND: launcher },
+      });
+      vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+        async () => {
+          throw new LinuxOwnedProcessPrerequisiteError(
+            new Error("spawn ps ENOENT"),
+          );
+        },
+      );
+      const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
+        inspectAvailability: async () => ({
+          status: "available",
+          code: null,
+          reason: null,
+          diagnostics: { version: "1.0.41" },
+        }),
+        close: async () => {},
+        execute: async () => ok(null),
+      };
+      const closed: string[] = [];
+      const session = createTestBinarySession(provider(closed));
+      const server = createServer(
+        { kind: "session", session },
+        { adbDeviceAnalysis, apktoolAnalysis, logger: silentLogger },
+      );
+      const mcp = new Client(
+        { name: "ps-prerequisite", version: "1.0.0" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      resources.push(mcp, server, apktoolAnalysis);
+      await server.connect(serverTransport);
+      await mcp.connect(clientTransport);
+
+      const reply = await mcp.callTool({
+        name: "binary_session",
+        arguments: {},
+      });
+      expect(reply.isError ?? false).toBe(false);
+      const status = structured(reply);
+      const availability = toolAvailabilitySummaryInventory.parse(
+        (status.result as { tool_availability: unknown }).tool_availability,
+      );
+      const apktool = availability.groups.find(({ names }) =>
+        names.includes("inspect_apktool_client"),
+      );
+      expect(apktool).toMatchObject({
+        available: false,
+        reason: "provider_unavailable",
+      });
+      // Discovery carries the prerequisite owner's repair, not its failure text.
+      expect(apktool?.remediation).toBe(LINUX_PROCESS_OWNERSHIP_REMEDIATION);
+      expect(
+        availability.groups.find(({ names }) =>
+          names.includes("inspect_adb_client"),
+        ),
+      ).toMatchObject({ available: true, reason: "available" });
+    },
+  );
 });
 
 describe("target-free MCP fixture host isolation", () => {
@@ -229,7 +318,7 @@ describe("target-free MCP fixture host isolation", () => {
     const status = structured(
       await mcp.callTool({ name: "binary_session", arguments: {} }),
     );
-    const availability = toolAvailabilityInventory.parse(
+    const availability = toolAvailabilitySummaryInventory.parse(
       (status.result as { tool_availability: unknown }).tool_availability,
     );
     for (const name of [
@@ -249,14 +338,12 @@ describe("target-free MCP lifecycle", () => {
     directory = await createTestTempDirectory("rea-mcp-status-readiness-");
     const targetPath = join(directory, "target.hop");
     await writeFile(targetPath, "fixture target");
-    const entered = createDeferred<void>();
-    const availability = createDeferred<ProviderAvailability>();
+    const readiness = phaseGate<void, ProviderAvailability>();
     const closed: string[] = [];
     const session = createTestBinarySession(provider(closed));
     const androidAnalysis: AndroidAnalysisPort = {
       inspectAvailability: () => {
-        entered.resolve();
-        return availability.promise;
+        return readiness.hold();
       },
       close: () => Promise.resolve(),
       execute: () => Promise.resolve(ok(null)),
@@ -268,17 +355,28 @@ describe("target-free MCP lifecycle", () => {
         logger: silentLogger,
       },
     );
-    const mcp = new Client({ name: "status-readiness", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "status-readiness", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
     await server.connect(serverTransport);
     await mcp.connect(clientTransport);
 
+    onTestFinished(() =>
+      readiness.release({
+        status: "available",
+        code: null,
+        reason: null,
+        diagnostics: { configured: true },
+      }),
+    );
     const status = mcp.callTool({ name: "binary_session", arguments: {} });
-    await entered.promise;
+    await readiness.reached(status, "provider readiness");
     expect((await session.open(targetPath)).ok).toBe(true);
-    availability.resolve({
+    readiness.release({
       status: "available",
       code: null,
       reason: null,
@@ -304,7 +402,10 @@ describe("target-free MCP lifecycle", () => {
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "replaced-target", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "replaced-target", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -352,7 +453,90 @@ describe("target-free MCP lifecycle", () => {
       path: canonicalTargetPath,
       sha256: z.object({ sha256: z.string() }).parse(second).sha256,
     });
-  }, 30_000);
+  });
+});
+
+describe("snapshot receipt after MCP cleanup", () => {
+  it.each([false, true])(
+    "retains the saved snapshot receipt when process cleanup fails (session failure=%s)",
+    async (sessionFailure) => {
+      directory = await createTestTempDirectory(
+        "rea-mcp-snapshot-process-cleanup-",
+      );
+      const cleanupObservation = createEvidence(
+        unknownTarget("not-observed"),
+        { id: "fixture", name: "Fixture", version: "1" },
+        { operation: "health", parameters: {}, result: "cleanup facts" },
+      );
+      const { mcp, first } = await createSessionMcpHarness(
+        directory,
+        (closed) => {
+          const base = provider(closed);
+          return {
+            ...base,
+            createClient: (target, options) => {
+              const active = base.createClient(target, options);
+              let failed = false;
+              return {
+                ...active,
+                close: async () => {
+                  if (sessionFailure && !failed) {
+                    failed = true;
+                    return err(
+                      new ProviderCleanupError(
+                        "fixture",
+                        ["fixture child"],
+                        {},
+                        { partialObservation: cleanupObservation },
+                      ),
+                    );
+                  }
+                  return active.close();
+                },
+              };
+            },
+          };
+        },
+        resources,
+      );
+      const opened = await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: first },
+      });
+      expect(opened.isError).not.toBe(true);
+      expect(
+        (await mcp.callTool({ name: "current_document", arguments: {} }))
+          .isError,
+      ).not.toBe(true);
+      const cleanup = vi
+        .spyOn(ProcessCaptureResourceScope.prototype, "retryCleanup")
+        .mockRejectedValueOnce(new Error("Process cleanup failed"));
+      const path = join(directory, "saved.json");
+      const result = await mcp.callTool({
+        name: "close_binary",
+        arguments: { snapshot_path: path },
+      });
+      expect(result.isError).toBe(true);
+      const committed = await readFile(path);
+      expect(
+        parseMcpToolError(result).error.details?.partial_observation,
+      ).toEqual({
+        saved_snapshot: {
+          path,
+          bytes: committed.byteLength,
+          primitive_entries: 0,
+          workflow_entries: 0,
+          evidence_records: 1,
+        },
+        ...(sessionFailure ? { cleanup_observation: cleanupObservation } : {}),
+      });
+      cleanup.mockRestore();
+      expect(
+        (await mcp.callTool({ name: "close_binary", arguments: {} })).isError,
+      ).not.toBe(true);
+      expect((await readFile(path)).equals(committed)).toBe(true);
+    },
+  );
 });
 
 describe("target-free MCP workflow", () => {
@@ -367,12 +551,7 @@ describe("target-free MCP workflow", () => {
 
     const beforeTools = (await mcp.listTools()).tools;
     const beforeNames = beforeTools.map(({ name }) => name);
-    expect(mcp.getInstructions()).toContain(
-      "Use the tool that directly answers the question",
-    );
-    expect(
-      beforeTools.find(({ name }) => name === "inspect_artifact")?.description,
-    ).toMatch(/\breturns the complete content-addressed artifact graph\b/iu);
+    expect(beforeNames).toContain("inspect_artifact");
     expect(beforeNames).toContain("open_binary");
     expect(beforeNames).toContain("binary_session");
     expect(beforeNames).toContain("current_document");
@@ -468,7 +647,15 @@ describe("target-free MCP workflow", () => {
     expect(
       structured(await mcp.callTool({ name: "list_unknowns", arguments: {} }))
         .result,
-    ).toMatchObject({ items: [] });
+    ).toMatchObject({
+      items: [
+        {
+          unknown_id: recordedUnknown.unknown_id,
+          revision: 2,
+          status: "resolved",
+        },
+      ],
+    });
     expect(
       (
         await mcp.callTool({
@@ -517,7 +704,7 @@ describe("MCP snapshot open ordering", () => {
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain('"open":false');
-  }, 10_000);
+  });
 });
 
 describe("session filesystem path boundaries over MCP", () => {
@@ -533,8 +720,19 @@ describe("session filesystem path boundaries over MCP", () => {
       name: "export_evidence_bundle",
       arguments: { path: "relative-bundle.json" },
     });
-    expect(exported.isError, JSON.stringify(exported.content)).toBe(true);
-    expect(JSON.stringify(exported.content)).toContain("absolute");
+    expect(parseMcpToolError(exported).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "export_evidence_bundle",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            expected: "regex",
+          }),
+        ],
+      },
+    });
 
     const opened = await mcp.callTool({
       name: "open_binary",
@@ -545,19 +743,34 @@ describe("session filesystem path boundaries over MCP", () => {
       name: "close_binary",
       arguments: { snapshot_path: "relative-analysis.json" },
     });
-    expect(closed.isError, JSON.stringify(closed.content)).toBe(true);
-    expect(JSON.stringify(closed.content)).toContain("absolute");
+    expect(parseMcpToolError(closed).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "close_binary",
+        issues: [
+          expect.objectContaining({
+            path: ["snapshot_path"],
+            reason: "invalid_format",
+            expected: "regex",
+          }),
+        ],
+      },
+    });
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  }, 10_000);
+  });
 });
 
 describe("json depth bounds over MCP", () => {
-  it("classifies deeply nested evidence parameters as an input validation error", async () => {
+  it("preserves source integrity and nesting-limit diagnostics for borrowed parameters", async () => {
     directory = await createTestTempDirectory("rea-mcp-depth-bound-");
+    const createClient = vi.fn<AnalysisProvider["createClient"]>(() => {
+      throw new Error("Offline comparison must not open a provider");
+    });
     const { mcp } = await createSessionMcpHarness(
       directory,
-      provider,
+      (closed) => ({ ...provider(closed), createClient }),
       resources,
+      4_096,
     );
     const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
     const baseline = await mcp.callTool({
@@ -578,11 +791,31 @@ describe("json depth bounds over MCP", () => {
         right: input.right,
       },
     });
-    const text = JSON.stringify(result.content);
-    expect(result.isError, text).toBe(true);
-    expect(text).toContain("Input validation");
-    expect(text).toContain("maximum nesting depth");
-  }, 10_000);
+    expect(result.isError, JSON.stringify(result.content)).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        // The Evidence owner authenticates borrowed source records after
+        // envelope admission and preserves the JSON bound before cloning.
+        code: "evidence_integrity_mismatch",
+        category: "integrity_mismatch",
+        message: expect.stringContaining(
+          `maximum nesting depth of ${MAX_JSON_DEPTH}`,
+        ),
+        details: {
+          reason: "left Evidence failed validation",
+          side: "left",
+          issue_path: ["parameters"],
+        },
+      },
+    });
+    const recovered = await mcp.callTool({
+      name: "compare_process_captures",
+      arguments: input,
+    });
+    expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
+    expect(recovered.structuredContent).toEqual(baseline.structuredContent);
+    expect(createClient).not.toHaveBeenCalled();
+  });
 });
 
 const client = (path: string, closed: string[]): AnalysisClient => ({

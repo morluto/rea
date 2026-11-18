@@ -2,8 +2,11 @@ import type {
   InspectPacketFieldsInput,
   PacketFieldRecord,
 } from "../domain/captures/packetFields.js";
+import { literalSubstringPredicate } from "../domain/analysisSearch.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 
-export class FieldDiscoveryBudgetError extends Error {}
+/** The ParseFailure format of `tshark -G fields` glossary output. */
+export const FIELD_GLOSSARY_FORMAT = "tshark-field-glossary";
 export const FIELD_RECORD_BUDGET = 8 * 1024 * 1024;
 
 /** TShark -G fields: P/name/abbreviation or F/name/abbreviation/type/parent/base/mask/blurb. */
@@ -13,7 +16,7 @@ export const parseFieldDiscovery = (
 ) => {
   const copy = (value: string) =>
     Buffer.from(value, "utf16le").toString("utf16le");
-  const query = input.query.toLowerCase();
+  const matches = literalSubstringPredicate(input.query, false);
   const records: PacketFieldRecord[] = [];
   let examined = 0,
     matching = 0,
@@ -49,7 +52,7 @@ export const parseFieldDiscovery = (
       continue;
     if (
       ![name, abbreviation, ...(tag === "F" ? [columns[7] ?? ""] : [])].some(
-        (value) => value.toLowerCase().includes(query),
+        matches,
       )
     )
       continue;
@@ -62,8 +65,10 @@ export const parseFieldDiscovery = (
     // Six bytes per source byte covers worst-case JSON escaping, plus record bookkeeping.
     budget += Buffer.byteLength(line, "utf8") * 6 + 512;
     if (budget > FIELD_RECORD_BUDGET)
-      throw new FieldDiscoveryBudgetError(
+      throw decodeLimit(
+        FIELD_GLOSSARY_FORMAT,
         "Selected glossary records exceed the 8 MiB representation budget; narrow the query or page size",
+        { name: "record_budget_bytes", maximum: FIELD_RECORD_BUDGET },
       );
     // Detach retained fields from the much larger producer string.
     records.push({

@@ -109,7 +109,7 @@ function compare(left: Fixture, right: Fixture) {
       [
         fileURLToPath(
           new URL(
-            "../../experiments/analysis-efficiency/compare.mjs",
+            "../../tests/support/analysis-efficiency/compare.mjs",
             import.meta.url,
           ),
         ),

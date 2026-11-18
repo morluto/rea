@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const fault = vi.hoisted(() => ({
   selected: "",
@@ -69,11 +70,17 @@ vi.mock("../../src/firmware/FirmwareCommand.js", async (importOriginal) => {
     >();
   return {
     ...original,
-    resolveFirmwareCommand: async () => ({
-      command: "/fixture/binwalk",
-      limiter: "/fixture/prlimit",
-      sha256: "0".repeat(64),
-    }),
+    resolveFirmwareCommand: async () => {
+      const { selectArtifactCommandPath } =
+        await import("../../src/process/ArtifactCommandPath.js");
+      const command = await selectArtifactCommandPath(process.execPath);
+      return {
+        command,
+        limiter: command,
+        sha256: "0".repeat(64),
+        fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+      };
+    },
     runFirmwareCommand: async (
       context: Parameters<typeof original.runFirmwareCommand>[0],
     ) => {
@@ -114,18 +121,26 @@ vi.mock("../../src/firmware/FirmwareCommand.js", async (importOriginal) => {
 import { FirmwareFileAccess } from "../../src/firmware/FirmwareFiles.js";
 import { publishFirmwareExtraction } from "../../src/firmware/FirmwarePublication.js";
 import { normalizeUnblobReport } from "../../src/firmware/FirmwareReports.js";
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { FirmwareProvider } from "../../src/firmware/FirmwareProvider.js";
-import { firmwareFailure } from "../../src/firmware/FirmwareFailures.js";
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
+import { firmwareFailureDialect } from "../../src/firmware/FirmwareFailures.js";
+import { classifyProviderFailure } from "../../src/providers/classifyProviderFailure.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
 import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { firmwareRequestSchema } from "../../src/domain/firmware/firmwareAnalysis.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+
+/** Classify a raw firmware failure the way the firmware producers do. */
+const firmwareFailure = (
+  cause: unknown,
+  context: Parameters<typeof firmwareFailureDialect>[0],
+) => classifyProviderFailure(cause, firmwareFailureDialect(context));
 
 const providers: FirmwareProvider[] = [];
 beforeEach(() => {
@@ -168,7 +183,7 @@ it.each(["snapshot", "range"] as const)(
     try {
       const raw = await files
         .snapshot(
-          {
+          firmwareRequestSchema.parse({
             operation: "extract_firmware",
             input: {
               path,
@@ -178,7 +193,7 @@ it.each(["snapshot", "range"] as const)(
               max_output_files: 10,
               ...(stage === "range" ? { range: { offset: 1, length: 4 } } : {}),
             },
-          },
+          }),
           work,
           controller.signal,
         )
@@ -262,7 +277,7 @@ it.each(
       fault.onRead = undefined;
       await appendFile(path, Buffer.from([1]));
     };
-    const request =
+    const request = firmwareRequestSchema.parse(
       operation === "inspect_firmware_regions"
         ? { operation, input: { path } }
         : {
@@ -274,14 +289,15 @@ it.each(
               max_output_bytes: 1024,
               max_output_files: 10,
             },
-          };
+          },
+    );
     const files = new FirmwareFileAccess();
     try {
       const raw = await files
         .snapshot(request, work, new AbortController().signal)
         .catch((cause: unknown) => cause);
       if (denyClose) expect(raw).toBeInstanceOf(ArtifactFileCleanupFailure);
-      const error = firmwareFailure(raw, "binwalk", operation);
+      const error = firmwareFailure(raw, { engine: "binwalk", operation });
       const projected = projectAnalysisError(error);
       expect(projected.code).toBe(
         denyClose ? "cleanup_incomplete" : "invalid_request",
@@ -374,16 +390,16 @@ it.each(["hash", "report"] as const)(
           ? createHash("sha256").update('{"value":"固件"}').digest("hex")
           : { value: "固件" },
     });
-    const original = firmwareFailure(
-      raw,
-      "binwalk",
-      "inspect_firmware_regions",
+    const original = firmwareFailure(raw, {
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+    });
+    const retry = await files.retryCleanup().catch((cause: unknown) =>
+      firmwareFailure(cause, {
+        engine: "binwalk",
+        operation: "inspect_firmware_regions",
+      }),
     );
-    const retry = await files
-      .retryCleanup()
-      .catch((cause: unknown) =>
-        firmwareFailure(cause, "binwalk", "inspect_firmware_regions"),
-      );
     expect(retry).toBeInstanceOf(AnalysisError);
     expect(fault.handles).toHaveLength(1);
     const handle = fault.handles[0];
@@ -409,7 +425,10 @@ it("preserves malformed-report failure when cancellation arrives during failed c
   const raw = await files
     .report(path, "inspect_firmware_regions", controller.signal)
     .catch((cause: unknown) => cause);
-  const error = firmwareFailure(raw, "binwalk", "inspect_firmware_regions");
+  const error = firmwareFailure(raw, {
+    engine: "binwalk",
+    operation: "inspect_firmware_regions",
+  });
   expect(error.diagnostics?.primary_error).toMatchObject({
     code: "unreadable_output",
   });
@@ -434,8 +453,14 @@ it.each([null, "caller cancellation", new Error("caller cancellation")])(
     const raw = await files
       .report(path, "inspect_firmware_regions", controller.signal)
       .catch((cause: unknown) => cause);
-    const error = firmwareFailure(raw, "binwalk", "inspect_firmware_regions");
-    expect(error).toBeInstanceOf(AnalysisCancelledError);
+    const error = firmwareFailure(raw, {
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+    });
+    expect(
+      error,
+      error instanceof Error ? error.stack : String(error),
+    ).toBeInstanceOf(AnalysisCancelledError);
     expect(error.cause).toBe(reason);
     await files.close();
   },
@@ -547,7 +572,10 @@ it.skipIf(process.platform === "win32").each(["snapshot", "report"] as const)(
           )
         : files.report(path, "inspect_firmware_regions")
     ).catch((cause: unknown) => cause);
-    const error = firmwareFailure(raw, "binwalk", "inspect_firmware_regions");
+    const error = firmwareFailure(raw, {
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+    });
     expect(error.diagnostics?.primary_error).toMatchObject({
       code: kind === "snapshot" ? "invalid_request" : "unreadable_output",
     });
@@ -612,12 +640,19 @@ it("classifies a deadline before composing failed descriptor cleanup", async () 
   const raw = await files
     .report(path, "inspect_firmware_regions", deadline.signal)
     .catch((cause: unknown) => cause);
-  const error = firmwareFailure(
-    raw,
-    "binwalk",
-    "inspect_firmware_regions",
-    deadline.signal,
-  );
+  const error = firmwareFailure(raw, {
+    engine: "binwalk",
+    operation: "inspect_firmware_regions",
+    phase: {
+      signal: deadline.signal,
+      deadline: {
+        phase: "analysis",
+        signal: deadline.signal,
+        timeoutMs: 120_000,
+        expiresAtMs: performance.now() + 120_000,
+      },
+    },
+  });
   expect(error.diagnostics?.primary_error).toMatchObject({
     code: "provider_timeout",
   });
@@ -628,7 +663,12 @@ it("classifies a deadline before composing failed descriptor cleanup", async () 
 
 const publication = async (
   signal: AbortSignal,
-  deadline = new AbortController().signal,
+  deadline = {
+    phase: "publication" as const,
+    signal: new AbortController().signal,
+    timeoutMs: 120_000,
+    expiresAtMs: performance.now() + 120_000,
+  },
 ) => {
   const root = await createTestTempDirectory(
     "rea-firmware-publication-lifetime-",
@@ -669,6 +709,7 @@ const publication = async (
     files: new FirmwareFileAccess(),
     workspacePath,
     deadline,
+    analysisTimeoutMs: 120_000,
     outputDirectory: join(root, "published"),
     entries: [],
     normalized,
@@ -708,14 +749,17 @@ it("preserves primitive cancellation before publication commit and rolls back th
   const fixture = await publication(controller.signal);
   const create = SafeOutputTree.create;
   vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
-    const tree = await create(...args);
+    const tree = await create.call(SafeOutputTree, ...args);
     controller.abort(null);
     return tree;
   });
   const error = await publishFirmwareExtraction(fixture.context).catch(
     (cause: unknown) => cause,
   );
-  expect(error).toBeInstanceOf(AnalysisCancelledError);
+  expect(
+    error,
+    error instanceof Error ? error.stack : String(error),
+  ).toBeInstanceOf(AnalysisCancelledError);
   if (error instanceof AnalysisCancelledError) expect(error.cause).toBeNull();
   await expect(access(fixture.context.outputDirectory)).rejects.toMatchObject({
     code: "ENOENT",
@@ -734,11 +778,20 @@ it.each(["caller", "deadline"])(
         : new DOMException("controlled deadline", "TimeoutError");
     const fixture = await publication(
       controller.signal,
-      kind === "deadline" ? controller.signal : undefined,
+      kind === "deadline"
+        ? {
+            phase: "publication" as const,
+            signal: controller.signal,
+            timeoutMs: 120_000,
+            expiresAtMs: performance.now() + 120_000,
+          }
+        : undefined,
     );
     const create = SafeOutputTree.create;
+    let outputTree: SafeOutputTree | undefined;
     vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
-      const tree = await create(...args);
+      const tree = await create.call(SafeOutputTree, ...args);
+      outputTree = tree;
       fault.selected = tree.outputRoot;
       fault.onSync = () => controller.abort(reason);
       return tree;
@@ -746,9 +799,13 @@ it.each(["caller", "deadline"])(
     const error = await publishFirmwareExtraction(fixture.context).catch(
       (cause: unknown) => cause,
     );
+    expect(outputTree?.published).toBe(false);
     if (!(error instanceof AnalysisError))
       throw new Error("Expected typed tree failure");
-    expect(error.cleanupIncomplete).toBe(true);
+    expect(
+      error.cleanupIncomplete,
+      JSON.stringify(projectAnalysisError(error)),
+    ).toBe(true);
     expect(error.diagnostics?.primary_error).toMatchObject({
       code: "cleanup_incomplete",
       details: {
@@ -827,22 +884,14 @@ it("waits through selected-range snapshot finalization when shutdown starts duri
   await mkdir(work);
   await writeFile(path, "firmware bytes");
   fault.selected = path;
-  let enter!: () => void;
-  let release!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const sourceClose = phaseGate();
   fault.onClose = async () => {
     fault.blocked.clear();
-    enter();
-    await gate;
+    await sourceClose.hold();
   };
   const files = new FirmwareFileAccess();
   const pending = files.snapshot(
-    {
+    firmwareRequestSchema.parse({
       operation: "extract_firmware",
       input: {
         path,
@@ -852,19 +901,19 @@ it("waits through selected-range snapshot finalization when shutdown starts duri
         max_output_files: 10,
         range: { offset: 1, length: 4 },
       },
-    },
+    }),
     work,
     new AbortController().signal,
   );
   try {
-    await entered;
+    await sourceClose.reached(pending, "firmware source close");
     let closed = false;
     const closing = files.close().then(() => {
       closed = true;
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
-    release();
+    sourceClose.release();
     const snapshot = await pending;
     await closing;
     expect(snapshot.selection).toMatchObject({
@@ -874,7 +923,7 @@ it("waits through selected-range snapshot finalization when shutdown starts duri
     });
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
   } finally {
-    release();
+    sourceClose.release();
     await pending.catch(() => {});
     await files.close();
   }
@@ -902,7 +951,10 @@ it("retains the exact publication source descriptor when its final close fails",
     )
     .catch((cause: unknown) => cause);
   expect(raw).toBeInstanceOf(ArtifactFileCleanupFailure);
-  const error = firmwareFailure(raw, "unblob", "extract_firmware");
+  const error = firmwareFailure(raw, {
+    engine: "unblob",
+    operation: "extract_firmware",
+  });
   expect(error.cleanupResources).toContain(path);
   await tree.rollback();
   expect(error.cleanupIncomplete).toBe(true);
@@ -961,21 +1013,13 @@ it("shares one workspace cleanup attempt across concurrent shutdown callers", as
   await writeFile(path, "firmware bytes");
   let blocked = true;
   let attempts = 0;
-  let enter!: () => void;
-  let release!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const workspaceCleanup = phaseGate();
   const close = PrivateRuntimeRoot.prototype.close;
   vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
     async function (this: PrivateRuntimeRoot) {
       attempts++;
       if (blocked) throw new Error("controlled first workspace close failure");
-      enter();
-      await gate;
+      await workspaceCleanup.hold();
       await close.call(this);
     },
   );
@@ -989,15 +1033,20 @@ it("shares one workspace cleanup attempt across concurrent shutdown callers", as
   blocked = false;
   const first = provider.close();
   try {
-    await entered;
+    await workspaceCleanup.reached(first, "firmware workspace cleanup");
     const second = provider.close();
-    expect(second).toBe(first);
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
     expect(attempts).toBe(2);
-    release();
+    workspaceCleanup.release();
     await Promise.all([first, second]);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
-    release();
+    workspaceCleanup.release();
     await first;
   }
 });

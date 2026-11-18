@@ -55,10 +55,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { traceDylibResolution } from "../../src/artifacts/apple/DylibResolutionReader.js";
 import { machoImage } from "../../src/artifacts/apple/MachoImage.fixture.js";
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { ArtifactProvider } from "../../src/artifacts/ArtifactProvider.js";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -123,6 +123,23 @@ it("preserves a dyld read failure when the same read observes cancellation", asy
   fault.abortOnRead = true;
   await expect(trace()).rejects.toBe(cause);
   expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+});
+
+it("retains the original dyld I/O cause through provider translation", async () => {
+  const { client } = await fixture();
+  const cause = Object.assign(new Error("controlled dyld EIO"), {
+    code: "EIO",
+    path: fault.path,
+  });
+  fault.readFailure = cause;
+  const result = await client.execute("trace_dylib_resolution", {
+    roots: ["Main"],
+  });
+  if (result.ok) throw new Error("Expected failed dyld read");
+  expect(result.error).toMatchObject({ reason: "io" });
+  expect(result.error.cause).toBe(cause);
+  expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+  await expect(client.close()).resolves.toMatchObject({ ok: true });
 });
 
 it("observes cancellation during the final dyld digest close", async () => {
@@ -381,3 +398,33 @@ it("waits for an in-flight final dyld close before completing provider close", a
     await running;
   }
 });
+
+it.each(["image", "digest"] as const)(
+  "retains the path and filesystem cause when the pathname disappears during the dyld %s read",
+  async (stage) => {
+    const { client } = await fixture();
+    fault.onRead = async () => {
+      if (fault.handles.length !== (stage === "image" ? 1 : 2)) return;
+      fault.onRead = undefined;
+      await rename(fault.path, `${fault.path}.old`);
+    };
+    const result = await client.execute("trace_dylib_resolution", {
+      roots: ["Main"],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "integrity",
+        integrityCheck: "member-identity",
+        detail: expect.stringContaining(fault.path),
+        cause: {
+          reason: "integrity",
+          cause: { code: "ENOENT", path: fault.path },
+        },
+      },
+    });
+    expect(fault.handles).toHaveLength(stage === "image" ? 1 : 2);
+    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+    await expect(client.close()).resolves.toMatchObject({ ok: true });
+  },
+);

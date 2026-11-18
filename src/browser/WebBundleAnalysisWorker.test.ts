@@ -1,9 +1,10 @@
+import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerInspection.js";
+import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -11,16 +12,36 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import {
+  primaryAnalysisError,
   resolvedAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { javaScriptRuntime } from "../domain/runtimeVersion.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
+import {
+  webBundleHeapExhaustedReason,
+  webBundleHeapExhaustedRemediation,
+  webBundleMemoryExhaustion,
+} from "../domain/webBundleAnalysis.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import {
   spawnOwnedProviderProcess,
   type ProviderProcessHandle,
 } from "../process/ProviderProcess.js";
-import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
+import {
+  WebBundleAnalysisWorker,
+  WebBundleWorkerCleanup,
+} from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
+import {
+  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
+  javaScriptMemberMutationRefusal,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -45,10 +66,11 @@ const makeScript = (text: string): IncludedScript => ({
 const sourceWorkerProgram = (
   hangMarker?: string,
   oomMarker?: string,
+  stderrMarker?: string,
 ): string => `
   const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(new URL("./WebBundleAnalysisWorkerServer.ts", import.meta.url).href)});
   const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
-  const analyze = (script) => {
+  const analyze = (script, precision, allowance) => {
     if (${JSON.stringify(hangMarker)} !== undefined && script.source.artifact.text === ${JSON.stringify(hangMarker)}) {
       for (;;) {}
     }
@@ -56,7 +78,9 @@ const sourceWorkerProgram = (
       const retained = [];
       for (;;) retained.push(new Array(50_000).fill({ marker: "bounded-child-oom" }));
     }
-    return analyzeCapturedWebScript(script);
+    if (${JSON.stringify(stderrMarker)} !== undefined)
+      process.stderr.write(${JSON.stringify(stderrMarker)} + "\\n");
+    return analyzeCapturedWebScript(script, precision, allowance);
   };
   await serveWebBundleAnalysisWorker(analyze);
 `;
@@ -66,17 +90,60 @@ type TestMode =
       readonly kind: "source";
       readonly hangMarker?: string;
       readonly oomMarker?: string;
+      readonly stderrMarker?: string;
+    }
+  | {
+      readonly kind: "result";
+      readonly encoding:
+        | "invalid-utf8"
+        | "replacement"
+        | "bom"
+        | "malformed-json";
     }
   | { readonly kind: "delayed-ready" }
+  | { readonly kind: "exit-before-ready" }
   | {
       readonly kind: "protocol";
-      readonly failure: "wrong-id" | "oversized-control" | "oversized-result";
+      readonly failure:
+        | "wrong-id"
+        | "oversized-control"
+        | "oversized-result"
+        | "late-failure"
+        | "exit-7"
+        | "truncated-exit"
+        | "abort-first-exit"
+        | "tail-exit"
+        | "malformed"
+        | "wrong-job-failure"
+        | "resource-failure"
+        | "work-refusal"
+        | "final-frame-held-pipe"
+        | "zero-exit-held-pipe"
+        | "heap-exit"
+        | "heap-exit-after-noise";
     };
 
 const protocolWorkerProgram = (
-  failure: "wrong-id" | "oversized-control" | "oversized-result",
+  failure:
+    | "wrong-id"
+    | "oversized-control"
+    | "oversized-result"
+    | "late-failure"
+    | "exit-7"
+    | "truncated-exit"
+    | "abort-first-exit"
+    | "tail-exit"
+    | "malformed"
+    | "wrong-job-failure"
+    | "resource-failure"
+    | "work-refusal"
+    | "final-frame-held-pipe"
+    | "zero-exit-held-pipe"
+    | "heap-exit"
+    | "heap-exit-after-noise",
 ): string => `
   import { createInterface } from "node:readline";
+  import { spawn } from "node:child_process";
   import { getHeapStatistics } from "node:v8";
   const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
   send({ kind: "ready", heap_limit_bytes: getHeapStatistics().heap_size_limit });
@@ -84,12 +151,75 @@ const protocolWorkerProgram = (
   input.once("line", (line) => {
     const request = JSON.parse(line);
     ${
-      failure === "wrong-id"
-        ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
-        : failure === "oversized-control"
-          ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
-          : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
+      failure === "heap-exit" || failure === "heap-exit-after-noise"
+        ? // The 256 KiB retention budget keeps only the head of stderr.
+          `process.stderr.write(${failure === "heap-exit" ? '""' : '"x".repeat(300 * 1024) + "\\n"'} + "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n", () => process.exit(7));`
+        : failure === "zero-exit-held-pipe"
+          ? `const program = "setTimeout(() => process.exit(0), 300);";
+           spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
+           process.exit(0);`
+          : failure === "exit-7"
+            ? `process.stderr.write("controlled exit 7\\n", () => process.exit(7));`
+            : failure === "tail-exit"
+              ? `const lateProgram = "setTimeout(() => { process.stderr.write('late tail marker'); setTimeout(() => process.exit(0), 500); }, 50);";
+             spawn(process.execPath, ["-e", lateProgram], { stdio: ["ignore", "ignore", "inherit"] });
+             process.stderr.write("early exit marker\\n", () => process.exit(7));`
+              : failure === "truncated-exit"
+                ? `process.stderr.write("x".repeat(300 * 1024), () => process.exit(7));`
+                : failure === "abort-first-exit"
+                  ? `process.stderr.write("late natural exit 7\\n", () => process.exit(7));`
+                  : failure === "malformed"
+                    ? `process.stdout.write("{not-json}\\n"); setInterval(() => {}, 1_000);`
+                    : failure === "wrong-job-failure"
+                      ? `send({ kind: "failure", id: ${JSON.stringify(randomUUID())}, reason: "output", message: "failure for another request" });
+               setInterval(() => {}, 1_000);`
+                      : failure === "resource-failure"
+                        ? `send({ kind: "failure", id: request.id, reason: "resource", message: "bounded result capacity" });
+                 setInterval(() => {}, 1_000);`
+                        : failure === "work-refusal"
+                          ? `send({ kind: "failure", id: request.id, reason: "resource", limits: { ${JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT}: request.member_mutation_allowance.alias_states, sent_source: request.member_mutation_allowance.source }, message: "work allowance" });
+                 setInterval(() => {}, 1_000);`
+                          : failure === "final-frame-held-pipe"
+                            ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
+               const program = "setTimeout(() => { process.stdout.write(" + JSON.stringify(frame + "\\n") + "); setInterval(() => {}, 1000); }, 100);";
+               spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
+               process.exit(7);`
+                            : failure === "late-failure"
+                              ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
+           setInterval(() => {}, 1_000);`
+                              : failure === "wrong-id"
+                                ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
+                                : failure === "oversized-control"
+                                  ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
+                                  : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
     }
+  });
+`;
+
+const resultWorkerProgram = (encoding: string): string => `
+  import { readFile, writeFile } from "node:fs/promises";
+  import { createHash } from "node:crypto";
+  import { createInterface } from "node:readline";
+  import { getHeapStatistics } from "node:v8";
+  const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
+  const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+  send({ kind: "ready", heap_limit_bytes: getHeapStatistics().heap_size_limit });
+  createInterface({ input: process.stdin, crlfDelay: Infinity }).once("line", async (line) => {
+    const request = JSON.parse(line);
+    const script = JSON.parse(await readFile(request.id + ".source", "utf8"));
+    const facts = analyzeCapturedWebScript(script);
+    let bytes = Buffer.from(JSON.stringify(facts));
+    const encoding = ${JSON.stringify(encoding)};
+    if (encoding === "invalid-utf8") {
+      const index = bytes.indexOf(Buffer.from("result-marker"));
+      if (index < 0) throw new Error("Expected endpoint marker in schema-valid facts");
+      bytes[index] = 0xff;
+    } else if (encoding === "bom") bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]);
+    else if (encoding === "malformed-json") bytes = bytes.subarray(0, bytes.length - 1);
+    await writeFile(request.id + ".result", bytes);
+    send({ kind: "complete", id: request.id, result: {
+      bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"),
+    } });
   });
 `;
 
@@ -101,6 +231,8 @@ const delayedReadyProgram = `
   }, 1_500);
   createInterface({ input: process.stdin, crlfDelay: Infinity });
 `;
+
+const exitBeforeReadyProgram = `process.exit(0);`;
 
 interface SpawnedTestProcess {
   readonly process: ProviderProcessHandle;
@@ -119,10 +251,18 @@ const launcherFor = (
     const loader = import.meta.resolve("tsx");
     const program =
       mode.kind === "source"
-        ? sourceWorkerProgram(mode.hangMarker, mode.oomMarker)
+        ? sourceWorkerProgram(
+            mode.hangMarker,
+            mode.oomMarker,
+            mode.stderrMarker,
+          )
         : mode.kind === "delayed-ready"
           ? delayedReadyProgram
-          : protocolWorkerProgram(mode.failure);
+          : mode.kind === "exit-before-ready"
+            ? exitBeforeReadyProgram
+            : mode.kind === "result"
+              ? resultWorkerProgram(mode.encoding)
+              : protocolWorkerProgram(mode.failure);
     const spawned = await spawnOwnedProviderProcess({
       ...request,
       arguments: [
@@ -150,7 +290,7 @@ const launcherFor = (
   };
 };
 
-const failureOf = <Value>(
+const failureOf = (
   result: Awaited<ReturnType<WebBundleAnalysisWorker["analyze"]>>,
 ): AnalysisError => {
   if (result.ok) throw new Error("Expected web worker failure");
@@ -175,6 +315,202 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) finish();
   });
 };
+
+it.each([false, true])(
+  "preserves physical ownership inspection failure when cancellation follows (same reason: %s)",
+  async (sameReason) => {
+    const controller = new AbortController();
+    const physical = new Error("inspection physically failed");
+    const reason = sameReason ? physical : { cancelled: "late" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw physical;
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.cause).toBe(physical);
+      expect(
+        error.secondaryFailures.some((failure) => failure.cause === reason),
+      ).toBe(true);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
+
+it.each(["reason", "normalized-exec"] as const)(
+  "retains %s cancellation from ownership inspection",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancel" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw kind === "reason"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : ProcessOwnershipInspectionCancelled.from(
+              new ExecFileOutputCancelledError(reason),
+            );
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const result = await worker.analyze(
+        makeScript("0"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisCancelledError);
+      expect(error.cause).toBe(reason);
+    } finally {
+      prepare.mockRestore();
+      await worker.close();
+    }
+  },
+);
+
+it("retains ownership-helper cleanup until worker close retries it", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel" };
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      releaseOwnedCleanup(cleanup);
+    }),
+  };
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
+        cancellation: { reason },
+        cleanupFailure: cleanup,
+        cleanupOwner: owner,
+      });
+    });
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(
+      makeScript("0"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it("retains failed helper cleanup without caller cancellation", async () => {
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["helper-root"],
+    {},
+    { operation: "prepare_owned_process" },
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      releaseOwnedCleanup(cleanup);
+    }),
+  };
+  const physical = new DarwinProcessOwnershipInspectionError(
+    "inspection failed",
+    { cleanupFailure: cleanup, cleanupOwner: owner },
+  );
+  const prepare = vi
+    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+    .mockRejectedValue(physical);
+  const worker = new WebBundleAnalysisWorker();
+  try {
+    const result = await worker.analyze(makeScript("0"), 5_000);
+    const error = failureOf(result);
+    expect(primaryAnalysisError(error).cause).toBe(physical);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain("helper-root");
+    await worker.close();
+    expect(owner.close).toHaveBeenCalledOnce();
+    expect(error.cleanupIncomplete).toBe(false);
+  } finally {
+    prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it("keeps a refused script's syntax facts and states the allowance the host sent", async () => {
+  // Four conditional self-selections before one member write (#8294); the
+  // Map lookup makes the analyzer index member mutations.
+  const source = [
+    "/* __webpack_require__ */ function probe(input, env) { var m; if (env.first) m = env.first.info;",
+    ...Array.from(
+      { length: 4 },
+      (_, index) =>
+        `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+    ),
+    "m[1] = input.length; var c = new Map(); c.get('k'); fetch('/refused'); return m; }",
+  ].join(" ");
+  const script = makeScript(source);
+  const allowance = { aliasStates: 8, source: "runtime" } as const;
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
+  try {
+    const result = await worker.analyze(
+      script,
+      10_000,
+      undefined,
+      undefined,
+      allowance,
+    );
+    if (!result.ok) throw result.error.error;
+    const refusal = javaScriptMemberMutationRefusal(
+      "analyze_web_bundle",
+      allowance,
+    );
+    expect(result.value).toEqual({
+      status: "unavailable",
+      script_key: script.script_key,
+      reason: "resource_constraint",
+      detail: expect.stringContaining("more than 8 alias states"),
+      limit: refusal.limit,
+      remediation: refusal.remediationAction,
+      partial: {
+        refused_phase: "member-mutations",
+        parse_status: "parsed",
+        inferences: [
+          expect.objectContaining({
+            kind: "bundle_runtime",
+            value: "webpack",
+          }),
+        ],
+      },
+    });
+  } finally {
+    await worker.close();
+  }
+});
 
 it("reuses one real owned worker for completed facts from consecutive scripts", async () => {
   const children: ProviderProcessHandle[] = [];
@@ -206,6 +542,550 @@ it("reuses one real owned worker for completed facts from consecutive scripts", 
     expect(children).toHaveLength(1);
   } finally {
     await worker.close();
+  }
+});
+
+it("preserves an observed failure frame and the opaque later abort reason", async () => {
+  const reason = { opaque: "caller cancellation reason" };
+  const controller = new AbortController();
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor(
+      { kind: "protocol", failure: "late-failure" },
+      {
+        onSpawn: ({ process: child }) => {
+          child.stdout?.on("data", (chunk) => {
+            if (String(chunk).includes("failure frame before abort"))
+              queueMicrotask(() => controller.abort(reason));
+          });
+        },
+      },
+    ),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/late');"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisOutputError);
+    expect(error.message).toContain("failure frame before abort");
+    expect(error.secondaryFailures).toHaveLength(1);
+    expect(error.secondaryFailures[0]).toBeInstanceOf(AnalysisCancelledError);
+    expect(error.secondaryFailures[0]?.cause).toBe(reason);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("retains exit-7 output when abort follows the observed exit", async () => {
+  for (const abortAfterExit of [false, true]) {
+    const reason = { opaque: "exit observed before abort" };
+    const controller = new AbortController();
+    const worker = new WebBundleAnalysisWorker(
+      128,
+      launcherFor(
+        { kind: "protocol", failure: "exit-7" },
+        {
+          onSpawn: ({ process: child }) => {
+            if (abortAfterExit)
+              child.once("exit", () =>
+                queueMicrotask(() => controller.abort(reason)),
+              );
+          },
+        },
+      ),
+    );
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/exit-7');"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.capturedOutput?.exit_code).toBe(7);
+      expect(error.capturedOutput?.stderr).toContain("controlled exit 7");
+      if (abortAfterExit) {
+        expect(error.secondaryFailures).toHaveLength(1);
+        expect(error.secondaryFailures[0]).toBeInstanceOf(
+          AnalysisCancelledError,
+        );
+        expect(error.secondaryFailures[0]?.cause).toBe(reason);
+      } else {
+        expect(error.secondaryFailures).toHaveLength(0);
+      }
+    } finally {
+      await worker.close();
+    }
+  }
+});
+
+it("keeps cancellation when abort is observed before a later child exit", async () => {
+  const controller = new AbortController();
+  let childExit: Promise<number | null> | undefined;
+  const launch = launcherFor(
+    { kind: "protocol", failure: "abort-first-exit" },
+    {
+      onSpawn: ({ process: child }) => {
+        childExit = new Promise((resolve) =>
+          child.once("exit", (code) => resolve(code)),
+        );
+        child.stdout?.once("data", () =>
+          queueMicrotask(() => controller.abort(null)),
+        );
+      },
+    },
+  );
+  const worker = new WebBundleAnalysisWorker(128, async (request) => {
+    const spawned = await launch(request);
+    return {
+      ...spawned,
+      cleanup: async () => {
+        // Cancellation is already observed. Explicitly release the fixture's
+        // later exit before invoking the real process-group cleanup owner.
+        spawned.process.stdin?.write("{}\n");
+        await waitForExit(spawned.process);
+        return spawned.cleanup === undefined
+          ? cleanupOwnedProcessGroup(spawned.ownership)
+          : spawned.cleanup();
+      },
+    };
+  });
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/abort-first');"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisCancelledError);
+    expect(error.cause).toBeNull();
+    expect(error.capturedOutput).toBeUndefined();
+    expect(await childExit).toBe(7);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("keeps a code-0 exit pending while an inherited output pipe can still produce a frame", async () => {
+  for (const abortAfterExit of [false, true]) {
+    const reason = { opaque: "code-0 exit while inherited pipe is open" };
+    const controller = new AbortController();
+    const worker = new WebBundleAnalysisWorker(
+      128,
+      launcherFor(
+        { kind: "protocol", failure: "zero-exit-held-pipe" },
+        {
+          onSpawn: ({ process: child }) => {
+            if (abortAfterExit)
+              child.once("exit", () =>
+                queueMicrotask(() => controller.abort(reason)),
+              );
+          },
+        },
+      ),
+    );
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/zero-exit-held-pipe');"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      if (abortAfterExit) {
+        expect(error).toBeInstanceOf(AnalysisCancelledError);
+        expect(error.cause).toBe(reason);
+      } else {
+        expect(error).toBeInstanceOf(AnalysisOutputError);
+        expect(error.capturedOutput?.exit_code).toBe(0);
+      }
+    } finally {
+      await worker.close();
+    }
+  }
+});
+
+it("retains EOF without a terminal response when abort follows the close event", async () => {
+  const reason = { opaque: "abort queued after owned output close" };
+  const controller = new AbortController();
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor(
+      { kind: "protocol", failure: "zero-exit-held-pipe" },
+      {
+        onSpawn: ({ process: child }) => {
+          child.once("close", () =>
+            queueMicrotask(() => controller.abort(reason)),
+          );
+        },
+      },
+    ),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/eof-before-abort');"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisOutputError);
+    expect(error.message).toContain("output closed before completing");
+    expect(error.capturedOutput?.exit_code).toBe(0);
+    expect(error.secondaryFailures).toHaveLength(1);
+    expect(error.secondaryFailures[0]).toBeInstanceOf(AnalysisCancelledError);
+    expect(error.secondaryFailures[0]?.cause).toBe(reason);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("retains startup EOF without a ready frame when abort follows the close event", async () => {
+  for (const abortAfterClose of [false, true]) {
+    const reason = { opaque: "abort queued after startup output close" };
+    const controller = new AbortController();
+    const worker = new WebBundleAnalysisWorker(
+      128,
+      launcherFor(
+        { kind: "exit-before-ready" },
+        {
+          onSpawn: ({ process: child }) => {
+            if (abortAfterClose)
+              child.once("close", () =>
+                queueMicrotask(() => controller.abort(reason)),
+              );
+          },
+        },
+      ),
+    );
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/startup-eof');"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.message).toContain("output closed before completing");
+      expect(error.capturedOutput?.exit_code).toBe(0);
+      if (abortAfterClose) {
+        expect(error.secondaryFailures).toHaveLength(1);
+        expect(error.secondaryFailures[0]).toBeInstanceOf(
+          AnalysisCancelledError,
+        );
+        expect(error.secondaryFailures[0]?.cause).toBe(reason);
+      } else {
+        expect(error.secondaryFailures).toHaveLength(0);
+      }
+    } finally {
+      await worker.close();
+    }
+  }
+});
+
+it("retains exit-time truncation when abort follows an oversized stderr exit", async () => {
+  const reason = { opaque: "oversized stderr exit observed before abort" };
+  const controller = new AbortController();
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor(
+      { kind: "protocol", failure: "truncated-exit" },
+      {
+        onSpawn: ({ process: child }) => {
+          child.once("exit", () =>
+            queueMicrotask(() => controller.abort(reason)),
+          );
+        },
+      },
+    ),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/truncated-exit');"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisOutputError);
+    expect(error.capturedOutput?.exit_code).toBe(7);
+    expect(error.capturedOutput?.truncated).toBe(true);
+    expect(Buffer.byteLength(error.capturedOutput?.stderr ?? "")).toBeLessThan(
+      300 * 1024,
+    );
+    expect(error.secondaryFailures[0]?.cause).toBe(reason);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("keeps malformed protocol output primary when abort follows its observation", async () => {
+  const reason = { opaque: "malformed frame observed before abort" };
+  for (const abortAfterFrame of [false, true]) {
+    const controller = new AbortController();
+    const worker = new WebBundleAnalysisWorker(
+      128,
+      launcherFor(
+        { kind: "protocol", failure: "malformed" },
+        {
+          onSpawn: ({ process: child }) => {
+            if (abortAfterFrame)
+              child.stdout?.on("data", (chunk) => {
+                if (String(chunk).includes("{not-json}"))
+                  queueMicrotask(() => controller.abort(reason));
+              });
+          },
+        },
+      ),
+    );
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/malformed');"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.message).toContain("Invalid web analyzer control frame");
+      if (abortAfterFrame) {
+        expect(error.secondaryFailures).toHaveLength(1);
+        expect(error.secondaryFailures[0]?.cause).toBe(reason);
+      } else {
+        expect(error.secondaryFailures).toHaveLength(0);
+      }
+    } finally {
+      await worker.close();
+    }
+  }
+});
+
+it("does not let a failure frame for another job replace cancellation", async () => {
+  const reason = { opaque: "unrelated frame observed before abort" };
+  const controller = new AbortController();
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor(
+      { kind: "protocol", failure: "wrong-job-failure" },
+      {
+        onSpawn: ({ process: child }) => {
+          child.stdout?.on("data", (chunk) => {
+            if (String(chunk).includes("failure for another request"))
+              queueMicrotask(() => controller.abort(reason));
+          });
+        },
+      },
+    ),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/wrong-job');"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisCancelledError);
+    expect(error.cause).toBe(reason);
+    expect(error.secondaryFailures).toHaveLength(0);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("sends the accepted member-mutation allowance and names its setting on refusal", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor({ kind: "protocol", failure: "work-refusal" }),
+  );
+  try {
+    const error = failureOf(
+      await worker.analyze(
+        makeScript("fetch('/work');"),
+        5_000,
+        undefined,
+        undefined,
+        { aliasStates: 2048, source: "setting" },
+      ),
+    );
+    if (!(error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a worker resource constraint failure");
+    expect(error).toMatchObject({
+      resource: "cpu",
+      retryable: false,
+      limit: {
+        setting: "javascript.member_mutation_alias_states",
+        effective_value: 2048,
+        source: "setting",
+      },
+    });
+    expect(error.fixedAllowance).toBeUndefined();
+    expect(error.reportedLimits).toMatchObject({
+      [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 2048,
+      sent_source: "setting",
+    });
+  } finally {
+    await worker.close();
+  }
+});
+
+it("keeps the resource budget on an observed worker resource frame", async () => {
+  const reason = { opaque: "resource frame before abort" };
+  const controller = new AbortController();
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor(
+      { kind: "protocol", failure: "resource-failure" },
+      {
+        onSpawn: ({ process: child }) => {
+          child.stdout?.on("data", (chunk) => {
+            if (String(chunk).includes("bounded result capacity"))
+              queueMicrotask(() => controller.abort(reason));
+          });
+        },
+      },
+    ),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/resource-failure');"),
+      5_000,
+      controller.signal,
+    );
+    const error = failureOf(result);
+    if (!(error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a worker resource constraint failure");
+    expect(error.reportedLimits?.result_budget_bytes).toBeGreaterThan(0);
+    expect(error.secondaryFailures[0]?.cause).toBe(reason);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("consumes a final frame before an inherited descendant pipe closes", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor({ kind: "protocol", failure: "final-frame-held-pipe" }),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/descendant-frame');"),
+      5_000,
+    );
+    const error = failureOf(result);
+    expect(error).toBeInstanceOf(AnalysisOutputError);
+    expect(error.message).toContain("final frame from descendant");
+  } finally {
+    await worker.close();
+  }
+});
+
+it.each(["heap-exit", "heap-exit-after-noise"] as const)(
+  "projects a heap-marker exit with the runtime's exhausted resource (%s)",
+  async (failure) => {
+    const heapMb = 256;
+    const worker = new WebBundleAnalysisWorker(
+      heapMb,
+      launcherFor({ kind: "protocol", failure }),
+    );
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("report heap exit"), 15_000),
+      );
+      expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+      const exhaustion = webBundleMemoryExhaustion({
+        runtime: javaScriptRuntime(process.versions).id,
+        heapMb,
+        memoryLimitReached: false,
+        processMemoryLimitBytes: javaScriptWorkerMemoryLimitBytes(heapMb),
+      });
+      expect(error.message).toContain(webBundleHeapExhaustedReason(exhaustion));
+      expect(error).toMatchObject({
+        remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
+        ...(exhaustion.kind === "bun-allocation"
+          ? {}
+          : {
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_heap_mb",
+                effective_value: heapMb,
+              },
+            }),
+        reportedLimits: {
+          max_heap_mb: heapMb,
+          worker_process_memory_limit_bytes:
+            javaScriptWorkerMemoryLimitBytes(heapMb),
+        },
+        // The runtime's own report survives even when it lies past the
+        // retained stderr.
+        diagnostics: {
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            stream: "stderr",
+            line_complete: true,
+          },
+        },
+      });
+    } finally {
+      await worker.close();
+    }
+  },
+);
+
+it("does not classify heap-marker stderr from a healthy worker as exhaustion", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor({
+      kind: "source",
+      stderrMarker:
+        "FATAL ERROR: Allocation failed - JavaScript heap out of memory",
+    }),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/healthy');"),
+      5_000,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.status).toBe("analyzed");
+  } finally {
+    await worker.close();
+  }
+});
+
+it("projects late stderr tails with completeness from the actual selection point", async () => {
+  for (const abortAfterExit of [false, true]) {
+    const reason = { opaque: "abort after exit but after late stderr tail" };
+    const controller = new AbortController();
+    const worker = new WebBundleAnalysisWorker(
+      128,
+      launcherFor(
+        { kind: "protocol", failure: "tail-exit" },
+        {
+          onSpawn: ({ process: child }) => {
+            if (abortAfterExit)
+              child.once("exit", () =>
+                setTimeout(() => controller.abort(reason), 150),
+              );
+          },
+        },
+      ),
+    );
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/late-tail');"),
+        5_000,
+        controller.signal,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.capturedOutput?.stderr).toContain("early exit marker");
+      expect(error.capturedOutput?.stderr).toContain("late tail marker");
+      expect(error.capturedOutput?.truncated).toBe(abortAfterExit);
+      if (abortAfterExit)
+        expect(error.secondaryFailures[0]?.cause).toBe(reason);
+      else expect(error.secondaryFailures).toHaveLength(0);
+    } finally {
+      await worker.close();
+    }
   }
 });
 
@@ -354,6 +1234,189 @@ it.each([
           "exceed the host's remaining reserved result capacity",
         );
     } finally {
+      await worker.close();
+    }
+  },
+);
+
+it.each(["invalid-utf8", "bom", "malformed-json"] as const)(
+  "rejects %s worker result bytes with a matching descriptor",
+  async (encoding) => {
+    let root: string | undefined;
+    const worker = new WebBundleAnalysisWorker(
+      WEB_BUNDLE_WORKER_LIMITS.heapMb,
+      launcherFor(
+        { kind: "result", encoding },
+        {
+          onSpawn: (spawned) => {
+            root = spawned.root;
+          },
+        },
+      ),
+    );
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/result-marker');"),
+        10_000,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.cause).toBeInstanceOf(
+        encoding === "invalid-utf8" ? TypeError : SyntaxError,
+      );
+      expect(error.cleanupIncomplete).toBe(false);
+    } finally {
+      await worker.close();
+    }
+    expect(root).toBeDefined();
+    await expect(access(root!)).rejects.toMatchObject({
+      code: "ENOENT",
+      path: root,
+    });
+  },
+);
+
+it("preserves literal replacement characters in valid UTF-8 worker facts", async () => {
+  let root: string | undefined;
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor(
+      { kind: "result", encoding: "replacement" },
+      {
+        onSpawn: (spawned) => {
+          root = spawned.root;
+        },
+      },
+    ),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/literal-�');"),
+      10_000,
+    );
+    if (!result.ok) throw new Error(result.error.error.message);
+    if (result.value.status !== "analyzed")
+      throw new Error("Expected analyzed worker facts");
+    expect(result.value.observations.endpoints).toContainEqual(
+      expect.objectContaining({ value: "/literal-�" }),
+    );
+  } finally {
+    await worker.close();
+  }
+  expect(root).toBeDefined();
+  await expect(access(root!)).rejects.toMatchObject({
+    code: "ENOENT",
+    path: root,
+  });
+});
+
+it("retries independent browser workers once while an earlier exact owner remains stuck", async () => {
+  const cleanup = new WebBundleWorkerCleanup();
+  const failures = [true, true];
+  const attempts = [0, 0];
+  const roots: string[] = [];
+  let spawning = 0;
+  let releaseSpawns: () => void = () => {};
+  const bothSpawning = new Promise<void>((resolve) => {
+    releaseSpawns = resolve;
+  });
+  const workers = [0, 1].map((index) => {
+    const launch = launcherFor({ kind: "protocol", failure: "malformed" });
+    return new WebBundleAnalysisWorker(
+      128,
+      async (request) => {
+        const child = await launch(request);
+        roots[index] = request.cwd!;
+        if (++spawning === 2) releaseSpawns();
+        await bothSpawning;
+        return {
+          ...child,
+          cleanup: async () => {
+            attempts[index]! += 1;
+            return failures[index]
+              ? {
+                  cleaned: false,
+                  reason: `exact worker ${index} cleanup blocked`,
+                }
+              : child.cleanup!();
+          },
+        };
+      },
+      cleanup,
+    );
+  });
+  try {
+    const results = await Promise.all(
+      workers.map((worker) =>
+        worker.analyze(makeScript("fetch('/mixed-cleanup');"), 10_000),
+      ),
+    );
+    const errors = results.map(failureOf);
+    expect(errors.every((error) => error.cleanupIncomplete)).toBe(true);
+    expect(attempts).toEqual([1, 1]);
+    failures[1] = false;
+    await expect(cleanup.retry()).rejects.toThrow();
+    expect(attempts).toEqual([2, 2]);
+    expect(errors[0]?.cleanupIncomplete).toBe(true);
+    expect(errors[1]?.cleanupIncomplete).toBe(false);
+    await access(roots[0]!);
+    await expect(access(roots[1]!)).rejects.toMatchObject({ code: "ENOENT" });
+    failures[0] = false;
+    await cleanup.retry();
+    expect(attempts).toEqual([3, 2]);
+    expect(errors[0]?.cleanupIncomplete).toBe(false);
+    await expect(access(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    failures.fill(false);
+    await Promise.all(workers.map((worker) => worker.close()));
+    await cleanup.retry();
+  }
+});
+
+it.each(["typed", "physical"] as const)(
+  "preserves %s ownership-admission facts from the recording worker launcher",
+  async (kind) => {
+    const controller = new AbortController();
+    const physical = new Error("physical worker admission failure");
+    const reason =
+      kind === "physical" ? physical : { caller: "cancel worker admission" };
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockResolvedValue();
+    const launcher = vi.fn<typeof spawnOwnedProviderProcess>(
+      async (options) => {
+        expect(options.signal).toBeDefined();
+        controller.abort(reason);
+        expect(options.signal?.reason).toBe(reason);
+        throw kind === "typed"
+          ? new ProcessOwnershipInspectionCancelled(reason)
+          : physical;
+      },
+    );
+    const worker = new WebBundleAnalysisWorker(128, launcher);
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("0"), 5_000, controller.signal),
+      );
+      if (kind === "typed")
+        expect(error).toBeInstanceOf(AnalysisCancelledError);
+      else {
+        expect(error).toBeInstanceOf(AnalysisOutputError);
+        expect(
+          error.secondaryFailures.some((failure) => failure.cause === reason),
+        ).toBe(true);
+      }
+      expect(error.cause).toBe(reason);
+      expect(launcher).toHaveBeenCalledOnce();
+      launcher.mockImplementationOnce(launcherFor({ kind: "source" }));
+      const recovered = await worker.analyze(
+        makeScript("fetch('/after-admission');"),
+        5_000,
+      );
+      expect(recovered.ok).toBe(true);
+      expect(launcher).toHaveBeenCalledTimes(2);
+    } finally {
+      prepare.mockRestore();
       await worker.close();
     }
   },

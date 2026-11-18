@@ -3,6 +3,7 @@ import { once } from "node:events";
 
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -42,6 +43,79 @@ afterEach(async () => {
   );
 });
 
+it("retains usable CDP sibling identities and reports malformed optional discovery metadata", async () => {
+  const { endpoint } = await listen((request, response) => {
+    const port = new URL(endpoint).port;
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify(
+        request.url === "/json/version"
+          ? {
+              Browser: "Chrome/fixture",
+              "Protocol-Version": "1.3",
+              "User-Agent": "fixture",
+              "V8-Version": "fixture",
+              "WebKit-Version": "fixture",
+              webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/fixture`,
+            }
+          : [
+              {
+                id: "malformed-attachment",
+                type: "page",
+                url: "https://example.test/a",
+                attached: "unknown",
+              },
+              {
+                id: "selected",
+                type: "page",
+                url: "https://example.test/b",
+                attached: false,
+                webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/selected`,
+              },
+              { id: 1, type: "page", url: "https://example.test/invalid" },
+              {
+                id: "invalid-socket",
+                type: "page",
+                url: "https://example.test/c",
+                attached: null,
+                webSocketDebuggerUrl: 1,
+              },
+              {
+                id: "worker",
+                type: "worker",
+                url: "https://example.test/worker",
+                attached: true,
+              },
+            ],
+      ),
+    );
+  });
+  const discovery = await discoverCdpEndpoint(endpoint, "list_browser_targets");
+  expect(discovery.targets.map(({ id }) => id)).toEqual([
+    "malformed-attachment",
+    "selected",
+    "invalid-socket",
+    "worker",
+  ]);
+  expect(discovery.targets[0]?.attached).toBeNull();
+  expect(discovery.targets[1]?.webSocket).toMatchObject({
+    scope: "page",
+    targetId: "selected",
+  });
+  expect(discovery.targets[2]?.webSocket).toBeUndefined();
+  expect(discovery.targets[3]?.attached).toBe(true);
+  expect(discovery.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining(
+        'target malformed-attachment reported malformed attached metadata "unknown"',
+      ),
+      expect.stringContaining(
+        "row 2 was excluded because its target identity is malformed",
+      ),
+    ]),
+  );
+});
+
 describe("CDP discovery cancellation ownership", () => {
   it("preserves the exact reason for a pre-aborted discovery request", async () => {
     let requests = 0;
@@ -60,7 +134,7 @@ describe("CDP discovery cancellation ownership", () => {
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
     expect(requests).toBe(0);
   });
 
@@ -88,58 +162,25 @@ describe("CDP discovery cancellation ownership", () => {
 
     expect(requestedPath).toBe("/json/version");
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
   });
 
-  it("does not replace a primary discovery failure when cancellation arrives later", async () => {
-    const primary = new BrowserObservationError(
-      "inspect_web_page",
-      "protocol_error",
-    );
-    const controller = new AbortController();
-    const failure = await withCdpDiscoveryDeadline(
-      "inspect_web_page",
-      controller.signal,
-      async () => {
-        throw primary;
-      },
-      100,
-    ).catch((error: unknown) => error);
-    controller.abort(new Error("late caller cancellation"));
-
-    expect(failure).toBe(primary);
-  });
-
-  it("does not replace a plain physical failure rejected before a late abort", async () => {
-    const primary = new Error("socket failed before cancellation");
-    const controller = new AbortController();
-    const pending = withCdpDiscoveryDeadline(
-      "inspect_web_page",
-      controller.signal,
-      () => Promise.reject(primary),
-      100,
-    ).catch((error: unknown) => error);
-    controller.abort(new Error("later caller cancellation"));
-    const failure = await pending;
-
-    expect(failure).toBe(primary);
-  });
-
-  it("classifies its own discovery deadline as timeout", async () => {
-    const failure = await withCdpDiscoveryDeadline(
-      "inspect_web_page",
-      undefined,
-      (signal) =>
-        new Promise((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
-          });
-        }),
-      1,
-    ).catch((error: unknown) => error);
-
-    expect(failure).toBeInstanceOf(BrowserObservationError);
-    expect(failure).toMatchObject({ reason: "timeout" });
+  it("keeps typed and plain discovery failures produced before a caller abort", async () => {
+    const failures = [
+      new BrowserObservationError("inspect_web_page", "protocol_error"),
+      new Error("socket failed before cancellation"),
+    ];
+    for (const primary of failures) {
+      const controller = new AbortController();
+      const pending = withCdpDiscoveryDeadline(
+        "inspect_web_page",
+        controller.signal,
+        () => Promise.reject(primary),
+        100,
+      ).catch((error: unknown) => error);
+      controller.abort(new Error("later caller cancellation"));
+      expect(await pending).toBe(primary);
+    }
   });
 
   it("normalizes a typed cancellation caused by its own deadline to timeout", async () => {
@@ -183,7 +224,7 @@ describe("CDP discovery cancellation ownership", () => {
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
   });
 
   it("keeps a deadline rejection when the caller aborts only after timeout", async () => {
@@ -193,17 +234,64 @@ describe("CDP discovery cancellation ownership", () => {
       controller.signal,
       (signal) =>
         new Promise((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
-          });
+          signal.addEventListener(
+            "abort",
+            () => {
+              controller.abort(new Error("caller stopped after timeout"));
+              reject(signal.reason);
+            },
+            { once: true },
+          );
         }),
       0,
     ).catch((error: unknown) => error);
-    controller.abort(new Error("caller stopped after timeout"));
 
     expect(failure).toBeInstanceOf(BrowserObservationError);
     expect(failure).toMatchObject({ reason: "timeout" });
   });
+});
+
+it("names the browser-socket message budget when that discovery deadline expires", async () => {
+  const failure = await withCdpDiscoveryDeadline(
+    "list_browser_targets",
+    undefined,
+    (signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+    1,
+  ).catch((error: unknown) => error);
+
+  expect(failure).toBeInstanceOf(BrowserObservationError);
+  if (!(failure instanceof BrowserObservationError)) return;
+  expect(failure.userMessage).toContain(
+    `${String(WEB_RUNTIME_LIMITS.protocolBytes)}-byte browser-socket message budget`,
+  );
+  expect(failure.userMessage).not.toContain(
+    "8388608-byte discovery document budget",
+  );
+});
+
+it("names the HTTP discovery document budget when that response deadline expires", async () => {
+  const { endpoint } = await listen(() => undefined);
+  const failure = await readCdpJson(
+    new URL(endpoint),
+    "list_browser_targets",
+    undefined,
+    { bytes: 8 * 1024 * 1024, timeoutMs: 20 },
+  ).catch((error: unknown) => error);
+
+  expect(failure).toBeInstanceOf(BrowserObservationError);
+  if (!(failure instanceof BrowserObservationError)) return;
+  expect(failure.userMessage).toContain(
+    "8388608-byte discovery document budget",
+  );
+  expect(failure.userMessage).toContain("20 ms");
+  expect(failure.userMessage).not.toContain(
+    `${String(WEB_RUNTIME_LIMITS.protocolBytes)}-byte browser-socket message budget`,
+  );
 });
 
 it("preserves an independent typed cancellation when the discovery deadline also expires", async () => {

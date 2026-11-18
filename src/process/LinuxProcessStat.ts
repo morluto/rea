@@ -1,17 +1,32 @@
+import type { ProcessLifecycle } from "./ProcessLifecycle.js";
+
+/** Linux `include/linux/sched.h` task flags reported by `/proc/<pid>/stat`. */
+const PF_EXITING = 0x00000004;
+const PF_KTHREAD = 0x00200000;
+
 /** Native process facts parsed from one Linux `/proc/<pid>/stat` record. */
 export interface LinuxProcessStat {
   readonly pid: number;
+  /** The kernel's short command name (comm), possibly truncated; display only. */
+  readonly name: string;
   readonly startTime: string;
-  readonly lifecycle: "non-zombie" | "zombie";
+  readonly lifecycle: ProcessLifecycle | undefined;
   readonly parentPid: number;
   readonly processGroupId: number;
   readonly sessionId: number;
+  /**
+   * PF_KTHREAD from the task flags. A kernel thread has no user address space
+   * or environment, so it cannot carry a run token. Undefined when the flags
+   * field is malformed.
+   */
+  readonly kernelThread: boolean | undefined;
 }
 
 /**
  * Parse the changing command field by its final `)`, then validate the native
  * identity and relation fields. Zero is valid for the native group/session
- * facts; callers may impose narrower admission rules for their own purpose.
+ * facts; -1 for group/session means lock_task_sighand could not supply them
+ * during teardown. Preserve these sentinels separately from the start identity.
  */
 export const parseLinuxProcessStat = (
   value: string,
@@ -40,9 +55,9 @@ export const parseLinuxProcessStat = (
     parentPidText === undefined ||
     !/^\d+$/u.test(parentPidText) ||
     processGroupIdText === undefined ||
-    !/^\d+$/u.test(processGroupIdText) ||
+    !/^(?:-1|\d+)$/u.test(processGroupIdText) ||
     sessionIdText === undefined ||
-    !/^\d+$/u.test(sessionIdText) ||
+    !/^(?:-1|\d+)$/u.test(sessionIdText) ||
     startTime === undefined ||
     !/^\d+$/u.test(startTime)
   )
@@ -58,12 +73,35 @@ export const parseLinuxProcessStat = (
   )
     return undefined;
 
+  // Field 9 is task flags. PF_EXITING can precede state Z and procfs token
+  // access can already fail during that interval. Neither proves terminal exit.
+  const flagsText = fields[6];
+  const flags =
+    flagsText !== undefined && /^\d+$/u.test(flagsText)
+      ? Number(flagsText)
+      : Number.NaN;
+  const kernelThread = Number.isSafeInteger(flags)
+    ? (flags & PF_KTHREAD) !== 0
+    : undefined;
+  const lifecycle: ProcessLifecycle | undefined =
+    state === "Z"
+      ? "zombie"
+      : state === "X" || state === "x"
+        ? "dead"
+        : !Number.isSafeInteger(flags)
+          ? undefined
+          : (flags & PF_EXITING) !== 0
+            ? "exiting"
+            : "non-zombie";
+
   return {
     pid,
+    name: value.slice(commandStart + 1, commandEnd),
     startTime,
-    lifecycle: state === "Z" ? "zombie" : "non-zombie",
+    lifecycle,
     parentPid,
     processGroupId,
     sessionId,
+    kernelThread,
   };
 };

@@ -7,12 +7,12 @@ import type {
   AnalyzeJavaScriptApplicationInput,
   JavaScriptApplicationAnalysisResult,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
+import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import { freezeOwnedJsonSnapshotSteps } from "../../domain/immutableJson.js";
 import { rememberOwnedApplicationGraphEvidence } from "./JavaScriptApplicationEvidenceGraph.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { jsonValueValidationSteps } from "../../domain/jsonValue.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 
 /** Create owned analysis Evidence while allowing request cancellation during sealing and hashing. */
 export const createOwnedJavaScriptApplicationEvidenceCooperatively = async (
@@ -89,6 +89,10 @@ const applicationObservation = (
 const parameters = (
   input: AnalyzeJavaScriptApplicationInput,
 ): EvidenceObservation["parameters"] => ({
+  input_path: input.input_path,
+  ...(input.semantic_precision === undefined
+    ? {}
+    : { semantic_precision: input.semantic_precision }),
   format: input.format,
   integrity_policy: input.integrity_policy,
   ...(input.max_semantic_nodes === undefined

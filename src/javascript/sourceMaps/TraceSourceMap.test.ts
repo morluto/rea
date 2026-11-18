@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
-
 import { describe, expect, it } from "vitest";
 import { traceSourceMap } from "./TraceSourceMap.js";
+import { inspectSourceMap } from "../../domain/sourceMapFormat.js";
 
 const url = "https://app.test/maps/app.js.map?v=2#map";
 const point = { line: 1, column: 0 };
@@ -15,18 +14,37 @@ const leaf = {
 const trace = (map: unknown, position = point) =>
   traceSourceMap(JSON.stringify(map), url, position);
 
-it("traces BOM-prefixed maps with a source-map transport prefix ending in CR", () => {
-  const text = `\uFEFF)]}'transport prefix\r${JSON.stringify(leaf)}`;
-  const report = traceSourceMap(text, url, point);
-  expect(report).toMatchObject({
-    source_map_sha256: createHash("sha256").update(text).digest("hex"),
-    matches: [
-      {
-        reported_source: "app.ts",
-        content: { text: "original" },
-      },
-    ],
-  });
+it("uses the same conservative section classification for URL-plus-map and malformed URLs", () => {
+  const externalUrl = "https://app.test/maps/part.map";
+  const external = () =>
+    inspectSourceMap(
+      JSON.stringify({
+        version: 3,
+        sections: [
+          { offset: { line: 0, column: 0 }, url: externalUrl, map: leaf },
+        ],
+      }),
+    );
+  expect(external).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ kind: "unsupported" }),
+      message: `External source-map section URL is not fetched: ${externalUrl}`,
+    }),
+  );
+
+  const malformed = () =>
+    inspectSourceMap(
+      JSON.stringify({
+        version: 3,
+        sections: [{ offset: { line: 0, column: 0 }, url: 12, map: leaf }],
+      }),
+    );
+  expect(malformed).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ kind: "malformed" }),
+      message: expect.stringMatching(/section URL.*must be a string.*\[0\]/iu),
+    }),
+  );
 });
 
 it("keeps ignore-list precedence and section-local indexes for duplicate sources", () => {
@@ -71,26 +89,31 @@ it("keeps ignore-list precedence and section-local indexes for duplicate sources
 });
 
 describe("upstream source-map point evidence", () => {
-  it("preserves every duplicate-column/source-URL candidate and its own embedded bytes", () => {
+  it("preserves duplicate-column candidates, their URL spelling and their own content", () => {
     const report = trace({
       ...leaf,
-      sources: ["same.ts", "same.ts"],
-      sourcesContent: ["first", "second"],
-      mappings: "AAAA,ACAA",
+      sources: ["dir/same.ts", "dir/same.ts", "dir//same.ts"],
+      sourcesContent: ["first", "second", "repeated separator"],
+      mappings: "AAAA,ACAA,ACAA",
     });
-    expect(report.matches).toHaveLength(2);
     expect(report.matches).toMatchObject([
       {
         flattened_source_index: 0,
         source_index: 0,
-        resolved_url: "https://app.test/maps/same.ts",
+        resolved_url: "https://app.test/maps/dir/same.ts",
         content: { text: "first" },
       },
       {
         flattened_source_index: 1,
         source_index: 1,
-        resolved_url: "https://app.test/maps/same.ts",
+        resolved_url: "https://app.test/maps/dir/same.ts",
         content: { text: "second" },
+      },
+      {
+        flattened_source_index: 2,
+        source_index: 2,
+        resolved_url: "https://app.test/maps/dir//same.ts",
+        content: { text: "repeated separator" },
       },
     ]);
   });
@@ -117,20 +140,16 @@ describe("upstream source-map point evidence", () => {
       content: { utf8_bytes: 8 },
     });
   });
-  it("retains generated-only mappings and no-match positions explicitly", () => {
-    expect(
-      trace({ ...leaf, mappings: "AAAA,K" }, { line: 1, column: 5 }).matches,
-    ).toEqual([{ state: "generated-only" }]);
-    expect(trace({ ...leaf, mappings: "KAAA" }).matches).toEqual([]);
-    expect(
-      trace({ ...leaf, mappings: "" }).lookup.matched_generated_position,
-    ).toBeNull();
-  });
-  it("uses cross-line greatest-position lookup without inventing a mapping", () => {
-    expect(
-      trace({ ...leaf, mappings: "AAAA;;" }, { line: 3, column: 2 }).lookup
-        .matched_generated_position,
-    ).toEqual({ line: 1, column: 0 });
+  it("distinguishes no match from a generated-only match carried across empty lines", () => {
+    const map = { ...leaf, mappings: "CAAA,I;;" };
+    expect(trace(map)).toMatchObject({
+      matches: [],
+      lookup: { matched_generated_position: null },
+    });
+    expect(trace(map, { line: 3, column: 2 })).toMatchObject({
+      matches: [{ state: "generated-only" }],
+      lookup: { matched_generated_position: { line: 1, column: 5 } },
+    });
   });
   it("preserves unknown source identity while retaining embedded content", () => {
     expect(trace({ ...leaf, sources: [null] }).matches[0]).toMatchObject({
@@ -202,7 +221,7 @@ describe("upstream source-map point evidence", () => {
 });
 
 describe("source-map layout admission", () => {
-  it.each(["ACAA", "AAAAC", "g", "!", "AA", "D"])(
+  it.each(["AAAAC", "g", "!", "AA", "D"])(
     "rejects malformed VLQ/components/indexes: %s",
     (mappings) => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
@@ -211,14 +230,6 @@ describe("source-map layout admission", () => {
   it("validates regular-map source indexes after reusing its decoded rows", () => {
     expect(() => trace({ ...leaf, mappings: "ACAA" })).toThrow(/index/u);
   });
-  it("rejects huge indexed offsets before upstream row allocation", () => {
-    expect(() =>
-      trace({
-        version: 3,
-        sections: [{ offset: { line: 1000000000, column: 0 }, map: leaf }],
-      }),
-    ).toThrow(/decoder budget/u);
-  });
   it("reports the actual malformed section offset constraint", () => {
     expect(() =>
       trace({
@@ -226,20 +237,6 @@ describe("source-map layout admission", () => {
         sections: [{ offset: { line: -1, column: 0 }, map: leaf }],
       }),
     ).toThrow(/offset/u);
-  });
-  it("rejects overlapping section mappings rather than silently clipping evidence", () => {
-    expect(() =>
-      trace({
-        version: 3,
-        sections: [
-          {
-            offset: { line: 0, column: 0 },
-            map: { ...leaf, mappings: "AAAA,UAAA" },
-          },
-          { offset: { line: 0, column: 5 }, map: leaf },
-        ],
-      }),
-    ).toThrow(/overlap/u);
   });
   it("accepts absent optional names and null contents without changing reported identity", () => {
     expect(

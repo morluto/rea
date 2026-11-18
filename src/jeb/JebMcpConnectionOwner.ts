@@ -1,11 +1,18 @@
+import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import {
-  Client,
+  SdkError,
+  SdkErrorCode,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import type { Result } from "../domain/result.js";
+import {
+  McpHttpUtf8Error,
+  validateMcpHttpResponse,
+} from "../providers/Utf8McpResponse.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Physical SDK failure captured before any subsequent resource cleanup. */
 export class JebMcpPhysicalFailure extends Error {
@@ -18,23 +25,24 @@ export class JebMcpPhysicalFailure extends Error {
   }
 }
 
-/** Acquisition failed while its exact connection still has pending cleanup. */
-export class JebMcpAcquisitionCleanupFailure extends ProviderCleanupError {
+/** An operation failed while its exact connection still has pending cleanup. */
+export class JebMcpCleanupFailure extends ProviderCleanupError {
   constructor(
     readonly primaryFailure: unknown,
     readonly cleanupFailure: ProviderCleanupError,
+    operation: string,
   ) {
     super(
       "jeb",
       cleanupFailure.cleanupResources,
       {
-        reason: "JEB MCP acquisition and cleanup failed",
+        reason: "JEB MCP operation and cleanup failed",
       },
       {
-        operation: "jeb_mcp_catalog",
+        operation,
         cause: new AggregateError(
           [primaryFailure, cleanupFailure],
-          "JEB MCP acquisition and cleanup failed",
+          "JEB MCP operation and cleanup failed",
           { cause: primaryFailure },
         ),
       },
@@ -47,7 +55,10 @@ export class JebMcpAcquisitionCleanupFailure extends ProviderCleanupError {
 
 /** One SDK client owns its attached transport; failed cleanup retains both identities. */
 export class JebMcpConnectionOwner {
-  readonly client = new Client({ name: "rea-jeb", version: "0.0.0" });
+  readonly client = new StructuredContentMcpClient({
+    name: "rea-jeb",
+    version: "0.0.0",
+  });
   readonly transport: StreamableHTTPClientTransport;
   readonly signal = new AbortController();
   tools: readonly string[] | undefined;
@@ -55,16 +66,26 @@ export class JebMcpConnectionOwner {
     | SharedStartupAttempt<Result<readonly string[], unknown>>
     | undefined;
   acquisitionFailure: { readonly cause: unknown } | undefined;
+  invalidation:
+    | { readonly failure: Promise<unknown>; settled: boolean }
+    | undefined;
   readonly #clientResource: string;
   readonly #transportResource: string;
   readonly #lease: AnalysisCleanupLease;
   #clientClosed = false;
   #transportClosed = false;
   #disposal: Promise<void> | undefined;
+  #httpUtf8Failure: McpHttpUtf8Error | undefined;
 
   constructor(endpoint: URL) {
     this.transport = new StreamableHTTPClientTransport(endpoint, {
       requestInit: { redirect: "error" },
+      fetch: async (input, init) =>
+        validateMcpHttpResponse(await fetch(input, init), (failure) => {
+          this.#httpUtf8Failure ??= failure;
+          this.tools = undefined;
+          void this.transport.close().catch(() => undefined);
+        }),
     });
     this.#clientResource = `${endpoint} (JEB MCP client)`;
     this.#transportResource = `${endpoint} (JEB MCP transport)`;
@@ -76,6 +97,15 @@ export class JebMcpConnectionOwner {
 
   get disposing(): boolean {
     return this.#disposal !== undefined;
+  }
+
+  /** Attribute only the actual transport close caused by malformed response bytes. */
+  responseFailure(cause: unknown): unknown {
+    return this.#httpUtf8Failure !== undefined &&
+      cause instanceof SdkError &&
+      cause.code === SdkErrorCode.ConnectionClosed
+      ? this.#httpUtf8Failure
+      : cause;
   }
 
   get cleanupResources(): readonly string[] {
@@ -127,11 +157,7 @@ export class JebMcpConnectionOwner {
       "jeb",
       this.cleanupResources,
       {
-        reason: failures
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: failures.map((cause) => errorMessage(cause)).join("; "),
       },
       {
         operation: "close_jeb_connection",

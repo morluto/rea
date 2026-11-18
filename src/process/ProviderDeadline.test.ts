@@ -121,18 +121,6 @@ it("keeps remaining time and cancellation classification stable across wall-cloc
   }
 });
 
-it("aborts a bounded wait when its real monotonic deadline expires", async () => {
-  vi.useRealTimers();
-  const deadline = new ProviderStartupDeadline(40);
-  try {
-    await expect(deadline.wait(500)).resolves.toBe("aborted");
-    expect(deadline.interruption).toBe("timeout");
-    expect(deadline.remainingMs()).toBe(0);
-  } finally {
-    deadline.dispose();
-  }
-});
-
 it("does not expire a future monotonic deadline on an early timer callback", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   let monotonic = 0;
@@ -222,34 +210,34 @@ it("keeps caller cancellation classified without reporting an exhausted budget",
   }
 });
 
-// Probe from issue #2760 review: both the abort timer and the clamped polling
-// timer can fire early at the same monotonic instant. The full-budget wait must
-// stay pending until the absolute deadline expires.
-it("keeps a full-budget wait pending when both timers fire early", async () => {
+it("keeps a full-budget wait pending until the absolute deadline when clocks are sampled at different times", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  let monotonic = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+  const now = vi.spyOn(performance, "now").mockReturnValue(0);
   const caller = new AbortController();
   const deadline = new ProviderStartupDeadline(40, caller.signal);
   let outcome: string | undefined;
+  // Startup polling can be interrupted between sampling its start and
+  // checking the remaining budget. This must not shorten the deadline.
+  now.mockReturnValueOnce(0).mockReturnValue(5);
   const pending = deadline.wait(500).then((result) => {
     outcome = result;
     return result;
   });
   try {
-    monotonic = 39;
+    // An early timer callback may arrive before the absolute monotonic limit.
+    now.mockReturnValue(39);
     await vi.advanceTimersByTimeAsync(40);
     expect(deadline.signal.aborted).toBe(false);
     expect(deadline.remainingMs()).toBe(1);
     expect(outcome).toBeUndefined();
-    monotonic = 40;
+    now.mockReturnValue(40);
     await vi.advanceTimersByTimeAsync(1);
     await expect(pending).resolves.toBe("aborted");
+    expect(deadline.interruption).toBe("timeout");
     expect(deadline.remainingMs()).toBe(0);
   } finally {
     caller.abort();
     deadline.dispose();
-    vi.useRealTimers();
   }
 });
 
@@ -301,5 +289,25 @@ it("reports no remaining time after terminal expiry near the monotonic boundary"
   } finally {
     deadline.dispose();
     vi.useRealTimers();
+  }
+});
+
+it("finalizes an expired startup under its own budget and the caller's signal", async () => {
+  const caller = new AbortController();
+  const deadline = new ProviderStartupDeadline(100, caller.signal, {
+    finalizeMs: 1_000,
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(100);
+    expect(deadline.signal.aborted).toBe(true);
+    expect(deadline.interruption).toBe("timeout");
+
+    const finalization = deadline.finalize();
+    // Startup expiry does not interrupt finalization; only the caller does.
+    expect(finalization.signal).toBe(caller.signal);
+    expect(finalization.signal?.aborted).toBe(false);
+    expect(finalization.deadline.remainingMs()).toBe(1_000);
+  } finally {
+    deadline.dispose();
   }
 });

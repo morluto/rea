@@ -145,6 +145,12 @@ describe("borrowing a parsed JSON snapshot", () => {
 
   it("preserves parser defaults, hidden-field removal and enumerability changes", () => {
     const source = freezeJsonSnapshot({ observed: 1 });
+    const optional: { observed: number; optional?: string | undefined } = {
+      observed: 1,
+    };
+    expect(canBorrowParsedJsonSnapshot(source, optional)).toBe(true);
+    optional.optional = undefined;
+    expect(canBorrowParsedJsonSnapshot(source, optional)).toBe(false);
     expect(
       canBorrowParsedJsonSnapshot(source, { observed: 1, defaulted: 0 }),
     ).toBe(false);

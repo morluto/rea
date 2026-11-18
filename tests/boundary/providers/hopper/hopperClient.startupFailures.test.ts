@@ -1,11 +1,16 @@
+import {
+  transportReplyContracts,
+  type TransportHopperClient,
+  HopperFixtureLauncher as FixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
+import { createServer } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import type { HopperStartupDiagnostic } from "../../../../src/domain/hopperStartupFailure.js";
+import type { HopperStartupDiagnostic } from "../../../../src/hopper/HopperStartupFailure.js";
 import { ok } from "../../../../src/domain/result.js";
 import type {
   BridgeLauncher,
@@ -13,8 +18,6 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX } from "../../../../src/hopper/LinuxPrivateDisplayDiagnostic.js";
-
-import { HopperFixtureLauncher as FixtureLauncher } from "./hopperClient.fixture.js";
 
 class SilentLauncher implements BridgeLauncher {
   launch() {
@@ -129,9 +132,6 @@ class LateSilentLauncher implements BridgeLauncher {
  * auth/preamble request added before it would hit the -32601 branch.
  */
 class BadHealthLauncher implements BridgeLauncher {
-  #server: Server | undefined;
-  #process: ChildProcess | undefined;
-
   async launch(session: BridgeSession) {
     const server = createServer((socket) => {
       let buffer = "";
@@ -173,7 +173,6 @@ class BadHealthLauncher implements BridgeLauncher {
         resolve();
       });
     });
-    this.#server = server;
     const child = spawn(
       process.execPath,
       ["-e", "setInterval(() => {}, 1000)"],
@@ -181,7 +180,6 @@ class BadHealthLauncher implements BridgeLauncher {
         stdio: "ignore",
       },
     );
-    this.#process = child;
     return ok({
       process: child,
       ownsProcessLifetime: true as const,
@@ -196,16 +194,20 @@ class BadHealthLauncher implements BridgeLauncher {
   }
 }
 
-const clients: HopperClient[] = [];
+const clients: TransportHopperClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
-}, 45_000);
+});
 
 describe("HopperClient startup deadline", () => {
   it("applies one deadline to launcher, socket, and health startup phases", async () => {
     const launcher = new LateSilentLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 500 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 500,
+    });
     clients.push(client);
 
     const result = await client.start();
@@ -240,6 +242,7 @@ describe("HopperClient startup failures", () => {
   it("cancels bridge startup without waiting for the startup timeout", async () => {
     const launcher = new CancelThenFixtureLauncher();
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       // Keep the retry proof independent from scheduler pressure when the
       // complete boundary project is starting several child-process fixtures.
@@ -268,6 +271,7 @@ describe("HopperClient startup failures", () => {
         name: "REA Hopper bridge",
         version: "1.0.0",
         processId: retriedProcess?.pid,
+        maxRequestBytes: 16 * 1024 * 1024,
       },
     });
     await expect(
@@ -280,7 +284,11 @@ describe("HopperClient startup failures", () => {
 
   it("retries after cancellation before the launcher starts", async () => {
     const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 30_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 30_000,
+    });
     clients.push(client);
     const controller = new AbortController();
 
@@ -300,6 +308,7 @@ describe("HopperClient startup failures", () => {
         name: "REA Hopper bridge",
         version: "1.0.0",
         processId: launcher.processes[0]?.pid,
+        maxRequestBytes: 16 * 1024 * 1024,
       },
     });
     await expect(
@@ -312,7 +321,11 @@ describe("HopperClient startup failures", () => {
 
   it("records unknown when the health handshake is invalid", async () => {
     const launcher = new BadHealthLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 30_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 30_000,
+    });
     clients.push(client);
 
     const result = await client.start();
@@ -325,10 +338,11 @@ describe("HopperClient startup failures", () => {
     expect(client.operationHealth()).toMatchObject({ state: "unknown" });
   });
 
-  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80])(
+  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82])(
     "reports Linux adapter exit %i during bridge startup",
     async (exitCode) => {
       const client = new HopperClient({
+        replyContracts: transportReplyContracts,
         launcher: new ExitingLauncher(exitCode),
         startupTimeoutMs: 10_000,
       });
@@ -345,6 +359,7 @@ describe("HopperClient startup failures", () => {
 
   it("projects actionable CI remediation for Hopper UI, license, and lifecycle failures", async () => {
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: new ExitingLauncher(75),
       startupTimeoutMs: 10_000,
     });
@@ -365,6 +380,7 @@ describe("HopperClient startup failures", () => {
 
   it("preserves the private-display diagnostic from an adapter exit", async () => {
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: new DiagnosticExitingLauncher(),
       startupTimeoutMs: 10_000,
     });

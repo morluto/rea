@@ -7,13 +7,14 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { findSourceModule } from "../../support/javascriptApplicationFixture.js";
 
 const verify = (value: unknown) => {
   const result = javascriptApplicationAnalysisResultSchema.parse(
     parseEvidence(value).normalized_result,
   );
   expect(result.statistics).toMatchObject({
-    parsed_javascript_files: 3,
+    parsed_javascript_files: 5,
     skipped_javascript_files: 0,
     parse_failures: 0,
   });
@@ -38,6 +39,28 @@ const verify = (value: unknown) => {
     interpretation: "candidate",
   });
   expect(endpoints.some(({ value }) => value === "/intrinsic")).toBe(false);
+  expect(endpoints).toContainEqual({
+    value: "/copied-factory",
+    interpretation: undefined,
+  });
+  expect(endpoints).toContainEqual({
+    value: "/copied-module",
+    interpretation: undefined,
+  });
+  for (const [path, expression] of [
+    ["copied-factory.cjs", 'box.make().require("./possible.cjs")'],
+    ["copied-module.cjs", 'box.loader.require("./possible.cjs")'],
+  ] as const) {
+    const source = findSourceModule(result.graph, path);
+    expect(source).toBeDefined();
+    expect(result.graph.edges).toContainEqual(
+      expect.objectContaining({
+        source_node_id: source?.node_id,
+        relation: "imports",
+        properties: expect.objectContaining({ specifier: null, expression }),
+      }),
+    );
+  }
   expect(result.semantic_graph.unknowns).toContainEqual(
     expect.objectContaining({
       reason: "dynamic-property",
@@ -80,6 +103,20 @@ function walk(flag) {
 }
 new Map().get("/growing");`,
     );
+    await writeFile(
+      join(root, "copied-factory.cjs"),
+      `let box={make:()=>module};
+while(flag) box={...box};
+box.make().require("./possible.cjs");
+fetch("/copied-factory");`,
+    );
+    await writeFile(
+      join(root, "copied-module.cjs"),
+      `let box={loader:module};
+while(flag) box={...box};
+box.loader.require("./possible.cjs");
+fetch("/copied-module");`,
+    );
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
@@ -104,5 +141,4 @@ new Map().get("/growing");`,
     expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
     verify(analyzed.structuredContent);
   },
-  90_000,
 );

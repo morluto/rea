@@ -3,7 +3,8 @@
 This lane extends native ELF analysis to 32-bit big-endian PowerPC; it does
 not execute PowerPC code. It is the first milestone of
 [#1741](https://github.com/morluto/rea/issues/1741). GameCube/Wii DOL
-executables, PPC64 and other PowerPC variants are separate follow-ups.
+executables are covered by [GameCube DOL analysis](ghidra-dol.md). PPC64 and other
+PowerPC variants remain separate follow-ups.
 
 ## Admission boundary
 
@@ -27,7 +28,7 @@ replaces the classic floating-point unit, so it misinterprets ordinary
 
 The lane therefore imports with `PowerPC:BE:32:default` and compiler spec
 `default`, commits that choice in the analysis profile as
-`language_selection: "provider-pinned-v1"`, and checks the language Ghidra
+`language_selection: "provider-pinned"`, and checks the language Ghidra
 reports after import. A different language set through
 `REA_GHIDRA_LANGUAGE_ID` (and optionally `REA_GHIDRA_COMPILER_SPEC_ID`)
 replaces the lane default and is admitted against the installed language

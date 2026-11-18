@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveAppBundleExecutable } from "./AppBundleExecutable.js";
+import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 describe("OpenStep Info.plist nesting during app target resolution", () => {
@@ -20,7 +20,7 @@ describe("OpenStep Info.plist nesting during app target resolution", () => {
         `{ CFBundleExecutable = App; payload = ${"(".repeat(depth)}x${")".repeat(depth)}; }`,
       );
 
-      const result = await resolveAppBundleExecutable(app);
+      const result = await resolveAppleBundleExecutable(app);
 
       if (depth === 127) {
         expect(result).toMatchObject({
@@ -33,7 +33,7 @@ describe("OpenStep Info.plist nesting during app target resolution", () => {
           error: {
             path: join(app, "Contents", "Info.plist"),
             cause: expect.objectContaining({
-              message: "Plist exceeds 128 nesting levels",
+              message: expect.stringMatching(/128 nesting levels/iu),
             }),
           },
         });
@@ -52,7 +52,7 @@ describe("OpenStep Info.plist nesting during app target resolution", () => {
       `{ CFBundleExecutable = App; }${"(".repeat(3000)}x${")".repeat(3000)}`,
     );
 
-    expect(await resolveAppBundleExecutable(app)).toMatchObject({
+    expect(await resolveAppleBundleExecutable(app)).toMatchObject({
       ok: true,
       value: { executable: join(programs, "App") },
     });

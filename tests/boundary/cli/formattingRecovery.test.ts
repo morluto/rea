@@ -1,12 +1,11 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli } from "incur";
 import { describe, expect, it } from "vitest";
 
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
@@ -14,37 +13,113 @@ import {
 } from "../../../src/cliLogging.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { silentLogger } from "../../../src/logger.js";
+import {
+  cliEvidencePublicationReceipt,
+  recordCliEvidencePublication,
+  withCliEvidencePublication,
+} from "../../../src/cli/cliEvidencePublication.js";
 
-const metadata = { command: "fixture", duration: "1ms", format: "toon" };
+const metadata = { command: "fixture", duration: "1ms" };
+
+/** Fail at the formatter boundary after the command has returned its result. */
+const formattingFailureValue = (
+  cause = new RangeError("Invalid string length"),
+) =>
+  new Proxy(
+    {},
+    {
+      ownKeys: () => {
+        throw cause;
+      },
+    },
+  );
+
+it("keeps receipts isolated across concurrent invocations", async () => {
+  const results = await Promise.all(
+    ["first", "second"].map((path) =>
+      withCliEvidencePublication(async () => {
+        recordCliEvidencePublication({ path, bytes: 1 });
+        await Promise.resolve();
+        return cliEvidencePublicationReceipt();
+      }),
+    ),
+  );
+  expect(results).toEqual([
+    { path: "first", bytes: 1 },
+    { path: "second", bytes: 1 },
+  ]);
+  expect(cliEvidencePublicationReceipt()).toBeUndefined();
+});
+
+it("retains a publication receipt after formatting recovery leaves the invocation context", async () => {
+  const chunks: Buffer[] = [];
+  const output = createCliResultOutput(
+    parseCliOutputArguments([]),
+    new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    }),
+  );
+  if (output === undefined) throw new Error("Missing output owner");
+  await withCliEvidencePublication(async () => {
+    recordCliEvidencePublication({ path: "/tmp/result.json", bytes: 123 });
+    expect(await output.write(formattingFailureValue(), metadata)).toBe(true);
+  });
+  expect(cliEvidencePublicationReceipt()).toBeUndefined();
+  expect(
+    await output.recoverFormattingFailure(
+      new RangeError("Invalid string length"),
+    ),
+  ).toBe(false);
+  expect(output.error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      diagnostics: {
+        evidence_bundle: { path: "/tmp/result.json", bytes: 123 },
+      },
+    },
+  });
+  expect(Buffer.concat(chunks).toString("utf8")).toContain("/tmp/result.json");
+});
+
+it.each([
+  { format: "md", value: "\u0000", window: false },
+  { format: "toon", value: "\ud800", window: false },
+  { format: "toon", value: "\ud800", window: true },
+] as const)(
+  "retains the committed receipt when $format cannot encode output (token window: $window)",
+  async ({ format, value, window }) => {
+    const chunks: Buffer[] = [];
+    const receipt = { path: "/authored/retained.json", bytes: 123 };
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "--format",
+        format,
+        ...(window ? ["--token-limit", "1000"] : []),
+      ]),
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      }),
+    );
+    if (output === undefined) throw new Error("Missing output owner");
+    await withCliEvidencePublication(async () => {
+      recordCliEvidencePublication(receipt);
+      expect(await output.write({ value }, metadata)).toBe(true);
+    });
+    expect(output.error).toMatchObject({
+      code: "invalid_request",
+      details: { diagnostics: { evidence_bundle: receipt } },
+    });
+    expect(Buffer.concat(chunks).toString("utf8")).toContain(receipt.path);
+  },
+);
 
 describe("CLI formatting stage admission", () => {
-  it("preserves native CTA sentinel output", async () => {
-    const replies: string[] = [];
-    for (const wrapped of [false, true]) {
-      const cli = Cli.create("rea-output-test", { sync: false });
-      cli.command("fixture", {
-        run: (context) =>
-          context.ok(
-            { value: 42 },
-            { cta: { commands: [{ command: "next" }] } },
-          ),
-      });
-      const output = createCliResultOutput(["fixture"], new Writable());
-      if (output === undefined) throw new Error("Missing output owner");
-      if (wrapped) streamCliCommandResults(cli, output);
-      let reply = "";
-      await cli.serve(["fixture"], {
-        stdout: (text) => {
-          reply += text;
-        },
-      });
-      expect(output.handled).toBe(false);
-      replies.push(reply);
-    }
-    expect(replies[1]).toBe(replies[0]);
-    expect(replies[0]).toContain("next");
-  });
-
   it("captures thrown integrity failures without re-reading diagnostics during recovery", async () => {
     const previousExitCode = process.exitCode;
     try {
@@ -75,7 +150,14 @@ describe("CLI formatting stage admission", () => {
   });
 
   it("declines errors before a result or from a different failure class", async () => {
-    const output = createCliResultOutput([], new Writable());
+    const output = createCliResultOutput(
+      parseCliOutputArguments([]),
+      new Writable({
+        write(_chunk, _encoding, done) {
+          done();
+        },
+      }),
+    );
     expect(output).toBeDefined();
     expect(
       await output?.recoverFormattingFailure(
@@ -89,19 +171,21 @@ describe("CLI formatting stage admission", () => {
       new Error("operation failed"),
     ])
       expect(await output?.recoverFormattingFailure(cause)).toBe(false);
-    expect(output?.handled).toBe(false);
+    expect(output?.handled).toBe(true);
   });
 
-  it("leaves command RangeErrors under Incur's command failure protocol", async () => {
-    const cli = Cli.create("rea-output-test", { sync: false });
-    cli.command("fixture", {
+  it("keeps command RangeErrors distinct from post-result formatting capacity failures", async () => {
+    const output = createCliResultOutput(
+      parseCliOutputArguments([]),
+      new Writable(),
+    );
+    if (output === undefined) throw new Error("Missing output owner");
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "fixture", {
       run: () => {
         throw new RangeError("Invalid string length");
       },
     });
-    const output = createCliResultOutput([], new Writable());
-    if (output === undefined) throw new Error("Missing output owner");
-    streamCliCommandResults(cli, output);
     let text = "";
     let status = 0;
     await cli.serve(["fixture"], {
@@ -120,18 +204,48 @@ describe("CLI formatting stage admission", () => {
 });
 
 describe("CLI formatting recovery outcomes", () => {
+  it("formats a recovered Markdown result through the CLI Markdown owner", async () => {
+    const cause = new RangeError("Invalid string length");
+    const chunks: Buffer[] = [];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["--format", "md"]),
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      }),
+    );
+    const value = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw cause;
+        },
+      },
+    );
+
+    expect(await output?.write(value, { ...metadata })).toBe(true);
+    expect(output?.error).toMatchObject({ code: "resource_constraint" });
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toContain("resource_constraint");
+    expect(text).toContain("original result was not written");
+    expect(output?.failed).toBe(false);
+  });
+
   it("retains ownership if the recovery document cannot be written", async () => {
     const cause = new RangeError("Invalid string length");
     const output = createCliResultOutput(
-      [],
+      parseCliOutputArguments([]),
       new Writable({
         write(_chunk, _encoding, callback) {
           callback(cause);
         },
       }),
     );
-    await output?.write({ result: "completed" }, metadata);
-    await expect(output?.recoverFormattingFailure(cause)).rejects.toBe(cause);
+    await expect(
+      output?.write(formattingFailureValue(cause), metadata),
+    ).rejects.toBe(cause);
     expect(output?.handled).toBe(true);
     expect(output?.failed).toBe(true);
     expect(await output?.recoverFormattingFailure(cause)).toBe(false);
@@ -140,7 +254,7 @@ describe("CLI formatting recovery outcomes", () => {
   it("does not replace a failed destination, even for the same RangeError", async () => {
     const cause = new RangeError("Invalid string length");
     const output = createCliResultOutput(
-      ["--json"],
+      parseCliOutputArguments(["--json"]),
       new Writable({
         write(_chunk, _encoding, callback) {
           callback(cause);
@@ -148,7 +262,7 @@ describe("CLI formatting recovery outcomes", () => {
       }),
     );
     await expect(
-      output?.write({ result: "completed" }, { ...metadata, format: "json" }),
+      output?.write({ result: "completed" }, { ...metadata }),
     ).rejects.toBe(cause);
     expect(output?.handled).toBe(true);
     expect(output?.failed).toBe(true);
@@ -158,7 +272,7 @@ describe("CLI formatting recovery outcomes", () => {
   it("retains the original failure identity and ignores large details on recovery", async () => {
     const chunks: Buffer[] = [];
     const output = createCliResultOutput(
-      [],
+      parseCliOutputArguments([]),
       new Writable({
         write(chunk: Buffer, _encoding, callback) {
           chunks.push(chunk);
@@ -176,12 +290,12 @@ describe("CLI formatting recovery outcomes", () => {
         remediation: { action: "Check the selected path." },
         details: { partial_observation: { text: "captured" } },
       }));
-      expect(await output?.write(value, metadata)).toBe(false);
-      expect(
-        await output?.recoverFormattingFailure(
-          new RangeError("Invalid string length"),
-        ),
-      ).toBe(true);
+      Object.defineProperty(value, "details", {
+        get() {
+          throw new RangeError("Invalid string length");
+        },
+      });
+      expect(await output?.write(value, metadata)).toBe(true);
       expect(output?.error).toMatchObject({
         code: "resource_constraint",
         details: {

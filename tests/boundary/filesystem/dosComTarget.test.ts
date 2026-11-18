@@ -27,7 +27,7 @@ describe("DOS COM admission", () => {
         sha256: createHash("sha256").update(bytes).digest("hex"),
       },
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     const detected = await parseBinaryTarget(path);
     expect(detected.ok && detected.value.format).not.toBe("dos-com");
   });
@@ -59,7 +59,7 @@ describe("DOS COM admission", () => {
       architecture: "x86",
       sha256: createHash("sha256").update(bytes).digest("hex"),
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   });
   it("rejects contradictory target kind", async () => {
     const directory = await createTestTempDirectory("rea-com-target-");

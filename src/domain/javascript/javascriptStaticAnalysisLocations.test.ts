@@ -1,7 +1,7 @@
 import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const directive = "//# sourceMappingURL=app.js.map";
 

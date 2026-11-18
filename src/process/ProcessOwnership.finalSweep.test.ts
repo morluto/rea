@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
+  verifyNoTokenOwnedProcesses,
   type ProcessOwnershipHost,
+  type ProcessRunTokenObservation,
   type ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
@@ -108,6 +110,142 @@ it("waits for native absence after one signal and does not signal again", async 
   expect(fixture.signalGroups).toEqual([100]);
 });
 
+it("finishes the public cleanup sweep when the application timer is unavailable", async () => {
+  const unrelated: ProcessTableEntry = {
+    pid: 200,
+    parentPid: 1,
+    processGroupId: 200,
+    state: "S",
+    command: "transient-token-process",
+  };
+  let signaled = false;
+  let postSignalSnapshots = 0;
+  let unrelatedTokenReads = 0;
+  const fixture = makeHost(() => {
+    signaled = true;
+    fixture.replaceRows([unrelated]);
+  });
+  fixture.replaceRows([...initialRows, unrelated]);
+  const host: ProcessOwnershipHost = {
+    ...fixture.host,
+    listProcesses: async () => {
+      if (!signaled) return fixture.rows();
+      postSignalSnapshots += 1;
+      if (postSignalSnapshots === 1) return fixture.rows();
+      fixture.replaceRows([]);
+      return [];
+    },
+    runTokens: async (entries) =>
+      new Map<number, ProcessRunTokenObservation>(
+        entries.map(({ pid }) => {
+          if (pid !== unrelated.pid)
+            return [pid, { state: "readable", runId: "sweep-run" }] as const;
+          if (!signaled)
+            return [pid, { state: "readable", runId: undefined }] as const;
+          unrelatedTokenReads += 1;
+          return [pid, { state: "readable", runId: "sweep-run" }] as const;
+        }),
+      ),
+  };
+  const applicationTimer = vi
+    .spyOn(globalThis, "setTimeout")
+    .mockImplementation(() => {
+      throw new Error("application timer is unavailable");
+    });
+
+  try {
+    await expect(cleanupOwnedProcessGroup(ownership(), host)).resolves.toEqual({
+      cleaned: true,
+      signaled: true,
+    });
+    expect(unrelatedTokenReads).toBeGreaterThan(0);
+    expect(postSignalSnapshots).toBe(2);
+    expect(fixture.signalGroups).toEqual([100]);
+    expect(applicationTimer).not.toHaveBeenCalled();
+  } finally {
+    applicationTimer.mockRestore();
+  }
+});
+
+it.each([
+  "EACCES: fixture permission denied",
+  "ambiguous_environment_boundary",
+])(
+  "keeps an unreadable live group member fail-closed when the application timer is unavailable: %s",
+  async (diagnostic) => {
+    const fixture = makeHost(() => undefined);
+    let unreadableReads = 0;
+    const host: ProcessOwnershipHost = {
+      ...fixture.host,
+      runTokens: async (entries) =>
+        new Map<number, ProcessRunTokenObservation>(
+          entries.map(({ pid }) => {
+            if (pid === 101) {
+              unreadableReads += 1;
+              return [
+                pid,
+                {
+                  state: "unavailable",
+                  reason: diagnostic,
+                },
+              ] as const;
+            }
+            return [pid, { state: "readable", runId: "sweep-run" }] as const;
+          }),
+        ),
+    };
+    const applicationTimer = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(() => {
+        throw new Error("application timer is unavailable");
+      });
+
+    try {
+      await expect(
+        cleanupOwnedProcessGroup(ownership(), host),
+      ).resolves.toMatchObject({
+        cleaned: false,
+        reason: expect.stringContaining(
+          "process ownership token could not be read",
+        ),
+      });
+      expect(unreadableReads).toBeGreaterThan(1);
+      expect(fixture.signalGroups).toEqual([]);
+      expect(applicationTimer).not.toHaveBeenCalled();
+    } finally {
+      applicationTimer.mockRestore();
+    }
+  },
+);
+
+it("retries an ambiguous owned member before signaling its group", async () => {
+  const fixture = makeHost(() => fixture.replaceRows([]));
+  let memberReads = 0;
+  const host: ProcessOwnershipHost = {
+    ...fixture.host,
+    runTokens: async (entries) =>
+      new Map<number, ProcessRunTokenObservation>(
+        entries.map(({ pid }) => {
+          if (pid === 101 && memberReads++ === 0)
+            return [
+              pid,
+              {
+                state: "unavailable",
+                reason: "ambiguous_environment_boundary",
+              },
+            ] as const;
+          return [pid, { state: "readable", runId: "sweep-run" }] as const;
+        }),
+      ),
+  };
+  await expect(cleanupOwnedProcessGroup(ownership(), host)).resolves.toEqual({
+    cleaned: true,
+    signaled: true,
+  });
+  expect(memberReads).toBeGreaterThan(1);
+  expect(fixture.signalGroups).toEqual([100]);
+});
+
 it("preserves a moved same-generation helper as unresolved through the final deadline", async () => {
   const child = initialRows[1];
   if (child === undefined) throw new Error("fixture child is missing");
@@ -141,7 +279,7 @@ it("preserves a moved same-generation helper as unresolved through the final dea
 
   expect(result).toMatchObject({
     cleaned: false,
-    reason: "process ownership token mismatch for PID(s): 101",
+    reason: expect.stringMatching(/ownership token mismatch.*\b101\b/i),
   });
   expect(fixture.rows()).toMatchObject([
     { pid: 101, parentPid: 1, processGroupId: 777 },
@@ -249,4 +387,42 @@ it("retries a moved token-owned helper group without signaling a released peer a
   expect(retry).toEqual({ cleaned: true, signaled: true });
   expect(signalGroups).toEqual([100, 200, 300]);
   expect(owner.evidenceOwner.candidates).toEqual([]);
+});
+
+it("settles transient token reads without borrowing the application timer", async () => {
+  const fixture = makeHost(() => undefined);
+  let reads = 0;
+  const host: ProcessOwnershipHost = {
+    ...fixture.host,
+    runTokens: async (entries) => {
+      reads += 1;
+      return new Map(
+        entries.map(({ pid }) => [
+          pid,
+          reads === 1
+            ? {
+                state: "unavailable" as const,
+                reason: "environment_errno_EACCES",
+              }
+            : { state: "readable" as const, runId: undefined },
+        ]),
+      );
+    },
+  };
+  const applicationTimer = vi
+    .spyOn(globalThis, "setTimeout")
+    .mockImplementation(() => {
+      throw new Error(
+        "application timer must not mediate native ownership retries",
+      );
+    });
+  try {
+    await expect(
+      verifyNoTokenOwnedProcesses("sweep-run", host),
+    ).resolves.toEqual({ cleaned: true, signaled: false });
+    expect(reads).toBe(2);
+    expect(applicationTimer).not.toHaveBeenCalled();
+  } finally {
+    applicationTimer.mockRestore();
+  }
 });

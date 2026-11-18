@@ -1,3 +1,4 @@
+import { createTestProcessCaptureResourceScope } from "../fixtures/processCaptureResourceScope.js";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { createDarwinProcessRunTokenReader } from "../../src/process/DarwinProcessRunTokenReader.js";
 import { createSystemProcessOwnershipHost } from "../../src/process/ProcessOwnershipObservation.js";
 import { startProcessSampler } from "../../src/process/capture/ProcessSampling.js";
+import { ProcessOwnershipInspectionCancelled } from "../../src/process/ProcessInspectionCancellation.js";
 
 const waitForFile = async (path: string, timeoutMs = 4_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -29,18 +31,28 @@ const waitForFile = async (path: string, timeoutMs = 4_000): Promise<void> => {
 };
 
 const waitForCommandOrFailure = async (
-  readyPath: string,
+  ready: Promise<void>,
   pending: Promise<unknown>,
 ): Promise<void> => {
   const outcome = await Promise.race([
-    waitForFile(readyPath).then(() => undefined),
+    ready.then(() => ({ ready: true as const })),
     pending.then(
-      () => new Error("The command completed before its ready marker"),
-      (cause: unknown) => cause,
+      () => ({ ready: false as const, cause: undefined }),
+      (cause: unknown) => ({ ready: false as const, cause }),
     ),
   ]);
-  if (outcome !== undefined) throw outcome;
+  if (!outcome.ready)
+    throw new Error("The command completed before its ready marker", {
+      cause: outcome.cause,
+    });
 };
+
+it("rejects an early command failure even when its reason is undefined", async () => {
+  const ready = new Promise<void>(() => {});
+  await expect(
+    waitForCommandOrFailure(ready, Promise.reject(undefined)),
+  ).rejects.toBeInstanceOf(Error);
+});
 
 const delayedCommandSource = (
   readyPath: string,
@@ -92,7 +104,7 @@ const expectOwnedCommandToFinishOnAbort = async (
 
   pending = run(controller.signal, directory);
   void pending.catch(() => {});
-  await waitForCommandOrFailure(command.readyPath, pending);
+  await waitForCommandOrFailure(waitForFile(command.readyPath), pending);
   controller.abort(reason);
   const failure = await pending.then(
     () => undefined,
@@ -101,7 +113,9 @@ const expectOwnedCommandToFinishOnAbort = async (
 
   if (!(failure instanceof Error))
     throw new Error("The cancelled process command did not return an error");
-  expect(failure.cause).toBe(reason);
+  expect(ProcessOwnershipInspectionCancelled.from(failure)?.reason).toBe(
+    reason,
+  );
   await expect(readFile(command.donePath, "utf8")).resolves.toBe("done");
 };
 
@@ -146,12 +160,6 @@ it.skipIf(process.platform === "win32")(
     const donePath = join(directory, "done");
     const psPath = join(directory, "ps");
     const originalPath = process.env.PATH;
-    const platformDescriptor = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
-    );
-    if (platformDescriptor === undefined)
-      throw new Error("process.platform descriptor is unavailable");
 
     let stopSampler: (() => Promise<unknown>) | undefined;
     let restoreProcessGlobals = (): void => {};
@@ -178,17 +186,15 @@ it.skipIf(process.platform === "win32")(
     await chmod(psPath, 0o755);
 
     process.env.PATH = `${directory}${originalPath === undefined ? "" : `:${originalPath}`}`;
-    Object.defineProperty(process, "platform", {
-      ...platformDescriptor,
-      value: "darwin",
-    });
     restoreProcessGlobals = () => {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
-      Object.defineProperty(process, "platform", platformDescriptor);
     };
 
+    // macOS runs /bin/ps; another ps platform keeps the fixture on PATH.
     stopSampler = startProcessSampler({
+      platform: "freebsd",
+      resourceScope: createTestProcessCaptureResourceScope(),
       rootPid: 100,
       runId: "fixture-run-token",
       started: 0,
@@ -205,15 +211,15 @@ it.skipIf(process.platform === "win32")(
 
 it
   .skipIf(process.platform === "win32")
-  .each(["darwin-list", "freebsd-environment"] as const)(
+  .each(["freebsd-list", "freebsd-environment"] as const)(
   "waits for the %s ownership command to exit after cancellation",
   async (kind) => {
     await expectOwnedCommandToFinishOnAbort(async (signal, directory) => {
-      const platform = kind === "darwin-list" ? "darwin" : "freebsd";
-      const host = createSystemProcessOwnershipHost(platform, {
+      // macOS runs /bin/ps; FreeBSD keeps the PATH fixture for both commands.
+      const host = createSystemProcessOwnershipHost("freebsd", {
         PATH: directory,
       });
-      return kind === "darwin-list"
+      return kind === "freebsd-list"
         ? host.listProcesses(signal)
         : host.environment(123, signal);
     });
@@ -251,7 +257,7 @@ const expectDarwinReaderCommandToFinishOnAbort = async (
       ? reader.read([processEntry], controller.signal)
       : reader.identities([processEntry], controller.signal);
   void pending.catch(() => {});
-  await waitForCommandOrFailure(command.readyPath, pending);
+  await waitForCommandOrFailure(waitForFile(command.readyPath), pending);
   controller.abort(reason);
   const failure = await pending.then(
     () => undefined,

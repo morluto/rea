@@ -4,30 +4,59 @@ import type {
   ListBrowserTargetsInput,
 } from "../domain/browserObservation.js";
 import {
+  webBundleAcquisitionPartialObservationSchema,
   webBundleAnalysisSchema,
   type AnalyzeWebBundleInput,
 } from "../domain/webBundleAnalysis.js";
-import type { ObserveWebSessionInput } from "../domain/browserSession.js";
-import type { DiscoverWebMcpToolsInput } from "../domain/webMcpDiscovery.js";
-import type { BrowserCaptureComparisonInput } from "../domain/browserCaptureComparison.js";
-import type {
-  CaptureWebScreenshotInput,
-  CompareWebScreenshotsInput,
+import {
+  webObservationSessionSchema,
+  type ObserveWebSessionInput,
+} from "../domain/browserSession.js";
+import {
+  webMcpDiscoverySchema,
+  type DiscoverWebMcpToolsInput,
+} from "../domain/webMcpDiscovery.js";
+import {
+  browserCaptureComparisonSchema,
+  type BrowserCaptureComparisonInput,
+} from "../domain/browserCaptureComparison.js";
+import {
+  webScreenshotSchema,
+  webScreenshotDiffSchema,
+  type CaptureWebScreenshotInput,
+  type CompareWebScreenshotsInput,
 } from "../domain/webScreenshot.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
-import type { BrowserObservationPort } from "./BrowserObservationPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import { createBrowserEvidence } from "./BrowserEvidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { completeProviderEvidence } from "./ProviderOperationExecution.js";
-import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  completeProviderEvidence,
+  keepIncompleteObservation,
+} from "./ProviderOperationExecution.js";
+import {
+  browserTargetListSchema,
+  webPageInspectionSchema,
+} from "../domain/browserObservationSchemas.js";
+
+/** Each completed provider response is admitted by its own operation contract. */
+const browserResultSchemas = {
+  list_browser_targets: browserTargetListSchema,
+  inspect_web_page: webPageInspectionSchema,
+  analyze_web_bundle: webBundleAnalysisSchema,
+  observe_web_session: webObservationSessionSchema,
+  discover_webmcp_tools: webMcpDiscoverySchema,
+  capture_web_screenshot: webScreenshotSchema,
+  compare_web_captures: browserCaptureComparisonSchema,
+  compare_web_screenshots: webScreenshotDiffSchema,
+};
 
 /** List browser targets within the endpoint and origin scope in the request. */
 export const listBrowserTargets = async (
@@ -38,11 +67,7 @@ export const listBrowserTargets = async (
   const ready = requireBrowser(browser, "list_browser_targets");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("list_browser_targets", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("list_browser_targets", options.signal));
   const result = await ready.value.listTargets(input, options);
   return result.ok
     ? browserEvidence(
@@ -64,11 +89,7 @@ export const inspectWebPage = async (
   const ready = requireBrowser(browser, "inspect_web_page");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("inspect_web_page", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("inspect_web_page", options.signal));
   const result = await ready.value.inspectPage(input, options);
   if (!result.ok)
     return retainBrowserObservation(
@@ -97,11 +118,7 @@ export const analyzeWebBundle = async (
   const ready = requireBrowser(browser, "analyze_web_bundle");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("analyze_web_bundle", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("analyze_web_bundle", options.signal));
   const analyzed = await ready.value.analyzeBundle(input, options);
   if (!analyzed.ok)
     return retainBrowserObservation(
@@ -128,11 +145,7 @@ export const observeWebSession = async (
   const ready = requireBrowser(browser, "observe_web_session");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("observe_web_session", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("observe_web_session", options.signal));
   const observed = await ready.value.observeSession(input, options);
   return observed.ok
     ? browserEvidence(
@@ -154,11 +167,7 @@ export const discoverWebMcpTools = async (
   const ready = requireBrowser(browser, "discover_webmcp_tools");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("discover_webmcp_tools", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("discover_webmcp_tools", options.signal));
   const discovered = await ready.value.discoverWebMcpTools(input, options);
   return discovered.ok
     ? browserEvidence(
@@ -180,13 +189,12 @@ export const compareWebCaptureEvidence = async (
   if (!ready.ok) return ready;
   const compared = await ready.value.compareCaptures(input);
   return compared.ok
-    ? ok(
-        createBrowserEvidence(
-          "compare_web_captures",
-          input,
-          compared.value,
-          ready.value.identity(),
-        ),
+    ? browserEvidence(
+        "compare_web_captures",
+        input,
+        compared.value,
+        ready.value.identity(),
+        {},
       )
     : compared;
 };
@@ -200,11 +208,7 @@ export const captureWebScreenshot = async (
   const ready = requireBrowser(browser, "capture_web_screenshot");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("capture_web_screenshot", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("capture_web_screenshot", options.signal));
   const captured = await ready.value.captureScreenshot(input, options);
   return captured.ok
     ? browserEvidence(
@@ -226,13 +230,12 @@ export const compareWebScreenshotEvidence = async (
   if (!ready.ok) return ready;
   const compared = await ready.value.compareScreenshots(input);
   return compared.ok
-    ? ok(
-        createBrowserEvidence(
-          "compare_web_screenshots",
-          input,
-          compared.value,
-          ready.value.identity(),
-        ),
+    ? browserEvidence(
+        "compare_web_screenshots",
+        input,
+        compared.value,
+        ready.value.identity(),
+        {},
       )
     : compared;
 };
@@ -254,7 +257,7 @@ const requireBrowser = (
 const browserEvidence = (
   operation: Parameters<typeof createBrowserEvidence>[0],
   input: Parameters<typeof createBrowserEvidence>[1],
-  result: Parameters<typeof createBrowserEvidence>[2],
+  result: Parameters<typeof createBrowserEvidence>[2]["facts"],
   provider: Parameters<typeof createBrowserEvidence>[3],
   options: ExecutionOptions,
 ): Result<Evidence, AnalysisError> => {
@@ -269,81 +272,120 @@ const browserEvidence = (
         },
       ),
     );
+  // The JSON owner projects only source fields before named schemas inspect them.
+  const report = browserResultSchemas[operation].safeParse(json.data);
+  if (!report.success)
+    return err(
+      new AnalysisOutputError(
+        operation,
+        "Browser provider returned a malformed completed observation.",
+        { cause: report.error },
+      ),
+    );
   return completeProviderEvidence(
-    createBrowserEvidence(operation, input, result, provider),
+    createBrowserEvidence(
+      operation,
+      input,
+      { source: json.data, facts: report.data },
+      provider,
+    ),
     options.signal,
   );
 };
 
-/** Retain the completed capture or bundle facts under their actual operation. */
+const NON_JSON_BROWSER_OBSERVATION =
+  "Browser provider retained a non-JSON incomplete observation.";
+
+/** Promote completed page or bundle facts; keep only a JSON-safe incomplete observation. */
 const retainBrowserObservation = (
   error: AnalysisError,
   input: InspectWebPageInput | AnalyzeWebBundleInput,
   provider: BrowserObservationPort,
   errorOperation: "inspect_web_page" | "analyze_web_bundle",
 ): Result<Evidence, AnalysisError> => {
-  const partial = error.partialObservation;
+  // Project source JSON before interpreting any provider-owned discriminants.
+  keepIncompleteObservation(
+    error,
+    errorOperation,
+    NON_JSON_BROWSER_OBSERVATION,
+  );
+  const seen = new Set<AnalysisError>();
+  const promoted = new Map<object, Evidence>();
+  let current: AnalysisError | undefined = error;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    const partial = current.partialObservation;
+    if (partial !== undefined) {
+      const evidence =
+        promoted.get(partial) ??
+        promoteBrowserObservation(partial, input, provider, errorOperation);
+      if (evidence !== undefined) {
+        promoted.set(partial, evidence);
+        current.partialObservation = evidence;
+      }
+    }
+    current = current.cleanupPrimary;
+  }
+  return err(error);
+};
+
+/** Each cleanup owner can become the selected error after cleanup succeeds. */
+const promoteBrowserObservation = (
+  partial: NonNullable<AnalysisError["partialObservation"]>,
+  input: InspectWebPageInput | AnalyzeWebBundleInput,
+  provider: BrowserObservationPort,
+  errorOperation: "inspect_web_page" | "analyze_web_bundle",
+): Evidence | undefined => {
   if (
     errorOperation === "analyze_web_bundle" &&
-    partial !== undefined &&
+    "kind" in partial &&
+    partial.kind === "web-bundle-acquisition"
+  ) {
+    const acquisition =
+      webBundleAcquisitionPartialObservationSchema.safeParse(partial);
+    if (acquisition.success) {
+      return createBrowserEvidence(
+        "analyze_web_bundle",
+        input,
+        { source: jsonValueSchema.parse(partial), facts: acquisition.data },
+        provider.identity(),
+      );
+    }
+  }
+  if (
+    errorOperation === "analyze_web_bundle" &&
     !("evidence_id" in partial) &&
     "observations" in partial &&
     "capture" in partial
   ) {
     const bundle = webBundleAnalysisSchema.safeParse(partial);
-    if (!bundle.success) {
-      const malformed = new AnalysisOutputError(
-        errorOperation,
-        "Browser provider retained malformed completed bundle facts.",
-        { cause: bundle.error },
-      );
-      return err(
-        error.cleanupIncomplete
-          ? analysisErrorWithCleanupFailure(
-              malformed,
-              error,
-              errorOperation,
-            ).bindCleanupDependencies([malformed, error])
-          : malformed,
+    if (bundle.success) {
+      return createBrowserEvidence(
+        "analyze_web_bundle",
+        input,
+        { source: jsonValueSchema.parse(partial), facts: bundle.data },
+        provider.identity(),
       );
     }
-    error.partialObservation = createBrowserEvidence(
-      "analyze_web_bundle",
-      input,
-      bundle.data,
-      provider.identity(),
-    );
-    return err(error);
-  }
-  if (
-    partial === undefined ||
-    "evidence_id" in partial ||
-    !("target" in partial) ||
-    !("network" in partial) ||
-    !("capture_window" in partial)
-  )
-    return err(error);
-  const inspection = webPageInspectionSchema.safeParse(partial);
-  if (!inspection.success) {
-    if (error instanceof AnalysisCancelledError)
-      return err(
-        new AnalysisOutputError(
-          errorOperation,
-          "Browser provider retained a malformed completed page inspection.",
-          { cause: inspection.error },
-        ),
+  } else if (
+    !("evidence_id" in partial) &&
+    "target" in partial &&
+    "network" in partial &&
+    "capture_window" in partial
+  ) {
+    const inspection = webPageInspectionSchema.safeParse(partial);
+    if (inspection.success) {
+      const pageInput: InspectWebPageInput =
+        "fetch_source_maps" in input
+          ? (({ fetch_source_maps: _fetchSourceMaps, ...page }) => page)(input)
+          : input;
+      return createBrowserEvidence(
+        "inspect_web_page",
+        pageInput,
+        { source: jsonValueSchema.parse(partial), facts: inspection.data },
+        provider.identity(),
       );
-    return err(error);
+    }
   }
-  const pageInput: InspectWebPageInput =
-    "fetch_source_maps" in input
-      ? (({ fetch_source_maps: _fetchSourceMaps, ...page }) => page)(input)
-      : input;
-  error.partialObservation = createBrowserEvidence(
-    "inspect_web_page",
-    pageInput,
-    inspection.data,
-    provider.identity(),
-  );
-  return err(error);
+  return undefined;
 };

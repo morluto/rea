@@ -1,49 +1,95 @@
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, symlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { HopperProvider } from "./HopperProvider.js";
 
 describe("Hopper provider discovery", () => {
-  it("reports bounded launcher availability without starting Hopper", () => {
-    const available = provider(process.execPath).inspectAvailability();
-    expect(available).toEqual({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {
-        launcher_path: process.execPath,
-        platform: process.platform,
-      },
-    });
+  it.skipIf(process.platform === "win32")(
+    "reports bounded launcher availability without starting Hopper",
+    () => {
+      const available = provider(process.execPath).inspectAvailability();
+      expect(available).toEqual({
+        status: "available",
+        code: null,
+        reason: null,
+        diagnostics: {
+          launcher_path: process.execPath,
+          platform: process.platform,
+        },
+      });
 
-    const missingPath = "/missing/rea-hopper-launcher";
-    expect(provider(missingPath).inspectAvailability()).toEqual({
-      status: "unavailable",
-      code: "executable_missing",
-      reason: `Hopper launcher is missing or not executable: ${missingPath}`,
-      diagnostics: {
-        launcher_path: missingPath,
-        platform: process.platform,
-      },
-    });
-  });
+      const missingPath = "/missing/rea-hopper-launcher";
+      expect(provider(missingPath).inspectAvailability()).toEqual({
+        status: "unavailable",
+        code: "executable_missing",
+        reason: `Hopper launcher is missing or not executable: ${missingPath}`,
+        remediation: expect.stringContaining("HOPPER_LAUNCHER_PATH"),
+        diagnostics: {
+          launcher_path: missingPath,
+          platform: process.platform,
+        },
+      });
+    },
+  );
 
-  it("reports a directory launcher path as missing", () => {
-    const directory = dirname(process.execPath);
-    expect(provider(directory).inspectAvailability()).toEqual({
-      status: "unavailable",
-      code: "executable_missing",
-      reason: `Hopper launcher is missing or not executable: ${directory}`,
-      diagnostics: {
-        launcher_path: directory,
-        platform: process.platform,
-      },
-    });
-  });
+  it.skipIf(
+    process.platform === "win32" || existsSync("/opt/hopper/bin/Hopper"),
+  )(
+    "discovers the launcher from the provider's host and home when none is configured",
+    async () => {
+      const home = await createTestTempDirectory("rea-hopper-discovery-");
+      const launcher = join(home, ".local/share/rea/hopper/bin/Hopper");
+      await mkdir(dirname(launcher), { recursive: true });
+      await symlink(process.execPath, launcher);
+      const config = parseConfig({});
+      if (!config.ok) throw config.error;
+      const hopper = new HopperProvider(
+        config.value,
+        silentLogger,
+        { HOME: home },
+        "linux",
+      );
+      expect(hopper.inspectAvailability()).toMatchObject({
+        status: "available",
+        diagnostics: { launcher_path: launcher, platform: "linux" },
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "reports a directory launcher path as missing",
+    () => {
+      const directory = dirname(process.execPath);
+      expect(provider(directory).inspectAvailability()).toEqual({
+        status: "unavailable",
+        code: "executable_missing",
+        reason: `Hopper launcher is missing or not executable: ${directory}`,
+        remediation: expect.stringContaining("HOPPER_LAUNCHER_PATH"),
+        diagnostics: {
+          launcher_path: directory,
+          platform: process.platform,
+        },
+      });
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "reports Hopper integration as unsupported on Windows",
+    () => {
+      expect(provider(process.execPath).inspectAvailability()).toMatchObject({
+        status: "unavailable",
+        code: "unsupported_host",
+        diagnostics: { platform: "win32" },
+      });
+    },
+  );
 
   it("separates target kind, format, and architecture support", () => {
     const hopper = provider(process.execPath, "linux");

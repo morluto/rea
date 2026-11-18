@@ -1,12 +1,10 @@
-import { createHash } from "node:crypto";
+import { captureBudgets } from "./CaptureBudgets.js";
 import { isUtf8 } from "node:buffer";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type WebNetworkCaptureRecord,
-} from "../../domain/webNetworkCapture.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export type SazValue =
   | JsonValue
@@ -19,7 +17,7 @@ export const projectSazRecord = (
   source: SazValue,
   sensitiveValues: readonly string[],
 ) => {
-  const redactor = new CaptureRedaction(sensitiveValues);
+  const redactor = new CaptureRedaction(sensitiveValues, source);
   const binary_fields: WebNetworkCaptureRecord["binary_fields"] = [];
   const visit = (
     value: SazValue,
@@ -27,17 +25,17 @@ export const projectSazRecord = (
     depth: number,
     parent?: Readonly<Record<string, SazValue>>,
   ): JsonValue => {
-    if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
-        "SAZ projection exceeds the complete-evidence nesting budget.",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
+        `SAZ projection exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
     if (parent !== undefined && redactor.harCredential(pointer, parent))
       return redactor.credential(pointer);
     if (Buffer.isBuffer(value)) {
       const base64 = value.toString("base64");
-      const sha256 = createHash("sha256").update(value).digest("hex");
+      const sha256 = sha256Hex(value);
       const hidden =
         redactor.sensitiveBytes(value) ||
         sensitiveValues.some(

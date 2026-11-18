@@ -1,34 +1,105 @@
-import { truncate, writeFile } from "node:fs/promises";
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
+import { chmod, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 
-import {
-  compareManagedMembersEvidenceValidated,
-  compareManagedMemberPaths,
-} from "../../../../src/application/managed/ManagedMemberComparisonService.js";
-import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
+import { executeManagedMemberComparison } from "../../../../src/application/managed/ManagedMemberComparisonService.js";
+import { RetainedRegularFileCleanupFailure } from "../../../../src/process/RegularFileRead.js";
+import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
-import { parseManagedMemberEvidence } from "../../../../src/domain/managed/managedMemberComparisonMatch.js";
-import { createEvidence } from "../../../../src/domain/evidence.js";
-import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
-import { compareManagedMembersInputSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
-import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
-import { managedPeFixtureTarget } from "../../../../src/dotnet/ManagedPe.fixture.js";
+import { readManagedMemberEvidence } from "../../../../src/domain/managed/managedMemberComparisonMatch.js";
+import { comparisonLimitations } from "../../../../src/domain/managed/managedMemberComparisonCoverage.js";
 import {
+  createEvidence,
+  parseEvidence,
+} from "../../../../src/domain/evidence.js";
+
+import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
+import {
+  managedPeFixtureTarget,
   buildManagedNestedTypeFixture,
   buildManagedPeFixture,
 } from "../../../../src/dotnet/ManagedPe.fixture.js";
-import {
-  MAX_MANAGED_SNAPSHOT_BYTES,
-  readManagedSnapshot,
-} from "../../../../src/dotnet/ManagedSnapshot.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
+import {
+  primaryAnalysisError,
+  type AnalysisError,
+} from "../../../../src/domain/analysisErrorBase.js";
+import { buildManagedMemberCapacityFixture } from "../../../fixtures/managedMemberCapacity.js";
+import { managedComparisonCommand } from "../../../fixtures/managedComparisonCommand.js";
+
+it("keeps missing members unknown when the opposite inspection retains only types", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-managed-type-recovery-comparison-",
+  );
+  const completePath = join(directory, "complete.dll");
+  const limitedPath = join(directory, "limited.dll");
+  const completeBytes = buildManagedPeFixture({ additionalEmptyTypes: 2 });
+  const limitedBytes = buildManagedMemberCapacityFixture();
+  await writeFile(completePath, completeBytes);
+  await writeFile(limitedPath, limitedBytes);
+  const complete = inspectManagedMembersBytes(
+    completeBytes,
+    managedPeFixtureTarget(completeBytes, completePath),
+    { userStrings: false },
+  );
+  const limited = inspectManagedMembersBytes(
+    limitedBytes,
+    managedPeFixtureTarget(limitedBytes, limitedPath),
+    { userStrings: false },
+  );
+  expect(limited.coverage.issues).toContainEqual(
+    expect.objectContaining({
+      code: "resource-limit",
+      scope: "metadata.representation",
+      offset: expect.any(Number),
+    }),
+  );
+  for (const [leftPath, rightPath] of [
+    [completePath, limitedPath],
+    [limitedPath, completePath],
+  ]) {
+    const evidence = parseEvidence(
+      await managedComparisonCommand()(leftPath!, rightPath!),
+    );
+    const report = managedMemberComparisonResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(report.coverage.status).toBe("partial");
+    expect(report.methods).toHaveLength(1);
+    expect(report.fields).toHaveLength(1);
+    expect(report.methods[0]?.status).toBe("unknown");
+    expect(report.fields[0]?.status).toBe("unknown");
+    const sources =
+      leftPath === completePath
+        ? ([complete, limited] as const)
+        : ([limited, complete] as const);
+    for (const [side, source] of [
+      [report.left, sources[0]],
+      [report.right, sources[1]],
+    ] as const)
+      expect(side.resource_limits).toEqual(
+        source.coverage.issues.filter(({ code }) => code === "resource-limit"),
+      );
+    expect(report.limitations).toEqual(comparisonLimitations(...sources));
+    const limitedSide = leftPath === limitedPath ? "left" : "right";
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `${limitedSide}.*metadata\\.representation.*do not establish absence`,
+          "i",
+        ),
+      ),
+    );
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(/smaller selection.*type_names.*--type/i),
+    );
+  }
+});
 
 it.each([
   ["accessibility", 6, 0x0011],
@@ -50,10 +121,11 @@ it.each([
     right.writeUInt16LE(flags, method.row_offset + flagOffset);
     await writeFile(leftPath, left);
     await writeFile(rightPath, right);
-    const result = await compareManagedMemberPaths({ leftPath, rightPath });
-    if (!result.ok) throw result.error;
+    const evidence = parseEvidence(
+      await managedComparisonCommand()(leftPath, rightPath),
+    );
     const comparison = managedMemberComparisonResultSchema.parse(
-      result.value.normalized_result,
+      evidence.normalized_result,
     );
     expect(comparison.methods[0]).toMatchObject({
       status: "changed",
@@ -85,10 +157,6 @@ const nestedInspection = (
   };
 };
 // Historical Evidence has neither nesting facts nor declared-name digests.
-const recordedBefore = ({ nesting_read, types, ...rest }: Inspection) => ({
-  ...rest,
-  types: types.map(({ enclosing_type_token, name_sha256, ...type }) => type),
-});
 const compare = (
   left: ReturnType<typeof nestedInspection>,
   right: ReturnType<typeof nestedInspection>,
@@ -107,22 +175,47 @@ const compare = (
       {
         operation: "inspect_managed_members",
         parameters: {},
-        result: jsonValueSchema.parse(change?.(inspection) ?? inspection),
+        result: change?.(inspection) ?? inspection,
         confidence: "observed",
         authority: "shipped-artifact",
       },
     );
-  const result = compareManagedMembersEvidenceValidated(
-    compareManagedMembersInputSchema.parse({
-      left: observe(left, edit.left),
-      right: observe(right, edit.right),
-    }),
-  );
+  const result = executeManagedMemberComparison({
+    left: observe(left, edit.left),
+    right: observe(right, edit.right),
+  });
   if (!result.ok) throw result.error;
   return managedMemberComparisonResultSchema.parse(
-    result.value.normalized_result,
+    result.value.evidence.normalized_result,
   );
 };
+
+describe("managed member comparison request envelope", () => {
+  it("rejects missing and extra fields before reading source Evidence", () => {
+    const missing = executeManagedMemberComparison({ left: null });
+    expect(missing).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["right"], reason: "missing_argument" }],
+      },
+    });
+
+    const extra = executeManagedMemberComparison({
+      left: null,
+      right: null,
+      ignored: true,
+    });
+    expect(extra).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["ignored"], reason: "unknown_argument" }],
+      },
+    });
+  });
+});
+
 const withCilDigests =
   (byToken: Readonly<Record<string, string>>) => (inspection: Inspection) => ({
     ...inspection,
@@ -162,6 +255,17 @@ const pairs = (comparison: ReturnType<typeof compare>) => {
 const original = nestedInspection();
 const swapped = nestedInspection({ swapEnclosing: true });
 
+it("refuses comparison manifests without resource-limit facts", () => {
+  const current = compare(original, swapped);
+  expect(current.left.resource_limits).toEqual([]);
+  expect(current.right.resource_limits).toEqual([]);
+  const { resource_limits: _limits, ...left } = current.left;
+  expect(
+    managedMemberComparisonResultSchema.safeParse({ ...current, left }).error
+      ?.issues[0]?.path,
+  ).toEqual(["left", "resource_limits"]);
+});
+
 it("does not equate missing nested parents with genuinely top-level types", () => {
   const missing = nestedInspection({ nestedClassRows: [] });
   const topLevel = nestedInspection({ topLevelTypes: true });
@@ -173,30 +277,6 @@ it("does not equate missing nested parents with genuinely top-level types", () =
     ),
   ).toBe(true);
 });
-
-it.each(["left", "right"] as const)(
-  "preserves a current enclosing-cycle gap beside %s historical Evidence",
-  (historicalSide) => {
-    const cyclic = nestedInspection({
-      nestedClassRows: [
-        [4, 5],
-        [5, 4],
-        [6, 4],
-      ],
-    });
-    expect(cyclic.inspection.nesting_read).toBe(true);
-    const result =
-      historicalSide === "left"
-        ? compare(original, cyclic, { left: recordedBefore })
-        : compare(cyclic, original, { right: recordedBefore });
-    expect(result.summary.unchanged).toBe(0);
-    expect(
-      [...result.methods, ...result.fields].every(
-        ({ status }) => status === "unknown",
-      ),
-    ).toBe(true);
-  },
-);
 
 describe("managed member comparison of nested types", () => {
   it("uses owned type identity while preserving omitted display labels", () => {
@@ -274,27 +354,9 @@ describe("managed member comparison of nested types", () => {
     // from TypeDef 4 on the left into TypeDef 5 on the right.
     expect(pairs(compare(original, swapped))).toEqual({
       methods: [
-        [
-          "0x06000001",
-          "0x06000002",
-          "unchanged",
-          "exact-il-signature",
-          "exact",
-        ],
-        [
-          "0x06000002",
-          "0x06000001",
-          "unchanged",
-          "exact-il-signature",
-          "exact",
-        ],
-        [
-          "0x06000003",
-          "0x06000003",
-          "unchanged",
-          "exact-il-signature",
-          "exact",
-        ],
+        ["0x06000001", "0x06000002", "changed", "exact-il-signature", "exact"],
+        ["0x06000002", "0x06000001", "changed", "exact-il-signature", "exact"],
+        ["0x06000003", "0x06000003", "changed", "exact-il-signature", "exact"],
       ],
       fields: [
         ["0x04000001", "0x04000002", "unchanged", "field-signature", "exact"],
@@ -323,28 +385,11 @@ describe("managed member comparison of nested types", () => {
     ]);
     expect(
       comparison.methods.slice(0, 2).map(({ dimensions }) => dimensions),
-    ).toEqual([["cil"], ["cil"]]);
-    expect(comparison.summary).toMatchObject({ changed: 2 });
-  });
-
-  it("retains explicitly limited bare names for historical observations", () => {
-    const bare = pairs(
-      compare(original, swapped, {
-        left: recordedBefore,
-        right: recordedBefore,
-      }),
-    );
-
-    expect(bare).not.toEqual(pairs(compare(original, swapped)));
-    expect(pairs(compare(original, swapped, { left: recordedBefore }))).toEqual(
-      bare,
-    );
-    expect(
-      pairs(compare(original, swapped, { right: recordedBefore })),
-    ).toEqual(bare);
-    expect(
-      compare(original, swapped, { left: recordedBefore }).limitations,
-    ).toContainEqual(expect.stringContaining("legacy bare-name comparison"));
+    ).toEqual([
+      ["field-target", "cil", "availability"],
+      ["field-target", "cil", "availability"],
+    ]);
+    expect(comparison.summary).toMatchObject({ changed: 3 });
   });
 
   it("does not pair a nested type with a top-level type of the same name", () => {
@@ -378,9 +423,9 @@ describe("managed nested type names", () => {
 
     // Joined names would make both sides' Fixture.A+Inner one ambiguous group.
     expect(pairs(spelled).methods).toEqual([
-      ["0x06000001", "0x06000001", "unchanged", "exact-il-signature", "exact"],
-      ["0x06000003", "0x06000003", "unchanged", "exact-il-signature", "exact"],
-      ["0x06000002", "0x06000002", "unchanged", "exact-il-signature", "exact"],
+      ["0x06000001", "0x06000001", "unknown", "exact-il-signature", "exact"],
+      ["0x06000003", "0x06000003", "unknown", "exact-il-signature", "exact"],
+      ["0x06000002", "0x06000002", "unknown", "exact-il-signature", "exact"],
     ]);
   });
 
@@ -405,8 +450,8 @@ describe("managed nested type names", () => {
     const warned = comparison.methods.map(({ left, right, limitations }) => [
       left?.token ?? null,
       right?.token ?? null,
-      limitations.some((limitation) =>
-        limitation.startsWith("counterpart-signature-not-decoded"),
+      limitations.some(
+        ({ code }) => code === "counterpart-signature-not-decoded",
       ),
     ]);
 
@@ -431,14 +476,14 @@ describe("managed member comparison subject identity", () => {
       {
         operation: "inspect_managed_members",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...inspection,
           artifact: { ...inspection.artifact, sha256: otherDigest },
           identity_scope: {
             ...inspection.identity_scope,
             requires_artifact_sha256: otherDigest,
           },
-        }),
+        },
       },
     );
     const aligned = createEvidence(
@@ -455,7 +500,7 @@ describe("managed member comparison subject identity", () => {
       },
     );
     const unavailableSubject = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       {
         id: "partial-fixture",
         name: "Partial fixture",
@@ -468,15 +513,114 @@ describe("managed member comparison subject identity", () => {
       },
     );
 
-    expect(() => parseManagedMemberEvidence(mismatched)).toThrow(
-      `Managed Evidence inspect_managed_members (${mismatched.evidence_id}) subject SHA-256 ${target.sha256} does not match normalized artifact SHA-256 ${otherDigest}`,
+    const rejected = readManagedMemberEvidence(mismatched, "left");
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+    if (!rejected.ok)
+      expect(rejected.error.message).toContain(
+        `Managed Evidence inspect_managed_members (${mismatched.evidence_id}) subject SHA-256 ${target.sha256} does not match normalized artifact SHA-256 ${otherDigest}`,
+      );
+    const parsedAligned = readManagedMemberEvidence(aligned, "left");
+    const parsedWithoutSubject = readManagedMemberEvidence(
+      unavailableSubject,
+      "right",
     );
-    expect(parseManagedMemberEvidence(aligned).result.artifact.sha256).toBe(
+    if (!parsedAligned.ok) throw parsedAligned.error;
+    if (!parsedWithoutSubject.ok) throw parsedWithoutSubject.error;
+    expect(parsedAligned.value.result.artifact.sha256).toBe(target.sha256);
+    expect(parsedAligned.value.evidence.evidence_id).toBe(aligned.evidence_id);
+    expect(parsedWithoutSubject.value.result.artifact.sha256).toBe(
       target.sha256,
     );
+  });
+});
+
+describe("managed call-target comparison", () => {
+  it("keeps changed call targets visible when another target fact is unavailable", () => {
+    const il = Buffer.from([0x28, 1, 0, 0, 0x0a, 0x28, 1, 0, 0, 0x0a, 0x2a]);
+    const observe = (
+      name: string,
+      path: string,
+      alterEdges?: (
+        edges: Inspection["call_edges"],
+      ) => Inspection["call_edges"],
+    ) => {
+      const bytes = buildManagedPeFixture({
+        targetFramework: null,
+        memberRefName: name,
+        ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+      });
+      const target = managedPeFixtureTarget(bytes, path);
+      const inspection = inspectManagedMembersBytes(bytes, target);
+      return createEvidence(
+        target,
+        {
+          id: "call-target-fixture",
+          name: "Call target fixture",
+          version: "1",
+        },
+        {
+          operation: "inspect_managed_members",
+          parameters: {},
+          result: {
+            ...inspection,
+            call_edges:
+              alterEdges?.(inspection.call_edges) ?? inspection.call_edges,
+          },
+          confidence: "observed",
+          authority: "shipped-artifact",
+        },
+      );
+    };
+    const left = observe("Clear", "/fixture/left.dll");
+    const rightWithOneUnknownTarget = observe(
+      "WriteLine",
+      "/fixture/right.dll",
+      (edges) =>
+        edges.map((edge, index) =>
+          index === 1
+            ? {
+                ...edge,
+                target_name: null,
+                target_declaring_type: null,
+                target_identity_sha256: null,
+              }
+            : edge,
+        ),
+    );
+    const result = executeManagedMemberComparison({
+      left,
+      right: rightWithOneUnknownTarget,
+    });
+    if (!result.ok) throw result.error;
+    const report = managedMemberComparisonResultSchema.parse(
+      result.value.evidence.normalized_result,
+    );
+    expect(report.methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: expect.arrayContaining(["call-target", "availability"]),
+      limitations: [
+        expect.objectContaining({ code: "call-target-unavailable" }),
+      ],
+    });
+
+    const unavailableEdges = observe(
+      "Clear",
+      "/fixture/no-edges.dll",
+      () => [],
+    );
+    const unknown = executeManagedMemberComparison({
+      left,
+      right: unavailableEdges,
+    });
+    if (!unknown.ok) throw unknown.error;
     expect(
-      parseManagedMemberEvidence(unavailableSubject).result.artifact.sha256,
-    ).toBe(target.sha256);
+      managedMemberComparisonResultSchema.parse(
+        unknown.value.evidence.normalized_result,
+      ).methods[0],
+    ).toMatchObject({ status: "unknown", dimensions: ["availability"] });
   });
 });
 
@@ -494,24 +638,25 @@ describe("managed member comparison path workflow", () => {
         {
           operation: "inspect_managed_members",
           parameters: {},
-          result: jsonValueSchema.parse({
+          result: {
             ...inspection,
             coverage: { ...inspection.coverage, state: "partial" },
-          }),
+          },
           confidence: "observed",
           authority: "shipped-artifact",
         },
       );
     };
-    const input = compareManagedMembersInputSchema.parse({
+    const input = {
       left: observe(0xff, "/tmp/partial-left.dll"),
       right: observe(0xfe, "/tmp/partial-right.dll"),
-    });
-    const result = compareManagedMembersEvidenceValidated(input);
+    };
+    const result = executeManagedMemberComparison(input);
     if (!result.ok) throw result.error;
     const comparison = managedMemberComparisonResultSchema.parse(
-      result.value.normalized_result,
+      result.value.evidence.normalized_result,
     );
+    expect(result.value.summary).toEqual(comparison.summary);
     expect(comparison.coverage.status).toBe("partial");
     expect(comparison.matching.structural_method_shape).toBe(0);
     expect(comparison.methods).toHaveLength(2);
@@ -522,67 +667,139 @@ describe("managed member comparison path workflow", () => {
       ),
     ).toBe(true);
   });
+});
 
-  it("compares two local paths and returns derived Evidence", async () => {
+/** Each typed failure the composed command's managed runner returned. */
+const observedComparison = () => {
+  const runner = createDirectAnalysis({}).runManagedProviderEvidence;
+  const targets: string[] = [];
+  const failures: AnalysisError[] = [];
+  const compare = managedComparisonCommand(async (...args) => {
+    targets.push(args[0]);
+    const result = await runner(...args);
+    if (!result.ok) failures.push(result.error);
+    return result;
+  });
+  return { compare, targets, failures };
+};
+
+/** Close owners a failed test left open, before its directory is removed. */
+const releaseOwners = async (
+  owners: Iterable<OwnedFileHandle>,
+): Promise<void> => {
+  for (const owner of owners)
+    if (owner.handle.fd >= 0) await owner.close().catch(() => undefined);
+};
+
+/** Release every file owner a typed cleanup failure retained. */
+const releaseRetainedOwners = async (cause: unknown): Promise<void> => {
+  if (cause instanceof RetainedRegularFileCleanupFailure)
+    await cause.cleanupLease.release();
+  else if (cause instanceof AggregateError)
+    for (const nested of cause.errors) await releaseRetainedOwners(nested);
+  else if (cause instanceof Error) await releaseRetainedOwners(cause.cause);
+};
+
+describe("compare-managed-members composed from inspect_managed_members", () => {
+  it("compares two local paths and records the caller's selection", async () => {
     const directory = await createTestTempDirectory("rea-managed-compare-");
     const leftPath = join(directory, "left.dll");
     const rightPath = join(directory, "right.dll");
-    await writeFile(leftPath, buildManagedPeFixture());
+    const left = buildManagedPeFixture();
+    await writeFile(leftPath, left);
     await writeFile(
       rightPath,
       buildManagedPeFixture({ methodName: "Renamed" }),
     );
 
-    const result = await compareManagedMemberPaths({
-      leftPath,
-      rightPath,
-    });
+    const evidence = parseEvidence(
+      await managedComparisonCommand()(leftPath, rightPath, {
+        maxSnapshotBytes: left.length * 2,
+      }),
+    );
 
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
+    expect(evidence).toMatchObject({
       operation: "compare_managed_members",
       confidence: "inferred",
       authority: "analyst-inference",
+      parameters: {
+        left_path: leftPath,
+        right_path: rightPath,
+        max_snapshot_bytes: left.length * 2,
+      },
     });
-    expect(result.value.parameters).toMatchObject({
-      left_path: leftPath,
-      right_path: rightPath,
-    });
-    expect(result.value.locations).toEqual([
+    expect(evidence.locations).toEqual([
       { kind: "artifact-path", path: leftPath },
       { kind: "artifact-path", path: rightPath },
     ]);
     expect(
-      managedMemberComparisonResultSchema.parse(result.value.normalized_result)
+      managedMemberComparisonResultSchema.parse(evidence.normalized_result)
         .matching.exact_il_signature,
     ).toBe(1);
   });
 
-  it("reports an unopenable path with the path that failed", async () => {
+  it("refuses the same Evidence on both sides with the CLI key", async () => {
+    const directory = await createTestTempDirectory("rea-managed-same-");
+    const path = join(directory, "same.dll");
+    await writeFile(path, buildManagedPeFixture());
+
+    const result = await managedComparisonCommand()(path, path);
+
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["rightPath"],
+            message: "Managed member Evidence must be distinct",
+          },
+        ],
+        argument_observations: [
+          { argument: "left", observation: { subject: { local_path: path } } },
+          {
+            argument: "right",
+            observation: { subject: { local_path: path } },
+          },
+        ],
+      },
+    });
+    expect(result).not.toHaveProperty("details.partial_observation");
+  });
+
+  it("reports an unopenable left path without opening the right", async () => {
     const directory = await createTestTempDirectory("rea-managed-missing-");
     const leftPath = join(directory, "missing.dll");
     const rightPath = join(directory, "right.dll");
     await writeFile(rightPath, buildManagedPeFixture());
+    const { compare, targets } = observedComparison();
 
-    const result = await compareManagedMemberPaths({ leftPath, rightPath });
+    const result = await compare(leftPath, rightPath);
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("BinaryTargetError");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      details: { path: expect.stringContaining("missing.dll") },
+    expect(result).toMatchObject({
+      code: "target_unavailable",
+      details: { path: leftPath },
     });
+    expect(result).not.toHaveProperty("details.partial_observation");
+    expect(result).not.toHaveProperty("details.argument_observations");
+    expect(targets).toEqual([leftPath]);
   });
 });
 
-describe("managed comparison post-admission read failures", () => {
+describe("compare-managed-members source failures", () => {
+  // Root and Windows can still read a 0o000 file.
+  const deniesUnreadableFiles =
+    process.platform !== "win32" && process.getuid?.() !== 0;
   it.each([
     ["left", "disappearance", "ENOENT"],
-    ["left", "permission denial", "EACCES"],
     ["right", "disappearance", "ENOENT"],
-    ["right", "permission denial", "EACCES"],
+    ...(deniesUnreadableFiles
+      ? [
+          ["left", "permission denial", "EACCES"],
+          ["right", "permission denial", "EACCES"],
+        ]
+      : []),
   ])(
-    "classifies a %s-side %s during the post-resolution read",
+    "classifies a %s-side %s and retains only earlier Evidence",
     async (side, _name, code) => {
       const directory = await createTestTempDirectory(
         "rea-managed-read-failure-",
@@ -590,78 +807,61 @@ describe("managed comparison post-admission read failures", () => {
       const leftPath = join(directory, "left.dll");
       const rightPath = join(directory, "right.dll");
       await writeFile(leftPath, buildManagedPeFixture());
-      await writeFile(rightPath, buildManagedPeFixture());
+      await writeFile(rightPath, buildManagedPeFixture({ methodName: "B" }));
+      const failed = side === "left" ? leftPath : rightPath;
+      if (code === "ENOENT") await rm(failed);
+      else await chmod(failed, 0o000);
 
-      const result = await compareManagedMemberPaths(
-        { leftPath, rightPath },
-        {
-          resolveTarget: parseBinaryTarget,
-          readSnapshot: async (path, operation, options) => {
-            if (path === (side === "left" ? leftPath : rightPath)) {
-              const failure = Object.assign(new Error(`read failed: ${code}`), {
-                code,
-              });
-              throw failure;
-            }
-            return readManagedSnapshot(path, operation, options);
-          },
-        },
-      );
+      const result = await managedComparisonCommand()(leftPath, rightPath);
 
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error._tag).toBe("BinaryTargetError");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        details: { path: side === "left" ? leftPath : rightPath },
+      expect(result).toMatchObject({
+        code: code === "EACCES" ? "access_denied" : "target_unavailable",
+        details: { path: failed },
       });
       if (side === "right")
-        expect(result.error.partialObservation).toMatchObject({
-          operation: "inspect_managed_members",
-          subject: {
-            local_path: leftPath,
-            digest: { sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) },
+        expect(result).toMatchObject({
+          details: {
+            argument_observations: [
+              {
+                argument: "left",
+                observation: {
+                  operation: "inspect_managed_members",
+                  subject: {
+                    local_path: leftPath,
+                    identity: {
+                      sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+                    },
+                  },
+                },
+              },
+            ],
           },
         });
-      else expect(result.error.partialObservation).toBeUndefined();
-      if (code === "EACCES")
-        expect(projectAnalysisError(result.error)).toMatchObject({
-          code: "access_denied",
-        });
+      else expect(result).not.toHaveProperty("details.argument_observations");
+      expect(result).not.toHaveProperty("details.partial_observation");
     },
   );
-});
 
-describe("managed comparison snapshot admission and cleanup", () => {
-  it("rejects a sparse oversized snapshot through the default reader before reading it", async () => {
+  it("applies the selected snapshot limit to each side before reading it", async () => {
     const directory = await createTestTempDirectory(
-      "rea-managed-oversized-snapshot-",
+      "rea-managed-snapshot-limit-",
     );
-    const leftPath = join(directory, "oversized.dll");
+    const leftPath = join(directory, "left.dll");
     const rightPath = join(directory, "right.dll");
     const fixture = buildManagedPeFixture();
-    await writeFile(leftPath, Buffer.alloc(0));
-    await truncate(leftPath, MAX_MANAGED_SNAPSHOT_BYTES + 1);
+    await writeFile(leftPath, fixture);
     await writeFile(rightPath, fixture);
-    const template = managedPeFixtureTarget(fixture);
     const read = vi.spyOn(boundedFileBytes, "readBoundedFileBytes");
     try {
-      const result = await compareManagedMemberPaths(
-        { leftPath, rightPath },
-        {
-          resolveTarget: async (path) => ({
-            ok: true,
-            value: { ...template, path },
-          }),
-        },
-      );
+      const result = await managedComparisonCommand()(leftPath, rightPath, {
+        maxSnapshotBytes: fixture.length - 1,
+      });
 
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        operation: "compare_managed_members",
-        reportedLimits: {
-          max_snapshot_bytes: MAX_MANAGED_SNAPSHOT_BYTES,
+      expect(result).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          operation: "inspect_managed_members",
+          reported_limits: { max_snapshot_bytes: fixture.length - 1 },
         },
       });
       expect(read).not.toHaveBeenCalled();
@@ -670,109 +870,200 @@ describe("managed comparison snapshot admission and cleanup", () => {
     }
   });
 
-  it("retries a transient snapshot close failure through the same resource owner", async () => {
+  it.each(["left", "right"] as const)(
+    "rejects a %s artifact that changes while its snapshot is read",
+    async (side) => {
+      const directory = await createTestTempDirectory(
+        "rea-managed-compare-race-",
+      );
+      const leftPath = join(directory, "left.dll");
+      const rightPath = join(directory, "right.dll");
+      await writeFile(leftPath, buildManagedPeFixture());
+      await writeFile(rightPath, buildManagedPeFixture({ methodName: "B" }));
+      const changed = side === "left" ? leftPath : rightPath;
+      const changedIdentity = (await stat(changed)).ino;
+      const original = boundedFileBytes.readBoundedFileBytes;
+      let wrote = false;
+      const read = vi
+        .spyOn(boundedFileBytes, "readBoundedFileBytes")
+        .mockImplementation(async (...args) => {
+          const observed = await original(...args);
+          if (!wrote && (await args[0].stat()).ino === changedIdentity) {
+            wrote = true;
+            await writeFile(
+              changed,
+              buildManagedPeFixture({ methodName: "ChangedAfterRead" }),
+            );
+          }
+          return observed;
+        });
+      try {
+        const result = await managedComparisonCommand()(leftPath, rightPath);
+
+        expect(wrote).toBe(true);
+        expect(result).toMatchObject({
+          code: "artifact_changed",
+          retryable: true,
+        });
+        expect(JSON.stringify(result)).toContain(changed);
+        if (side === "right")
+          expect(result).toMatchObject({
+            details: {
+              argument_observations: [
+                {
+                  argument: "left",
+                  observation: { subject: { local_path: leftPath } },
+                },
+              ],
+            },
+          });
+        else expect(result).not.toHaveProperty("details.argument_observations");
+      } finally {
+        read.mockRestore();
+      }
+    },
+  );
+});
+
+describe("compare-managed-members source cleanup", () => {
+  it("keeps a changed source's failed file owner until its cleanup is retried", async () => {
+    const root = await createTestTempDirectory(
+      "rea-managed-comparison-identity-close-",
+    );
+    const leftPath = join(root, "left.dll");
+    const rightPath = join(root, "right.dll");
+    const bytes = buildManagedPeFixture();
+    await Promise.all([
+      writeFile(leftPath, bytes),
+      writeFile(rightPath, buildManagedPeFixture({ methodName: "B" })),
+    ]);
+    const { compare, targets, failures } = observedComparison();
+    const leftIdentity = (await stat(leftPath)).ino;
+    let blocked = false;
+    const original = boundedFileBytes.readBoundedFileBytes;
+    const read = vi
+      .spyOn(boundedFileBytes, "readBoundedFileBytes")
+      .mockImplementation(async (...args) => {
+        const observed = await original(...args);
+        if (!blocked && (await args[0].stat()).ino === leftIdentity) {
+          const changed = Buffer.from(bytes);
+          changed[changed.length - 1] =
+            changed.readUInt8(changed.length - 1) ^ 1;
+          await writeFile(leftPath, changed);
+          blocked = true;
+        }
+        return observed;
+      });
+    const nativeClose = OwnedFileHandle.prototype.close;
+    const owners = new Set<OwnedFileHandle>();
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (blocked) {
+          owners.add(this);
+          throw new Error("comparison descriptor close denied");
+        }
+        await nativeClose.call(this);
+      });
+    try {
+      const result = await compare(leftPath, rightPath);
+
+      expect(result).toMatchObject({
+        code: "cleanup_incomplete",
+        details: { resources: [leftPath] },
+      });
+      expect(JSON.stringify(result)).toContain("artifact_changed");
+      expect(targets).toEqual([leftPath]);
+      const [failure] = failures;
+      expect(failure?.cleanupIncomplete).toBe(true);
+      expect(primaryAnalysisError(failure!)._tag).toBe(
+        "AnalysisArtifactChangedError",
+      );
+      expect(owners.size).toBe(1);
+      expect([...owners].every((owner) => owner.handle.fd >= 0)).toBe(true);
+
+      blocked = false;
+      read.mockRestore();
+      close.mockRestore();
+      await releaseRetainedOwners(failure);
+      expect(failure?.cleanupIncomplete).toBe(false);
+      expect([...owners].every((owner) => owner.handle.fd < 0)).toBe(true);
+    } finally {
+      blocked = false;
+      read.mockRestore();
+      close.mockRestore();
+      await releaseOwners(owners);
+    }
+  });
+
+  it("retries a transient snapshot close failure through the same owner", async () => {
     const directory = await createTestTempDirectory(
       "rea-managed-compare-close-",
     );
     const leftPath = join(directory, "left.dll");
     const rightPath = join(directory, "right.dll");
     await writeFile(leftPath, buildManagedPeFixture());
-    await writeFile(rightPath, buildManagedPeFixture());
-    const resources = new ArtifactResourceScope();
+    await writeFile(rightPath, buildManagedPeFixture({ methodName: "B" }));
     const originalClose = OwnedFileHandle.prototype.close;
     const owners: OwnedFileHandle[] = [];
-    let attempts = 0;
+    let failed = false;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
         owners.push(this);
-        attempts += 1;
-        if (attempts === 1) throw new Error("injected transient close failure");
+        if (!failed) {
+          failed = true;
+          throw new Error("injected transient close failure");
+        }
         await originalClose.call(this);
       });
     try {
-      const result = await compareManagedMemberPaths(
-        { leftPath, rightPath },
-        {},
-        resources,
-      );
+      const result = await managedComparisonCommand()(leftPath, rightPath);
 
-      expect(result.ok).toBe(true);
-      expect(owners[0]).toBe(owners[1]);
-      expect(attempts).toBe(3);
+      expect(result).toMatchObject({ operation: "compare_managed_members" });
+      expect(owners[1]).toBe(owners[0]);
+      expect(owners.every((owner) => owner.handle.fd === -1)).toBe(true);
     } finally {
       close.mockRestore();
-      await resources.close();
     }
   });
 
-  it("projects persistent snapshot cleanup failure and retains its exact owner", async () => {
+  it("stops at a left cleanup failure and retains its exact owner", async () => {
     const directory = await createTestTempDirectory(
       "rea-managed-compare-cleanup-",
     );
     const leftPath = join(directory, "left.dll");
     const rightPath = join(directory, "right.dll");
     await writeFile(leftPath, buildManagedPeFixture());
-    await writeFile(rightPath, buildManagedPeFixture());
-    const resources = new ArtifactResourceScope();
-    const cleanupCause = new Error("injected persistent close failure");
-    const owners: OwnedFileHandle[] = [];
+    await writeFile(rightPath, buildManagedPeFixture({ methodName: "B" }));
+    const { compare, targets, failures } = observedComparison();
+    const owners = new Set<OwnedFileHandle>();
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        owners.push(this);
-        throw cleanupCause;
+        owners.add(this);
+        throw new Error("injected persistent close failure");
       });
-    let result: Awaited<ReturnType<typeof compareManagedMemberPaths>>;
     try {
-      result = await compareManagedMemberPaths(
-        { leftPath, rightPath },
-        {},
-        resources,
-      );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(projectAnalysisError(result.error)).toMatchObject({
+      const result = await compare(leftPath, rightPath);
+
+      expect(result).toMatchObject({
         code: "cleanup_incomplete",
         details: { cleanup: "incomplete", resources: [leftPath] },
       });
-      expect(owners[0]).toBe(owners[1]);
-      expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(targets).toEqual([leftPath]);
+      const [failure] = failures;
+      expect(failure?.cleanupResources).toEqual([leftPath]);
+      expect(owners.size).toBe(1);
+      expect([...owners][0]?.handle.fd).toBeGreaterThanOrEqual(0);
+
+      close.mockRestore();
+      await releaseRetainedOwners(failure);
+      expect(failure?.cleanupIncomplete).toBe(false);
+      expect([...owners][0]?.handle.fd).toBe(-1);
     } finally {
       close.mockRestore();
-      await resources.close();
+      await releaseOwners(owners);
     }
-  });
-});
-
-describe("managed comparison target identity", () => {
-  it("rejects a file that changes after target identity is resolved", async () => {
-    const directory = await createTestTempDirectory(
-      "rea-managed-compare-race-",
-    );
-    const leftPath = join(directory, "left.dll");
-    const rightPath = join(directory, "right.dll");
-    await writeFile(leftPath, buildManagedPeFixture());
-    await writeFile(rightPath, buildManagedPeFixture());
-    const replacement = buildManagedPeFixture({
-      methodName: "ChangedAfterOpen",
-    });
-
-    const result = await compareManagedMemberPaths(
-      { leftPath, rightPath },
-      {
-        resolveTarget: async (path) => {
-          const target = await parseBinaryTarget(path);
-          if (target.ok && path === leftPath)
-            await writeFile(path, replacement);
-          return target;
-        },
-      },
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("EvidenceIntegrityError");
-    expect(result.error.message).toContain(leftPath);
   });
 });
