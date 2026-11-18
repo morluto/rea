@@ -11,9 +11,21 @@ it.each([
   'fs.readFile("fixture.json", "utf8")',
   'fs.readFile("fixture.json", {}, 1)',
   'fs.readFile("fixture.json", () => {}, "invalid")',
+  'fs.readFile("fixture.json", () => {}, +1)',
+  'fs.readFile("fixture.json", () => {}, `invalid`)',
+  'fs.readFile("fixture.json", () => {}, `prefix${suffix}`)',
 ])("omits a file source when Node rejects its callback: %s", (call) => {
   expect(reads(call)).toEqual([]);
 });
+
+it.each(["+0", "``", "`${unknown}`"])(
+  "keeps the possible options fallback for %s",
+  (callback) => {
+    expect(
+      reads(`fs.readFile("fixture.json", () => {}, ${callback})`),
+    ).toHaveLength(1);
+  },
+);
 
 it("keeps callable options when a falsy callback falls back to them", () => {
   expect(

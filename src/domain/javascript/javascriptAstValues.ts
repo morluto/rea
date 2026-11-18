@@ -171,6 +171,10 @@ export const staticJavaScriptTruthiness = (
   if (t.isBooleanLiteral(value)) return value.value;
   if (t.isNullLiteral(value)) return false;
   if (t.isStringLiteral(value)) return value.value.length > 0;
+  if (t.isTemplateLiteral(value)) {
+    if (value.quasis.some(({ value: { cooked } }) => cooked)) return true;
+    return value.expressions.length === 0 ? false : undefined;
+  }
   if (t.isNumericLiteral(value))
     return value.value !== 0 && !Number.isNaN(value.value);
   // Babel exposes a BigIntLiteral value as a bigint or, in older versions, its
@@ -184,7 +188,7 @@ export const staticJavaScriptTruthiness = (
   }
   if (
     t.isUnaryExpression(value) &&
-    value.operator === "-" &&
+    (value.operator === "-" || value.operator === "+") &&
     t.isNumericLiteral(value.argument)
   )
     return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
