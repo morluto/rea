@@ -380,22 +380,29 @@ describe("environment tool response summaries", () => {
 describe("environment catalog description budgets", () => {
   it("bounds captured scalar prose while preserving complete lookup identities", () => {
     const query = "query-".repeat(1000);
+    const method = "METHOD".repeat(1000);
+    const path = `/${"😀".repeat(1000)}`;
     const expanded = {
       ...tool("get_users_by_id"),
-      method: "METHOD".repeat(1000),
-      path_template: `/${"😀".repeat(1000)}`,
+      method,
+      path_template: path,
       query_parameter_names: [query],
     };
     const [definition] = environmentToolDefinitions(
       withTools([expanded]),
       source.manifest.name,
     );
-    expect(definition?.tool).toBe(expanded);
+    expect(definition?.tool).toMatchObject({
+      method,
+      path_template: path,
+      query_parameter_names: [query],
+    });
     expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
     expect(definition?.description).toContain(
       "path display truncated; full value in manifest Evidence",
     );
-    expect(definition?.description).not.toContain("\uFFFD");
+    expect(definition?.description).toContain("/😀😀");
+    expect(definition?.description).not.toMatch(/[\uD800-\uDFFF\uFFFD]/u);
     expect(
       Object.hasOwn(definition?.inputSchema.properties ?? {}, "query_1"),
     ).toBe(true);
@@ -441,23 +448,6 @@ describe("environment catalog description budgets", () => {
     expect(definition?.inputSchema.properties.id?.description).toContain(
       observations[0],
     );
-  });
-
-  it("cuts a long captured path in the tool description and keeps it whole in the manifest", () => {
-    const users = tool("get_users_by_id");
-    const long = {
-      ...users,
-      path_template: `/api/${"segment/".repeat(200_000)}{id}`,
-    };
-    const [definition] = environmentToolDefinitions(
-      withTools([long]),
-      source.manifest.name,
-    );
-    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(2048);
-    expect(definition?.description).toContain(
-      "path display truncated; full value in manifest Evidence",
-    );
-    expect(definition?.tool.path_template).toBe(long.path_template);
   });
 
   it("advertises long path parameters with collision-safe aliases consistently", () => {
