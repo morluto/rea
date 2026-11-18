@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 
-test("retains each script's context when a page reuses a context ID", async () => {
+test("attributes scripts to their own context lifetime across a clear and ID reuse", async () => {
   const oldOrigin = "http://127.0.0.1:8080";
   const newOrigin = "http://localhost:8080";
   const scriptUrl = `${oldOrigin}/shared.js`;
@@ -18,6 +18,10 @@ test("retains each script's context when a page reuses a context ID", async () =
       isModule: false,
     },
   };
+  const beforeClear = `${oldOrigin}/before.js`;
+  const afterClear = `${oldOrigin}/after.js`;
+  const betweenContexts = `${oldOrigin}/between.js`;
+  const unobservedContext = `${oldOrigin}/unobserved.js`;
   const fake = await startFakeV8Inspector({
     targetUrl: `${oldOrigin}/page`,
     targetType: "page",
@@ -26,71 +30,39 @@ test("retains each script's context when a page reuses a context ID", async () =
       {
         method: "Runtime.executionContextCreated",
         params: {
-          context: { id: 1, uniqueId: "old", origin: oldOrigin, name: "" },
+          context: { id: 1, origin: oldOrigin, name: "old frame" },
         },
       },
     ],
     scriptEvents: [
       script,
+      {
+        ...script,
+        params: { ...script.params, scriptId: "4", url: beforeClear },
+      },
       { method: "Runtime.executionContextsCleared", params: {} },
+      {
+        ...script,
+        params: { ...script.params, scriptId: "5", url: betweenContexts },
+      },
       {
         method: "Runtime.executionContextCreated",
         params: {
-          context: { id: 1, uniqueId: "new", origin: newOrigin, name: "" },
+          context: { id: 1, origin: newOrigin, name: "new frame" },
         },
       },
       script,
-    ],
-  });
-  const provider = new V8InspectorProvider();
-  try {
-    const result = await provider.observe({
-      inspector_endpoint: fake.endpoint,
-      target_id: fake.targetId,
-      runtime_kind: "electron-renderer",
-      observation_ms: 0,
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.scripts.observed_total).toBe(2);
-    expect(result.value.scripts.items).toHaveLength(2);
-    const scriptsByContext = new Map(
-      result.value.scripts.items.map((item) => [
-        item.execution_context_key,
-        item,
-      ]),
-    );
-    expect(scriptsByContext.size).toBe(2);
-    expect(result.value.execution_contexts).toHaveLength(2);
-    for (const [origin, state] of [
-      [oldOrigin, "cleared"],
-      [newOrigin, "created"],
-    ] as const) {
-      const context = result.value.execution_contexts.find(
-        (item) => item.origin === origin,
-      );
-      expect(context).toMatchObject({ origin, state });
-      expect(scriptsByContext.has(context?.context_key ?? null)).toBe(true);
-    }
-  } finally {
-    await provider.close();
-    await fake.close();
-  }
-});
-
-test("retains a script's reported context ID when its context was not observed", async () => {
-  const fake = await startFakeV8Inspector({
-    targetUrl: "http://127.0.0.1:8080/page",
-    targetType: "page",
-    runtimeProduct: "Electron/fixture",
-    runtimeEvents: [],
-    scriptEvents: [
       {
-        method: "Debugger.scriptParsed",
+        ...script,
+        params: { ...script.params, scriptId: "6", url: afterClear },
+      },
+      {
+        ...script,
         params: {
-          scriptId: "3",
-          url: "http://127.0.0.1:8080/shared.js",
+          ...script.params,
+          scriptId: "7",
+          url: unobservedContext,
           executionContextId: 17,
-          hash: "source",
         },
       },
     ],
@@ -104,13 +76,47 @@ test("retains a script's reported context ID when its context was not observed",
       observation_ms: 0,
     });
     if (!result.ok) throw result.error;
-    expect(result.value.scripts.items).toEqual([
-      expect.objectContaining({
-        execution_context_id: 17,
-        execution_context_key: null,
-      }),
-    ]);
-    expect(result.value.execution_contexts).toEqual([]);
+    const { execution_contexts: contexts, scripts } = result.value;
+    expect(contexts).toHaveLength(2);
+    const oldContext = contexts.find(({ origin }) => origin === oldOrigin);
+    const newContext = contexts.find(({ origin }) => origin === newOrigin);
+    expect(oldContext).toMatchObject({
+      execution_context_id: 1,
+      name: "old frame",
+      state: "cleared",
+    });
+    expect(newContext).toMatchObject({
+      execution_context_id: 1,
+      name: "new frame",
+      state: "created",
+    });
+    const oldKey = oldContext?.context_key;
+    const newKey = newContext?.context_key;
+    expect(oldKey).not.toBe(newKey);
+
+    expect(scripts.observed_total).toBe(6);
+    expect(scripts.items).toHaveLength(6);
+    expect(scripts.items).toEqual(
+      expect.arrayContaining(
+        [
+          [scriptUrl, 1, oldKey],
+          [scriptUrl, 1, newKey],
+          [beforeClear, 1, oldKey],
+          [afterClear, 1, newKey],
+          [betweenContexts, 1, null],
+          [unobservedContext, 17, null],
+        ].map(([url, id, key]) =>
+          expect.objectContaining({
+            location: expect.objectContaining({
+              kind: "url",
+              sanitized_url: url,
+            }),
+            execution_context_id: id,
+            execution_context_key: key,
+          }),
+        ),
+      ),
+    );
   } finally {
     await provider.close();
     await fake.close();
