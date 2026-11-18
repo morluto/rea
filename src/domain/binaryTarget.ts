@@ -608,27 +608,47 @@ export const parsePeRecordStructure = (
     readonly characteristics: number;
     readonly optionalHeader: Buffer;
   },
-  string
+  | {
+      readonly kind: "incomplete";
+      readonly requiredBytes: number;
+      readonly message: string;
+    }
+  | { readonly kind: "malformed"; readonly message: string }
 > => {
-  if (
-    record.length < PE_RECORD_HEADER_BYTES ||
-    record.toString("binary", 0, 4) !== "PE\u0000\u0000"
-  )
-    return err("invalid or truncated PE header");
+  if (record.length < PE_RECORD_HEADER_BYTES)
+    return err({
+      kind: "incomplete",
+      requiredBytes: PE_RECORD_HEADER_BYTES,
+      message: "invalid or truncated PE header",
+    });
+  if (record.toString("binary", 0, 4) !== "PE\u0000\u0000")
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE header",
+    });
   const coff = readPeCoffHeader(record.subarray(4, PE_RECORD_HEADER_BYTES));
-  if (!coff.ok) return err("invalid or truncated PE header");
+  if (!coff.ok)
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE header",
+    });
   const { machine, optionalHeaderSize, characteristics } = coff.value;
-  if (
-    optionalHeaderSize > MAX_PE_OPTIONAL_HEADER_BYTES ||
-    record.length < PE_RECORD_HEADER_BYTES + optionalHeaderSize
-  )
-    return err("invalid or truncated PE optional header");
-  const optionalHeader = record.subarray(
-    PE_RECORD_HEADER_BYTES,
-    PE_RECORD_HEADER_BYTES + optionalHeaderSize,
-  );
+  if (optionalHeaderSize > MAX_PE_OPTIONAL_HEADER_BYTES)
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE optional header",
+    });
+  const declaredEnd = PE_RECORD_HEADER_BYTES + optionalHeaderSize;
+  if (record.length < declaredEnd)
+    return err({
+      kind: "incomplete",
+      requiredBytes: declaredEnd,
+      message: "invalid or truncated PE optional header",
+    });
+  const optionalHeader = record.subarray(PE_RECORD_HEADER_BYTES, declaredEnd);
   const parsed = readPeOptionalHeaderStructure(optionalHeader);
-  if (!parsed.ok) return err(parsed.error.message);
+  if (!parsed.ok)
+    return err({ kind: "malformed", message: parsed.error.message });
   return ok({ machine, characteristics, optionalHeader });
 };
 
@@ -644,7 +664,7 @@ export const parsePeRecordFacts = (
   string
 > => {
   const structure = parsePeRecordStructure(record);
-  if (!structure.ok) return err(structure.error);
+  if (!structure.ok) return err(structure.error.message);
   const {
     machine: machineType,
     characteristics,
