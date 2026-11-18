@@ -8,10 +8,12 @@ PowerPC variants remain separate follow-ups.
 
 ## Admission boundary
 
-ELF `EM_PPC` (20) is retained as the provider-neutral `powerpc` family. The
-target also retains class, byte order, `e_type` and raw `e_flags`. Recognition
-does not mean every provider or PowerPC variant is supported. `EM_PPC64` (21)
-is not recognized as this family.
+ELF `EM_PPC` (20) and `EM_PPC64` (21) are retained as the provider-neutral
+`powerpc` family. The target also retains class, byte order, `e_type` and raw
+`e_flags`; for `EM_PPC64` the low two bits of `e_flags` declare the ELFv1 or
+ELFv2 ABI. Recognition does not mean every provider or PowerPC variant is
+supported: no provider lane admits `EM_PPC64` yet. Static ELF readers keep the
+names `ppc` and `ppc64` in their reports.
 
 The Ghidra lane admits ELF32 `ET_EXEC`, big endian. ELF64, little-endian,
 relocatable and shared objects are refused with a specific unsupported

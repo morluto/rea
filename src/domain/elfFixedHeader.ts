@@ -125,6 +125,7 @@ export const elfArchitecture = (
     case 8: // EM_MIPS: ISA, ABI and byte order remain separate ELF facts.
       return "mips";
     case 20: // EM_PPC; byte order and processor variant remain ELF declarations.
+    case 21: // EM_PPC64; class, byte order and the ABI in e_flags remain ELF declarations.
       return "powerpc";
     case 40:
       return "arm";

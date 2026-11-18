@@ -119,15 +119,13 @@ export const architectureForElfMachine = (machine: number): string => {
         return "386";
       case "x86_64":
         return "amd64";
-      case "powerpc":
-        return "ppc";
+      case "powerpc": // EM_PPC and EM_PPC64 share the family, not the reader name.
+        return machine === 21 ? "ppc64" : "ppc";
       default:
         return architecture;
     }
   }
   switch (machine) {
-    case 21:
-      return "ppc64";
     case 22:
       return "s390";
     case 258:
