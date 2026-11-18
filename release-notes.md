@@ -842,6 +842,7 @@
 * **environment:** tighten varied write outcomes ([#11965](https://github.com/morluto/rea/issues/11965)) ([845c162](https://github.com/morluto/rea/commit/845c162495279bee570e2fb8d1d3bb84608c3c36))
 * **environment:** tighten write stamp witnesses ([#11960](https://github.com/morluto/rea/issues/11960)) ([3360549](https://github.com/morluto/rea/commit/3360549187768c3aff01640c9eb305f968ae23df))
 * **environment:** use the compiled standalone card proof ([#11935](https://github.com/morluto/rea/issues/11935)) ([01e691f](https://github.com/morluto/rea/commit/01e691f4a20ce8df343622da75e6436327672f9c))
+* **environment:** verify bounded clock format conflicts ([#11979](https://github.com/morluto/rea/issues/11979)) ([8c8f37c](https://github.com/morluto/rea/commit/8c8f37c200788e83be0dd7418650e5c750ce11dd))
 * **environment:** verify equal-key write order ([#11975](https://github.com/morluto/rea/issues/11975)) ([71cf21c](https://github.com/morluto/rea/commit/71cf21c200fac5a25e3ec42116ba902559fef0d3))
 * **environment:** verify escaped card capacity at the wire boundary ([#11937](https://github.com/morluto/rea/issues/11937)) ([4f68939](https://github.com/morluto/rea/commit/4f68939830d96cb35a9e5c10ae8992dc20c4c236))
 * **environment:** verify loaded collection history at capacity ([#11962](https://github.com/morluto/rea/issues/11962)) ([4624ebd](https://github.com/morluto/rea/commit/4624ebd14663f0b3b6f81c73d724c9cf6b550ee5))
