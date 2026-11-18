@@ -15219,7 +15219,7 @@ msgstr "Guía para crear un entorno"
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Skip to content"
-msgstr ""
+msgstr "Saltar al contenido"
 
 #. {ph0}: <a href="../../">
 #. {ph1}: </a>
@@ -15229,12 +15229,12 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / RL environments"
-msgstr ""
+msgstr "{ph0}Inicio{ph1} / {ph2}Guías{ph3} / Entornos de RL"
 
 #: website/public/guides/rl-environments/index.html:204
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments."
-msgstr ""
+msgstr "Crear entornos de RL."
 
 #: website/public/guides/rl-environments/index.html:205
 #: website/public/guides/rl-environments/index.html:7
@@ -15243,6 +15243,8 @@ msgid ""
 "Turn a recorded web app session into a runnable environment for training and"
 " testing AI agents."
 msgstr ""
+"Convierte una sesión grabada de una aplicación web en un entorno ejecutable "
+"para entrenar y probar agentes de IA."
 
 #. {ph0}: <a href="https://x.com/reatools/status/2112574822584918075?s=20" >
 #. {ph1}: </a >
@@ -15250,33 +15252,33 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Watch the announcement video on X{ph1}"
-msgstr ""
+msgstr "{ph0}Ver el vídeo del anuncio en X{ph1}"
 
 #: website/public/guides/rl-environments/index.html:217
 #: website/public/guides/rl-environments/index.html:216
 msgctxt "page:guides/rl-environments/index.html"
 msgid "On this page"
-msgstr ""
+msgstr "En esta página"
 
 #: website/public/guides/rl-environments/index.html:230
 msgctxt "page:guides/rl-environments/index.html"
 msgid "What REA builds"
-msgstr ""
+msgstr "Qué crea REA"
 
 #: website/public/guides/rl-environments/index.html:273
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Before you start"
-msgstr ""
+msgstr "Antes de empezar"
 
 #: website/public/guides/rl-environments/index.html:374
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment"
-msgstr ""
+msgstr "Ejecute el entorno"
 
 #: website/public/guides/rl-environments/index.html:455
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Check what works"
-msgstr ""
+msgstr "Compruebe qué funciona"
 
 #: website/public/guides/rl-environments/index.html:231
 msgctxt "page:guides/rl-environments/index.html"
@@ -15286,6 +15288,11 @@ msgid ""
 "calls, the local data those tools use, and a basic test that checks the "
 "environment starts and responds."
 msgstr ""
+"Un agente puede practicar cómo encontrar una incidencia, crear una carpeta o"
+" editar un registro sin ejecutar la aplicación original. REA crea las "
+"herramientas que el agente invoca, los datos locales que usan esas "
+"herramientas y una prueba básica que comprueba que el entorno arranca y "
+"responde."
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -15300,6 +15307,8 @@ msgid ""
 "{ph0}01 · Record{ph1}{ph2}Use a test app{ph3}{ph4}Capture requests, "
 "responses, and the results of changes.{ph5}"
 msgstr ""
+"{ph0}01 · Grabar{ph1}{ph2}Use una aplicación de prueba{ph3}{ph4}Capture las "
+"solicitudes, las respuestas y los resultados de los cambios.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -15315,6 +15324,9 @@ msgid ""
 "state{ph3}{ph4}Export a runnable AgentEnv folder with the recording and a "
 "test.{ph5}"
 msgstr ""
+"{ph0}02 · Crear con REA{ph1}{ph2}Cree las herramientas y el estado "
+"local{ph3}{ph4}Exporte una carpeta de AgentEnv ejecutable con la grabación y"
+" una prueba.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -15330,6 +15342,9 @@ msgid ""
 "agent{ph3}{ph4}Add task goals and reward checks for evaluation or RL "
 "training.{ph5}"
 msgstr ""
+"{ph0}03 · Ejecutar con AgentEnv{ph1}{ph2}Entregue el entorno a un "
+"agente{ph3}{ph4}Añada objetivos de tarea y comprobaciones de recompensa para"
+" la evaluación o el entrenamiento de RL.{ph5}"
 
 #: website/public/guides/rl-environments/index.html:265
 msgctxt "page:guides/rl-environments/index.html"
@@ -15337,6 +15352,8 @@ msgid ""
 "The recording determines which operations the environment can support. "
 "Changes are supported when the recording confirms their effects."
 msgstr ""
+"La grabación determina qué operaciones puede admitir el entorno. Los cambios"
+" se admiten cuando la grabación confirma sus efectos."
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a >
@@ -15349,6 +15366,11 @@ msgid ""
 "create, edit, and delete data. REA records the app you provide; you start it"
 " and prepare its test data."
 msgstr ""
+"{ph0}Configure REA con su agente de codificación{ph1}. Para grabar una "
+"aplicación, necesita un navegador de la familia Chrome y una instancia de "
+"prueba en ejecución en la que el agente pueda crear, editar y eliminar "
+"datos. REA graba la aplicación que usted le indique; usted la inicia y "
+"prepara sus datos de prueba."
 
 #. {ph0}: <a href="https://github.com/scaleapi/agentenv-framework#install" >
 #. {ph1}: </a >
@@ -15361,11 +15383,14 @@ msgid ""
 "and start Docker. REA's compatibility check uses AgentEnv version {ph2} with"
 " Python 3.12."
 msgstr ""
+"Para ejecutar el entorno exportado, instale el {ph0}framework AgentEnv{ph1} "
+"e inicie Docker. La comprobación de compatibilidad de REA usa la versión "
+"{ph2} de AgentEnv con Python 3.12."
 
 #: website/public/guides/rl-environments/index.html:291
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Record and build with your agent"
-msgstr ""
+msgstr "Grabe y cree con su agente"
 
 #: website/public/guides/rl-environments/index.html:292
 msgctxt "page:guides/rl-environments/index.html"
@@ -15373,6 +15398,8 @@ msgid ""
 "Tell your agent which app and operations to cover. For an app with folders, "
 "adapt this example:"
 msgstr ""
+"Indique a su agente qué aplicación y qué operaciones debe cubrir. Para una "
+"aplicación con carpetas, adapte este ejemplo:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -15387,7 +15414,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr ""
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Su agente de codificación"
 
 #: website/public/guides/rl-environments/index.html:302
 #: website/public/guides/rl-environments/index.html:347
@@ -15395,7 +15422,7 @@ msgstr ""
 #: website/public/guides/rl-environments/index.html:419
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy"
-msgstr ""
+msgstr "Copiar"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -15418,6 +15445,13 @@ msgid ""
 " {ph6}, which does not exist yet. Check which operations are supported and "
 "report any gaps.{ph7}{ph8}{ph9}"
 msgstr ""
+"{ph0}›{ph1}{ph2}Use REA para crear un entorno de AgentEnv a partir de mi "
+"aplicación web de prueba en {ph3}. Cubra el listado, la creación, el cambio "
+"de nombre y la eliminación de carpetas. Puede crear y eliminar carpetas de "
+"prueba; deje sin cambios los datos existentes. Inicie sesión como admin con "
+"la contraseña de {ph4}. Use el navegador en {ph5} y exporte a {ph6}, que "
+"todavía no existe. Compruebe qué operaciones se admiten e informe de "
+"cualquier carencia.{ph7}{ph8}{ph9}"
 
 #. {ph0}: <code>APP_PASSWORD</code>
 #: website/public/guides/rl-environments/index.html:326
@@ -15428,6 +15462,9 @@ msgid ""
 "in the environment that starts REA's MCP server so the password stays out of"
 " the prompt."
 msgstr ""
+"Mensaje de ejemplo. Sustituya la URL, las operaciones, la cuenta y las "
+"rutas. Defina {ph0} en el entorno que inicia el servidor MCP de REA para que"
+" la contraseña no aparezca en el mensaje."
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -15439,11 +15476,14 @@ msgid ""
 "operations, and exports the environment. After export, continue with "
 "{ph0}running the environment{ph1}."
 msgstr ""
+"Su agente inspecciona la aplicación, graba una sesión, comprueba las "
+"operaciones admitidas y exporta el entorno. Tras la exportación, continúe "
+"con {ph0}la ejecución del entorno{ph1}."
 
 #: website/public/guides/rl-environments/index.html:338
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Or use a saved recording"
-msgstr ""
+msgstr "O use una grabación guardada"
 
 #: website/public/guides/rl-environments/index.html:339
 msgctxt "page:guides/rl-environments/index.html"
@@ -15452,11 +15492,15 @@ msgid ""
 "with API response bodies from the browser's network panel, then build into a"
 " new or empty folder:"
 msgstr ""
+"Un archivo HAR registra las solicitudes y respuestas de red de un navegador."
+" Exporte uno que incluya los cuerpos de las respuestas de la API desde el "
+"panel de red del navegador y, después, cree el entorno en una carpeta nueva "
+"o vacía:"
 
 #: website/public/guides/rl-environments/index.html:346
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build the environment"
-msgstr ""
+msgstr "Cree el entorno"
 
 #. {ph0}: <code>capture-browser-scenario</code>
 #. {ph1}: <code>--dry-run</code>
@@ -15469,6 +15513,11 @@ msgid ""
 " build reads local data and writes the folder without contacting the app. "
 "Add {ph1} to review the report without writing files."
 msgstr ""
+"También puede pasar el JSON de Evidence de captura guardado por {ph0} de REA"
+" o por la inspección de HAR. Evidence es la grabación guardada junto con la "
+"información de su origen. La creación lee datos locales y escribe la carpeta"
+" sin contactar con la aplicación. Añada {ph1} para revisar el informe sin "
+"escribir archivos."
 
 #: website/public/guides/rl-environments/index.html:366
 msgctxt "page:guides/rl-environments/index.html"
@@ -15477,6 +15526,10 @@ msgid ""
 " because the recording did not establish their effects. Each withheld "
 "operation has a reason and a hint about what to record next."
 msgstr ""
+"El informe enumera las operaciones de lectura, los cambios admitidos y las "
+"operaciones excluidas porque la grabación no estableció sus efectos. Cada "
+"operación excluida indica un motivo y una pista sobre qué grabar a "
+"continuación."
 
 #: website/public/guides/rl-environments/index.html:375
 msgctxt "page:guides/rl-environments/index.html"
@@ -15484,11 +15537,13 @@ msgid ""
 "Whether your agent exported the folder or you built it from a recording, run"
 " it with AgentEnv:"
 msgstr ""
+"Tanto si su agente exportó la carpeta como si usted la creó a partir de una "
+"grabación, ejecútela con AgentEnv:"
 
 #: website/public/guides/rl-environments/index.html:381
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment test"
-msgstr ""
+msgstr "Ejecute la prueba del entorno"
 
 #: website/public/guides/rl-environments/index.html:393
 msgctxt "page:guides/rl-environments/index.html"
@@ -15496,6 +15551,9 @@ msgid ""
 "Use the path your agent reported if it differs. The first run builds the "
 "container image and needs access to its image and package sources."
 msgstr ""
+"Use la ruta que indicó su agente si es distinta. La primera ejecución "
+"construye la imagen del contenedor y necesita acceso a los orígenes de su "
+"imagen y de sus paquetes."
 
 #: website/public/guides/rl-environments/index.html:398
 msgctxt "page:guides/rl-environments/index.html"
@@ -15504,11 +15562,15 @@ msgid ""
 "a suitable read tool exists, calls it and checks its response status. "
 "Passing it shows the environment starts and responds in that setup."
 msgstr ""
+"La tarea smoke incluida es una prueba básica. Comprueba el número de "
+"herramientas y, cuando existe una herramienta de lectura adecuada, la invoca"
+" y comprueba el estado de su respuesta. Superarla demuestra que el entorno "
+"arranca y responde en esa configuración."
 
 #: website/public/guides/rl-environments/index.html:406
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Add tasks and reward checks"
-msgstr ""
+msgstr "Añada tareas y comprobaciones de recompensa"
 
 #: website/public/guides/rl-environments/index.html:407
 msgctxt "page:guides/rl-environments/index.html"
@@ -15517,6 +15579,10 @@ msgid ""
 "and run training. Your coding agent can help write the tasks and checks. "
 "Start with one operation the environment supports:"
 msgstr ""
+"Use el entorno con su framework de RL para definir objetivos, puntuar "
+"resultados y ejecutar el entrenamiento. Su agente de codificación puede "
+"ayudarle a escribir las tareas y las comprobaciones. Empiece por una "
+"operación que el entorno admita:"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -15534,6 +15600,12 @@ msgid ""
 "the result. Reset the environment before each run. Use the AgentEnv task and"
 " verifier formats.{ph3}{ph4}{ph5}"
 msgstr ""
+"{ph0}›{ph1}{ph2}Use este entorno exportado para añadir una tarea de AgentEnv"
+" que pida a un agente crear una carpeta llamada Practice. Compruebe el "
+"estado del entorno para confirmar que la carpeta existe con ese nombre y use"
+" esa comprobación para puntuar el resultado. Restablezca el entorno antes de"
+" cada ejecución. Use los formatos de tarea y de verificador de "
+"AgentEnv.{ph3}{ph4}{ph5}"
 
 #: website/public/guides/rl-environments/index.html:440
 msgctxt "page:guides/rl-environments/index.html"
@@ -15542,6 +15614,9 @@ msgid ""
 " changes data should check the resulting state; a retrieval task can check "
 "an answer against a recorded value."
 msgstr ""
+"Mensaje de ejemplo para un entorno que admite la creación de carpetas. Una "
+"tarea que cambia datos debe comprobar el estado resultante; una tarea de "
+"consulta puede contrastar una respuesta con un valor grabado."
 
 #. {ph0}: <a href="https://www.agentenvframework.com/docs" >
 #. {ph1}: </a >
@@ -15553,6 +15628,10 @@ msgid ""
 "specific grading is added in the evaluation workflow. See the {ph0}AgentEnv "
 "documentation{ph1} for tasks, verifiers, and agent connections."
 msgstr ""
+"La exportación incluye el entorno ejecutable y su prueba básica. La "
+"calificación específica de cada tarea se añade en el flujo de evaluación. "
+"Consulte la {ph0}documentación de AgentEnv{ph1} para conocer las tareas, los"
+" verificadores y las conexiones de agentes."
 
 #: website/public/guides/rl-environments/index.html:456
 msgctxt "page:guides/rl-environments/index.html"
@@ -15562,6 +15641,10 @@ msgid ""
 "change. Repeat with different values. For deletes, record the missing-item "
 "response and the updated list."
 msgstr ""
+"Para que los cambios se admitan, grabe los resultados además de la acción: "
+"lea un elemento, cámbielo y vuelva a leer el elemento y su lista antes del "
+"siguiente cambio. Repita con valores distintos. Para las eliminaciones, "
+"grabe la respuesta de elemento inexistente y la lista actualizada."
 
 #. {ph0}: <code>environment-compare</code>
 #: website/public/guides/rl-environments/index.html:462
@@ -15573,6 +15656,10 @@ msgid ""
 "separate recording of calls made against the app from the same starting "
 "data."
 msgstr ""
+"Superar la prueba de arranque, que un agente complete una tarea y coincidir "
+"con la aplicación original son comprobaciones distintas. Para la última, use"
+" {ph0} con una grabación aparte de las llamadas hechas a la aplicación desde"
+" los mismos datos iniciales."
 
 #: website/public/guides/rl-environments/index.html:468
 msgctxt "page:guides/rl-environments/index.html"
@@ -15581,6 +15668,10 @@ msgid ""
 "paths. Custom headers, query values, and body tokens can remain. Credential-"
 "name warnings identify places to review; they do not remove those values."
 msgstr ""
+"Antes de compartir la carpeta, revise los cuerpos de respuesta y las rutas "
+"locales que conserva. Pueden quedar cabeceras personalizadas, valores de "
+"consulta y tokens en los cuerpos. Los avisos de nombres de credenciales "
+"señalan lugares que revisar; no eliminan esos valores."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/agent-
 #. environments-quickstart.md" >
@@ -15596,36 +15687,40 @@ msgid ""
 "reports and comparison commands. The {ph2}environment reference{ph3} covers "
 "direct MCP serving, state controls, and limits."
 msgstr ""
+"Siga la {ph0}guía completa de grabación y validación{ph1} para conocer los "
+"informes de cobertura y los comandos de comparación. La {ph2}referencia de "
+"entornos{ph3} cubre el servicio directo por MCP, los controles de estado y "
+"los límites."
 
 #: website/public/guides/rl-environments/index.html:6
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments with REA"
-msgstr ""
+msgstr "Crear entornos de RL con REA"
 
 #: website/public/guides/rl-environments/index.html:302
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment prompt"
-msgstr ""
+msgstr "Copie el mensaje del entorno"
 
 #: website/public/guides/rl-environments/index.html:347
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment build command"
-msgstr ""
+msgstr "Copie el comando de creación del entorno"
 
 #: website/public/guides/rl-environments/index.html:382
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment run command"
-msgstr ""
+msgstr "Copie el comando de ejecución del entorno"
 
 #: website/public/guides/rl-environments/index.html:419
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy task prompt"
-msgstr ""
+msgstr "Copie el mensaje de la tarea"
 
 #: website/public/guides/rl-environments/index.html:507
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Back to top"
-msgstr ""
+msgstr "Volver arriba"
 
 #. {ph0}: <a href="#rl-environments">
 #. {ph1}: </a>
@@ -15665,7 +15760,7 @@ msgstr "{ph0}Guía para crear un entorno{ph1} · {ph2}Ver la demo en X{ph3}"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}What REA builds{ph1}"
-msgstr ""
+msgstr "{ph0}Qué crea REA{ph1}"
 
 #. {ph0}: <a href="#prepare">
 #. {ph1}: </a>
@@ -15673,7 +15768,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Before you start{ph1}"
-msgstr ""
+msgstr "{ph0}Antes de empezar{ph1}"
 
 #. {ph0}: <a href="#record">
 #. {ph1}: </a>
@@ -15681,7 +15776,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Record with your agent{ph1}"
-msgstr ""
+msgstr "{ph0}Grabe con su agente{ph1}"
 
 #. {ph0}: <a href="#build">
 #. {ph1}: </a>
@@ -15689,7 +15784,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Use a saved recording{ph1}"
-msgstr ""
+msgstr "{ph0}Use una grabación guardada{ph1}"
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -15697,7 +15792,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Run the environment{ph1}"
-msgstr ""
+msgstr "{ph0}Ejecute el entorno{ph1}"
 
 #. {ph0}: <a href="#tasks">
 #. {ph1}: </a>
@@ -15705,7 +15800,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Add tasks and rewards{ph1}"
-msgstr ""
+msgstr "{ph0}Añada tareas y recompensas{ph1}"
 
 #. {ph0}: <a href="#check">
 #. {ph1}: </a>
@@ -15713,7 +15808,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Check what works{ph1}"
-msgstr ""
+msgstr "{ph0}Compruebe qué funciona{ph1}"
 
 #: website/public/showcase/index.html:301
 msgctxt "page:showcase/index.html"
@@ -15938,6 +16033,10 @@ msgid ""
 "renderer has since changed; the recorded source locations accompany the API,"
 " channel and handler findings."
 msgstr ""
+"Grabado por REA 4.1.0 en una versión anterior del ejemplo que aparece a "
+"continuación. El renderizador ha cambiado desde entonces; las ubicaciones de"
+" origen grabadas acompañan a los hallazgos de la API, el canal y el "
+"controlador."
 
 #. {ph0}: <code>--client</code>
 #: website/public/get-started/index.html:635
@@ -15947,6 +16046,8 @@ msgid ""
 "Use the ID with {ph0} when choosing a client explicitly. These clients are "
 "supported in npm 6.8.0 and later."
 msgstr ""
+"Use el identificador con {ph0} cuando elija un cliente de forma explícita. "
+"Estos clientes se admiten a partir de npm 6.8.0."
 
 #. {ph0}: <code>droid</code>
 #. {ph1}: <code>dsh</code>
@@ -15963,6 +16064,8 @@ msgid ""
 "{ph0}, {ph1}, {ph2}, {ph3}, {ph4}, {ph5} and {ph6} require npm 6.5.0 or "
 "later. {ph7} requires npm 6.8.0 or later."
 msgstr ""
+"{ph0}, {ph1}, {ph2}, {ph3}, {ph4}, {ph5} y {ph6} requieren npm 6.5.0 o "
+"posterior. {ph7} requiere npm 6.8.0 o posterior."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -15974,11 +16077,15 @@ msgid ""
 "with an MCP registration. The macOS headless profile requires a source build"
 " or a release that includes it."
 msgstr ""
+"{ph0}IDA{ph1} (Windows; macOS arm64 sin interfaz gráfica): use una "
+"instalación de IDA existente con un registro MCP. El perfil sin interfaz "
+"gráfica de macOS requiere una compilación desde el código fuente o una "
+"versión que lo incluya."
 
 #: website/public/get-started/index.html:1042
 msgctxt "page:get-started/index.html"
 msgid "x86_64 installer on supported distributions"
-msgstr ""
+msgstr "Instalador x86_64 en las distribuciones compatibles"
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
@@ -15996,6 +16103,12 @@ msgid ""
 "prerequisites and PowerShell setup. A Linux environment such as WSL is "
 "another option."
 msgstr ""
+"{ph0}Configure REA{ph1} y, después, descargue estos dos archivos en la misma"
+" carpeta. En Windows x64, use un paquete que incluya los controles nativos "
+"de Windows correspondientes y compatibilidad con la entrada estándar (stdin)"
+" del protocolo propio; consulte la {ph2}guía del proveedor de Android{ph3} "
+"para conocer los requisitos previos y la configuración de PowerShell. Un "
+"entorno Linux como WSL es otra opción."
 
 #: website/public/get-started/index.html:1072
 msgctxt "page:get-started/index.html"
@@ -16006,6 +16119,11 @@ msgid ""
 "arm64, use Ghidra. Hopper is commercial software; its demo has vendor-"
 "defined limits."
 msgstr ""
+"La configuración automatizada en Linux requiere un host x86_64 con Ubuntu "
+"24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS u Omarchy. También se "
+"puede configurar un lanzador de Hopper existente en otras distribuciones de "
+"Linux compatibles. En Linux arm64, use Ghidra. Hopper es software comercial;"
+" su demostración tiene límites definidos por el fabricante."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -16018,6 +16136,11 @@ msgid ""
 "license before your first analysis. Automated Linux setup requires x86_64; "
 "use Ghidra on Linux arm64."
 msgstr ""
+"{ph0}Hopper{ph1} (macOS o Linux): la configuración de REA lo detecta u "
+"ofrece instalarlo. En macOS, abra Hopper una vez y elija el modo de "
+"demostración o active una licencia antes de su primer análisis. La "
+"configuración automatizada en Linux requiere x86_64; use Ghidra en Linux "
+"arm64."
 
 #~ msgctxt "page:get-started/index.html"
 #~ msgid ""
