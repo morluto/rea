@@ -54,11 +54,23 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
     cases: ["tests/boundary/cli/desktopApplicationCli.test.ts"],
   },
   devicetree: { cases: ["tests/acceptance/devicetreeCli.test.ts"] },
+  dwarfUnits: {
+    cases: [
+      "tests/acceptance/dwarfUnitsCli.test.ts",
+      "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+    ],
+  },
   electronActiveObservation: {
     cases: ["tests/acceptance/applications/electronBlankPathCli.test.ts"],
   },
   electronFuses: { cases: ["tests/acceptance/electronFusesCli.test.ts"] },
   electronObservation: { cases: ["tests/boundary/cli/electronCli.test.ts"] },
+  elfDebugLink: {
+    cases: [
+      "tests/acceptance/elfDebugLinkCli.test.ts",
+      "tests/boundary/mcp/elfDebugLinkMcp.test.ts",
+    ],
+  },
   elfNotes: { cases: ["tests/acceptance/elfNotesCli.test.ts"] },
   elfDependencies: {
     cases: [
@@ -108,6 +120,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   managedWorkflow: {
     cases: ["tests/boundary/mcp/managedWorkflowUnknownIdentityMcp.test.ts"],
   },
+  mavenGradleMetadata: {
+    cases: ["tests/acceptance/mavenGradleMetadataCli.test.ts"],
+  },
   modelArtifact: { cases: ["tests/acceptance/modelArtifactCli.test.ts"] },
   nativeExports: {
     cases: [
@@ -126,6 +141,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   peImports: { cases: ["tests/acceptance/peImportsCli.test.ts"] },
   peLoadConfig: { cases: ["tests/acceptance/peLoadConfigCli.test.ts"] },
   peResources: { cases: ["tests/acceptance/applications/peResources.test.ts"] },
+  nugetNupkg: { cases: ["tests/acceptance/nugetNupkgCli.test.ts"] },
   pythonPyc: { cases: ["tests/acceptance/pythonPycCli.test.ts"] },
   recordedCrash: { cases: ["tests/boundary/mcp/recordedCrashMcp.test.ts"] },
   releaseExposure: { cases: ["tests/acceptance/releaseExposureCli.test.ts"] },

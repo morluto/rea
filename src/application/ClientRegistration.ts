@@ -31,6 +31,7 @@ import {
   type ClientRegistrationCommandIdentity,
 } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { dshToolCallTimeout } from "./DshCordisPatch.js";
 
 const tomlTimeoutSchema = z.union([
   z.number().positive(),
@@ -195,10 +196,7 @@ export const parseClientRegistrationPolicy = (
     const parsed = registrationSchema
       .pick({ command: true, args: true, serverName: true, transport: true })
       .extend({
-        // An unevaluated Cordis expression or malformed literal is not a
-        // usable deadline; alignment reports the registration stale so setup
-        // repairs it with the recommended literal.
-        toolCallTimeoutMs: z.number().positive().optional().catch(undefined),
+        toolCallTimeoutMs: z.unknown().transform(dshToolCallTimeout).optional(),
       })
       .strip()
       .safeParse(value);

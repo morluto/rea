@@ -15,6 +15,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import type {
   Evidence,
+  EvidenceAuthority,
   EvidenceLocation,
   EvidenceSubjectTarget,
 } from "../domain/evidence.js";
@@ -117,7 +118,7 @@ export interface AnalysisExecution extends AnalysisObservation {
   readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
-interface CreateAnalysisExecutionOptions {
+export interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
   readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
@@ -133,6 +134,7 @@ interface CreateAnalysisExecutionOptions {
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
+  readonly authority?: EvidenceAuthority;
 }
 
 /**
@@ -212,6 +214,9 @@ export function createAnalysisExecution(
       ? {}
       : { sourceEvidence: Object.freeze([...options.sourceEvidence]) }),
     ...(options.subject === undefined ? {} : { subject: options.subject }),
+    ...(options.authority === undefined
+      ? {}
+      : { authority: options.authority }),
   };
 }
 

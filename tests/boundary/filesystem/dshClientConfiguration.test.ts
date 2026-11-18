@@ -957,23 +957,44 @@ describe("DeepSeek Harness tool call timeout", () => {
     ).toBe(450_000);
   });
 
-  it("replaces an expression-backed timeout with the recommended literal", async () => {
+  it("preserves an expression-backed timeout and reports its value unknown", async () => {
     const { home, client } = await harnessClient();
     const document = parseDocument(
       stringifyYaml([{ insert: [canonicalEntry()] }]),
     );
     const expression = document.createNode("process.env.REA_TOOL_TIMEOUT");
     expression.tag = "tag:yaml.org,2002:js";
+    expression.comment = " caller timeout";
     document.setIn([0, "insert", 0, "config", "toolCallTimeoutMs"], expression);
-    await writeFile(client.configPath, document.toString());
+    const original = document.toString();
+    await writeFile(client.configPath, original);
+
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
+    ).toBe("unchanged");
+    expect(await readFile(client.configPath, "utf8")).toBe(original);
+    expect(await dshStatus(home)).toMatchObject({
+      state: "aligned",
+      advisory: expect.stringContaining("effective timeout is unknown"),
+    });
+
     expect(
-      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
-        ?.config?.toolCallTimeoutMs,
-    ).toBe(450_000);
-    expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_ANALYSIS_PROVIDER: "ghidra" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const refreshed = await readFile(client.configPath, "utf8");
+    expect(
+      cordisPatches(refreshed)[0]?.insert?.[0]?.config?.toolCallTimeoutMs,
+    ).toEqual({ __jsExpr: "process.env.REA_TOOL_TIMEOUT" });
+    expect(refreshed).toContain("# caller timeout");
+    expect(cordisPatches(refreshed)[0]?.insert?.[0]?.config?.env).toMatchObject(
+      { REA_ANALYSIS_PROVIDER: "ghidra" },
+    );
   });
 });
 

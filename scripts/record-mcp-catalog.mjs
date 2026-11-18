@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 // Runtime discovery is generated from the same canonical registrations, after
-// default identity has been recorded and before bundling. Test catalogs stay separate.
+// default identity has been recorded and before bundling.
 const compiled = resolve(dirname(fileURLToPath(import.meta.url)), "../dist");
 const read = (name) => import(pathToFileURL(join(compiled, name)).href);
 const [

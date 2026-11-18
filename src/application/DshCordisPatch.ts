@@ -278,7 +278,7 @@ export class DshCordisDocument {
     if (Object.keys(env).length > 0) desired.env = env;
     if (
       toolCallTimeoutMs !== undefined &&
-      !retainsCallerToolTimeout(this.config)
+      dshToolCallTimeout(this.config?.toolCallTimeoutMs) === undefined
     )
       desired.toolCallTimeoutMs = toolCallTimeoutMs;
     return ok(desired);
@@ -474,17 +474,14 @@ export const serializeDshDocument = (
     throw new ConfigurationError("Missing Cordis edit plan");
   return document.cordis.source.serialize(document.cordis.registration);
 };
-/**
- * Whether the caller's own tool timeout survives a refresh: a positive finite
- * literal. Any other value, including an unevaluated Cordis expression or a
- * malformed literal, is replaced by the recommended deadline, matching how
- * registration-status expressions are repaired elsewhere.
- */
-const retainsCallerToolTimeout = (
-  config: Record<string, unknown> | undefined,
-): boolean => {
-  const value = config?.toolCallTimeoutMs;
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
+/** Read a positive literal deadline or null for a caller-owned expression of unknown value. */
+export const dshToolCallTimeout = (
+  value: unknown,
+): number | null | undefined => {
+  if (value instanceof CordisExpression) return null;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
 };
 
 export const dshClientRegistrationEntry = (

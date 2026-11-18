@@ -17,9 +17,11 @@ import {
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "rejects misaligned 64-bit Mach-O through Rust CLI and stdio MCP",

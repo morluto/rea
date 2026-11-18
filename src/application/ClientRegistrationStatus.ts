@@ -562,8 +562,8 @@ const registrationAligned = ({
   // Native transport is admitted separately; the Harness route must name REA.
   if (client.format === "dsh" && registration.serverName !== "rea")
     return "stale";
-  // A registration without a usable toolCallTimeoutMs keeps DeepSeek Harness's
-  // 60-second default, which a native provider startup alone can exceed.
+  // Setup repairs missing or malformed literals. Doctor reports the unknown
+  // value of a caller-owned expression as an advisory.
   if (client.format === "dsh" && registration.toolCallTimeoutMs === undefined)
     return "stale";
   // Legacy package runners remain owned, but setup migrates them to the selected installation.
@@ -649,6 +649,8 @@ const timeoutAdvisory = (
           ? registration.toolCallTimeoutMs
           : undefined;
   if (toolTimeout === undefined) return undefined;
+  if (client.name === "dsh" && toolTimeout === null)
+    return "The effective timeout is unknown because toolCallTimeoutMs is a caller-owned Cordis expression.";
   const providerAllowance = mcpProviderDeadlineAllowanceMs(timeoutInputs);
   const inMilliseconds = client.name === "kimi" || client.name === "dsh";
   // A bigint is beyond the safe Number range, so rounding cannot cross the allowance.

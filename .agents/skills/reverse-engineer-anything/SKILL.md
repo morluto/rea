@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "62"
+  version: "63"
 ---
 
 # REA
@@ -269,6 +269,14 @@ explicit path or endpoint and do not need it.
   delivery requires `--evidence_output`.
   See the
   [Rust binary guide](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+- Maven POM or Gradle module metadata: `inspect_maven_gradle_metadata` with
+  the explicit local `pom.xml` or `.module` file. This built-in target-free
+  inspection requires no Maven or Gradle. Preserve coordinates as spelled,
+  dependency and dependencyManagement rows, BOM imports, Gradle variants and
+  rich versions, and unresolved property or parent references. Interpolation,
+  inheritance, tree resolution, and repository access are not performed. See
+  the
+  [Maven POM and Gradle module metadata guide](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
 - PE Authenticode certificate table: `inspect_pe_certificates` with the explicit
   local PE32/PE32+ file. This built-in target-free inspection requires no
   Windows SDK. Preserve WIN_CERTIFICATE ranges, types, payload SHA-256, and
@@ -316,6 +324,29 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- DWARF compile units: `inspect_dwarf_units` with the explicit local ELF,
+  Mach-O, or PE file, or the DWARF file inside a `.dSYM` bundle. This built-in
+  target-free inspection requires no disassembler. It reads DWARF 2 through 5
+  unit headers and the unit DIE: name, compilation directory, producer,
+  language, and `dwo_name`, including compressed ELF sections. Page with
+  `offset` and `limit`. Partial coverage means a later unit could not be
+  framed or a declared `.debug_info` was not read. Absent `.debug_info`
+  applies to this file only. Per-unit gaps stay in `issues`. Child DIEs, types,
+  line tables, and location expressions are not read. Universal Mach-O
+  requires `architecture`. See the
+  [DWARF compile units guide](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
+
+- Separate ELF debug files: `inspect_elf_debug_link` with the explicit local
+  ELF32/ELF64 file. This built-in target-free inspection requires no
+  disassembler and does not search for debug files. Preserve the
+  `.gnu_debuglink` name and CRC32, `.gnu_debugaltlink` build-id, GNU build-id,
+  and lookup path strings. Those paths are not opened. Pass `candidate_path`
+  only for one file you already selected; the verdict is matches,
+  does_not_match, or cannot_verify. A missing section is observed absence only
+  when section names are complete. The `.gnu_debugdata` xz payload is not
+  decoded. See the
+  [ELF debug files guide](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-debug-link.md).
+
 - ELF load-time dynamic dependencies: `inspect_elf_dependencies` with the
   explicit local ELF32/ELF64 `ET_EXEC` or `ET_DYN` file. This built-in
   target-free inspection requires no disassembler or dynamic loader. Preserve
@@ -393,6 +424,14 @@ explicit path or endpoint and do not need it.
   Evidence. CLI summary requires `--evidence_output`. Missing table counts stay
   null; decoded empty tables count zero. Bytecode is not executed. See the
   [Erlang BEAM guide](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+- NuGet `.nupkg` package identity, dependency groups and ZIP inventory:
+  `inspect_nuget_nupkg` with the explicit local file. This built-in
+  target-free inspection does not restore the package, execute it, or contact a
+  feed. Preserve identity fields as present, dependency version ranges as
+  spelled, and path-derived member roles. Missing, ambiguous, or malformed
+  `.nuspec` members still return the inventory with limitations. Encrypted
+  members are listed and not extracted. See the
+  [NuGet packages guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema
