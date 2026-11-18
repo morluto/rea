@@ -617,10 +617,10 @@ const rejectsProcessOptionLiteral = (
     // `{cwd: \`/tmp\`}` and `{argv0: \`x\`}` both start a child.
     const literal = readExactJavaScriptLiteral(value);
     if (literal.found) {
-      if (typeof literal.value === "string") continue;
-      return true;
+      if (typeof literal.value !== "string" || literal.value.includes("\0"))
+        return true;
+      continue;
     }
-    if (t.isStringLiteral(value)) continue;
     // A constructor can return a URL or another accepted path value. Its name
     // cannot prove that cwd is invalid, including qualified and custom constructors.
     if (member === "cwd" && t.isNewExpression(value)) continue;
