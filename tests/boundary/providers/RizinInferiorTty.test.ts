@@ -25,6 +25,7 @@ import {
 } from "./RizinTestInferiorTty.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
+import { assertRequiredRizin } from "../../support/requiredRizin.js";
 
 let terminal: ReturnType<typeof spawn> | undefined;
 let manager: RizinDebugSessionManager | undefined;
@@ -33,6 +34,14 @@ let inferiorPid: number | undefined;
 let providerPid: number | undefined;
 let providerWatchdogPid: number | undefined;
 const rizinBinary = findRizinBinary();
+// The real-provider gate below runs only on Linux with Rizin 0.7.4. With
+// REA_REQUIRE_RIZIN=0.7.4, a missing or different Rizin, or another host,
+// fails instead of skipping it.
+assertRequiredRizin("RizinInferiorTty", rizinBinary);
+if (process.env.REA_REQUIRE_RIZIN === "0.7.4" && process.platform !== "linux")
+  throw new Error(
+    `RizinInferiorTty's Rizin 0.7.4 gate runs only on Linux, not ${process.platform}`,
+  );
 
 afterEach(async () => {
   await manager?.closeAll().catch(() => undefined);

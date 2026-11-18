@@ -13,7 +13,9 @@ protocol, and checks that the target survives debugger close and writes to the
 selected TTY. The suite is included in the reverse-tools Vitest and mutation
 typecheck selections; its real-provider assertions skip when Rizin 0.7.4 is
 unavailable. Run the focused command above on a host with that provider for the
-explicit real-provider verification gate.
+explicit real-provider verification gate. With `REA_REQUIRE_RIZIN=0.7.4`, the
+suite fails instead of skipping when the host is not Linux or the Rizin on
+`PATH` is missing or is not 0.7.4.
 
 The decoder and map inputs of `execute_rizin_command` have their own
 real-provider gate. Run
@@ -25,10 +27,38 @@ decodes. It also reads bytes below the base address, at it, at the end of the
 image and past it, and checks a call with only `base_address`. Two of the images are ones that Rizin's AVR and
 BIOS loaders claim without `-n`. It also selects an arch that no host uses by
 default, an arch plugin that Rizin does not have, and a bits value that the
-arch lacks. The test names the Rizin version it ran. It skips when no Rizin is
-on `PATH`; to check another build, put its directory first on `PATH`. It has
-passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin 0.7.4 (official static
-build, Linux x86_64).
+arch lacks. It checks that REA rejects a width that no plugin declares, such
+as 17, which Rizin would apply, and that Rizin applies the declared ARM widths
+as given. The test names the Rizin version it ran. It skips when no Rizin is
+on `PATH`; to check another build, put its directory first on `PATH`. Set
+`REA_REQUIRE_RIZIN` to a version, such as `0.9.1`, to make a missing Rizin, or a
+Rizin on `PATH` that reports another version, fail the suite instead of
+skipping it. It has passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin
+0.7.4 (official static build, Linux x86_64).
+
+`.github/workflows/real-rizin.yml` runs both gates on `ubuntu-24.04`
+(x86_64). It runs on manual dispatch and on pull requests that change
+`src/rizin/**`, the Rizin input contract or CLI command, these tests, their
+helpers, the workflow or `.nvmrc`. Its matrix installs the official static
+Linux x86_64 release of each version the docs make claims about, and sets
+`REA_REQUIRE_RIZIN` to that version. The decoder and map input gate runs on
+both legs; the inferior TTY gate runs on the 0.7.4 leg only. The job summary
+records the Rizin binary, its version banner and the archive hash. Each leg
+downloads its archive (more than 100 MB) on every run.
+
+| Rizin | Asset (format: `tar.xz`)            | Size (bytes) | Pinned SHA-256 source                         | Checked    |
+| ----- | ----------------------------------- | ------------ | --------------------------------------------- | ---------- |
+| 0.9.1 | `rizin-v0.9.1-static-x86_64.tar.xz` | 137,626,404  | GitHub release asset digest                   | 2026-11-11 |
+| 0.7.4 | `rizin-v0.7.4-static-x86_64.tar.xz` | 109,416,864  | Maintainer download (the asset has no digest) | 2026-11-11 |
+
+The assets come from
+`https://github.com/rizinorg/rizin/releases/download/v<version>/`. Rizin
+publishes no signature or checksum file for them, so the pinned hash shows only
+that the archive has not changed since it was checked; it does not prove that
+Rizin built it. The lane checks the hash before it extracts the archive. To add
+or update a version, record the asset size and GitHub digest from
+`gh api repos/rizinorg/rizin/releases/tags/v<version>`. If the asset has no
+digest, download it once, hash it, and record that here.
 
 Each real-toolchain command must require only the host tools needed to prove
 its stated claim. Use a host-native fixture for host/provider acceptance, and
