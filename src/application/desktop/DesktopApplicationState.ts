@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   desktopViewPolicy,
   desktopViewPolicyInputSchema,
@@ -7,9 +8,16 @@ import {
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+  isAborted,
+} from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
@@ -36,7 +44,11 @@ import {
   stateRole,
 } from "../../domain/desktop/stateRoles.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
@@ -59,12 +71,15 @@ import {
   DESKTOP_PROVIDER,
   desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "inspect_desktop_application_state";
 
 /**
  * Readers for formats that need a tool or worker, supplied by composition. Each
  * database is staged with its retained log in a private directory the caller removes.
+ * Expected format/read failures return an error result. Cancellation throws a typed
+ * AnalysisCancelledError or ArtifactReaderFailure; cleanup failures retain their owner.
  */
 export interface DesktopStateReaders {
   readonly sqlite: (
@@ -92,44 +107,92 @@ export const readDesktopCapture = async (
   signal: AbortSignal | undefined,
 ): Promise<{ evidence: Evidence; capture: DesktopApplicationCapture }> => {
   const resources = new ArtifactResourceScope();
+  const outcome = await resources
+    .run(async () => {
+      const loaded = await readJsonFile(
+        join(folder, "capture.json"),
+        signal,
+        resources,
+        OPERATION,
+      );
+      if (!loaded.ok) {
+        if (loaded.error instanceof AnalysisError) throw loaded.error;
+        throw inputError(
+          `${join(folder, "capture.json")} could not be read as JSON.`,
+          "Pass a folder written by capture-desktop-application.",
+        );
+      }
+      const evidence = safeParseEvidence(loaded.value);
+      // A capture from another format revision is refused with the recreate
+      // guidance, not reported as some other kind of file.
+      if (!evidence.ok && isUnsupportedEvidenceFormat(evidence.error))
+        throw unsupportedEvidenceFormatError(evidence.error);
+      if (
+        !evidence.ok ||
+        evidence.value.operation !== DESKTOP_OPERATION ||
+        evidence.value.predicate_type !== "rea.desktop-application-capture" ||
+        evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
+        evidence.value.provider.version !== DESKTOP_PROVIDER.version
+      )
+        throw inputError(
+          "capture.json is not desktop application capture Evidence.",
+          "Pass a folder written by capture-desktop-application.",
+        );
+      const capture = desktopApplicationCaptureSchema.safeParse(
+        evidence.value.normalized_result,
+      );
+      if (!capture.success)
+        throw inputError(
+          `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
+          "Capture the application again.",
+        );
+      return { evidence: evidence.value, capture: capture.data };
+    })
+    .then(ok, (cause: unknown) => err(cause));
   try {
-    const loaded = await readJsonFile(
-      join(folder, "capture.json"),
-      signal,
-      resources,
-      OPERATION,
-    );
-    if (!loaded.ok) {
-      if (loaded.error instanceof AnalysisError) throw loaded.error;
-      throw inputError(
-        `${join(folder, "capture.json")} could not be read as JSON.`,
-        "Pass a folder written by capture-desktop-application.",
-      );
-    }
-    const evidence = safeParseEvidence(loaded.value);
-    if (
-      !evidence.ok ||
-      evidence.value.operation !== DESKTOP_OPERATION ||
-      evidence.value.predicate_type !== "rea.desktop-application-capture" ||
-      evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
-      evidence.value.provider.version !== DESKTOP_PROVIDER.version
-    )
-      throw inputError(
-        "capture.json is not desktop application capture Evidence.",
-        "Pass a folder written by capture-desktop-application.",
-      );
-    const capture = desktopApplicationCaptureSchema.safeParse(
-      evidence.value.normalized_result,
-    );
-    if (!capture.success)
-      throw inputError(
-        `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
-        "Capture the application again.",
-      );
-    return { evidence: evidence.value, capture: capture.data };
-  } finally {
     await resources.close();
+  } catch (cause: unknown) {
+    const cleanup = desktopOperationFailure(
+      cause,
+      signal,
+      OPERATION,
+      "Desktop capture input",
+    );
+    if (outcome.ok && !isAborted(signal))
+      throw cleanup.retainPartialObservation(outcome.value.evidence);
+    const primary = outcome.ok
+      ? cancelledBy(
+          OPERATION,
+          // A completed outcome reaches here only after the caller aborted.
+          carriedReason(signal?.reason),
+        ).retainPartialObservation(outcome.value.evidence)
+      : desktopOperationFailure(
+          outcome.error,
+          undefined,
+          OPERATION,
+          "Desktop capture input",
+        );
+    if (!outcome.ok && signal?.aborted)
+      analysisErrorWithCancellation(primary, cancelledBy(OPERATION, signal));
+    throw analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   }
+  if (!outcome.ok) {
+    if (!signal?.aborted) throw outcome.error;
+    throw analysisErrorWithCancellation(
+      desktopOperationFailure(
+        outcome.error,
+        undefined,
+        OPERATION,
+        "Desktop capture input",
+      ),
+      cancelledBy(OPERATION, signal),
+    );
+  }
+  if (signal?.aborted)
+    throw cancelledBy(OPERATION, signal).retainPartialObservation(
+      outcome.value.evidence,
+    );
+  return outcome.value;
 };
 
 interface ViewContext {
@@ -345,7 +408,8 @@ const readVersion = async (
   path: string,
   context: ViewContext,
 ): Promise<void> => {
-  context.signal?.throwIfAborted();
+  if (context.signal?.aborted === true)
+    throw cancelledBy(OPERATION, context.signal);
   if (!version.present) return;
   if (version.sha256 === null) {
     version.view_error = "content not retained";
@@ -372,9 +436,7 @@ const hasDconfGroups = (version: Version): boolean => {
   const view = version.view;
   return (
     version.format === "dconf" &&
-    typeof view === "object" &&
-    view !== null &&
-    !Array.isArray(view) &&
+    isRecord(view) &&
     typeof view.groups === "object" &&
     view.groups !== null &&
     Object.keys(view.groups).length > 0
@@ -496,8 +558,8 @@ const inspectState = async (
     paths,
     limitations,
   };
-  signal?.throwIfAborted();
-  return createEvidence(undefined, DESKTOP_PROVIDER, {
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
+  return createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,
     parameters: {

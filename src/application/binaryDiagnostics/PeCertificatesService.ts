@@ -1,5 +1,6 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { PeCertificatesPort } from "./PeCertificatesPort.js";
+import { insideArtifact } from "./artifactRange.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -94,8 +95,7 @@ const validReport = (
   maxEntries: number,
   maxBytes: number,
 ): boolean => {
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   if (
     report.artifact.bytes > maxBytes ||
     report.coverage.examined_entries > maxEntries ||

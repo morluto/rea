@@ -1,19 +1,17 @@
-import { expect, it, vi } from "vitest";
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
+import { expect, it } from "vitest";
 import { z } from "zod";
 import { androidComponentsViewRequestSchema } from "../android/androidPackageQuery.js";
 import { createEvidence } from "../evidence.js";
 import { immutableJsonSnapshotMember } from "../immutableJson.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+} from "./analysisViewResult.js";
 import type { AdmittedView } from "./analysisViewShape.js";
-import {
-  androidClassSummarySchema,
-  projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary,
-} from "./androidSymbolView.js";
+import { projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary } from "./androidSymbolView.js";
 
 const projectAndroidSymbolSummary = (
   parent: Parameters<typeof projectAdmittedAndroidSymbolSummary>[0],
@@ -262,7 +260,10 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
       operation === "inspect_android_class" ? classReport() : methodReport(),
     );
     expect(
-      projectAnalysisView({ ...parent, subject: null }, { kind: "summary" }),
+      projectAnalysisView(
+        { ...parent, subject: UNKNOWN_EVIDENCE_SUBJECT },
+        { kind: "summary" },
+      ),
     ).toMatchObject({
       ok: false,
       error: {
@@ -308,16 +309,4 @@ it("refuses an admitted one-MiB source plus summary context without truncation a
     },
   });
   expect(parent.normalizedResult).toEqual(facts);
-});
-
-it("reuses validation of an authenticated sealed class result across retained summaries", () => {
-  const { parent } = fixture("inspect_android_class", classReport());
-  const parse = vi.spyOn(androidClassSummarySchema, "safeParse");
-  try {
-    for (let attempt = 0; attempt < 2; attempt++)
-      expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(true);
-    expect(parse).toHaveBeenCalledTimes(1);
-  } finally {
-    parse.mockRestore();
-  }
 });

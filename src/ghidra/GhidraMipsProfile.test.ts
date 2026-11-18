@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ok } from "../domain/result.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
@@ -18,7 +17,10 @@ import {
   ghidraMipsProfileMismatchReason,
   ghidraMipsProfileParameters,
 } from "./GhidraMipsProfile.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  ghidraProfileInstallationHost as host,
+  simulatedInstallDirectory,
+} from "./GhidraInstallation.fixture.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { GhidraMipsSoftFloatReport } from "./GhidraMipsProfile.js";
 import {
@@ -46,7 +48,7 @@ const MIPS_LANGUAGE_DEFINITIONS = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 const installedMipsConfig = async () => {
-  const installDir = await createTestTempDirectory("rea-ghidra-mips-");
+  const installDir = await simulatedInstallDirectory("rea-ghidra-mips-");
   const languages = join(installDir, "Ghidra/Processors/MIPS/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "mips.ldefs"), MIPS_LANGUAGE_DEFINITIONS);
@@ -246,9 +248,9 @@ describe("recordless legacy MIPS admission", () => {
   );
 
   it.each([
-    [{ flags: 0x00000001 }, "elf32-exec-mips1-legacy-pinned-v1"],
-    [{ flags: 0x50000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
-    [{ flags: 0x70000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
+    [{ flags: 0x00000001 }, "elf32-exec-mips1-legacy-pinned"],
+    [{ flags: 0x50000001 }, "elf32-exec-arch32-legacy-pinned"],
+    [{ flags: 0x70000001 }, "elf32-exec-arch32-legacy-pinned"],
   ] satisfies [Partial<MipsElfMetadata>, string][])(
     "admits a recordless legacy header (%j) with a pinned 32-bit language",
     async (change, lane) => {
@@ -261,10 +263,10 @@ describe("recordless legacy MIPS admission", () => {
       if (!resolved.ok) throw resolved.error;
       expect(resolved.value.profile?.parameters).toMatchObject({
         mips_support_lane: lane,
-        mips_abi_basis: "inferred-o32-assumption-v1",
+        mips_abi_basis: "inferred-o32-assumption",
         language_id: "MIPS:LE:32:default",
         compiler_spec_id: "default",
-        language_selection: "provider-pinned-v1",
+        language_selection: "provider-pinned",
       });
       const resolvedBig = await ghidra.resolveAnalysisProfile(big);
       if (!resolvedBig.ok) throw resolvedBig.error;
@@ -335,7 +337,7 @@ describe("recordless legacy MIPS admission", () => {
     expect(parameters.language_selection).toBeUndefined();
     expect(parameters.language_id).toBeUndefined();
     expect(parameters).toMatchObject({
-      mips_support_lane: "elf32-exec-arch32-legacy-pinned-v1",
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
     });
   });
 
@@ -377,9 +379,9 @@ describe("caller-selected MIPS-I language", () => {
       await installedMipsConfig(),
     );
     expect(profile.parameters).toMatchObject({
-      mips_support_lane: "elf32-exec-mips1-legacy-pinned-v1",
+      mips_support_lane: "elf32-exec-mips1-legacy-pinned",
       language_id: "MIPS:LE:32:16e",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     const health = await client.execute("health", {});
     if (!health.ok) throw health.error;
@@ -562,8 +564,8 @@ describe("MIPS16 shared-image profile", () => {
       expect(parameters).toMatchObject({
         language_id: `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
         compiler_spec_id: "default",
-        language_selection: "provider-pinned-v1",
-        mips_support_lane: "elf32-dyn-o32-arch32r2-mips16-local-rel32-v1",
+        language_selection: "provider-pinned",
+        mips_support_lane: "elf32-dyn-o32-arch32r2-mips16-local-rel32",
         mips_elf: { abi_flags: null },
       });
       expect(ghidraProfileLanguageOverride(parameters)).toEqual({
@@ -738,7 +740,7 @@ describe("MIPS32 shared-image link base", () => {
         throw new Error("expected shared profile");
       expect(resolved.value.profile.parameters.elf_image_base).toEqual({
         offset,
-        selection: "elf-link-base-v1",
+        selection: "elf-link-base",
       });
     }
     const mips16 = await ghidra.resolveAnalysisProfile(
@@ -774,7 +776,7 @@ describe("MIPS32 shared-image link base", () => {
       {
         ...config,
         ghidraCheckpointDirectory: join(
-          await createTestTempDirectory("rea-ghidra-mips-checkpoints-"),
+          await simulatedInstallDirectory("rea-ghidra-mips-checkpoints-"),
           "checkpoints",
         ),
       },
@@ -813,7 +815,7 @@ describe("MIPS32 shared-image profile", () => {
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("expected shared profile");
     expect(resolved.value.profile.parameters).toMatchObject({
-      mips_support_lane: "elf32-dyn-o32-arch32r2-standard-v1",
+      mips_support_lane: "elf32-dyn-o32-arch32r2-standard",
       language_id: "auto-from-header",
       mips_elf: {
         type: 3,
@@ -946,11 +948,11 @@ describe("soft-float MIPS storage", () => {
     const relocatable = target({ type: 1 });
     const { profile, client } = await session(relocatable, undefined);
     expect(profile.parameters.mips_support_lane).toBe(
-      "elf32-rel-o32-arch32r2-standard-v1",
+      "elf32-rel-o32-arch32r2-standard",
     );
     const executable = await session(target(), undefined);
     expect(executable.profile.parameters.mips_support_lane).toBe(
-      "elf32-exec-o32-arch32r2-standard-v3",
+      "elf32-exec-o32-arch32r2-standard",
     );
     const health = await client.execute("health", {});
     if (!health.ok) throw health.error;

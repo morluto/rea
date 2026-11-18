@@ -1,5 +1,6 @@
 import { readElfRelocationEntry } from "../domain/elfRelocation.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { ElfProgramHeader } from "../domain/elfProgramHeader.js";
 import type { MipsElfMetadata } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -15,6 +16,7 @@ export interface MipsElfRelocationSection {
   readonly offset: number;
   readonly size: number;
   readonly entrySize: number;
+  readonly compressed: boolean;
 }
 type SharedLoadFacts = Extract<
   NonNullable<MipsElfMetadata["sharedLoad"]>,
@@ -79,9 +81,7 @@ export const readMipsElfSharedLoad = async (
     if (!trailer.ok) return err(trailer.error);
     const tag = trailer.value.subarray(4).toString("latin1");
     if (tag.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/gu, "") === "PRE")
-      prelinkBase = little
-        ? trailer.value.readUInt32LE(0)
-        : trailer.value.readUInt32BE(0);
+      prelinkBase = new BinaryReader(trailer.value, little, "elf").u32(0);
   }
   const ranges = loads
     .filter((load) => load.memorySize > 0)
@@ -174,6 +174,8 @@ export const readMipsElfSharedLoad = async (
     let observed = 0;
     for (const section of sections) {
       checkCancelled();
+      if (section.compressed)
+        return `MIPS section relocation declarations at file offset ${section.offset} use compressed storage; decoded relocation coverage is unavailable`;
       if (section.size === 0) continue;
       if (
         section.type !== 9 ||

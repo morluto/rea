@@ -3,6 +3,7 @@ import { PassThrough, Writable } from "node:stream";
 import { expect, it, vi } from "vitest";
 
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { OwnedCommandFailure, runOwnedCommand } from "./OwnedCommand.js";
 import type { ProcessCleanupResult } from "./ProcessOwnership.js";
 
@@ -95,6 +96,7 @@ it("captures synchronous EOF output after supervision and interprets it before c
 });
 
 it("waits for delayed input finalization after output closes", async () => {
+  const controller = new AbortController();
   const finalizing = createDeferred<void>();
   let finishInput: () => void = () => {};
   const input = new Writable({
@@ -115,6 +117,7 @@ it("waits for delayed input finalization after output closes", async () => {
       observeCompleted,
     },
     {
+      signal: controller.signal,
       launcher: async () => ({
         process: fixture.child,
         ownership: fixture.ownership,
@@ -122,14 +125,26 @@ it("waits for delayed input finalization after output closes", async () => {
       }),
     },
   );
-  await finalizing.promise;
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(observeCompleted).not.toHaveBeenCalled();
-  expect(fixture.cleanup).not.toHaveBeenCalled();
-  finishInput();
-  await expect(pending).resolves.toMatchObject({ exitCode: 0 });
-  expect(observeCompleted).toHaveBeenCalledOnce();
-  expect(fixture.cleanup).toHaveBeenCalledOnce();
+  try {
+    await awaitAcknowledgement(
+      finalizing.promise,
+      pending,
+      "input finalization",
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observeCompleted).not.toHaveBeenCalled();
+    expect(fixture.cleanup).not.toHaveBeenCalled();
+    const finish = finishInput;
+    finishInput = () => {};
+    finish();
+    await expect(pending).resolves.toMatchObject({ exitCode: 0 });
+    expect(observeCompleted).toHaveBeenCalledOnce();
+    expect(fixture.cleanup).toHaveBeenCalledOnce();
+  } finally {
+    controller.abort();
+    finishInput();
+    await pending.catch(() => undefined);
+  }
 });
 
 it.each([2_000, null])(
@@ -168,13 +183,22 @@ it.each([2_000, null])(
       cancellation: { reason },
       cleanupFailure: null,
     });
-    await finalizing.promise;
-    controller.abort(reason);
-    await rejected;
-    expect(observeCompleted).not.toHaveBeenCalled();
-    expect(fixture.cleanup).toHaveBeenCalledOnce();
-    expect(input.destroyed).toBe(true);
-    expect(fixture.child.kill).not.toHaveBeenCalled();
+    try {
+      await awaitAcknowledgement(
+        finalizing.promise,
+        pending,
+        "input finalization",
+      );
+      controller.abort(reason);
+      await rejected;
+      expect(observeCompleted).not.toHaveBeenCalled();
+      expect(fixture.cleanup).toHaveBeenCalledOnce();
+      expect(input.destroyed).toBe(true);
+      expect(fixture.child.kill).not.toHaveBeenCalled();
+    } finally {
+      controller.abort(reason);
+      await pending.catch(() => undefined);
+    }
   },
 );
 
@@ -488,3 +512,83 @@ it("reports a deadline that elapses during final cleanup as a timeout", async ()
     vi.useRealTimers();
   }
 });
+
+it.each(["cancelled", "timeout"] as const)(
+  "reports a %s interruption during refused final cleanup with its retry owner",
+  async (interruption) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const controller = new AbortController();
+    const reason = { request: "abort during refused final cleanup" };
+    const fixture = ownedInput(null);
+    let denied = true;
+    const cleanupStarted = createDeferred<void>();
+    const releaseCleanup = createDeferred<void>();
+    fixture.cleanup.mockImplementation(async () => {
+      if (!denied) return { cleaned: true, signaled: false };
+      cleanupStarted.resolve();
+      await releaseCleanup.promise;
+      return { cleaned: false, reason: "process group still present" };
+    });
+    let pending: Promise<unknown> | undefined;
+    try {
+      pending = runOwnedCommand(
+        spawn,
+        { timeoutMs: 1_000, diagnosticBytes: 1024 },
+        {
+          signal: controller.signal,
+          launcher: async () => {
+            setImmediate(() => {
+              fixture.child.stdout.write("completed output");
+              fixture.child.complete();
+            });
+            return {
+              process: fixture.child,
+              ownership: fixture.ownership,
+              cleanup: fixture.cleanup,
+            };
+          },
+        },
+      ).catch((cause: unknown) => cause);
+      let started = false;
+      void cleanupStarted.promise.then(() => (started = true));
+      while (!started) await vi.advanceTimersByTimeAsync(10);
+      expect(performance.now()).toBeLessThan(1_000);
+      if (interruption === "cancelled") controller.abort(reason);
+      else await vi.advanceTimersByTimeAsync(1_000);
+      releaseCleanup.resolve();
+      const failure = await pending;
+      if (!(failure instanceof OwnedCommandFailure)) throw failure;
+      expect(failure).toMatchObject({
+        reason: interruption,
+        cleanupFailure: "process group still present",
+        snapshot: { exitCode: 0, stdout: { text: "completed output" } },
+      });
+      expect(failure.cancellation?.reason).toBe(
+        interruption === "cancelled" ? reason : undefined,
+      );
+      expect(failure.cleanupOwner?.launch.ownership).toBe(fixture.ownership);
+      denied = false;
+      await expect(failure.cleanupOwner?.stop()).resolves.toEqual({
+        status: "verified-cleanup",
+      });
+      expect(fixture.cleanup).toHaveBeenCalledTimes(2);
+    } finally {
+      denied = false;
+      releaseCleanup.resolve();
+      // Join the command even when an assertion failed before it settled;
+      // its deadline bounds the fake time this can take.
+      if (pending !== undefined) {
+        let settled = false;
+        const joined = pending.finally(() => {
+          settled = true;
+        });
+        for (let step = 0; !settled && step < 200; step += 1)
+          await vi.advanceTimersByTimeAsync(10);
+        const outcome = await joined;
+        if (outcome instanceof OwnedCommandFailure)
+          await outcome.cleanupOwner?.stop();
+      }
+      vi.useRealTimers();
+    }
+  },
+);

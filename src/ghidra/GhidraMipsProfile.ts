@@ -403,7 +403,7 @@ export const ghidraMipsElfImageBaseCommitment = (
   const imageBase = ghidraMipsElfImageBase(target);
   return imageBase === undefined
     ? undefined
-    : { offset: `0x${imageBase}`, selection: "elf-link-base-v1" };
+    : { offset: `0x${imageBase}`, selection: "elf-link-base" };
 };
 
 /** Commit source ELF interpretation without confusing target ISA with host CPU. */
@@ -428,7 +428,7 @@ export const ghidraMipsProfileParameters = (
       ? {
           language_id: language.languageId,
           compiler_spec_id: language.compilerSpecId ?? "default",
-          language_selection: "provider-pinned-v1",
+          language_selection: "provider-pinned",
         }
       : {};
   return {
@@ -491,19 +491,18 @@ export const ghidraMipsProfileParameters = (
     ...(isGhidraMipsSoftFloatTarget(target)
       ? { mips_soft_float_storage: GHIDRA_MIPS_SOFT_FLOAT_STORAGE }
       : {}),
-    instruction_context_evidence: "per-address-isa-mode-v1",
     mips_support_lane: legacy
       ? isMips1Header(target)
-        ? "elf32-exec-mips1-legacy-pinned-v1"
-        : "elf32-exec-arch32-legacy-pinned-v1"
+        ? "elf32-exec-mips1-legacy-pinned"
+        : "elf32-exec-arch32-legacy-pinned"
       : isGhidraMips16SharedTarget(target)
-        ? "elf32-dyn-o32-arch32r2-mips16-local-rel32-v1"
+        ? "elf32-dyn-o32-arch32r2-mips16-local-rel32"
         : isGhidraMipsStandardSharedTarget(target)
-          ? "elf32-dyn-o32-arch32r2-standard-v1"
+          ? "elf32-dyn-o32-arch32r2-standard"
           : target.mips.type === MIPS_ET_REL
-            ? "elf32-rel-o32-arch32r2-standard-v1"
-            : "elf32-exec-o32-arch32r2-standard-v3",
-    ...(legacy ? { mips_abi_basis: "inferred-o32-assumption-v1" } : {}),
+            ? "elf32-rel-o32-arch32r2-standard"
+            : "elf32-exec-o32-arch32r2-standard",
+    ...(legacy ? { mips_abi_basis: "inferred-o32-assumption" } : {}),
     ...pinnedLanguage,
   };
 };
@@ -524,7 +523,7 @@ export const ghidraMipsProfileMismatchReason = (
   const expected = ghidraMipsProfileParameters(target);
   // PSP keeps its own loader and lane but still commits target-derived MIPS
   // metadata; bind that metadata without demanding the generic lane name.
-  const pspLane = "psp-elf32-exec-eabi32-allegrex-v2";
+  const pspLane = "psp-elf32-exec-eabi32-allegrex";
   const committedLane = parameters.mips_support_lane;
   const expectedLane =
     committedLane === pspLane ? pspLane : expected.mips_support_lane;

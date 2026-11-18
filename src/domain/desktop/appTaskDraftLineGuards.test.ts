@@ -562,12 +562,12 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
     });
 
     const byFile = new Map(files.map((file) => [file.file, file]));
-    expect(byFile.get(".rednotebook/rednotebook.log")?.suggested).not.toEqual(
-      [],
-    );
-    expect(byFile.get(".rednotebook/data/2026-10.txt")?.suggested).not.toEqual(
-      [],
-    );
+    expect(
+      byFile.get(".rednotebook/rednotebook.log")?.suggested.length ?? 0,
+    ).toBeGreaterThan(0);
+    expect(
+      byFile.get(".rednotebook/data/2026-10.txt")?.suggested.length ?? 0,
+    ).toBeGreaterThan(0);
     expect(
       byFile.get(".config/app/state.xml")?.notes.map(({ code }) => code),
     ).toEqual(["read_as_text"]);
@@ -596,7 +596,8 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
       ),
     });
 
-    expect(logged[0]?.suggested).not.toEqual([]);
+    expect(logged[0]?.file).toBe(".config/app/notes.log");
+    expect(logged[0]?.suggested.length ?? 0).toBeGreaterThan(0);
     expect(
       noted[0]?.notes.some((note) => note.message.includes("internal subset")),
     ).toBe(false);

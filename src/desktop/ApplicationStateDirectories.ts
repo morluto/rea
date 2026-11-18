@@ -2,6 +2,8 @@ import { lstat, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
+import { xdgBase } from "./XdgBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The environment whose XDG folders, and the home whose dot-folders, may hold the application's state. */
 interface StateLocations {
@@ -64,10 +66,10 @@ export const stateDirectories = async (
   extra: readonly string[],
 ): Promise<DesktopApplicationInventory["state_directories"]> => {
   const bases = [
-    environment.XDG_CONFIG_HOME || join(home, ".config"),
-    environment.XDG_DATA_HOME || join(home, ".local/share"),
-    environment.XDG_STATE_HOME || join(home, ".local/state"),
-    environment.XDG_CACHE_HOME || join(home, ".cache"),
+    xdgBase(environment.XDG_CONFIG_HOME, join(home, ".config")),
+    xdgBase(environment.XDG_DATA_HOME, join(home, ".local/share")),
+    xdgBase(environment.XDG_STATE_HOME, join(home, ".local/state")),
+    xdgBase(environment.XDG_CACHE_HOME, join(home, ".cache")),
   ];
   const variants = new Set(
     names
@@ -102,9 +104,20 @@ export const stateDirectories = async (
     ...extra,
   ]);
   return Promise.all(
-    [...paths].map(async (path) => ({
-      path,
-      exists_at_start: (await lstat(path).catch(() => undefined)) !== undefined,
-    })),
+    [...paths].map(async (path) => {
+      try {
+        await lstat(path);
+        return { path, exists_at_start: true };
+      } catch (cause: unknown) {
+        const code = (cause as NodeJS.ErrnoException).code;
+        return code === "ENOENT" || code === "ENOTDIR"
+          ? { path, exists_at_start: false }
+          : {
+              path,
+              exists_at_start: null,
+              existence_error: errorMessage(cause),
+            };
+      }
+    }),
   );
 };

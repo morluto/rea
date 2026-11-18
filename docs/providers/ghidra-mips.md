@@ -33,7 +33,7 @@ structure, recorded as `mips_abi_basis` in the profile and stated as a
 limitation in Evidence, never a declared fact; floating-point ABI semantics
 stay unverified. Ghidra's own header auto-selection picks a 64-bit language
 for exactly these files, so the lane pins `-processor MIPS:<LE|BE>:32:default`
-through a `provider-pinned-v1` profile selection and checks the
+through a `provider-pinned` profile selection and checks the
 bridge-reported `language_id` after import. A caller-selected
 `REA_GHIDRA_LANGUAGE_ID`/`REA_GHIDRA_COMPILER_SPEC_ID` still wins over the
 pin; combining the pinned profile with an environment override is a typed
@@ -172,7 +172,7 @@ profile verifies `R_MIPS_NONE`, symbol-index-zero and symbol-bearing
 refused. Images without an ABI flags record remain refused, as in the executable
 lane, and so do images ending in an Android prelink trailer, whose base Ghidra
 prefers over the program headers. The support lane is
-`elf32-dyn-o32-arch32r2-standard-v1`; Ghidra selects the language from the
+`elf32-dyn-o32-arch32r2-standard`; Ghidra selects the language from the
 header, and the real-provider lane checks it.
 
 REA imports the image at its own ELF image base (`-loader-imagebase`, the

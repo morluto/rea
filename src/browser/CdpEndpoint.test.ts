@@ -7,6 +7,7 @@ import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import {
   discoverCdpEndpoint,
@@ -136,7 +137,7 @@ describe("CDP discovery cancellation ownership", () => {
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
     expect(requests).toBe(0);
   });
 
@@ -164,7 +165,7 @@ describe("CDP discovery cancellation ownership", () => {
 
     expect(requestedPath).toBe("/json/version");
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
   });
 
   it("does not replace a primary discovery failure when cancellation arrives later", async () => {
@@ -259,7 +260,7 @@ describe("CDP discovery cancellation ownership", () => {
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
   });
 
   it("keeps a deadline rejection when the caller aborts only after timeout", async () => {
@@ -328,7 +329,7 @@ it("names the HTTP discovery document budget when that response deadline expires
 const socketDiscoveryConnection = (
   targetReply: unknown,
 ): Pick<CdpConnection, "send"> => ({
-  async send(method: string): Promise<unknown> {
+  send: fakeCdpSend((method) => {
     if (method === "Browser.getVersion")
       return {
         protocolVersion: "1.3",
@@ -339,7 +340,7 @@ const socketDiscoveryConnection = (
       };
     if (method === "Target.getTargets") return targetReply;
     throw new Error(method);
-  },
+  }),
 });
 
 it.each([
@@ -360,6 +361,25 @@ it.each([
   ).rejects.toMatchObject({
     reason: "invalid_endpoint_response",
     detail: expect.stringContaining("CDP Target.getTargets"),
+  });
+});
+
+it("reports a malformed browser-socket version as an invalid endpoint response", async () => {
+  await expect(
+    discoverCdpBrowserSocket(
+      {
+        send: fakeCdpSend((method) =>
+          method === "Browser.getVersion"
+            ? { protocolVersion: "", product: "fixture" }
+            : { targetInfos: [] },
+        ),
+      },
+      "ws://127.0.0.1:9222/devtools/browser/fixture",
+      "list_browser_targets",
+    ),
+  ).rejects.toMatchObject({
+    reason: "invalid_endpoint_response",
+    detail: expect.stringContaining("CDP Browser.getVersion"),
   });
 });
 
@@ -392,7 +412,7 @@ it("preserves an independent typed cancellation when the discovery deadline also
 it("preserves browser-socket sibling identities and reports malformed optional metadata", async () => {
   const discovery = await discoverCdpBrowserSocket(
     {
-      send: async (method) =>
+      send: fakeCdpSend((method) =>
         method === "Browser.getVersion"
           ? {
               protocolVersion: "1.3",
@@ -425,6 +445,7 @@ it("preserves browser-socket sibling identities and reports malformed optional m
                 },
               ],
             },
+      ),
     },
     "ws://127.0.0.1:9222/devtools/browser/fixture",
     "list_browser_targets",

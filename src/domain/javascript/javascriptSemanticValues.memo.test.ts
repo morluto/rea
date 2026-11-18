@@ -1,9 +1,7 @@
 import { expect, it, vi } from "vitest";
 
-import {
-  analyzeJavaScriptSemantics,
-  indexJavaScriptBindingsSteps,
-} from "./javascriptSemanticAnalysis.js";
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { SemanticDependencyProofs } from "./javascriptSemanticDependencies.js";
 import { JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS } from "./javascriptSemanticPrecision.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";

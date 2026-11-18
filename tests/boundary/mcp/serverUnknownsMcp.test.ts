@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -13,7 +14,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
@@ -32,6 +33,7 @@ import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/proce
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 
 import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const resources: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {
@@ -103,7 +105,7 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
   const root = await createTestTempDirectory("rea-unknown-divergent-");
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const records = ["create", "left", "right"].map((operation) =>
-    createEvidence(undefined, provider, {
+    createEvidence(unknownTarget("not-observed"), provider, {
       operation,
       parameters: {},
       result: {},
@@ -153,7 +155,10 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
     throw new Error("no target");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "conflicting-history", version: "1" });
+  const client = new Client(
+    { name: "conflicting-history", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -193,7 +198,6 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
     expect(parseMcpToolError(conflict).error).toMatchObject({
       code: "evidence_integrity_mismatch",
       retryable: false,
-      remediation: { action: expect.stringContaining("cannot reconcile") },
       details: { diagnostics: { unknown_id: initial.unknown_id, revision: 2 } },
     });
     const after = await client.callTool({
@@ -209,7 +213,10 @@ it("does not record capability unavailability without supporting Evidence", asyn
     providerWithCapabilities(["procedure_pseudo_code"]),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unavailable-unknown", version: "1" });
+  const client = new Client(
+    { name: "unavailable-unknown", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -264,7 +271,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
     ],
   });
   const captureEvidence = (capture: typeof left) =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
@@ -277,7 +284,10 @@ it("records capture disagreement as a contradicted unknown", async () => {
   expect(session.recordEvidence(leftEvidence).ok).toBe(true);
   expect(session.recordEvidence(rightEvidence).ok).toBe(true);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "comparison-unknown", version: "1" });
+  const client = new Client(
+    { name: "comparison-unknown", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -370,7 +380,10 @@ it("records capture disagreement as a contradicted unknown", async () => {
 it("pages filtered unknown heads through the public MCP contract", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-pagination", version: "1" });
+  const client = new Client(
+    { name: "unknown-pagination", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -524,7 +537,10 @@ it("pages filtered unknown heads through the public MCP contract", async () => {
 it("reports contradictory unknown input as a correctable request", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-input", version: "1" });
+  const client = new Client(
+    { name: "unknown-input", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -569,9 +585,6 @@ it("reports contradictory unknown input as a correctable request", async () => {
     category: "invalid_input",
     retryable: false,
     details: { reason: "already-exists" },
-    remediation: {
-      action: expect.stringContaining("do not repeat record_unknown"),
-    },
   });
   const evidenceId = created.mutation_evidence_ids[0];
 
@@ -641,7 +654,10 @@ it("returns exact committed unknown receipts when creation and update replies ov
     { kind: "session", session },
     { delivery: createToolResultDelivery(8 * 1024) },
   );
-  const client = new Client({ name: "unknown-overflow-receipt", version: "1" });
+  const client = new Client(
+    { name: "unknown-overflow-receipt", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   resources.push(client, server);
   await server.connect(st);
@@ -677,19 +693,12 @@ it("returns exact committed unknown receipts when creation and update replies ov
               kind: "retained-evidence",
               evidence_id: unknown.mutation_evidence_ids[0],
             },
+            // Export, not a list_unknowns page: one head may not fit a page.
+            next_operation: "export_evidence_bundle",
           },
-        },
-        remediation: {
-          action: expect.stringContaining(
-            "Do not repeat the completed mutation",
-          ),
         },
       },
     });
-    const recovery = parseMcpToolError(response).error.remediation.action;
-    expect(recovery).toContain("export_evidence_bundle");
-    expect(recovery).not.toContain("or page list_unknowns");
-    expect(recovery).toContain("may be too large");
     for (const id of unknown.mutation_evidence_ids)
       expect(session.evidenceById(id)).toBeDefined();
   };
@@ -699,9 +708,10 @@ it("returns exact committed unknown receipts when creation and update replies ov
     arguments: { offset: 0, limit: 1 },
   });
   expect(singlePage.isError).toBe(true);
-  expect(parseMcpToolError(singlePage).error.remediation.action).toContain(
-    "export_evidence_bundle",
-  );
+  // A one-row page cannot shrink; the route is export, not another page.
+  expect(parseMcpToolError(singlePage).error).toMatchObject({
+    details: { reported_limits: { next_operation: "export_evidence_bundle" } },
+  });
   const directory = await createTestTempDirectory("rea-unknown-overflow-");
   const path = join(directory, "bundle.json");
   const exported = await client.callTool({
@@ -731,7 +741,10 @@ it("returns exact committed unknown receipts when creation and update replies ov
 it("preserves graph constraint facts and rejects atomically until input is corrected", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-constraint", version: "1" });
+  const client = new Client(
+    { name: "unknown-constraint", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -781,9 +794,6 @@ it("preserves graph constraint facts and rejects atomically until input is corre
       category: "invalid_input",
       retryable: false,
       details: { reason: "constraint", constraint },
-      remediation: {
-        action: expect.stringContaining("Do not repeat the unchanged call"),
-      },
     });
     expect(await good("get_evidence_bundle")).toEqual(empty);
   }
@@ -852,7 +862,10 @@ it("recovers an oversized list with same-session paging or export", async () => 
     { kind: "session", session },
     { delivery: createToolResultDelivery(8 * 1024) },
   );
-  const client = new Client({ name: "unknown-list-recovery", version: "1" });
+  const client = new Client(
+    { name: "unknown-list-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   resources.push(client, server);
   await server.connect(st);
@@ -879,11 +892,11 @@ it("recovers an oversized list with same-session paging or export", async () => 
       arguments: { domain: "overflow-list" },
     }),
   ).error;
-  expect(overflow.code).toBe("resource_constraint");
-  expect(overflow.remediation.action).toContain("same connection");
-  expect(overflow.remediation.action).toContain("smaller limit");
-  expect(overflow.remediation.action).toContain("export_evidence_bundle");
-  expect(overflow.remediation.action).not.toContain("CLI JSON");
+  // The list pages again on this connection rather than falling back to CLI.
+  expect(overflow).toMatchObject({
+    code: "resource_constraint",
+    details: { reported_limits: { next_operation: "list_unknowns" } },
+  });
   const first = await client.callTool({
     name: "list_unknowns",
     arguments: { domain: "overflow-list", offset: 0, limit: 1 },

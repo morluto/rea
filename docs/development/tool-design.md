@@ -262,6 +262,28 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+Owned provider commands follow the same rule. `providerOutcomeOf` in
+`src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
+refusal, cancellation, deadline, output or memory limit, resource signal, exit
+status with the owner's stop state, or stream failure) together with the
+retained output and whether it was truncated. `classifyProviderOutcome` maps
+that outcome to a typed error once; a provider supplies only its settings,
+recovery text and a dialect for what an exit or launch refusal means.
+`classifyProviderFailure` in `src/providers/classifyProviderFailure.ts` is the
+one entry for a raw failure: typed analysis errors pass through, command
+outcomes go to `classifyProviderOutcome`, selected-file failures go to the
+shared stable-artifact projections, and only what none of them recognises
+reaches the provider's `unclassified` report. A provider supplies a dialect,
+not a classifier. A phase that armed its own deadline throws that deadline's
+timeout where it observes the abort; for a read its signal cancelled, it
+supplies the timeout as the dialect's `interruption`, so classification never
+rereads a cancellation's reason as a timeout. A provider whose cleanup report
+has its own shape supplies `readCleanup` or `commandCleanup`; otherwise the
+unresolved cleanup is attached to the reported failure. The
+`rea/provider-failure-classifier` lint rule keeps new
+`(cause: unknown) => AnalysisError` functions out of `src/` except in that
+owner; existing ones are counted in a baseline that may only shrink.
+
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
 bytes, Fetch response-body bytes, or UTF-8 text. Preserve admitted source values
@@ -286,6 +308,26 @@ corresponding objects.
 Complete traversal or inventory does not make unavailable values equal. A
 partial aggregate fingerprint difference cannot establish modification when
 omissions alone explain it; independently proven differences still survive.
+
+A byte-format parser reports failure with `ParseFailureError` from
+`src/domain/parseFailure.ts`: `malformed`, `truncated`, `unsupported`, or
+`limit`, with the format and, when known, the offset and field. Read bounded
+fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
+raises that failure instead of a bare `RangeError`. Providers project the
+failure with `parseFailureAnalysisError` rather than their own `instanceof`
+ladder; a `limit` stays with its producer, which knows the budget to name.
+Do not use `RangeError` as a failure channel: a stack overflow, a host string
+or buffer limit, and an unchecked read past the end of a buffer are all
+`RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
+`RangeError`, and `parseFailureFromCause` admits only a reported parse failure
+as evidence about the input. Readers report bounds failures at the read site;
+host error codes alone cannot distinguish a read from a write or allocation.
+`scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
+`DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
+of parser input, and direct `instanceof RangeError` checks against their
+per-guard baselines in `scripts/verify/baselines/`. A
+file may not exceed its count; after removing copies, run
+`node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 
 Keep format recognition separate from provider admission. A recognizable header
 can supply useful observations while later structure remains unresolved or a
@@ -358,7 +400,9 @@ In multi-stage work, retain each completed, admitted observation before awaiting
 the next stage. Later reads, validation, cancellation, or finalization can fail
 without erasing those facts. Carry them through typed failure outcomes with
 explicit coverage of unperformed work; do not construct a successful result for
-stages that never ran.
+stages that never ran. For concurrent reads, the batch owner settles every
+admitted peer before reporting a failure. Retain completed observations together with each
+failed request's physical, cancellation and cleanup facts.
 
 - Keep target admission, provider readiness, active work, observed process exit,
   and resource release separate. A valid process handle, successful launcher,
@@ -398,12 +442,13 @@ stages that never ran.
   primary failure and let incomplete cleanup retain its own classification.
   Preserve the caller's abort reason as the typed cancellation error's cause,
   including when cancellation is observed only after provider completion.
-  Shared command owners must retain the observed cancellation reason separately
-  from physical failures and cleanup ownership. Carry that fact through failure
-  wrapping so adapters can preserve the exact reason without interpreting it.
-  ZIP member streams retain the exact signal reason; hdiutil wrappers consume
-  the command owner's typed cancellation record and keep physical command
-  failures separate, even if a host error is named `AbortError`.
+  The producing boundary records cancellation separately from physical failures
+  and cleanup ownership. A caller's abort reason is opaque: its value, error
+  type, name or cause chain cannot establish failure origin or cleanup authority.
+  Consumers use the owner's parsed facts. An established command timeout keeps
+  its timeout or refusal policy when preparation records a cancellation.
+  Failure wrapping and operation rebinding preserve these facts and already
+  classified secondary failures.
   Client cancellation alone does not prove native work stopped.
   For atomic publication, document the cancellation cutoff and preserve any
   committed output's publication receipt.
@@ -421,7 +466,9 @@ stages that never ran.
   original failure and completed observations. Later failure composition must
   report only resources whose cleanup remains unresolved. Carry cleanup
   capabilities explicitly in typed outcomes so consumers can bind returned errors
-  to exact owners without reparsing diagnostic cause chains.
+  to exact owners without reparsing diagnostic cause chains. A cleanup-status
+  observer does not replace a callable close capability retained by the caller's
+  scope.
   Bind every caller-visible retry error and aggregate, including an error already
   produced by the provider. An aggregate remains incomplete until all owners it
   reports are released; releasing one child cannot clear another child's status.
@@ -434,7 +481,12 @@ stages that never ran.
   remain attached to their owning envelope while cleanup is pending and after
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
-  applies rather than duplicate close/finally handling.
+  applies rather than duplicate close/finally handling. It projects
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/providers/runOwned.ts),
+  which owns this precedence for owned work: a recorded failure stays primary,
+  cancellation before commit keeps the completed value as a partial
+  observation, cancellation after commit keeps the value, and unconfirmed
+  cleanup reports `cleanup_incomplete` while keeping the completed value.
 - Give descriptor-backed reads an owner before opening the file. A rejected
   close must retain the exact handle and preserve any earlier failure.
   Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s
@@ -474,7 +526,18 @@ through the producing owner and affected CLI/MCP consumers.
 ## Implement and evaluate
 
 Put provider wire-protocol parsing in adapters and shared CLI/MCP workflows in
-the application layer. Reusable format declarations may live in pure domain
+the application layer.
+
+CLI commands register through
+[`cliCommandRegistrations.ts`](https://github.com/morluto/rea/blob/main/src/cli/cliCommandRegistrations.ts):
+add the registrar to its family there and its module to `src/cli.ts`. The build
+records which registrar defines each top-level command, and a one-shot command
+loads only that registrar's module graph; help, completions, `--llms` and unknown
+names load the complete CLI. A registrar's command definitions must not depend
+on other registrars, and `tests/boundary/cli/cliLazyRegistration.test.ts` checks
+that each one registers alone with the definitions the complete CLI gives it.
+Modules that every registrar imports set the startup cost of every command; load
+optional heavy services where a command needs them. Reusable format declarations may live in pure domain
 owners: [`peOptionalHeader.ts`](https://github.com/morluto/rea/blob/main/src/domain/peOptionalHeader.ts)
 decodes PE structure, while consumers retain machine admission, directory-address
 interpretation, and file/mapping bounds. Share Evidence provenance, unknown
@@ -548,6 +611,25 @@ Zod's tuple projection omits implicit length bounds and Draft 2020-12 `items`,
 which some clients require even alongside `prefixItems`. Tuples with a rest
 schema also need explicit minimum lengths. Check parser/schema parity for empty,
 short, overlong, and malformed values in both input and output projections.
+
+A CLI command for a tool contract is described by `describeContractCommand` in
+[`contractCliDescription.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCliDescription.ts)
+and rendered for the CLI framework by `registerContractCommand` in
+[`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
+A contract with `cli: true` names its own command, the kebab-case spelling of
+its name; the CLI command inventory in `catalogIdentity.ts` is derived from
+those declarations, and the projection omits `command` for it. `CLI_COMMANDS`
+holds only the commands no contract names.
+The projection names only what the CLI spells differently: positionals,
+caller-relative path fields, option renames and short flags, CLI help wording,
+omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field
+rules refuse at argv parsing or at the service's contract parse. A delivery
+`view` is JSON text decoded when the command runs; the contract input then
+admits the view with its `detail` before any target is opened, including a
+`detail`-discriminated union input. Field schemas and decimal argv tokens are
+derived, and
+`tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
+command admits what its contract admits.
 
 CLI translations must reuse the canonical semantic fields, enum membership and
 list bounds. Document transport differences such as relative path spelling and

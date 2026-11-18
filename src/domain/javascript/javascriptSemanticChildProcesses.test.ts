@@ -7,6 +7,25 @@ const analyze = (source: string) =>
     `import { spawn } from 'node:child_process';\n${source}`,
   );
 
+it.each(
+  ["on", "once", "addListener"].flatMap((method) =>
+    ["", ", 1", ", null", ", {}", ", void 0"].map((listener) => ({
+      method,
+      listener,
+    })),
+  ),
+)(
+  "does not invent a child $method registration with rejected listener $listener",
+  ({ method, listener }) => {
+    const ir = analyze(
+      `const child = spawn('worker'); child.${method}('exit'${listener});`,
+    );
+    expect(ir.childProcessSpawns).toHaveLength(1);
+    expect(ir.childProcessInteractions).toEqual([]);
+    expect(ir.eventOperations).toEqual([]);
+  },
+);
+
 it("keeps interactions before replacement resolved and later ownership uncertain", () => {
   const ir = analyze(`
     let child = spawn('old');

@@ -1,5 +1,6 @@
+import { dirname } from "node:path";
+
 import { SetupSkillInstallError, type SkillDestination } from "./SetupSkill.js";
-import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import type { LinuxPackageFamily } from "./HopperReleaseFeed.js";
 import {
   linuxHopperInstallDisclosure,
@@ -7,7 +8,7 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
-import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
+import { macHopperUserApplicationPath } from "../hopperPaths/MacHopperPaths.js";
 import type {
   ClientConfigurationInspection,
   SetupAction,
@@ -23,7 +24,6 @@ import {
 import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type { DoctorReport } from "./Doctor.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 
 /**
@@ -94,13 +94,7 @@ export const discoverSetupState = async (input: {
   );
   const clientStates = clients.map((client): SetupClientState => {
     const registration = registrationByClient.get(client.name);
-    const commandIdentity =
-      registration === undefined
-        ? undefined
-        : classifyClientRegistrationCommand(
-            registration.command,
-            CURRENT_ENTRYPOINT_PATH,
-          );
+    const commandIdentity = registration?.command_identity;
     const ownedRegistration =
       (registration?.state === "aligned" || registration?.state === "stale") &&
       commandIdentity === "owned";
@@ -108,7 +102,10 @@ export const discoverSetupState = async (input: {
     const status: SetupClientState["status"] =
       registration?.state === "invalid"
         ? "invalid"
-        : registration?.state === "unknown" || commandIdentity === "unknown"
+        : registration?.state === "unknown" ||
+            ((registration?.state === "aligned" ||
+              registration?.state === "stale") &&
+              commandIdentity === "unknown")
           ? "unknown"
           : ownedRegistration && registration.state === "aligned"
             ? "configured"
@@ -128,10 +125,7 @@ export const discoverSetupState = async (input: {
     .filter(
       (registration) =>
         (registration.state === "aligned" || registration.state === "stale") &&
-        classifyClientRegistrationCommand(
-          registration.command,
-          CURRENT_ENTRYPOINT_PATH,
-        ) === "owned",
+        registration.command_identity === "owned",
     )
     .map(({ client }) => client);
   return {
@@ -496,5 +490,9 @@ const clientConfigurationDetail = (
       : " The HOPPER_LAUNCHER_PATH value shown above is the current fallback; if this plan installs Hopper, REA will replace it with the launcher path reported by that installation."
     : "";
   const persistence = registrationPersistenceDetail(client);
-  return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${hopperDetail}${persistence === undefined ? "" : ` ${persistence}`}`;
+  const privateProfile =
+    client.privateProfile === undefined
+      ? ""
+      : ` The profile is private: REA sets its folder ${dirname(client.configPath)} to mode 0700 and the file to 0600.`;
+  return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${hopperDetail}${privateProfile}${persistence === undefined ? "" : ` ${persistence}`}`;
 };

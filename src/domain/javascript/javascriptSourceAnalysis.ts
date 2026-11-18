@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "./javascriptSemanticPrecision.js";
 import type {
   JavaScriptSemanticProjectionCapacity,
@@ -40,8 +41,24 @@ export interface JavaScriptSourceAnalysisFailure {
 /** Operational choices for source analysis, independent of transport framing. */
 export interface JavaScriptSourceAnalysisLimits {
   readonly semanticPrecision?: JavaScriptSemanticPrecisionInput;
+  /** Accepted member-mutation work allowance; absent means the default. */
+  readonly memberMutationAllowance?: JavaScriptMemberMutationAllowance;
   readonly heapMb: number;
+  /** Where `heapMb` was selected. Absent when the caller did not record it. */
+  readonly heapSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
   readonly timeoutMs: number;
+  /** Where `timeoutMs` was selected. Absent when the caller did not record it. */
+  readonly timeoutSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
 }
 
 /** Sequential source-analysis authority with independently verified cleanup. */

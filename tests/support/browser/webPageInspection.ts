@@ -55,7 +55,11 @@ export const createWebPageInspection = (
       },
     },
     frames: [],
-    dom: { total_nodes: 0, nodes: [] },
+    dom: {
+      total_nodes: 0,
+      node_value_length_unit: "utf16-code-units",
+      nodes: [],
+    },
     accessibility: {
       total_nodes: 0,
       text_capture: {
@@ -70,6 +74,7 @@ export const createWebPageInspection = (
       items: scripts.map(
         ({ source, scriptKey, url, origin: scriptOrigin, cdpHash }) => ({
           script_key: scriptKey,
+          frame_id: null,
           url,
           origin: scriptOrigin,
           cdp_hash: cdpHash,
@@ -116,6 +121,9 @@ export const createWebPageInspection = (
       session_storage_keys: [],
       indexed_db_names: [],
       cache_names: [],
+      content_fingerprints: [],
+      fingerprint_algorithm: "sha256",
+      fingerprints_complete: false,
       values_redacted: true,
     },
     limitations: [],

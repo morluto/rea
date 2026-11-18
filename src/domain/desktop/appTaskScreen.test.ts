@@ -10,23 +10,19 @@ import {
   screenExamplesOf,
 } from "./appTaskScreen.js";
 
-const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
 const SHOWN = {
   id: "shown",
   kind: "screen_judge",
   question: "Does the calculator's display show the result 8.568?",
 };
 const parse = (change: Record<string, unknown>) =>
-  parseDesktopTask(
-    {
-      name: "tip-total",
-      prompt:
-        "In Calculator, work out 18% of 47.60 and leave the result showing.",
-      checks: [SHOWN],
-      ...change,
-    },
-    portable,
-  );
+  parseDesktopTask({
+    name: "tip-total",
+    prompt:
+      "In Calculator, work out 18% of 47.60 and leave the result showing.",
+    checks: [SHOWN],
+    ...change,
+  });
 const EXAMPLES = { fail: "c2VlZA==", pass: "ZW5k" };
 
 describe("screen_judge checks", () => {

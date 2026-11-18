@@ -1,3 +1,4 @@
+import { boundedList } from "../boundedList.js";
 import { z } from "zod";
 
 import { runtimeFile } from "./runtimeFiles.js";
@@ -11,7 +12,7 @@ export const desktopFileFactsSchema = z.strictObject({
   type: z.enum(["file", "directory", "symlink", "other"]),
   size: z.int().min(0),
   mode: z.int().min(0),
-  mtime_ns: z.string().regex(/^\d+$/u),
+  mtime_ns: z.string().regex(/^-?\d+$/u),
   sha256: sha256.nullable(),
 });
 export type DesktopFileFacts = z.infer<typeof desktopFileFactsSchema>;
@@ -145,6 +146,7 @@ export const checkpointTaken = (
         (left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
     )
     .map(({ path }) => relative(path));
+  const changedFiles = boundedList(files, MAX_ACKNOWLEDGED_FILES);
   return {
     kind: "checkpoint",
     name: checkpoint.name,
@@ -157,8 +159,8 @@ export const checkpointTaken = (
       (sum, file) => sum + file.size,
       0,
     ),
-    changed_files: files.slice(0, MAX_ACKNOWLEDGED_FILES),
-    more_changed_files: Math.max(0, files.length - MAX_ACKNOWLEDGED_FILES),
+    changed_files: [...changedFiles.items],
+    more_changed_files: changedFiles.omitted,
   };
 };
 
@@ -271,7 +273,10 @@ export const desktopApplicationInventorySchema = z.strictObject({
   state_directories: z.array(
     z.strictObject({
       path: z.string().min(1),
-      exists_at_start: z.boolean(),
+      /** Null when the filesystem probe could not establish presence or absence. */
+      exists_at_start: z.boolean().nullable(),
+      /** The failed existence probe's reason; absent for confirmed presence or absence. */
+      existence_error: z.string().optional(),
     }),
   ),
 });

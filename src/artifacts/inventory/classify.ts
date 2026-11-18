@@ -1,14 +1,19 @@
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  openRootArtifact,
+  releaseRootArtifact,
+  abortIfNeeded,
+  assertArtifactSelectedSource,
+} from "../../resources/index.js";
 import {
   nesContainerFormat,
   parseInesLayout,
 } from "../../domain/inesContainer.js";
-import type { GodotPckAdmission } from "../GodotPckLocation.js";
 import {
   resolveArtifactReaderLimits,
   type ArtifactReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
 import type {
   ArtifactReaderAdmission,
   ArtifactFormatAdmission,
@@ -17,13 +22,15 @@ import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../../domain/firmware/espFlashLocation.js";
-import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
+import type { BunStandaloneProbe } from "../bun/BunModuleGraphLayout.js";
+import type { NodeSeaLocation } from "../nodeSea/NodeSeaLocation.js";
+import type { PyInstallerCookie } from "../pyinstaller/CArchiveLayout.js";
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
@@ -37,7 +44,6 @@ import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
 import { readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import { claimsExecutableHeader } from "../../domain/binaryTarget.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
@@ -47,13 +53,10 @@ import {
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import type { HashResult } from "../ArtifactHash.js";
 import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "./hashStableRootArtifact.js";
+  classifyStableRootArtifactHandle,
+  type HashResult,
+} from "../ArtifactHash.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
@@ -105,6 +108,7 @@ export const classifyAndHashRootForInventory = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Root artifact changed before inventory: ${path}`,
+      { integrityCheck: "container-identity" },
     );
   }
   if (directory && options.expectedRootSha256 !== undefined)
@@ -112,6 +116,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -142,6 +147,7 @@ export const classifyAndHashRootForInventory = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
     // Prior probe state can prove replacement without interpreting any bytes.
     const probes = new ArtifactEmbeddedFormatProbes(
@@ -154,7 +160,7 @@ export const classifyAndHashRootForInventory = async (
     const admittedDigest =
       options.expectedRootSha256 === undefined
         ? undefined
-        : await hashStableRootArtifactHandle(
+        : await classifyStableRootArtifactHandle(
             path,
             handle,
             initial,
@@ -180,7 +186,7 @@ export const classifyAndHashRootForInventory = async (
       typeof classified === "string" ? classified : classified.kind;
     const digest =
       admittedDigest ??
-      (await hashStableRootArtifactHandle(
+      (await classifyStableRootArtifactHandle(
         path,
         handle,
         initial,
@@ -235,6 +241,53 @@ export const classifyAndHashRootForInventory = async (
   return outcome.value;
 };
 
+type DenoPresentProbe = Extract<
+  Awaited<ReturnType<ArtifactEmbeddedFormatProbes["denoStandalone"]>>,
+  { readonly status: "present" }
+>;
+
+export type EmbeddedExecutablePackage =
+  | { readonly format: "deno-standalone"; readonly probe: DenoPresentProbe }
+  | { readonly format: "node-sea"; readonly location: NodeSeaLocation }
+  | {
+      readonly format: "bun-standalone";
+      readonly probe: Extract<
+        BunStandaloneProbe,
+        { readonly status: "present" }
+      >;
+    }
+  | { readonly format: "dotnet-bundle"; readonly headerOffset: number }
+  | { readonly format: "pyinstaller"; readonly cookie: PyInstallerCookie };
+
+/**
+ * Executable-branch package order for a native image.
+ * Root classification and release-exposure probing both use this decision.
+ */
+export const classifyEmbeddedExecutablePackage = async (
+  probes: ArtifactEmbeddedFormatProbes,
+  nativeFormat: string,
+  signal?: AbortSignal,
+): Promise<EmbeddedExecutablePackage | undefined> => {
+  const sea = await probes.nodeSea();
+  abortIfNeeded(signal);
+  if (sea !== undefined) return { format: "node-sea", location: sea };
+  const bun = await probes.bunStandalone();
+  if (bun.status === "present") return { format: "bun-standalone", probe: bun };
+  const deno = await probes.denoStandalone();
+  if (deno.status === "present")
+    return { format: "deno-standalone", probe: deno };
+  const packaged = await probes.pyInstaller();
+  abortIfNeeded(signal);
+  if (nativeFormat !== "mach-o-universal") {
+    const headerOffset = await probes.dotnetBundle();
+    if (headerOffset !== undefined)
+      return { format: "dotnet-bundle", headerOffset };
+  }
+  if (packaged !== undefined)
+    return { format: "pyinstaller", cookie: packaged };
+  return undefined;
+};
+
 const classifyRootFormat = async (
   path: string,
   source: RootInventorySource,
@@ -273,7 +326,7 @@ const classifyRootFormat = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during classification: ${path}`,
-        { cause: cause.cause ?? cause },
+        { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
       );
     throw artifactOperationCause(cause);
   }
@@ -374,42 +427,47 @@ const classifyRootFormat = async (
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
-    const sea = await embeddedProbes.nodeSea();
-    abortIfNeeded(signal);
-    if (sea !== undefined) {
+    const embedded = await classifyEmbeddedExecutablePackage(
+      embeddedProbes,
+      format,
+      signal,
+    );
+    if (embedded?.format === "node-sea") {
       const decoded = await decodeNodeSeaBlob(
-        await readNodeSeaBlob(source, sea, signal, readerLimits.node_sea),
+        await readNodeSeaBlob(
+          source,
+          embedded.location,
+          signal,
+          readerLimits.node_sea,
+        ),
         signal,
         readerLimits.node_sea,
       );
       return {
         kind: "node-sea",
         source,
-        location: sea,
+        location: embedded.location,
         decoded,
         limits: readerLimits.node_sea,
       };
     }
-    const bun = await embeddedProbes.bunStandalone();
-    if (bun.status === "present")
-      return { kind: "bun-standalone", source, probe: bun };
-    const deno = await embeddedProbes.denoStandalone();
-    if (deno.status === "present")
-      return { kind: "deno-standalone", source, probe: deno };
-    const packaged = await embeddedProbes.pyInstaller();
-    abortIfNeeded(signal);
-    if (format !== "mach-o-universal") {
-      const headerOffset = await embeddedProbes.dotnetBundle();
-      if (headerOffset !== undefined)
-        return { kind: "dotnet-bundle", source, headerOffset };
-    }
+    if (embedded?.format === "bun-standalone")
+      return { kind: "bun-standalone", source, probe: embedded.probe };
+    if (embedded?.format === "deno-standalone")
+      return { kind: "deno-standalone", source, probe: embedded.probe };
+    if (embedded?.format === "dotnet-bundle")
+      return {
+        kind: "dotnet-bundle",
+        source,
+        headerOffset: embedded.headerOffset,
+      };
     // A valid cookie also proves enough bytes for a thin Mach-O identity;
     // PE and universal Mach-O classification already require stronger proof.
-    if (packaged !== undefined)
+    if (embedded?.format === "pyinstaller")
       return {
         kind: "pyinstaller",
         source,
-        cookie: packaged,
+        cookie: embedded.cookie,
         carrierPathDialect: format === "pe" ? "windows" : "posix",
       };
   }
@@ -523,6 +581,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },

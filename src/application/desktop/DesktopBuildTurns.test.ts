@@ -57,11 +57,14 @@ it("keeps the place of a call cancelled while it waits, so the one after it stil
     return ok("last");
   });
   await settled();
-  caller.abort(new Error("the client went away"));
-  expect(await cancelled).toMatchObject({
+  const reason = { caller: "the client went away" };
+  caller.abort(reason);
+  const cancellation = await cancelled;
+  expect(cancellation).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisCancelledError", operation: "cancelled" },
   });
+  expect(!cancellation.ok && cancellation.error.cause).toBe(reason);
   await settled();
   expect(log).toEqual(["running"]);
   running.end();

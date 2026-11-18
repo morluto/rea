@@ -1,7 +1,9 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { recordedProviderSettings } from "../../../src/application/ClientRegistrationEnvironment.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
@@ -34,7 +36,11 @@ const readClaudeCode = async (env: unknown) => {
   const [status] = await readClientRegistrationStatuses(
     home,
     CURRENT_ENTRYPOINT_PATH,
-    { environment: {}, providerSettings: selected },
+    {
+      platform: HOST_PLATFORM.platform,
+      environment: {},
+      providerSettings: selected,
+    },
   );
   return status;
 };
@@ -98,7 +104,7 @@ it("does not read the comparison for callers that did not ask", async () => {
   const [status] = await readClientRegistrationStatuses(
     home,
     CURRENT_ENTRYPOINT_PATH,
-    { environment: {} },
+    { platform: HOST_PLATFORM.platform, environment: {} },
   );
   expect(status).not.toHaveProperty("provider_settings");
 });
@@ -117,6 +123,7 @@ it("retains the comparison on a stale launcher, which setup can still repair", a
     }),
   );
   const [status] = await readClientRegistrationStatuses(home, "/current/rea", {
+    platform: HOST_PLATFORM.platform,
     environment: {},
     providerSettings: selected,
   });
@@ -136,7 +143,11 @@ it("reads Codex's environment table", async () => {
   const [status] = await readClientRegistrationStatuses(
     home,
     CURRENT_ENTRYPOINT_PATH,
-    { environment: {}, providerSettings: selected },
+    {
+      platform: HOST_PLATFORM.platform,
+      environment: {},
+      providerSettings: selected,
+    },
   );
   expect(status).toMatchObject({
     client: "codex",
@@ -166,7 +177,11 @@ it("reads OpenCode's differently named environment member", async () => {
   const [status] = await readClientRegistrationStatuses(
     home,
     CURRENT_ENTRYPOINT_PATH,
-    { environment: {}, providerSettings: selected },
+    {
+      platform: HOST_PLATFORM.platform,
+      environment: {},
+      providerSettings: selected,
+    },
   );
   expect(status).toMatchObject({
     client: "opencode",
@@ -201,6 +216,7 @@ it("reads the effective view of layered OpenCode files", async () => {
     home,
     CURRENT_ENTRYPOINT_PATH,
     {
+      platform: HOST_PLATFORM.platform,
       environment: { OPENCODE_CONFIG: override },
       providerSettings: selected,
     },
@@ -273,6 +289,39 @@ it("folds recorded environment names on Windows", () => {
   ).toBeUndefined();
 });
 
+it("compares selected Windows aliases once using the winning caller spelling", () => {
+  const servers = { rea: { env: { JAVA_HOME: "/opt/jdk" } } };
+  const observed: [string, string][] = [];
+  const owned: [string, string][] = [];
+  expect(
+    recordedProviderSettings(
+      {
+        document: { mcpServers: servers },
+        servers,
+        serversPath: ["mcpServers"],
+        dialect: "json",
+        environmentKey: "env",
+        legacyServers: {},
+      },
+      undefined,
+      { JAVA_HOME: "/overridden", java_home: "/opt/jdk" },
+      "win32",
+      (name, value) => {
+        owned.push([name, value]);
+        return true;
+      },
+      (name, value) => observed.push([name, value]),
+    ),
+  ).toEqual({
+    unrecorded: [],
+    differing: [],
+    unresolved: [],
+    owned: ["java_home"],
+  });
+  expect(observed).toEqual([["java_home", "/opt/jdk"]]);
+  expect(owned).toEqual(observed);
+});
+
 it("does not treat a map it could not read as absent", () => {
   const servers = { rea: { env: { GHIDRA_INSTALL_DIR: 1 } } };
   expect(
@@ -309,7 +358,10 @@ it("does not classify an unresolved Qwen expression as a differing literal", () 
   expect(
     recordedProviderSettings(
       parsed,
-      "qwen_code",
+      {
+        name: "qwen_code",
+        registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+      },
       { REA_KUNA_COMMAND: "/opt/kuna" },
       "linux",
     ),

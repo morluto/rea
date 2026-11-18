@@ -732,15 +732,45 @@ export interface FakeAgentEnvRunner {
   notes(name: string): Promise<unknown[]>;
 }
 
-export const fakeAgentEnvRunner = async (
-  computer: Pick<FakeComputer, "url" | "token">,
-): Promise<FakeAgentEnvRunner> => {
-  const state = await createTestTempDirectory("fake-agentenv-");
-  const python = execFileSync(
+/**
+ * JSONL notes from the fake build computer. A trailing fragment without a
+ * newline is still being appended. Every newline-terminated line is a record
+ * and must parse.
+ */
+export const parseAgentEnvNotes = (text: string): unknown[] => {
+  if (text.length === 0) return [];
+  const terminated = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (terminated) lines.pop();
+  const records: unknown[] = [];
+  for (const [index, line] of lines.entries()) {
+    try {
+      records.push(JSON.parse(line) as unknown);
+    } catch (error) {
+      if (!terminated && index === lines.length - 1) break;
+      throw error;
+    }
+  }
+  return records;
+};
+
+let cachedPython3Executable: string | undefined;
+
+/** Resolve the host's python3 interpreter once per test worker. */
+export const resolvePython3Executable = (): string => {
+  cachedPython3Executable ??= execFileSync(
     "python3",
     ["-c", "import sys; print(sys.executable)"],
     { encoding: "utf8" },
   ).trim();
+  return cachedPython3Executable;
+};
+
+export const fakeAgentEnvRunner = async (
+  computer: Pick<FakeComputer, "url" | "token">,
+): Promise<FakeAgentEnvRunner> => {
+  const state = await createTestTempDirectory("fake-agentenv-");
+  const python = resolvePython3Executable();
   await mkdir(join(state, "site", "agent_env"), { recursive: true });
   const runner = join(state, "agent-env");
   await writeFile(
@@ -769,10 +799,7 @@ export const fakeAgentEnvRunner = async (
       } catch {
         return [];
       }
-      return (await readFile(path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as unknown);
+      return parseAgentEnvNotes(await readFile(path, "utf8"));
     },
   };
 };

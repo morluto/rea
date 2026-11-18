@@ -62,6 +62,16 @@ runtime presence. For compact CLI output, use
 `inspect-desktop-application PATH --detail summary --evidence_output BUNDLE`.
 See [desktop installations](https://github.com/morluto/rea/blob/main/docs/desktop-applications.md).
 
+## Release exposure
+
+Use `audit_release_exposure` (`rea audit-release-exposure PATH`) when the question is what static analysis of a shipped `.app`, install directory, ASAR, or executable recovers. Each check has a stable id, a status, the observation behind it, and fixed remediation. Unknown and unassessed checks stay in the report. The report does not establish that the application is secure.
+
+`text.credential_markers` reports a rule id and location only. Matched bytes, previews, lengths, and hashes of matched bytes are omitted.
+
+`native.hardening`, `macho.hardened_runtime`, and `android.manifest` are not assessed here. Their next probes are `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`.
+
+See [release exposure](https://github.com/morluto/rea/blob/main/docs/release-exposure.md).
+
 ## Go build metadata
 
 Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
@@ -79,7 +89,11 @@ unparsed module-text line. A missing record is an unknown, not proof of a
 non-Go binary; observed metadata does not authenticate its claims, and static
 `(ptr, len)` string recovery excludes compiler-inlined stack/immediate strings
 without proving runtime reachability. Function,
-source and type recovery remain a separate native-analysis question.
+source and type recovery remain a separate native-analysis question. For a
+scanner, project the retained parent with `inspect_analysis_view` kind
+`cyclonedx`. That document is CycloneDX 1.6, reads no target bytes, and states
+`compositions` as incomplete or unknown. See
+[CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
 
 ## Model files
 
@@ -120,7 +134,22 @@ Preserve artifact SHA-256, package order, dependency indices, and the section
 file range. A missing section is null metadata, not proof the binary has no
 dependencies. An omitted package kind stays null. A rustc commit hash is
 inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
-identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+identify the compiler. Project the retained parent with `inspect_analysis_view`
+kind `cyclonedx` for one CycloneDX 1.6 document. Build-kind packages are
+`scope: excluded`. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)
+and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
+
+## Maven POM and Gradle module metadata
+
+Use `inspect_maven_gradle_metadata` for an explicit local Maven `pom.xml` or
+Gradle `.module` file when the question concerns declared coordinates,
+dependency scopes and exclusions, BOM or platform constraints, or unresolved
+property and parent references. No `open_binary`, Maven, Gradle, or repository
+access is required. The CLI equivalent is `inspect-maven-gradle-metadata PATH`.
+Preserve artifact SHA-256, versions as spelled, and `unresolved` entries.
+Interpolation and inheritance are not performed. A missing version is not a
+resolved BOM selection. See
+[Maven POM and Gradle module metadata](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
 
 ## PE Authenticode certificate tables
 
@@ -199,6 +228,52 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## DWARF compile units
+
+Use `inspect_dwarf_units` for an explicit local ELF, Mach-O, or PE image when
+the question concerns compile-unit source file, compilation directory,
+producer, language, or split-DWARF `dwo_name`. No `open_binary` or target
+execution is required. The CLI equivalent is `inspect-dwarf-units PATH`. For a
+`.dSYM` bundle, pass the DWARF file inside the bundle; the bundle itself is
+not opened. Universal Mach-O requires `architecture`. Preserve artifact
+SHA-256, section file ranges, and per-unit issues. Absent `.debug_info`
+describes this file only and does not establish that a separate debug file is
+absent. Partial coverage includes a declared `.debug_info` that was not read,
+such as an undecodable section or a `.dwo` object. A present `.gnu_debuglink` is named and not decoded. Child DIEs,
+types, line tables, and location expressions are not read. See
+[DWARF compile units](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
+
+## ELF debug files
+
+Use `inspect_elf_debug_link` for an explicit local ELF32/ELF64 image when the
+question concerns `.gnu_debuglink`, `.gnu_debugaltlink`, the GNU build-id, or
+whether one selected file matches that linkage. No `open_binary` or target
+execution is required. The CLI equivalent is `inspect-elf-debug-link PATH`,
+with optional `--candidate-path`. Preserve artifact SHA-256, debuglink CRC32,
+build-id hex, and the returned lookup path strings. Those strings are not
+opened, and a same-directory path is not listed. Pass `candidate_path` only
+for a file you already chose. The verdict compares debuglink CRC32 and GNU
+build-id; the alt-file build-id is not that comparison. A missing named
+section is observed absence only when section names are complete. The
+`.gnu_debugdata` xz payload is not decoded. See
+[ELF debug files](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-debug-link.md).
+
+## ELF dynamic dependencies
+
+Use `inspect_elf_dependencies` for an explicit local ELF32/ELF64 `ET_EXEC` or
+`ET_DYN` image when the question concerns needed libraries, SONAME, rpath /
+runpath, GNU symbol versions, or undefined dynamic imports. No `open_binary`,
+dynamic loader, or `ldd` is required. The CLI equivalent is
+`inspect-elf-dependencies PATH`. Preserve artifact SHA-256, `DT_NEEDED` order
+and duplicates, search-path tokens as written, decoded `DT_FLAGS` /
+`DT_FLAGS_1`, `PT_INTERP`, GNU version names, and `library@version` joins when
+`.gnu.version` names a verneed record. `$ORIGIN`, `$LIB`, and `$PLATFORM` are
+not expanded. A missing `PT_DYNAMIC` is observed absence of that inventory,
+not proof the image never needed libraries in another container. Relocatable
+objects use `inspect_kernel_module`. Core dumps use `inspect_recorded_crash`.
+See
+[ELF dynamic dependencies](https://github.com/morluto/rea/blob/main/docs/elf-dependencies.md).
+
 ## ELF and Mach-O initializer functions
 
 Use `inspect_native_initializers` for an explicit local ELF or Mach-O image
@@ -238,7 +313,10 @@ Xcode, atos, or target execution is required. The CLI equivalent is
 `inspect-apple-ips PATH`. Preserve artifact SHA-256, `bug_type` as a string,
 uppercase image UUIDs, and integer literals that exceed IEEE-754 range. Only
 `bug_type` `"309"` yields a crash body; other DiagnosticReports types return
-no crash result. Opened Mach-O and dSYM UUID joins remain unobserved. See
+no crash result. Select `join_path` for one local Mach-O or dSYM to match
+report images to slices by UUID and architecture. Preserve the selected
+artifact identity, slice facts and unjoined reasons; a joined static address
+does not resolve function names or dSYM symbols. See
 [Apple IPS crash reports](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 
 ## Linux kernel modules
@@ -283,7 +361,7 @@ external utility, then call `inspect_kernel_build_config` on the result. See
 
 ## CPython pyc files
 
-Use `inspect_python_pyc` for an explicit local CPython 3.7–3.13 `.pyc` when the
+Use `inspect_python_pyc` for an explicit local CPython 3.7–3.15 `.pyc` when the
 question concerns the header magic, PEP 552 source hash or timestamp, nested
 code-object names, or bytecode identity. No `open_binary`, Python installation,
 or target execution is required. The CLI equivalent is `inspect-python-pyc PATH`.
@@ -304,6 +382,19 @@ pages from `parent_evidence_id` or the complete Evidence bundle. Same-name
 exports retain every arity and original atom index. CLI summary delivery requires
 `--evidence_output`. Null table counts remain distinct from decoded empty tables. See
 [Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+
+## NuGet packages
+
+Use `inspect_nuget_nupkg` for an explicit local `.nupkg` when the question
+concerns package identity, license, repository, dependency groups, or the ZIP
+contents inventory. No `open_binary`, restore, feed access, or target execution
+is required. The CLI equivalent is `inspect-nuget-nupkg PATH`. Preserve artifact
+SHA-256, `.nuspec` fields as present, dependency version ranges as spelled, and
+path-derived member roles (`lib`, `ref`, `runtimes`, and the other NuGet folder
+conventions). Missing, ambiguous, or malformed `.nuspec` members succeed with
+inventory and limitations. Encrypted members are listed and not extracted.
+Roles are folder conventions, not restore-time asset selection. See
+[NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
 ## SQLite snapshots
 
@@ -536,8 +627,7 @@ the framing LF still fits. Cutter measures, signs, and writes a fitting
 response in bounded chunks. The bridge searches only the newly read bytes
 for the framing LF. The client unescapes each socket chunk into one response
 string before parsing it, so this ceiling does not keep the paged wire frame
-and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
-and start Hopper or Cutter from that same environment. An out-of-band bridge
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. `bridge.max_request_bytes` can be changed at runtime with `update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`. Start Hopper or Cutter from that same environment so the bridge keeps the ceiling it started with until that bridge starts again. An out-of-band bridge
 without the setting stays at 16777216 bytes. The client reports that mismatch
 during discovery only after the hello proves a live authenticated bridge, and
 does not send a status request or the command. A stale descriptor is ignored.
@@ -844,6 +934,22 @@ IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.
 Multi-file components retain their aligned physical ranges; the full payload
 is also materialized. Unknown name text retains its original 32 bytes. See
 [U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
+
+Android boot, init_boot, recovery, and vendor_boot images use the same
+inspection and extraction workflows. `ANDROID!` versions 0-4 and `VNDRBOOT`
+versions 3-4 expose header facts and stored component bytes. The header does
+not record whether an `ANDROID!` image is boot, init_boot, or recovery.
+Command lines and names are target-derived. gzip, lz4, and zstd payloads stay
+stored. The v4 signature and any AVB footer are reported with sizes and are
+not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
+[Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
+
+Android A/B OTA `payload.bin` files (CrAU v2) use the same
+inspection/extraction workflows. Prefer a retained summary for header,
+partition table, dynamic groups and signature counts. Signatures are not
+verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
+operations stay inventoried with unavailable content. See
+[Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
 
 ## ESP images
 

@@ -1,12 +1,12 @@
 import {
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { adbArguments, runAdb, type AdbRunLimits } from "./AdbCommand.js";
-import type { AdbBinarySelection } from "./AdbConfiguration.js";
+import type { AdbCommandHost } from "./AdbProcess.js";
 import {
   parseAdbDevicesOutput,
   parseGetpropOutput,
@@ -25,7 +25,7 @@ const GETPROP_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 export interface AdbCommandContext {
   readonly operation: AdbRequest["operation"];
   readonly request: AdbRequest;
-  readonly selection: AdbBinarySelection;
+  readonly selection: AdbCommandHost;
   readonly client: AdbClientResult;
   readonly provider: AdbProviderIdentity;
   readonly signal: AbortSignal | undefined;
@@ -48,6 +48,8 @@ export const inspectAdbClientOperation = (
 export const listAdbDevicesOperation = async (
   context: AdbCommandContext,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
+  const started = await context.selection.startServer?.();
+  if (started !== undefined && !started.ok) return started;
   const ran = await runAdb(
     context.operation,
     { device: "adb-devices" },
@@ -61,6 +63,8 @@ export const listAdbDevicesOperation = async (
     context.signal,
   );
   if (!ran.ok) return ran;
+  // Keep exact transport identities internally; the shared client boundary
+  // alone produces the legacy numeric projection.
   const { devices, unparsedLines, daemonStarted } = parseAdbDevicesOutput(
     ran.value.stdout,
     ran.value.stderr,
@@ -76,7 +80,8 @@ export const listAdbDevicesOperation = async (
       {
         client: context.client,
         devices,
-        may_have_started_adb_server: daemonStarted,
+        may_have_started_adb_server:
+          started?.value?.daemonStarted === true || daemonStarted,
       },
       context.provider,
       {

@@ -321,7 +321,7 @@ export const projectPlaywrightTraceView = (
         sha256: context.artifact.sha256,
       },
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "event-text") {
     const text = selectEventText(parsed.value, view);

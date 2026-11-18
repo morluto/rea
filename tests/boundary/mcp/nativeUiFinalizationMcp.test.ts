@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, vi } from "vitest";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import * as runtimes from "../../../src/native/NativeUiHelperRuntime.js";
 import { NativeMacOSProvider } from "../../../src/native/NativeMacOSProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -10,6 +10,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each([false, true])(
   "retains native UI reports over MCP when its deadline expires during close (cleanup fails: %s)",
@@ -42,6 +43,7 @@ it.each([false, true])(
     });
     const runtime = {
       signal: deadline.signal,
+      deadlineMs: 180_000,
       cleanupLease,
       invoke: async () => ({ ok: true, result: snapshot }),
       close: () => cleanupLease.release(),
@@ -54,7 +56,10 @@ it.each([false, true])(
       new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin"),
     );
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "native-ui-finalization", version: "1" });
+    const client = new Client(
+      { name: "native-ui-finalization", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

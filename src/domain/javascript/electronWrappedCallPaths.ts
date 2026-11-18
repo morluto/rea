@@ -1458,10 +1458,17 @@ export function* collectElectronWrappedCallPathsSteps(
         const branch = node.cases[index]!;
         if (branch.test) walk(branch.test, env, context);
         if (remainingVisits < 0) return;
-        const branchContext = switchCaseContext(node, index, context);
+        let branchContext = switchCaseContext(node, index, context);
         for (const statement of branch.consequent) {
           if (remainingVisits < 0) return;
           walk(statement, env, branchContext);
+          const fallthrough = sequentialFallthrough(
+            prefixes.statement(statement, branch) ?? null,
+            env,
+            branchContext,
+          );
+          if (!fallthrough.continues) break;
+          branchContext = fallthrough.context;
         }
       }
       return;
@@ -1532,7 +1539,11 @@ export function* collectElectronWrappedCallPathsSteps(
             parent.left,
             parent.operator === "??" ? "nullish" : parent.operator === "&&",
           );
-      } else if (t.isBlockStatement(parent)) {
+      }
+      if (
+        t.isBlockStatement(parent) ||
+        (t.isSwitchCase(parent) && child !== parent.test)
+      ) {
         const prefix = yield* prefixes.before(parent, child);
         if (remainingVisits < 0) return;
         if (prefix !== undefined) {

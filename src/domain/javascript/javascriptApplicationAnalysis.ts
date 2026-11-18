@@ -56,8 +56,7 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_utility_entrypoints: countSchema,
   native_addon_bindings: countSchema,
   resolved_native_addon_bindings: countSchema,
-  /** Absent in evidence produced before protocol registrations were reported. */
-  protocol_registrations: countSchema.exactOptional(),
+  protocol_registrations: countSchema,
   /** `node:vm` compilations whose logic may live in an opaque bytecode cache. */
   v8_cached_data_compilations: countSchema.exactOptional(),
   /**
@@ -68,10 +67,9 @@ const electronBoundarySummarySchema = z.strictObject({
    * sources were not fully examined or reported, for example after the result
    * budget ran out; counts from those sources are unknown, not zero.
    *
-   * Absent when no retained fact names an Electron module, or in evidence
-   * produced before this field existed. Absence is unknown rather than proof
-   * that the application has no Electron surface: unread sources, failed
-   * analysis, and dynamic module names can hide one.
+   * Absent when no retained fact names an Electron module. Absence is unknown
+   * rather than proof that the application has no Electron surface: unread
+   * sources, failed analysis, and dynamic module names can hide one.
    */
   electron_semantics: z.enum(["recovered", "partial", "empty"]).exactOptional(),
 });
@@ -82,10 +80,7 @@ const reconstructionStatisticsSchema = z.strictObject({
   text_bytes_read: countSchema,
   invalid_utf8_files: countSchema,
   parsed_javascript_files: countSchema,
-  // Old saved evidence predates this field: absence must stay unknown, not
-  // become a measured zero. The producer always writes it (required by the
-  // application-layer result type); readers treat a missing value as unknown.
-  skipped_javascript_files: countSchema.exactOptional(),
+  skipped_javascript_files: countSchema,
   visited_ast_nodes: countSchema,
   findings: countSchema,
   modules: countSchema,

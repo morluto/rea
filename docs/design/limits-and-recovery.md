@@ -5,7 +5,9 @@ who owns each value, when an update takes effect, how providers enforce it, and
 how to extend the system. The public tool contract is in
 [MCP contracts](../reference/mcp-contracts.md#editable-analysis-settings); recorded runtime
 checks and their limitations are in the
-[verification report](../verification/runtime-analysis-settings.md).
+[verification report](../verification/runtime-analysis-settings.md). The
+[limit inventory](rea-limit-inventory.md) lists every numeric `REA_` limit, which
+of them are runtime settings, and which stay restart-only.
 
 ## Problem and design boundary
 
@@ -129,12 +131,14 @@ Windows ChangeTime admission waits out a fresh timestamp before recording a
 baseline. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS` (default 2000 ms, floor 1 ms,
 maximum 60000 ms), `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS` (default 25 ms,
 floor 1 ms, maximum 1000 ms), and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`
-(default 40, floor 1, maximum 1000) are launch settings. Unset keeps those
-defaults. An invalid value is a configuration error: it names the setting, the
-rejected value, source `setting`, the default, the floor, and the maximum, and
-says to set a positive decimal integer in the environment that starts REA and
-then restart REA. There is no runtime override. Setup forwards an explicit
-selection. When the poll budget runs out, admission keeps the last observation
+(default 40, floor 1, maximum 1000) are runtime settings. Unset keeps those
+defaults. An invalid launch value is a configuration error: it names the
+setting, the rejected value, source `setting`, the default, the floor, the
+maximum, and `update_mode: "runtime"`. It omits `pending_restart` because
+the rejected value is not an accepted configuration. Change the
+active value with `update_analysis_settings`. The launch seed must be a
+positive decimal integer in that range. Setup forwards an explicit selection.
+When the poll budget runs out, admission keeps the last observation
 instead of failing the readable file. Raising a setting only changes how long
 that wait can last. It does not change Windows ChangeTime itself.
 
@@ -184,6 +188,7 @@ cannot partially apply. Clients coordinating writes can supply
 | `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                  |
 | `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                      |
 | `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
+| `javascript.member_mutation_alias_states`                                                                       | Next JavaScript application, web bundle or reference-source analysis            |
 | `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
 | `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
 
@@ -255,8 +260,8 @@ are runtime-wide, not scoped to a target or an individual connection.
 ### Failure and retry
 
 An ASAR admission error supplies `details.limit` with the exact setting,
-effective value, units, bounds, scope, application point, restart requirement
-and, when known, required bytes and value source. The agent can immediately call:
+effective value, units, bounds, scope, application point, `update_mode`,
+`pending_restart` and, when known, required bytes and value source. The agent can immediately call:
 
 ```json
 {
@@ -273,12 +278,54 @@ that argument; raising a runtime default cannot override it.
 
 The resource owner constructs `details.limit` from the registry plus the budget
 it actually enforced. Metadata includes `agent_editable: true`,
-`scope: "rea-runtime"`, and `rea_restart_required: false`. Optional
+`scope: "rea-runtime"`, `update_mode`, and `pending_restart`. `update_mode`
+is `runtime` when `update_analysis_settings` can change the active value,
+`restart` when this process keeps the value it started with, and `parameter`
+when the budget is adjustable through a per-call argument. Its `source` records
+whether the reported value came from a request or a default. An explicit `analysis_timeout_ms`,
+`max_heap_mb`, or `command_timeout_ms`, plus artifact reader limits and
+web-network capture budgets, use `parameter`. `pending_restart` is false when
+that reported value is the one this process is using. Optional
 `required_value`, `source`, and `parameter` fields are supplied only where known
 or applicable. Do not infer a source because a value happens to equal a default.
 Error copying, attribution, redaction, and delivery must preserve these facts.
 Human-readable remediation explains the same failure; clients should not need
 to parse that sentence to identify an editable setting.
+
+A deadline controlled by something other than a registered setting reports
+`details.limit` with `control_kind` instead of `setting`.
+`control_kind: "parameter"` names the per-call contract field in `parameter`
+(`native_command_timeout_ms`, `native_ui_deadline_ms`,
+`pwntools_timeout_ms`) and applies on the next call. Services and their
+remediation text name only that field. A CLI command adds `cli_flag`, the
+option that sets the field on that command, from its own field-to-flag
+binding; MCP results do not carry it.
+A completed or partial result can record the same reference, for example a
+`limit` in a web bundle `unknowns` entry for a script that reached its
+`analysis_timeout_ms` deadline. That reference is part of the result and its
+Evidence identity, so the CLI never adds to it. Instead, the CLI renders the
+flags in its own `--full-output` envelope as `meta.cli_controls`, a map from
+each recorded contract field to the option that sets it on that command. The
+bare result is the record itself and gains no CLI field.
+`control_kind: "environment"` names the `environment` variable REA reads when
+it starts (`REA_SWIFTC_COMPILE_TIMEOUT_MS`): `applies_at` is `next_startup`,
+or `next_invocation` for a one-shot invocation. Both carry `effective_value`,
+`unit`, `minimum`, `maximum` and `default_value`. `update_analysis_settings`
+changes neither. A limit without `control_kind` is a registered setting.
+
+This output is breaking. Results and errors no longer carry the previous
+restart boolean or a single effect field, and there is no compatibility alias.
+Read `update_mode` to see whether the setter can change the active value, and
+`pending_restart` to see whether a configured value is waiting. A configuration
+error for a Windows ChangeTime setting carries `update_mode` on
+`details.settings`. Its rejected value does not establish an accepted pending
+configuration, so `pending_restart` is omitted. The removed field names
+are listed in the changelog.
+
+An inspected setting whose launch value is invalid and which has no runtime
+override likewise omits `pending_restart`: it has no accepted configured value
+to classify. Setting a valid runtime override reports `pending_restart: false`;
+resetting it restores the invalid launch state and the omission.
 
 `scope` and `applies_at` describe a continuing caller, such as an MCP
 connection. A one-shot invocation, such as a CLI command, has released its
@@ -288,8 +335,11 @@ so its adapter projects with an explicit `"invocation"` caller lifetime.
 `scope: "rea-invocation"`, `applies_at: "next_invocation"` and the launch
 `environment` seed when one exists. `agent_editable: true` still holds, because
 the caller chooses that environment value or per-call `parameter` for the new
-invocation; `rea_restart_required: false` means no running REA process needs a
-restart. A producer keeps guidance that holds only while its caller retains the
+invocation; `update_mode: "runtime"` and `pending_restart: false` mean the
+reported value is active in this process. `update_mode: "restart"` means
+`update_analysis_settings` does not change it. `update_mode: "parameter"` means
+the budget is adjustable through a per-call argument; `source` identifies where
+the reported value came from. A producer keeps guidance that holds only while its caller retains the
 session, such as "the Ghidra session remains usable" or a same-session runtime
 update, in `continuingCallerGuidance`; the shared presentation adds it only for
 a continuing caller. The producer's own message and remediation must stay true
@@ -343,6 +393,35 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+## Typed refusals
+
+A producer that refuses a request types the refusal instead of leaving
+recovery to the resource kind. The domain owner is
+[`analysisRefusal.ts`](https://github.com/morluto/rea/blob/main/src/domain/analysisRefusal.ts).
+It has three variants. Each one projects under `details.refusal` with the
+`operation` the error is attributed to:
+
+| Variant              | Producer fact                                                                                                                            | Projected fields                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                         |
+| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                                                                                               | `control`, `setting`, `effective_value`, `unit`, `range`, optional `required_value` |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                               |
+
+Presentation is total over these variants. Authored remediation still wins.
+Without it, the variant names the recovery: fixed ceilings and their narrowing
+step, the budget's control and range for the caller's lifetime, or the selector
+field and its candidates. A resource refusal never falls back to text about
+worker limits, the MCP transport, or doctor. An ambiguous selector conforms to
+the input contract, so it does not ask the caller to inspect the schema.
+
+A measured exhaustion or occupied admission is not a refusal. It declares
+`measuredExhaustion: true` and keeps the resource kind's recovery. The
+`rea/typed-resource-refusal` lint rule rejects a new
+`AnalysisResourceConstraintError` that names none of these. Older untyped
+constructions are counted in
+`scripts/lint/rules/typed-resource-refusal-baseline.json`, and those counts may
+only shrink.
+
 ## Recovery text
 
 The string the caller sees includes:
@@ -380,7 +459,9 @@ request to change it.
   retry a startup that returns the same unchanged result: tell the user REA
   could not start, ask them to restart the MCP client, then run `rea doctor`.
 - Unexpected process-command failure: do not repeat the command. Tell the user
-  to check the input files, then run `rea doctor`.
+  the reported reason and ask them to check the scenario or capture files it
+  read; if they are valid, report the failure with its diagnostics. Doctor does
+  not check process commands.
 - `cleanup_incomplete`: the operation is not retryable. Retry that exact
   cleanup owner, named in `details.resources`, and wait until it confirms
   release before admitting new work on those resources
@@ -499,7 +580,10 @@ own `expanded_bytes` controls its independently enforced bundle expansion.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and
-`can_increase`. When `can_increase` is true, raise that field and retry the same
+`can_increase`. `update_mode` is `parameter`: the caller selects the value on
+the next call, and `update_analysis_settings` does not accept it.
+`pending_restart` is false. Web-network capture budgets use the same mode.
+When `can_increase` is true, raise that field and retry the same
 complete artifact. At the supported maximum, or when the required representation
 exceeds it, the failure is not retryable by increasing that budget; inspect the
 declared dimensions and input validity, or explicitly choose a suitable reader.

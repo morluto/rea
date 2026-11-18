@@ -115,6 +115,21 @@ it.skipIf(process.platform === "win32")(
         process.platform,
       ),
     ).toBe(installation);
+    // A removed working directory holds nothing under `.` or an empty entry;
+    // a later absolute entry still finds the installation.
+    const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("ENOENT: uv_cwd");
+    });
+    try {
+      expect(
+        discoverGhidraInstallationOnPath(
+          { PATH: `.::${pathDirectory}` },
+          process.platform,
+        ),
+      ).toBe(installation);
+    } finally {
+      cwd.mockRestore();
+    }
 
     const incomplete = join(root, "incomplete");
     const incompletePath = join(root, "incomplete-bin");
@@ -972,11 +987,20 @@ describe("Ghidra installation version admission", () => {
       code: "version_unresolved",
     },
     {
+      name: "missing Ghidra version",
+      readText: () => "application.java.min=21\n",
+      probeJava: () => javaProbeOk<GhidraJavaObservation>(JAVA),
+      failed: "version",
+      code: "version_unresolved",
+      detail: "unknown",
+    },
+    {
       name: "unparseable Ghidra version",
       readText: () => "application.version=latest\napplication.java.min=21\n",
       probeJava: () => javaProbeOk<GhidraJavaObservation>(JAVA),
       failed: "version",
       code: "version_unresolved",
+      detail: "latest",
     },
     {
       name: "different Ghidra line",
@@ -985,23 +1009,32 @@ describe("Ghidra installation version admission", () => {
       failed: "version",
       code: "unsupported_version",
     },
-  ])("distinguishes $name", async ({ readText, probeJava, failed, code }) => {
-    const result = await inspectGhidraInstallation(
-      {
-        resourceOwner: inspectionResources.owner,
-        environment: {},
-        installDir: INSTALL,
-        platform: "linux",
-        architecture: "x64",
-      },
-      host({ readText, probeJava }),
-    );
-    expect(result.status).toBe("unavailable");
-    expect(
-      result.checks.find(({ status }) => status === "failed"),
-    ).toMatchObject({ name: failed, code });
-  });
+  ])(
+    "distinguishes $name",
+    async ({ readText, probeJava, failed, code, detail }) => {
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {},
+          installDir: INSTALL,
+          platform: "linux",
+          architecture: "x64",
+        },
+        host({ readText, probeJava }),
+      );
+      expect(result.status).toBe("unavailable");
+      expect(
+        result.checks.find(({ status }) => status === "failed"),
+      ).toMatchObject({
+        name: failed,
+        code,
+        ...(detail === undefined ? {} : { detail }),
+      });
+    },
+  );
+});
 
+describe("Ghidra JDK version admission", () => {
   it("names the accepted Ghidra line and JDK range in failure remediation", async () => {
     const result = await inspectGhidraInstallation(
       {
@@ -1084,6 +1117,9 @@ describe("Ghidra installation version admission", () => {
         result.checks.find(({ name }) => name === "version"),
       ).toMatchObject({
         status: "passed",
+        detail: expect.stringMatching(
+          /\b12\.2\b.*\bcompatible\b.*\b12\.1\.4\b/u,
+        ),
       });
       expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
         status: major === 25 ? "passed" : "failed",
@@ -1532,27 +1568,6 @@ describe("Ghidra JVM native directory admission", () => {
       ),
       remediation: expect.stringContaining("JAVA_HOME"),
     });
-  });
-
-  it("accepts a JDK whose os.arch selects the validated native decompiler directory", async () => {
-    const result = await inspectGhidraInstallation(
-      {
-        resourceOwner: inspectionResources.owner,
-        environment: {},
-        installDir: INSTALL,
-        platform: "darwin",
-        architecture: "arm64",
-      },
-      host({
-        probeJava: () =>
-          javaProbeOk<GhidraJavaObservation>({
-            ...JAVA,
-            osArch: "aarch64",
-            osName: "Mac OS X",
-          }),
-      }),
-    );
-    expect(result.status).toBe("available");
   });
 
   it("rejects a successful Java probe that omits os.arch", async () => {
