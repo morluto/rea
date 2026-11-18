@@ -113,6 +113,7 @@ const createFakeAdb = async () => {
 const fs = require("node:fs");
 const [stdoutPath, stderrPath, callsPath, exitCodePath] = ${JSON.stringify([stdoutFile, stderrFile, callsFile, exitCodeFile])};
 const args = process.argv.slice(2);
+if (args[0] === "start-server") process.exit(0);
 fs.appendFileSync(callsPath, args.join(" ") + "\\n");
 if (args[0] === "version") {
   process.stdout.write("Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\n");

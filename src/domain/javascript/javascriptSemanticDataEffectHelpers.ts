@@ -848,7 +848,7 @@ const processSnapshotObjectRoot = (
 };
 
 /** Check shared exports at the use or method-capture point, not at every later call. */
-const requiredModuleChanged = (
+export const requiredModuleChanged = (
   specifier: string,
   selected: readonly string[],
   capture: t.Node,

@@ -214,31 +214,29 @@ it("seeds each file the bundle lists in SEED_MODES with that mode, as a lock who
     "[s]\n",
   );
   await writeFile(join(root, "seed", "run.sh"), "#!/bin/sh\n");
+  const work = "work.txt";
+  const home = join(root, "home");
+  await writeFile(join(root, "seed", work), utf16("/home/ada/project\n", "be"));
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
 SEED_HOME = "/home/ada"
-TEXT_SEEDS = frozenset()
+TEXT_SEEDS = frozenset(["work.txt"])
 SEED_MODES = {".config/notes/secret.ini": 0o600, "run.sh": 0o755}
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 _seed_home(Path(sys.argv[2]))
 `;
 
-  execFileSync("python3", [
-    "-I",
-    "-B",
-    "-c",
-    program,
-    root,
-    join(root, "home"),
-  ]);
+  execFileSync("python3", ["-I", "-B", "-c", program, root, home]);
 
   const mode = async (path: string) =>
     (await stat(join(root, "home", path))).mode & 0o777;
   expect(await mode(".config/notes/secret.ini")).toBe(0o600);
   expect(await mode("run.sh")).toBe(0o755);
+  const restored = await readFile(join(home, work));
+  expect(restored.equals(utf16(`${home}/project\n`, "be"))).toBe(true);
 });
 
 it.each([true, false])(

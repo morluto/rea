@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { Budget } from "../domain/budget.js";
@@ -293,18 +294,15 @@ const readColumns = (
 };
 
 /**
- * The facts a row window needs and the caller's projection cannot supply: which
- * rowid alias spellings the table declares, and the primary key that orders a
- * WITHOUT ROWID table. Alias detection compares raw name bytes against ASCII, so
- * an unrelated malformed identifier is never decoded on the way.
+ * The table key a row window can order by independently of the caller's
+ * projection. Only a selected key needs to be decoded.
  */
 type RowKeyFacts = {
-  readonly withoutRowid: boolean;
   readonly primaryKey: readonly {
     readonly name: string;
     readonly position: number;
   }[];
-  readonly shadowedAliases: ReadonlySet<string>;
+  readonly rowidAlias: string | undefined;
 };
 
 const ROWID_ALIASES = ["rowid", "_rowid_", "oid"] as const;
@@ -345,6 +343,40 @@ const asciiLower = (
   return text;
 };
 
+const readPrimaryKeyIndexName = (
+  db: DatabaseSync,
+  table: string,
+): Uint8Array | undefined => {
+  const index = db
+    .prepare(
+      "SELECT CAST(name AS BLOB) AS name FROM temp.pragma_index_list(?, 'main') WHERE origin = 'pk'",
+    )
+    .get(table);
+  return z
+    .object({ name: z.instanceof(Uint8Array) })
+    .optional()
+    .parse(index)?.name;
+};
+
+const readDeclaredRowidAlias = (
+  db: DatabaseSync,
+  table: string,
+  name: Uint8Array | undefined,
+  encoding: DatabaseEncoding,
+): string | undefined => {
+  // On a rowid table, a declared primary key with no separate PK index
+  // names the rowid itself. Inline INTEGER PRIMARY KEY DESC has an index.
+  if (name === undefined || readPrimaryKeyIndexName(db, table) !== undefined)
+    return undefined;
+  try {
+    return decodeSchemaText(name, encoding, "rowid alias");
+  } catch (cause: unknown) {
+    // The caller can still read an unordered first sample without this key.
+    if (cause instanceof SqliteInspectionFailure) return undefined;
+    throw cause;
+  }
+};
+
 const readRowKeyFacts = (
   db: DatabaseSync,
   name: string,
@@ -370,6 +402,7 @@ const readRowKeyFacts = (
   const withoutRowid = row !== undefined && row.wr !== 0 && row.wr !== 0n;
   const shadowed = new Set<string>();
   const primaryKey: { name: string; position: number }[] = [];
+  let declaredKey: Uint8Array | undefined;
   for (const raw of db
     .prepare(
       "SELECT cid, CAST(name AS BLOB) AS name, pk FROM temp.pragma_table_xinfo(?, 'main') WHERE hidden IN (0, 2, 3) ORDER BY cid",
@@ -391,22 +424,26 @@ const readRowKeyFacts = (
       (ROWID_ALIASES as readonly string[]).includes(alias)
     )
       shadowed.add(alias);
-    // A rowid table's ORDER BY names an alias, never a declared key, so only a
-    // WITHOUT ROWID table's key columns are worth decoding — and a malformed
-    // unselected key name must not abort an otherwise readable selection.
     const pk = Number(value.pk);
-    if (withoutRowid && pk > 0)
+    if (pk <= 0) continue;
+    if (withoutRowid) {
       primaryKey.push({
         name: decodeSchemaText(value.name, encoding, "primary key column"),
         position: pk,
       });
+    } else if (pk === 1) {
+      declaredKey = value.name;
+    }
   }
+  const rowidAlias = withoutRowid
+    ? undefined
+    : (ROWID_ALIASES.find((spelling) => !shadowed.has(spelling)) ??
+      readDeclaredRowidAlias(db, name, declaredKey, encoding));
   return {
-    withoutRowid,
     primaryKey: primaryKey.sort(
       (left, right) => left.position - right.position,
     ),
-    shadowedAliases: shadowed,
+    rowidAlias,
   };
 };
 
@@ -866,9 +903,8 @@ const indexKeyRow = z.object({
 
 /**
  * Choose the unique order a window is read in, without accepting caller SQL.
- * A rowid table exposes an implicit rowid unless all three spellings are
- * declared columns. A WITHOUT ROWID table orders by its primary key, reusing the
- * index's own direction and collation so no sorter is introduced.
+ * A rowid table can use an unshadowed built-in name or a declared rowid alias.
+ * A WITHOUT ROWID table reuses its key index's direction and collation.
  */
 const readRowOrder = (
   db: DatabaseSync,
@@ -879,23 +915,14 @@ const readRowOrder = (
   // A non-ordinary table's keys are not probed, and none of its rows are read.
   if (facts === undefined) return { order: "unspecified", clause: "" };
   if (!table.without_rowid) {
-    // ORDER BY must name an alias SQLite still binds: a declared `rowid` column
-    // shadows that spelling and would sort by a stored column that need not be
-    // unique. Pick the first spelling the table leaves free.
-    const alias = ROWID_ALIASES.find(
-      (spelling) => !facts.shadowedAliases.has(spelling),
-    );
+    const alias = facts.rowidAlias;
     return alias === undefined
       ? { order: "unspecified", clause: "" }
-      : { order: "rowid", clause: ` ORDER BY ${alias}` };
+      : { order: "rowid", clause: ` ORDER BY ${quoteIdentifier(alias)}` };
   }
   const key = facts.primaryKey;
   if (key.length === 0) return { order: "unspecified", clause: "" };
-  const primaryKey = db
-    .prepare(
-      "SELECT CAST(name AS BLOB) AS name FROM temp.pragma_index_list(?) WHERE origin = 'pk'",
-    )
-    .get(table.name) as { readonly name: unknown } | undefined;
+  const primaryKey = readPrimaryKeyIndexName(db, table.name);
   if (primaryKey === undefined) return { order: "unspecified", clause: "" };
   // A WITHOUT ROWID key may repeat a column at different collations or
   // directions — `PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC)` is
@@ -911,7 +938,7 @@ const readRowOrder = (
     .prepare(
       'SELECT CAST(name AS BLOB) AS name, "desc", CAST(coll AS BLOB) AS coll FROM temp.pragma_index_xinfo(CAST(? AS BLOB)) WHERE key = 1 ORDER BY seqno',
     )
-    .iterate(primaryKey.name as Uint8Array) as Iterable<unknown>) {
+    .iterate(primaryKey) as Iterable<unknown>) {
     const { name, desc, coll } = indexKeyRow.parse(raw);
     const column = decodeSchemaText(name, encoding, "index column");
     const detail = {
@@ -979,7 +1006,7 @@ const readRows = (
   if (offset > 0 && order === "unspecified")
     throw new SqliteInspectionFailure(
       "row-offset",
-      `row_offset requires a stated row order, but table ${input.table} shadows rowid, _rowid_ and oid and declares no primary key. Read the table without row_offset.`,
+      `row_offset requires a stated row order, but no usable row order was established for table ${input.table}. Use row_offset 0 for the first sample.`,
     );
   const window = `${source}${clause} LIMIT ? OFFSET ?`;
   const rows: NonNullable<SqliteDatabase["rows"]> = {
@@ -1042,6 +1069,10 @@ export const inspectSqliteDatabaseSnapshot = (
   snapshotPath: string,
   input: InspectSqliteDatabaseInput,
 ): Inspection => {
+  // SQLite's Unix VFS reports a one-byte file as size zero, so the engine would
+  // open it as an empty database and never reach its own header check.
+  if (statSync(snapshotPath).size === 1)
+    throw new SqliteInspectionFailure("format", "file is not a database");
   const db = new DatabaseSync(snapshotPath, {
     readOnly: true,
     allowExtension: false,

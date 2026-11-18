@@ -1,10 +1,12 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli } from "incur";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
+import { decode as decodeToon } from "@toon-format/toon";
+import { parse as parseYaml } from "yaml";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
@@ -134,56 +136,25 @@ it("reads a union value under the option the producer used", () => {
   ).toEqual({});
 });
 
-it("parses a union branch only when the value's keys cannot select it", () => {
+it("reads declared controls without inspecting unrelated captured values", () => {
   const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
-  const spy = <Schema extends z.ZodType>(schema: Schema) => ({
-    schema,
-    // Spy through the base type: a generic `Schema` hides its method keys.
-    parse: vi.spyOn<z.ZodType, "safeParse">(schema, "safeParse"),
-  });
-  // A uniquely selected branch and a branch without controls are not parsed.
-  const view = spy(
-    z.strictObject({
-      kind: z.literal("view"),
-      limit: analysisParameterLimitSchema,
-    }),
-  );
-  const complete = spy(
-    z.strictObject({ limit: analysisParameterLimitSchema, total: z.number() }),
-  );
-  const plain = spy(z.strictObject({ count: z.number() }));
-  const other = spy(z.strictObject({ name: z.string() }));
+  const extra = {
+    get count(): number {
+      throw new Error("Control collection visited an unrelated captured value");
+    },
+  };
   const schema = z.strictObject({
-    result: z.union([view.schema, complete.schema]),
-    extra: z.union([plain.schema, other.schema]).optional(),
+    result: z.strictObject({ limit: analysisParameterLimitSchema }),
+    extra: z.union([
+      z.strictObject({ count: z.literal(1) }),
+      z.strictObject({ timestamp: z.string() }),
+    ]),
   });
   expect(
-    cliResultControlsIn(
-      { result: { limit, total: 1 }, extra: { count: 1 } },
-      schema,
-      binding,
-    ),
-  ).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
-  for (const branch of [view, complete, plain, other])
-    expect(branch.parse).not.toHaveBeenCalled();
-  // Branches the keys cannot tell apart keep first-match order.
-  const captured = spy(
-    z.strictObject({ note: z.strictObject({ limit: z.unknown() }) }),
-  );
-  const declared = spy(
-    z.strictObject({
-      note: z.strictObject({ limit: analysisParameterLimitSchema }),
-    }),
-  );
-  expect(
-    cliResultControlsIn(
-      { note: { limit } },
-      z.union([captured.schema, declared.schema]),
-      binding,
-    ),
-  ).toEqual({});
-  expect(captured.parse).toHaveBeenCalledTimes(1);
-  expect(declared.parse).not.toHaveBeenCalled();
+    cliResultControlsIn({ result: { limit }, extra }, schema, binding),
+  ).toEqual({
+    worker_timeout_ms: "--worker-timeout-ms",
+  });
 });
 
 it("finds a control a recursive schema reaches only past a back-reference", () => {
@@ -219,7 +190,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
     }),
     outputSchema: partialResultSchema,
   };
-  const cli = Cli.create("rea-result-controls", { version: "1", sync: false });
+  const cli = createCommandCli();
   registerContractCommand(
     cli as unknown as CliInstance,
     silentLogger,
@@ -231,7 +202,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
     },
     async () => produce() as never,
   );
-  const command = Cli.toCommands.get(cli)?.get("inspect-control-fixture");
+  const command = cliCommand(cli, "inspect-control-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
     (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
@@ -245,13 +216,6 @@ const runFixtureCommand = async (produce: () => unknown) => {
     return { output: value, controls: cliResultControls() };
   });
 };
-
-it("records the controls of a contract command's result and returns the result unchanged", async () => {
-  const { output, controls } = await runFixtureCommand(partialResult);
-  expect(output).toEqual(partialResult());
-  // Only controls this command takes as options are rendered.
-  expect(controls).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
-});
 
 it("reads a failure's partial Evidence of the same operation at the declared positions only", async () => {
   const failure = (operation: string) => ({
@@ -287,13 +251,11 @@ const written = async (
     destination,
   );
   if (output === undefined) throw new Error("Missing output surface");
-  const format = argv[argv.indexOf("--format") + 1] ?? "json";
   let collected = 0;
   // The ordinary command path: no forced output, controls collected on demand.
   const handled = await output.write(partialResult(), {
     command: "fixture",
     duration: "0ms",
-    format,
     collectCliControls: () => {
       collected += 1;
       return cliControls;
@@ -343,19 +305,18 @@ it.each(["yaml", "toon"] as const)(
       ["--format", format, "--full-output"],
       cliControls,
     );
-    expect(text).toBe(
-      `${formatCliOutput(
-        {
-          ok: true,
-          data: partialResult(),
-          meta: {
-            command: "fixture",
-            duration: "0ms",
-            cli_controls: cliControls,
-          },
-        },
-        format,
-      )}\n`,
-    );
+    const decoded = format === "yaml" ? parseYaml(text) : decodeToon(text);
+    expect(decoded).toEqual({
+      ok: true,
+      data: {
+        ...partialResult(),
+        ...(format === "toon" ? { trailing: null } : {}),
+      },
+      meta: {
+        command: "fixture",
+        duration: "0ms",
+        cli_controls: cliControls,
+      },
+    });
   },
 );

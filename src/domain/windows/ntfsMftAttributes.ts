@@ -102,6 +102,7 @@ export type MftAttribute = z.infer<typeof ntfsAttributeSchema>;
 /** Per selected record; each additional decoded record is bounded to 64 KiB. */
 export const MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT = 32;
 export const ntfsAttributeListResolutionSchema = z.strictObject({
+  // domain-vocabulary: whether every $ATTRIBUTE_LIST entry resolved within the inline reference budget.
   coverage: z.enum(["complete", "incomplete"]),
   knownEntryCount: offset,
   omittedKnownEntries: offset,
@@ -458,11 +459,16 @@ export const readMftAttributes = (
         malformed(cursor, "FILE_NAME string exceeds its value");
         break;
       }
+      const namespace = record[valueOffset + 65]!;
+      if (namespace > 3) {
+        malformed(cursor, "FILE_NAME namespace is outside the NTFS range");
+        break;
+      }
       fileNames.push({
         fileOffset: fileOffset + valueOffset,
         parent: decodeMftFileReference(record.readBigUInt64LE(valueOffset)),
         ...readTimes(record.subarray(valueOffset + 8)),
-        namespace: record[valueOffset + 65]!,
+        namespace,
         name: record.toString(
           "utf16le",
           valueOffset + 66,

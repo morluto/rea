@@ -95,6 +95,10 @@ describe("ELF note provider failures", () => {
     if (result.ok) throw new Error("Expected a text budget refusal");
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("memory");
+    expect(error.reportedLimits).toEqual({
+      boundary: "note_text_bytes",
+      maximum: bytes.length,
+    });
     expect(error.message).toMatch(/byte budget/u);
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
@@ -149,8 +153,9 @@ describe("ELF note provider failures", () => {
     expect(refused.error).toMatchObject({
       resource: "memory",
       reportedLimits: {
-        max_file_bytes: bytes.length + 1,
-        minimum_required_bytes: String(minimumMaxFileBytes),
+        boundary: "max_file_bytes",
+        maximum: bytes.length + 1,
+        required: String(minimumMaxFileBytes),
       },
       retryable: false,
     });

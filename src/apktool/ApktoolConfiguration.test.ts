@@ -1,6 +1,7 @@
 import * as commandOwner from "../process/OwnedCommand.js";
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -9,6 +10,7 @@ import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,
 } from "../process/ProcessInspectionCancellation.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,6 +61,12 @@ describe("resolveApktoolCommand", () => {
   it("rejects a relative environment path explicitly", async () => {
     await expect(
       resolveApktoolCommand({ [APKTOOL_COMMAND_ENV]: "bin/apktool" }, "linux"),
+    ).rejects.toThrow(/must be an absolute path/u);
+    await expect(
+      resolveApktoolCommand(
+        { [APKTOOL_COMMAND_ENV]: "\\tools\\apktool.bat" },
+        "win32",
+      ),
     ).rejects.toThrow(/must be an absolute path/u);
   });
 });
@@ -658,6 +666,45 @@ it("keeps a recorded command timeout primary with its actual inspection stop fac
     expect(stopped.cause).toBe(reason);
     expect(Reflect.get(stopped, "inspectionFailure")).toBe(inspection);
     expect(result.cleanupResources).toEqual([]);
+  } finally {
+    command.mockRestore();
+    prepare.mockRestore();
+  }
+});
+
+it("reports EMFILE during macOS ownership helper preparation as a resource constraint", async () => {
+  const emfile = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const darwin = new DarwinProcessOwnershipInspectionError(
+    "helper capacity exhausted",
+    { cause: emfile },
+  );
+  const failure = new commandOwner.OwnedCommandFailure(
+    "process",
+    "Ownership preparation failed",
+    null,
+    null,
+    { preparationFailure: darwin },
+  );
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockResolvedValue(undefined);
+  const command = vi
+    .spyOn(commandOwner, "runOwnedCommand")
+    .mockRejectedValue(failure);
+  try {
+    const result: unknown = await inspectApktoolClient(
+      { command: "/selected/apktool", commandSource: "environment" },
+      commands,
+      { platform: "linux" },
+    ).catch((cause: unknown) => cause);
+    expect(result).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      retryable: true,
+      diagnostics: {
+        system_code: "EMFILE",
+        selected_command: "/selected/apktool",
+      },
+    });
   } finally {
     command.mockRestore();
     prepare.mockRestore();

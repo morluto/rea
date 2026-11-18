@@ -24,6 +24,7 @@ const scannerFixture = async (
   await symlink(
     join(process.cwd(), "node_modules"),
     join(root, "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
   );
   return { scanner, source, bridge };
 };
@@ -99,5 +100,69 @@ describe("tech-debt marker scan", () => {
       `${marker} - java block comment`,
     ])
       expect(scanned.stdout).toContain(expected);
+  });
+
+  it("reports bare markers on CRLF lines and comments in Python interpolation", async () => {
+    const { scanner, bridge, source } = await scannerFixture(
+      "rea-scan-todos-comments-",
+    );
+    const marker = `TO${"DO"}`;
+    await writeFile(join(source, "crlf.ts"), `// ${marker}\r\n`);
+    await writeFile(
+      join(bridge, "interpolation.py"),
+      `value = f"""{\n  1 # ${marker}: f-string replacement expression\n}"""\n`,
+    );
+
+    const scanned: { readonly code?: number; readonly stdout?: string } =
+      await execute(process.execPath, [scanner]).catch(
+        (error: { readonly code?: number; readonly stdout?: string }) => error,
+      );
+    expect(scanned.code).toBe(1);
+    expect(scanned.stdout).toContain(`${join("src", "crlf.ts")}:1: ${marker}`);
+    expect(scanned.stdout).toContain(
+      `${join("bridge", "interpolation.py")}:2: ${marker} - f-string replacement expression`,
+    );
+  });
+
+  it("bounds markers and their messages to the comment body", async () => {
+    const { scanner, bridge, source } = await scannerFixture(
+      "rea-scan-todos-comment-body-",
+    );
+    const marker = `TO${"DO"}`;
+    await writeFile(
+      join(source, "comments.ts"),
+      `/* ${marker} */ export const value = 0;\n// ${marker}  \n/* ${marker}: short */ value;\n// ${marker} is a term here\n`,
+    );
+    await writeFile(
+      join(bridge, "Bridge.java"),
+      `class Bridge { /* ${marker} */ }\n`,
+    );
+    const scanned: { readonly code?: number; readonly stdout?: string } =
+      await execute(process.execPath, [scanner]).catch(
+        (error: { readonly code?: number; readonly stdout?: string }) => error,
+      );
+    expect(scanned.code).toBe(1);
+    expect(scanned.stdout?.trim().split("\n").filter(Boolean).sort()).toEqual(
+      [
+        `${join("src", "comments.ts")}:1: ${marker}`,
+        `${join("src", "comments.ts")}:2: ${marker}`,
+        `${join("src", "comments.ts")}:3: ${marker} - short`,
+        `${join("bridge", "Bridge.java")}:1: ${marker}`,
+        "4 tech-debt marker(s) found.",
+      ].sort(),
+    );
+  });
+
+  it("reports Java markers when Unicode escapes can form comment delimiters", async () => {
+    const { scanner, bridge } = await scannerFixture("rea-scan-todos-java-");
+    const marker = `TO${"DO"}`;
+    await writeFile(
+      join(bridge, "EscapedDelimiter.java"),
+      `\\u002f\\u002f ${marker}: escaped Java delimiter\nclass EscapedDelimiter {}\n`,
+    );
+    await expect(execute(process.execPath, [scanner])).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining(`${marker} - escaped Java delimiter`),
+    });
   });
 });

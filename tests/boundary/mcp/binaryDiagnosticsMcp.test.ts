@@ -59,6 +59,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "byte-limit.dll",
       bytes: peRepeatedExportNamesImage(0x3000),
+      boundary: "retained_text",
       maximum: 16777216,
       expected: "fixed byte allowance",
       excluded: "fixed count",
@@ -66,6 +67,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "count-limit.dll",
       bytes: peStoredExportTableImage(0x40001),
+      boundary: "rows",
       maximum: 262144,
       expected: "fixed count",
       excluded: "fixed byte allowance",
@@ -83,7 +85,10 @@ it("reports the exhausted native export allowance through MCP", async () => {
       code: "resource_constraint",
       retryable: false,
       details: {
-        reported_limits: { boundary: "structure", maximum: fixture.maximum },
+        reported_limits: {
+          boundary: fixture.boundary,
+          maximum: fixture.maximum,
+        },
       },
     });
     expect(error.remediation.action).toContain(fixture.expected);

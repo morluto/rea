@@ -50,12 +50,59 @@ describe("verifier run identity", { concurrent: false }, () => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "reports token-verified live descendants",
+    "keeps a fresh report ID while verifying descendants with an inherited token",
     async () => {
+      const inherited = "fixture-parent-process-token";
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { completeVerifierRun, createVerifierRun } from "./scripts/lib/verifier-run.mjs";
+const run = createVerifierRun({ inheritProcessRunId: true });
+const child = spawn(process.execPath, ["-e",
+  "process.stdout.write('ready'); process.stdin.resume()"]);
+const closed = once(child, "close");
+try {
+  await once(child.stdout, "data");
+  process.stdout.write(JSON.stringify({
+    run: await completeVerifierRun(run),
+    child: child.pid,
+    processToken: process.env.REA_PROCESS_RUN_ID,
+  }));
+} finally {
+  child.stdin.end();
+  await closed;
+}
+`,
+        ],
+        { env: { ...process.env, REA_PROCESS_RUN_ID: inherited } },
+      );
+      const report = JSON.parse(stdout);
+      expect(report.processToken).toBe(inherited);
+      expect(report.run.run_id).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(report.run.process_lineage).toMatchObject({
+        status: "verified",
+        descendants: [expect.objectContaining({ pid: report.child })],
+      });
+    },
+  );
+
+  it
+    .runIf(process.platform !== "win32")
+    .each([
+      undefined,
+      ...(process.platform === "linux" ? ["fixture\nworker"] : []),
+    ])(
+    "reports token-verified live descendants with display name %j",
+    async (displayName) => {
       const previousRunId = process.env.REA_PROCESS_RUN_ID;
       delete process.env.REA_PROCESS_RUN_ID;
       const run = createVerifierRun();
-      const child = spawnReadyChild(process.env);
+      const child = spawnReadyChild(process.env, displayName);
       try {
         await childReady(child);
         const completed = await completeVerifierRun(run);
@@ -106,10 +153,17 @@ describe("verifier run identity", { concurrent: false }, () => {
   );
 });
 
-const spawnReadyChild = (env: NodeJS.ProcessEnv): ChildProcess =>
+const spawnReadyChild = (
+  env: NodeJS.ProcessEnv,
+  displayName?: string,
+): ChildProcess =>
   spawn(
     process.execPath,
-    ["-e", "process.stdout.write('ready'); setInterval(() => {}, 1000)"],
+    [
+      "-e",
+      `if (process.argv[1] !== undefined) process.title = process.argv[1]; process.stdout.write("ready"); setInterval(() => {}, 1000)`,
+      ...(displayName === undefined ? [] : [displayName]),
+    ],
     { env, stdio: ["ignore", "pipe", "ignore"] },
   );
 

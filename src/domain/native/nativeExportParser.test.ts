@@ -709,6 +709,24 @@ describe("ELF dynamic symbol exports", () => {
       exports: [{ name: "be_fn", value: "0x10000", size: "8" }],
     });
   });
+
+  it("keeps the ppc64 reader name for EM_PPC64", () => {
+    const result = parse(
+      elfExportImage({
+        bits: 64,
+        little: true,
+        machine: 21,
+        symbols: [{ name: "le_fn", value: 0x10000n, size: 8n }],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      bits: 64,
+      byte_order: "little",
+      architecture: "ppc64",
+      exports: [{ name: "le_fn", value: "0x10000", size: "8" }],
+    });
+  });
 });
 
 describe("ELF version index 0 unversioned exports", () => {

@@ -142,7 +142,6 @@
     "test:run": {
       "cache": false,
       "dependsOn": [
-        "artifacts:mcp-catalog",
         "artifacts:product-catalog",
         "artifacts:managed-evidence",
         "artifacts:skills"
@@ -185,16 +184,6 @@
           ]
         }
       ]
-    },
-    "artifacts:mcp-catalog": {
-      "dependsOn": ["compile"],
-      "inputs": [
-        "package.json",
-        "package-lock.json",
-        "scripts/generate-mcp-tool-catalog.mjs",
-        "scripts/lib/generated-file.mjs"
-      ],
-      "outputs": [".cache/mcp-tool-catalog.json"]
     },
     "artifacts:skills": {
       "dependsOn": ["compile"],
@@ -247,19 +236,6 @@
       "outputs": [
         "docs/error-contract.schema.json",
         "docs/user-visible-errors.csv"
-      ]
-    },
-    "mcp-catalog:check:built": {
-      "dependsOn": ["artifacts:mcp-catalog"],
-      "inputs": [
-        "package.json",
-        "package-lock.json",
-        "scripts/generate-mcp-tool-catalog.mjs",
-        "scripts/lib/generated-file.mjs",
-        {
-          "mode": "dependencyOutputs",
-          "globs": [".cache/mcp-tool-catalog.json"]
-        }
       ]
     },
     "evidence:check:built": {

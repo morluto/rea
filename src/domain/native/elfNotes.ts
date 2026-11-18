@@ -10,6 +10,13 @@ const range = z.strictObject({ offset: uint, bytes: uint });
 export const MAX_INSPECT_ELF_NOTE_FILE_BYTES = 536870912;
 /** Hard ceiling on decoded note entries across every declared table. */
 export const MAX_INSPECT_ELF_NOTE_ENTRIES = 256;
+/**
+ * Default note entry budget. Distribution glibc builds carry dozens of
+ * SystemTap `.note.stapsdt` probes. Ubuntu 26.04's libc.so.6 has 82 distinct
+ * notes, examined as 85 entries because its allocated notes appear in both the
+ * program and section tables; the default admits that with room to spare.
+ */
+export const DEFAULT_INSPECT_ELF_NOTE_ENTRIES = 128;
 
 export const ELF_NOTE_TYPE_NAMES = [
   "gnu_abi_tag",
@@ -106,7 +113,7 @@ export const inspectElfNotesInputSchema = z.strictObject({
     .int()
     .min(1)
     .max(MAX_INSPECT_ELF_NOTE_ENTRIES)
-    .default(32)
+    .default(DEFAULT_INSPECT_ELF_NOTE_ENTRIES)
     .describe(
       "Maximum note entries to examine across every table; exceeding the budget fails without partial success",
     ),

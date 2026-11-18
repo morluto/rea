@@ -33,7 +33,6 @@ import {
   describeContractDocumentCommand,
   type CliDocumentProjection,
   type DocumentContract,
-  type ContractCliDocumentDescription,
   type CliContractProjection,
   describeOperationChoices,
   type CliEvidenceDeliveryChoice,
@@ -59,7 +58,6 @@ import {
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
 import {
-  cliCommands,
   contractDescriptionOperations,
   distinctOperations,
   registerCliCommand,
@@ -69,9 +67,9 @@ import { isRecord } from "../kernel/isRecord.js";
 import { optionFlagName } from "./optionFields.js";
 
 /**
- * Incur adapter for contract commands. The command itself is described in
+ * CLI adapter for contract commands. The command itself is described in
  * `contractCliDescription.ts`; this module only renders that description as
- * Incur args and options and runs the handler.
+ * CLI args and options and runs the handler.
  */
 
 /** What a contract command's handler receives besides the contract input. */
@@ -556,15 +554,7 @@ const commandPositionals = (
   ...description.cliPositionals,
 ];
 
-/** Commands registered on this CLI through `registerContractCommand`. */
-export const contractCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "contract" ? [source.description] : [],
-  );
-
-const incurOptions = (description: ContractCliDescription): z.ZodType => {
+const commandOptions = (description: ContractCliDescription): z.ZodType => {
   const object = z.object(
     Object.fromEntries([
       ...description.parameters
@@ -646,7 +636,7 @@ export const registerContractCommand = <
               ),
             ),
           }),
-      options: incurOptions(description),
+      options: commandOptions(description),
       ...(Object.keys(alias).length === 0 ? {} : { alias }),
       run: ({
         args,
@@ -673,7 +663,7 @@ export const registerContractCommand = <
           logCliCommand(logger, description.command, async () => {
             const options = selected.admitDeliveryOptions(values);
             if (!options.ok) return projectAnalysisError(options.error);
-            const read = await readJsonInputs(selected, values, signal);
+            const read = await readJsonInputs(selected, options.value, signal);
             if (!read.ok) return read.error;
             const admitted = selected.admit(read.value);
             // Admission and handler issues alike name renamed fields by CLI key.
@@ -686,11 +676,13 @@ export const registerContractCommand = <
             if (!opening.ok) return projectAnalysisError(opening.error);
             // A composed command also takes its sources' options; a control
             // its result records from a source is set by that option.
+            const operations = contractDescriptionOperations(selected);
             const resultBinding =
               description.evidenceTargets === undefined
-                ? selected.inputBinding
+                ? { ...selected.inputBinding, operations }
                 : {
                     ...selected.inputBinding,
+                    operations,
                     flags: {
                       ...description.evidenceTargets.sourceFlags,
                       ...selected.inputBinding.flags,
@@ -746,11 +738,14 @@ export const registerContractCommand = <
       },
     } as never,
     {
-      operations: distinctOperations(
-        [description, ...chosen.values()].flatMap(
-          contractDescriptionOperations,
+      operations: distinctOperations([
+        ...contractDescriptionOperations(description),
+        ...[...chosen.entries()].flatMap(([value, choice]) =>
+          contractDescriptionOperations(choice, {
+            selector: `--${optionFlagName(projection.operationBy!.option)} ${String(value)}`,
+          }),
         ),
-      ),
+      ]),
       source: { kind: "contract", description },
     },
   );
@@ -857,7 +852,7 @@ const commandShape = (description: ContractCliDescription) => ({
   // Routed descriptions declare no object-level rules, so this is the object.
   options: Object.fromEntries(
     Object.entries(
-      (incurOptions(description) as z.ZodObject).shape as Readonly<
+      (commandOptions(description) as z.ZodObject).shape as Readonly<
         Record<string, z.ZodType>
       >,
     ).map(([key, schema]) => [key, withoutDefault(schema)]),
@@ -866,14 +861,6 @@ const commandShape = (description: ContractCliDescription) => ({
 
 const schemaSignature = (schema: z.ZodType): string =>
   JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
-
-/** Route descriptions of commands registered through `registerRoutedCommand`. */
-export const routedCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "routed" ? source.descriptions : [],
-  );
 
 /**
  * Register one CLI command whose input chooses the contract input it runs,
@@ -994,7 +981,7 @@ export const registerRoutedCommand = (
             if (!options.ok) return projectAnalysisError(options.error);
             const read = await readJsonInputs(
               description,
-              shared.value,
+              options.value,
               signal,
               ownJsonInputs(description, sharedJson),
             );
@@ -1027,7 +1014,10 @@ export const registerRoutedCommand = (
                 ),
               }),
               description.contract.outputSchema,
-              description.inputBinding,
+              {
+                ...description.inputBinding,
+                operations: contractDescriptionOperations(description),
+              },
             );
           }),
         );
@@ -1107,14 +1097,6 @@ export interface ContractDocumentContext<
    */
   readonly opening: Readonly<Record<string, unknown>>;
 }
-
-/** Commands registered on this CLI through `registerContractDocumentCommand`. */
-export const contractDocumentCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDocumentDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "document" ? [source.description] : [],
-  );
 
 /**
  * A document field the projection omits or takes as an option is refused

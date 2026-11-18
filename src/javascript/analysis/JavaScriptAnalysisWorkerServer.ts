@@ -18,6 +18,7 @@ import {
   type BoundedControlLine,
 } from "../../process/BoundedControlLines.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { isHostLimitFailure } from "../../domain/parseFailure.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
@@ -214,12 +215,12 @@ const analyzeJob = async (
           );
     await send({ kind: "complete", id: request.id, descriptor });
   } catch (cause: unknown) {
+    const hostLimit = isHostLimitFailure(cause);
     await send({
       kind: "failure",
       id: request.id,
       reason:
-        cause instanceof AnalysisResourceConstraintError ||
-        cause instanceof RangeError
+        cause instanceof AnalysisResourceConstraintError || hostLimit
           ? "resource"
           : cause instanceof TypeError
             ? "output"
@@ -227,7 +228,7 @@ const analyzeJob = async (
       resource:
         cause instanceof AnalysisResourceConstraintError
           ? cause.resource
-          : cause instanceof RangeError
+          : hostLimit
             ? "memory"
             : null,
       limits:

@@ -1,7 +1,5 @@
 import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
-import { EnhancedTools } from "./EnhancedTools.js";
 import type { ValidatedEnhancedCall } from "./EnhancedToolTypes.js";
-import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
 import {
   composedLimitationBudget,
@@ -95,6 +93,7 @@ export const executeSessionWorkflowEvidence = async (
         ? undefined
         : (session.analysisProfile() ?? session.analysisProfile(name)),
   };
+  const { EnhancedTools } = await import("./EnhancedTools.js");
   const executed = await executeComposedWorkflow(
     analysis,
     (observed) => new EnhancedTools(observed).executeValidated(call, signal),
@@ -155,6 +154,8 @@ export const executeSessionFunctionAnalysis = async (
   session: WorkflowSession | undefined,
   request: WorkflowRequest,
 ): Promise<Result<SessionWorkflowOutcome, AnalysisError>> => {
+  const { executeFunctionAnalysisEvidence } =
+    await import("./FunctionAnalysisEvidence.js");
   const analyzed = retainAnalysisResultSources(
     "analyze_function",
     session === undefined

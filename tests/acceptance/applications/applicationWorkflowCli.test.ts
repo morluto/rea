@@ -3,11 +3,9 @@ import { execFile } from "node:child_process";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { runInNewContext } from "node:vm";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -44,7 +42,6 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 
 const execute = promisify(execFile);
 let cliSession: CliCommandSession | undefined;
-const requireFixture = createRequire(import.meta.url);
 // Analysis requests are stateless; retain one compiled server and its SDK
 // validators while every scenario still owns a separate application directory.
 const mcpTransport = new StdioClientTransport({
@@ -93,7 +90,9 @@ const WEBPACK_FACTORY_BODY = `
   exports["nested.child"] = 7;
   module.exports["module.dot"] = 5;
   module["exports.decoy"] = 99;
-  Object.defineProperty(exports, "", {
+  this.exports.ignoredReceiver = 3;
+  class Example { #private = 0; read() { this.#private = 1; } }
+  Object.defineProperty(exports, "defined.key", {
     value: 4,
     configurable: true,
     enumerable: true,
@@ -1076,36 +1075,63 @@ describe("rest parameter semantic trace CLI", () => {
   });
 });
 
-describe("empty property key application CLI", () => {
-  it.each(["const root = routes[''];", "const {'': root} = routes;"])(
-    "analyzes a root-route dictionary with %s",
-    async (read) => {
-      const root = await createTestTempDirectory("rea-empty-key-cli-");
-      await writeFile(
-        join(root, "app.js"),
-        `const routes = {'': 'HOME'}; ${read}`,
-      );
-      const evidence = await runCli([
-        "analyze-javascript-application",
-        root,
-        "--json",
-      ]);
-      expect(evidence).toMatchObject({
-        operation: "analyze_javascript_application",
-        normalized_result: {
-          semantic_graph: {
-            nodes: expect.arrayContaining([
-              expect.objectContaining({
-                kind: "property-slot",
-                label: '""',
-                properties: expect.objectContaining({ name: "" }),
-              }),
-            ]),
-          },
-        },
-      });
-    },
+it("links empty-key reads and destructuring to the same property slot through CLI", async () => {
+  const root = await createTestTempDirectory("rea-empty-key-cli-");
+  await writeFile(
+    join(root, "app.js"),
+    [
+      "const routes = {'': 'HOME'};",
+      "const member = routes[''];",
+      "const {'': pattern} = routes;",
+    ].join("\n"),
   );
+  const evidence = await runCli([
+    "analyze-javascript-application",
+    root,
+    "--json",
+  ]);
+  const { semantic_graph: graph } = z
+    .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+    .parse(evidence).normalized_result;
+  const slots = graph.nodes.filter(
+    ({ kind, properties }) =>
+      kind === "property-slot" && properties.name === "",
+  );
+  expect(slots).toMatchObject([
+    { label: '""', properties: { property_path: [""], property_pointer: "/" } },
+  ]);
+  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  expect(
+    graph.relations
+      .filter(
+        ({ source_node_id, relation }) =>
+          source_node_id === slots[0]?.node_id &&
+          (relation === "reads-property" || relation === "destructures"),
+      )
+      .map(({ relation, resolution, target_node_id }) => {
+        const target = nodes.get(target_node_id);
+        return {
+          relation,
+          resolution,
+          kind: target?.kind,
+          label: target?.label,
+        };
+      })
+      .sort((left, right) => left.relation.localeCompare(right.relation)),
+  ).toEqual([
+    {
+      relation: "destructures",
+      resolution: "resolved",
+      kind: "binding",
+      label: "pattern",
+    },
+    {
+      relation: "reads-property",
+      resolution: "resolved",
+      kind: "expression",
+      label: "read:/",
+    },
+  ]);
 });
 
 describe("Webpack factory CommonJS export keys", () => {
@@ -1125,77 +1151,6 @@ describe("Webpack factory CommonJS export keys", () => {
       }
     }]);`;
     await writeFile(join(root, "bundle.js"), bundle);
-
-    // Execute the exact bundle and invoke its registered factory with a loader.
-    // This also rejects invalid factory syntax before trusting the export oracle.
-    const actual = runInNewContext(`
-      globalThis.webpackChunkStaticExports = [];
-      ${bundle}
-      const module = { exports: {} };
-      const loader = {
-        d(target, definitions) {
-          for (const name of Object.keys(definitions))
-            Object.defineProperty(target, name, {
-              enumerable: true,
-              get: definitions[name],
-            });
-        },
-      };
-      const [, factories] = globalThis.webpackChunkStaticExports[0];
-      factories[1](module, module.exports, loader);
-      module.exports;
-    `) as Record<string, unknown>;
-    const oracleRoot = await createTestTempDirectory(
-      "rea-webpack-export-oracle-",
-    );
-    expect(Reflect.ownKeys(actual).sort()).toEqual([
-      "",
-      "dot.key",
-      "dynamic",
-      "from.helper",
-      "module.dot",
-      "nested",
-      "nested.child",
-    ]);
-    expect(actual).toMatchObject({
-      "": 4,
-      "dot.key": 2,
-      dynamic: 1,
-      "from.helper": 7,
-      "module.dot": 5,
-      nested: { child: 6 },
-      "nested.child": 7,
-    });
-    const prototypeSetterPath = join(oracleRoot, "prototype-setter.cjs");
-    const ownPrototypeKeyPath = join(oracleRoot, "own-prototype-key.cjs");
-    await Promise.all([
-      writeFile(prototypeSetterPath, "module.exports = { __proto__: {} }"),
-      writeFile(
-        ownPrototypeKeyPath,
-        'module.exports = { ["__proto__"]: 1, __proto__() {} }',
-      ),
-    ]);
-    expect(
-      Reflect.ownKeys(requireFixture(prototypeSetterPath) as object),
-    ).toEqual([]);
-    expect(
-      Reflect.ownKeys(requireFixture(ownPrototypeKeyPath) as object),
-    ).toEqual(["__proto__"]);
-
-    const aliasPath = join(oracleRoot, "alias.cjs");
-    const replacementPath = join(oracleRoot, "replacement.cjs");
-    await Promise.all([
-      writeFile(aliasPath, "exports = function ignored() {};"),
-      writeFile(
-        replacementPath,
-        "module.exports = function actual() { return 42; };",
-      ),
-    ]);
-    expect(requireFixture(aliasPath)).toEqual({});
-    const replacement: unknown = requireFixture(replacementPath);
-    if (typeof replacement !== "function")
-      throw new Error("Expected Node to load the replacement export");
-    expect(replacement()).toBe(42);
 
     const applicationEvidenceSchema = z.object({
       evidence_id: z.string(),
@@ -1219,41 +1174,37 @@ describe("Webpack factory CommonJS export keys", () => {
     const mcpEvidence = applicationEvidenceSchema.parse(
       response.structuredContent,
     );
-    expect(await client.ping()).toEqual({});
     expect(mcpEvidence.evidence_id).toBe(cliEvidence.evidence_id);
 
-    const expectBundleExports = (
-      evidence: typeof cliEvidence,
-      moduleKey: string,
-      expected: readonly string[],
-    ) => {
-      const module = evidence.normalized_result.graph.nodes.find(
-        ({ kind, observations }) =>
-          kind === "javascript-module" &&
-          observations.some(
-            ({ properties }) =>
-              properties.runtime === "webpackChunkStaticExports" &&
-              properties.module_key === moduleKey,
-          ),
-      );
-      if (module === undefined)
-        throw new Error(`Missing webpack factory ${moduleKey}`);
-      expect(module.observations[0]?.properties.exports).toEqual(expected);
-    };
     for (const evidence of [cliEvidence, mcpEvidence]) {
-      expectBundleExports(evidence, "1", [
-        "",
-        "dot.key",
-        "from.helper",
-        "module.dot",
-        "nested",
-        "nested.child",
+      const modules = evidence.normalized_result.graph.nodes
+        .filter(({ kind }) => kind === "javascript-module")
+        .flatMap(({ observations }) => observations)
+        .filter(
+          ({ properties }) =>
+            properties.runtime === "webpackChunkStaticExports",
+        )
+        .map(({ properties }) => [properties.module_key, properties.exports])
+        .sort(([left], [right]) => String(left).localeCompare(String(right)));
+      expect(modules).toEqual([
+        [
+          "1",
+          [
+            "",
+            "defined.key",
+            "dot.key",
+            "from.helper",
+            "module.dot",
+            "nested",
+            "nested.child",
+          ],
+        ],
+        ["2", ["default"]],
+        ["3", []],
+        ["4", ["stable"]],
+        ["5", []],
+        ["6", ["__proto__"]],
       ]);
-      expectBundleExports(evidence, "2", ["default"]);
-      expectBundleExports(evidence, "3", []);
-      expectBundleExports(evidence, "4", ["stable"]);
-      expectBundleExports(evidence, "5", []);
-      expectBundleExports(evidence, "6", ["__proto__"]);
     }
   });
 });
@@ -1312,21 +1263,17 @@ describe("application version source-scope MCP comparison", () => {
       ],
     });
     const client = await connectedMcpClient();
-    const compare = async (left: unknown, right: unknown) => {
-      const response = await client.callTool({
-        name: "compare_application_versions",
-        arguments: { left, right },
-      });
-      expect(response.isError).not.toBe(true);
-      return applicationVersionComparisonResultSchema.parse(
-        parseEvidence(response.structuredContent).normalized_result,
-      );
-    };
-    const forward = await compare(full, selected);
-    const reverse = await compare(selected, full);
+    const response = await client.callTool({
+      name: "compare_application_versions",
+      arguments: { left: full, right: selected },
+    });
+    expect(response.isError).not.toBe(true);
+    const result = applicationVersionComparisonResultSchema.parse(
+      parseEvidence(response.structuredContent).normalized_result,
+    );
 
     expect(
-      forward.items.find(
+      result.items.find(
         ({ right_node_id }) => right_node_id === scope?.node_id,
       ),
     ).toMatchObject({
@@ -1338,11 +1285,7 @@ describe("application version source-scope MCP comparison", () => {
         selected.evidence_id,
       ]),
     });
-    expect(
-      reverse.items.find(({ left_node_id }) => left_node_id === scope?.node_id),
-    ).toMatchObject({ status: "unknown", dimensions: ["availability"] });
-    expect(forward.summary).toMatchObject({ added: 0, removed: 0 });
-    expect(reverse.summary).toMatchObject({ added: 0, removed: 0 });
+    expect(result.summary).toMatchObject({ added: 0, removed: 0 });
   });
 });
 

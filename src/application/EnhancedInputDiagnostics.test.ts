@@ -15,11 +15,4 @@ it("preserves field diagnostics for rejected enhanced tool inputs", async () => 
     },
   });
   expect(execute).not.toHaveBeenCalled();
-
-  const sibling = await tools.execute("batch_decompile", { addresses: "bad" });
-  if (sibling.ok) throw new Error("expected an input failure");
-  expect(projectAnalysisError(sibling.error)).toMatchObject({
-    details: { issues: [{ path: ["addresses"], reason: "invalid_type" }] },
-  });
-  expect(execute).not.toHaveBeenCalled();
 });

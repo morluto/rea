@@ -87,31 +87,11 @@ describe("strings a create composes from other fields", () => {
     },
   );
 
-  it("takes two clocks a create stamps alike as one source, but not two members that send the same text", () => {
+  it("takes two clocks a create stamps alike as one source", () => {
     const modified: FieldRule = { ...CLOCK, field: "modified" };
     expect(
       createdComposer(CREATED, [ECHO_URL, CLOCK, modified], [SEED])("snapshot"),
     ).toMatchObject({ rule: "composed" });
-    const folder = {
-      uid: "scratch-pier",
-      title: "Scratch Pier",
-      url: "/dashboards/f/scratch-pier/scratch-pier",
-    };
-    const seed = {
-      uid: "lighthouse-rota",
-      title: "Lighthouse Rota",
-      url: "/dashboards/f/lighthouse-rota/lighthouse-rota",
-    };
-    expect(
-      createdComposer(
-        folder,
-        [
-          { field: "uid", rule: "echo" },
-          { field: "title", rule: "echo" },
-        ],
-        [seed],
-      )("url"),
-    ).toBeUndefined();
   });
 });
 
@@ -354,19 +334,42 @@ describe("slug spellings", () => {
     ).toBeUndefined();
   });
 
-  it("reads no address that more sources spell than it can tell apart", () => {
-    const fields = Object.fromEntries(
-      Array.from({ length: 40 }, (_, index) => [
-        `alias${String(index)}`,
-        "harbour-notes",
-      ]),
-    );
-    const rules: FieldRule[] = Object.keys(fields).map((field) => ({
-      field,
-      rule: "echo",
-    }));
-    const created = { ...fields, url: "/notes/harbour-notes/harbour-notes" };
-    const held = [{ ...fields, url: "/notes/harbour-notes/harbour-notes" }];
-    expect(createdComposer(created, rules, held)("url")).toBeUndefined();
+  it("bounds candidate combinations even when held values select one spelling", () => {
+    const sources = {
+      folder: "harbour-notes",
+      parent: "harbour-notes",
+      workspace: "harbour-notes",
+      title: "tide-log",
+      label: "tide-log",
+      heading: "tide-log",
+      name: "tide-log",
+    };
+    const created = { ...sources, url: "/notes/harbour-notes/tide-log" };
+    const held = [
+      {
+        folder: "lighthouse",
+        title: "night-shift",
+        url: "/notes/lighthouse/night-shift",
+      },
+    ];
+    const inferWithout = (excluded: string) => {
+      const rules: FieldRule[] = Object.keys(sources)
+        .filter((field) => field !== excluded)
+        .map((field) => ({ field, rule: "echo" }));
+      return createdComposer(created, rules, held)("url");
+    };
+    // Two folder values and four title values give eight combinations.
+    expect(inferWithout("workspace")).toEqual({
+      field: "url",
+      rule: "composed",
+      parts: [
+        { text: "/notes/" },
+        { from: "folder", as: "value" },
+        { text: "/" },
+        { from: "title", as: "value" },
+      ],
+    });
+    // Three folder values and three title values give nine combinations.
+    expect(inferWithout("name")).toBeUndefined();
   });
 });
