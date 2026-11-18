@@ -333,8 +333,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       },
     });
     const edge = result.graph.edges.find(
-      ({ relation, evidence }) =>
+      ({ relation, properties, evidence }) =>
         relation === "imports" &&
+        properties.kind === "static-import" &&
         evidence.location.available &&
         evidence.location.value.kind === "source-range" &&
         evidence.location.value.source === "main.js",
