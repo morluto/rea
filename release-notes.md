@@ -174,6 +174,7 @@
 * **ci:** exercise numeric guard source permissions ([#11913](https://github.com/morluto/rea/issues/11913)) ([3e5c48d](https://github.com/morluto/rea/commit/3e5c48debc904a25d6673b933e9e41e5cc8c580e))
 * **ci:** keep MinGW setup within the native build deadline ([#11887](https://github.com/morluto/rea/issues/11887)) ([2cc7f01](https://github.com/morluto/rea/commit/2cc7f01731e5049f4b5d0d9b338050caf5c13d94))
 * **ci:** let npm retry upstream registry connection resets ([3f361d8](https://github.com/morluto/rea/commit/3f361d820fd4a54e037bf60726e79217586ad431))
+* **ci:** refresh CLI decimal schema goldens ([25784cd](https://github.com/morluto/rea/commit/25784cd4e790a6290e2f719549a83f5f7a63b3e0))
 * **ci:** repair Python catalog test and deep static check failures ([8ffea11](https://github.com/morluto/rea/commit/8ffea11ee30d5e0d442a8d14b27e05b0441b9e18))
 * **ci:** repair shared progress, cleanup and verifier failures ([#11727](https://github.com/morluto/rea/issues/11727)) ([552d1c7](https://github.com/morluto/rea/commit/552d1c7108b99d1c9ec15d8b629ae07dc56d4714))
 * **ci:** restore formatting for JavaScript tests ([#11951](https://github.com/morluto/rea/issues/11951)) ([2b26bd1](https://github.com/morluto/rea/commit/2b26bd107e8ca0d236f34e5c62d9e0f94d235acf))
