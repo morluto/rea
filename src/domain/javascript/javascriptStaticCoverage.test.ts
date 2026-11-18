@@ -53,10 +53,30 @@ it.each(["main.js", ".js", ".mjs", ".cjs", ".JS", ".MJS"])(
         expect.stringContaining(
           path.startsWith(".")
             ? "loader invocation is unknown"
-            : "only if Node loads it as an ES module",
+            : "package loader mode is unknown",
         ),
       );
     }
+  },
+);
+
+it.each(["unknown", "unspecified"] as const)(
+  "keeps script grammar and conditional coverage for a BOM/hashbang in a %s package",
+  (packageType) => {
+    const source =
+      '\uFEFF#!/usr/bin/env node\nwith ({}) {} module.exports = require("./dep.cjs");';
+    const file = parseJavaScriptSource(source, "main.js", packageType);
+    expect(file).not.toBeNull();
+    expect(file!.program.sourceType).toBe("script");
+    expect(javaScriptRuntimeContext(file!.program)).toBe("unknown");
+    expect(file!.errors).toEqual([]);
+    const result = analyzeParsedJavaScriptStaticSource(source, file!);
+    expect(result.analysis_coverage).toMatchObject({
+      syntax: { status: "complete", error_count: 0 },
+      semantics: {
+        uncertainty: expect.arrayContaining(["conditional-loader"]),
+      },
+    });
   },
 );
 

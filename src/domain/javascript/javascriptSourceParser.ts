@@ -137,19 +137,20 @@ const parseWithRuntimeContext = (
   const conditionalCommonJs =
     signedHashbang &&
     !compilerSource &&
-    (filenameMode === "commonjs" || packageContext === "commonjs");
+    (filenameMode === "commonjs" || signaturePackageContext === "commonjs");
   const conditionalModule =
     signedHashbang &&
     ambiguousHashbangPath &&
     (signaturePackageContext === undefined ||
       signaturePackageContext === "unknown" ||
+      (!suffixOnlySource && signaturePackageContext === "unspecified") ||
       (suffixOnlySource && signaturePackageContext === "module"));
   const loaderCondition = conditionalCommonJs
     ? `Source in ${sourcePath ?? "<unknown>"} is recovered as CommonJS when imported through the ES module loader. Direct execution and require can reject this BOM/hashbang.`
     : conditionalModule
       ? suffixOnlySource
         ? `Source in ${sourcePath ?? "<unknown>"} is recovered under an ES module interpretation. Its loader invocation is unknown; direct entrypoint and module import can differ.`
-        : `Source in ${sourcePath ?? "<unknown>"} is parseable only if Node loads it as an ES module. Its package loader mode is unknown.`
+        : `Source in ${sourcePath ?? "<unknown>"} is recovered under a conditional loader interpretation. Its package loader mode is unknown.`
       : undefined;
   const hashbangSignature =
     signedHashbang &&
@@ -170,36 +171,43 @@ const parseWithRuntimeContext = (
     hashbangSignature
       ? {
           ...parserOptions,
-          ...(conditionalModule ? { sourceType: "module" as const } : {}),
+          ...(conditionalModule && suffixOnlySource
+            ? { sourceType: "module" as const }
+            : {}),
           startIndex: (options.startIndex ?? 0) + 1,
           startColumn: (options.startColumn ?? 0) + 1,
         }
       : options,
   );
-  const runtime = conditionalModule
-    ? "unknown"
-    : filenameMode === "commonjs"
-      ? sourcePath?.toLowerCase().endsWith(".d.cts")
+  const runtime =
+    conditionalCommonJs && suffixOnlySource
+      ? "commonjs"
+      : conditionalModule
         ? "unknown"
-        : "commonjs"
-      : filenameMode === "module"
-        ? "module"
-        : packageContext === "module" || packageContext === "commonjs"
-          ? packageContext
-          : packageContext === "unspecified" &&
-              posix.extname(sourcePath ?? "") === ".js"
-            ? file.program.sourceType === "module"
-              ? "module"
-              : "commonjs"
-            : hasCaseVariantJavaScriptLoaderSuffix(sourcePath)
-              ? "unknown"
-              : file.program.body.some((node) => t.isTSExportAssignment(node))
-                ? // CommonJS isolation does not establish strict ESM semantics.
-                  "commonjs"
-                : file.program.sourceType === "module" &&
-                    hasRuntimeModuleDeclaration(file.program)
+        : filenameMode === "commonjs"
+          ? sourcePath?.toLowerCase().endsWith(".d.cts")
+            ? "unknown"
+            : "commonjs"
+          : filenameMode === "module"
+            ? "module"
+            : packageContext === "module" || packageContext === "commonjs"
+              ? packageContext
+              : packageContext === "unspecified" &&
+                  posix.extname(sourcePath ?? "") === ".js"
+                ? file.program.sourceType === "module"
                   ? "module"
-                  : "unknown";
+                  : "commonjs"
+                : hasCaseVariantJavaScriptLoaderSuffix(sourcePath)
+                  ? "unknown"
+                  : file.program.body.some((node) =>
+                        t.isTSExportAssignment(node),
+                      )
+                    ? // CommonJS isolation does not establish strict ESM semantics.
+                      "commonjs"
+                    : file.program.sourceType === "module" &&
+                        hasRuntimeModuleDeclaration(file.program)
+                      ? "module"
+                      : "unknown";
   contextByProgram.set(file.program, {
     runtime,
     ...(loaderCondition === undefined ? {} : { loaderCondition }),
@@ -387,6 +395,19 @@ export const parseJavaScriptSource = (
     );
     // Unambiguous mode retains module-only diagnostics after choosing a script.
     // The .cjs extension establishes wrapper mode, so obtain its own diagnostics.
+    if (
+      !commonjs &&
+      file.program.sourceType === "script" &&
+      file.errors.length > 0 &&
+      javaScriptSourceLoaderCondition(file.program) !== undefined &&
+      javaScriptRuntimeContext(file.program) === "unknown"
+    )
+      return parseWithRuntimeContext(
+        source,
+        sourcePath,
+        { ...options, sourceType: "script" },
+        observedPackageType,
+      );
     return commonjs &&
       file.program.sourceType === "script" &&
       file.errors.length > 0
