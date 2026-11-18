@@ -776,8 +776,8 @@ describe("reference-source outline-depth input schema", () => {
     const outlineDepth = advertised.options?.properties?.outlineDepth;
     expect(outlineDepth).toMatchObject({
       anyOf: [
-        { type: "integer", minimum: 0 },
-        { type: "string", pattern: "^[0-9]+$" },
+        { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        { type: "string", pattern: expect.any(String) },
       ],
     });
 
@@ -827,8 +827,16 @@ describe("reference-source outline-depth input schema", () => {
       expect(validate(parsed.data)).toBe(true);
       expect(validate({ outlineDepth: token, detail: "summary" })).toBe(true);
     }
-    for (const token of ["0x2", "2e0", "-1"])
-      expect(validate({ outlineDepth: token, detail: "summary" })).toBe(false);
+    for (const token of [
+      "0x2",
+      "2e0",
+      "-1",
+      "9007199254740992",
+      "09007199254740992",
+    ])
+      expect(validate({ outlineDepth: token, detail: "summary" }), token).toBe(
+        false,
+      );
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
     expect(validate({ outlineDepth: 2 })).toBe(false);
