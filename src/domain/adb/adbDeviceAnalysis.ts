@@ -178,23 +178,17 @@ export const activityExtraCliEntrySchema = z
         activityExtraCliPattern("float", patternBody(javaFloatValuePattern)),
       ),
   ])
-  .transform((entry, context) => {
-    const typeEnd = entry.indexOf(":");
-    const keyEnd = entry.indexOf(":", typeEnd + 1);
-    const parsed = activityExtraSchema.safeParse({
-      type: entry.slice(0, typeEnd),
-      key: entry.slice(typeEnd + 1, keyEnd),
-      value: entry.slice(keyEnd + 1),
-    });
-    if (parsed.success) return parsed.data;
-    context.addIssue({
-      code: "custom",
-      message:
-        parsed.error.issues[0]?.message ??
-        "Extra does not match the activity extra contract",
-    });
-    return z.NEVER;
-  });
+  .pipe(
+    z.preprocess((entry: string) => {
+      const typeEnd = entry.indexOf(":");
+      const keyEnd = entry.indexOf(":", typeEnd + 1);
+      return {
+        type: entry.slice(0, typeEnd),
+        key: entry.slice(typeEnd + 1, keyEnd),
+        value: entry.slice(keyEnd + 1),
+      };
+    }, activityExtraSchema),
+  );
 
 /**
  * Caller intent for ADB-backed device inspection and acquisition.
