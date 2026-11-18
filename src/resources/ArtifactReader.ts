@@ -249,6 +249,7 @@ export interface ArtifactReader {
     | "esp-flash-image"
     | "fit"
     | "ntfs-mft"
+    | "macos-fsevents"
     | "file";
   entries(
     signal?: AbortSignal,

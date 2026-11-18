@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 
 import {
@@ -110,4 +111,23 @@ it("recognizes a CrAU v2 payload after the uImage magic check", () => {
     state: "recognized",
     format: "android-ota-payload",
   });
+});
+
+it("recognizes uncompressed and gzipped macOS FSEvents stores without matching plain gzip", () => {
+  const rawDls = Buffer.concat([
+    Buffer.from("2SLD"),
+    Buffer.alloc(4),
+    Buffer.from([12, 0, 0, 0]),
+  ]);
+  expect(recognize(rawDls)).toMatchObject({
+    state: "recognized",
+    format: "macos-fsevents",
+  });
+  expect(recognize(gzipSync(rawDls))).toMatchObject({
+    state: "recognized",
+    format: "macos-fsevents",
+  });
+  expect(
+    recognize(gzipSync(Buffer.from("plain text inside gzip"))),
+  ).toBeUndefined();
 });
