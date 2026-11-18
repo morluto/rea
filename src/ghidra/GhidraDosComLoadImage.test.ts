@@ -144,6 +144,47 @@ describe("COM independent load-image checks", () => {
     });
     expect(result.ok && result.value).not.toHaveProperty("loader_fallback");
   });
+  it("reports mismatch coordinates from the measured import", () => {
+    const f = fixtureDosComLoadImage();
+    f.observation.executable_format = "Old-style DOS Executable (COM)";
+    if (f.observation.mappings[0]) f.observation.mappings[0].start = "0x100";
+    const result = attestGhidraDosComLoadImage(
+      f.bytes,
+      f.sha256,
+      f.observation,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "mismatch",
+        loader: "ComLoader",
+        load_address: "0000:0100",
+        load_segment: 0,
+        entry: { linear_address: "0x100" },
+      },
+    });
+  });
+  it("omits load segment and entry when the measured import is not a known COM layout", () => {
+    const f = fixtureDosComLoadImage();
+    if (f.observation.mappings[0]) f.observation.mappings[0].start = "0x200";
+    const result = attestGhidraDosComLoadImage(
+      f.bytes,
+      f.sha256,
+      f.observation,
+    );
+    if (!result.ok || !("checks" in result.value))
+      throw new Error("Expected a retained mismatch");
+    expect(result.value.status).toBe("mismatch");
+    expect(result.value).not.toHaveProperty("load_segment");
+    expect(result.value).not.toHaveProperty("entry");
+    expect(
+      result.value.checks.find((item) => item.name === "load_address"),
+    ).toMatchObject({
+      matched: false,
+      expected: "1000:0100",
+      observed: null,
+    });
+  });
   it.each(mutations)("retains mismatch evidence for %s", (_name, damage) => {
     const f = fixtureDosComLoadImage();
     damage(f.observation);

@@ -30,6 +30,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import {
+  createVerifierMcpOwner,
+  VerifierStdioTransport,
+} from "./lib/verifier-mcp-owner.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -538,17 +542,19 @@ async function verifyRejectedCom() {
   const rejectedFixture = buildRejectedDosComFixture();
   const rejectedPath = join(workspace, "rejected.com");
   await writeFile(rejectedPath, rejectedFixture.bytes, { mode: 0o600 });
-  const rejectedTransport = new StdioClientTransport({
+  const fallbackOwner = createVerifierMcpOwner();
+  workspaceFixture.releaseAfter(() => fallbackOwner.close());
+  const rejectedClient = new Client({
+    name: "rea-real-com-fallback",
+    version: "1",
+  });
+  const rejectedTransport = new VerifierStdioTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
     env,
     stderr: "pipe",
   });
-  const rejectedClient = new Client({
-    name: "rea-real-com-fallback",
-    version: "1",
-  });
-  await rejectedClient.connect(rejectedTransport);
+  const connection = await fallbackOwner.open(rejectedClient, rejectedTransport);
   try {
     const opened = await rejectedClient.callTool(
       {
@@ -601,8 +607,7 @@ async function verifyRejectedCom() {
     await rejectedClient
       .callTool({ name: "close_binary", arguments: {} }, { timeout: 240000 })
       .catch(() => undefined);
-    await rejectedClient.close();
-    await rejectedTransport.close();
+    await fallbackOwner.closeConnection(connection);
   }
 }
 function digest(bytes) {

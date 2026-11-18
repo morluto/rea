@@ -8,6 +8,7 @@ import {
   ghidraFileDialect,
   readGhidraProfileArtifact,
 } from "./GhidraFileArtifacts.js";
+import { ghidraSnapshotFileName } from "./GhidraTargetSnapshot.js";
 
 /**
  * Ghidra 12.2 ComLoader acceptance, owned here so import selection and the
@@ -202,7 +203,13 @@ export const resolveGhidraComImport = async (
         "DOS COM bytes changed before import selection",
       ),
     );
-  return ok(selectGhidraComImport(target.path, bytes));
+  // ComLoader's name gate reads the imported snapshot, not the caller's path.
+  return ok(
+    selectGhidraComImport(
+      ghidraSnapshotFileName(target.path, target.sha256),
+      bytes,
+    ),
+  );
 };
 
 /** The loader a committed DOS COM profile selected. */

@@ -303,6 +303,49 @@ const observedComLoadAddress = (
 ): GhidraComImportSelection["loadAddress"] | null =>
   start === "0x100" ? "0000:0100" : start === "0x10100" ? "1000:0100" : null;
 
+const COM_HEADERLESS_LIMITATION =
+  "DOS COM is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.";
+const COM_UNVERIFIED_RUNTIME_LIMITATION =
+  "The initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.";
+const COM_MAPPING_END_LIMITATION =
+  "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.";
+
+/** Coordinates and limitations for one measured COM layout, not the selector. */
+const appliedComLayout = (
+  loader: GhidraComImportSelection["loader"] | null,
+  loadAddress: GhidraComImportSelection["loadAddress"] | null,
+): {
+  readonly loadSegment: number;
+  readonly linearAddress: "0x100" | "0x10100";
+  readonly limitations: readonly string[];
+} | null => {
+  if (loader === "ComLoader" && loadAddress === "0000:0100")
+    return {
+      loadSegment: 0,
+      linearAddress: "0x100",
+      limitations: [
+        COM_HEADERLESS_LIMITATION,
+        "Ghidra ComLoader mapped a 256-byte zero-filled PSP placeholder at 0000:0000 and the file at 0000:0100 (linear 0x100). The placeholder is not file-backed and is not an observed DOS PSP.",
+        "Verification covers complete original/modified source identity, the placeholder and mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x0 is imposed for analysis; it is not an observed running process.",
+        COM_UNVERIFIED_RUNTIME_LIMITATION,
+        COM_MAPPING_END_LIMITATION,
+      ],
+    };
+  if (loader === "BinaryLoader" && loadAddress === "1000:0100")
+    return {
+      loadSegment: 0x1000,
+      linearAddress: "0x10100",
+      limitations: [
+        COM_HEADERLESS_LIMITATION,
+        "Ghidra ComLoader rejected this image. REA imported it with BinaryLoader at 1000:0100 (linear 0x10100). loader_fallback.reason is the typed rejection.",
+        "Verification covers complete original/modified source identity, mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x1000 is imposed for analysis; it is not an observed running process.",
+        "The PSP, initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.",
+        COM_MAPPING_END_LIMITATION,
+      ],
+    };
+  return null;
+};
+
 /** Verify the explicit DOS COM interpretation against measured bytes and context. */
 export const attestGhidraDosComLoadImage = (
   bytes: Buffer,
@@ -371,6 +414,7 @@ export const attestGhidraDosComLoadImage = (
       check,
     );
   const matched = checks.every((item) => item.matched);
+  const applied = appliedComLayout(observedLoader, observedLoadAddress);
   return ok(
     nativeLoadImageSchema.parse({
       status: matched ? "verified" : "mismatch",
@@ -386,33 +430,29 @@ export const attestGhidraDosComLoadImage = (
               : { loader_fallback: selection.fallback }),
           }),
       target_sha256: targetSha256,
-      load_segment: Number(selection.loadSegment),
+      ...(applied === null
+        ? {}
+        : {
+            load_segment: applied.loadSegment,
+            entry: {
+              relative_segment: 0,
+              offset: 0x100,
+              linear_address: applied.linearAddress,
+            },
+          }),
       header_bytes: 0,
       module_bytes: bytes.length,
       overlay_bytes: 0,
-      entry: {
-        relative_segment: 0,
-        offset: 0x100,
-        linear_address: selection.linearAddress,
-      },
       observations,
       checks,
       limitations:
-        selection.loader === "ComLoader"
+        applied === null
           ? [
-              "DOS COM is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
-              "Ghidra ComLoader mapped a 256-byte zero-filled PSP placeholder at 0000:0000 and the file at 0000:0100 (linear 0x100). The placeholder is not file-backed and is not an observed DOS PSP.",
-              "Verification covers complete original/modified source identity, the placeholder and mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x0 is imposed for analysis; it is not an observed running process.",
-              "The initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.",
-              "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
+              COM_HEADERLESS_LIMITATION,
+              "The measured loader and load address are not a known COM import. checks retain the expected and observed values. No load segment or entry was derived.",
+              COM_MAPPING_END_LIMITATION,
             ]
-          : [
-              "DOS COM is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
-              "Ghidra ComLoader rejected this image. REA imported it with BinaryLoader at 1000:0100 (linear 0x10100). loader_fallback.reason is the typed rejection.",
-              "Verification covers complete original/modified source identity, mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x1000 is imposed for analysis; it is not an observed running process.",
-              "The PSP, initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.",
-              "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
-            ],
+          : [...applied.limitations],
     }),
   );
 };

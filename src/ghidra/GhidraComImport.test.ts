@@ -15,6 +15,7 @@ import {
   ghidraComRecognitionScore,
   selectGhidraComImport,
 } from "./GhidraComImport.js";
+import { ghidraSnapshotFileName } from "./GhidraTargetSnapshot.js";
 
 // ComLoader scans only while i < length - 2, so the terminating INT must not
 // sit in the last two bytes. Sixteen bytes keeps both INT 21h opcodes in range.
@@ -109,6 +110,15 @@ describe("Ghidra COM import selection", () => {
     expect(ghidraComRecognitionScore(bytes)).toBe(5);
   });
 
+  it("keeps a dotfile named .com visible to ComLoader as a .com snapshot", () => {
+    const sha256 = "ab".repeat(32);
+    const imported = ghidraSnapshotFileName("/hidden/.com", sha256);
+    expect(imported).toBe(`target-${sha256.slice(0, 12)}.com`);
+    expect(selectGhidraComImport(imported, recognized).loader).toBe(
+      "ComLoader",
+    );
+  });
+
   it("selects ComLoader for a recognized .com image and records no fallback", () => {
     expect(selectGhidraComImport("fixture.com", recognized)).toEqual({
       loader: "ComLoader",
@@ -181,6 +191,35 @@ describe("Ghidra COM analysis profile", () => {
     expect(resolved.value.profile.parameters).not.toHaveProperty(
       "loader_fallback",
     );
+  });
+
+  it("selects ComLoader when the admitted file is a dotfile named .com", async () => {
+    const directory = await createTestTempDirectory("rea-com-dotfile-");
+    const path = join(directory, ".com");
+    await writeFile(path, recognized);
+    const sha256 = createHash("sha256").update(recognized).digest("hex");
+    const parsed = parseConfig({ GHIDRA_INSTALL_DIR: installDir });
+    if (!parsed.ok) throw parsed.error;
+    const resolved = await new GhidraProvider(
+      parsed.value,
+      silentLogger,
+      {},
+      host,
+    ).resolveAnalysisProfile({
+      path,
+      sha256,
+      kind: "executable",
+      format: "dos-com",
+      architecture: "x86",
+      availableArchitectures: ["x86"],
+    });
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("Expected a COM analysis profile");
+    expect(ghidraSnapshotFileName(path, sha256).endsWith(".com")).toBe(true);
+    expect(resolved.value.profile.parameters).toMatchObject({
+      loader: "ComLoader",
+      load_address: "0000:0100",
+    });
   });
 
   it("records the typed BinaryLoader fallback when ComLoader rejects the image", async () => {

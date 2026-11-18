@@ -97,7 +97,7 @@ export const nativeDosLoadImageSchema = z.strictObject({
   format: z.enum(["dos-mz", "dos-com"]),
   /** Loader Ghidra applied. Present for DOS COM; MZ leaves it unset. */
   loader: z.enum(["MzLoader", "ComLoader", "BinaryLoader"]).optional(),
-  /** Segment:offset where the selected loader mapped the image. */
+  /** Segment:offset of the measured import, when it is a known COM layout. */
   load_address: z
     .string()
     .regex(/^[0-9a-f]{4}:[0-9a-f]{4}$/u)
@@ -114,15 +114,21 @@ export const nativeDosLoadImageSchema = z.strictObject({
     })
     .optional(),
   target_sha256: digest,
-  load_segment: integer.max(0xffff),
+  /**
+   * Load segment and entry describe the measured import. They are omitted when
+   * the measured loader and address are not a known COM or MZ layout.
+   */
+  load_segment: integer.max(0xffff).optional(),
   header_bytes: integer,
   module_bytes: integer,
   overlay_bytes: integer,
-  entry: z.strictObject({
-    relative_segment: integer.max(0xffff),
-    offset: integer.max(0xffff),
-    linear_address: nativeAddressObservationSchema,
-  }),
+  entry: z
+    .strictObject({
+      relative_segment: integer.max(0xffff),
+      offset: integer.max(0xffff),
+      linear_address: nativeAddressObservationSchema,
+    })
+    .optional(),
   observations: nativeLoadImageObservationSchema,
   checks: z.array(nativeLoadImageCheckSchema),
   limitations: z.array(z.string().min(1)),
