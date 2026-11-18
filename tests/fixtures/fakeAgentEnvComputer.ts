@@ -658,7 +658,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 import types
 
 STATE = os.environ["FAKE_STATE"]
@@ -705,7 +704,9 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     os.system("echo a build writing to stdout")
     print("agentenv writing to stdout")
     on_progress("deploying the computer")
-    time.sleep(float(os.environ.get("FAKE_DEPLOY_SECONDS", "0")))
+    if os.environ.get("FAKE_HOLD_DEPLOY"):
+        _note("deploying.jsonl", {"pid": os.getpid()})
+        signal.pause()
     signal.signal(signal.SIGTERM, previous)
     chatter = int(os.environ.get("FAKE_CHATTER_BYTES", "0"))
     for line in range(chatter // 80):
@@ -754,15 +755,23 @@ export const parseAgentEnvNotes = (text: string): unknown[] => {
   return records;
 };
 
-export const fakeAgentEnvRunner = async (
-  computer: Pick<FakeComputer, "url" | "token">,
-): Promise<FakeAgentEnvRunner> => {
-  const state = await createTestTempDirectory("fake-agentenv-");
-  const python = execFileSync(
+let cachedPython3Executable: string | undefined;
+
+/** Resolve the host's python3 interpreter once per test worker. */
+export const resolvePython3Executable = (): string => {
+  cachedPython3Executable ??= execFileSync(
     "python3",
     ["-c", "import sys; print(sys.executable)"],
     { encoding: "utf8" },
   ).trim();
+  return cachedPython3Executable;
+};
+
+export const fakeAgentEnvRunner = async (
+  computer: Pick<FakeComputer, "url" | "token">,
+): Promise<FakeAgentEnvRunner> => {
+  const state = await createTestTempDirectory("fake-agentenv-");
+  const python = resolvePython3Executable();
   await mkdir(join(state, "site", "agent_env"), { recursive: true });
   const runner = join(state, "agent-env");
   await writeFile(

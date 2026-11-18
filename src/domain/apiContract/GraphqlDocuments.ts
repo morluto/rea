@@ -1,6 +1,7 @@
 import { GraphQLError, Source, parse, visit, type DocumentNode } from "graphql";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
+import { isHostLimitFailure } from "../parseFailure.js";
 import {
   API_CONTRACT_OPERATION,
   API_CONTRACT_MAX_FILE_BYTES,
@@ -77,7 +78,7 @@ export const parseGraphqlDocument = (
   } catch (cause) {
     if (cause instanceof GraphQLError)
       throw new GraphqlDocumentRefusal(cause, document, role);
-    if (cause instanceof RangeError)
+    if (isHostLimitFailure(cause))
       throw new AnalysisResourceConstraintError(
         API_CONTRACT_OPERATION,
         "memory",

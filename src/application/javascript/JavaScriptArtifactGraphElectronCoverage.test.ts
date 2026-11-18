@@ -266,30 +266,19 @@ it("does not count a whole type-only import when semantics are skipped", async (
   expect(electronSemantics).toBeUndefined();
 });
 
-it("does not treat a worker URL path as an Electron module", async () => {
-  // `new Worker(new URL("electron", import.meta.url))` records a `worker`
-  // reference whose specifier is a path relative to the importing source.
-  const { electronSemantics } = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-    (entry) => ({ ...entry, semantic: null }),
-  );
-  expect(electronSemantics).toBeUndefined();
-});
-
-it("reports the same Electron applicability as the retained static fact", async () => {
-  // `analysis_coverage.applicability.electron` is the domain owner of the same
-  // question, so a worker URL path must be unknown for both outputs.
-
+it("retains an electron-named worker URL without claiming Electron coverage", async () => {
   const entry = await analyzedEntry(
     `const worker = new Worker(new URL("electron", import.meta.url));\n`,
+  );
+  expect(entry.javascript?.references).toContainEqual(
+    expect.objectContaining({ kind: "worker", specifier: "electron" }),
   );
   expect(entry.javascript?.analysis_coverage.applicability.electron).toBe(
     "unknown",
   );
-  const graph = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-  );
+  const graph = graphForEntries([{ ...entry, semantic: null }]);
   expect(graph.electronSemantics).toBeUndefined();
+  expect(graph.limitations).not.toContain(EMPTY_COVERAGE);
 });
 
 it("does not count a resolve-only Electron reference as coverage", async () => {

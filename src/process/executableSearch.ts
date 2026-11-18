@@ -120,7 +120,8 @@ export interface WindowsPathSearchFailure {
  * its own location, resolved against `cwd`, and never on PATH; then for each
  * PATH entry (relative ones resolve against `cwd`, or against this process's
  * directory, read only when such an entry is reached and skipped once
- * removed), each bare command with every PATHEXT extension,
+ * removed, unless `relativeEntries` is `skip`), each bare command with every
+ * PATHEXT extension,
  * or as written when it already names an extension. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
@@ -131,7 +132,11 @@ export interface WindowsPathSearchFailure {
 export const windowsPathCandidates = (
   commands: string | readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
-  search: { readonly cwd?: string; readonly allowBatch?: boolean } = {},
+  search: {
+    readonly cwd?: string;
+    readonly allowBatch?: boolean;
+    readonly relativeEntries?: "skip";
+  } = {},
 ): Result<Iterable<PathSearchCandidate>, WindowsPathSearchFailure> => {
   const selected = snapshotEnvironment(environment, "win32");
   const listed = typeof commands === "string" ? [commands] : commands;
@@ -179,14 +184,18 @@ export const windowsPathCandidates = (
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
-        const workingDirectory = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/u.test(directory)
-          ? directory
-          : (search.cwd ?? currentDirectory());
+        const relativeEntry =
+          !win32.isAbsolute(directory) ||
+          win32.parse(directory).root.length <= 1;
+        if (relativeEntry && search.relativeEntries === "skip") continue;
+        const workingDirectory = relativeEntry
+          ? (search.cwd ?? currentDirectory())
+          : directory;
         if (workingDirectory === undefined) continue;
         for (const name of names)
           yield {
             path: win32.resolve(workingDirectory, directory, name),
-            relativeEntry: !win32.isAbsolute(directory),
+            relativeEntry,
           };
       }
     },

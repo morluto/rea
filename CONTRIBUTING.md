@@ -126,10 +126,10 @@ the human owner and must not attest to a human review on their behalf.
 
 The `PR readiness` check reports pending for drafts and requires a named human
 owner and all three template declarations for non-drafts. PRs authored by
-@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
-the declaration; their human ownership, review, and evidence responsibilities
-above still apply. The check identifies authors by GitHub account ID. It checks
-that the declaration is filled, not whether the code or evidence is correct.
+@morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or @vincentkoc are
+exempt from the declaration. Their human ownership, review, and evidence
+responsibilities above still apply. The check identifies authors by GitHub
+account ID and verifies that they filled in the declaration.
 Existing PRs can copy the **Author readiness** section from the current template.
 Open PRs must have distinct head commits because GitHub shares commit statuses.
 

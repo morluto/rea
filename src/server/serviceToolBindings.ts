@@ -1,3 +1,8 @@
+import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
+
+import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
+import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
+import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
@@ -34,6 +39,7 @@ import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsS
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
@@ -492,6 +498,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfNotesService>,
+  elfDebugLink: ((service) => ({
+    inspect_elf_debug_link: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDebugLinkService>,
   nativeInitializers: ((service) => ({
     inspect_native_initializers: {
       admission: "sdk",
@@ -606,6 +618,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<RustBinaryService>,
+  nugetNupkg: ((service) => ({
+    inspect_nuget_nupkg: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<NugetNupkgService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",
@@ -846,6 +864,24 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  mavenGradleMetadata: ((service) => ({
+    inspect_maven_gradle_metadata: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<MavenGradleMetadataService>,
+  dwarfUnits: ((service) => ({
+    inspect_dwarf_units: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DwarfUnitsService>,
+  elfDependencies: ((service) => ({
+    inspect_elf_dependencies: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDependenciesService>,
   guidance: ((resources) => ({
     search_guidance: {
       admission: "application",
@@ -1813,6 +1849,7 @@ const SERVICE_TOOL_BINDINGS = {
   processCapture: ((options) => ({
     capture_process_scenario: {
       admission: "sdk",
+      completionProgress: "workflow",
       analyze: (input, _analysis, request) =>
         captureSessionProcessScenario(options, input, request),
     },

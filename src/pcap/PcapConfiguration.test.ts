@@ -39,9 +39,16 @@ describe("resolvePcapTools", () => {
     ]);
     expect(
       resolvePcapTools(
-        { Path: "relative-bin;C:\\Wireshark", PATHEXT: ".COM;.EXE;.BAT" },
+        {
+          Path: "relative-bin;\\drive-relative;\\\\incomplete-unc;C:\\Wireshark",
+          PATHEXT: ".COM;.EXE;.BAT",
+        },
         "win32",
-        (path) => files.has(path) || path.includes("relative-bin"),
+        (path) =>
+          files.has(path) ||
+          path.includes("relative-bin") ||
+          path.includes("drive-relative") ||
+          path.includes("incomplete-unc"),
       ),
     ).toEqual({
       tshark: { command: "C:\\Wireshark\\tshark.EXE", source: "path" },
@@ -50,6 +57,21 @@ describe("resolvePcapTools", () => {
     expect(() =>
       resolvePcapTools({ Path: "C:\\Empty" }, "win32", () => false),
     ).toThrow(/tshark was not found in an absolute PATH entry/u);
+  });
+
+  it("reports invalid PATHEXT separately from a missing tool", () => {
+    expect(() =>
+      resolvePcapTools(
+        { Path: "C:\\Wireshark", PATHEXT: ".EXE;C:\\invalid" },
+        "win32",
+        () => true,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "invalid_pathext",
+        diagnostics: { extension: "C:\\invalid" },
+      }),
+    );
   });
 
   it("fails closed when no absolute PATH entry holds the tool", () => {

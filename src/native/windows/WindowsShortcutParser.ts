@@ -1229,6 +1229,15 @@ export const parseWindowsShortcut = async (
   const extraData = !walk.stopped
     ? await parseExtraData(bytes, walk, input.max_extra_data_blocks, signal)
     : { blocks: [], terminal_offset: null };
+  // The TerminalBlock ends the Shell Link. Appended bytes are not examined, so
+  // the file is not completely covered; payloads are often hidden there.
+  if (extraData.terminal_offset !== null && walk.offset < bytes.length)
+    note(
+      walk,
+      "malformed_structure",
+      walk.offset,
+      `${String(bytes.length - walk.offset)} byte(s) follow the ExtraData TerminalBlock and are not part of the Shell Link`,
+    );
   const signatures = new Set(extraData.blocks.map((block) => block.signature));
   const unseenBlocks = EXPECTED_EXTRA_DATA_BLOCKS.filter(
     ({ flag, signature }) => (flags & flag) !== 0 && !signatures.has(signature),

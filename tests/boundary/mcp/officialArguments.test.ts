@@ -87,7 +87,7 @@ const invalidArguments = [
 ] as const;
 
 describe("official operation arguments", () => {
-  it("dispatches equivalent CLI and MCP arguments while retaining omissions and defaults", async () => {
+  it("dispatches equivalent CLI and MCP selections while retaining omissions and explicit defaults", async () => {
     const [path] = await createBinarySessionTargets();
     const calls: Array<{
       name: string;
@@ -130,29 +130,31 @@ describe("official operation arguments", () => {
       createManagedBinarySession: createSession,
     };
     const client = await connect({ execute });
-    for (const [name, mcpParameters, cliParameters] of [
-      ["procedure_pseudo_code", { procedure: "main" }, { procedure: "main" }],
-      ["search_bytes", { pattern: "48 ??" }, { pattern: "48 ??", limit: 100 }],
+    for (const [name, parameters] of [
+      ["procedure_pseudo_code", { procedure: "main" }],
+      ["search_bytes", { pattern: "48 ??" }],
+      ["search_bytes", { pattern: "48 ??", limit: 100 }],
+      ["search_strings", { pattern: "entry" }],
       [
         "search_strings",
-        { pattern: "entry" },
         { pattern: "entry", mode: "literal", case_sensitive: false },
       ],
     ] as const) {
       const cli = parseEvidence(
-        await runDirectAnalysis(dependencies, path, name, cliParameters).then(
+        await runDirectAnalysis(dependencies, path, name, parameters).then(
           projectCliAnalysisResult,
         ),
       );
-      const mcp = await client.callTool({ name, arguments: mcpParameters });
+      const mcp = await client.callTool({ name, arguments: parameters });
       expect(mcp.isError).not.toBe(true);
       expect(calls.slice(-2)).toEqual([
-        { name, parameters: cliParameters },
-        { name, parameters: cliParameters },
+        { name, parameters },
+        { name, parameters },
       ]);
       expect(mcp.structuredContent).toMatchObject({
         parameters: cli.parameters,
       });
+      expect(cli.parameters).toEqual(parameters);
       expect(cli.parameters).not.toHaveProperty("document");
     }
   });

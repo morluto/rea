@@ -120,17 +120,23 @@ const isRegularFile = (path: string): boolean => {
  * The first `.com` or `.exe` image Windows' PATH/PATHEXT search would start
  * for a bare tool name, from absolute PATH entries only, as on POSIX. The
  * owned Windows launcher starts only absolute paths, so a bare name has to be
- * resolved here. Undefined when no such file exists or PATHEXT is invalid.
+ * resolved here. Undefined when the absolute entries contain no such file.
  */
 const locateWiresharkToolOnWindowsPath = (
   tool: string,
   environment: Readonly<Record<string, string | undefined>>,
   isFile: (path: string) => boolean,
 ): string | undefined => {
-  const candidates = windowsPathCandidates(tool, environment);
-  if (!candidates.ok) return undefined;
-  for (const { path, relativeEntry } of candidates.value)
-    if (!relativeEntry && isFile(path)) return path;
+  const candidates = windowsPathCandidates(tool, environment, {
+    relativeEntries: "skip",
+  });
+  if (!candidates.ok)
+    throw new PcapConfigurationFailure(
+      "invalid_pathext",
+      "PATHEXT contains an invalid filename extension. Correct PATHEXT or specify the Wireshark tool by absolute path.",
+      { extension: candidates.error.extension },
+    );
+  for (const { path } of candidates.value) if (isFile(path)) return path;
   return undefined;
 };
 
@@ -195,6 +201,7 @@ export const locateWiresharkTool = (
 };
 
 export type PcapConfigurationFailureCode =
+  | "invalid_pathext"
   | "tshark_not_absolute"
   | "capinfos_not_absolute"
   | "tshark_missing"
@@ -271,7 +278,7 @@ const rejectionCodeOf = (
     ? "executable_missing"
     : code.includes("unsupported")
       ? "unsupported_version"
-      : code.includes("not_absolute")
+      : code === "invalid_pathext" || code.includes("not_absolute")
         ? "not_configured"
         : "version_unresolved";
 

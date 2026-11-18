@@ -6,26 +6,30 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { fakeBuildComputers as setUp } from "../../fixtures/fakeAgentEnvComputer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
 
 it("joins a start still in progress when the owner closes, and refuses later starts", async () => {
   const { computers, runner, start } = await setUp(
     {},
-    { FAKE_DEPLOY_SECONDS: "30" },
+    { FAKE_HOLD_DEPLOY: "1" },
   );
   const order: string[] = [];
   const pending = start().then((result) => {
     order.push("start settled");
     return result;
   });
-  while ((await runner.notes("runs.jsonl")).length === 0) await delay(50);
-  await computers.closeAll();
+  const helper = await waitFor(async () => {
+    const notes = await runner.notes("deploying.jsonl");
+    expect(notes).toHaveLength(1);
+    return notes;
+  }).finally(() => computers.closeAll());
   order.push("closeAll returned");
   expect(order).toEqual(["start settled", "closeAll returned"]);
   const started = await pending;
   expect(started.ok).toBe(false);
   if (!started.ok) expect(started.error._tag).toBe("AnalysisCancelledError");
   // Shutdown cancelled the deploy, whose own interruption tore it down.
-  expect(await runner.notes("interrupted.jsonl")).toHaveLength(1);
+  expect(await runner.notes("interrupted.jsonl")).toEqual(helper);
   const later = await start();
   expect(later.ok).toBe(false);
   expect(await runner.notes("runs.jsonl")).toHaveLength(1);
