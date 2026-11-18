@@ -75,8 +75,18 @@ export function* addJavaScriptStaticFindingsSteps(
     const asset = context.assetNodes.get(file.path);
     if (javascript === null || asset === undefined) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
+    const loaderLimitations =
+      javascript.analysis_coverage.semantics.uncertainty.includes(
+        "conditional-loader",
+      )
+        ? javascript.limitations
+        : [];
     for (const value of javascript.references)
-      addReference(context, { file, asset, value, coverage }, omissions);
+      addReference(
+        context,
+        { file, asset, value, coverage, loaderLimitations },
+        omissions,
+      );
     for (const value of javascript.endpoints)
       addEndpoint(context, { file, asset, value, coverage });
     for (const value of javascript.storage)
@@ -194,7 +204,9 @@ function* propagateApplicationOwners(
 
 const addReference = (
   context: JavaScriptArtifactGraphContext,
-  input: FindingInput<StaticReference>,
+  input: FindingInput<StaticReference> & {
+    readonly loaderLimitations: readonly string[];
+  },
   omissions: { selfReferences: number; imports: Map<string, Set<string>> },
 ): void => {
   const source =
@@ -340,16 +352,18 @@ const addReference = (
     },
     ...(input.value.loader_authority === "candidate"
       ? { confidence: "low" as const }
-      : {}),
-    ...(resolved === null
-      ? input.value.loader_authority === "candidate"
-        ? {
-            limitations: [
+      : input.loaderLimitations.length > 0
+        ? { confidence: "medium" as const }
+        : {}),
+    limitations: [
+      ...input.loaderLimitations,
+      ...(resolved?.limitations ??
+        (input.value.loader_authority === "candidate"
+          ? [
               "The module loader is unknown, so this dependency cannot be resolved against the source file.",
-            ],
-          }
-        : {}
-      : { limitations: resolved.limitations }),
+            ]
+          : [])),
+    ],
   });
 };
 

@@ -223,7 +223,7 @@ it.each(["main.mjs", "main.js", "view.jsx"])(
     expect(result.state).toBe("parsed");
     expect(result.diagnostics).toEqual(
       path === "main.js"
-        ? [expect.stringContaining("only if Node loads it as an ES module")]
+        ? [expect.stringContaining("package loader mode is unknown")]
         : [],
     );
     expect(result.imports.map(({ expression }) => expression)).toEqual([
