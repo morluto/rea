@@ -2,14 +2,15 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { open, unlink } from "node:fs/promises";
 
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Remediation for a host that denies writes under the session temporary root.
@@ -34,46 +35,32 @@ export type GhidraTemporaryDirectoryProbe =
       readonly retainedPath?: string;
     };
 
-/** Filesystem seam so classification is testable without a restricted host. */
-export interface GhidraTemporaryDirectoryHost {
-  readonly sessionRoot: () => string;
-  readonly writeProbe: (
-    path: string,
-    resourceOwner: RetainedResourceScope,
-  ) => Promise<void>;
-  readonly removeProbe: (path: string) => Promise<void>;
-}
-
-const systemHost: GhidraTemporaryDirectoryHost = {
-  sessionRoot: () => ghidraSessionRoot(),
-  writeProbe: async (path, resourceOwner) => {
-    const resources = new ArtifactResourceScope();
-    try {
-      await withArtifactFileHandle(
+const writeProbe = async (
+  path: string,
+  resourceOwner: RetainedResourceScope,
+) => {
+  const resources = new ArtifactResourceScope();
+  try {
+    await withArtifactFileHandle(
+      path,
+      await open(path, "wx", 0o600),
+      resources,
+      undefined,
+      (handle) => handle.writeFile("rea doctor probe\n"),
+    );
+  } finally {
+    if (resources.hasPending)
+      resourceOwner.retain(
+        { close: () => resources.close(), cleanupResources: [path] },
         path,
-        await open(path, "wx", 0o600),
-        resources,
-        undefined,
-        (handle) => handle.writeFile("rea doctor probe\n"),
       );
-    } finally {
-      if (resources.hasPending)
-        resourceOwner.retain(
-          { close: () => resources.close(), cleanupResources: [path] },
-          path,
-        );
-    }
-  },
-  removeProbe: unlink,
+  }
 };
 
 const errorCode = (cause: unknown): string | undefined =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
     ? cause.code
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /**
  * Create and delete one file under the Ghidra session root from the REA
@@ -84,19 +71,17 @@ const errorMessage = (cause: unknown): string =>
  */
 export const probeGhidraTemporaryDirectory = async (
   resourceOwner: RetainedResourceScope,
-  overrides: Partial<GhidraTemporaryDirectoryHost> = {},
 ): Promise<GhidraTemporaryDirectoryProbe> => {
-  const host = { ...systemHost, ...overrides };
-  const directory = host.sessionRoot();
+  const directory = ghidraSessionRoot();
   const path = join(directory, `rea-doctor-probe-${randomUUID()}`);
   const remove = () =>
-    host.removeProbe(path).catch((cause: unknown) => {
+    unlink(path).catch((cause: unknown) => {
       if (errorCode(cause) !== "ENOENT") throw cause;
     });
   const retain = () =>
     resourceOwner.retain({ close: remove, cleanupResources: [path] }, path);
   try {
-    await host.writeProbe(path, resourceOwner);
+    await writeProbe(path, resourceOwner);
   } catch (cause: unknown) {
     const cleanupOnly =
       cause instanceof ArtifactFileCleanupFailure &&
@@ -121,7 +106,7 @@ export const probeGhidraTemporaryDirectory = async (
     };
   }
   try {
-    await host.removeProbe(path);
+    await unlink(path);
   } catch (cause: unknown) {
     retain();
     return {
@@ -134,28 +119,4 @@ export const probeGhidraTemporaryDirectory = async (
     };
   }
   return { ok: true, directory };
-};
-
-/** A denied `java_home.save` write reported in Ghidra launcher output. */
-export interface GhidraJavaHomeSaveDenial {
-  readonly path: string;
-}
-
-const JAVA_HOME_SAVE_DENIED =
-  /FileNotFoundException:\s*(.*?java_home\.save)\s*\(Access is denied\)/iu;
-
-/**
- * Recognize the JVM's access-denied refusal to open `java_home.save` (Win32
- * error 5). Only a line naming that file and the denial counts; other output,
- * including other denied paths, is not classified.
- */
-export const ghidraJavaHomeSaveDenial = (
-  text: readonly string[],
-): GhidraJavaHomeSaveDenial | undefined => {
-  for (const block of text)
-    for (const line of block.split(/\r?\n/u)) {
-      const path = JAVA_HOME_SAVE_DENIED.exec(line)?.[1]?.trim();
-      if (path !== undefined && path !== "") return { path };
-    }
-  return undefined;
 };

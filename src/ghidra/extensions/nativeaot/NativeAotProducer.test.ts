@@ -5,6 +5,7 @@ import { validateNativeAotReport } from "./NativeAotReport.js";
 
 it.skipIf(!process.env.JAVA_HOME || !process.env.GSON_JAR)(
   "accepts transaction reports from the Java producer with controlled APIs",
+  { tags: ["long-running"] },
   async () => {
     const output = await runOwnedCommand(
       {
@@ -37,5 +38,4 @@ it.skipIf(!process.env.JAVA_HOME || !process.env.GSON_JAR)(
         }),
       ).toBeNull();
   },
-  90_000,
 );

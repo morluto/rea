@@ -2,15 +2,18 @@ import type { ElectronApplication, JSHandle, Page } from "playwright-core";
 import { z } from "zod";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ArtifactResourceScope,
   ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
@@ -47,6 +50,8 @@ const hookSnapshotSchema = z.strictObject({
   observed_ipc: retention.observed_ipc,
   observed_runtime: retention.observed_runtime,
   hook_error: z.boolean(),
+  /** Null when the hook did not run, so the lock outcome is unknown. */
+  single_instance_lock_refused: z.boolean().nullable(),
 });
 
 type ElectronAction = ElectronActiveObservationInput["actions"][number];
@@ -241,16 +246,10 @@ const releaseActionWindow = async (
   error.bindCleanupResourceOwner(released.lease);
   released.lease.bindCleanupError(error);
   if (!signal?.aborted) return error;
-  const cancellation = new AnalysisCancelledError(OPERATION, {
-    cause: signal.reason,
-  });
+  const cancellation = cancelledBy(OPERATION, signal);
   return actionStatus === "failed"
     ? error.retainSecondaryFailure(cancellation)
-    : analysisErrorWithCleanupFailure(
-        cancellation,
-        error,
-        OPERATION,
-      ).bindCleanupDependencies([cancellation, error]);
+    : analysisErrorWithCleanupDependencies(cancellation, error, OPERATION);
 };
 
 type RunActionContext = {
@@ -381,6 +380,40 @@ const emitDeepLink = (
     { delivery: action.delivery, url: action.url },
   );
 
+/**
+ * Abort when the hook announces a refused single-instance lock. The hook
+ * stops the application path that requested the lock, so a window that path
+ * would have opened never appears; aborting lets pending actions stop. The
+ * hook snapshot's `single_instance_lock_refused` remains the reported fact.
+ */
+export const watchSingleInstanceLockRefusal = (
+  application: ElectronApplication,
+): AbortSignal => {
+  const refusal = new AbortController();
+  void application
+    .evaluate(() => {
+      const announced = Reflect.get(
+        globalThis,
+        "__reaElectronSingleInstanceLockRefusal",
+      );
+      return announced instanceof Promise ? announced : false;
+    })
+    .then(
+      (refused) => {
+        if (refused === true)
+          refusal.abort(
+            new BrowserObservationError(
+              OPERATION,
+              "application_already_running",
+            ),
+          );
+      },
+      // The pending read settles when the application closes; nothing to report.
+      () => undefined,
+    );
+  return refusal.signal;
+};
+
 /** Read the current Electron windows, metrics, and hook snapshot. */
 export const readApplicationState = async (
   application: ElectronApplication,
@@ -455,6 +488,7 @@ export const readApplicationState = async (
             observed_ipc: 0,
             observed_runtime: 0,
             hook_error: true,
+            single_instance_lock_refused: null,
           };
     })
     .then((value) => hookSnapshotSchema.parse(value));

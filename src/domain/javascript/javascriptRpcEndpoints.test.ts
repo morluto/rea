@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const endpoints = (source: string) =>
   analyzeJavaScriptStaticSource(source).endpoints.map(
@@ -35,6 +35,9 @@ describe("RPC object property ownership", () => {
     ['url: "/trpc/live", [0x1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [0b1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [-1n]: {}', "/trpc/live"],
+    ["url: `/trpc/\\u006cive`", "/trpc/live"],
+    ['url: "/trpc/old", url: `/trpc/live`', "/trpc/live"],
+    ['url: "/trpc/old", url: `/trpc/${runtimeUrl}`', null],
   ] as const)(
     "reads only the final known link URL from {%s}",
     (options, value) => {
@@ -48,6 +51,11 @@ describe("RPC object property ownership", () => {
 
   it.each([
     ['operation: "mutation"', "Old", "graphql:mutation"],
+    [
+      "kind: `OperationDefinition`, operation: `mutation`, name: { kind: `Name`, value: `Current` }",
+      "Current",
+      "graphql:mutation",
+    ],
     ['name: { kind: "Name", value: "Current" }', "Current", "graphql:query"],
     ['kind: "FragmentDefinition"', null, null],
     ["name: runtimeName", null, null],
@@ -317,7 +325,7 @@ describe("tRPC binding identity and bundled syntax", () => {
       c.users.query();
       const p = (t.createTRPCProxyClient as any)({});
       p.posts.query();
-      (0, t.httpLink)({ url: "/api/other" });
+      (0, t.httpLink)({ url: \`/api/other\` });
     `),
     ).toEqual([
       {
@@ -331,7 +339,7 @@ describe("tRPC binding identity and bundled syntax", () => {
     ]);
   });
 
-  it("preserves procedure paths beyond the former nesting cutoff", () => {
+  it("preserves a procedure path of 64 segments", () => {
     const path = Array.from({ length: 64 }, (_, i) => `router${i}`).join(".");
     expect(rpcEndpoints(`root.${path}.useQuery();`)).toEqual([
       { kind: "network", value: path, mechanism: "trpc:procedure:useQuery" },

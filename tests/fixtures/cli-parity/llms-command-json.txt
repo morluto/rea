@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy --llms --format json
+exit: 0
+--- stdout
+{"version":"incur.v1","commands":[{"name":"inspect-byte-entropy","description":"Inspect file-wide and block byte entropy without executing the file"}],"globals":{"type":"object","properties":{"timings":{"default":false,"description":"Write measured command timing to stderr.","type":"boolean"}},"required":["timings"],"additionalProperties":false}}
+<end>
+--- stderr
+<end>

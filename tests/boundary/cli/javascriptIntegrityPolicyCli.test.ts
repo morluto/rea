@@ -74,10 +74,10 @@ it.each(["fail", "record-and-continue"] as const)(
       details: {
         issues: [
           {
-            path: ["integrity_policy"],
+            path: ["integrityPolicy"],
             reason: "invalid_value",
             message: expect.stringMatching(
-              /integrity policy.*static JavaScript ASAR\/directory.*binary_overview.*no input/iu,
+              /--integrity-policy.*static JavaScript ASAR\/directory.*native program target.*does not take it/u,
             ),
           },
         ],
@@ -101,6 +101,7 @@ it("advertises the optional integrity policy without an undefined union", async 
   expect(policy).toMatchObject({
     type: "string",
     enum: ["fail", "record-and-continue"],
+    default: "fail",
     description: "Behavior when declared application integrity does not match",
   });
   expect(JSON.stringify(policy)).not.toContain("undefined");

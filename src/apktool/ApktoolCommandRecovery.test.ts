@@ -15,6 +15,7 @@ import {
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { ApktoolProvider } from "./ApktoolProvider.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 vi.mock("../process/OwnedCommand.js", async (original) => ({
   ...(await original<typeof import("../process/OwnedCommand.js")>()),
@@ -61,7 +62,7 @@ it.each(["process", "helper"] as const)(
     );
     const helperClose = vi.fn(async () => {
       if (denied) throw helperCleanup;
-      helperCleanup.resolveCleanup();
+      releaseOwnedCleanup(helperCleanup);
     });
     const compilerOutput = {
       stdout: "authored compiler stdout",
@@ -276,7 +277,7 @@ it("retries failed command peers without repeating successful helper cleanup", a
   const commands = new ApktoolCommandCleanup();
   const helper = new ProviderCleanupError("process-ownership", ["helper"], {});
   const close = vi.fn(async () => {
-    helper.resolveCleanup();
+    releaseOwnedCleanup(helper);
   });
   let denied = true;
   const stop = vi.fn(async () =>
@@ -329,7 +330,7 @@ it("joins preparation during close and retains a late helper handoff", async () 
     {},
   );
   const close = vi.fn(async () => {
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
   });
   vi.mocked(prepareOwnedCommand).mockImplementationOnce(async () => {
     entered.resolve();

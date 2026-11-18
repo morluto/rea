@@ -15,7 +15,8 @@ export interface DesktopEntry {
 }
 
 const GROUP = /^\[(?<name>[^\]]+)\]$/u;
-const ENTRY = /^(?<key>[A-Za-z0-9-]+)\s*=\s*(?<value>.*)$/u;
+// Only LF separates records; Unicode line/paragraph separators are value data.
+const ENTRY = /^(?<key>[A-Za-z0-9-]+)[ \t]*=[ \t]*(?<value>.*)$/su;
 const VALUE_ESCAPES: Readonly<Record<string, string>> = {
   s: " ",
   n: "\n",

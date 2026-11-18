@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
@@ -10,7 +11,7 @@ import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
@@ -33,7 +34,7 @@ const environmentValue = (
 /** Identify the package runner that launched this process, if any. */
 export const invokingPackageRunner = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): PackageRunner | undefined => {
   if (environmentValue(environment, "npm_command", platform) !== "exec")
     return undefined;
@@ -50,7 +51,7 @@ export const invokingPackageRunner = (
 /** Copy an environment without the variable that marks a package-runner launch. */
 export const withoutPackageRunnerIdentity = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv =>
   Object.fromEntries(
     Object.entries(environment).filter(([key]) =>
@@ -68,7 +69,8 @@ export const currentClientRegistrationCommand = (
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
   } = {},
 ): readonly string[] => {
-  const platform = selection.platform ?? process.platform;
+  // The registration names this process's runtime, so it defaults to this host.
+  const platform = selection.platform ?? HOST_PLATFORM.platform;
   const environment = selection.environment ?? process.env;
   const entrypointPath = Object.hasOwn(selection, "entrypointPath")
     ? selection.entrypointPath
@@ -128,8 +130,9 @@ const entrypointIdentity = (
   if (candidate === current) return "owned";
   // Bun's realpath can normalize parent segments differently from its launcher.
   // Without matching traversal semantics it cannot prove ownership of an alias.
+  // The comparison resolves paths on this host's filesystem.
   if (
-    process.platform !== "win32" &&
+    HOST_PLATFORM.platform !== "win32" &&
     javaScriptRuntime(process.versions).id === "bun" &&
     [candidate, current].some((path) => path.split("/").includes(".."))
   )
@@ -166,9 +169,11 @@ const sameFileExecutableAlias = (
   environment: Readonly<NodeJS.ProcessEnv>,
   identify: typeof entrypointIdentity,
 ): string => {
-  for (const directory of (environment.PATH ?? "").split(":")) {
-    if (!isAbsolute(directory)) continue;
-    const candidate = absoluteCallerPath(`${directory}/${name}`);
+  for (const { path: candidate } of posixPathCandidates(
+    name,
+    environment.PATH ?? "",
+    { relativeEntries: "skip" },
+  )) {
     if (identify(candidate, selected) !== "owned") continue;
     try {
       accessSync(candidate, constants.X_OK);

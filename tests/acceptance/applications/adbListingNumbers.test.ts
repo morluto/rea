@@ -6,7 +6,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const SERIAL = "listing-numbers-device";
 const UNSAFE = "9007199254740993";
@@ -192,6 +192,7 @@ cliTest.skipIf(process.platform === "win32")(
       binary,
       `#!${process.execPath}
 const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === 'start-server') process.exit(0);
 if (args.length === 1 && args[0] === 'version') {
   console.log('Android Debug Bridge version 1.0.41\\nVersion 34.0.5-fixture\\nInstalled as ' + process.argv[1]);
   process.exit(0);
@@ -224,9 +225,10 @@ process.stdout.write(require('node:fs').readFileSync(path));
           arguments: [operation.replaceAll("_", "-"), SERIAL, "--json"],
           environment,
         };
-        const output = await (variant === "safe"
-          ? cli.run(invocation)
-          : runFileCli(cli, invocation));
+        const output = await cli.run({
+          ...invocation,
+          freshProcess: variant === "safe",
+        });
         expect(output.exitCode, output.stderr).toBe(0);
         const evidence = contract.outputSchema.parse(output.json);
         expect(evidence.parameters).toMatchObject({ serial: SERIAL });
