@@ -31,6 +31,82 @@ describe("Ghidra COM import selection", () => {
     expect(
       ghidraComRecognitionScore(Buffer.from("abcd$abcd$abcd$", "ascii")),
     ).toBe(5);
+    expect(ghidraComRecognitionScore(Buffer.from("aaa$", "ascii"))).toBe(0);
+    expect(ghidraComRecognitionScore(Buffer.from("abc$defgh$", "ascii"))).toBe(
+      3,
+    );
+  });
+
+  it("matches ComLoader's dollar-string walk on mixed buffers", () => {
+    const reference = (data: Uint8Array): number => {
+      let score = 0;
+      for (let index = 0; index < data.length - 2 && score < 12; index++) {
+        if (data[index] !== 0xcd) continue;
+        if (data[index + 1] === 0x21) {
+          score += 2;
+          if (
+            index >= 2 &&
+            (data[index - 2] === 0xb4 || data[index - 2] === 0xb0)
+          )
+            score += 3;
+          if (index >= 3 && data[index - 3] === 0xb8) score += 2;
+          if (score >= 12) return score;
+        } else if (data[index + 1] === 0x20) {
+          score += 2;
+          if (score >= 12) return score;
+        }
+        if (index > 1 && (data[index - 2] === 0xb4 || data[index - 2] === 0xb0))
+          score += 2;
+        if (index > 2 && data[index - 3] === 0xb8) score += 2;
+        if (score >= 12) return score;
+      }
+      let count = 0;
+      for (let index = 0; index < data.length - 4 && count < 3; index++) {
+        let length = 0;
+        while (
+          index + length < data.length &&
+          data[index + length]! >= 0x20 &&
+          data[index + length]! <= 0x7e
+        ) {
+          length += 1;
+          if (
+            index + length < data.length &&
+            data[index + length] === 0x24 &&
+            length >= 4
+          ) {
+            count += 1;
+            index += length;
+            break;
+          }
+        }
+      }
+      if (count > 0) score += 3;
+      if (count > 2) score += 2;
+      return score;
+    };
+    const samples = [
+      Buffer.alloc(300, 0x41),
+      Buffer.from("abc$defgh$abcd$abcd$abcd$"),
+      Buffer.from("\x00abcd$\x01$$$$abcd$"),
+      recognized,
+    ];
+    for (let seed = 0; seed < 20; seed++) {
+      const bytes = Buffer.alloc(180);
+      for (let index = 0; index < bytes.length; index++)
+        bytes[index] = (seed * 17 + index * 13) & 0xff;
+      samples.push(bytes);
+    }
+    for (const sample of samples)
+      expect(ghidraComRecognitionScore(sample)).toBe(reference(sample));
+  });
+
+  it("scores a full-size printable image without rescanning each suffix", () => {
+    const bytes = Buffer.alloc(0xff00, 0x41);
+    const started = Date.now();
+    expect(ghidraComRecognitionScore(bytes)).toBe(0);
+    expect(Date.now() - started).toBeLessThan(250);
+    bytes.set(Buffer.from("abcd$abcd$abcd$"), bytes.length - 15);
+    expect(ghidraComRecognitionScore(bytes)).toBe(5);
   });
 
   it("selects ComLoader for a recognized .com image and records no fallback", () => {

@@ -92,25 +92,34 @@ const isPrintable = (value: number): boolean => value >= 0x20 && value <= 0x7e;
 
 /**
  * Count `$`-terminated printable runs the way ComLoader.countDollarStrings does.
- * The index advance matches that loop, including the extra increment from `for`.
+ *
+ * That loop restarts inside a printable run that has no `$`, so a 64 KiB image
+ * of printable bytes is quadratic and blocks profile resolution. Inside one
+ * printable run an earlier start sees every `$` a later start could use, so a
+ * miss skips the rest of the run. A hit resumes at the byte after that `$`,
+ * the same index ComLoader's `for` increment reaches after `i += len`.
  */
 const countDollarStrings = (data: Uint8Array): number => {
   let count = 0;
   const minLength = 4;
-  for (let index = 0; index < data.length - minLength && count < 3; index++) {
-    let length = 0;
-    while (index + length < data.length && isPrintable(data[index + length]!)) {
-      length += 1;
-      if (
-        index + length < data.length &&
-        data[index + length] === 0x24 &&
-        length >= minLength
-      ) {
-        count += 1;
-        index += length;
-        break;
-      }
+  const limit = data.length - minLength;
+  let index = 0;
+  while (index < limit && count < 3) {
+    if (!isPrintable(data[index]!)) {
+      index += 1;
+      continue;
     }
+    let end = index + 1;
+    while (end < data.length && isPrintable(data[end]!)) end += 1;
+    let start = index;
+    while (start < limit && start < end && count < 3) {
+      let dollar = start + minLength;
+      while (dollar < end && data[dollar] !== 0x24) dollar += 1;
+      if (dollar >= end) break;
+      count += 1;
+      start = dollar + 1;
+    }
+    index = end;
   }
   return count;
 };
