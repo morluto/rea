@@ -809,6 +809,7 @@ const isBoolean = (value: unknown) => typeof value === "boolean";
  *   including null                                        -> THREW ERR_INVALID_ARG_VALUE
  *   spawn and execFile: shell that is not a boolean, string, null or
  *   undefined                                             -> THREW ERR_INVALID_ARG_TYPE
+ *   uid or gid outside the signed 32-bit integer type     -> THREW before spawn
  *   execFile and exec: maxBuffer -1 / NaN / "1" / 0n      -> THREW ERR_OUT_OF_RANGE
  *   execFile and exec: maxBuffer 0 / 1.5 / Infinity       -> child
  *
@@ -828,6 +829,17 @@ const VALIDATED_CHILD_OPTIONS: readonly {
         typeof value === "number" && Number.isInteger(value) && value >= 0,
     ),
   },
+  ...(["uid", "gid"] as const).map((member) => ({
+    member,
+    methods: ALL_SPAWN_METHODS,
+    rejects: provenOtherThan(
+      (value) =>
+        typeof value === "number" &&
+        Number.isInteger(value) &&
+        value >= -(2 ** 31) &&
+        value < 2 ** 31,
+    ),
+  })),
   ...(["detached", "windowsHide", "windowsVerbatimArguments"] as const).map(
     (member) => ({
       member,

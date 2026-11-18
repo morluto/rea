@@ -226,6 +226,9 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+For child-process options, a proven non-int32 `uid` or `gid` rules out the
+spawn candidate. Nullish and unknown values do not themselves rule it out;
+an accepted integer does not establish that the host permits the launch.
 For `fs/promises.open`, a binding receiving the Promise is distinct from one
 receiving the awaited FileHandle. Awaiting the Promise later does not replace
 the original binding, but `h = await h` can replace it with the FileHandle.
