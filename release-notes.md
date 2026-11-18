@@ -804,6 +804,7 @@
 * **environment:** consolidate write body and pointer checks ([#11910](https://github.com/morluto/rea/issues/11910)) ([70d9693](https://github.com/morluto/rea/commit/70d9693a01c7faf1a54174a74ef2ee05c1446f28))
 * **environment:** distinguish write cutoffs from record ordering ([#11908](https://github.com/morluto/rea/issues/11908)) ([c5d197b](https://github.com/morluto/rea/commit/c5d197b1b4e3adeaad8d6e15c9becddab5843217))
 * **environment:** isolate manifest identifier spelling cases ([#11901](https://github.com/morluto/rea/issues/11901)) ([16fb48f](https://github.com/morluto/rea/commit/16fb48f9b72072c97d77b4e827ef8fe768083147))
+* **environment:** isolate manifest pointer admission ([#11915](https://github.com/morluto/rea/issues/11915)) ([5cdd7d5](https://github.com/morluto/rea/commit/5cdd7d54bf253586307b422cbf5ee0cf842c6327))
 * **environment:** prove replay selection precedence ([#11912](https://github.com/morluto/rea/issues/11912)) ([9e7db13](https://github.com/morluto/rea/commit/9e7db13005874a073f012ba409bd8e87d64ea643))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
 * **environment:** shrink the request-body read-budget fixture ([#11903](https://github.com/morluto/rea/issues/11903)) ([518a2ad](https://github.com/morluto/rea/commit/518a2ad434896d7c33890f4007b3400c1e8cfffb))
