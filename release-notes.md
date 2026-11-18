@@ -189,6 +189,7 @@
 * **ci:** expose failed test modules in portable diagnostics ([#12069](https://github.com/morluto/rea/issues/12069)) ([644cb82](https://github.com/morluto/rea/commit/644cb8243d449c27aa63e483146cd82f53b57083))
 * **ci:** keep MinGW setup within the native build deadline ([#11887](https://github.com/morluto/rea/issues/11887)) ([2cc7f01](https://github.com/morluto/rea/commit/2cc7f01731e5049f4b5d0d9b338050caf5c13d94))
 * **ci:** let npm retry upstream registry connection resets ([3f361d8](https://github.com/morluto/rea/commit/3f361d820fd4a54e037bf60726e79217586ad431))
+* **ci:** preserve conformance subprocess cleanup ownership ([#12025](https://github.com/morluto/rea/issues/12025)) ([93fb79e](https://github.com/morluto/rea/commit/93fb79e3b881c2997e0a625bab1c416de0e2e170))
 * **ci:** refresh CLI decimal schema goldens ([25784cd](https://github.com/morluto/rea/commit/25784cd4e790a6290e2f719549a83f5f7a63b3e0))
 * **ci:** repair Python catalog test and deep static check failures ([8ffea11](https://github.com/morluto/rea/commit/8ffea11ee30d5e0d442a8d14b27e05b0441b9e18))
 * **ci:** repair shared progress, cleanup and verifier failures ([#11727](https://github.com/morluto/rea/issues/11727)) ([552d1c7](https://github.com/morluto/rea/commit/552d1c7108b99d1c9ec15d8b629ae07dc56d4714))
