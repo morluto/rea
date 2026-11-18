@@ -9,6 +9,11 @@ it("counts hand-read abort checks on completed results", () => {
   ).toBe(1);
   expect(
     completedAbortReclassificationCount(
+      "if (results[0].ok && signal?.aborted) return cancelled();",
+    ),
+  ).toBe(1);
+  expect(
+    completedAbortReclassificationCount(
       "if (waited instanceof AbortedWait || (waited.ok && isAborted(signal))) {}",
     ),
   ).toBe(1);
@@ -37,6 +42,16 @@ it("ignores negated .ok checks that attach cancellation to a failed primary", ()
   ).toBe(0);
   expect(
     completedAbortReclassificationCount(
+      "if (!results[0].ok && signal?.aborted) {}",
+    ),
+  ).toBe(0);
+  expect(
+    completedAbortReclassificationCount(
+      "if (!this.readResult().outcome.ok && signal?.aborted) {}",
+    ),
+  ).toBe(0);
+  expect(
+    completedAbortReclassificationCount(
       "if (! result.ok && isAborted(signal)) {}",
     ),
   ).toBe(0);
@@ -48,6 +63,11 @@ it("ignores negated .ok checks that attach cancellation to a failed primary", ()
   expect(
     completedAbortReclassificationCount(
       "if (!readResult().ok && signal?.aborted) {}",
+    ),
+  ).toBe(0);
+  expect(
+    completedAbortReclassificationCount(
+      "if (!(await readResult()).ok && signal?.aborted) {}",
     ),
   ).toBe(0);
 });
