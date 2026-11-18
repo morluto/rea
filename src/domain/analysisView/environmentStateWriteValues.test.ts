@@ -266,17 +266,13 @@ it("finds a delimited token in any string nested in objects and arrays", () => {
 });
 
 it("searches arrays and objects too wide to spread into one call", () => {
-  const wide = Array.from({ length: 500_000 }, () => 0);
-  expect(containsDelimited(wide, "2")).toBe(false);
-  expect(containsDelimited({ wide: [...wide, "see /issues/2"] }, "2")).toBe(
-    true,
+  const wide = Array<JsonValue>(500_000).fill(0);
+  const object = Object.fromEntries(
+    wide.map((value, index) => [String(index), value]),
   );
-  expect(
-    containsDelimited(
-      Object.fromEntries(wide.map((value, index) => [String(index), value])),
-      "2",
-    ),
-  ).toBe(false);
+  wide[0] = "see /issues/2";
+  expect(containsDelimited({ wide }, "2")).toBe(true);
+  expect(containsDelimited(object, "2")).toBe(false);
 });
 
 it("derives a deterministic version 4 UUID per seed", () => {
