@@ -22,6 +22,7 @@ import {
   ANDROID_BOOT_FIXED_LIMITS,
   AVB_FOOTER_SIZE,
   compressionFromPrefix,
+  avbFooterOffset,
   inspectAvbFooter,
   parseAndroidBootHeader,
   parseVendorRamdiskTable,
@@ -137,13 +138,13 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     plans: readonly AndroidBootComponentPlan[],
     signal?: AbortSignal,
   ): Promise<AvbFooterFacts> {
-    const trailing = fileSize - header.imageEnd;
+    const offset = avbFooterOffset(fileSize, header.dataEnd);
     this.assertOpen(signal);
     const tail =
-      trailing >= AVB_FOOTER_SIZE
+      offset !== null
         ? await readArtifactFileBytes(
             handle,
-            fileSize - AVB_FOOTER_SIZE,
+            offset,
             AVB_FOOTER_SIZE,
             fileSize,
             signal,
