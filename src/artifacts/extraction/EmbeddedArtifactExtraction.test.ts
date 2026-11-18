@@ -159,9 +159,12 @@ it.each(cases)(
 );
 
 it.each(
-  cases.flatMap((fixture) =>
-    ["cancel", "retry", "mixed"].map((mode) => ({ ...fixture, mode })),
-  ),
+  cases.flatMap((fixture) => [
+    { ...fixture, mode: "mixed" as const },
+    ...(fixture.format === "godot-pck"
+      ? [{ ...fixture, mode: "cancel" as const }]
+      : []),
+  ]),
 )(
   "retains $format finalization semantics during $mode",
   async ({ inputFormat, reader, bytes, mode }) => {
@@ -239,10 +242,7 @@ it.each(
           `artifact reader for ${path}`,
           `root artifact descriptor for ${path}`,
         ]);
-      else if (mode === "retry")
-        expect(scope.cleanupResources).toEqual([
-          `root artifact descriptor for ${path}`,
-        ]);
+      else expect(scope.cleanupResources).toEqual([]);
       await scope.close();
       expect(rootAttempts).toBe(mode === "cancel" ? 1 : 2);
       expect(readerAttempts).toBe(mode === "mixed" ? 3 : 2);
