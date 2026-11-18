@@ -221,6 +221,23 @@ const addReference = (
     input.value.loader_authority === "candidate"
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
+  const candidateLoader = input.value.loader_authority === "candidate";
+  const loaderEvidence = {
+    confidence: candidateLoader
+      ? ("low" as const)
+      : input.loaderLimitations.length > 0
+        ? ("medium" as const)
+        : ("high" as const),
+    limitations: [
+      ...input.loaderLimitations,
+      ...(resolved?.limitations ??
+        (candidateLoader
+          ? [
+              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+            ]
+          : [])),
+    ],
+  };
   if (
     input.value.operation === "load" &&
     (input.value.kind === "static-import" ||
@@ -273,7 +290,7 @@ const addReference = (
             range: input.value.location,
             operation: "discover-worker",
             coverage: input.coverage,
-            limitations: resolved?.limitations ?? [],
+            ...loaderEvidence,
           }),
         },
       ],
@@ -290,7 +307,7 @@ const addReference = (
         resolution_status: resolved?.resolution?.resolution_status ?? null,
         ...artifactPathResolutionProperties(resolved?.resolution),
       },
-      limitations: resolved?.limitations ?? [],
+      ...loaderEvidence,
     });
     if (resolved !== null && resolved.path !== null && resolved.node !== null)
       addStaticInferenceEdge(context, {
@@ -301,7 +318,7 @@ const addReference = (
         coverage: input.coverage,
         relation: "maps_to",
         properties: { resolved_path: resolved.path },
-        limitations: resolved.limitations,
+        ...loaderEvidence,
       });
     return;
   }
@@ -350,20 +367,7 @@ const addReference = (
       resolution_status: resolved?.resolution?.resolution_status ?? null,
       ...artifactPathResolutionProperties(resolved?.resolution),
     },
-    ...(input.value.loader_authority === "candidate"
-      ? { confidence: "low" as const }
-      : input.loaderLimitations.length > 0
-        ? { confidence: "medium" as const }
-        : {}),
-    limitations: [
-      ...input.loaderLimitations,
-      ...(resolved?.limitations ??
-        (input.value.loader_authority === "candidate"
-          ? [
-              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
-            ]
-          : [])),
-    ],
+    ...loaderEvidence,
   });
 };
 

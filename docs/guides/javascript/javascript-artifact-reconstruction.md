@@ -230,7 +230,8 @@ unknown findings and typed uncertainty, including returned-reference widening
 and unavailable type-only compiler options. `conditional-loader` records a
 BOM/hashbang source recovered with an uncertain package mode or loader
 invocation. Its overall `parse_status` stays partial without inventing a syntax
-error, and the dependency Evidence retains the loader limitation. `examination` reports static semantic
+error. Dependency and worker Evidence retains the loader limitation.
+`examination` reports static semantic
 resource limits and Electron wrapper expansion limits independently. A completed
 pass does not establish complete runtime semantics. Route examination and result
 capacity remain in the separate route inventory.
@@ -363,7 +364,7 @@ retain a conditional interpretation: direct entrypoint and module import can
 select different loaders. A known CommonJS package can load these files
 through an ES module import using CommonJS grammar.
 An unknown package scope or a package without a `type` field retains a
-conditional interpretation for ordinary `.js` files. Application analysis and
+conditional interpretation for ordinary `.js` and suffix-only JavaScript files. Application analysis and
 reference import can recover either script or ES module syntax without
 establishing the runtime loader.
 Source indexes and later-line columns still refer to the original text.

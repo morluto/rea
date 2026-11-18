@@ -50,11 +50,7 @@ it.each(["main.js", ".js", ".mjs", ".cjs", ".JS", ".MJS"])(
         },
       ]);
       expect(result.limitations).toContainEqual(
-        expect.stringContaining(
-          path.startsWith(".")
-            ? "loader invocation is unknown"
-            : "package loader mode is unknown",
-        ),
+        expect.stringContaining("package loader mode is unknown"),
       );
     }
   },

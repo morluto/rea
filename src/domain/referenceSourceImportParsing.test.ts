@@ -116,11 +116,16 @@ it.each([
   },
 );
 
-it.each(["unknown", "unspecified"] as const)(
-  "retains a conditional dependency without a strict-mode error for %s packages",
-  (mode) => {
+it.each([
+  ["main.js", "unknown"],
+  ["main.js", "unspecified"],
+  [".cjs", "unknown"],
+  [".js", "unspecified"],
+] as const)(
+  "retains a conditional dependency without a strict-mode error for %s in a %s package",
+  (path, mode) => {
     const parsed = parseReferenceSourceImports(
-      "main.js",
+      path,
       Buffer.from(
         '\uFEFF#!/usr/bin/env node\nwith ({}) {}\nrequire("./dep.cjs");',
       ),
