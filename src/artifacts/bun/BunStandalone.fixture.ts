@@ -1,11 +1,30 @@
+import type { FileHandle } from "node:fs/promises";
 import {
-  BUN_OFFSETS_BYTES,
-  BUN_RECORD_BYTES_1_3_3,
-  BUN_RECORD_BYTES_1_3_9,
-  BUN_TRAILER,
+  loadBunStandaloneGraph,
+  probeBunStandaloneGraph,
   type BunLayoutRevision,
+  type BunStandaloneRecognition,
   type BunStringPointer,
 } from "./BunModuleGraphLayout.js";
+
+// https://github.com/oven-sh/bun/blob/bun-v1.3.9/src/StandaloneModuleGraph.zig
+// and the 1.3.3 serializer define the two supported layouts.
+const OFFSETS_BYTES = 32;
+const RECORD_BYTES_1_3_3 = 36;
+const RECORD_BYTES_1_3_9 = 52;
+export const BUN_FIXTURE_TRAILER = Buffer.from("\n---- Bun! ----\n");
+export const BUN_FIXTURE_GRAPH_SUFFIX_BYTES =
+  OFFSETS_BYTES + BUN_FIXTURE_TRAILER.length;
+
+/** Exercise the same two-stage probe and payload read as the artifact reader. */
+export const locateBunGraphFixture = async (
+  handle: FileHandle,
+  fileSize: number,
+): Promise<BunStandaloneRecognition> => {
+  const probed = await probeBunStandaloneGraph(handle, fileSize);
+  if (probed.status !== "present" || probed.claim === undefined) return probed;
+  return loadBunStandaloneGraph(handle, probed.claim);
+};
 
 export interface BunFixtureModule {
   readonly name?: string | Buffer;
@@ -32,7 +51,7 @@ export const bunModuleGraphPayload = (input: {
 }): Buffer => {
   const revision = input.revision ?? "bun-1.3.9";
   const recordBytes =
-    revision === "bun-1.3.3" ? BUN_RECORD_BYTES_1_3_3 : BUN_RECORD_BYTES_1_3_9;
+    revision === "bun-1.3.3" ? RECORD_BYTES_1_3_3 : RECORD_BYTES_1_3_9;
   const modules = input.modules ?? [];
   const chunks: Buffer[] = [];
   let cursor = 0;
@@ -73,8 +92,8 @@ export const bunModuleGraphPayload = (input: {
     writePointer(record, 8, contents);
     writePointer(record, 16, row.sourcemap);
     writePointer(record, 24, row.bytecode);
-    const metadataAt = recordBytes === BUN_RECORD_BYTES_1_3_9 ? 48 : 32;
-    if (recordBytes === BUN_RECORD_BYTES_1_3_9) {
+    const metadataAt = recordBytes === RECORD_BYTES_1_3_9 ? 48 : 32;
+    if (recordBytes === RECORD_BYTES_1_3_9) {
       writePointer(record, 32, row.moduleInfo);
       writePointer(record, 40, row.origin);
     }
@@ -86,13 +105,13 @@ export const bunModuleGraphPayload = (input: {
   chunks.push(records.subarray(0, tableLength));
   cursor += tableLength;
   const data = Buffer.concat(chunks);
-  const offsets = Buffer.alloc(BUN_OFFSETS_BYTES);
+  const offsets = Buffer.alloc(OFFSETS_BYTES);
   offsets.writeBigUInt64LE(BigInt(data.length), 0);
   writePointer(offsets, 8, { offset: tableOffset, length: tableLength });
   offsets.writeUInt32LE(input.entryPointId ?? 0, 16);
   writePointer(offsets, 20, argv);
   offsets.writeUInt32LE(input.flags ?? 0, 28);
-  return Buffer.concat([data, offsets, BUN_TRAILER]);
+  return Buffer.concat([data, offsets, BUN_FIXTURE_TRAILER]);
 };
 
 /** Length prefix used by current Mach-O, PE, and ELF section writers. */
@@ -202,8 +221,10 @@ export const elfAppendedBunPayload = (payload: Buffer): Buffer =>
   Buffer.concat([elfPrefix(), payload]);
 
 /** ELF64 whose `.bun` section holds the length-prefixed graph. */
-export const elfBunSection = (section: Buffer): Buffer => {
-  const shstr = Buffer.from("\0.shstrtab\0.bun\0");
+export const elfBunSection = (section: Buffer, nameOffset = 11): Buffer => {
+  const shstr = Buffer.alloc(nameOffset + 5);
+  shstr.write("\0.shstrtab\0");
+  shstr.write(".bun\0", nameOffset);
   const shstrOffset = 64;
   const sectionOffset = shstrOffset + shstr.length;
   const tableOffset = sectionOffset + section.length;
@@ -217,7 +238,13 @@ export const elfBunSection = (section: Buffer): Buffer => {
   shstr.copy(bytes, shstrOffset);
   section.copy(bytes, sectionOffset);
   writeElfSection(bytes, tableOffset + 64, 1, shstrOffset, shstr.length);
-  writeElfSection(bytes, tableOffset + 128, 11, sectionOffset, section.length);
+  writeElfSection(
+    bytes,
+    tableOffset + 128,
+    nameOffset,
+    sectionOffset,
+    section.length,
+  );
   return bytes;
 };
 

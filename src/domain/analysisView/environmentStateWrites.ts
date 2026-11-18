@@ -2,6 +2,10 @@ import type { ExtractedState } from "./environmentStateRules.js";
 import { EnvironmentStateWriteSimulation } from "./EnvironmentStateWriteSimulation.js";
 import type { WriteSimulationInput } from "./environmentStateWriteEffects.js";
 import { usesWriteClock } from "./environmentStateWriteRules.js";
+import {
+  compareOffsetDateTimeInstants,
+  type OffsetDateTimeInstant,
+} from "../offsetDateTime.js";
 
 /** The latest end a record can have and still round up to a whole second a date can hold. */
 const LATEST_END_MS = 8_640_000_000_000_000 - 1000;
@@ -13,17 +17,23 @@ const clockStart = (
   // The clock is global: any unknown completion may extend beyond every known end.
   if (records.some((record) => record.timing.endMs === undefined)) return null;
   // A record timed past the range of a date carries no usable time, so the clock starts from the others.
-  const end = records.reduce(
-    (latest, record) =>
-      record.timing.endMs !== undefined &&
-      Math.abs(record.timing.endMs) <= LATEST_END_MS
-        ? Math.max(latest, record.timing.endMs)
-        : latest,
-    Number.NEGATIVE_INFINITY,
-  );
-  return Number.isFinite(end)
-    ? new Date(Math.ceil(end / 1000) * 1000).toISOString()
-    : null;
+  let latest: OffsetDateTimeInstant | undefined;
+  for (const record of records) {
+    if (
+      record.timing.endMs === undefined ||
+      Math.abs(record.timing.endMs) > LATEST_END_MS
+    )
+      continue;
+    const end = record.timing.end;
+    if (end === undefined) return null;
+    if (latest === undefined || compareOffsetDateTimeInstants(end, latest) > 0)
+      latest = end;
+  }
+  return latest === undefined
+    ? null
+    : new Date(
+        (latest.epochSecond + (latest.fraction === "" ? 0 : 1)) * 1000,
+      ).toISOString();
 };
 
 /**

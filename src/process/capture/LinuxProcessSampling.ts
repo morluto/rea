@@ -1,6 +1,9 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readProcessInspectionFile } from "../ProcessInspectionFile.js";
+import { readdir } from "node:fs/promises";
 import { parseLinuxProcessStat } from "../LinuxProcessStat.js";
+import type { ProcessLifecycle } from "../ProcessLifecycle.js";
 import {
+  settleSamplingReads,
   mergeSamplingDiagnostics,
   readProcSamplingSource,
   samplingFailure,
@@ -18,6 +21,8 @@ export interface SampledProcessRow {
   readonly session_id: number | null;
   readonly command: string;
   readonly startTime: string | undefined;
+  /** Native lifecycle from the stat record; undefined when ps supplied the row. */
+  readonly lifecycle: ProcessLifecycle | undefined;
 }
 
 export interface SampledProcessNode extends SampledProcessRow {
@@ -30,7 +35,7 @@ export const readLinuxProcessStat = async (
 ): Promise<SamplingObservation<SampledProcessRow | undefined>> => {
   const path = `/proc/${String(pid)}/stat`;
   const read = await readProcSamplingSource(path, signal, () =>
-    readFile(path, { encoding: "utf8", signal }),
+    readProcessInspectionFile(path, signal),
   );
   if (read.value === undefined)
     return samplingObservation(undefined, read.diagnostics);
@@ -53,6 +58,7 @@ export const readLinuxProcessStat = async (
       session_id: parsed.sessionId,
       command: "",
       startTime: parsed.startTime,
+      lifecycle: parsed.lifecycle,
     },
     read.diagnostics,
   );
@@ -74,10 +80,10 @@ const systemLinuxChildrenHost: LinuxChildrenHost = {
       .sort((left, right) => left - right);
   },
   children(pid, taskId, signal) {
-    return readFile(`/proc/${String(pid)}/task/${String(taskId)}/children`, {
-      encoding: "utf8",
+    return readProcessInspectionFile(
+      `/proc/${String(pid)}/task/${String(taskId)}/children`,
       signal,
-    });
+    );
   },
 };
 
@@ -105,7 +111,7 @@ export const readLinuxChildren = async (
     offset < tasks.value.length && !signal.aborted;
     offset += PROC_READ_CONCURRENCY
   ) {
-    const texts = await Promise.all(
+    const texts = await settleSamplingReads(
       tasks.value
         .slice(offset, offset + PROC_READ_CONCURRENCY)
         .map((taskId) =>
@@ -182,7 +188,7 @@ const readLinuxCommand = async (
 ): Promise<SamplingObservation<string>> => {
   const path = `/proc/${String(pid)}/cmdline`;
   const command = await readProcSamplingSource(path, signal, () =>
-    readFile(path, { signal }),
+    readProcessInspectionFile(path, signal),
   );
   return samplingObservation(
     command.value?.toString().replaceAll("\0", " ").trim() ?? "",
@@ -228,7 +234,7 @@ export const inspectLinuxProcess = async (
     signal,
     identities,
     async () => {
-      const [command, children] = await Promise.all([
+      const [command, children] = await settleSamplingReads([
         readLinuxCommand(pid, signal),
         readLinuxChildren(pid, signal),
       ]);

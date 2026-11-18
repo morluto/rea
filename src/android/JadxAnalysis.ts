@@ -1,7 +1,6 @@
 import type { z } from "zod";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
-import { observedAndroidManifestComponentsSchema } from "../domain/android/androidManifestComponents.js";
 import {
   type AndroidMappingQuery,
   type AndroidMappingSource,
@@ -63,11 +62,6 @@ export interface JadxAnalysisContext {
     readonly libraries: () => Promise<AndroidJniLibraries>;
   };
 }
-
-const observedPackageSchema =
-  androidResultSchemas.inspect_android_package.extend({
-    components: observedAndroidManifestComponentsSchema,
-  });
 
 const methodsOf = (summary: Pick<ClassSummary, "methods">) => {
   const seen = new Map<string, number>();
@@ -276,7 +270,7 @@ const inspectPackage = async (
   const manifest = normalizeJadxText(
     await tools.text("get_android_manifest", {}),
   );
-  return observedPackageSchema.parse({
+  return androidResultSchemas.inspect_android_package.parse({
     engine,
     package_name: app.package || null,
     version_name: app.version_name || null,
@@ -374,11 +368,33 @@ const matchingMethods = (
   return candidates;
 };
 
-const overloadChoices = (
+/** The method name matched several overloads and no overload_index chose one. */
+const ambiguousOverload = (
+  request: AndroidRequest,
   candidates: ReturnType<typeof matchingMethods>,
   external = false,
-): string =>
-  `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`;
+): never => {
+  throw new AnalysisInputError(
+    request.operation,
+    {
+      ambiguousSelector: {
+        field: ["overload_index"],
+        candidates: candidates.map((method) => ({
+          overload_index: method.overload_index,
+          reported_signature: method.reported_signature,
+          dex_descriptor: method.dex_descriptor,
+        })),
+      },
+    },
+    [
+      {
+        path: ["overload_index"],
+        reason: "invalid_value",
+        message: `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`,
+      },
+    ],
+  );
+};
 
 const inspectMethod = async (
   tools: JadxToolPort,
@@ -388,7 +404,7 @@ const inspectMethod = async (
 ): Promise<JsonValue> => {
   const candidates = matchingMethods(summary, request);
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(request, "overload_index", overloadChoices(candidates));
+    ambiguousOverload(request, candidates);
   const index = request.input.overload_index ?? 0;
   const selected =
     candidates[index] ??
@@ -421,11 +437,22 @@ const inspectMethod = async (
     class_name: summary.full_name,
     method: selected,
     overload_count: candidates.length,
-    representation: body.mode,
-    body_status: body.body.length === 0 ? "not_available" : "available",
-    fell_back: body.fell_back,
-    markers: body.markers,
-    source: normalizeJadxText(body.body),
+    ...(body.mode === "unavailable"
+      ? {
+          representation: null,
+          body_status: "not_available",
+          body_unavailable_reason: body.body_unavailable_reason,
+          fell_back: false,
+          markers: ["disassembly_failed"],
+          source: null,
+        }
+      : {
+          representation: body.mode,
+          body_status: body.body.length === 0 ? "not_available" : "available",
+          fell_back: body.fell_back,
+          markers: body.markers,
+          source: normalizeJadxText(body.body),
+        }),
     ...mappingOf(mapping, () => [
       classQuery(summary),
       ...methodQueries(summary).filter(
@@ -531,11 +558,7 @@ const traceReferences = async (
       "Method name is required for an overload index.",
     );
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(
-      request,
-      "overload_index",
-      overloadChoices(candidates, external),
-    );
+    ambiguousOverload(request, candidates, external);
   const index = request.input.overload_index ?? 0;
   const selected = methodName === undefined ? undefined : candidates[index];
   if (methodName !== undefined && selected === undefined)

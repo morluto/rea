@@ -15,7 +15,7 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
   const boundary = split < 0 ? lfSplit : split;
   if (boundary < 0)
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "SAZ HTTP message has no header/body separator.",
     );
   const lines = bytes
@@ -27,14 +27,17 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
     ? /^(\S+) +(\S+) +(HTTP\/\d+(?:\.\d+)?)$/.exec(first)
     : /^(HTTP\/\d+(?:\.\d+)?) +(\d{3})(?: (.*))?$/.exec(first);
   if (fields === null)
-    throw new CaptureFormatError("format", "SAZ HTTP start line is malformed.");
+    throw new CaptureFormatError(
+      "malformed",
+      "SAZ HTTP start line is malformed.",
+    );
   const headers: { name: string; value: string }[] = [];
   for (const line of lines) {
     if (/^[ \t]/.test(line)) {
       const previous = headers.at(-1);
       if (previous === undefined)
         throw new CaptureFormatError(
-          "format",
+          "malformed",
           "SAZ HTTP header continuation has no field.",
         );
       previous.value += `${split < 0 ? "\n" : "\r\n"}${line}`;
@@ -44,11 +47,14 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
     // HTTP/2 pseudo-headers use the second colon as the delimiter.
     const delimiter = colon === 0 ? line.indexOf(":", 1) : colon;
     if (delimiter < 1)
-      throw new CaptureFormatError("format", "SAZ HTTP header is malformed.");
+      throw new CaptureFormatError(
+        "malformed",
+        "SAZ HTTP header is malformed.",
+      );
     const name = line.slice(0, delimiter);
     if (!/^:?[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name))
       throw new CaptureFormatError(
-        "format",
+        "malformed",
         "SAZ HTTP header name is malformed.",
       );
     headers.push({ name, value: line.slice(delimiter + 1) });

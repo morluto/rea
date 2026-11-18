@@ -28,10 +28,25 @@ if (
   );
 if (outputs.tier === "full" && selectedScopes.length !== CI_FLAGS.length)
   throw new Error("Full qualification requires every canonical CI scope");
+// Only a fast pull-request plan may run a selected test subset.
+const testMode = outputs.test_mode;
+if (
+  !["full", "selected"].includes(testMode) ||
+  (testMode === "selected" &&
+    (outputs.tier !== "fast" ||
+      process.env.GITHUB_EVENT_NAME !== "pull_request" ||
+      outputs.code !== "true"))
+)
+  throw new Error(
+    "CI classification requires a valid test mode: full, or selected on a fast pull request",
+  );
 const required = reused ? ["changes"] : ["changes", "static", "test"];
 if (outputs.tier === "full") required.push("static-deep");
 for (const scope of selectedScopes)
-  required.push(...CI_LANES[scope].required[outputs.tier]);
+  required.push(
+    ...((testMode === "selected" && CI_LANES[scope].selectedTests) ||
+      CI_LANES[scope].required[outputs.tier]),
+  );
 const failed = [...new Set(required)].filter(
   (name) => jobs[name]?.result !== "success",
 );

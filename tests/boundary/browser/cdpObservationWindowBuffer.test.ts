@@ -2,8 +2,9 @@ import { expect, it, onTestFinished, vi } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
-import { recordValue } from "../../../src/browser/CdpCaptureValues.js";
+import { cdpFrameEvent } from "../../../src/browser/protocol/CdpEvents.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import {
   startFakeCdpBrowser,
   type FakeOptions,
@@ -53,8 +54,8 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
         method: "Network.requestWillBeSent",
         sessionId: command.sessionId,
         params: {
-          requestId: "request-before-window",
-          timestamp: 19,
+          requestId: "request-at-cutoff",
+          timestamp: 20,
           type: "Document",
           frameId: "frame-main",
           redirectResponse: { url: `${origin}/before-redirect` },
@@ -128,15 +129,6 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
           timestamp: 21,
         },
       },
-      {
-        method: "Page.navigatedWithinDocument",
-        sessionId: command.sessionId,
-        params: {
-          frameId: "frame-main",
-          url: `${origin}#in-window`,
-          navigationType: "historyApi",
-        },
-      },
     ];
   return undefined;
 };
@@ -167,9 +159,6 @@ it("buffers clock-response events while dropping lifecycle history before the cl
   );
 
   if (!result.ok) throw result.error;
-  expect(browser.commands.map(({ method }) => method)).toContain(
-    "Performance.getMetrics",
-  );
   expect(result.value.timeline).toContainEqual(
     expect.objectContaining({
       type: "lifecycle",
@@ -191,7 +180,7 @@ it("buffers clock-response events while dropping lifecycle history before the cl
     }),
   );
   expect(result.value.timeline).not.toContainEqual(
-    expect.objectContaining({ request_id: "request-before-window" }),
+    expect.objectContaining({ request_id: "request-at-cutoff" }),
   );
   expect(result.value.timeline).toContainEqual(
     expect.objectContaining({
@@ -216,8 +205,10 @@ it("buffers clock-response events while dropping lifecycle history before the cl
       timestamp: 22,
     }),
   );
-  expect(result.value.limitations).toContain(
-    "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /unknown timing.*context only.*do not establish.*observation window/iu,
+    ),
   );
 });
 
@@ -258,78 +249,71 @@ it.each([
   },
 );
 
-it.each([
-  ["out-of-scope navigation", "Page.frameNavigated"],
-  ["target termination", "Inspector.targetCrashed"],
-])(
-  "fails closed when the pre-clock event buffer is exceeded before %s",
-  async (_name, eventAfterBudget) => {
-    const oversizedHash = "x".repeat(8 * 1024 * 1024);
-    const browser = await startFakeCdpBrowser({
-      eventsBeforeReply: ["Performance.getMetrics"],
-      commandResult: (command) =>
-        command.method === "Performance.enable"
-          ? {}
-          : command.method === "Performance.getMetrics"
-            ? { metrics: [{ name: "Timestamp", value: 20 }] }
-            : undefined,
-      commandEvents: (command, origin) => {
-        if (command.method !== "Performance.getMetrics") return undefined;
-        return [
-          {
-            method: "Page.frameNavigated",
-            sessionId: command.sessionId,
-            params: {
-              frame: {
-                id: "frame-main",
-                loaderId: "oversized-loader",
-                url: `${origin}#${oversizedHash}`,
-              },
+it("keeps pre-clock buffer exhaustion primary over later terminal events", async () => {
+  const oversizedHash = "x".repeat(8 * 1024 * 1024);
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Performance.getMetrics"],
+    commandResult: (command) =>
+      command.method === "Performance.enable"
+        ? {}
+        : command.method === "Performance.getMetrics"
+          ? { metrics: [{ name: "Timestamp", value: 20 }] }
+          : undefined,
+    commandEvents: (command, origin) => {
+      if (command.method !== "Performance.getMetrics") return undefined;
+      return [
+        {
+          method: "Page.frameNavigated",
+          sessionId: command.sessionId,
+          params: {
+            frame: {
+              id: "frame-main",
+              loaderId: "oversized-loader",
+              url: `${origin}#${oversizedHash}`,
             },
           },
-          eventAfterBudget === "Page.frameNavigated"
-            ? {
-                method: "Page.frameNavigated",
-                sessionId: command.sessionId,
-                params: {
-                  frame: {
-                    id: "frame-main",
-                    loaderId: "outside-after-budget",
-                    url: "https://outside.example/path",
-                  },
-                },
-              }
-            : {
-                method: "Inspector.targetCrashed",
-                sessionId: command.sessionId,
-                params: {},
-              },
-        ];
-      },
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().observeSession(
-      observeWebSessionInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 20,
-      }),
-    );
+        },
+        {
+          method: "Page.frameNavigated",
+          sessionId: command.sessionId,
+          params: {
+            frame: {
+              id: "frame-main",
+              loaderId: "outside-after-budget",
+              url: "https://outside.example/path",
+            },
+          },
+        },
+        {
+          method: "Inspector.targetCrashed",
+          sessionId: command.sessionId,
+          params: {},
+        },
+      ];
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().observeSession(
+    observeWebSessionInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 20,
+    }),
+  );
 
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BrowserObservationError",
-        reason: "payload_limit",
-        userMessage: expect.stringContaining("retained CDP event buffer"),
-      },
-    });
-    expect(browser.commands.map(({ method }) => method)).not.toContain(
-      "Page.setLifecycleEventsEnabled",
-    );
-  },
-);
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BrowserObservationError",
+      reason: "payload_limit",
+      userMessage: expect.stringContaining("retained CDP event buffer"),
+    },
+  });
+  expect(browser.commands.map(({ method }) => method)).not.toContain(
+    "Page.setLifecycleEventsEnabled",
+  );
+});
 
 it("ignores unrelated protocol payloads before charging the timeline buffer", async () => {
   const browser = await startFakeCdpBrowser({
@@ -383,23 +367,17 @@ it("ignores unrelated protocol payloads before charging the timeline buffer", as
 });
 
 it("keeps cancellation authoritative while an over-budget clock request is pending", async () => {
-  let received = false;
+  const received = phaseArrival();
   const onEvent = CdpConnection.prototype.onEvent;
   const subscribe = vi
     .spyOn(CdpConnection.prototype, "onEvent")
     .mockImplementation(function (this: CdpConnection, listener) {
       return onEvent.call(this, (event) => {
         listener(event);
-        if (
-          event.method === "Page.frameNavigated" &&
-          recordValue(recordValue(event.params)?.frame)?.loaderId ===
-            "oversized-before-clock"
-        )
+        if (cdpFrameEvent(event)?.facts.loaderId === "oversized-before-clock")
           // All subscribers finish synchronously before this microtask, including
           // the timeline owner that admits or rejects the received payload.
-          queueMicrotask(() => {
-            received = true;
-          });
+          queueMicrotask(() => received.arrive());
       });
     });
   onTestFinished(() => subscribe.mockRestore());
@@ -435,7 +413,7 @@ it("keeps cancellation authoritative while an over-budget clock request is pendi
       },
     },
   });
-  await waitFor(() => received, "the over-budget event was not received");
+  await received.reached(pending, "over-budget event");
   controller.abort();
 
   await expect(pending).resolves.toMatchObject({

@@ -15,6 +15,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 /** Exact requested facts; only the parent Evidence's raw protocol calls are omitted. */
 export const androidClassSummarySchema =
@@ -81,7 +82,8 @@ export const projectAndroidSymbolSummary = (
       ]),
     );
   // The engine artifact digest is the JAR; it cannot identify the APK.
-  if (parent.subject == null)
+  const subject = evidenceSubjectTarget(parent.subject);
+  if (subject === undefined)
     return err(
       analysisViewInputError([
         {
@@ -97,11 +99,8 @@ export const projectAndroidSymbolSummary = (
     view,
     parent_evidence_id: parent.evidenceId,
     parent_digest: parent.evidenceId.slice(3),
-    artifact: {
-      path: parent.subject.local_path,
-      sha256: parent.subject.digest.sha256,
-    },
-    coverage: completeWithinViewCoverage(1, 1),
+    artifact: { path: subject.path, sha256: subject.sha256 },
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       parent.limitations,
       parent.evidenceId,
@@ -128,7 +127,10 @@ export const projectAndroidSymbolSummary = (
     summary: parsed.value,
     unknowns: [
       ...shared.unknowns,
-      ...(parsed.value.source.status === "partial"
+      ...(parsed.value.source === null
+        ? [parsed.value.body_unavailable_reason]
+        : []),
+      ...(parsed.value.source?.status === "partial"
         ? [
             "The selected method source is partial; retained text does not establish a complete method body.",
           ]

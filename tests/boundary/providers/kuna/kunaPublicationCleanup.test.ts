@@ -15,6 +15,7 @@ import {
   writeFakeKuna,
   type FakeKunaBehavior,
 } from "./fakeKuna.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 
 const fault = vi.hoisted(() => ({ root: "", blocked: false }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -78,7 +79,7 @@ const fixture = async (behavior: FakeKunaBehavior = {}) => {
 it("retains the completed publication receipt while retrying only stopped staging cleanup", async () => {
   const { cache, request, kuna } = await fixture();
   try {
-    const built = await cache.build(request);
+    const built = await cache.build(withKunaProjectDeadline(request));
     if (built.ok) throw new Error("Expected retained staging cleanup failure");
     expect(built.error).toBeInstanceOf(KunaPublishedProjectCleanupError);
     if (!(built.error instanceof KunaPublishedProjectCleanupError))
@@ -164,7 +165,7 @@ it("reuses the published export in the same session without hiding pending clean
 it("preserves the original failed export when staging cleanup also fails", async () => {
   const { cache, request } = await fixture({ project: "exit-failure" });
   try {
-    const built = await cache.build(request);
+    const built = await cache.build(withKunaProjectDeadline(request));
     if (built.ok) throw new Error("Expected export and cleanup failure");
     expect(built.error).not.toBeInstanceOf(KunaPublishedProjectCleanupError);
     expect(built.error.cleanupIncomplete).toBe(true);

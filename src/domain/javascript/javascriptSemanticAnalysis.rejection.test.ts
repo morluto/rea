@@ -7,11 +7,7 @@ import {
   analyzeParsedJavaScriptSemantics,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
-import {
-  collectJavaScriptExports,
-  fingerprintJavaScriptAst,
-} from "./javascriptAstFingerprint.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import {
   onlyCallable,
@@ -41,8 +37,6 @@ describe("JavaScript semantic analysis: rejection 1", () => {
       const staticAnalysis = analyzeParsedJavaScriptStaticSource("", parsed);
       expect(staticAnalysis.parse_status).toBe("complete");
       expect(staticAnalysis.visited_ast_nodes).toBe(24006);
-      expect(collectJavaScriptExports(parsed).values).toEqual([]);
-      expect(fingerprintJavaScriptAst(parsed)).toMatch(/^[a-f0-9]{64}$/u);
       const ir = analyzeParsedJavaScriptSemantics(parsed);
       expect(ir.coverage).toMatchObject({
         status: "partial",

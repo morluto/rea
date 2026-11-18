@@ -11,6 +11,7 @@ import type {
 } from "playwright-core";
 
 import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
+import { Budget } from "../domain/budget.js";
 import {
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
@@ -100,7 +101,7 @@ type EventKind = BrowserScenarioEvent["kind"];
 /** Arrival-ordered Playwright event capture with current-step attribution. */
 export class PlaywrightScenarioEvents {
   private readonly items: BrowserScenarioEvent[] = [];
-  private retainedCost = 0;
+  private readonly retained: Budget;
   private dropped = 0;
   private readonly omittedKinds = new Map<
     EventKind,
@@ -140,6 +141,7 @@ export class PlaywrightScenarioEvents {
       this.enabled = new Set([...this.enabled, "network"]);
     this.secrets = options.secrets;
     this.limits = options.limits ?? DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS;
+    this.retained = new Budget(this.limits.max_total_event_allocation_bytes);
     this.ownsContext = options.ownsContext === true;
     this.pages.add(options.page);
     if (this.ownsContext && this.enabled.size > 0) {
@@ -323,10 +325,10 @@ export class PlaywrightScenarioEvents {
         original,
         this.limits.max_event_allocation_bytes,
       );
-      this.retainedCost -= oldCost;
+      this.retained.refund(oldCost);
       const available = Math.min(
         this.limits.max_event_allocation_bytes,
-        this.limits.max_total_event_allocation_bytes - this.retainedCost,
+        this.retained.remaining,
       );
       const extra = eventTextUnits(
         original.kind === "network-content"
@@ -384,11 +386,10 @@ export class PlaywrightScenarioEvents {
         reason =
           cost > this.limits.max_event_allocation_bytes
             ? "max-event-allocation-bytes"
-            : cost > available
-              ? "max-total-event-allocation-bytes"
-              : undefined;
+            : this.retained.tryCharge(cost)
+              ? undefined
+              : "max-total-event-allocation-bytes";
         if (reason === undefined) {
-          this.retainedCost += cost;
           this.items[retained++] = event;
           continue;
         }
@@ -578,17 +579,15 @@ export class PlaywrightScenarioEvents {
     this.sequence += 1;
     const cost =
       allocationCost(event, this.limits.max_event_allocation_bytes) + 128;
-    const reason = this.admissionReason(cost);
-    if (this.sealed || reason !== undefined) {
-      const finalReason = reason ?? "max-events";
-      this.omitEvent(event.kind, finalReason);
-      return {
-        status: "omitted",
-        sequence: this.sequence,
-        reason: finalReason,
-      };
+    const reason =
+      this.admissionReason(cost) ??
+      (this.retained.tryCharge(cost)
+        ? undefined
+        : "max-total-event-allocation-bytes");
+    if (reason !== undefined) {
+      this.omitEvent(event.kind, reason);
+      return { status: "omitted", sequence: this.sequence, reason };
     }
-    this.retainedCost += cost;
     const parsed = browserScenarioEventSchema.parse({
       ...event,
       sequence: this.sequence,
@@ -632,7 +631,7 @@ export class PlaywrightScenarioEvents {
       return "max-events";
     if (cost > this.limits.max_event_allocation_bytes)
       return "max-event-allocation-bytes";
-    if (cost > this.limits.max_total_event_allocation_bytes - this.retainedCost)
+    if (cost > this.retained.remaining)
       return "max-total-event-allocation-bytes";
     return undefined;
   }
@@ -906,11 +905,7 @@ export class PlaywrightScenarioEvents {
 
   private popup(page: Page): void {
     if (this.pages.has(page)) return;
-    if (
-      !this.admitOwner("popup-opened") ||
-      !this.admitText("popup-opened", page.url())
-    )
-      return;
+    if (!this.admitOwner("popup-opened")) return;
     this.pages.add(page);
     for (const family of [
       "frames",
@@ -919,12 +914,14 @@ export class PlaywrightScenarioEvents {
       "downloads",
     ] as const)
       if (this.enabled.has(family)) this.incompleteFamilies.add(family);
-    const opened = {
-      url: page.url() === "" ? null : this.safeUrl(page.url()),
-      name: null,
-    };
     if (this.enabled.has("popups")) {
-      this.push({ kind: "popup-opened", ...opened });
+      const url = page.url();
+      if (this.admitText("popup-opened", url))
+        this.push({
+          kind: "popup-opened",
+          url: url === "" ? null : this.safeUrl(url),
+          name: null,
+        });
       const onClose = () => {
         if (!this.admitText("popup-closed", page.url())) return;
         this.push({

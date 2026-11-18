@@ -1,3 +1,4 @@
+import { createTestArtifactResourceScope } from "../../../fixtures/artifactResourceScope.js";
 import {
   access,
   chmod,
@@ -29,6 +30,7 @@ import {
   ghidraHeadlessCommand,
   GhidraHeadlessLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -110,14 +112,14 @@ describe("Ghidra COM loader", () => {
       descriptorPath: "/tmp/session.json",
       ghidraLogPath: "/tmp/ghidra.log",
       scriptLogPath: "/tmp/script.log",
-      dosCom: true,
+      dosCom: { loader: "ComLoader" },
     });
     expectOptions(arguments_, [
-      ["-loader", "BinaryLoader"],
-      ["-loader-baseAddr", "1000:0100"],
+      ["-loader", "ComLoader"],
       ["-processor", "x86:LE:16:Real Mode"],
       ["-cspec", "default"],
     ]);
+    expect(arguments_).not.toContain("-loader-baseAddr");
     const prepare = arguments_.indexOf("-preScript");
     expect(arguments_[prepare + 1]).toBe(
       join("/package/bridge", "ReaGhidraPrepareCom.java"),
@@ -125,6 +127,27 @@ describe("Ghidra COM loader", () => {
     expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
+  });
+
+  it("keeps BinaryLoader at 1000:0100 when ComLoader is not selected", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target.bin",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      dosCom: { loader: "BinaryLoader" },
+    });
+    expectOptions(arguments_, [
+      ["-loader", "BinaryLoader"],
+      ["-loader-baseAddr", "1000:0100"],
+      ["-processor", "x86:LE:16:Real Mode"],
+      ["-cspec", "default"],
+    ]);
+    expect(arguments_).toContain(
+      join("/package/bridge", "ReaGhidraPrepareCom.java"),
+    );
   });
 });
 
@@ -234,7 +257,7 @@ describe("Ghidra GameCube DOL loader", () => {
   it.each([
     ["PSP", { psp: true }],
     ["DOS MZ", { dosMz: true }],
-    ["DOS COM", { dosCom: true }],
+    ["DOS COM", { dosCom: { loader: "ComLoader" } }],
     ["MIPS soft-float", { mipsSoftFloat: true }],
     [
       "RISC-V calling convention",
@@ -344,7 +367,7 @@ describe("Ghidra headless launcher", () => {
     for (const conflict of [
       { psp: true as const },
       { dosMz: true as const },
-      { dosCom: true as const },
+      { dosCom: { loader: "ComLoader" } as const },
       {
         rawBinary: {
           languageId: "x86:LE:32:default",
@@ -401,7 +424,7 @@ describe("Ghidra headless launcher", () => {
       { psp: true as const },
       { mipsSoftFloat: true as const },
       { dosMz: true as const },
-      { dosCom: true as const },
+      { dosCom: { loader: "ComLoader" } as const },
       {
         rawBinary: {
           languageId: "x86:LE:32:default",
@@ -507,7 +530,7 @@ describe("Ghidra configured import language and seeds", () => {
         ...base,
         platform,
         bridgeScriptPath: path.join(bridgeDirectory, "ReaGhidraBridge.java"),
-        dosCom: true,
+        dosCom: { loader: "ComLoader" },
         seedPath,
       });
       const prepare = arguments_.indexOf(
@@ -545,7 +568,7 @@ describe("Ghidra disabled analyzers", () => {
   it("applies the analyzer options after seeds and before analysis scripts", () => {
     const arguments_ = ghidraHeadlessArguments({
       ...base,
-      dosCom: true,
+      dosCom: { loader: "ComLoader" },
       seedPath: posix.join("/tmp/runtime/seeds", "seeds.tsv"),
       disabledAnalyzers: [
         "Objective-C Message Analyzer",
@@ -665,7 +688,7 @@ describe("Ghidra existing project", () => {
 
   it.each([
     [{ dosMz: true as const }, "existing_project_dos"],
-    [{ dosCom: true as const }, "existing_project_dos"],
+    [{ dosCom: { loader: "ComLoader" } as const }, "existing_project_dos"],
     [
       {
         rawBinary: {
@@ -787,17 +810,20 @@ const launchExistingProject = async (
       return fakeSpawnedProcess(options.runId);
     },
   });
-  return launcher.launch({
-    runtimeRoot,
-    transport: "unix-socket",
-    endpointPath: join(runtimeRoot, "bridge.sock"),
-    token: "secret-token-that-must-not-leak",
-    runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
-    targetPath: "/tmp/target",
-    targetSha256: "b".repeat(64),
-    providerVersion: "12.1.4",
-    profileDigest: "a".repeat(64),
-  });
+  return launcher.launch(
+    {
+      runtimeRoot,
+      transport: "unix-socket",
+      endpointPath: join(runtimeRoot, "bridge.sock"),
+      token: "secret-token-that-must-not-leak",
+      runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+      targetPath: "/tmp/target",
+      targetSha256: "b".repeat(64),
+      providerVersion: "12.1.4",
+      profileDigest: "a".repeat(64),
+    },
+    { resourceScope: createTestArtifactResourceScope() },
+  );
 };
 
 describe("Ghidra existing project launcher", () => {
@@ -868,7 +894,6 @@ describe("Ghidra existing project launcher", () => {
         join(parent, "absent-project"),
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       // The launcher wraps the copy failure; the reason stays on the cause.
       expect(String(launched.error.cause)).toMatch(/does not exist/u);
@@ -895,7 +920,6 @@ describe("Ghidra existing project launcher", () => {
         sourceProject,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(/rea-project\.gpr/u);
       expect(spawned).toHaveLength(0);
@@ -922,7 +946,6 @@ describe("Ghidra existing project launcher", () => {
         runtime.path,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -947,7 +970,6 @@ describe("Ghidra existing project launcher", () => {
         join(runtime.path, "project"),
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -983,7 +1005,6 @@ describe("Ghidra existing project symlink overlap", () => {
         alias,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -1016,7 +1037,6 @@ describe("Ghidra expanded project admission", () => {
       sourceProject,
       spawned,
     );
-    expect(launched.ok).toBe(false);
     if (launched.ok) throw new Error("launch unexpectedly succeeded");
     expect(String(launched.error.cause)).toMatch(
       /restore saved \.grez archives/u,
@@ -1121,17 +1141,20 @@ describe("Ghidra Windows release configuration", () => {
         }),
         spawnProcess,
       });
-      const launched = await launcher.launch({
-        runtimeRoot: runtime.path,
-        transport: "unix-socket",
-        endpointPath: join(runtime.path, "bridge.sock"),
-        token: "fixture-token",
-        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
-        targetPath: join(parent, "fixture.exe"),
-        targetSha256: "b".repeat(64),
-        providerVersion: "12.1.4",
-        profileDigest: "a".repeat(64),
-      });
+      const launched = await launcher.launch(
+        {
+          runtimeRoot: runtime.path,
+          transport: "unix-socket",
+          endpointPath: join(runtime.path, "bridge.sock"),
+          token: "fixture-token",
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: join(parent, "fixture.exe"),
+          targetSha256: "b".repeat(64),
+          providerVersion: "12.1.4",
+          profileDigest: "a".repeat(64),
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
       expect(launched.ok).toBe(false);
       expect(spawnProcess).toHaveBeenCalledOnce();
       expect(
@@ -1175,23 +1198,24 @@ describe("Ghidra Windows launcher process ownership", () => {
           environment: {},
         }),
       });
-      const launched = await launcher.launch({
-        runtimeRoot,
-        transport: "unix-socket",
-        endpointPath: join(runtimeRoot, "bridge.sock"),
-        token,
-        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
-        targetPath: "/tmp/fixture",
-        targetSha256: "b".repeat(64),
-        providerVersion: "12.1.4",
-        profileDigest: "a".repeat(64),
-      });
+      const launched = await launcher.launch(
+        {
+          runtimeRoot,
+          transport: "unix-socket",
+          endpointPath: join(runtimeRoot, "bridge.sock"),
+          token,
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: "/tmp/fixture",
+          targetSha256: "b".repeat(64),
+          providerVersion: "12.1.4",
+          profileDigest: "a".repeat(64),
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
       if (!launched.ok) throw launched.error;
       try {
         const capturePath = join(runtimeRoot, "launch-capture.json");
-        await vi.waitFor(() => access(`${capturePath}.ready`), {
-          timeout: 10_000,
-        });
+        await waitFor(() => access(`${capturePath}.ready`));
         const capture = launchCaptureSchema.parse(
           JSON.parse(await readFile(capturePath, "utf8")),
         );
@@ -1254,17 +1278,20 @@ describe("Ghidra GameCube DOL section file", () => {
           sectionFile,
         },
       });
-      await launcher.launch({
-        runtimeRoot: runtime.path,
-        transport: "unix-socket",
-        endpointPath: join(runtime.path, "bridge.sock"),
-        token: "token-for-section-test",
-        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
-        targetPath: "/tmp/fixture.dol",
-        targetSha256: "c".repeat(64),
-        providerVersion: "12.1.4",
-        profileDigest: "a".repeat(64),
-      });
+      await launcher.launch(
+        {
+          runtimeRoot: runtime.path,
+          transport: "unix-socket",
+          endpointPath: join(runtime.path, "bridge.sock"),
+          token: "token-for-section-test",
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: "/tmp/fixture.dol",
+          targetSha256: "c".repeat(64),
+          providerVersion: "12.1.4",
+          profileDigest: "a".repeat(64),
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
       expect(spawnProcess).toHaveBeenCalledOnce();
       const sectionPath = join(runtime.path, "gamecube-dol-sections.txt");
       expect(await readFile(sectionPath, "utf8")).toBe(sectionFile);

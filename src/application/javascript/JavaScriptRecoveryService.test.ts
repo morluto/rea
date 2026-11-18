@@ -3,7 +3,7 @@ import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCo
 import { err, ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { JavaScriptRecoveryService } from "./JavaScriptRecoveryService.js";
 
 const artifact = { path: "/tmp/bundle.js", sha256: "a".repeat(64), bytes: 20 };
@@ -154,7 +154,13 @@ describe("JavaScript recovery workflow", () => {
     expect(invoked).toBe(false);
     if (result.ok) throw new Error("expected invalid path");
     expect(result.error).toMatchObject({
-      issues: [{ path: ["additional_paths"], reason: "invalid_format" }],
+      issues: [
+        {
+          path: ["additional_paths", 0],
+          reason: "invalid_format",
+          expected: "regex",
+        },
+      ],
     });
   });
 });
@@ -186,8 +192,7 @@ it("returns cancellation with the validated Evidence when the caller aborts afte
     parameters: input,
     subject: {
       local_path: artifact.path,
-      digest: { sha256: artifact.sha256 },
-      format: "javascript",
+      identity: { sha256: artifact.sha256, format: "javascript" },
     },
     confidence: "derived",
     authority: "shipped-artifact",

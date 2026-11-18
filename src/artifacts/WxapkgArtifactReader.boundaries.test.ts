@@ -1,3 +1,4 @@
+import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import { buildWxapkg } from "../../tests/fixtures/wxapkg.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
   const path = join(
@@ -26,6 +28,68 @@ const entries = async (reader: WxapkgArtifactReader) => {
   return result;
 };
 
+it("retries Wxapkg preparation cancelled during file reading", async () => {
+  const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new WxapkgArtifactReader(path, admitted);
+  const controller = new AbortController();
+  const reason = { stage: "header read" };
+  const nativeRead = admitted.handle.read.bind(admitted.handle);
+  const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(nativeRead, admitted.handle, args);
+    controller.abort(reason);
+    return result;
+  }) as typeof admitted.handle.read);
+  try {
+    await expect(
+      (async () => {
+        for await (const _ of reader.entries(controller.signal)) {
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    read.mockRestore();
+    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
+it("does not publish Wxapkg entries when final source verification fails", async () => {
+  const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));
+  const control = new WxapkgArtifactReader(path);
+  const reader = new WxapkgArtifactReader(path);
+  const expected = (await entries(control))[0]!;
+  const nativeRead = ArtifactFileSource.prototype.read;
+  const physical = Object.assign(
+    new Error("final source verification failed"),
+    { code: "EIO" },
+  );
+  let calls = 0;
+  const read = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, ...args) {
+      calls += 1;
+      if (calls === 2) return Promise.reject(physical);
+      return nativeRead.apply(this, args);
+    });
+  try {
+    await expect(entries(reader)).rejects.toBe(physical);
+    await expect(reader.open(expected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    read.mockRestore();
+    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
 describe("wxapkg allocation and malformed-input boundaries", () => {
   it("admits the encoded table budget before reading it", async () => {
     const bytes = buildWxapkg([{ path: "a", data: "x" }]);
@@ -40,6 +104,12 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(entries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg member table allowance",
+          kind: "parser",
+          limit: 16 * 1024 * 1024,
+          unit: "bytes",
+        },
       });
       expect(reads).toHaveBeenCalledTimes(1); // bounded header only
     } finally {
@@ -75,6 +145,10 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(entries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg directory representation allowance",
+          unit: "bytes",
+        },
       });
     } finally {
       await reader.close();
@@ -92,7 +166,10 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await fixture(buildWxapkg(members, { aliasOffsets: true })),
     );
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "limit" });
+      await expect(entries(reader)).rejects.toMatchObject({
+        reason: "limit",
+        message: expect.stringContaining("wxapkg members declare"),
+      });
     } finally {
       await reader.close();
     }
@@ -119,6 +196,117 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       });
     } finally {
       await reader.close();
+    }
+  });
+});
+
+describe("wxapkg pending read cancellation", () => {
+  it("retains final source verification failure during cancellation", async () => {
+    const reader = new WxapkgArtifactReader(
+      await fixture(buildWxapkg([{ path: "x", data: "bytes" }])),
+    );
+    const [entry] = await entries(reader);
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    const failure = new Error("final source verification failed");
+    const controller = new AbortController();
+    const read = ArtifactFileSource.prototype.read;
+    let count = 0;
+    const observer = vi
+      .spyOn(ArtifactFileSource.prototype, "read")
+      .mockImplementation(async function (this: ArtifactFileSource, signal) {
+        if (++count === 2) {
+          reached.resolve();
+          await release.promise;
+          throw failure;
+        }
+        return read.call(this, signal);
+      });
+    let consumed: Promise<Buffer> | undefined;
+    try {
+      consumed = buffer(await reader.open(entry!, controller.signal));
+      await awaitAcknowledgement(
+        reached.promise,
+        consumed,
+        "final verification",
+      );
+      controller.abort(new Error("caller cancelled"));
+      release.resolve();
+      await expect(consumed).rejects.toBe(failure);
+    } finally {
+      release.resolve();
+      await consumed?.catch(() => undefined);
+      observer.mockRestore();
+      await reader.close();
+    }
+  });
+
+  it("retains the member cancellation outcome after a pending read succeeds", async () => {
+    const path = await fixture(buildWxapkg([{ path: "x", data: "bytes" }]));
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new WxapkgArtifactReader(path, admitted);
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    const controller = new AbortController();
+    const reason = new Error("caller cancelled");
+    const nativeRead = admitted.handle.read.bind(admitted.handle);
+    const [entry] = await entries(reader);
+    const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      reached.resolve();
+      await release.promise;
+      return Reflect.apply(nativeRead, admitted.handle, args);
+    }) as typeof admitted.handle.read);
+    let consumed: Promise<Buffer> | undefined;
+    try {
+      consumed = buffer(await reader.open(entry!, controller.signal));
+      await awaitAcknowledgement(reached.promise, consumed, "member read");
+      controller.abort(reason);
+      release.resolve();
+      await expect(consumed).rejects.toMatchObject({
+        reason: "cancelled",
+        message: "wxapkg member read cancelled",
+        cause: reason,
+      });
+    } finally {
+      release.resolve();
+      await consumed?.catch(() => undefined);
+      reads.mockRestore();
+      await reader.close();
+      await admitted.handle.close();
+    }
+  });
+
+  it("preserves a pending read failure when cancellation overlaps it", async () => {
+    const path = await fixture(buildWxapkg([{ path: "x", data: "bytes" }]));
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new WxapkgArtifactReader(path, admitted);
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    const failure = new Error("member read failed");
+    const controller = new AbortController();
+    const [entry] = await entries(reader);
+    const reads = vi
+      .spyOn(admitted.handle, "read")
+      .mockImplementation((async () => {
+        reached.resolve();
+        await release.promise;
+        throw failure;
+      }) as typeof admitted.handle.read);
+    let consumed: Promise<Buffer> | undefined;
+    try {
+      consumed = buffer(await reader.open(entry!, controller.signal));
+      await awaitAcknowledgement(reached.promise, consumed, "member read");
+      controller.abort(new Error("caller cancelled"));
+      release.resolve();
+      await expect(consumed).rejects.toBe(failure);
+    } finally {
+      release.resolve();
+      await consumed?.catch(() => undefined);
+      reads.mockRestore();
+      await reader.close();
+      await admitted.handle.close();
     }
   });
 });
@@ -243,29 +431,30 @@ describe("wxapkg stream capacity and freshness", () => {
     }
   });
 
-  it("bounds repeated member I/O operations, including empty members", async () => {
+  it.each([
+    { path: "x", data: "b" },
+    { path: "empty.wxss", data: "" },
+  ])("bounds repeated I/O operations for $path", async (member) => {
     const reader = new WxapkgArtifactReader(
-      await fixture(
-        buildWxapkg([
-          { path: "x", data: "b" },
-          { path: "empty.wxss", data: "" },
-        ]),
-      ),
+      await fixture(buildWxapkg([member])),
     );
     try {
-      const [entry, emptyEntry] = await entries(reader);
+      const [entry] = await entries(reader);
       await expect(
         (async () => {
           for (let index = 0; index < 5000; index++)
             await buffer(await reader.open(entry!));
         })(),
-      ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
-      await expect(
-        (async () => {
-          for (let index = 0; index < 5000; index++)
-            await buffer(await reader.open(emptyEntry!));
-        })(),
-      ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+      ).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg directory-and-chunk I/O work allowance",
+          kind: "parser",
+          limit: expect.any(Number),
+          unit: "operations",
+        },
+      });
     } finally {
       await reader.close();
     }
@@ -307,4 +496,9 @@ describe("wxapkg stream capacity and freshness", () => {
       await reader.close();
     }
   });
+});
+
+artifactPreparationRecoveryCases({
+  image: () => buildWxapkg([{ path: "a", data: "x" }]),
+  createReader: (path, admitted) => new WxapkgArtifactReader(path, admitted),
 });

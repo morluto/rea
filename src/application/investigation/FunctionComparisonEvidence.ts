@@ -1,5 +1,9 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { functionComparisonInputSchema } from "../../domain/functionComparisonSchemas.js";
-import { FUNCTION_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
+import {
+  FUNCTION_COMPARISON_PROFILE,
+  FUNCTION_COMPARISON_PROVIDER,
+} from "../../domain/comparisonEvidenceIdentity.js";
 import { compareFunctions } from "../../domain/functionComparison.js";
 import { parseFunctionEvidence } from "../../domain/functionDossierEvidence.js";
 import { createEvidence } from "../../domain/evidence.js";
@@ -47,19 +51,24 @@ export const compareFunctionEvidence = (
     const rightEvidence = right.value.evidence;
     const leftIds = [leftEvidence.evidence_id];
     const rightIds = [rightEvidence.evidence_id];
-    const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
-      predicateType: "rea.function-comparison",
-      operation: "compare_functions",
-      parameters: {
-        left_evidence_id: leftEvidence.evidence_id,
-        right_evidence_id: rightEvidence.evidence_id,
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      FUNCTION_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.function-comparison",
+        operation: "compare_functions",
+        analysisProfile: FUNCTION_COMPARISON_PROFILE,
+        parameters: {
+          left_evidence_id: leftEvidence.evidence_id,
+          right_evidence_id: rightEvidence.evidence_id,
+        },
+        result: comparison,
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: comparison.limitations,
+        evidenceLinks: [...leftIds, ...rightIds],
       },
-      result: comparison,
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: comparison.limitations,
-      evidenceLinks: [...leftIds, ...rightIds],
-    });
+    );
     return ok({
       evidence,
       sources: [leftEvidence, rightEvidence],
@@ -81,29 +90,44 @@ const comparisonUnknownInput = (
   leftIds: readonly string[],
   rightIds: readonly string[],
   comparisonEvidenceId: string,
-): RecordUnknownInput | undefined =>
-  functionUnknownInput({
-    status: comparison.status,
-    dimensions: comparison.dimensions
-      .filter(({ status }) =>
-        comparison.status === "unknown"
-          ? status === "unknown"
-          : status === "changed",
-      )
-      .map(({ dimension }) => dimension),
+): RecordUnknownInput | undefined => {
+  const discoveryUnresolved = comparison.dimensions.some(
+    ({ dimension, discovery_status }) =>
+      dimension === "calls" && discovery_status !== "complete",
+  );
+  const status =
+    comparison.status === "unchanged" && discoveryUnresolved
+      ? "unknown"
+      : comparison.status;
+  const dimensions = comparison.dimensions
+    .filter(
+      ({ dimension, status: dimensionStatus }) =>
+        (status === "unknown"
+          ? dimensionStatus === "unknown"
+          : dimensionStatus === "changed") ||
+        (dimension === "calls" && discoveryUnresolved),
+    )
+    .map(({ dimension }) => dimension);
+  return functionUnknownInput({
+    status,
+    dimensions,
+    discoveryUnresolved,
     leftIds,
     rightIds,
     comparisonEvidenceId,
   });
+};
 
 const functionUnknownInput = ({
   status,
   dimensions,
+  discoveryUnresolved,
   leftIds,
   rightIds,
   comparisonEvidenceId,
 }: {
   status: ReturnType<typeof compareFunctions>["status"];
+  discoveryUnresolved: boolean;
   dimensions: readonly ReturnType<
     typeof compareFunctions
   >["dimensions"][number]["dimension"][];
@@ -118,7 +142,7 @@ const functionUnknownInput = ({
   const contradictingIds = rightIds.filter((id) => !leftIds.includes(id));
   const contradictory = status === "changed";
   return {
-    question: `Function comparison is ${status} (comparison ${comparisonEvidenceId})`,
+    question: `Function comparison is ${status}${discoveryUnresolved ? "; call discovery is not fully established" : ""} (comparison ${comparisonEvidenceId})`,
     severity: status === "changed" ? "medium" : "high",
     domain: "function-comparison",
     comparison_conclusion_scope: {

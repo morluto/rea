@@ -4,7 +4,6 @@ import type { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { buildMultiPayload, buildUImage } from "../../tests/fixtures/uimage.js";
 import {
@@ -360,9 +359,15 @@ it("rejects an entry that does not match its owning inventory", async () => {
     const entries = [];
     for await (const item of reader.entries()) entries.push(item);
     const forged = { ...entries[0]!, declaredSize: 999 };
-    await expect(reader.open(forged)).rejects.toBeInstanceOf(
-      ArtifactReaderFailure,
-    );
+    await expect(reader.open(forged)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+    const foreign = { ...entries[0]!, adapterKey: "foreign" };
+    await expect(reader.open(foreign)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
   } finally {
     await reader.close();
   }

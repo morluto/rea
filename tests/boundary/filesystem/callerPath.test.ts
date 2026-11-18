@@ -1,6 +1,31 @@
 import { expect, it, vi } from "vitest";
 
-import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
+import {
+  absoluteCallerPath,
+  isQualifiedCallerPath,
+} from "../../../src/filesystem/callerPath.js";
+
+it.each([
+  ["win32", "C:\\tools\\adb.exe", true],
+  ["win32", "c:/tools/adb.exe", true],
+  ["win32", "\\\\server\\share\\adb.exe", true],
+  ["win32", "//server/share/adb.exe", true],
+  ["win32", "\\\\?\\C:\\tools\\adb.exe", true],
+  ["win32", "//server//share/adb.exe", true],
+  ["win32", "\\tools\\adb.exe", false],
+  // Repeated separators without a share still resolve on the current drive.
+  ["win32", "///tools/adb.exe", false],
+  ["win32", "\\\\\\tools\\adb.exe", false],
+  ["win32", "\\\\server", false],
+  ["win32", "/tools/adb.exe", false],
+  ["win32", "C:tools\\adb.exe", false],
+  ["win32", "tools\\adb.exe", false],
+  ["linux", "/opt/tools/adb", true],
+  ["linux", "tools/adb", false],
+  ["linux", "C:\\tools\\adb", false],
+] as const)("on %s treats %j as qualified: %s", (platform, path, qualified) => {
+  expect(isQualifiedCallerPath(path, platform)).toBe(qualified);
+});
 
 it("resolves absolute POSIX paths independently of an unavailable cwd", () => {
   const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
@@ -43,9 +68,14 @@ it("removes only POSIX spellings that cannot change the named file", () => {
 });
 
 it("makes a relative POSIX cwd absolute before appending the path", () => {
-  expect(
-    absoluteCallerPath("sample", { cwd: "fixtures/../x", platform: "linux" }),
-  ).toBe(`${process.cwd()}/fixtures/../x/sample`);
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue("/work");
+  try {
+    expect(
+      absoluteCallerPath("sample", { cwd: "fixtures/../x", platform: "linux" }),
+    ).toBe("/work/fixtures/../x/sample");
+  } finally {
+    cwd.mockRestore();
+  }
 });
 
 it("uses lexical resolution on Windows, where it is exact", () => {
@@ -65,4 +95,32 @@ it("normalizes separator spellings of absolute Windows paths (#4707)", () => {
     "C://Users//u//h.exe",
   ])
     expect(absoluteCallerPath(spelling, win32)).toBe("C:\\Users\\u\\h.exe");
+});
+
+it("keeps unselected Windows share paths lexical", () => {
+  expect(
+    absoluteCallerPath("\\\\unselected-server\\share\\Source.JS", {
+      platform: "win32",
+    }),
+  ).toBe("\\\\unselected-server\\share\\Source.JS");
+  expect(
+    absoluteCallerPath("C:\\CaseSensitive\\Different.js", {
+      platform: "win32",
+    }),
+  ).toBe("C:\\CaseSensitive\\Different.js");
+});
+
+it("refuses POSIX resolution from a Windows working directory instead of recursing", () => {
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\work");
+  try {
+    // A POSIX PATH search on a Windows host reached this with a relative entry.
+    expect(() => absoluteCallerPath("bin/uv", { platform: "linux" })).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      absoluteCallerPath("bin/uv", { cwd: "relative", platform: "linux" }),
+    ).toThrow(TypeError);
+  } finally {
+    cwd.mockRestore();
+  }
 });

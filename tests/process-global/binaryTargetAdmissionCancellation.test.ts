@@ -55,8 +55,8 @@ import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.
 import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
-} from "../../src/application/RegularFileRead.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+} from "../../src/process/RegularFileRead.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { createApplicationMcpHarness } from "../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";
@@ -112,7 +112,6 @@ it.each([
       architecture: "x86",
       entryPoint: "0x1000",
     });
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("cancelled target was admitted");
     expect(projectAnalysisError(resolved.error)).toMatchObject({
       code: "cancelled",

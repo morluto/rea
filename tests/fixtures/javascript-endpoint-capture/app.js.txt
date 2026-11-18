@@ -1,0 +1,6 @@
+
+function unusedAdmin() { return fetch('/api/admin/export'); }
+function templateCandidate() { return fetch('/users/789'); }
+function neverContacted() { return fetch('https://never-contact.invalid/route'); }
+function translatedValue() { return translate.get('KEY'); }
+Promise.all([fetch('/api/users?ordinary=kept-source-only#fragment'), fetch('/users/123'), fetch(window.dynamicTarget)].map(request => request.then(response => response.text()))).then(() => window.done = true);

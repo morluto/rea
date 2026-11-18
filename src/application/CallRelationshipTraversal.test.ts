@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -11,15 +11,19 @@ import { err, ok } from "../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { EnhancedTools } from "./EnhancedTools.js";
+import type { ValidatedEnhancedCall } from "./EnhancedToolTypes.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const tools = ["get_call_graph", "trace_call_path"] as const;
-const input = (tool: (typeof tools)[number]) =>
+const call = (tool: (typeof tools)[number]): ValidatedEnhancedCall =>
   tool === "get_call_graph"
-    ? { address: "0x1", direction: "forward" }
-    : { start: "0x1", goal: "0x4", direction: "forward" };
+    ? { name: tool, input: { address: "0x1", direction: "forward" } }
+    : {
+        name: tool,
+        input: { start: "0x1", goal: "0x4", direction: "forward" },
+      };
 
 const cleanupFailure = () =>
   new AnalysisCapabilityUnavailableError(
@@ -61,10 +65,9 @@ describe.each(tools)("%s cleanup ownership", (tool) => {
     failure.bindCleanupRetry({ operation: "close_binary" });
     const reads: string[] = [];
 
-    const result = await new EnhancedTools(port(reads, () => failure)).execute(
-      tool,
-      input(tool),
-    );
+    const result = await new EnhancedTools(
+      port(reads, () => failure),
+    ).executeValidated(call(tool));
 
     if (result.ok) throw new Error("expected incomplete cleanup");
     expect(result.error).toBe(failure);
@@ -93,7 +96,7 @@ describe.each(tools)("%s cleanup ownership", (tool) => {
         controller.abort({ requested: "stop" });
         return failure;
       }),
-    ).execute(tool, input(tool), controller.signal);
+    ).executeValidated(call(tool), controller.signal);
 
     if (result.ok) throw new Error("expected incomplete cleanup");
     expect(result.error).toBe(failure);
@@ -115,7 +118,7 @@ describe.each(tools)("%s cleanup ownership", (tool) => {
         });
         return cancellation;
       }),
-    ).execute(tool, input(tool), controller.signal);
+    ).executeValidated(call(tool), controller.signal);
 
     if (result.ok) throw new Error("expected cancellation");
     expect(result.error).toBe(cancellation);

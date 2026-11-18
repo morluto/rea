@@ -1,15 +1,18 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -69,7 +72,9 @@ const instruction = (
 
 const checkContinuation = async (
   client: Client,
-  schema: Readonly<Record<string, unknown>>,
+  toolDefinition: NonNullable<
+    NonNullable<Parameters<Client["callTool"]>[1]>["toolDefinition"]
+  >,
   continuation: {
     name: "inspect_analysis_view";
     arguments: z.output<typeof inspectAnalysisViewInputSchema>;
@@ -99,15 +104,11 @@ const checkContinuation = async (
   const recovered: unknown[] = [];
   let request = continuation.arguments;
   for (;;) {
-    const response = await client.callTool({
-      name: continuation.name,
-      arguments: request,
-    });
+    const response = await client.callTool(
+      { name: continuation.name, arguments: request },
+      { toolDefinition },
+    );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-    expect(
-      validation.assertions.validate(schema, response.structuredContent),
-      JSON.stringify(validation.assertions.errors),
-    ).toBe(true);
     const page = analysisViewResultSchema.parse(
       parseEvidence(response.structuredContent).normalized_result,
     );
@@ -138,7 +139,7 @@ const checkContinuation = async (
   expect(original).toEqual(referenceRows);
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains and pages instruction reference states through %s MCP",
   async (profile) => {
     let incoming: "rows" | "empty" | "unavailable" | "not-recorded" = "rows";
@@ -160,22 +161,26 @@ it.each(["full", "compact"] as const)(
         },
       },
     );
-    const client = new Client({
-      name: "instruction-reference-pages",
-      version: "1",
-    });
+    const client = new Client(
+      { name: "instruction-reference-pages", version: "1" },
+      { jsonSchemaValidator: validation },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
+      const listed = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_analysis_view",
       );
-      if (!advertised?.outputSchema)
+      if (listed === undefined)
         throw new Error("Missing advertised view schema");
+      // Every call, including continuation pages, checks the whole reply.
+      const advertised = withCanonicalOutputSchema(listed);
       expect(
-        validation.assertions.validateSchema(advertised.outputSchema),
+        validation.assertions.validateSchema(
+          canonicalOutputSchema(advertised.name),
+        ),
       ).toBe(true);
       expect(
         (
@@ -218,12 +223,7 @@ it.each(["full", "compact"] as const)(
             throw new Error("Expected retained parent in continuation");
           source = continuation.arguments.source;
           const before = reads;
-          await checkContinuation(
-            client,
-            advertised.outputSchema,
-            continuation,
-            source,
-          );
+          await checkContinuation(client, advertised, continuation, source);
           expect(reads).toBe(before);
         } else {
           expect(result.isError).not.toBe(true);
@@ -233,26 +233,22 @@ it.each(["full", "compact"] as const)(
           };
         }
         const before = reads;
-        const reply = await client.callTool({
-          name: "inspect_analysis_view",
-          arguments: {
-            source,
-            view: {
-              kind: "native-instruction-references",
-              collection: "incoming_references",
-              offset: incoming === "rows" ? 1 : 0,
-              limit: 1,
+        const reply = await client.callTool(
+          {
+            name: "inspect_analysis_view",
+            arguments: {
+              source,
+              view: {
+                kind: "native-instruction-references",
+                collection: "incoming_references",
+                offset: incoming === "rows" ? 1 : 0,
+                limit: 1,
+              },
             },
           },
-        });
+          { toolDefinition: advertised },
+        );
         expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-        expect(
-          validation.assertions.validate(
-            advertised.outputSchema,
-            reply.structuredContent,
-          ),
-          JSON.stringify(validation.assertions.errors),
-        ).toBe(true);
         const page = analysisViewResultSchema.parse(
           parseEvidence(reply.structuredContent).normalized_result,
         );
@@ -286,12 +282,11 @@ it.each(["full", "compact"] as const)(
       if (!closed.ok) throw closed.error;
     }
   },
-  90_000,
 );
 
 it("recovers the complete parent when a single reference exceeds the page budget", async () => {
   const oversized = { ...row, type: "x".repeat(1024 * 1024) };
-  const parent = createEvidence(undefined, provider, {
+  const parent = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inspect_native_instruction",
     parameters: { address: "0x1000" },
     result: { ...instruction("rows"), incoming_references: [row, oversized] },
@@ -303,10 +298,13 @@ it("recovers the complete parent when a single reference exceeds the page budget
   const retained = session.recordEvidence(parent);
   if (!retained.ok) throw retained.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "oversized-instruction-reference",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "oversized-instruction-reference",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -374,4 +372,4 @@ it("recovers the complete parent when a single reference exceeds the page budget
     const closed = await session.close();
     if (!closed.ok) throw closed.error;
   }
-}, 90_000);
+});

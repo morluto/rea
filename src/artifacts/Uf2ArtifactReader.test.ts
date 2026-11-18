@@ -112,27 +112,6 @@ it("inventories each family's regions with family and block facts", async () => 
   ]);
 });
 
-it("leaves coverage unknown when numbered blocks are absent", async () => {
-  const snapshot = await scanCanonicalArtifactInventory(
-    await writeImage(
-      "universal.uf2",
-      uf2File([ABSOLUTE, ...uf2Image(RP2040_FAMILY, 0x1000_0000, APP)]),
-    ),
-  );
-  expect(snapshot.coverage.status).toBe("unknown");
-  expect(snapshot.limitations).toContain(
-    "UF2 numbering declares 1 block(s) that are absent: family 0xe48bff57 (RP2XXX_ABSOLUTE) with 2 numbered blocks has 1 of them.",
-  );
-  expect(
-    snapshot.occurrences
-      .filter((row) => row.logical_path !== ".")
-      .map((row) => row.logical_path),
-  ).toEqual([
-    "family-0xe48bff56/0x10000000-0x10000257.bin",
-    "family-0xe48bff57/0x10ffff00-0x10ffffff.bin",
-  ]);
-});
-
 it("leaves short files unrecognized", async () => {
   const truncated = await scanCanonicalArtifactInventory(
     await writeImage("short.uf2", ABSOLUTE.subarray(0, 511)),

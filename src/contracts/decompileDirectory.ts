@@ -3,6 +3,7 @@ import { z } from "zod";
 import { digestSchema } from "../domain/digests.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { analysisSourceDescriptorSchema } from "../domain/analysisSource.js";
+import { pseudocodeAbsenceSchema } from "../domain/native/pseudocodeAbsence.js";
 
 /** On-disk journal. Append-only so a crash keeps committed function files. */
 export const DECOMPILE_DIRECTORY_JOURNAL_NAME = "decompile-journal.jsonl";
@@ -61,6 +62,11 @@ const failureFields = {
   address: z.string().min(1),
   code: z.string().min(1),
   message: z.string().min(1),
+  pseudocode_absence: pseudocodeAbsenceSchema
+    .exactOptional()
+    .describe(
+      "The provider's reported reason for null pseudocode; omitted after the name to fit the inline text budget, and always kept in the index.",
+    ),
 };
 
 const failureSchema = z.union([
@@ -101,6 +107,12 @@ export const decompileDirectoryInputSchema = z.strictObject({
     .default(false)
     .describe(
       "Continue a journal for the same target SHA-256, provider, analysis profile, and layout. Both digests must be known. Verified files and functions recorded as external are skipped, conflicting files are left unchanged, and functions not yet tried run before retries of recorded failures.",
+    ),
+  retry_failed: z
+    .enum(["independent_fresh"])
+    .optional()
+    .describe(
+      "For a null result explicitly reported as a function failure, retain the failure and try an independent decompile when supported. It can use different analysis context; errors and omissions without that typed fact are not retried.",
     ),
   name: z
     .string()
@@ -201,9 +213,16 @@ export const decompileDirectoryManifestSchema = z
       .describe(
         "SHA-256 of the analyzed target, or null when the observation has no file subject.",
       ),
+    inventory_limitations: z
+      .array(z.string())
+      .describe(
+        "Limitations reported by this call's procedure inventory. They describe the selection that produced this run, not every historical function record in the directory.",
+      ),
     limitations: z
       .array(z.string())
-      .describe("Limits of this export. Pseudocode is not included."),
+      .describe(
+        "Limits of this export directory. The body-coverage caveat counts every retained function record, including records earlier runs wrote. Pseudocode is not included.",
+      ),
     resume: z.boolean().describe("Whether this call continued a journal."),
   })
   .superRefine((manifest, context) => {
@@ -262,6 +281,7 @@ export const decompileDirectoryFunctionSchema = z
         }),
       ])
       .optional(),
+    pseudocode_absence: pseudocodeAbsenceSchema.optional(),
     body: bodySchema,
     failure: z
       .strictObject({
@@ -318,6 +338,28 @@ export const decompileJournalLineSchema = z.discriminatedUnion("kind", [
   decompileJournalFunctionSchema,
 ]);
 
+/** One caller selection, retained to distinguish the latest run from older records. */
+const decompileSelectionSchema = z.strictObject({
+  name: z.string().nullable(),
+  namespace: z.string().nullable(),
+  address_start: z.string().nullable(),
+  address_end: z.string().nullable(),
+  limit: z.number().int().min(1).nullable(),
+});
+
+/**
+ * Facts owned by the run that last rewrote this index. Inventory limitations
+ * and filters describe that run; older runs remain represented only by their
+ * retained function records.
+ */
+const decompileLatestRunSchema = z.strictObject({
+  resume: z.boolean(),
+  selected: countSchema("Functions matching this run's filter."),
+  excluded: countSchema("Inventory functions excluded by this run's filter."),
+  selection: decompileSelectionSchema,
+  inventory_limitations: z.array(z.string()),
+});
+
 /** Index rewritten from the journal at the end of a call. */
 export const decompileDirectoryIndexSchema = z.strictObject({
   version: z.literal(DECOMPILE_DIRECTORY_VERSION),
@@ -326,7 +368,16 @@ export const decompileDirectoryIndexSchema = z.strictObject({
   analysis_profile_digest: digestSchema.nullable(),
   layout: layoutSchema,
   layout_status: z.enum(["address", "debug_layout_unavailable"]),
-  limitations: z.array(z.string()),
+  latest_run: decompileLatestRunSchema
+    .optional()
+    .describe(
+      "Selection and inventory limitations owned by the run that last rewrote this index. Absent in indexes written before this field existed.",
+    ),
+  limitations: z
+    .array(z.string())
+    .describe(
+      "Limits of this export directory. The body-coverage caveat counts every retained function record, including records earlier runs wrote.",
+    ),
   functions: z.array(decompileDirectoryFunctionSchema),
 });
 

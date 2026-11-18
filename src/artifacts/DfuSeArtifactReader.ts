@@ -36,9 +36,7 @@ const dfuSeRegions: RegionDecoding<DfuSeImage> = {
         bytes: element.bytes,
       };
     }),
-    ...(image.limitations.length === 0
-      ? {}
-      : { coverage: { status: "complete", limitations: image.limitations } }),
+    coverage: { status: "complete", limitations: image.limitations },
     containerIntegrity: {
       algorithm: "dfu-crc32",
       declared_crc32: crcText(image.metadata.suffix_crc),

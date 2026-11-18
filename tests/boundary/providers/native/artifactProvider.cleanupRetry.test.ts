@@ -6,9 +6,9 @@ import { expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { AsarArtifactReader } from "../../../../src/artifacts/AsarArtifactReader.js";
-import { SafeOutputTree } from "../../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../../src/resources/SafeOutputTree.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
@@ -86,7 +86,6 @@ it("retains a failed reader close, blocks new work, and retries the same reader"
   expect(closeOwners[2]).toBe(closeOwners[1]);
 
   const incompleteClose = await client.close();
-  expect(incompleteClose.ok).toBe(false);
   if (incompleteClose.ok) throw new Error("Expected reader cleanup failure");
   expect(incompleteClose.error).toBeInstanceOf(ProviderCleanupError);
   expect(closeOwners).toHaveLength(4);

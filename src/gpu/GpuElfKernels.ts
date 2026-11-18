@@ -17,14 +17,19 @@ import {
   BinaryReader,
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import {
   readElfSectionDirectory,
   type NativeSection,
   type NativeSectionDirectory,
-} from "../native/metadata/NativeSectionDirectory.js";
-import { readElfString } from "../native/metadata/ElfStringTable.js";
+} from "../domain/native/nativeSectionDirectory.js";
+import { readElfStringBytes } from "../domain/native/elfStringBytes.js";
 import { readElfSymbol } from "../domain/elfSymbol.js";
+import {
+  ELF_SHN_XINDEX,
+  ElfSymbolSectionIndexTables,
+  readElfSymbolSectionReference,
+} from "../domain/elfSymbolSectionIndex.js";
 import {
   gpuCount,
   readGpuNativeDirectory,
@@ -43,7 +48,7 @@ const sectionBytes = (
   section: NativeSection,
   budget?: CudaMetadataBudget,
 ): Promise<Buffer> => {
-  if (!section.file_backed || (section.flags & 0x800n) !== 0n)
+  if (!section.file_backed || section.compressed)
     rejectGpu("GPU metadata section has no supported uncompressed file range");
   budget?.read(gpuCount(section.size));
   return source.read(gpuCount(section.offset), gpuCount(section.size));
@@ -172,7 +177,7 @@ const indexCudaMetadata = async (
         if (record.format !== 4 || record.attribute !== 0x2f) continue;
         if (record.data.length !== 8)
           rejectGpu("CUDA register count record has an unsupported extent");
-        const r = new BinaryReader(record.data, directory.little),
+        const r = new BinaryReader(record.data, directory.little, "elf"),
           key = `${row.link}:${r.u32(0)}`;
         const values = registerFacts.get(key) ?? new Map<number, GpuLocation>();
         const value = r.u32(4);
@@ -260,6 +265,7 @@ const cudaKernels = async (
   onKernel: (kernel: GpuKernel) => void,
 ): Promise<"complete" | "partial"> => {
   const index = await indexCudaMetadata(source, directory);
+  const extendedTables = new ElfSymbolSectionIndexTables(directory.sections);
   let complete = index.allNamesKnown;
   let symbolTables = 0;
   for (const section of directory.sections) {
@@ -291,37 +297,39 @@ const cudaKernels = async (
       const symbol = parsedSymbol.value;
       // STO_CUDA_ENTRY distinguishes launchable kernels from ordinary device functions.
       if (symbol.type !== 2 || (symbol.other & 0x10) === 0) continue;
-      let sectionIndex = symbol.section_index;
-      if (sectionIndex === 0xffff) {
+      const sectionIndex = symbol.section_index;
+      if (sectionIndex === ELF_SHN_XINDEX) {
         if (extendedIndices === null) {
-          const matches = directory.sections.filter(
-            (row) => row.type === 18 && row.link === section.index,
+          const extended = extendedTables.tableFor(
+            section.index,
+            BigInt(symbolCount),
           );
-          if (matches.length !== 1)
-            rejectGpu(
-              "CUBIN extended symbol section-index table is unavailable",
-            );
-          const extended = matches[0]!;
-          if (
-            extended.entry_size !== 4n ||
-            extended.size !== BigInt(symbolCount) * 4n
-          )
-            rejectGpu(
-              "CUBIN extended symbol section-index table has an invalid extent",
-            );
-          extendedIndices = await sectionBytes(source, extended, index.budget);
+          if (!extended.ok) return rejectGpu(`CUBIN ${extended.error.message}`);
+          extendedIndices = await sectionBytes(
+            source,
+            extended.value,
+            index.budget,
+          );
         }
-        sectionIndex = new BinaryReader(extendedIndices, directory.little).u32(
-          (offset / width) * 4,
-        );
       }
-      const text = directory.sections[sectionIndex];
+      const resolved = readElfSymbolSectionReference(
+        sectionIndex,
+        offset / width,
+        directory.sections.length,
+        directory.little,
+        extendedIndices ?? undefined,
+      );
+      if (!resolved.ok) return rejectGpu(`CUBIN ${resolved.error.message}`);
+      const text =
+        resolved.value.kind === "section"
+          ? directory.sections[resolved.value.index]
+          : undefined;
       if (text === undefined || text.type !== 1 || (text.flags & 4n) === 0n)
         rejectGpu("CUBIN kernel symbol has no executable section");
       const kernel = blankKernel(
         source,
         `sym:${section.index}:${offset / width}`,
-        readElfString(names, symbol.name_offset),
+        readElfStringBytes(names, symbol.name_offset).toString("latin1"),
         site(source, section, offset, width),
       );
       if (
@@ -460,7 +468,7 @@ export const readAmdElfMetadata = async (
         );
       retainedBytes += sectionSize;
       const bytes = await sectionBytes(source, section),
-        r = new BinaryReader(bytes, directory.little);
+        r = new BinaryReader(bytes, directory.little, "elf");
       for (let p = 0; p < bytes.length;) {
         if (bytes.length - p < 12) rejectGpu("Truncated ELF note header");
         const namesize = r.u32(p),

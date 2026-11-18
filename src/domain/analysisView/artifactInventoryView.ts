@@ -3,6 +3,7 @@ import {
   artifactInventoryCoverageSchema,
   artifactNodeSchema,
   artifactOccurrenceSchema,
+  artifactOccurrenceRelationshipCoverage,
   artifactEdgeSchema,
   integrityContradictionSchema,
 } from "../artifactGraph.js";
@@ -15,6 +16,7 @@ import { prefixedDigestSchema } from "../digests.js";
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
+import { artifactReaderLimitsSchema } from "../artifactReaderLimits.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -39,6 +41,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
 import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
+import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -93,6 +96,7 @@ export const artifactInventoryItemsSchema = z.array(
 );
 
 export const artifactInventorySummarySchema = z.strictObject({
+  effective_limits: artifactReaderLimitsSchema.exactOptional(),
   source_coverage: artifactInventoryCoverageSchema.exactOptional(),
   available_hash_status_counts: z
     .strictObject({
@@ -103,9 +107,16 @@ export const artifactInventorySummarySchema = z.strictObject({
     })
     .exactOptional(),
   manifest: artifactGraphManifestSchema,
-  /** An ESP flash layout's nested images appear as summaries here. */
+  /**
+   * An ESP flash layout's nested images appear as summaries here, and an
+   * Android OTA payload's partition, group and APEX arrays as counts.
+   */
   root_format_metadata: z
-    .union([artifactFormatMetadataSchema, espFlashImageSummaryMetadataSchema])
+    .union([
+      artifactFormatMetadataSchema,
+      espFlashImageSummaryMetadataSchema,
+      androidOtaPayloadSummaryMetadataSchema,
+    ])
     .exactOptional(),
   available_counts: z.strictObject({
     nodes: z.number().int().nonnegative(),
@@ -182,7 +193,7 @@ const parseSource = (
   if (cached !== undefined && cached.operation === parent.operation) {
     try {
       validateArtifactInventorySubject(
-        parent.subject ?? null,
+        parent.subject,
         cached.source.inventory.manifest,
       );
     } catch (cause: unknown) {
@@ -207,14 +218,14 @@ const parseSourceUncached = (
       return ok({
         inventory: parseArtifactInventoryResult(
           parent.normalizedResult,
-          parent.subject ?? null,
+          parent.subject,
         ),
         evidenceIds: [],
         inspection: null,
       });
     const parsed = parseArtifactInspectionInventoryResult(
       parent.normalizedResult,
-      parent.subject ?? null,
+      parent.subject,
     );
     return ok({
       inventory: parsed.inventory,
@@ -286,7 +297,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "uf2" ||
     inventory.manifest.root_format === "dfuse" ||
     inventory.manifest.root_format === "esp-flash-image" ||
-    inventory.manifest.root_format === "fit";
+    inventory.manifest.root_format === "fit" ||
+    inventory.manifest.root_format === "android-ota-payload";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -333,6 +345,9 @@ export const projectArtifactInventoryView = (
       kind: "summary" as const,
       view,
       summary: {
+        ...(inventory.effectiveLimits === undefined
+          ? {}
+          : { effective_limits: inventory.effectiveLimits }),
         manifest: inventory.manifest,
         available_counts: {
           nodes: inventory.nodes.length,
@@ -367,7 +382,7 @@ export const projectArtifactInventoryView = (
               },
         limitation_count: limitations.length,
       },
-      coverage: completeWithinViewCoverage(examined, examined),
+      coverage: completeWithinViewCoverage(examined),
       ...shared,
     });
   }
@@ -569,6 +584,12 @@ const selectOccurrenceFields = (
     ? row
     : {
         ...selectFields(row, fields),
+        ...(fields.includes("relationship_coverage")
+          ? {
+              relationship_coverage:
+                artifactOccurrenceRelationshipCoverage(row),
+            }
+          : {}),
         occurrence_id: row.occurrence_id,
         artifact_id: row.artifact_id,
         parent_occurrence_id: row.parent_occurrence_id,
