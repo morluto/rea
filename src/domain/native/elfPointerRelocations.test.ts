@@ -7,6 +7,7 @@ import {
   elfRelocationWidth,
   readElfRelocationWritesSteps,
   readElfPointerValuesSteps,
+  readElfPointerRelocationsSteps,
   type ElfPointerWrite,
 } from "./elfPointerRelocations.js";
 
@@ -112,21 +113,21 @@ it("returns the decoded record type, symbol index and addend with each write", (
 });
 
 it("owns the word-sized absolute relocation type per machine", () => {
-  expect(elfAbsoluteRelocationType(62)).toBe(1);
-  expect(elfAbsoluteRelocationType(3)).toBe(1);
-  expect(elfAbsoluteRelocationType(183)).toBe(257);
-  expect(elfAbsoluteRelocationType(40)).toBe(2);
-  expect(elfAbsoluteRelocationType(8)).toBeUndefined();
+  expect(elfAbsoluteRelocationType(62, 64)).toBe(1);
+  expect(elfAbsoluteRelocationType(3, 32)).toBe(1);
+  expect(elfAbsoluteRelocationType(183, 64)).toBe(257);
+  expect(elfAbsoluteRelocationType(40, 32)).toBe(2);
+  expect(elfAbsoluteRelocationType(8, 64)).toBeUndefined();
 });
 
 it("owns the COPY relocation type per machine and gives it no fixed width", () => {
-  expect(elfCopyRelocationType(62)).toBe(5);
-  expect(elfCopyRelocationType(3)).toBe(5);
-  expect(elfCopyRelocationType(183)).toBe(1024);
-  expect(elfCopyRelocationType(40)).toBe(20);
-  expect(elfCopyRelocationType(8)).toBeUndefined();
-  expect(elfRelocationWidth(62, 5)).toBeUndefined();
-  expect(elfRelocationWidth(183, 1024)).toBeUndefined();
+  expect(elfCopyRelocationType(62, 64)).toBe(5);
+  expect(elfCopyRelocationType(3, 32)).toBe(5);
+  expect(elfCopyRelocationType(183, 64)).toBe(1024);
+  expect(elfCopyRelocationType(40, 32)).toBe(20);
+  expect(elfCopyRelocationType(8, 64)).toBeUndefined();
+  expect(elfRelocationWidth(62, 5, 64)).toBeUndefined();
+  expect(elfRelocationWidth(183, 1024, 64)).toBeUndefined();
 });
 
 /**
@@ -261,6 +262,7 @@ it.each([
   ["AArch64 GLOB_DAT", 183, 1025, 0x4020n],
   ["x86-64 absolute", 62, 1, 0x4020n],
   ["x86-64 GLOB_DAT", 62, 6, 0x4000n],
+  ["RISC-V RV64 absolute", 243, 2, 0x4020n],
 ] as const)(
   "derives %s from image definitions only when requested",
   (_name, machine, kind, expected) => {
@@ -435,6 +437,8 @@ it.each([
   ["AArch64", 183, 64, 1024],
   ["i386", 3, 32, 5],
   ["ARM", 40, 32, 20],
+  ["RISC-V RV32", 243, 32, 4],
+  ["RISC-V RV64", 243, 64, 4],
 ] as const)(
   "sizes a %s COPY write from the image's own dynamic symbol",
   (_name, machine, bits, kind) => {
@@ -526,10 +530,10 @@ it("reports a TLS descriptor as a two-word write", () => {
   const { writes, result } = walk(symbolicImage(36n, 0n));
   expect(writes).toMatchObject([{ address: 0x300n, width: 16, value: null }]);
   expect(result.pointer_coverage_known).toBe(true);
-  expect(elfRelocationWidth(62, 36)).toBe(16);
-  expect(elfRelocationWidth(183, 1031)).toBe(16);
-  expect(elfRelocationWidth(40, 13)).toBe(8);
-  expect(elfRelocationWidth(3, 41)).toBe(8);
+  expect(elfRelocationWidth(62, 36, 64)).toBe(16);
+  expect(elfRelocationWidth(183, 1031, 64)).toBe(16);
+  expect(elfRelocationWidth(40, 13, 32)).toBe(8);
+  expect(elfRelocationWidth(3, 41, 32)).toBe(8);
 });
 
 /** Three fully decoded relative values; empty REL declarations add no state. */
@@ -599,4 +603,97 @@ it("refuses pointer workspace growth before inserting the next virtual destinati
   } finally {
     inserted.mockRestore();
   }
+});
+
+/** ELF32 RELA with an ordinary defined symbol and a SysV hash bound. */
+const riscvSymbolicImage32 = (kind: number, symbol = 1): Buffer => {
+  const bytes = symbolicImage32(kind, 0x28);
+  bytes.writeInt32LE(7, 0); // RELA instead of REL.
+  bytes.writeInt32LE(8, 8);
+  bytes.writeUInt32LE(12, 12);
+  bytes.writeInt32LE(9, 16);
+  bytes.writeUInt32LE(12, 20);
+  bytes.writeUInt32LE((symbol << 8) | kind, 0x104);
+  bytes.writeInt32LE(-16, 0x108);
+  bytes.writeUInt32LE(0x4000, 0x214);
+  bytes[0x21c] = 0x11;
+  bytes.writeUInt16LE(1, 0x21e);
+  bytes.writeInt32LE(4, 40);
+  bytes.writeUInt32LE(0x280, 44);
+  [1, 2, 1, 0, 0].forEach((value, index) =>
+    bytes.writeUInt32LE(value, 0x280 + index * 4),
+  );
+  return bytes;
+};
+
+it.each([32, 64] as const)(
+  "keeps RV%s symbol, TLS, resolver and COPY semantics separate",
+  (bits) => {
+    const make = (kind: number, symbol = 1) =>
+      bits === 32
+        ? riscvSymbolicImage32(kind, symbol)
+        : symbolicImage(BigInt(kind), 0x28n, {
+            definition: { value: 0x4000n },
+            addend: -16n,
+            symbolIndex: symbol,
+          });
+    const absolute = bits === 32 ? 1 : 2;
+    expect(elfAbsoluteRelocationType(243, bits)).toBe(absolute);
+    expect(elfCopyRelocationType(243, bits)).toBe(4);
+    expect(elfRelocationWidth(243, 12, bits)).toBe(bits / 4);
+    expect(
+      walk(make(absolute), undefined, 243, bits).writes[0]?.value,
+    ).toBeNull();
+    expect(
+      walk(make(absolute), undefined, 243, bits, true).writes[0]?.value,
+    ).toBe(0x3ff0n);
+    // Type 6 must never inherit x86 GLOB_DAT semantics, even for a defined symbol.
+    for (const [kind, width] of [
+      [6, 4],
+      [12, bits / 4],
+      [58, bits / 8],
+    ]) {
+      const { writes, result } = walk(make(kind!), undefined, 243, bits, true);
+      expect(writes[0]).toMatchObject({ value: null, width });
+      expect(result.pointer_coverage_known).toBe(true);
+    }
+    const relative = walk(make(3, 0), undefined, 243, bits);
+    expect(relative.writes[0]?.value).toBe(BigInt.asUintN(bits, -16n));
+    const input = {
+      bits,
+      little: true,
+      machine: 243,
+      dynamicSegments: [{ offset: 0n, size: 0x100n }],
+      mappings: [{ address: 0n, offset: 0, size: 0x400 }],
+      zeroFills: [],
+    };
+    const sparse = readElfPointerRelocationsSteps(make(3, 0), input);
+    let sparseNext = sparse.next();
+    while (!sparseNext.done) sparseNext = sparse.next();
+    expect(sparseNext.value.pointerAt(0x300n)).toMatchObject({
+      value: BigInt.asUintN(bits, -16n),
+      relocation: { encoding: "rela", kind: 3, record_file_offset: 0x100 },
+    });
+    const values = readElfPointerValuesSteps(
+      make(absolute),
+      input,
+      1024 * 1024,
+      {
+        symbolResolution: "image-definitions",
+      },
+    );
+    let valuesNext = values.next();
+    while (!valuesNext.done) valuesNext = values.next();
+    expect(valuesNext.value.unsignedAt(0x300n, bits === 64 ? 8 : 4)).toBe(
+      0x3ff0n,
+    );
+    const unknown = walk(make(0x7f), "record", 243, bits, true);
+    expect(unknown.result.pointer_coverage_known).toBe(false);
+    expect(unknown.writes).toEqual([]);
+  },
+);
+
+it("does not apply a machine's pointer rules to a different ELF class", () => {
+  expect(elfAbsoluteRelocationType(183, 32)).toBeUndefined();
+  expect(elfAbsoluteRelocationType(40, 64)).toBeUndefined();
 });

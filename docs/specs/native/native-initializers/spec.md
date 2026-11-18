@@ -26,6 +26,9 @@ slot's location, resolved target and how that target was obtained. The
   `LC_DYLD_INFO` rebases (reported separately), `MH_OBJECT` section
   relocations and `__init_offsets` image-base offsets. Anything else is
   `unresolved`, never a stored zero.
+- Select ELF relocation rules by machine and word size, including RV32/RV64
+  RELATIVE, RELR and word-sized absolute records. RISC-V TLS and resolver
+  relocations retain unknown values and their known write extents.
 - Relocation coverage is per slot. A slot that a dynamic or section relocation
   only partly overwrites or writes more than once is `unresolved`, and so is an
   absolute relocation against an `STT_GNU_IFUNC` resolver. On 32-bit ARM the
@@ -99,6 +102,6 @@ and MCP boundary tests exercise the public workflows and Evidence output.
 Executing the image or proving that a listed address runs; runtime ordering
 (file order is reported); disassembling initializer bodies; PE/COFF TLS
 callbacks; Android packed relocations and machines other than x86-64, i386,
-AArch64 and 32-bit ARM for relocation decoding; Mach-O fixup decoding for
+AArch64, 32-bit ARM and RV32/RV64 for relocation decoding; Mach-O fixup decoding for
 images other than little-endian 64-bit arm64 and x86-64, and legacy
 `LC_DYSYMTAB` external relocations.

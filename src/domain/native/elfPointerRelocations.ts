@@ -157,133 +157,164 @@ const SYMBOL_TABLE_TAGS = new Set([DT_SYMTAB, DT_SYMENT, DT_HASH, DT_GNU_HASH]);
 const malformed = (message: string): never => {
   throw new ElfPointerRelocationFailure("malformed-container", message);
 };
-const RELOCATION_KINDS = new Map([
-  [
-    183,
-    {
-      absolute: 257,
-      bits: 64,
-      relative: 1027,
-      copy: 1024,
-      widths: new Map([
-        [257, 8],
-        [258, 4],
-        [259, 2],
-        [260, 8],
-        [261, 4],
-        [262, 2],
-        [1025, 8],
-        [1026, 8],
-        [1028, 8],
-        [1029, 8],
-        [1030, 8],
-        [1031, 16],
-        [1032, 8],
-      ]),
-    },
-  ],
-  [
-    62,
-    {
-      absolute: 1,
-      bits: 64,
-      relative: 8,
-      copy: 5,
-      widths: new Map([
-        [1, 8],
-        [2, 4],
-        [6, 8],
-        [7, 8],
-        [10, 4],
-        [11, 4],
-        [16, 8],
-        [17, 8],
-        [18, 8],
-        [24, 8],
-        [36, 16],
-        [37, 8],
-      ]),
-    },
-  ],
-  [
-    40,
-    {
-      absolute: 2,
-      bits: 32,
-      relative: 23,
-      copy: 20,
-      widths: new Map([
-        [2, 4],
-        [3, 4],
-        [13, 8],
-        [17, 4],
-        [18, 4],
-        [19, 4],
-        [21, 4],
-        [22, 4],
-        [160, 4],
-      ]),
-    },
-  ],
-  [
-    3,
-    {
-      absolute: 1,
-      bits: 32,
-      relative: 8,
-      copy: 5,
-      widths: new Map([
-        [1, 4],
-        [2, 4],
-        [3, 4],
-        [4, 4],
-        [6, 4],
-        [7, 4],
-        [9, 4],
-        [10, 4],
-        [11, 4],
-        [14, 4],
-        [15, 4],
-        [16, 4],
-        [17, 4],
-        [18, 4],
-        [19, 4],
-        [20, 2],
-        [21, 2],
-        [22, 1],
-        [23, 1],
-        [35, 4],
-        [36, 4],
-        [37, 4],
-        [38, 4],
-        [41, 8],
-        [42, 4],
-        [43, 4],
-      ]),
-    },
-  ],
-]);
+const RELOCATION_KINDS = [
+  {
+    machine: 183,
+    globalData: 1025,
+    absolute: 257,
+    bits: 64,
+    relative: 1027,
+    copy: 1024,
+    widths: new Map([
+      [257, 8],
+      [258, 4],
+      [259, 2],
+      [260, 8],
+      [261, 4],
+      [262, 2],
+      [1025, 8],
+      [1026, 8],
+      [1028, 8],
+      [1029, 8],
+      [1030, 8],
+      [1031, 16],
+      [1032, 8],
+    ]),
+  },
+  {
+    machine: 62,
+    globalData: 6,
+    absolute: 1,
+    bits: 64,
+    relative: 8,
+    copy: 5,
+    widths: new Map([
+      [1, 8],
+      [2, 4],
+      [6, 8],
+      [7, 8],
+      [10, 4],
+      [11, 4],
+      [16, 8],
+      [17, 8],
+      [18, 8],
+      [24, 8],
+      [36, 16],
+      [37, 8],
+    ]),
+  },
+  {
+    machine: 40,
+    globalData: 21,
+    absolute: 2,
+    bits: 32,
+    relative: 23,
+    copy: 20,
+    widths: new Map([
+      [2, 4],
+      [3, 4],
+      [13, 8],
+      [17, 4],
+      [18, 4],
+      [19, 4],
+      [21, 4],
+      [22, 4],
+      [160, 4],
+    ]),
+  },
+  {
+    machine: 3,
+    globalData: 6,
+    absolute: 1,
+    bits: 32,
+    relative: 8,
+    copy: 5,
+    widths: new Map([
+      [1, 4],
+      [2, 4],
+      [3, 4],
+      [4, 4],
+      [6, 4],
+      [7, 4],
+      [9, 4],
+      [10, 4],
+      [11, 4],
+      [14, 4],
+      [15, 4],
+      [16, 4],
+      [17, 4],
+      [18, 4],
+      [19, 4],
+      [20, 2],
+      [21, 2],
+      [22, 1],
+      [23, 1],
+      [35, 4],
+      [36, 4],
+      [37, 4],
+      [38, 4],
+      [41, 8],
+      [42, 4],
+      [43, 4],
+    ]),
+  },
+  ...([32, 64] as const).map((bits) => ({
+    machine: 243, // EM_RISCV: its pointer relocation kinds depend on ELF class.
+    bits,
+    absolute: bits === 64 ? 2 : 1,
+    relative: 3,
+    copy: 4,
+    // RISC-V has no GLOB_DAT. In particular, type 6 is TLS_DTPMOD32.
+    globalData: null,
+    widths: new Map([
+      [1, 4], // R_RISCV_32
+      [2, 8], // R_RISCV_64
+      [5, bits / 8], // JUMP_SLOT
+      [6, 4],
+      [7, 8], // TLS_DTPMOD32/64
+      [8, 4],
+      [9, 8], // TLS_DTPREL32/64
+      [10, 4],
+      [11, 8], // TLS_TPREL32/64
+      [12, bits / 4], // TLSDESC: two pointer words
+      [18, 8],
+      [19, 8], // CALL/CALL_PLT: two instructions
+      [57, 4], // 32_PCREL
+      [58, bits / 8], // IRELATIVE: resolver result is unknown
+    ]),
+  })),
+];
+
+const relocationKinds = (machine: number, bits: 32 | 64) =>
+  RELOCATION_KINDS.find(
+    (kinds) => kinds.machine === machine && kinds.bits === bits,
+  );
 
 /** R_*_RELATIVE type for a supported ELF machine, or undefined when unsupported. */
 export const elfRelativeRelocationType = (
   machine: number,
-): number | undefined => RELOCATION_KINDS.get(machine)?.relative;
+  bits: 32 | 64,
+): number | undefined => relocationKinds(machine, bits)?.relative;
 
 /** Word-sized absolute (S + A) relocation type for a supported ELF machine. */
 export const elfAbsoluteRelocationType = (
   machine: number,
-): number | undefined => RELOCATION_KINDS.get(machine)?.absolute;
+  bits: 32 | 64,
+): number | undefined => relocationKinds(machine, bits)?.absolute;
 
 /** COPY relocation type, whose write is as wide as its symbol's `st_size`. */
-export const elfCopyRelocationType = (machine: number): number | undefined =>
-  RELOCATION_KINDS.get(machine)?.copy;
+export const elfCopyRelocationType = (
+  machine: number,
+  bits: 32 | 64,
+): number | undefined => relocationKinds(machine, bits)?.copy;
 
 /** Bytes written by a relocation; type zero is a no-op and unknown types remain undefined. */
 export const elfRelocationWidth = (
   machine: number,
   type: number,
+  bits: 32 | 64,
 ): number | undefined =>
-  type === 0 ? 0 : RELOCATION_KINDS.get(machine)?.widths.get(type);
+  type === 0 ? 0 : relocationKinds(machine, bits)?.widths.get(type);
 
 type DynamicTags = {
   readonly values: ReadonlyMap<bigint, bigint>;
@@ -375,14 +406,15 @@ export function* readElfRelocationWritesSteps(
   input: ElfPointerRelocationInput,
   options: RelocationOptions = {},
 ): Generator<ElfPointerWrite | undefined, ElfRelocationStreamResult> {
-  const kinds = RELOCATION_KINDS.get(input.machine);
-  if (kinds === undefined || kinds.bits !== input.bits)
+  const kinds = relocationKinds(input.machine, input.bits);
+  if (kinds === undefined)
     throw new ElfPointerRelocationFailure(
       "unsupported-container",
-      "ELF relative pointers require a matching AArch64, x86-64, ARM or i386 image",
+      "ELF relative pointers require a matching AArch64, x86-64, ARM, i386 or RISC-V image",
     );
   const relative = kinds.relative;
   const absolute = kinds.absolute;
+  const globalData = kinds.globalData;
   const wholeExtents = options.wholeExtents === true;
   const copy = wholeExtents ? kinds.copy : undefined;
   const unknownWidths = kinds.widths;
@@ -618,7 +650,7 @@ export function* readElfRelocationWritesSteps(
             );
       if (!parsed.ok) return malformed(parsed.error.message);
       const { type: kind, offset: destination, symbolIndex } = parsed.value;
-      if (elfRelocationWidth(input.machine, kind) === 0) continue;
+      if (elfRelocationWidth(input.machine, kind, input.bits) === 0) continue;
       const source = { encoding, record_file_offset: at, kind };
       const explicitAddend =
         "addend" in parsed.value && typeof parsed.value.addend === "bigint"
@@ -646,15 +678,14 @@ export function* readElfRelocationWritesSteps(
         continue;
       }
       if (kind !== relative || symbolIndex !== 0) {
-        const globalData = input.machine === 183 ? 1025 : 6;
         if (
           options.symbolResolution === "image-definitions" &&
-          input.bits === 64 &&
+          (input.bits === 64 || input.machine === 243) &&
           (kind === absolute || kind === globalData)
         ) {
           const value = yield* symbolLinkValue(symbolIndex);
           if (value !== undefined) {
-            // AArch64 ABS64/GLOB_DAT and x86-64 R_X86_64_64 use S + A.
+            // Absolute pointers (including R_RISCV_32/64) use S + A.
             // R_X86_64_GLOB_DAT uses S, ignoring even a nonzero addend.
             const slot =
               explicitAddend === undefined ? target(destination, word) : null;

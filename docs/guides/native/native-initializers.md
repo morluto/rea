@@ -100,8 +100,11 @@ For PIE executables and shared objects the array slots are usually zero on
 disk. A slot is reported `unresolved`, never as its stored zero, when the
 dynamic relocation tables use an encoding this inspection does not decode
 (for example Android packed relocations or an unsupported machine). Relative
-relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
-also `unresolved` when a dynamic relocation writes only part of it, starts
+relocations are decoded for x86-64, i386, AArch64, 32-bit ARM and RISC-V
+(RV32/RV64). RISC-V word-sized absolute relocations also resolve defined
+symbols in section tables; imported symbols remain unresolved imports. TLS
+and indirect-function resolver results are not treated as function addresses.
+A slot is also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
 
 A `COPY` relocation writes as many bytes as the image's own dynamic symbol

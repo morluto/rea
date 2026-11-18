@@ -318,8 +318,8 @@ export const relocationFromEntry = (
   symbols: readonly ElfInitializerSymbol[] | undefined,
   inplace: bigint | null,
 ): SlotRelocation => {
-  const relative = elfRelativeRelocationType(facts.machine);
-  const absolute = elfAbsoluteRelocationType(facts.machine);
+  const relative = elfRelativeRelocationType(facts.machine, facts.bits);
+  const absolute = elfAbsoluteRelocationType(facts.machine, facts.bits);
   if (entry.type === relative && entry.symbolIndex === 0) {
     const addend = addendOf(entry, inplace);
     if (addend === null) return unresolved();
@@ -509,8 +509,8 @@ export const sectionRelocations = async (
   };
   // One budget across every header, so many headers over one range cannot multiply the work.
   let budget = SECTION_RELOCATION_RECORD_SCAN;
-  const relative = elfRelativeRelocationType(input.machine);
-  const copy = elfCopyRelocationType(input.machine);
+  const relative = elfRelativeRelocationType(input.machine, input.bits);
+  const copy = elfCopyRelocationType(input.machine, input.bits);
   // Slot visits grow with each COPY span, so the spans together are limited to
   // the file size, as in the dynamic walk.
   let copyAllowance = input.bytes.length;
@@ -602,7 +602,7 @@ export const sectionRelocations = async (
         copied ??
         (parsed.value.type === relative
           ? word
-          : elfRelocationWidth(input.machine, parsed.value.type));
+          : elfRelocationWidth(input.machine, parsed.value.type, input.bits));
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
       const span = extent ?? word;
       if (span === 0) continue;

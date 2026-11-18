@@ -1105,7 +1105,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
 
 it.each([
   [{ dynamic: false }, "unsupported-container"],
-  [{ machine: 243 }, "unsupported-container"],
+  [{ machine: 21 }, "unsupported-container"], // EM_PPC64 has no pointer profile.
   [{ androidPacked: true }, "unsupported-pointer-encoding"],
 ] as const)(
   "refuses ELF relocations it cannot apply (%o)",

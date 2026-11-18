@@ -560,7 +560,7 @@ describe("ELF section content admission", () => {
 describe("ELF incomplete inputs", () => {
   it("reports an unsupported relocation machine as incomplete, not as raw zeros", async () => {
     const bytes = elf64PieInitializers();
-    bytes.writeUInt16LE(243, 18);
+    bytes.writeUInt16LE(21, 18); // EM_PPC64 remains unsupported by the pointer decoder.
     const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
