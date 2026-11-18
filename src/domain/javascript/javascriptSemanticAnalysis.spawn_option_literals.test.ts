@@ -77,6 +77,17 @@ it.each([
   expect(spawnsFor(call)).toHaveLength(1);
 });
 
+it.each([
+  ['cp.fork("x", [], { silent: `yes` })', "pipe"],
+  ['cp.fork("x", [], { silent: `` })', "default"],
+  ['cp.fork("x", [], { stdio: null, silent: `yes` })', "pipe"],
+  ['cp.fork("x", [], { silent: `yes-${input}` })', "dynamic"],
+  ['cp.fork("x", [], { silent: `yes`, ...input })', "dynamic"],
+  ['cp.fork("x", [], { stdio: "inherit", silent: `yes` })', "inherit"],
+] as const)("retains a template silent mode: %s", (call, mode) => {
+  expect(spawnsFor(call).map(({ stdioMode }) => stdioMode)).toEqual([mode]);
+});
+
 // Invalid literal paths and argv0 values fail before child creation. Unknown
 // constructor results are covered separately and must retain their candidates.
 it.each([

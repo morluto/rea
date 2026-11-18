@@ -958,7 +958,11 @@ const unsetStdioMode = (
   if (silent.status !== "explicit") return "dynamic";
   const value = unwrapJavaScriptExpression(silent.value).node;
   if (context.isNullish(value)) return "default";
-  const truthy = staticJavaScriptTruthiness(value);
+  const literal = readExactJavaScriptLiteral(value);
+  const truthy =
+    literal.found && typeof literal.value === "string"
+      ? literal.value.length > 0
+      : staticJavaScriptTruthiness(value);
   if (truthy === undefined) return "dynamic";
   return truthy ? "pipe" : "default";
 };

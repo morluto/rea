@@ -18,6 +18,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         '  fork("template-inherit", [], { stdio: `inherit` });',
         '  spawn("dynamic", [], { stdio: `mode-${input}` });',
         '  spawn("quoted", [], { stdio: "pipe" });',
+        '  fork("silent-template", [], { silent: `yes` });',
+        '  fork("silent-empty", [], { silent: `` });',
+        '  fork("silent-dynamic", [], { silent: `mode-${input}` });',
+        '  fork("silent-overridden", [], { stdio: "inherit", silent: `yes` });',
         "}",
       ].join("\n"),
     });
@@ -26,12 +30,16 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const children = graph.nodes.filter(
       (node) => node.kind === "child-process",
     );
-    expect(children).toHaveLength(4);
+    expect(children).toHaveLength(8);
     for (const [command, mode] of [
       ["template-pipe", "pipe"],
       ["template-inherit", "inherit"],
       ["dynamic", "dynamic"],
       ["quoted", "pipe"],
+      ["silent-template", "pipe"],
+      ["silent-empty", "default"],
+      ["silent-dynamic", "dynamic"],
+      ["silent-overridden", "inherit"],
     ] as const) {
       const child = children.find(
         (node) => node.properties.command === command,
