@@ -83,6 +83,36 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "lists an unowned link once when needed directly and through another link",
+  async () => {
+    const root = await createTestTempDirectory("rea-needed-unowned-links-");
+    const bin = join(root, "bin");
+    const lib = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(lib)]);
+    const executable = join(bin, "app");
+    const outer = join(lib, "outer.so");
+    const inner = join(lib, "inner.so");
+    await Promise.all([
+      writeFile(executable, elfImage({ needed: [outer, inner] })),
+      writeFile(join(lib, "payload.so"), elfImage({})),
+      symlink("payload.so", inner),
+      symlink("inner.so", outer),
+    ]);
+
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command) => ({
+        stdout: "",
+        exitCode: command === "ldconfig" ? 0 : 1,
+      }),
+      undefined,
+    );
+    expect(report.unpackaged_libraries).toEqual([inner, outer]);
+  },
+);
+
 it
   .skipIf(process.platform === "win32")
   .each(["needed", "rpath", "runpath", "cache"] as const)(

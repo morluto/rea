@@ -300,16 +300,18 @@ the filesystem afresh. Cancellation is checked between lookup metadata reads
 and link-target traversals. An in-flight operating-system request is awaited.
 Hard I/O failures keep their original error; expected refusals check cancellation
 before becoming unresolved. Intermediate file and directory symlink entries
-needed to reach a library are retained separately from the physical object, including directory links reached through file-link
-targets and when the object is inside the application's folder. The exact
+needed to reach a library are retained separately from the physical object.
+This includes directory links reached through file-link targets and links to
+objects inside the application's folder. The exact
 usr-merge links supplied by the Ubuntu 24.04 computer base (`/bin`, `/sbin`,
 `/lib`, and amd64 `/lib64` to their `/usr` counterparts) need no extra package;
 packages merely registering those shared directories are not inferred as
 library dependencies. Other link targets retain their own ownership. External
-lookup aliases need their own package owner; ownership of their physical target
-cannot hide an unowned alias. A library is app-contained
-only when its required leaf and physical target are inside the application's
-folder and its required lookup aliases are captured there as well.
+intermediate links need their own package owner. For the selected leaf, the
+physical target is an ownership fallback when the leaf has no known owner.
+A library is app-contained only when its required leaf and physical target are
+inside the application's folder and its required lookup aliases are captured
+there as well.
 A combination with another dollar expression that REA does not expand remains
 unresolved with a reason, rather than selecting a literal token-named file.
 Each candidate's ELF machine, class and byte order must match the
@@ -319,10 +321,9 @@ cache architecture flag alone does not establish compatibility. If a candidate's
 identity cannot be read, that lookup stays unresolved, without selecting its
 package or guessing that a later candidate would load. A compatible identity
 remains available if a later header or dependency-table check fails; its package
-is retained with an incompleteness reason. REA asks `dpkg-query -S` for each
-selected library's package. Libraries in the executable's own folder belong to
-the application: they are walked but not
-listed, and neither is the application's own package. One batched
+is retained with an incompleteness reason. REA asks `dpkg-query -S` for the
+packages supplying external libraries and their required links. The inventory
+lists each unowned path once and omits the application's own package. One batched
 `apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
 recorded vendor repository with a verified key offers, in any component its
 sources entry lists, since the export declares them all; the rest, such as

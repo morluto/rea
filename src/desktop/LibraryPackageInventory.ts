@@ -433,7 +433,7 @@ export const inspectLibraryPackages = async (
   return {
     library_packages: [...libraryPackageNames(names, ownPackage)],
     missing_libraries: [...closure.missing].sort(),
-    unpackaged_libraries: unpackaged.sort(),
+    unpackaged_libraries: [...new Set(unpackaged)].sort(),
     ...(reason.length === 0 ? {} : { library_packages_reason: reason }),
   };
 };
