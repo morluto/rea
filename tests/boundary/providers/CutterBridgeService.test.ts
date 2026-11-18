@@ -110,6 +110,7 @@ it("classifies confirmed command observations as external-service, not controlle
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async () => ({
       requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
