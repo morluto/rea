@@ -238,6 +238,7 @@
 * **desktop:** keep the advertised apt suite pattern valid in v-mode ([fee2677](https://github.com/morluto/rea/commit/fee267759d19be81bad8ccc39354328d70115e5e)), closes [#10389](https://github.com/morluto/rea/issues/10389)
 * **desktop:** point the packing blocker at the moved guide ([#10255](https://github.com/morluto/rea/issues/10255)) ([002716a](https://github.com/morluto/rea/commit/002716a99879d1170696847a478036d9c3a79990))
 * **desktop:** preserve commas in apt source fields ([#11926](https://github.com/morluto/rea/issues/11926)) ([7d357b8](https://github.com/morluto/rea/commit/7d357b8325414f281a487398ba48fd0c285599e0))
+* **desktop:** preserve distinct JSON record selector identities ([#12072](https://github.com/morluto/rea/issues/12072)) ([c0ad2c1](https://github.com/morluto/rea/commit/c0ad2c1a222afad78611a1106864bb44b36ecced))
 * **desktop:** preserve literal directories in ELF origin expansion ([#10215](https://github.com/morluto/rea/issues/10215)) ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
 * **desktop:** preserve multiline apt-config locations ([#10241](https://github.com/morluto/rea/issues/10241)) ([0f5ac9d](https://github.com/morluto/rea/commit/0f5ac9d5f3d750e017456fa5e9b9f955f497a8b1))
 * **desktop:** preserve own JSON keys in task grading ([#10331](https://github.com/morluto/rea/issues/10331)) ([cd96c5e](https://github.com/morluto/rea/commit/cd96c5e9ebc96b1ac03f384f83eb55ba8580e433))
