@@ -345,7 +345,9 @@ const locatorSchema = z.discriminatedUnion("kind", [
     name: z
       .string()
       .min(1)
-      .describe("The exact full accessible name of the element with this role."),
+      .describe(
+        "The exact full accessible name of the element with this role.",
+      ),
   }),
   z.strictObject({
     kind: z.literal("css"),
