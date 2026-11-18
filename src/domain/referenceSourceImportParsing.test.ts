@@ -71,18 +71,18 @@ it.each([
   ["main.jsx", "commonjs", true],
   [".js", "module", true],
   [".mjs", "module", true],
-  [".mjs", "commonjs", false],
-  [".js", "commonjs", false],
+  [".mjs", "commonjs", true],
+  [".js", "commonjs", true],
   [".cjs", "module", true],
   [".CJS", "module", true],
   [".JS", "module", true],
   [".MJS", "module", true],
-  [".cjs", "commonjs", false],
+  [".cjs", "commonjs", true],
 ] as const)(
   "retains the loader's BOM/hashbang semantics for %s (%s)",
   (path, packageType, valid) => {
     const esm =
-      path.endsWith(".mjs") ||
+      (path.endsWith(".mjs") && path !== ".mjs") ||
       path.endsWith(".mts") ||
       path.endsWith(".jsx") ||
       (path.startsWith(".") && packageType === "module") ||
@@ -113,5 +113,26 @@ it.each([
       expect(parsed.parse_failures).toHaveLength(1);
       expect(parsed.relationships).toEqual([]);
     }
+  },
+);
+
+it.each(["unknown", "unspecified"] as const)(
+  "retains a conditional dependency without a strict-mode error for %s packages",
+  (mode) => {
+    const parsed = parseReferenceSourceImports(
+      "main.js",
+      Buffer.from(
+        '\uFEFF#!/usr/bin/env node\nwith ({}) {}\nrequire("./dep.cjs");',
+      ),
+      "JavaScript",
+      mode,
+    );
+    expect(parsed.parse_failures).toEqual([]);
+    expect(parsed.relationships).toMatchObject([
+      { to: "./dep.cjs", parse_state: "partial" },
+    ]);
+    expect(parsed.limitations).toContainEqual(
+      expect.stringContaining("package loader mode is unknown"),
+    );
   },
 );

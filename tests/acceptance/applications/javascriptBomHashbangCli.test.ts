@@ -54,8 +54,10 @@ const fixture = async () => {
       '\uFEFF#!/usr/bin/env node\nconst {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
     "rejected.js":
       '\uFEFF#!/usr/bin/env node\nconst {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
+    ".cjs":
+      '\uFEFF#!/usr/bin/env node\nwith ({}) {} const {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
     "invoke-commonjs.mjs":
-      'const print = console.log; console.log = () => {}; await import("./rejected.cjs"); await import("./rejected.js"); print(JSON.stringify({loaded:true}));',
+      'const print = console.log; console.log = () => {}; await import("./rejected.cjs"); await import("./rejected.js"); await import("./.cjs"); print(JSON.stringify({loaded:true}));',
     "plain.cjs":
       '#!/usr/bin/env node\nconst {marker}=require("./dep.cjs"); console.log(JSON.stringify({marker}));',
     "dep.mjs": "export const marker=42;",
@@ -86,7 +88,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "plain.cjs",
     ])
       expect(await runNodeJsonControl(root, path)).toEqual({ marker: 42 });
-    for (const path of ["rejected.cjs", "rejected.js"])
+    for (const path of ["rejected.cjs", "rejected.js", ".cjs"])
       await expect(runNodeJsonControl(root, path)).rejects.toMatchObject({
         code: 1,
         stderr: expect.stringContaining("SyntaxError"),
@@ -120,6 +122,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["plain.cjs", "require", "dep.cjs"],
       ["rejected.cjs", "require", "dep.cjs"],
       ["rejected.js", "require", "dep.cjs"],
+      [".cjs", "require", "dep.cjs"],
       ...importedDotfiles.map(
         ({ path }) => [path, "static-import", "dep.mjs"] as const,
       ),
@@ -137,6 +140,19 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           evidence.location.value.source === path,
       );
       expect(edges).toHaveLength(1);
+      if (
+        path === "rejected.cjs" ||
+        path === "rejected.js" ||
+        path === ".cjs"
+      ) {
+        expect(edges[0]?.evidence).toMatchObject({
+          coverage: { status: "partial" },
+          limitations: expect.arrayContaining([
+            expect.stringContaining("imported through the ES module loader"),
+          ]),
+        });
+      }
+
       expect(edges[0]).toMatchObject({
         properties: { resolved_path: target },
         evidence: {
@@ -177,7 +193,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ]),
       },
     });
-    for (const path of ["rejected.cjs", "rejected.js"]) {
+    for (const path of ["rejected.cjs", "rejected.js", ".cjs"]) {
       expect(
         graph.nodes.flatMap(({ observations }) => observations),
       ).toContainEqual(
@@ -225,7 +241,7 @@ cliTest.runIf(process.platform !== "win32")(
       }),
     );
     expect(partial.limitations).toContainEqual(
-      expect.stringContaining("only if Node loads it as an ES module"),
+      expect.stringContaining("package loader mode is unknown"),
     );
     expect(output.exitCode, output.stderr).toBe(0);
     const graph = historicalSourceGraphSchema.parse(output.json);
@@ -267,7 +283,7 @@ cliTest.runIf(process.platform !== "win32")(
         parse_state: "parsed",
       }),
     );
-    for (const path of ["rejected.cjs", "rejected.js"]) {
+    for (const path of ["rejected.cjs", "rejected.js", ".cjs"]) {
       expect(graph.relationships).toContainEqual(
         expect.objectContaining({
           from_path: path,
@@ -348,7 +364,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           properties.path === "main.js" && properties.text_status !== undefined,
       );
     expect(sourceObservation?.evidence.limitations).toContainEqual(
-      expect.stringContaining("only if Node loads it as an ES module"),
+      expect.stringContaining("package loader mode is unknown"),
     );
   },
 );
