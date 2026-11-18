@@ -1,3 +1,19 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
+import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -6,35 +22,39 @@ import type { _electron as electron } from "playwright-core";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
-} from "../application/javascript/ElectronActiveObservationPort.js";
+} from "../ports/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  cleanupOwnedProcessGroup,
-  cleanupWindowsProcessTree,
-  verifyNoTokenOwnedProcesses,
-  type OwnedProcessGroup,
-  type ProcessCleanupResult,
-  type ProcessLineageObservation,
-  type OwnershipSweepUnverifiedProcess,
+import type {
+  PersistentOwnedProcessGroup,
+  ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import {
   observeOwnedProcessLineage,
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "../process/ProcessOwnershipObservation.js";
-import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
 import {
   runElectronActions,
   readApplicationState,
-  runWithExecutionLimits,
+  readFinalApplicationState,
+  watchSingleInstanceLockRefusal,
+  type ElectronHookSnapshot,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
@@ -44,6 +64,8 @@ const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const hookPath = fileURLToPath(
   new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
@@ -58,12 +80,27 @@ type ElectronPaths = {
 
 /** Launch an owned Electron application through the official Playwright API. */
 export class PlaywrightElectronActiveProvider implements ElectronActiveObservationPort {
+  readonly #resources = new ArtifactResourceScope();
+  readonly #shutdown = new AbortController();
+
+  /** Stop admitting work, cancel and join captures, then retry exact retained resource owners. */
+  async close(): Promise<void> {
+    this.#shutdown.abort(new Error("Electron active provider is closing"));
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      throw providerError(cause);
+    }
+  }
+
   constructor(
     private readonly environment: Readonly<Record<string, string | undefined>>,
     // Load Playwright only when a capture launches; MCP startup stays off its module graph.
     private readonly launch: typeof electron.launch = async (options) =>
       (await import("playwright-core"))._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
+    // The host the application launches and is cleaned up on.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   identity(): ProviderIdentity {
@@ -74,49 +111,109 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     input: CanonicalElectronActiveObservationInput,
     options: ExecutionOptions = {},
   ): Promise<Result<ElectronActiveObservationResult, AnalysisError>> {
+    const signal = AbortSignal.any([
+      this.#shutdown.signal,
+      ...(options.signal === undefined ? [] : [options.signal]),
+    ]);
+    try {
+      return await this.#resources.run(() =>
+        this.#capture(input, { ...options, signal }),
+      );
+    } catch (cause: unknown) {
+      return err(providerError(cause));
+    }
+  }
+
+  async #capture(
+    input: CanonicalElectronActiveObservationInput,
+    options: ExecutionOptions,
+  ): Promise<Result<ElectronActiveObservationResult, AnalysisError>> {
     let application: ElectronApplication | undefined;
-    let ownership: OwnedProcessGroup | undefined;
+    let ownership: PersistentOwnedProcessGroup | undefined;
     let lineage: ProcessLineageObservation | undefined;
     let capture: ElectronActiveObservationResult | undefined;
     let paths: ElectronPaths | undefined;
-    let initialState:
-      | Awaited<ReturnType<typeof readApplicationState>>
+    // The latest completed snapshot, retained when a later stage fails.
+    let retained:
+      | {
+          readonly stage: "initial" | "final";
+          readonly state: Awaited<ReturnType<typeof readApplicationState>>;
+        }
       | undefined;
     let actions: ElectronActiveObservationResult["actions"] = [];
     let outcome: Result<ElectronActiveObservationResult, AnalysisError>;
     const runId = randomUUID();
     try {
       if (options.signal?.aborted === true)
-        throw new BrowserObservationError(OPERATION, "cancelled");
-      await prepareProcessOwnershipInspection(options.signal);
+        throw new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+        });
+      await inspectOwnership(
+        () => prepareProcessOwnershipInspection(options.signal),
+        this.#resources,
+      );
       const startupDeadline = performance.now() + STARTUP_TIMEOUT_MS;
       paths = {
         executable: input.executable_path,
         application: input.application_path,
         root: input.application_root,
       };
-      await runWithExecutionLimits(
-        assertNodeCliInspectArgumentsSupported(paths.executable, {
+      const preflight = assertNodeCliInspectArgumentsSupported(
+        input.executable_path,
+        {
+          resources: this.#resources,
           ...(options.signal === undefined ? {} : { signal: options.signal }),
           readFuseImage: this.readFuseImage,
-        }),
-        options.signal,
-        startupDeadline,
+        },
+      ).catch((cause: unknown) => {
+        throw electronFuseFailure(cause, input.executable_path, OPERATION);
+      });
+      try {
+        await runWithExecutionLimits(
+          preflight,
+          options.signal,
+          startupDeadline,
+        );
+      } catch (interruption: unknown) {
+        // A startup interruption cannot abandon an admitted descriptor's final
+        // close. Its physical/cleanup failure takes precedence over the race.
+        await preflight;
+        throw interruption;
+      }
+      const captureBaseline = await inspectOwnership(
+        () => systemProcessOwnershipHost.captureBaseline?.(options.signal),
+        this.#resources,
       );
-      const captureBaseline =
-        await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
-        throw new BrowserObservationError(OPERATION, "cancelled");
+        throw new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+        });
+      const applicationArgs = [
+        "-r",
+        hookPath,
+        paths.application,
+        ...input.args,
+      ];
       const launchOptions: Parameters<typeof electron.launch>[0] = {
         executablePath: paths.executable,
         cwd: paths.root,
-        env: safeElectronEnvironment(this.environment, runId),
-        args: ["-r", hookPath, paths.application, ...input.args],
+        env: {
+          ...safeElectronEnvironment(this.environment, runId, this.platform),
+          REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
+            length: applicationArgs.length,
+            sha256: sha256Hex(JSON.stringify(applicationArgs)),
+          }),
+        },
+        args: applicationArgs,
         timeout: Math.max(1, startupDeadline - performance.now()),
       };
-      application = await containLaunchRejections(() =>
-        this.launch(launchOptions),
-      );
+      application = await containLaunchRejections(() => {
+        if (options.signal?.aborted === true)
+          throw new BrowserObservationError(OPERATION, "cancelled", {
+            cause: options.signal.reason,
+          });
+        return this.launch(launchOptions);
+      });
       const leaderPid = application.process().pid;
       if (
         typeof leaderPid !== "number" ||
@@ -134,137 +231,136 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         expectedParentPid: process.pid,
         expectedCommand: paths.executable,
         sweepTokenOwnedProcesses: true,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
         ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       lineage = await observeOwnedProcessLineage(ownership);
-      initialState = await readApplicationState(application);
-      actions = await runElectronActions(application, input, options);
-      const state = await runWithExecutionLimits(
+      const initialState = await runWithExecutionLimits(
         readApplicationState(application),
-        undefined,
-        options.signal?.aborted ? performance.now() + 5_000 : undefined,
+        options.signal,
+        startupDeadline,
       );
-      capture = projectElectronActiveCapture(paths, actions, state);
-      outcome = options.signal?.aborted
-        ? err(
-            new BrowserObservationError(OPERATION, "cancelled", {
-              partialObservation: {
-                kind: "electron-active-observation",
-                capture,
-              },
-            }),
-          )
-        : ok(capture);
+      retained = { stage: "initial", state: initialState };
+      refuseHandedOffInstance(initialState.hookSnapshot);
+      // A lock refused while actions run stops the path that would open their
+      // windows, so the refusal also ends pending actions; the final snapshot
+      // then reports it.
+      const handedOff = watchSingleInstanceLockRefusal(application);
+      const actionOutcome = await runElectronActions(
+        application,
+        input,
+        {
+          ...options,
+          signal:
+            options.signal === undefined
+              ? handedOff
+              : AbortSignal.any([options.signal, handedOff]),
+        },
+        this.#resources,
+      );
+      actions = actionOutcome.actions;
+      if (actionOutcome.cleanupError !== undefined)
+        throw actionOutcome.cleanupError;
+      const state = await readFinalApplicationState(
+        application,
+        options.signal,
+      );
+      const finalCapture = projectElectronActiveCapture(paths, actions, state);
+      retained = { stage: "final", state };
+      refuseHandedOffInstance(state.hookSnapshot);
+      capture = finalCapture;
+      outcome = ok(capture);
     } catch (cause: unknown) {
-      if (paths !== undefined && initialState !== undefined) {
+      if (paths !== undefined && retained !== undefined) {
         const retainedCapture = projectElectronActiveCapture(
           paths,
           actions,
-          initialState,
+          retained.state,
         );
+        const reason = errorMessage(cause);
         capture = {
           ...retainedCapture,
           limitations: [
             ...retainedCapture.limitations,
-            `Capture stopped after the initial pre-action snapshot: ${cause instanceof Error ? cause.message : String(cause)}. Final Windows, metrics, IPC, and timeline state is unknown; the retained snapshot may omit action effects.`,
+            retained.stage === "initial"
+              ? `Capture stopped after the initial pre-action snapshot: ${reason}. Final Windows, metrics, IPC, and timeline state is unknown; the retained snapshot may omit action effects.`
+              : `Capture failed after its final snapshot: ${reason}. The retained final snapshot includes action effects.`,
           ],
         };
       }
-      if (options.signal?.aborted === true)
-        outcome = err(
-          new BrowserObservationError(OPERATION, "cancelled", {
+      const error = providerError(cause);
+      if (capture !== undefined)
+        error.retainPartialObservation({
+          kind: "electron-active-observation",
+          capture,
+        });
+      outcome = err(error);
+    }
+    if (application !== undefined) {
+      const owner = new ElectronCaptureCleanup(
+        application,
+        ownership,
+        lineage,
+        this.platform,
+      );
+      const released = await owner.release(this.#resources);
+      const cleanup = owner.processResult;
+      outcome = captureOutcomeWithCancellation(outcome, options.signal);
+      if (
+        released.processes.kind === "failed" ||
+        released.transport.kind === "failed"
+      ) {
+        const processFailure = released.processes.kind === "failed";
+        const failures = [released.processes, released.transport].flatMap(
+          (attempt) => (attempt.kind === "failed" ? [attempt.cause] : []),
+        );
+        const cause =
+          failures.length === 1
+            ? failures[0]
+            : new AggregateError(
+                failures,
+                "Electron process and transport cleanup failed",
+              );
+        const reason = failures
+          .map((failure) => errorMessage(failure))
+          .join("; ");
+        const failure = new BrowserObservationError(
+          OPERATION,
+          "cleanup_failed",
+          {
             cause,
+            detail: `${processFailure ? "Electron process cleanup could not be verified" : "Electron transport teardown failed after process cleanup"}: ${reason}. Collected observations are retained when available.`,
+            cleanup: { reason, resources: owner.pendingResources },
             ...(capture === undefined
               ? {}
               : {
                   partialObservation: {
                     kind: "electron-active-observation" as const,
-                    capture,
+                    capture: processFailure
+                      ? {
+                          ...capture,
+                          application: {
+                            ...capture.application,
+                            cleanup: "unverified" as const,
+                          },
+                        }
+                      : capture,
                   },
                 }),
-          }),
+          },
         );
-      else {
-        const error = providerError(cause);
-        if (capture !== undefined)
-          error.retainPartialObservation({
-            kind: "electron-active-observation",
-            capture,
-          });
-        outcome = err(error);
+        owner.bind(failure);
+        if (outcome.ok) return err(failure);
+        const composed = analysisErrorWithCleanupDependencies(
+          outcome.error,
+          failure,
+          OPERATION,
+        );
+        if (failure.partialObservation !== undefined)
+          composed.partialObservation = failure.partialObservation;
+        return err(composed);
       }
-    }
-    if (application !== undefined) {
-      if (ownership !== undefined) {
-        const currentLineage = await observeOwnedProcessLineage(ownership);
-        if (currentLineage.status === "verified" || lineage === undefined)
-          lineage = currentLineage;
-      }
-      let closeError: unknown;
-      try {
-        await runWithExecutionLimits(
-          application.close(),
-          undefined,
-          performance.now() + 5_000,
-        );
-      } catch (cause: unknown) {
-        closeError = cause;
-      }
-      const cleanup =
-        ownership === undefined
-          ? ({
-              cleaned: false,
-              reason: "owned Electron process identity was unavailable",
-            } satisfies ProcessCleanupResult)
-          : await cleanupElectronProcesses(ownership, lineage);
-      if (!cleanup.cleaned)
-        return err(
-          new BrowserObservationError(OPERATION, "cleanup_failed", {
-            cause: outcome.ok ? new Error(cleanup.reason) : outcome.error,
-            detail: `Electron cleanup could not be verified: ${cleanup.reason}.${capture !== undefined ? " Collected observations are retained in partial_observation." : ""}${outcome.ok ? "" : ` Capture also failed: ${outcome.error.message}.`} Inspect the reported process resources before launching another capture.`,
-            cleanup: {
-              reason: cleanup.reason,
-              resources:
-                ownership === undefined
-                  ? ["owned_process_group"]
-                  : [
-                      "owned_process_group",
-                      `run:${ownership.runId}`,
-                      `process-group:${String(ownership.processGroupId)}`,
-                    ],
-            },
-            ...(capture !== undefined
-              ? {
-                  partialObservation: {
-                    kind: "electron-active-observation" as const,
-                    capture: {
-                      ...capture,
-                      application: {
-                        ...capture.application,
-                        cleanup: "unverified" as const,
-                      },
-                    },
-                  },
-                }
-              : {}),
-          }),
-        );
-      if (closeError !== undefined)
-        return err(
-          new BrowserObservationError(OPERATION, "cleanup_failed", {
-            cause: outcome.ok ? closeError : outcome.error,
-            detail: `Electron transport teardown failed after process cleanup: ${closeError instanceof Error ? closeError.message : String(closeError)}.${capture !== undefined ? " Collected observations are retained in partial_observation." : ""}${outcome.ok ? "" : ` Capture also failed: ${outcome.error.message}.`}`,
-            ...(capture !== undefined
-              ? {
-                  partialObservation: {
-                    kind: "electron-active-observation" as const,
-                    capture,
-                  },
-                }
-              : {}),
-          }),
-        );
-      if (outcome.ok && cleanup.unverified !== undefined)
+      if (outcome.ok && cleanup?.cleaned && cleanup.unverified !== undefined)
         outcome = ok({
           ...outcome.value,
           limitations: [
@@ -276,107 +372,80 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         });
     }
-    return outcome;
+    // Cleanup failures returned above keep precedence; a completed capture
+    // observed under late cancellation is retained as partial Evidence.
+    return captureOutcomeWithCancellation(outcome, options.signal);
   }
 }
 
-/** Clean up an Electron launch. Windows signals a process only after lineage is verified. */
-export const cleanupElectronProcesses = async (
-  ownership: OwnedProcessGroup,
-  lineage: ProcessLineageObservation | undefined,
-  host: {
-    readonly platform: NodeJS.Platform;
-    readonly terminateTree: typeof cleanupWindowsProcessTree;
-  } = {
-    platform: process.platform,
-    terminateTree: cleanupWindowsProcessTree,
-  },
-): Promise<ProcessCleanupResult> => {
-  if (host.platform === "win32") {
-    // An empty Windows process table is not ownership proof for this PID.
-    if (lineage?.status !== "verified")
-      return {
-        cleaned: false,
-        reason:
-          "owned Electron lineage was unavailable; helper cleanup was not proven",
-      };
-    const root = await host.terminateTree(ownership.leaderPid);
-    if (!root.cleaned) return root;
-    for (const descendant of lineage.lineage.descendants) {
-      const result = await host.terminateTree(descendant.pid);
-      if (!result.cleaned) return result;
-    }
-    return root;
-  }
-  if (lineage?.status !== "verified") {
-    const root = await cleanupOwnedProcessGroup(ownership);
-    return root.cleaned
-      ? {
-          cleaned: false,
-          reason:
-            "owned Electron lineage was unavailable; helper cleanup was not proven",
-        }
-      : root;
-  }
-  const groupIds = selectCapturedProcessGroupIds(
-    ownership.leaderPid,
-    lineage.lineage.descendants.map(({ pid, processGroupId }) => ({
-      pid,
-      process_group_id: processGroupId,
-    })),
-  );
-  let signaled = false;
-  const unverified: OwnershipSweepUnverifiedProcess[] = [];
-  for (const processGroupId of groupIds) {
-    const cleanupOwnership: OwnedProcessGroup =
-      processGroupId === ownership.processGroupId
-        ? { ...ownership, leaderPid: processGroupId, processGroupId }
-        : {
-            runId: ownership.runId,
-            leaderPid: processGroupId,
-            processGroupId,
-          };
-    const result = await cleanupOwnedProcessGroup(cleanupOwnership);
-    if (!result.cleaned) return result;
-    signaled ||= result.signaled;
-    unverified.push(...(result.unverified ?? []));
-  }
-  const remaining = await verifyNoTokenOwnedProcesses(
-    ownership.runId,
-    undefined,
-    ownership.captureBaseline,
-    {
-      leaderPid: ownership.leaderPid,
-      processGroupId: ownership.processGroupId,
-      ...(ownership.sampledProcessGroupIds === undefined
-        ? {}
-        : { sampledProcessGroupIds: ownership.sampledProcessGroupIds }),
-    },
-  );
-  if (!remaining.cleaned) return remaining;
-  unverified.push(...(remaining.unverified ?? []));
-  return {
-    cleaned: true,
-    signaled,
-    ...(unverified.length === 0
-      ? {}
-      : {
-          unverified: [
-            ...new Map(
-              unverified.map((item) => [
-                `${String(item.pid)}:${item.diagnostic}`,
-                item,
-              ]),
-            ).values(),
-          ],
-        }),
-  };
+/**
+ * A launch that was refused the app's single-instance lock was handed to the
+ * instance holding it; the launched process is not the target, so stop.
+ */
+const refuseHandedOffInstance = (snapshot: ElectronHookSnapshot): void => {
+  if (snapshot.single_instance_lock_refused === true)
+    throw new BrowserObservationError(
+      OPERATION,
+      "application_already_running",
+      {
+        detail:
+          "The application is already running: the launched instance did not obtain the app's single-instance lock, so Electron handed this launch and its arguments to the running instance. REA stopped the launched instance at that call and failed the capture; it did not observe or drive the running instance.",
+        remediationAction:
+          "Close the running application, or wait for another capture of the same application to finish, then retry.",
+      },
+    );
 };
+
+/** Normalize only explicit facts emitted by the inspection owner. */
+const inspectOwnership = async <T>(
+  inspect: () => Promise<T> | undefined,
+  resources: ArtifactResourceScope,
+): Promise<T | undefined> => {
+  try {
+    return await inspect();
+  } catch (cause: unknown) {
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    const primary =
+      cancellation === undefined ? providerError(cause) : cancellation;
+    throw retainProcessInspectionCleanup(cause, primary, resources, OPERATION);
+  }
+};
+
+/** Keep existing failures and their cleanup owners when cancellation arrives later. */
+const captureOutcomeWithCancellation = (
+  outcome: Result<ElectronActiveObservationResult, AnalysisError>,
+  signal: AbortSignal | undefined,
+): Result<ElectronActiveObservationResult, AnalysisError> => {
+  if (signal?.aborted !== true) return outcome;
+  if (outcome.ok) return err(cancelledCapture(outcome.value, signal.reason));
+  const primary = primaryAnalysisError(outcome.error);
+  if (
+    (primary instanceof AnalysisCancelledError ||
+      primary.userCategory === "cancelled") &&
+    Object.is(primary.cause, signal.reason)
+  )
+    return outcome;
+  return err(
+    analysisErrorWithCancellation(
+      outcome.error,
+      cancelledBy(OPERATION, signal),
+    ),
+  );
+};
+
+const cancelledCapture = (
+  capture: ElectronActiveObservationResult,
+  reason: unknown,
+): BrowserObservationError =>
+  new BrowserObservationError(OPERATION, "cancelled", {
+    cause: reason,
+    partialObservation: { kind: "electron-active-observation", capture },
+  });
 
 export const safeElectronEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   runId: string,
-  platform = process.platform,
+  platform: NodeJS.Platform,
 ): Record<string, string> =>
   Object.fromEntries([
     ...[
@@ -387,6 +456,7 @@ export const safeElectronEnvironment = (
       "TMPDIR",
       "USER",
       "DISPLAY",
+      "XAUTHORITY",
       "WAYLAND_DISPLAY",
       ...(platform === "win32"
         ? [
@@ -495,16 +565,26 @@ const containLaunchRejections = async <T>(
   }
 };
 
-const providerError = (cause: unknown): AnalysisError =>
-  cause instanceof AnalysisError
-    ? cause
-    : new ProviderAdapterError(
-        PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
-        OPERATION,
-        {
-          cause,
-          diagnostics: {
-            message: cause instanceof Error ? cause.message : String(cause),
-          },
-        },
-      );
+const providerError = (cause: unknown): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+    const failure = new ProviderCleanupError(
+      PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
+      cause.cleanup.resources,
+      { reason: cause.cleanup.reason },
+      { operation: OPERATION, cause },
+    );
+    bindArtifactFileCleanup(cause, failure);
+    return failure;
+  }
+  return new ProviderAdapterError(
+    PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
+    OPERATION,
+    {
+      cause,
+      diagnostics: {
+        message: errorMessage(cause),
+      },
+    },
+  );
+};

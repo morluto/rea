@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { JebAnalysisService } from "./JebAnalysisService.js";
-import type { JebAnalysisPort } from "./JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../../ports/jeb/JebAnalysisPort.js";
 import type { JebRequest } from "../../domain/jeb/jebAnalysis.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -52,10 +52,17 @@ describe("JebAnalysisService admission", () => {
     const result = await service.execute("list_jeb_units", {
       count: 101,
       index: -1,
+      parent_unit_path: "",
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(AnalysisInputError);
+    if (!(result.error instanceof AnalysisInputError)) throw result.error;
+    expect(result.error.issues).toContainEqual({
+      path: ["parent_unit_path"],
+      reason: "out_of_range",
+      minimum: 1,
+    });
     expect(requests).toHaveLength(0);
   });
 

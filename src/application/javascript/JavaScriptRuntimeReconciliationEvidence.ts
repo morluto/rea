@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   createEvidence,
   type Evidence,
@@ -7,26 +8,29 @@ import type {
   JavaScriptRuntimeReconciliationResult,
   ReconcileJavaScriptRuntimeInput,
 } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER } from "../InvestigationProviders.js";
+import { JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER } from "../../domain/investigationProviders.js";
 
 /** Create derived Evidence for one exact set of static/runtime inputs. */
 export const createJavaScriptRuntimeReconciliationEvidence = (
   input: ReconcileJavaScriptRuntimeInput,
   result: JavaScriptRuntimeReconciliationResult,
 ): Evidence =>
-  createEvidence(undefined, JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER, {
-    predicateType: "rea.javascript-runtime-reconciliation",
-    operation: "reconcile_javascript_runtime",
-    parameters: parameters(input),
-    result: jsonValueSchema.parse(result),
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: result.limitations,
-    evidenceLinks: result.evidence_links,
-  });
+  createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+    {
+      predicateType: "rea.javascript-runtime-reconciliation",
+      operation: "reconcile_javascript_runtime",
+      parameters: parameters(input),
+      result,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: result.limitations,
+      evidenceLinks: result.evidence_links,
+    },
+  );
 
 const parameters = (
   input: ReconcileJavaScriptRuntimeInput,

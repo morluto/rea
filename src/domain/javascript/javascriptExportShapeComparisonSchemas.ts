@@ -1,12 +1,16 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+
+import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 
 import { evidenceSchema } from "../evidence.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
+import { applicationCoverageStatusSchema } from "./javascriptApplicationEvidenceSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const graphIdSchema = prefixedDigestSchema("jag");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const textSchema = z.string().min(1);
 const exportNameSchema = z.string();
 const semanticPrimitiveSchema = z.union([
   z.string(),
@@ -30,29 +34,6 @@ function isJsonPointer(value: string): boolean {
 const jsonPointerSchema = z
   .string()
   .refine(isJsonPointer, "Expected an RFC 6901 JSON Pointer");
-
-const sourcePointSchema = z.strictObject({
-  line: z.number().int().min(1),
-  column: z.number().int().min(0),
-});
-
-const sourceRangeSchema = z
-  .strictObject({
-    start: sourcePointSchema,
-    end: sourcePointSchema,
-  })
-  .superRefine((range, context) => {
-    if (
-      range.end.line < range.start.line ||
-      (range.end.line === range.start.line &&
-        range.end.column < range.start.column)
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["end"],
-        message: "Source range end must not precede its start",
-      });
-  });
 
 /** Check that export-shape comparisons bind distinct source Evidence. */
 const validateJavaScriptExportShapeIdentities = (
@@ -85,9 +66,9 @@ export const compareJavaScriptExportShapesInputSchema = z
   .strictObject({
     left: evidenceSchema,
     right: evidenceSchema,
-    left_module_path: textSchema,
+    left_module_path: nonEmptyTextSchema,
     left_export_name: exportNameSchema,
-    right_module_path: textSchema,
+    right_module_path: nonEmptyTextSchema,
     right_export_name: exportNameSchema,
   })
   .superRefine(validateJavaScriptExportShapeIdentities);
@@ -113,7 +94,7 @@ const projectedReturnFieldSchema = z.discriminatedUnion("state", [
     ...projectedReturnFieldShape,
     state: z.literal("unknown"),
     value: z.null(),
-    reason: textSchema,
+    reason: nonEmptyTextSchema,
   }),
 ]);
 export type ProjectedReturnField = z.infer<typeof projectedReturnFieldSchema>;
@@ -127,7 +108,7 @@ const projectedPropertyCoverageSchema = z.discriminatedUnion("status", [
   z.strictObject({
     path: jsonPointerSchema,
     status: z.literal("partial"),
-    omitted: z.union([z.number().int().positive(), z.null()]),
+    omitted: z.union([z.int().positive(), z.null()]),
   }),
 ]);
 export type ProjectedPropertyCoverage = z.infer<
@@ -136,7 +117,7 @@ export type ProjectedPropertyCoverage = z.infer<
 
 const projectedReturnShapeSchema = z
   .strictObject({
-    source_range: sourceRangeSchema,
+    source_range: javascriptSourceRangeSchema,
     value_status: z.enum([
       "literal",
       "union",
@@ -170,17 +151,17 @@ const projectedReturnShapeSchema = z
 export const projectedExportReturnShapesSchema = z
   .strictObject({
     semantic_role: z.literal("export-return-shapes"),
-    module_path: textSchema,
+    module_path: nonEmptyTextSchema,
     exported_name: exportNameSchema,
-    callable_id: textSchema,
+    callable_id: nonEmptyTextSchema,
     callable_kind: z.enum(["function", "class", "method"]),
     static_return_shapes: z.array(projectedReturnShapeSchema),
     return_shape_coverage: z.strictObject({
-      status: z.enum(["complete", "partial", "truncated"]),
-      retained_return_sites: z.number().int().min(0),
-      omitted_return_sites: z.number().int().min(0).nullable(),
-      omitted_fields: z.number().int().min(0),
-      omitted_property_coverage: z.number().int().min(0),
+      status: z.enum([...knownCoverageStatusSchema.options, "truncated"]),
+      retained_return_sites: z.int().min(0),
+      omitted_return_sites: z.int().min(0).nullable(),
+      omitted_fields: z.int().min(0),
+      omitted_property_coverage: z.int().min(0),
       projection_complete: z.boolean(),
     }),
   })
@@ -196,9 +177,18 @@ export const projectedExportReturnShapesSchema = z
       });
   });
 
+/** A side's source omission count; null when the side has no return-shape projection. */
+const sourceOmissionCountSchema = z
+  .int()
+  .min(0)
+  .nullable()
+  .describe(
+    "Null (unknown) when the side's export selection recovered no return-shape projection; zero only when the projection omitted none.",
+  );
+
 const exportCandidateSchema = z.strictObject({
   node_id: nodeIdSchema,
-  module_path: textSchema,
+  module_path: nonEmptyTextSchema,
   export_name: exportNameSchema,
   matches_requested_module: z.boolean(),
   matches_requested_export: z.boolean(),
@@ -207,10 +197,10 @@ const exportCandidateSchema = z.strictObject({
 const selectorResultShape = {
   evidence_id: evidenceIdSchema,
   graph_id: graphIdSchema,
-  requested_module_path: textSchema,
+  requested_module_path: nonEmptyTextSchema,
   requested_export_name: exportNameSchema,
   candidates: z.array(exportCandidateSchema),
-  omitted_candidates: z.number().int().min(0),
+  omitted_candidates: z.int().min(0),
 };
 const selectorResultSchema = z.union([
   z.strictObject({
@@ -242,7 +232,7 @@ const valueAvailabilitySchema = z.discriminatedUnion("availability", [
   }),
   z.strictObject({
     availability: z.literal("unknown"),
-    reason: textSchema,
+    reason: nonEmptyTextSchema,
   }),
 ]);
 
@@ -269,23 +259,23 @@ export const javaScriptExportShapeComparisonChangeSchema = z.strictObject({
   }),
   left: valueAvailabilitySchema,
   right: valueAvailabilitySchema,
-  left_source_range: sourceRangeSchema.nullable(),
-  right_source_range: sourceRangeSchema.nullable(),
+  left_source_range: javascriptSourceRangeSchema.nullable(),
+  right_source_range: javascriptSourceRangeSchema.nullable(),
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 const inventoryPropertyCoverageSchema = z.strictObject({
   path: jsonPointerSchema,
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
 });
 
 const propertyInventorySchema = z.strictObject({
   side: z.enum(["left", "right"]),
-  variant_index: z.number().int().nonnegative(),
+  variant_index: z.int().nonnegative(),
   discriminant: discriminantSchema.nullable(),
   paired: z.boolean(),
-  source_range: sourceRangeSchema,
+  source_range: javascriptSourceRangeSchema,
   properties: z.array(jsonPointerSchema),
   property_coverage: z.array(inventoryPropertyCoverageSchema),
 });
@@ -297,42 +287,41 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
   right: selectorResultSchema,
   property_inventories: z.array(propertyInventorySchema),
   summary: z.strictObject({
-    added: z.number().int().min(0),
-    removed: z.number().int().min(0),
-    changed: z.number().int().min(0),
-    unknown: z.number().int().min(0),
+    added: z.int().min(0),
+    removed: z.int().min(0),
+    changed: z.int().min(0),
+    unknown: z.int().min(0),
   }),
   changes: z.array(javaScriptExportShapeComparisonChangeSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial", "truncated"]),
-    left_graph_status: z.enum([
-      "complete",
+    /**
+     * `unknown` when either source graph's coverage is unknown or
+     * unavailable; `truncated` and `partial` are known gaps.
+     */
+    status: z.enum([
+      "complete-within-inputs",
       "partial",
+      "truncated",
       "unknown",
-      "unavailable",
     ]),
-    right_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
-      "unavailable",
-    ]),
-    paired_variants: z.number().int().min(0),
-    unpaired_left_variants: z.number().int().min(0),
-    unpaired_right_variants: z.number().int().min(0),
-    omitted_left_variants: z.number().int().min(0),
-    omitted_right_variants: z.number().int().min(0),
-    left_source_omitted_variants: z.number().int().min(0).nullable(),
-    right_source_omitted_variants: z.number().int().min(0).nullable(),
-    left_omitted_fields: z.number().int().min(0),
-    right_omitted_fields: z.number().int().min(0),
-    left_omitted_property_coverage: z.number().int().min(0),
-    right_omitted_property_coverage: z.number().int().min(0),
-    omitted_candidates: z.number().int().min(0),
-    omitted_changes: z.number().int().min(0),
+    left_graph_status: applicationCoverageStatusSchema,
+    right_graph_status: applicationCoverageStatusSchema,
+    paired_variants: z.int().min(0),
+    unpaired_left_variants: z.int().min(0),
+    unpaired_right_variants: z.int().min(0),
+    omitted_left_variants: z.int().min(0),
+    omitted_right_variants: z.int().min(0),
+    left_source_omitted_variants: z.int().min(0).nullable(),
+    right_source_omitted_variants: z.int().min(0).nullable(),
+    left_omitted_fields: sourceOmissionCountSchema,
+    right_omitted_fields: sourceOmissionCountSchema,
+    left_omitted_property_coverage: sourceOmissionCountSchema,
+    right_omitted_property_coverage: sourceOmissionCountSchema,
+    omitted_candidates: z.int().min(0),
+    omitted_changes: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ProjectedExportReturnShapes = z.output<

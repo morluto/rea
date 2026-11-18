@@ -1,13 +1,36 @@
 import { z } from "zod";
+import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
 
-import { localPathStringSchema } from "../localPath.js";
-import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
+import { pwntoolsTimeoutField } from "./nativeDeadlines.js";
+import { pwntoolsProducerLimitsField } from "./pwntoolsResourceLimits.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { canonicalBase64Schema } from "../stringPatterns.js";
 
-const unsignedHex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
-const index = z.number().int().nonnegative();
-const scalar = z.union([z.string(), z.number().int()]);
+const unsignedHex = z
+  .string()
+  .regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/, { abort: true });
+const index = z.int().nonnegative();
+const scalar = z.union([z.string(), z.int()]);
+
+// ELF section and segment types may be retained as either names or numeric values.
+const sectionTypes = {
+  SHT_NULL: 0,
+  SHT_SYMTAB: 2,
+  SHT_STRTAB: 3,
+  SHT_RELA: 4,
+  SHT_NOBITS: 8,
+  SHT_REL: 9,
+  SHT_DYNSYM: 11,
+  SHT_RELR: 19,
+} as const;
+const sectionTypeIs = (
+  value: string | number | undefined,
+  name: keyof typeof sectionTypes,
+): boolean => value === name || value === sectionTypes[name];
+const segmentIsNull = (value: string | number): boolean =>
+  value === "PT_NULL" || value === 0;
 const range = z.strictObject({ offset: unsignedHex, bytes: unsignedHex });
-const canonicalBase64 = z.string().regex(CANONICAL_BASE64_PATTERN);
+const canonicalBase64 = canonicalBase64Schema;
 const name = z.strictObject({
   display: z.string(),
   bytes_base64: canonicalBase64.nullable(),
@@ -17,9 +40,11 @@ const name = z.strictObject({
 
 /** Explicit local object selection, independent of an active disassembler target. */
 export const inspectBinaryLayoutInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected binary",
   ),
+  pwntools_timeout_ms: pwntoolsTimeoutField,
+  producer_limits: pwntoolsProducerLimitsField,
 });
 
 /** File and linked-image evidence; numeric ELF values never pass through unsafe JSON numbers. */
@@ -30,11 +55,23 @@ const binaryLayoutObjectSchema = z.strictObject({
     bytes: index,
   }),
   format: z.literal("elf"),
-  architecture: z.strictObject({
-    machine: z.literal("EM_X86_64"),
-    bits: z.literal(64),
-    byte_order: z.literal("little"),
-  }),
+  architecture: z.union([
+    z.strictObject({
+      machine: z.enum(["EM_X86_64", "EM_AARCH64"]),
+      bits: z.literal(64),
+      byte_order: z.literal("little"),
+    }),
+    z.strictObject({
+      machine: z.enum(["EM_386", "EM_ARM"]),
+      bits: z.literal(32),
+      byte_order: z.literal("little"),
+    }),
+    z.strictObject({
+      machine: z.literal("EM_MIPS"),
+      bits: z.literal(32),
+      byte_order: z.enum(["little", "big"]),
+    }),
+  ]),
   image_type: z.enum(["ET_EXEC", "ET_DYN", "ET_REL"]),
   entry_point: z.strictObject({
     reported_value: unsignedHex,
@@ -240,8 +277,9 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
       });
     for (const [index, section] of value.sections.entries()) {
       if (
-        (section.type === "SHT_SYMTAB" || section.type === "SHT_DYNSYM") &&
-        value.sections[section.link]?.type !== "SHT_STRTAB"
+        (sectionTypeIs(section.type, "SHT_SYMTAB") ||
+          sectionTypeIs(section.type, "SHT_DYNSYM")) &&
+        !sectionTypeIs(value.sections[section.link]?.type, "SHT_STRTAB")
       )
         context.addIssue({
           code: "custom",
@@ -262,7 +300,17 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
         "header_location",
       ]);
       checkName(section.name, ["sections", index, "name"]);
-      if (section.file_backing === "file")
+      const hasFileBytes =
+        !sectionTypeIs(section.type, "SHT_NOBITS") &&
+        !sectionTypeIs(section.type, "SHT_NULL");
+      if (section.file_backing !== (hasFileBytes ? "file" : "none"))
+        context.addIssue({
+          code: "custom",
+          path: ["sections", index, "file_backing"],
+          message:
+            "File backing must follow the reported section type; NOBITS and unused headers have no file content.",
+        });
+      if (hasFileBytes)
         check(section.offset, section.size, ["sections", index]);
     }
     for (const [index, segment] of value.segments.entries()) {
@@ -279,7 +327,7 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
         "header_location",
       ]);
       const hasFileBytes =
-        segment.type !== "PT_NULL" && BigInt(segment.file_size) !== 0n;
+        !segmentIsNull(segment.type) && BigInt(segment.file_size) !== 0n;
       if (segment.file_backing !== (hasFileBytes ? "file" : "none"))
         context.addIssue({
           code: "custom",
@@ -287,7 +335,7 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
           message:
             "File backing must follow the reported segment type and file size.",
         });
-      if ((segment.type === "PT_NULL") !== (segment.permissions === null))
+      if (segmentIsNull(segment.type) !== (segment.permissions === null))
         context.addIssue({
           code: "custom",
           path: ["segments", index, "permissions"],
@@ -316,6 +364,28 @@ export type InspectBinaryLayoutInput = z.infer<
 >;
 export type BinaryLayout = z.infer<typeof binaryLayoutSchema>;
 
+const validatedImmutableLayouts = new WeakSet<object>();
+
+/** Validate once per exact immutable source; mutable inputs always revalidate. */
+export const safeParseOwnedBinaryLayout = (
+  input: unknown,
+): z.ZodSafeParseResult<BinaryLayout> => {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    validatedImmutableLayouts.has(input)
+  )
+    return { success: true, data: input as BinaryLayout };
+  const parsed = binaryLayoutSchema.safeParse(input);
+  if (parsed.success && canBorrowParsedJsonSnapshot(input, parsed.data)) {
+    // Preserve normalization if the schema changes: only unchanged, completely
+    // validated data can be borrowed without retaining a duplicate layout.
+    validatedImmutableLayouts.add(input);
+    return { success: true, data: input };
+  }
+  return parsed;
+};
+
 const validateRelocationReferences = (
   value: z.output<typeof binaryLayoutObjectSchema>,
   context: z.RefinementCtx,
@@ -334,16 +404,20 @@ const validateRelocationReferences = (
           ? target.section_index !== 0 &&
             target.section_index === owner?.info &&
             value.sections[target.section_index] !== undefined &&
-            value.sections[target.section_index]?.type !== "SHT_NULL" &&
+            !sectionTypeIs(
+              value.sections[target.section_index]?.type,
+              "SHT_NULL",
+            ) &&
             target.offset === relocation.reported_offset
           : target.kind === "unknown-section" &&
             target.reported_section_index === owner?.info &&
             target.offset === relocation.reported_offset &&
             (target.reported_section_index === 0
               ? target.unknown_reason === "undefined-section-reference"
-              : value.sections[target.reported_section_index]?.type ===
-                  "SHT_NULL" &&
-                target.unknown_reason === "inactive-section-header")
+              : sectionTypeIs(
+                  value.sections[target.reported_section_index]?.type,
+                  "SHT_NULL",
+                ) && target.unknown_reason === "inactive-section-header")
         : target.kind === "linked-virtual-address" &&
           target.address === relocation.reported_offset;
     if (!targetMatches)
@@ -356,18 +430,24 @@ const validateRelocationReferences = (
     const table = value.sections[relocation.symbol_table_index];
     const tableExists =
       relocation.symbol_table_index !== 0 &&
-      (table?.type === "SHT_SYMTAB" || table?.type === "SHT_DYNSYM");
+      (sectionTypeIs(table?.type, "SHT_SYMTAB") ||
+        sectionTypeIs(table?.type, "SHT_DYNSYM"));
     const positiveReferenceExists =
       tableExists &&
-      BigInt(table.entry_size) >= 24n &&
+      table !== undefined &&
+      // Elf32_Sym is 16 bytes; Elf64_Sym is 24.
+      BigInt(table.entry_size) >=
+        (value.architecture.bits === 32 ? 16n : 24n) &&
       BigInt(relocation.symbol_index) <
         BigInt(table.size) / BigInt(table.entry_size) &&
       symbols.has(
         `${relocation.symbol_table_index}:${relocation.symbol_index}`,
       );
     if (
-      (owner?.type !== "SHT_REL" && owner?.type !== "SHT_RELA") ||
-      owner.link !== relocation.symbol_table_index ||
+      owner === undefined ||
+      (!sectionTypeIs(owner.type, "SHT_REL") &&
+        !sectionTypeIs(owner.type, "SHT_RELA")) ||
+      owner?.link !== relocation.symbol_table_index ||
       (relocation.symbol_table_index !== 0 && !tableExists) ||
       (relocation.symbol_index !== 0 && !positiveReferenceExists) ||
       relocation.symbol_reference_meaning !==
@@ -401,17 +481,11 @@ const validatePackedRelativeTables = (
       tableIndex,
       "location",
     ]);
-    const encodedBytes =
-      (table.encoded_bytes_base64.length * 3) / 4 -
-      (table.encoded_bytes_base64.endsWith("==")
-        ? 2
-        : table.encoded_bytes_base64.endsWith("=")
-          ? 1
-          : 0);
-    if (
-      !Number.isInteger(encodedBytes) ||
-      BigInt(encodedBytes) !== BigInt(table.location.bytes)
-    )
+    const encodedBytes = Buffer.byteLength(
+      table.encoded_bytes_base64,
+      "base64",
+    );
+    if (BigInt(encodedBytes) !== BigInt(table.location.bytes))
       context.addIssue({
         code: "custom",
         path: ["packed_relative_relocations", tableIndex],
@@ -420,7 +494,8 @@ const validatePackedRelativeTables = (
       });
     const section = value.sections[table.section_index];
     if (
-      section?.type !== "SHT_RELR" ||
+      section === undefined ||
+      !sectionTypeIs(section.type, "SHT_RELR") ||
       section.offset !== table.location.offset ||
       section.size !== table.location.bytes
     )

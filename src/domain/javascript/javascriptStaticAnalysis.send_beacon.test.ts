@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const endpoints = (source: string) =>
   analyzeJavaScriptStaticSource(source).endpoints.map(
@@ -28,7 +28,16 @@ describe("beacon endpoints", () => {
     ]);
   });
 
-  it("keeps a dynamic beacon URL unreported", () => {
-    expect(endpoints("navigator.sendBeacon(url, payload);")).toEqual([]);
+  it("retains a dynamic beacon target as partial source evidence", () => {
+    expect(
+      analyzeJavaScriptStaticSource("navigator.sendBeacon(url, payload);")
+        .endpoints,
+    ).toEqual([
+      expect.objectContaining({
+        value: "url",
+        mechanism: "call:navigator.sendBeacon",
+        resolution: "partial",
+      }),
+    ]);
   });
 });

@@ -1,6 +1,10 @@
 import type { InspectSignalDecodersInput } from "../domain/signals/signalDecoders.js";
+import { literalSubstringPredicate } from "../domain/analysisSearch.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 
-export class DecoderDiscoveryBudgetError extends Error {}
+/** The ParseFailure format of the `sigrok-cli` decoder catalog. */
+export const DECODER_CATALOG_FORMAT = "sigrok-decoder-catalog";
+const DECODER_CATALOG_LINES = 65536;
 
 const copyText = (value: string): string =>
   Buffer.from(value, "utf16le").toString("utf16le");
@@ -14,13 +18,15 @@ export const parseDecoderDiscovery = (
   // 65,536 records leaves an 8 MiB budget at 128 bytes of bookkeeping per record.
   let separators = 0;
   for (const character of text)
-    if (character === "\n" && ++separators >= 65536)
-      throw new DecoderDiscoveryBudgetError(
+    if (character === "\n" && ++separators >= DECODER_CATALOG_LINES)
+      throw decodeLimit(
+        DECODER_CATALOG_FORMAT,
         "Decoder discovery exceeds the 65,536-line representation budget",
+        { name: "line_budget", maximum: DECODER_CATALOG_LINES },
       );
   const lines = text.split(/\r?\n/u);
   if (lines.at(-1) === "") lines.pop();
-  const query = input.query.toLowerCase();
+  const matches = literalSubstringPredicate(input.query, false);
   const decoders: { id: string; name: string }[] = [];
   const help: { line_number: number; text: string }[] = [];
   if (input.decoder === null) {
@@ -48,10 +54,8 @@ export const parseDecoderDiscovery = (
   }
   const catalog = input.decoder === null;
   const matching = catalog
-    ? decoders.filter(({ id, name }) =>
-        `${id} ${name}`.toLowerCase().includes(query),
-      )
-    : help.filter(({ text: line }) => line.toLowerCase().includes(query));
+    ? decoders.filter(({ id, name }) => matches(id) || matches(name))
+    : help.filter(({ text: line }) => matches(line));
   const start = Math.min(input.offset, matching.length);
   const count = Math.min(
     input.limit ?? matching.length,

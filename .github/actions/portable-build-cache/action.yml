@@ -24,19 +24,7 @@ runs:
         BUILD_CACHE_PREFIX: rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.npmrc', '.nvmrc', 'package-lock.json') }}
       run: |
         npm run --silent test:prepare -- --dry=json |
-          node --input-type=module -e '
-            import { createHash } from "node:crypto";
-            import { readFileSync } from "node:fs";
-            const { tasks } = JSON.parse(readFileSync(0, "utf8"));
-            const hashes = tasks.map(({ taskId, hash }) => {
-              if (typeof hash !== "string")
-                throw new Error(`Build task ${taskId} must have an eager Turbo hash`);
-              return `${taskId}:${hash}`;
-            }).sort();
-            const hash = createHash("sha256").update(hashes.join("\n")).digest("hex");
-            console.log(`key=${process.env.BUILD_CACHE_PREFIX}-${hash}`);
-            console.log(`prefix=${process.env.BUILD_CACHE_PREFIX}-`);
-          ' >> "$GITHUB_OUTPUT"
+          node scripts/ci/portable-build-cache.mjs key >> "$GITHUB_OUTPUT"
     - name: Restore portable build outputs
       if: inputs.build_cache_artifact == '' && inputs.save != 'true'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

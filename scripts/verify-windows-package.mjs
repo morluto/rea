@@ -1,40 +1,44 @@
 #!/usr/bin/env node
 
-import { execFile } from "node:child_process";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { supportedClients } from "../dist/application/SupportedClients.js";
-import { promisify } from "node:util";
+import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
+import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { verifyPackageUpdate } from "./verify-package-update.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-const exec = promisify(execFile);
 const verifierRun = createVerifierRun();
 const root = process.cwd();
-const workspace = await mkdtemp(join(tmpdir(), "rea-windows-package-"));
+// Windows children write beneath the root; a private root's DELETE handle would block them.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-windows-package-",
+  private: false,
+});
+const workspace = fixture.path;
+// The package command owner releases the fixture after its commands close.
+const workspaceOwner = { path: workspace, close: () => fixture.release() };
 const prefix = join(workspace, "prefix");
+let commands;
+const closeWorkspace = () =>
+  commands === undefined ? workspaceOwner.close() : commands.close();
 let report;
 
 try {
+  commands = await createPackageVerifierCommands({ workspace: workspaceOwner });
   const packed = JSON.parse(
     (
-      await npm(
+      await commands.execNpm(
         ["pack", "--json", "--silent", "--pack-destination", workspace],
-        root,
+        { cwd: root, windowsHide: true },
       )
     ).stdout,
   );
@@ -49,7 +53,9 @@ try {
     );
   const packagedPaths = new Set(packageResult.files.map(({ path }) => path));
   for (const required of [
-    "bridge/ghidra/ReaGhidraBridge.java",
+    ...Object.values(GHIDRA_BRIDGE_SOURCES).map(
+      (name) => `bridge/ghidra/${name}`,
+    ),
     "native/windows/build/manifest.json",
     "native/windows/build/rea-windows-x64.node",
     "dist/android/JadxWorkspaceRoot.js",
@@ -63,9 +69,18 @@ try {
 
   const tarball = join(workspace, packageResult.filename);
   await access(tarball);
-  await npm(
-    ["install", "--no-package-lock", "--no-save", "--prefix", prefix, tarball],
-    workspace,
+  await commands.execNpm(
+    [
+      "install",
+      "--no-package-lock",
+      "--no-save",
+      "--no-audit",
+      "--no-fund",
+      "--prefix",
+      prefix,
+      tarball,
+    ],
+    { cwd: workspace, windowsHide: true },
   );
   const entry = join(
     prefix,
@@ -78,7 +93,7 @@ try {
     ...process.env,
     REA_ANALYSIS_PROVIDER: "auto",
   };
-  const help = await exec(process.execPath, [entry, "--help"], {
+  const help = await commands.exec(process.execPath, [entry, "--help"], {
     env: environment,
     windowsHide: true,
   });
@@ -97,12 +112,27 @@ try {
   });
   const client = new Client({ name: "rea-windows-package", version: "1.0.0" });
   let toolCount = 0;
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(server);
     toolCount = (await verifyCompleteToolCatalog(client)).length;
-  } finally {
-    await client.close();
-  }
+  }, [
+    async () => {
+      try {
+        await client.close();
+      } catch (cause) {
+        commands.adopt(client, entry);
+        throw cause;
+      }
+    },
+    async () => {
+      try {
+        await server.close();
+      } catch (cause) {
+        commands.adopt(server, entry);
+        throw cause;
+      }
+    },
+  ]);
 
   const home = join(workspace, "home");
   const setupEnvironment = {
@@ -142,7 +172,7 @@ try {
   ];
   const setup = JSON.parse(
     (
-      await exec(process.execPath, [entry, ...setupArgs], {
+      await commands.exec(process.execPath, [entry, ...setupArgs], {
         env: setupEnvironment,
         windowsHide: true,
       })
@@ -182,7 +212,7 @@ try {
   }
   const repeated = JSON.parse(
     (
-      await exec(process.execPath, [entry, ...setupArgs], {
+      await commands.exec(process.execPath, [entry, ...setupArgs], {
         env: setupEnvironment,
         windowsHide: true,
       })
@@ -196,7 +226,7 @@ try {
     throw new Error("Packaged agent setup is not idempotent");
   const uninstalled = JSON.parse(
     (
-      await exec(process.execPath, [entry, "uninstall", "--json"], {
+      await commands.exec(process.execPath, [entry, "uninstall", "--json"], {
         env: setupEnvironment,
         windowsHide: true,
       })
@@ -209,11 +239,12 @@ try {
       throw new Error(`Packaged uninstall did not remove ${id}`);
 
   if (process.platform !== "win32")
-    await npm(
+    await commands.execNpm(
       ["install", "--global", "--ignore-scripts", "--prefix", prefix, tarball],
-      workspace,
+      { cwd: workspace, windowsHide: true },
     );
   const update = await verifyPackageUpdate({
+    commands,
     prefix,
     packageRoot:
       process.platform === "win32"
@@ -235,22 +266,10 @@ try {
     uninstall: true,
     update,
   };
-} finally {
-  await rm(workspace, { recursive: true, force: true });
+} catch (cause) {
+  await withVerifierCleanup(() => Promise.reject(cause), [closeWorkspace]);
 }
+await closeWorkspace();
 process.stdout.write(
   `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
 );
-
-function npm(arguments_, cwd) {
-  const npmExecPath = process.env.npm_execpath;
-  return npmExecPath === undefined
-    ? exec(process.platform === "win32" ? "npm.cmd" : "npm", arguments_, {
-        cwd,
-        windowsHide: true,
-      })
-    : exec(process.execPath, [npmExecPath, ...arguments_], {
-        cwd,
-        windowsHide: true,
-      });
-}

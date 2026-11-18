@@ -1,9 +1,9 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { EventEmitter } from "node:events";
-import { Cli } from "incur";
 import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import type { BrowserScenarioCapturePort } from "../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../src/ports/BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "../../src/application/BrowserScenarioEvidence.js";
 import type { BrowserScenarioSessionPort } from "../../src/browser/BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "../../src/browser/PlaywrightBrowserScenarioProvider.js";
@@ -24,8 +24,12 @@ import {
 } from "../../src/domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../src/domain/browserObservationError.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
+import { waitFor } from "../support/testWait.js";
 
 const state = vi.hoisted(() => ({
   provider: undefined as BrowserScenarioCapturePort | undefined,
@@ -75,6 +79,9 @@ class RetrySession implements BrowserScenarioSessionPort {
     },
   });
 
+  get cleanupLease() {
+    return this.cleanup.cleanupLease;
+  }
   constructor(private readonly closeFailures = 1) {}
 
   currentUrl() {
@@ -151,7 +158,7 @@ it("waits for a slow but successful browser close before removing its profile", 
 });
 
 const serveScenario = async () => {
-  const cli = Cli.create("browser-cleanup-test", { sync: false });
+  const cli = createCommandCli();
   registerBrowserScenarioCommands(cli, silentLogger, {});
   let stdout = "";
   let exitCode = 0;
@@ -173,6 +180,54 @@ const serveScenario = async () => {
     processExitCode: process.exitCode,
   };
 };
+
+it("retains the completed scenario when cancellation arrives during final close", async () => {
+  let announceClose!: () => void;
+  const closeStarted = new Promise<void>((resolve) => {
+    announceClose = resolve;
+  });
+  let releaseClose!: () => void;
+  const closeBarrier = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  class FinalCloseSession extends RetrySession {
+    override async close() {
+      announceClose();
+      await closeBarrier;
+      return super.close();
+    }
+  }
+
+  const session = new FinalCloseSession(0);
+  const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+  const cancellation = new AbortController();
+  try {
+    const pending = provider.captureScenario(scenario, {
+      signal: cancellation.signal,
+    });
+    await closeStarted;
+    cancellation.abort();
+    releaseClose();
+
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "browser-scenario-observation",
+      capture: {
+        browser: { cleanup: "terminated-owned-process" },
+        steps: [{ step_id: "scenario_start" }, { step_id: "wait" }],
+      },
+    });
+    expect(session.closeBrowserCalls).toBe(1);
+    expect(session.profileRemovalCalls).toBe(1);
+  } finally {
+    releaseClose();
+    cancellation.abort();
+    await provider.close();
+  }
+});
 
 it("retries retained browser cleanup before the one-shot CLI releases its provider", async () => {
   const savedExitCode = process.exitCode;
@@ -265,24 +320,29 @@ it("retries a late Playwright open after cancellation before accepting another c
     signal: cancellation.signal,
   });
   try {
-    await vi.waitFor(() => expect(launchCount).toBe(1));
+    await waitFor(() => expect(launchCount).toBe(1));
     cancellation.abort();
     const cancelled = await firstCapture;
     if (cancelled.ok) throw new Error("Expected the first capture to cancel.");
-    expect(cancelled.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(cancelled.error.cleanupIncomplete).toBe(true);
+    let primary = cancelled.error.cleanupPrimary;
+    while (primary?.cleanupPrimary !== undefined)
+      primary = primary.cleanupPrimary;
+    expect(primary).toBeInstanceOf(AnalysisCancelledError);
+    expect(primary?.cause).toBe(cancellation.signal.reason);
 
     finishLateOpen(makeContext());
     await closeStarted;
     finishFirstClose();
 
-    const failedRetry = await provider.captureScenario(scenario);
-    expect(failedRetry.ok).toBe(false);
-    if (!failedRetry.ok) expect(failedRetry.error.cleanupIncomplete).toBe(true);
-
     const retried = await provider.captureScenario(scenario);
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.steps).toHaveLength(2);
     expect(firstCloseAttempts).toBe(2);
+    expect(cancelled.error).toMatchObject({
+      cleanupIncomplete: false,
+      cleanupResources: [],
+    });
     expect(launchCount).toBe(2);
     await provider.close();
     expect(launchCount).toBe(2);
@@ -307,10 +367,30 @@ it("preserves the initial partial observation when the provider cleanup retry al
   try {
     const result = await serveScenario();
     expect(result.output).toMatchObject({ code: "cleanup_incomplete" });
-    expect(JSON.stringify(result.output)).toContain("injected close failure 1");
-    expect(JSON.stringify(result.output)).not.toContain(
-      "injected close failure 2",
-    );
+    expect(result.output).toMatchObject({
+      details: {
+        diagnostics: {
+          primary_error: {
+            details: {
+              diagnostics: {
+                primary_error: {
+                  details: { cleanup_reason: "injected close failure 1" },
+                },
+              },
+            },
+          },
+          cleanup_error: {
+            details: { diagnostics: { reason: "injected close failure 2" } },
+          },
+        },
+        partial_observation: {
+          capture: {
+            browser: { cleanup: "incomplete" },
+            steps: [{ step_id: "scenario_start" }, { step_id: "wait" }],
+          },
+        },
+      },
+    });
     expect(close).toHaveBeenCalledTimes(1);
     expect(session.closeBrowserCalls).toBe(2);
     expect(session.profileRemovalCalls).toBe(0);
@@ -334,7 +414,7 @@ it("retains completed Evidence when provider shutdown fails after a successful c
   if (!captured.ok) throw captured.error;
   const evidence = createBrowserScenarioEvidence(
     scenario,
-    captured.value,
+    { source: jsonValueSchema.parse(captured.value), facts: captured.value },
     provider.identity(),
   );
   const close = vi.fn().mockRejectedValue(
@@ -379,11 +459,18 @@ it("preserves cancellation diagnostics while retrying retained cleanup", async (
     const result = await serveScenario();
     expect(result.output).toMatchObject({
       code: "cleanup_incomplete",
-      category: "execution_failure",
+      category: "cancelled",
       details: {
         cleanup: "incomplete",
         diagnostics: {
-          primary_error: { code: "cancelled", category: "cancelled" },
+          primary_error: {
+            code: "cleanup_incomplete",
+            details: {
+              diagnostics: {
+                primary_error: { code: "cancelled", category: "cancelled" },
+              },
+            },
+          },
         },
         partial_observation: { kind: "browser-scenario-observation" },
       },
@@ -416,12 +503,18 @@ it("preserves a thrown capture error when provider shutdown also rejects", async
   try {
     const result = await serveScenario();
     expect(result.output).toMatchObject({
-      code: "provider_timeout",
+      code: "cleanup_incomplete",
       category: "timeout",
+      details: {
+        execution_failure: "provider_timeout",
+        diagnostics: {
+          primary_error: { code: "provider_timeout", category: "timeout" },
+          cleanup_error: {
+            details: { diagnostics: { reason: "secondary shutdown failure" } },
+          },
+        },
+      },
     });
-    expect(JSON.stringify(result.output)).not.toContain(
-      "secondary shutdown failure",
-    );
     expect(close).toHaveBeenCalledTimes(1);
   } finally {
     await provider.close();

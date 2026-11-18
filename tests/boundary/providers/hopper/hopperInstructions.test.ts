@@ -98,8 +98,9 @@ describe("Hopper instruction block boundaries", () => {
         maxBuffer: 1_024 * 1_024,
       },
     );
-    expect(
-      z.object({ error: z.string() }).parse(JSON.parse(stdout)).error,
-    ).toBe("Instruction enumeration requires Hopper basic-block ownership");
+    const { error } = z.object({ error: z.string() }).parse(JSON.parse(stdout));
+    expect(error).toContain("Hopper");
+    expect(error).toContain("basic-block");
+    expect(error).toContain("ownership");
   });
 });

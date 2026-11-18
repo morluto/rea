@@ -1,3 +1,5 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -13,10 +15,7 @@ import { detectClients } from "../../../src/application/SetupHost.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  clearClientLocationEnvironment,
-  NPX_REGISTRATION_COMMAND,
-} from "../../fixtures/clientEnvironment.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -29,6 +28,8 @@ const piPath = (
 
 // Catch fallback to OMP paths, loss of relative overrides, and normalization
 // that differs from Pi's public getAgentDir()/normalizePath boundary.
+const command = currentClientRegistrationCommand();
+
 describe("Pi user configuration paths", () => {
   it.each([
     [undefined, "/home/a/.pi/agent"],
@@ -139,7 +140,7 @@ describe("Pi registration semantics", () => {
 }\n`;
     await writeFile(client.configPath, original);
     expect(
-      await configureClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
+      await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
     expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
       original,
@@ -151,20 +152,21 @@ describe("Pi registration semantics", () => {
         other: { command: "other-server" },
         rea: {
           type: "stdio",
-          command: "npx",
-          args: NPX_REGISTRATION_COMMAND.slice(1),
+          command: command[0],
+          args: command.slice(1),
         },
       },
       enabledServers: ["other"],
       disabledServers: ["rea", "other"],
     });
-    expect(
-      await configureClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
-    ).toEqual({ status: "unchanged" });
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "unchanged",
+    });
     expect(await readFile(client.configPath, "utf8")).toBe(configured);
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "pi"),
@@ -197,8 +199,8 @@ describe("Pi registration semantics", () => {
         JSON.stringify({
           mcpServers: {
             rea: {
-              command: "npx",
-              args: NPX_REGISTRATION_COMMAND.slice(1),
+              command: command[0],
+              args: command.slice(1),
               type,
               enabled,
             },
@@ -207,6 +209,7 @@ describe("Pi registration semantics", () => {
         }),
       );
       const statuses = await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses.find(({ client: name }) => name === "pi")).toMatchObject({
@@ -240,15 +243,12 @@ describe("Pi strict JSON parsing", () => {
       await writeFile(client.configPath, original);
       expect(() => parseClientConfiguration(original, "pi")).toThrow();
       expect(
-        await inspectClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
+        await inspectClientConfiguration(client, {}, command),
       ).toMatchObject({ status: "invalid" });
-      expect(
-        await configureClientConfiguration(
-          client,
-          {},
-          NPX_REGISTRATION_COMMAND,
-        ),
-      ).toEqual({ status: "failed", reason: "readback" });
+      expect(await configureClientConfiguration(client, {})).toEqual({
+        status: "failed",
+        reason: "readback",
+      });
       expect(await readFile(client.configPath, "utf8")).toBe(original);
       await expect(
         readFile(`${client.configPath}.rea.backup`),
@@ -256,6 +256,7 @@ describe("Pi strict JSON parsing", () => {
       expect(
         (
           await readClientRegistrationStatuses(home, undefined, {
+            platform: HOST_PLATFORM.platform,
             environment: {},
           })
         ).find(({ client: name }) => name === "pi"),
@@ -279,11 +280,11 @@ describe("Pi strict JSON parsing", () => {
     await expect(readFile(client.configPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
+    expect(await inspectClientConfiguration(client, {}, command)).toEqual({
+      status: "create",
+    });
     expect(
-      await inspectClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
-    ).toEqual({ status: "create" });
-    expect(
-      await configureClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
+      await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
     const created = await readFile(client.configPath, "utf8");
     expect(() => JSON.parse(created)).not.toThrow();
@@ -291,21 +292,22 @@ describe("Pi strict JSON parsing", () => {
       mcpServers: {
         rea: {
           type: "stdio",
-          command: "npx",
-          args: NPX_REGISTRATION_COMMAND.slice(1),
+          command: command[0],
+          args: command.slice(1),
         },
       },
     });
     await expect(
       readFile(`${client.configPath}.rea.backup`),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    expect(
-      await configureClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
-    ).toEqual({ status: "unchanged" });
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "unchanged",
+    });
     expect(await readFile(client.configPath, "utf8")).toBe(created);
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "pi"),

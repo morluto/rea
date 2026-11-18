@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "./coverage.js";
 import { posix } from "node:path";
 
 import { z } from "zod";
@@ -9,9 +10,8 @@ import {
   isPortableAbsoluteReferenceTarget,
 } from "./referenceSourcePathIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
-const boundedTextSchema = z.string().min(1);
+import { digestSchema, prefixedDigestSchema } from "./digests.js";
+import { nonEmptyTextSchema } from "./textSchemas.js";
 const relativePathSchema = z
   .string()
   .min(1)
@@ -39,7 +39,9 @@ const classificationSchema = z.enum([
 const entryBaseShape = {
   path: relativePathSchema,
   classifications: z.array(classificationSchema).min(1),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
+  // Host presentation is retained evidence, separate from relocatable semantics.
+  local_diagnostics: z.array(nonEmptyTextSchema).exactOptional(),
 };
 
 const sourceFileBaseShape = {
@@ -52,13 +54,13 @@ const sourceFileSchema = z.union([
   z.strictObject({
     ...sourceFileBaseShape,
     sha256: digestSchema,
-    size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    size: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     content_state: z.literal("hashed"),
   }),
   z.strictObject({
     ...sourceFileBaseShape,
     sha256: z.null(),
-    size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+    size: z.int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
     content_state: z.enum([
       "redacted-secret",
       "excluded",
@@ -119,6 +121,7 @@ const sourceEntrySchema = z.union([
 const sourceRelationshipSchema = z.strictObject({
   from_path: relativePathSchema,
   to: z.string().min(1),
+  source_specifier: z.string().min(1).exactOptional(),
   kind: z.enum(["imports", "requires", "references", "declares-module"]),
   resolution: z.enum(["internal", "external", "unresolved", "unknown"]),
   parse_state: z.enum(["parsed", "partial", "unknown"]),
@@ -127,28 +130,24 @@ const sourceRelationshipSchema = z.strictObject({
 const parseFailureSchema = z.strictObject({
   path: relativePathSchema,
   parser: z.string().min(1),
-  reason: boundedTextSchema,
+  reason: nonEmptyTextSchema,
 });
 
 const exclusionSchema = z.discriminatedUnion("reason", [
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum([
       "configured-secret",
       "project-ignored",
       "default-ignored",
       "caller-excluded",
     ]),
-    pattern: boundedTextSchema,
+    pattern: nonEmptyTextSchema,
   }),
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum(["symlink-escape", "unreadable"]),
   }),
 ]);
@@ -178,7 +177,7 @@ const graphShape = {
   authority: z.literal("historical-reference"),
   root_alias: z.literal("$REFERENCE_ROOT"),
   root_sha256: digestSchema,
-  inventory_state: z.enum(["complete", "partial", "unknown"]),
+  inventory_state: coverageStatusSchema,
   entries: z.array(sourceEntrySchema),
   relationships: z.array(sourceRelationshipSchema),
   parse_failures: z.array(parseFailureSchema),
@@ -194,7 +193,7 @@ const graphShape = {
       .min(1)
       .regex(/^[\w .:@\x2f+\x2d]+$/u),
   }),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const historicalSourceGraphStructureSchema = z
@@ -224,9 +223,9 @@ const historicalSourceManifestBaseSchema = z.strictObject({
   manifest_id: prefixedDigestSchema("hsm"),
   graph_sha256: digestSchema,
   root_sha256: digestSchema,
-  inventory_state: z.enum(["complete", "partial", "unknown"]),
-  entry_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  relationship_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  inventory_state: coverageStatusSchema,
+  entry_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  relationship_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
 
 export type HistoricalSourceGraph = z.infer<typeof historicalSourceGraphSchema>;
@@ -237,15 +236,45 @@ export type HistoricalSourceManifest = z.infer<
   typeof historicalSourceManifestBaseSchema
 >;
 
+/** Whether source facts prevent an inventory from being claimed complete. */
+export const historicalSourceInventoryHasPartialFacts = (
+  input: Pick<
+    HistoricalSourceGraphInput,
+    | "entries"
+    | "relationships"
+    | "parse_failures"
+    | "exclusions"
+    | "limitations"
+  >,
+): boolean =>
+  input.limitations.length > 0 ||
+  input.exclusions.length > 0 ||
+  input.parse_failures.length > 0 ||
+  input.entries.some(
+    (entry) =>
+      entry.limitations.length > 0 ||
+      (entry.kind === "file" && entry.content_state !== "hashed") ||
+      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
+      (entry.kind === "symlink" && entry.target_state !== "internal") ||
+      entry.kind === "unknown",
+  ) ||
+  input.relationships.some(
+    ({ parse_state, resolution }) =>
+      parse_state !== "parsed" ||
+      resolution === "unresolved" ||
+      resolution === "unknown",
+  );
+
 /** Stable identity used to sort and deduplicate source parse failures. */
 export const historicalSourceParseFailureKey = (
   failure: HistoricalSourceGraphInput["parse_failures"][number],
 ): string => `${failure.path}\u0000${failure.parser}\u0000${failure.reason}`;
 
-const relationshipKey = (
-  relationship: z.infer<typeof sourceRelationshipSchema>,
+/** Stable identity used to sort and deduplicate source relationships. */
+export const historicalSourceRelationshipKey = (
+  relationship: HistoricalSourceGraphInput["relationships"][number],
 ): string =>
-  `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}`;
+  `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}${relationship.source_specifier === undefined ? "" : `\u0000${relationship.source_specifier}`}`;
 
 const checkSortedUnique = (
   values: readonly string[],
@@ -334,7 +363,7 @@ const checkSymlinks = (
   );
   const excludedKinds = new Map<
     string,
-    Set<"file" | "directory" | "symlink" | "other" | "unknown" | undefined>
+    Set<"file" | "directory" | "symlink" | "other" | "unknown">
   >();
   for (const { path, entry_kind } of graph.exclusions) {
     const kinds = excludedKinds.get(path) ?? new Set();
@@ -397,26 +426,9 @@ const checkCompleteInventory = (
   graph: GraphStructure,
   context: z.RefinementCtx,
 ): void => {
-  if (graph.inventory_state !== "complete") return;
-  const partialEntry = graph.entries.some(
-    (entry) =>
-      entry.limitations.length > 0 ||
-      (entry.kind === "file" && entry.content_state !== "hashed") ||
-      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
-      (entry.kind === "symlink" && entry.target_state !== "internal") ||
-      entry.kind === "unknown",
-  );
-  const partialRelationship = graph.relationships.some(
-    ({ parse_state, resolution }) =>
-      parse_state !== "parsed" ||
-      ["unresolved", "unknown"].includes(resolution),
-  );
   if (
-    !partialEntry &&
-    !partialRelationship &&
-    graph.parse_failures.length === 0 &&
-    graph.exclusions.length === 0 &&
-    graph.limitations.length === 0
+    graph.inventory_state !== "complete" ||
+    !historicalSourceInventoryHasPartialFacts(graph)
   )
     return;
   context.addIssue({
@@ -445,7 +457,7 @@ function checkGraphInvariants(
   checkSortedUnique(graph.languages, "languages", context);
   checkSortedUnique(graph.manifests, "manifests", context);
   checkSortedUnique(
-    graph.relationships.map(relationshipKey),
+    graph.relationships.map(historicalSourceRelationshipKey),
     "relationships",
     context,
   );
@@ -551,15 +563,17 @@ export const createHistoricalSourceGraph = (
   });
 };
 
-/** Parse a graph and reject stale or caller-invented root commitments. */
-export const parseHistoricalSourceGraph = (
-  input: unknown,
-): HistoricalSourceGraph => historicalSourceGraphSchema.parse(input);
-
-/** Compute a deterministic graph commitment containing no absolute root path. */
-export const computeHistoricalSourceGraphSha256 = (input: unknown): string =>
+/** Commit semantic graph facts while retaining host-local diagnostic metadata separately. */
+const computeHistoricalSourceGraphSha256 = (
+  graph: HistoricalSourceGraph,
+): string =>
   digestCanonicalValue(
-    parseHistoricalSourceGraph(input),
+    {
+      ...graph,
+      entries: graph.entries.map(
+        ({ local_diagnostics: _local, ...entry }) => entry,
+      ),
+    },
     "Reference source graph",
   );
 
@@ -567,7 +581,7 @@ export const computeHistoricalSourceGraphSha256 = (input: unknown): string =>
 export const createHistoricalSourceManifest = (
   input: unknown,
 ): HistoricalSourceManifest => {
-  const graph = parseHistoricalSourceGraph(input);
+  const graph = historicalSourceGraphSchema.parse(input);
   const semantic = {
     schema: "HistoricalSourceManifest" as const,
     authority: "historical-reference" as const,
@@ -581,18 +595,4 @@ export const createHistoricalSourceManifest = (
     ...semantic,
     manifest_id: `hsm_${digestCanonicalValue(semantic, "Reference source graph")}`,
   });
-};
-
-/** Parse and verify a historical source manifest's semantic identifier. */
-export const parseHistoricalSourceManifest = (
-  input: unknown,
-): HistoricalSourceManifest => {
-  const manifest = historicalSourceManifestBaseSchema.parse(input);
-  const { manifest_id: manifestId, ...semantic } = manifest;
-  if (
-    `hsm_${digestCanonicalValue(semantic, "Reference source graph")}` !==
-    manifestId
-  )
-    throw new TypeError("Historical source manifest identifier does not match");
-  return manifest;
 };

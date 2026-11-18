@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const endpoints = (source: string) =>
   analyzeJavaScriptStaticSource(source).endpoints.map(
@@ -34,7 +34,15 @@ describe("server-sent event endpoints", () => {
     ]);
   });
 
-  it("keeps a dynamic EventSource URL unreported", () => {
-    expect(endpoints("new EventSource(url);")).toEqual([]);
+  it("retains a dynamic EventSource target as partial source evidence", () => {
+    expect(
+      analyzeJavaScriptStaticSource("new EventSource(url);").endpoints,
+    ).toEqual([
+      expect.objectContaining({
+        value: "url",
+        mechanism: "call:EventSource",
+        resolution: "partial",
+      }),
+    ]);
   });
 });

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../../../src/composition/android.js";
-import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -28,6 +28,7 @@ export const createJadxProtocolFixture = async (
   mode = "normal",
   cleanupFailure?: () => boolean,
   inventory?: { readonly classCount?: number },
+  settings: Readonly<Record<string, string>> = {},
 ) => {
   const root = await createTestTempDirectory("rea-android-boundary-");
   const apk = join(root, "fixture.apk");
@@ -52,10 +53,17 @@ export const createJadxProtocolFixture = async (
     javaToolOptions: string | undefined;
     legacyJavaOptions: string | undefined;
   }[] = [];
+  // Inherit the host environment for process launch, but take JADX settings
+  // only from this fixture so a developer's shell cannot change the provider.
   const environment: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([name]) => !name.startsWith("REA_JADX_"),
+      ),
+    ),
     JAVA_HOME: javaHome,
     REA_JADX_MCP_JAR: jar,
+    ...settings,
   };
   const provider = createAndroidAnalysisProvider(
     environment,
@@ -85,27 +93,29 @@ export const createJadxProtocolFixture = async (
           options.env?._JAVA_OPTIONS ?? options.hostEnvironment?._JAVA_OPTIONS,
       });
       if (mode === "cleanup-failure" || cleanupFailure !== undefined) {
-        onTestFinished(async () => {
-          const supervisor = new ProviderProcessSupervisor({
+        // Supervise from launch: a supervisor attached after the child closed
+        // never observes that close and waits out the output-close grace.
+        const supervisor = new ProviderProcessSupervisor(
+          {
             ...spawned,
             ownsProcessLifetime: true,
             cleanup: () => cleanupOwnedProcessGroup(spawned.ownership),
-          });
+          },
+          { captureStdout: false, maxDiagnosticBytes: 0 },
+        );
+        onTestFinished(async () => {
           // The SDK can close the child transport before process exit settles.
           // Retry retained ownership without bypassing the supervisor's proof.
           // Retain the entire stop result so an incomplete teardown failure reports its reason.
           await expect
-            .poll(
-              async () => {
-                const stopped = await supervisor.stop();
-                if (stopped.status === "incomplete")
-                  throw new Error(
-                    `Owned process cleanup incomplete: ${stopped.reason}`,
-                  );
-                return stopped.status;
-              },
-              { timeout: 5_000 },
-            )
+            .poll(async () => {
+              const stopped = await supervisor.stop();
+              if (stopped.status === "incomplete")
+                throw new Error(
+                  `Owned process cleanup incomplete: ${stopped.reason}`,
+                );
+              return stopped.status;
+            })
             .not.toBe("incomplete");
           if (options.cwd !== undefined)
             await rm(options.cwd, { recursive: true, force: true });
@@ -130,7 +140,8 @@ export const createJadxProtocolFixture = async (
     } catch (cause) {
       if (
         mode !== "cleanup-failure" ||
-        !(cause instanceof ProviderCleanupError) ||
+        !(cause instanceof ProviderAdapterError) ||
+        !cause.cleanupIncomplete ||
         cause.providerId !== "jadx"
       )
         throw cause;

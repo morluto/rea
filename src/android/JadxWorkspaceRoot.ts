@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 
 /** Match the native owner's ordinary spelling only for extended local drive paths. */
@@ -105,8 +106,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
       },
     });
     let diagnostics = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      diagnostics = (diagnostics + chunk.toString()).slice(-8192);
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      diagnostics = (diagnostics + chunk).slice(-8192);
     });
     const exit = new Promise<GuardianExit>((resolve) => {
       child.once("error", (error: Error) =>
@@ -116,8 +118,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
     });
     const ready = new Promise<string>((resolve, reject) => {
       let frame = "";
-      child.stdout.on("data", (chunk: Buffer) => {
-        frame += chunk.toString();
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        frame += chunk;
         if (frame.length > 4096) {
           reject(
             new Error("Android workspace guardian readiness exceeded 4 KiB"),
@@ -142,7 +145,8 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
         15000,
         "Android workspace guardian startup timed out",
       );
-      const observation = readySchema.parse(JSON.parse(line));
+      const decoded = parseJsonWithDuplicatePolicy(line, "reject");
+      const observation = readySchema.parse(decoded.ok ? decoded.value : null);
       if (
         win32.dirname(localDrivePath(observation.path)).toLowerCase() !==
           localDrivePath(win32.resolve(parent)).toLowerCase() ||
@@ -218,7 +222,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
 }
 
 /** POSIX retains its in-process root; Windows keeps a detached native owner. */
-export const createJadxWorkspaceRoot = (): Promise<JadxWorkspaceRoot> =>
-  process.platform === "win32"
+export const createJadxWorkspaceRoot = (
+  platform: NodeJS.Platform,
+): Promise<JadxWorkspaceRoot> =>
+  platform === "win32"
     ? WindowsJadxWorkspaceRoot.create()
     : PrivateRuntimeRoot.create({ prefix: "rea-android-" });

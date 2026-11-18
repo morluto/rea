@@ -17,6 +17,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const fixture = fileURLToPath(
   new URL("../../fixtures/processCaptureCancellation.mjs", import.meta.url),
@@ -59,19 +60,32 @@ const isRunning = async (pid: number): Promise<boolean> => {
 };
 
 const waitForExit = async (pid: number): Promise<void> => {
-  await expect
-    .poll(() => isRunning(pid), { timeout: 3_000, interval: 25 })
-    .toBe(false);
+  await expect.poll(() => isRunning(pid), { interval: 25 }).toBe(false);
 };
 
 const cleanupFixture = async (marker: Marker | undefined): Promise<void> => {
   if (marker === undefined) return;
   // Teardown uses the fixture's capture run token, never a bare PID kill.
-  await cleanupOwnedProcessGroup({
+  const result = await cleanupOwnedProcessGroup({
     runId: marker.runId,
     leaderPid: marker.rootPid,
     processGroupId: marker.rootPid,
   });
+  if (!result.cleaned)
+    throw new Error(`Fixture cleanup failed: ${result.reason}`);
+};
+
+const finishCleanup = async (steps: readonly (() => Promise<unknown>)[]) => {
+  const failures: unknown[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (cause: unknown) {
+      failures.push(cause);
+    }
+  }
+  if (failures.length > 0)
+    throw new AggregateError(failures, "Fixture cleanup failed");
 };
 
 itWithCaptureCapability.each(["SIGINT", "SIGTERM"] as const)(
@@ -110,9 +124,14 @@ itWithCaptureCapability.each(["SIGINT", "SIGTERM"] as const)(
     });
     let marker: Marker | undefined;
     onTestFinished(async () => {
-      await cleanupFixture(marker);
-      if (cli.exitCode === null && cli.signalCode === null) cli.kill("SIGKILL");
-      await closed;
+      await finishCleanup([
+        () => cleanupFixture(marker),
+        async () => {
+          if (cli.exitCode === null && cli.signalCode === null)
+            cli.kill("SIGKILL");
+          await closed;
+        },
+      ]);
     });
     marker = await readMarker(root);
     expect(await isRunning(marker.rootPid)).toBe(true);
@@ -132,6 +151,92 @@ itWithCaptureCapability.each(["SIGINT", "SIGTERM"] as const)(
     });
   },
   20_000,
+);
+
+itWithCaptureCapability(
+  "preserves completed observations as partial evidence when SIGINT arrives during CLI cleanup",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-cleanup-cancel-");
+    const scenario = join(root, "scenario.json");
+    const cleanupMarker = join(root, "cleanup.json");
+    await writeFile(
+      scenario,
+      JSON.stringify({
+        executable: process.execPath,
+        arguments: ["-e", "console.log('completed-before-cleanup')"],
+        timeout_ms: 5_000,
+      }),
+    );
+    const hook = fileURLToPath(
+      new URL("../../fixtures/processCleanupCancellation.mjs", import.meta.url),
+    );
+    for (const cancel of [false, true]) {
+      const cli = spawn(
+        process.execPath,
+        [
+          "--import",
+          hook,
+          "scripts/rea.mjs",
+          "capture-process",
+          scenario,
+          "--format",
+          "json",
+        ],
+        {
+          env: {
+            ...process.env,
+            TMPDIR: root,
+            REA_TEST_CANCEL_DURING_CLEANUP: cancel ? "1" : "0",
+            REA_TEST_CLEANUP_MARKER: cleanupMarker,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      let stdout = "";
+      cli.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      cli.stderr.resume();
+      const closed = new Promise<number | null>((resolve, reject) => {
+        cli.once("error", reject);
+        cli.once("close", resolve);
+      });
+      onTestFinished(async () => {
+        if (cli.exitCode === null && cli.signalCode === null)
+          cli.kill("SIGKILL");
+        await closed;
+      });
+      expect(await closed).toBe(cancel ? 130 : 0);
+      const marker = z
+        .object({ path: z.string(), removed: z.literal(true) })
+        .parse(JSON.parse(await readFile(cleanupMarker, "utf8")));
+      await expect(access(marker.path)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const output: unknown = JSON.parse(stdout);
+      if (cancel) {
+        expect(analysisCliErrorEnvelopeSchema.parse(output)).toMatchObject({
+          code: "cancelled",
+          details: {
+            cleanup: "complete",
+            partial_observation: {
+              capture: { exit: { code: 0 } },
+              cleanup: { temporary_root: { state: "cleaned" } },
+            },
+          },
+        });
+      } else {
+        expect(output).toMatchObject({
+          operation: "capture_process_scenario",
+          normalized_result: {
+            exit: { code: 0 },
+            cleanup: { temporary_root: "removed" },
+          },
+        });
+      }
+    }
+  },
+  30_000,
 );
 
 itWithCaptureCapability(
@@ -164,16 +269,21 @@ itWithCaptureCapability(
       },
     );
     const server = createServer({ kind: "session", session }, { logger });
-    const client = new Client({
-      name: "process-settlement-cancellation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-settlement-cancellation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     let marker: Marker | undefined;
     onTestFinished(async () => {
-      await cleanupFixture(marker);
-      await client.close();
-      await server.close();
-      await session.close();
+      await finishCleanup([
+        () => cleanupFixture(marker),
+        () => client.close(),
+        () => server.close(),
+        () => session.close(),
+      ]);
     });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

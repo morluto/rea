@@ -1,217 +1,238 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  captureAccessibility,
   captureDom,
   captureFrames,
   captureResources,
+  classifyCdpFrameUrl,
+  observeCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import {
+  frameTreeReply,
+  resourceTreeReply,
+} from "../../tests/fixtures/fakeCdpSend.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 const origin = "https://app.example.test";
 
-describe("CDP DOM capture", () => {
-  it("preserves node names and parents when aligned arrays are valid", () => {
-    const generator = captureDom(
+it("keeps reported origin evidence independent of malformed or missing frame URLs", () => {
+  const allowed = new Set([origin]);
+  const url = "https://user:password@app.example.test/page?token=local#old";
+  for (const urlFragment of [7, null, "without-hash"]) {
+    const observed = observeCdpFrameUrl({ url, urlFragment });
+    expect(observed, String(urlFragment)).toEqual({
+      kind: "invalid_fragment",
+      scopeUrl: url,
+    });
+    expect(classifyCdpFrameUrl(observed, allowed), String(urlFragment)).toEqual(
       {
-        strings: [origin + "/app", "#document", "DIV", "SPAN", ""],
-        documents: [
-          {
-            documentURL: 0,
-            baseURL: 0,
-            nodes: {
-              nodeType: [9, 1, 1],
-              nodeName: [1, 2, 3],
-              nodeValue: [4, 4, 4],
-              parentIndex: [-1, 0, 1],
-              attributes: [[], [], []],
-            },
-          },
-        ],
+        scope: "approved",
+        origin,
+        url: undefined,
       },
-      new Set([origin]),
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: [origin],
-        target_id: "page-1",
-      }),
     );
-    let captured = generator.next([]);
-    while (!captured.done) captured = generator.next([]);
-    expect(captured.value.nodes.map((node) => node.node_name)).toEqual([
-      "#document",
-      "DIV",
-      "SPAN",
-    ]);
-    expect(captured.value.nodes.map((node) => node.parent_index)).toEqual([
-      -1, 0, 1,
-    ]);
-    expect(captured.value.nodes.map((node) => node.node_value_length)).toEqual([
-      0, 0, 0,
-    ]);
+  }
+  expect(
+    classifyCdpFrameUrl(
+      observeCdpFrameUrl({ urlFragment: `#${origin}` }),
+      allowed,
+    ),
+  ).toEqual({
+    scope: "unknown",
+    origin: null,
+    url: undefined,
   });
+});
 
-  it.each(["nodeName", "parentIndex", "nodeValue", "attributes"] as const)(
-    "preserves DOM fact positions and reports malformed %s entries",
-    (field) => {
-      const strings = [
+it("publishes exact approved frame URLs and counts malformed and foreign children", () => {
+  const completeness = new CdpCaptureCompleteness();
+  const children = [
+    { id: "inline", url: `${origin}/inline?x=1#old` },
+    {
+      id: "replaced",
+      url: "https://user:password@app.example.test/replaced?token=local#old",
+      urlFragment: "#new",
+    },
+    { id: "cleared", url: `${origin}/cleared?x=1#old`, urlFragment: "" },
+    { id: "malformed-approved", url: `${origin}/invalid`, urlFragment: 7 },
+    {
+      id: "malformed-foreign-number",
+      url: "https://foreign.test/number",
+      urlFragment: 7,
+    },
+    {
+      id: "malformed-foreign-string",
+      url: "https://foreign.test/string",
+      urlFragment: "without-hash",
+    },
+    {
+      id: "foreign",
+      url: "https://foreign.test/page",
+      urlFragment: `#${origin}`,
+    },
+  ];
+  const captured = captureFrames(
+    frameTreeReply({
+      frameTree: {
+        frame: { id: "root", url: `${origin}/` },
+        childFrames: children.map((frame) => ({
+          frame: { ...frame, parentId: "root" },
+        })),
+      },
+    }),
+    new Set([origin]),
+    undefined,
+    completeness,
+  );
+
+  expect(captured.items).toEqual([
+    { frame_id: "root", parent_frame_id: null, url: `${origin}/`, origin },
+    {
+      frame_id: "inline",
+      parent_frame_id: "root",
+      url: `${origin}/inline?x=1#old`,
+      origin,
+    },
+    {
+      frame_id: "replaced",
+      parent_frame_id: "root",
+      url: `${origin}/replaced?token=local#new`,
+      origin,
+    },
+    {
+      frame_id: "cleared",
+      parent_frame_id: "root",
+      url: `${origin}/cleared?x=1`,
+      origin,
+    },
+  ]);
+  expect(completeness.snapshot()).toMatchObject({
+    unavailable_sections: ["frames"],
+    policy_filtered_sections: ["frames"],
+    excluded: [
+      { section: "frames", reason: "disallowed_origin", count: 3 },
+      { section: "frames", reason: "invalid_protocol_value", count: 3 },
+    ],
+  });
+});
+
+it("keeps DOM node and URL source positions when neighboring rows are malformed", () => {
+  const columns = [
+    [9, 1, -1, -1, []],
+    [1, 2, -1, 0, []],
+    // Wrong wire types in name, parent, value, and attribute references.
+    [1, "3", -1, 1, []],
+    [1, 3, -1, "1", []],
+    [1, 3, "0", 1, []],
+    [1, 3, -1, 1, [4, "bad", 4, 5]],
+    // Malformed and missing string references, including the value-only -1 sentinel.
+    [1, -1, -1, 1, []],
+    [1, 20, -1, 1, []],
+    [1, 7, -1, 1, []],
+    [1, 3, -2, 1, []],
+    [1, 3, 20, 1, []],
+    [1, 3, 7, 1, []],
+    [1, 3, -1, 1, [-1, 5]],
+    [1, 3, -1, 1, [20, 5]],
+    [1, 3, -1, 1, [4, -2]],
+    [1, 3, -1, 1, [4, 20]],
+    [1, 3, -1, 1, [4]],
+    [1, 3, -1, 1, "invalid"],
+    [1, 3, 8, 2, []],
+    [1, 9, -1, 1, [4, 6]],
+  ] as const;
+  const completeness = new CdpCaptureCompleteness();
+  const generator = captureDom(
+    {
+      strings: [
         origin + "/app",
         "#document",
-        "DIV",
+        "HTML",
         "SPAN",
         "href",
-        "title",
-        "/page",
-      ];
-      const nodeArrays: Record<string, unknown> = {
-        nodeType: [9, 1, 1],
-        nodeName: [1, 2, 3],
-        nodeValue: [0, 0, 0],
-        parentIndex: [-1, 0, 1],
-        attributes: [[], [], []],
-      };
-      if (field === "nodeName") nodeArrays.nodeName = [1, "malformed", 3];
-      if (field === "parentIndex")
-        nodeArrays.parentIndex = [-1, "malformed", 1];
-      if (field === "nodeValue") nodeArrays.nodeValue = [0, 0, "malformed"];
-      if (field === "attributes")
-        nodeArrays.attributes = [[], [4, "malformed", 5, 6], []];
-      const completeness = new CdpCaptureCompleteness();
-      const generator = captureDom(
+        "/decoy",
+        "/kept",
+        42,
+        "😀a",
+        "A",
+      ],
+      documents: [
         {
-          strings,
-          documents: [
-            {
-              documentURL: 0,
-              baseURL: 0,
-              nodes: nodeArrays,
-            },
-          ],
+          documentURL: 0,
+          nodes: {
+            nodeType: columns.map(([type]) => type),
+            nodeName: columns.map(([, name]) => name),
+            nodeValue: columns.map(([, , value]) => value),
+            parentIndex: columns.map(([, , , parent]) => parent),
+            attributes: columns.map(([, , , , attributes]) => attributes),
+          },
         },
-        new Set([origin]),
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: "http://127.0.0.1:9222",
-          allowed_origins: [origin],
-          target_id: "page-1",
-        }),
-        completeness,
-      );
-      let captured = generator.next([]);
-      while (!captured.done) captured = generator.next([]);
-      expect(captured.value.total).toBe(3);
-      expect(captured.value.nodes.map((node) => node.node_name)).toEqual(
-        field === "nodeValue" ? ["#document", "DIV"] : ["#document", "SPAN"],
-      );
-      expect(captured.value.nodes.map((node) => node.index)).toEqual(
-        field === "nodeValue" ? [0, 1] : [0, 2],
-      );
-      expect(captured.value.nodes.map((node) => node.parent_index)).toEqual(
-        field === "nodeValue" ? [-1, 0] : [-1, 1],
-      );
-      if (field === "attributes") {
-        expect(
-          captured.value.nodes.map((node) => node.attribute_names),
-        ).toEqual([[], []]);
-        expect(captured.value.urls).toEqual([]);
-      }
-      expect(completeness.snapshot()).toMatchObject({
-        unavailable_sections: expect.arrayContaining(["dom"]),
-        excluded: expect.arrayContaining([
-          { section: "dom", reason: "invalid_protocol_value", count: 1 },
-        ]),
-      });
+      ],
     },
+    new Set([origin]),
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      allowed_origins: [origin],
+      target_id: "page-1",
+    }),
+    completeness,
   );
+  const result = generator.next();
+  if (!result.done) throw new Error("Unexpected SVG identity query");
+  expect(result.value.total).toBe(20);
+  expect(result.value.nodes).toEqual([
+    {
+      index: 0,
+      node_type: 9,
+      node_name: "#document",
+      parent_index: -1,
+      node_value_length: 0,
+      attribute_names: [],
+    },
+    {
+      index: 1,
+      node_type: 1,
+      node_name: "HTML",
+      parent_index: 0,
+      node_value_length: 0,
+      attribute_names: [],
+    },
+    {
+      index: 18,
+      node_type: 1,
+      node_name: "SPAN",
+      parent_index: 2,
+      node_value_length: 3,
+      attribute_names: [],
+    },
+    {
+      index: 19,
+      node_type: 1,
+      node_name: "A",
+      parent_index: 1,
+      node_value_length: 0,
+      attribute_names: ["href"],
+    },
+  ]);
+  expect(result.value.urls).toEqual([
+    {
+      node_index: 19,
+      attribute: "href",
+      url: `${origin}/kept`,
+      destination_scope: "approved",
+    },
+  ]);
+  expect(completeness.snapshot()).toMatchObject({
+    unavailable_sections: ["dom", "metadata"],
+    excluded: [
+      { section: "dom", reason: "invalid_protocol_value", count: 16 },
+      { section: "metadata", reason: "invalid_protocol_value", count: 16 },
+    ],
+  });
 });
 
 describe("CDP DOM string and namespace validity", () => {
-  it.each([
-    { field: "nodeName", index: -1 },
-    { field: "nodeName", index: 20 },
-    { field: "nodeName", index: 2, malformedString: true },
-    { field: "nodeValue", index: -2 },
-    { field: "nodeValue", index: 20 },
-    { field: "nodeValue", index: 5, malformedString: true },
-    { field: "attributeName", index: -1 },
-    { field: "attributeName", index: 20 },
-    { field: "attributeValue", index: -2 },
-    { field: "attributeValue", index: 20 },
-  ] as const)(
-    // -1 is DOMSnapshot's empty string for values, never for names.
-    "omits a node when its $field string index is invalid ($index)",
-    ({
-      field,
-      index,
-      malformedString,
-    }: {
-      readonly field:
-        | "nodeName"
-        | "nodeValue"
-        | "attributeName"
-        | "attributeValue";
-      readonly index: number;
-      readonly malformedString?: boolean;
-    }) => {
-      const strings: unknown[] = [
-        origin + "/app",
-        "#document",
-        "DIV",
-        "SPAN",
-        "href",
-        "/good",
-      ];
-      const nodeArrays: Record<string, unknown> = {
-        nodeType: [9, 1, 1],
-        nodeName: [1, 2, 3],
-        nodeValue: [0, 0, 0],
-        parentIndex: [-1, 0, 0],
-        attributes: [[], [], []],
-      };
-      if (field === "nodeName") nodeArrays.nodeName = [1, index, 3];
-      if (field === "nodeValue") nodeArrays.nodeValue = [0, index, 0];
-      if (field === "attributeName")
-        nodeArrays.attributes = [[], [index, 5], []];
-      if (field === "attributeValue")
-        nodeArrays.attributes = [[], [4, index], []];
-      if (malformedString === true) strings[index === 2 ? 2 : 5] = 42;
-      const completeness = new CdpCaptureCompleteness();
-      const generator = captureDom(
-        {
-          strings,
-          documents: [
-            {
-              documentURL: 0,
-              baseURL: 0,
-              nodes: nodeArrays,
-            },
-          ],
-        },
-        new Set([origin]),
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: "http://127.0.0.1:9222",
-          allowed_origins: [origin],
-          target_id: "page-1",
-        }),
-        completeness,
-      );
-      let captured = generator.next([]);
-      while (!captured.done) captured = generator.next([]);
-
-      expect(captured.value.total).toBe(3);
-      expect(captured.value.nodes.map((node) => node.index)).toEqual([0, 2]);
-      expect(captured.value.nodes.map((node) => node.node_name)).toEqual([
-        "#document",
-        "SPAN",
-      ]);
-      expect(completeness.snapshot().excluded).toContainEqual({
-        section: "dom",
-        reason: "invalid_protocol_value",
-        count: 1,
-      });
-    },
-  );
-
   it("does not infer SVG ancestry through an element with malformed namespace data", () => {
     const strings: unknown[] = [
       origin + "/app",
@@ -268,17 +289,19 @@ describe("CDP DOM string and namespace validity", () => {
 
 describe("CDP frame capture", () => {
   it("walks deeply nested frame trees and returns every frame and resource", () => {
+    const rootIndex = 1_999;
     let frameTree: Record<string, unknown> = {
-      frame: { id: "frame-0", url: `${origin}/0` },
+      frame: { id: "frame-0", parentId: "frame-1", url: `${origin}/0` },
       resources: [
         { url: `${origin}/0.js`, type: "Script", mimeType: "text/javascript" },
       ],
     };
-    for (let index = 1; index < 2_000; index += 1) {
+    for (let index = 1; index <= rootIndex; index += 1) {
       frameTree = {
         frame: {
-          id: `frame-${String(index)}`,
-          url: `${origin}/${String(index)}`,
+          id: `frame-${index}`,
+          ...(index === rootIndex ? {} : { parentId: `frame-${index + 1}` }),
+          url: `${origin}/${index}`,
         },
         resources: [
           {
@@ -291,75 +314,26 @@ describe("CDP frame capture", () => {
       };
     }
     const result = { frameTree };
-    const frames = captureFrames(result, new Set([origin]));
-    const resources = captureResources(result, new Set([origin]));
-    expect(frames.items).toHaveLength(2_000);
-    expect(resources.items).toHaveLength(2_000);
-  });
-});
-
-describe("CDP accessibility capture", () => {
-  it("retains full approved accessibility text", () => {
-    const capture = captureAccessibility(
-      [
-        {
-          nodes: [
-            {
-              nodeId: "node-1",
-              role: { value: "button" },
-              name: { value: "😀a" },
-              description: { value: "éé" },
-              childIds: ["missing-child"],
-              properties: [
-                { name: "disabled", value: { value: true } },
-                { name: "valuetext", value: { value: "private value" } },
-              ],
-            },
-          ],
-        },
-      ],
-      {
-        includeText: true,
-      },
+    const frames = captureFrames(frameTreeReply(result), new Set([origin]));
+    const resources = captureResources(
+      resourceTreeReply(result),
+      new Set([origin]),
     );
-
-    expect(capture.nodes[0]).toMatchObject({
-      name: "😀a",
-      description: "éé",
-      states: [{ name: "disabled", value: true }],
-    });
-    expect(capture.treeIncomplete).toBe(true);
-    expect(capture.textCapture).toEqual({
-      status: "included",
-      retained_bytes: 9,
-      excluded_fields: 0,
-    });
-  });
-
-  it("counts accessibility fields omitted without text approval", () => {
-    const capture = captureAccessibility(
-      [
-        {
-          nodes: [
-            {
-              nodeId: "node-1",
-              name: { value: "private name" },
-              description: { value: "private description" },
-            },
-          ],
-        },
-      ],
-      {
-        includeText: false,
-      },
+    const frameIndexes = Array.from(
+      { length: rootIndex + 1 },
+      (_, index) => rootIndex - index,
     );
-
-    expect(capture.nodes[0]).toMatchObject({ name: null, description: null });
-    expect(capture.textCapture).toEqual({
-      status: "not_approved",
-      retained_bytes: 0,
-      excluded_fields: 2,
-    });
+    expect(frames.items).toEqual(
+      frameIndexes.map((index) => ({
+        frame_id: `frame-${index}`,
+        parent_frame_id: index === rootIndex ? null : `frame-${index + 1}`,
+        url: `${origin}/${index}`,
+        origin,
+      })),
+    );
+    expect(resources.items.map(({ url }) => url)).toEqual(
+      frameIndexes.map((index) => `${origin}/${index}.js`),
+    );
   });
 });
 

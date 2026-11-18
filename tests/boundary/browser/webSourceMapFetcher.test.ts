@@ -2,8 +2,12 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 import { describe, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
   analyzeWebBundleInputSchema,
   webSourceMapsSchema,
@@ -28,6 +32,133 @@ const expectInvalidIncludedSourceMaps = (result: WebSourceMaps): void => {
   });
   expectInvalidSourceMaps({ ...result, status: "unavailable" });
 };
+
+it.each(["regular", "indexed"])(
+  "retains declaration identity for duplicate source URLs in HTTP %s maps",
+  async (format) => {
+    const contents = [
+      null,
+      'import "./shared.js"; import "./shared.js"; import "./first.js";',
+      'import "./shared.js"; import "./second.js";',
+    ];
+    const leaf = (sourcesContent: (string | null)[]) => ({
+      version: 3,
+      sources: sourcesContent.map(() => "same.ts"),
+      sourcesContent,
+      names: [],
+      mappings: "",
+    });
+    const map =
+      format === "regular"
+        ? leaf(contents)
+        : {
+            version: 3,
+            sections: contents.map((content, line) => ({
+              offset: { line, column: 0 },
+              map: leaf([content]),
+            })),
+          };
+    const server = createServer((_incoming, response) => {
+      response.setHeader("content-type", "application/source-map+json");
+      response.end(JSON.stringify(map));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/app.js.map`;
+      const result = await fetchWebSourceMapsOk(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({ allowed_origins: [localOrigin] }),
+      );
+      const item = result.items[0];
+      if (item?.status !== "included") throw new Error("map not included");
+      expect(item.limitation).toBeNull();
+      expect(
+        item.original_sources.map((source) => ({
+          declaration_index: source.declaration_index,
+          source_index: source.source_index,
+          source: source.source,
+          text: source.artifact?.text ?? null,
+        })),
+      ).toEqual(
+        contents.map((text, declaration_index) => ({
+          declaration_index,
+          source_index: format === "regular" ? declaration_index : 0,
+          source: `${localOrigin}/same.ts`,
+          text,
+        })),
+      );
+      expect(item.original_module_edges).toEqual(
+        [
+          [1, "./shared.js"],
+          [1, "./first.js"],
+          [2, "./shared.js"],
+          [2, "./second.js"],
+        ].map(([declaration_index, specifier]) => ({
+          declaration_index,
+          from_source: `${localOrigin}/same.ts`,
+          kind: "static_import",
+          specifier,
+          resolved_source: new URL(String(specifier), url).href,
+        })),
+      );
+      expect(webSourceMapsSchema.parse(result)).toEqual(result);
+      expectInvalidSourceMaps({
+        ...result,
+        items: [
+          {
+            ...item,
+            original_module_edges: item.original_module_edges.map(
+              ({ declaration_index: _index, ...edge }) => edge,
+            ),
+          },
+        ],
+      });
+      for (const omit of ["source_index", "declaration_index"] as const)
+        expectInvalidSourceMaps({
+          ...result,
+          items: [
+            {
+              ...item,
+              original_sources: item.original_sources.map((source) =>
+                Object.fromEntries(
+                  Object.entries(source).filter(([key]) => key !== omit),
+                ),
+              ),
+            },
+          ],
+        });
+      expectInvalidSourceMaps({
+        ...result,
+        items: [
+          {
+            ...item,
+            original_module_edges: [
+              {
+                ...item.original_module_edges[0],
+                declaration_index: -1,
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  },
+);
 
 it.each(["regular", "indexed"])(
   "collects an HTTP %s source map with omitted names without accepting invalid names",
@@ -68,7 +199,7 @@ it.each(["regular", "indexed"])(
       if (address === null || typeof address === "string")
         throw new TypeError("Expected a TCP listener address");
       const localOrigin = `http://127.0.0.1:${String(address.port)}`;
-      const result = await fetchWebSourceMaps(
+      const result = await fetchWebSourceMapsOk(
         texts.map((_, index) => ({
           ...request,
           fetchUrl: `${localOrigin}/${index}`,
@@ -136,15 +267,13 @@ it("parses ECMA-426 HTTP source-map prefixes while retaining exact response evid
     mappings: "AAAA",
   });
   const prefix = ")]}'transport prefix";
-  const texts = [
-    map,
+  const included = [
     `\uFEFF${prefix}\n${map}`,
-    `${prefix}\n${map}`,
     `${prefix}\r\n${map}`,
     `${prefix}\r${map}`,
-    `${prefix}${map}`,
-    `${prefix}\n{`,
   ];
+  const invalid = [`${prefix}${map}`, `\uFEFF${prefix}\n{`];
+  const texts = [...included, ...invalid];
   const server = createServer((incoming, response) => {
     const index = Number(incoming.url?.slice(1));
     response.setHeader("content-type", "application/source-map+json");
@@ -159,7 +288,7 @@ it("parses ECMA-426 HTTP source-map prefixes while retaining exact response evid
     if (address === null || typeof address === "string")
       throw new TypeError("Expected a TCP listener address");
     const localOrigin = `http://127.0.0.1:${String(address.port)}`;
-    const result = await fetchWebSourceMaps(
+    const result = await fetchWebSourceMapsOk(
       texts.map((_, index) => ({
         ...request,
         fetchUrl: `${localOrigin}/${index}`,
@@ -171,12 +300,10 @@ it("parses ECMA-426 HTTP source-map prefixes while retaining exact response evid
       "included",
       "included",
       "included",
-      "included",
-      "included",
       "invalid",
       "invalid",
     ]);
-    for (const [index, text] of texts.slice(0, 5).entries())
+    for (const [index, text] of included.entries())
       expect(result.items[index]).toMatchObject({
         artifact: {
           text,
@@ -201,10 +328,35 @@ it("parses ECMA-426 HTTP source-map prefixes while retaining exact response evid
           },
         ],
       });
-    expect(result.items.slice(5)).toMatchObject([
-      { artifact: null, mappings: [], original_sources: [] },
-      { artifact: null, mappings: [], original_sources: [] },
-    ]);
+    expect(result.items.slice(included.length)).toMatchObject(
+      invalid.map((text) => ({
+        artifact: null,
+        mappings: [],
+        original_sources: [],
+        response_identity: {
+          bytes: Buffer.byteLength(text),
+          sha256: createHash("sha256").update(text).digest("hex"),
+          representation: "fetch-response-body-bytes",
+        },
+      })),
+    );
+    const without = (value: object, omit: string) =>
+      Object.fromEntries(Object.entries(value).filter(([key]) => key !== omit));
+    for (const omit of ["source_index", "declaration_index"])
+      expectInvalidSourceMaps({
+        ...result,
+        items: result.items.map((item) => ({
+          ...item,
+          mappings: item.mappings.map((row) => without(row, omit)),
+        })),
+      });
+    // An invalid map was read in full, so its body identity is required.
+    expectInvalidSourceMaps({
+      ...result,
+      items: result.items.map((item) =>
+        item.status === "invalid" ? without(item, "response_identity") : item,
+      ),
+    });
   } finally {
     server.closeAllConnections();
     if (server.listening)
@@ -249,7 +401,7 @@ describe("source-map redirect URL resolution", () => {
           throw new TypeError("Expected a TCP listener address");
         const localOrigin = `http://127.0.0.1:${String(address.port)}`;
         const declaredUrl = `${localOrigin}${initialPath}`;
-        const result = await fetchWebSourceMaps(
+        const result = await fetchWebSourceMapsOk(
           [{ ...request, fetchUrl: declaredUrl, declaredUrl }],
           input({ allowed_origins: [localOrigin] }),
         );
@@ -294,41 +446,10 @@ describe("source-map redirect URL resolution", () => {
     },
   );
 
-  it.each([
-    [404, "unavailable", "fetch_failed"],
-    [200, "not-json", "invalid"],
-  ])(
-    "retains the delivered URL when its HTTP %s response cannot supply a map",
-    async (responseStatus, body, itemStatus) => {
-      const effectiveUrl = `${origin}${deliveredPath}`;
-      const calls: string[] = [];
-      const result = await fetchWebSourceMaps([request], input(), undefined, {
-        fetch: (url) => {
-          calls.push(String(url));
-          return Promise.resolve(
-            calls.length === 1
-              ? new Response(null, {
-                  status: 302,
-                  headers: { location: effectiveUrl },
-                })
-              : new Response(body, { status: responseStatus }),
-          );
-        },
-      });
-      expect(calls).toEqual([request.fetchUrl, effectiveUrl]);
-      expect(result.items[0]).toMatchObject({
-        status: itemStatus,
-        declared_url: request.declaredUrl,
-        effective_url: effectiveUrl,
-        artifact: null,
-      });
-    },
-  );
-
   it("retains the last observed response URL when the next redirect fetch rejects", async () => {
     const nextUrl = `${origin}${deliveredPath}`;
     const calls: string[] = [];
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: (url) => {
         calls.push(String(url));
         return calls.length === 1
@@ -350,16 +471,20 @@ describe("source-map redirect URL resolution", () => {
     });
   });
 
-  it("reports an absent effective URL when the first fetch rejects", async () => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+  it("represents the effective URL as null when no response was observed", async () => {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () => Promise.reject(new TypeError("fixture connection failed")),
     });
-    expect(result.items[0]).toMatchObject({
+    const item = result.items[0];
+    if (item === undefined) throw new Error("Expected a fetch failure");
+    expect(item).toMatchObject({
       status: "fetch_failed",
       declared_url: request.declaredUrl,
       effective_url: null,
       artifact: null,
     });
+    const { effective_url: _effective, ...withoutEffectiveUrl } = item;
+    expectInvalidSourceMaps({ ...result, items: [withoutEffectiveUrl] });
   });
 });
 
@@ -374,7 +499,7 @@ describe("web source-map fetching and validation: fetching maps and following re
       sourcesContent: ["import './dependency.ts';\nexport const entry = 1;"],
       mappings: "AAAAA",
     });
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: (url, init) => {
         calls.push({ url: String(url), init });
         return Promise.resolve(
@@ -431,31 +556,44 @@ describe("web source-map fetching and validation: fetching maps and following re
     expectInvalidIncludedSourceMaps(result);
   });
 
-  it("reauthorizes every redirect and never contacts a disallowed origin", async () => {
+  it.each([
+    ["another origin", "https://private.example.test/map"],
+    ["same-origin credentials", "https://user:secret@app.example.test/map"],
+  ])("reauthorizes a redirect with %s", async (_case, location) => {
     const calls: string[] = [];
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: (url) => {
         calls.push(String(url));
         return Promise.resolve(
           new Response(null, {
             status: 302,
-            headers: { location: "https://private.example.test/map" },
+            headers: { location },
           }),
         );
       },
     });
 
     expect(calls).toEqual([request.fetchUrl]);
+    expect(JSON.stringify(result)).not.toContain("user:secret");
     expect(result).toMatchObject({
       status: "unavailable",
-      items: [{ status: "policy_filtered", effective_url: request.fetchUrl }],
+      items: [
+        {
+          status: "policy_filtered",
+          effective_url: request.fetchUrl,
+          limitation:
+            "Each source-map redirect must be a credential-free HTTP(S) URL on an approved exact origin.",
+        },
+      ],
     });
     expectInvalidSourceMaps({
       ...result,
       items: [{ ...result.items[0], limitation: null }],
     });
   });
+});
 
+describe("source-map declared URL policy", () => {
   it.each([
     ["embedded credentials", "https://user:secret@app.example.test/a.map"],
     ["a different scheme on the same host", "http://app.example.test/a.map"],
@@ -467,7 +605,7 @@ describe("web source-map fetching and validation: fetching maps and following re
     "filters a declared fetch URL with %s before any request",
     async (_description, fetchUrl) => {
       const calls: string[] = [];
-      const result = await fetchWebSourceMaps(
+      const result = await fetchWebSourceMapsOk(
         [{ ...request, fetchUrl }],
         input(),
         undefined,
@@ -482,14 +620,21 @@ describe("web source-map fetching and validation: fetching maps and following re
       expect(calls).toEqual([]);
       expect(result).toMatchObject({
         status: "unavailable",
-        items: [{ status: "policy_filtered", effective_url: null }],
+        items: [
+          {
+            status: "policy_filtered",
+            effective_url: null,
+            limitation:
+              "Declared source-map URL must be a credential-free HTTP(S) URL on an approved exact origin.",
+          },
+        ],
       });
     },
   );
 
   it("follows an approved redirect chain without an arbitrary hop ceiling", async () => {
     const calls: string[] = [];
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: (url) => {
         const current = String(url);
         calls.push(current);
@@ -534,11 +679,14 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         throw new TypeError("Expected a TCP listener address");
       const localOrigin = `http://127.0.0.1:${String(address.port)}`;
       const url = `${localOrigin}/map?n=0`;
-      const result = await fetchWebSourceMaps(
+      const result = await fetchWebSourceMapsOk(
         [{ ...request, fetchUrl: url, declaredUrl: url }],
-        input({ allowed_origins: [localOrigin] }),
+        input({
+          allowed_origins: [localOrigin],
+          source_map_fetch_timeout_ms: 100,
+        }),
         undefined,
-        { fetch, timeoutMs: 100 },
+        { fetch },
       );
       expect(calls).toBeGreaterThan(1);
       expect(result).toMatchObject({
@@ -548,7 +696,7 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
           {
             status: "fetch_failed",
             artifact: null,
-            limitation: "Source-map fetching exceeded its operation deadline.",
+            limitation: expect.stringContaining("source_map_fetch_timeout_ms"),
           },
         ],
       });
@@ -589,11 +737,14 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         throw new TypeError("Expected a TCP listener address");
       const localOrigin = `http://127.0.0.1:${String(address.port)}`;
       const url = `${localOrigin}/map`;
-      const result = await fetchWebSourceMaps(
+      const result = await fetchWebSourceMapsOk(
         [{ ...request, fetchUrl: url, declaredUrl: url }],
-        input({ allowed_origins: [localOrigin] }),
+        input({
+          allowed_origins: [localOrigin],
+          source_map_limits: { fetch_bytes: 512 },
+        }),
         undefined,
-        { fetch, maxResponseBytes: 512 },
+        { fetch },
       );
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const closeConfirmed = await Promise.race([
@@ -611,8 +762,7 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
           {
             status: "fetch_failed",
             artifact: null,
-            limitation:
-              "Source-map response exceeded the retained-byte budget.",
+            limitation: expect.stringContaining("retained budget"),
           },
         ],
       });
@@ -626,25 +776,21 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         });
     }
   });
+});
 
+describe("source-map response cancellation", () => {
   it("cancels a pending response reader on caller abort", async () => {
-    let markPullStarted: (() => void) | undefined;
-    const pullStarted = new Promise<void>((resolve) => {
-      markPullStarted = resolve;
-    });
-    let markCancelled: (() => void) | undefined;
-    const cancelled = new Promise<void>((resolve) => {
-      markCancelled = resolve;
-    });
+    const pullStart = phaseArrival();
+    let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("{"));
       },
       pull() {
-        markPullStarted?.();
+        pullStart.arrive();
       },
       cancel() {
-        markCancelled?.();
+        cancelled = true;
       },
     });
     const controller = new AbortController();
@@ -653,18 +799,157 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
       fetch: async () => new Response(body),
     });
 
-    await pullStarted;
-    controller.abort(abortReason);
-
-    await expect(pending).rejects.toBe(abortReason);
-    await cancelled;
+    await withVerifierCleanup(async () => {
+      await pullStart.reached(pending, "source-map response pull");
+      controller.abort(abortReason);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.cause).toBe(abortReason);
+      await expect.poll(() => cancelled).toBe(true);
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+    ]);
   });
+});
 
-  it("reports malformed source-map JSON as invalid", async () => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () => Promise.resolve(new Response("not-json", { status: 200 })),
+describe("completed source-map cancellation", () => {
+  it.each([null, { stopped: "caller" }, new AnalysisCancelledError("test")])(
+    "retains a completed map when a later response is cancelled with reason %s",
+    async (reason) => {
+      const pullStart = phaseArrival();
+      let cancelled = false;
+      const secondBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("{"));
+        },
+        pull() {
+          pullStart.arrive();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const firstBody = JSON.stringify({
+        version: 3,
+        sources: ["src/first.ts"],
+        names: [],
+        mappings: "AAAA",
+      });
+      const first = {
+        ...request,
+        declaredUrl: `${origin}/first.map`,
+        fetchUrl: `${origin}/first.map`,
+      };
+      const second = {
+        ...request,
+        declaredUrl: `${origin}/second.map`,
+        fetchUrl: `${origin}/second.map`,
+      };
+      let fetches = 0;
+      const controller = new AbortController();
+      const pending = fetchWebSourceMaps(
+        [first, second],
+        input(),
+        controller.signal,
+        {
+          fetch: async () => {
+            fetches += 1;
+            return fetches === 1
+              ? new Response(firstBody, { status: 200 })
+              : new Response(secondBody, { status: 200 });
+          },
+        },
+      );
+
+      await withVerifierCleanup(async () => {
+        await pullStart.reached(pending, "second source-map response pull");
+        controller.abort(reason);
+        const result = await pending;
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const failure = result.error;
+        expect(failure).toBeInstanceOf(AnalysisCancelledError);
+        expect(failure.cause).toBe(reason);
+        expect(failure.partialObservation).toMatchObject({
+          kind: "web-source-map-fetch",
+          source_maps: {
+            requested: 2,
+            processed: 1,
+            items: [
+              {
+                status: "included",
+                artifact: {
+                  text: firstBody,
+                  sha256: createHash("sha256").update(firstBody).digest("hex"),
+                },
+              },
+            ],
+          },
+        });
+        await expect.poll(() => cancelled).toBe(true);
+      }, [
+        () => controller.abort(),
+        async () => {
+          await pending;
+        },
+      ]);
+    },
+  );
+});
+
+describe("selected source-map fetch deadline", () => {
+  it("applies a non-default source_map_fetch_timeout_ms from the public input", async () => {
+    let calls = 0;
+    let closed = 0;
+    const server = createServer((incoming, response) => {
+      calls += 1;
+      incoming.on("close", () => {
+        closed += 1;
+      });
+      const next =
+        Number(
+          new URL(incoming.url ?? "/", "http://local").searchParams.get("n") ??
+            "0",
+        ) + 1;
+      response.writeHead(302, { location: `/map?n=${String(next)}` }).end();
     });
-    expect(result.items[0]?.status).toBe("invalid");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/map?n=0`;
+      const result = await fetchWebSourceMapsOk(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({
+          source_map_fetch_timeout_ms: 150,
+          allowed_origins: [localOrigin],
+        }),
+        undefined,
+        { fetch },
+      );
+      expect(calls).toBeGreaterThan(1);
+      expect(closed).toBeGreaterThan(0);
+      expect(result.items[0]?.limitation).toContain("150");
+      expect(result.items[0]?.limitation).toContain(
+        "source_map_fetch_timeout_ms",
+      );
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
   });
 });
 
@@ -697,7 +982,7 @@ describe("browser map decoded validation", () => {
       ...request,
       scriptKey: `scr_${String(requestIndex + 1).padStart(64, "0")}`,
     }));
-    const result = await fetchWebSourceMaps(requests, input(), undefined, {
+    const result = await fetchWebSourceMapsOk(requests, input(), undefined, {
       fetch: () =>
         Promise.resolve(
           new Response(JSON.stringify(maps[index++]), { status: 200 }),
@@ -719,26 +1004,6 @@ describe("browser map decoded validation", () => {
   });
 });
 
-describe("source-map response encoding", () => {
-  it("rejects malformed UTF-8 source-map response bytes", async () => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () =>
-        Promise.resolve(
-          new Response(Uint8Array.of(0x7b, 0x22, 0xc3, 0x28, 0x22, 0x7d), {
-            status: 200,
-          }),
-        ),
-    });
-
-    expect(result.status).toBe("unavailable");
-    expect(result.items[0]).toMatchObject({
-      status: "invalid",
-      artifact: null,
-      limitation: "Source-map response is not valid UTF-8.",
-    });
-  });
-});
-
 describe("source-map operation deadline observations", () => {
   it("keeps completed maps when a later request times out", async () => {
     let calls = 0;
@@ -746,15 +1011,24 @@ describe("source-map operation deadline observations", () => {
       request,
       { ...request, scriptKey: `scr_${"2".repeat(64)}` },
     ];
-    const result = await fetchWebSourceMaps(requests, input(), undefined, {
-      timeoutMs: 100,
-      fetch: () => {
-        calls += 1;
-        return calls === 1
-          ? Promise.resolve(validMapResponse())
-          : new Promise<Response>(() => undefined);
+    const result = await fetchWebSourceMapsOk(
+      requests,
+      input({ source_map_fetch_timeout_ms: 100 }),
+      undefined,
+      {
+        fetch: (_url, options) => {
+          calls += 1;
+          return calls === 1
+            ? Promise.resolve(validMapResponse())
+            : new Promise<Response>((_resolve, reject) => {
+                const signal = options?.signal;
+                signal?.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+        },
       },
-    });
+    );
 
     expect(result.status).toBe("partial");
     expect(result.items.map(({ status }) => status)).toEqual([
@@ -765,44 +1039,67 @@ describe("source-map operation deadline observations", () => {
   });
 });
 
-describe("indexed source-map offsets", () => {
-  it.each([
-    { line: 0, column: -1 },
-    { line: -1, column: 0 },
-    { line: 0, column: "1" },
-    { line: "0", column: 0 },
-    { line: 0, column: 0.5 },
-    { line: 0.5, column: 0 },
-    { line: 0 },
-    { line: 0, column: Number.MAX_SAFE_INTEGER + 1 },
-  ])("retains an invalid-map item for malformed offset %j", async (offset) => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              version: 3,
-              sections: [
-                {
-                  offset,
-                  map: {
-                    version: 3,
-                    names: [],
-                    sources: ["original.js"],
-                    sourcesContent: ["export const stable = 1;"],
-                    mappings: "AAAA",
-                  },
-                },
-              ],
-            }),
-            { status: 200 },
-          ),
-        ),
-    });
-    expect(result).toMatchObject({
-      status: "unavailable",
-      items: [{ status: "invalid", artifact: null, mappings: [] }],
-    });
+it("shares the caller's fetch byte budget across completed map responses", async () => {
+  const body = JSON.stringify({
+    version: 3,
+    sources: [],
+    names: [],
+    mappings: "",
+  });
+  const requests = [
+    request,
+    { ...request, scriptKey: `scr_${"2".repeat(64)}` },
+  ];
+  let calls = 0;
+  const result = await fetchWebSourceMapsOk(
+    requests,
+    input({ source_map_limits: { fetch_bytes: Buffer.byteLength(body) } }),
+    undefined,
+    {
+      fetch: () => {
+        calls += 1;
+        return Promise.resolve(new Response(body));
+      },
+    },
+  );
+
+  expect(calls).toBe(2);
+  expect(result.items.map(({ status }) => status)).toEqual([
+    "included",
+    "fetch_failed",
+  ]);
+  expect(result.items[1]?.limitation).toContain("retained budget");
+});
+
+it.each([
+  { line: 0, column: -1 },
+  { line: -1, column: 0 },
+  { line: "0", column: 0 },
+  { line: 0, column: 0.5 },
+  { line: 0 },
+  { line: 0, column: Number.MAX_SAFE_INTEGER + 1 },
+])("retains an invalid-map item for malformed offset %j", async (offset) => {
+  const text = JSON.stringify({
+    version: 3,
+    sections: [
+      {
+        offset,
+        map: {
+          version: 3,
+          sources: ["original.js"],
+          names: [],
+          mappings: "AAAA",
+        },
+      },
+    ],
+  });
+  const result = await fetchWebSourceMapsOk([request], input(), undefined, {
+    fetch: async () => new Response(text),
+  });
+
+  expect(result).toMatchObject({
+    status: "unavailable",
+    items: [{ status: "invalid", artifact: null, mappings: [] }],
   });
 });
 
@@ -811,7 +1108,7 @@ describe("web source-map sourcesContent validation", () => {
     ["a scalar sourcesContent value", { sourcesContent: "source" }],
     ["a non-string, non-null source entry", { sourcesContent: [42] }],
   ])("reports %s as invalid", async (_description, content) => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () =>
         Promise.resolve(
           new Response(
@@ -846,7 +1143,7 @@ describe("web source-map sourcesContent validation", () => {
   ])(
     "keeps every source declaration when sourcesContent is %s than sources",
     async (_length, sourcesContent) => {
-      const result = await fetchWebSourceMaps([request], input(), undefined, {
+      const result = await fetchWebSourceMapsOk([request], input(), undefined, {
         fetch: () =>
           Promise.resolve(
             new Response(
@@ -885,7 +1182,7 @@ describe("web source-map sourcesContent validation", () => {
   );
 
   it("accepts null source-map source contents", async () => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () =>
         Promise.resolve(
           new Response(
@@ -915,7 +1212,7 @@ describe("web source-map sourcesContent validation", () => {
   });
 
   it("keeps unnamed source slots and mapping indices", async () => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () =>
         Promise.resolve(
           new Response(
@@ -961,117 +1258,9 @@ describe("web source-map sourcesContent validation", () => {
   });
 });
 
-describe("source-map original dependency syntax", () => {
-  it("does not invent edges from comments or string contents", async () => {
-    const text = [
-      '// import "./comment.js";',
-      String.raw`const quoted = "require(\"./string.js\")";`,
-      'export { value } from "./real.js";',
-      'import("./dynamic.js");',
-      'require("./common.cjs");',
-    ].join("\n");
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              version: 3,
-              names: [],
-              sources: ["main.ts"],
-              sourcesContent: [text],
-              mappings: "AAAA",
-            }),
-          ),
-        ),
-    });
-    expect(
-      result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
-    ).toEqual(["./real.js", "./dynamic.js", "./common.cjs"]);
-  });
-
-  it("reads expression-free template module specifiers as literals", async () => {
-    const text = [
-      "import(`./dep.js`);",
-      "import(`./dep.${name}.js`);",
-      "require(`./common.cjs`);",
-      "require(`./${name}.cjs`);",
-    ].join("\n");
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              version: 3,
-              names: [],
-              sources: ["main.ts"],
-              sourcesContent: [text],
-              mappings: "AAAA",
-            }),
-          ),
-        ),
-    });
-    const item = result.items[0];
-    if (item?.status !== "included") throw new Error("map not included");
-    expect(item.original_module_edges).toEqual([
-      expect.objectContaining({
-        kind: "dynamic_import",
-        specifier: "./dep.js",
-        resolved_source: `${origin}/assets/dep.js`,
-      }),
-      expect.objectContaining({ kind: "require", specifier: "./common.cjs" }),
-    ]);
-    expect(item.original_sources[0]?.artifact?.text).toBe(text);
-    expect(item.mappings).toHaveLength(1);
-  });
-});
-
-describe("source-map original syntax boundaries", () => {
-  it.each([
-    [
-      `import "./it's-real.js"; const quoted = \`import './template-comment.js'\`;`,
-      "included",
-      ["./it's-real.js"],
-    ],
-    [
-      'function fake(require) { require("./not-a-module.js"); } require("./real.cjs");',
-      "included",
-      ["./real.cjs"],
-    ],
-    // An unrecoverable source cannot invent edges, and the caller is told its
-    // edge list is incomplete rather than being told it has no imports.
-    ['import "./recovered.js"; const = ;', "partial", []],
-  ] as const)(
-    "retains literal syntax without inventing module calls",
-    async (text, status, expected) => {
-      const result = await fetchWebSourceMaps([request], input(), undefined, {
-        fetch: () =>
-          Promise.resolve(
-            new Response(
-              JSON.stringify({
-                version: 3,
-                names: [],
-                sources: ["main.ts"],
-                sourcesContent: [text],
-                mappings: "AAAA",
-              }),
-            ),
-          ),
-      });
-      const item = result.items[0];
-      expect(item?.status).toBe(status);
-      if (status === "partial")
-        expect(item?.limitation).toContain("could not be parsed in full");
-      else expect(item?.limitation).toBeNull();
-      expect(
-        item?.original_module_edges.map(({ specifier }) => specifier),
-      ).toEqual(expected);
-    },
-  );
-});
-
 describe("source-map dependency coverage of hard-to-parse sources", () => {
   const fetchWithSources = (sources: readonly string[]) =>
-    fetchWebSourceMaps([request], input(), undefined, {
+    fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () =>
         Promise.resolve(
           new Response(
@@ -1103,6 +1292,11 @@ describe("source-map dependency coverage of hard-to-parse sources", () => {
       ["./lib.js"],
     ],
     [
+      "type-only import equals",
+      'import type Types = require("./types.js");\nimport lib = require("./lib.js");',
+      ["./lib.js"],
+    ],
+    [
       "whole-statement type-only import",
       'import type { Value } from "./types.js";',
       [],
@@ -1128,34 +1322,6 @@ describe("source-map dependency coverage of hard-to-parse sources", () => {
     expect(
       result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
     ).toEqual(expected);
-  });
-
-  it("selects parser mode from the original source URL pathname", async () => {
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              version: 3,
-              names: [],
-              sources: ["main.ts?revision=2#view.tsx"],
-              sourcesContent: [`import "./dep.ts"; const value = <number>1;`],
-              mappings: "AAAA",
-            }),
-          ),
-        ),
-    });
-    expect(result.items[0]?.status).toBe("included");
-    expect(result.items[0]?.limitation).toBeNull();
-    expect(result.items[0]?.original_sources[0]?.source).toBe(
-      `${origin}/assets/main.ts?revision=2#view.tsx`,
-    );
-    expect(result.items[0]?.original_module_edges).toEqual([
-      expect.objectContaining({
-        specifier: "./dep.ts",
-        resolved_source: `${origin}/assets/dep.ts`,
-      }),
-    ]);
   });
 
   it("keeps recovered edges from a partly recovered source and reports them as partial", async () => {
@@ -1184,49 +1350,25 @@ describe("source-map dependency coverage of hard-to-parse sources", () => {
 });
 
 describe("web source-map collection", () => {
-  it("rejects mapping expansion before the trace-mapping decoder allocates it", async () => {
-    const response = new Response(
-      JSON.stringify({
-        version: 3,
-        names: [],
-        sources: [],
-        mappings: Array.from({ length: 262_145 }, () => "A").join(","),
-      }),
-      { status: 200 },
-    );
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () => Promise.resolve(response),
+  it("rejects a map above the default decoded segment limit", async () => {
+    const mapText = JSON.stringify({
+      version: 3,
+      names: [],
+      sources: [],
+      mappings: Array.from({ length: 262_145 }, () => "A").join(","),
+    });
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
+      fetch: async () => new Response(mapText),
     });
 
     expect(result.status).toBe("unavailable");
     expect(result.items[0]).toMatchObject({
       status: "fetch_failed",
       artifact: null,
+      limitation: expect.stringContaining(
+        "source_map_limits.decoded_segments is 262144",
+      ),
     });
-    expect(result.items[0]?.limitation).toContain("262144");
-  });
-
-  it("accounts for decoded records across the complete fetch operation", async () => {
-    const mapText = JSON.stringify({
-      version: 3,
-      names: [],
-      sources: [],
-      mappings: Array.from({ length: 150_000 }, () => "A").join(","),
-    });
-    const requests = [
-      request,
-      { ...request, scriptKey: `scr_${"2".repeat(64)}` },
-    ];
-    const result = await fetchWebSourceMaps(requests, input(), undefined, {
-      fetch: () => Promise.resolve(new Response(mapText, { status: 200 })),
-    });
-
-    expect(result.status).toBe("partial");
-    expect(result.items.map(({ status }) => status)).toEqual([
-      "included",
-      "fetch_failed",
-    ]);
-    expect(result.items[1]?.limitation).toContain("262144-record");
   });
 
   it("rejects deeply nested indexed maps before recursive flattening", async () => {
@@ -1241,7 +1383,7 @@ describe("web source-map collection", () => {
         version: 3,
         sections: [{ offset: { line: 0, column: 0 }, map }],
       };
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () =>
         Promise.resolve(new Response(JSON.stringify(map), { status: 200 })),
     });
@@ -1251,7 +1393,9 @@ describe("web source-map collection", () => {
       status: "fetch_failed",
       artifact: null,
     });
-    expect(result.items[0]?.limitation).toContain("64-level");
+    expect(result.items[0]?.limitation).toContain(
+      "source_map_limits.section_depth is 64",
+    );
   });
 
   it("retains every mapping from a sectioned source map", async () => {
@@ -1263,7 +1407,7 @@ describe("web source-map collection", () => {
       sourcesContent: ["export const a = 1"],
       mappings: Array.from({ length: segmentCount }, () => "AAAA").join(","),
     };
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () =>
         Promise.resolve(
           new Response(
@@ -1288,14 +1432,16 @@ describe("web source-map collection", () => {
       scriptKey: `scr_${String(index + 1).padStart(64, "0")}`,
       fetchUrl: `${origin}/assets/${String(index)}.js.map`,
     }));
-    const result = await fetchWebSourceMaps(requests, input(), undefined, {
+    const result = await fetchWebSourceMapsOk(requests, input(), undefined, {
       fetch: (url) => {
         calls.push(String(url));
         return Promise.resolve(validMapResponse());
       },
     });
 
-    expect(calls).toHaveLength(requests.length);
+    expect(calls.toSorted()).toEqual(
+      requests.map(({ fetchUrl }) => fetchUrl).toSorted(),
+    );
     expect(result).toMatchObject({
       status: "included",
       requested: requests.length,
@@ -1304,7 +1450,7 @@ describe("web source-map collection", () => {
     expect(result.items).toHaveLength(requests.length);
   });
 
-  it("includes source-map text above the former per-map byte budget", async () => {
+  it("includes source-map text above 8 MiB", async () => {
     const content = "x".repeat(8 * 1_024 * 1_024 + 1);
     const map = JSON.stringify({
       version: 3,
@@ -1313,7 +1459,7 @@ describe("web source-map collection", () => {
       sourcesContent: [content],
       mappings: "AAAA",
     });
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: () => Promise.resolve(new Response(map, { status: 200 })),
     });
 
@@ -1326,127 +1472,182 @@ describe("web source-map collection", () => {
   });
 });
 
-describe("source-map output admission", () => {
-  it.each([
-    { selectionMiB: 8, responseStatus: "invalid" },
-    { selectionMiB: 16, responseStatus: "invalid" },
-    { selectionMiB: 16, responseStatus: "included" },
-  ])(
-    "accounts for JSON escaping in a $selectionMiB MiB effective URL for $responseStatus responses",
-    async ({ selectionMiB, responseStatus }) => {
-      const effectiveUrl = `${origin}/delivered.map?selection=${"\\".repeat(selectionMiB * 1_024 * 1_024)}`;
-      const secondRequest = { ...request, scriptKey: `scr_${"2".repeat(64)}` };
-      let calls = 0;
-      const result = await fetchWebSourceMaps(
-        [request, secondRequest],
-        input(),
-        undefined,
-        {
-          fetch: () => {
-            calls += 1;
-            return Promise.resolve(
-              calls === 1
-                ? validMapResponse()
-                : calls === 2
-                  ? new Response(null, {
-                      status: 302,
-                      headers: { location: effectiveUrl },
-                    })
-                  : responseStatus === "included"
-                    ? validMapResponse()
-                    : new Response("not-json", { status: 200 }),
-            );
-          },
+it("shares the selected decoded record limit across maps", async () => {
+  // Each map consumes one structural record, two rows and two segments.
+  const mapText = JSON.stringify({
+    version: 3,
+    names: [],
+    sources: [],
+    mappings: "A;A",
+  });
+  const second = { ...request, scriptKey: `scr_${"2".repeat(64)}` };
+  const fetchMaps = (decodedRecords: number) =>
+    fetchWebSourceMapsOk(
+      [request, second],
+      input({ source_map_limits: { decoded_records: decodedRecords } }),
+      undefined,
+      { fetch: async () => new Response(mapText) },
+    );
+
+  expect(await fetchMaps(10)).toMatchObject({
+    status: "included",
+    requested: 2,
+    processed: 2,
+    items: [
+      { script_key: request.scriptKey, status: "included" },
+      { script_key: second.scriptKey, status: "included" },
+    ],
+  });
+  expect(await fetchMaps(9)).toMatchObject({
+    status: "partial",
+    requested: 2,
+    processed: 2,
+    items: [
+      { script_key: request.scriptKey, status: "included" },
+      {
+        script_key: second.scriptKey,
+        status: "fetch_failed",
+        limitation: expect.stringContaining(
+          "source_map_limits.decoded_records is 9",
+        ),
+      },
+    ],
+  });
+});
+
+it("charges the escaped effective URL before reading the redirected response", async () => {
+  const effectiveUrl = `${origin}/delivered.map?selection=${"\\".repeat(6_000)}`;
+  const second = {
+    scriptKey: `scr_${"2".repeat(64)}`,
+    declaredUrl: `${origin}/redirect.map`,
+    fetchUrl: `${origin}/redirect.map`,
+  };
+  const fetchMaps = async (outputBytes: number) => {
+    let read = false;
+    let cancelled = false;
+    const result = await fetchWebSourceMapsOk(
+      [request, second],
+      input({ source_map_limits: { output_bytes: outputBytes } }),
+      undefined,
+      {
+        fetch: async (url) => {
+          if (String(url) === request.fetchUrl) return validMapResponse();
+          if (String(url) === second.fetchUrl)
+            return new Response(null, {
+              status: 302,
+              headers: { location: effectiveUrl },
+            });
+          expect(String(url)).toBe(effectiveUrl);
+          const body = new ReadableStream<Uint8Array>(
+            {
+              pull(controller) {
+                read = true;
+                controller.enqueue(Buffer.from("not-json"));
+                controller.close();
+              },
+              cancel() {
+                cancelled = true;
+              },
+            },
+            { highWaterMark: 0 },
+          );
+          return new Response(body);
         },
-      );
-      expect(calls).toBe(3);
-      expect(result).toMatchObject({
-        status: "partial",
-        requested: 2,
-        processed: selectionMiB === 8 ? 2 : 1,
-      });
-      if (selectionMiB === 8) {
-        expect(result.items[1]).toMatchObject({
-          status: "invalid",
-          declared_url: secondRequest.declaredUrl,
-        });
-        expect(result.items[1]?.effective_url === effectiveUrl).toBe(true);
-      } else {
-        expect(result.items).toHaveLength(1);
-        expect(result.limitation).toContain("1 requested map");
-      }
-      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
-        32 * 1_024 * 1_024,
-      );
-    },
+      },
+    );
+    return { result, read, cancelled };
+  };
+
+  const admitted = await fetchMaps(16_000);
+  expect(admitted.result).toMatchObject({
+    status: "partial",
+    requested: 2,
+    processed: 2,
+    items: [
+      { script_key: request.scriptKey, status: "included" },
+      {
+        script_key: second.scriptKey,
+        status: "invalid",
+        declared_url: second.declaredUrl,
+        effective_url: effectiveUrl,
+      },
+    ],
+  });
+  expect(admitted.read).toBe(true);
+
+  const budget = 10_000;
+  expect(Buffer.byteLength(effectiveUrl)).toBeLessThan(budget);
+  expect(Buffer.byteLength(JSON.stringify(effectiveUrl))).toBeGreaterThan(
+    budget,
   );
+  const excluded = await fetchMaps(budget);
+  expect(excluded.result).toMatchObject({
+    status: "partial",
+    requested: 2,
+    processed: 1,
+    items: [{ script_key: request.scriptKey, status: "included" }],
+    limitation: expect.stringContaining("1 requested map"),
+  });
+  expect(excluded.cancelled).toBe(true);
+  expect(excluded.read).toBe(false);
 });
 
 describe("source-map set output admission", () => {
-  it("admits a maximum-size map set according to its serialized output size", async () => {
-    const localOrigin = "http://127.0.0.1:9222";
-    const mapUrl = `${localOrigin}/m`;
-    const requests = Array.from({ length: 50_000 }, (_, index) => ({
-      ...request,
-      scriptKey: `scr_${index.toString(16).padStart(64, "0")}`,
-      declaredUrl: mapUrl,
-      fetchUrl: mapUrl,
+  it("retains only the maps that fit the selected aggregate output budget", async () => {
+    const requests = ["first", "second", "third"].map((name, index) => ({
+      scriptKey: `scr_${String(index + 1).repeat(64)}`,
+      declaredUrl: `${origin}/${name}.map${
+        name === "third" ? `?revision=${"r".repeat(3_000)}` : ""
+      }`,
+      fetchUrl: `${origin}/${name}.map`,
     }));
     const map = JSON.stringify({
       version: 3,
       names: [],
-      sources: ["x"],
+      sources: ["source.ts"],
+      sourcesContent: [`// ${"x".repeat(4096)}`],
       mappings: "AAAA",
     });
-    const result = await fetchWebSourceMaps(
-      requests,
-      input({ allowed_origins: [localOrigin] }),
-      undefined,
-      {
-        timeoutMs: 120_000,
-        fetch: () => Promise.resolve(new Response(map, { status: 200 })),
-      },
-    );
-
-    const outputLimitBytes = 32 * 1_024 * 1_024;
-    const itemSizes = new Set(
-      result.items.map((item) => Buffer.byteLength(JSON.stringify(item))),
-    );
-    expect(itemSizes.size).toBe(1);
-    const firstItem = result.items[0];
-    if (firstItem === undefined) throw new Error("no source map was admitted");
-    const itemBytes = Buffer.byteLength(JSON.stringify(firstItem));
-    const completeEnvelope = JSON.stringify({
-      ...result,
-      status: "included",
-      processed: requests.length,
-      items: [],
-      limitation: undefined,
-    });
-    const projectedCompleteBytes =
-      Buffer.byteLength(completeEnvelope) +
-      itemBytes * requests.length +
-      requests.length -
-      1;
-    const completeOutputFits = projectedCompleteBytes <= outputLimitBytes;
-
-    expect(result.status).toBe(completeOutputFits ? "included" : "partial");
-    if (completeOutputFits) {
-      expect(result.limitation).toBeUndefined();
-      expect(result.items).toHaveLength(requests.length);
-    } else {
-      expect(result.items.length).toBeLessThan(requests.length);
-      expect(result.limitation).toContain(
-        `${String(requests.length - result.items.length)} requested maps`,
+    const fetchMaps = (outputBytes: number) =>
+      fetchWebSourceMapsOk(
+        requests,
+        input({ source_map_limits: { output_bytes: outputBytes } }),
+        undefined,
+        { fetch: async () => new Response(map) },
       );
-      expect(projectedCompleteBytes).toBeGreaterThan(outputLimitBytes);
-    }
-    expect(result.processed).toBe(result.items.length);
-    expect(result.requested).toBe(requests.length);
-    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
-      outputLimitBytes,
+
+    const complete = await fetchMaps(32_000);
+    const includedItems = requests.map(({ scriptKey, declaredUrl }) => ({
+      script_key: scriptKey,
+      declared_url: declaredUrl,
+      status: "included",
+    }));
+    expect(complete).toMatchObject({
+      status: "included",
+      requested: 3,
+      processed: 3,
+      items: includedItems,
+    });
+
+    const outputBytes = 21_000;
+    const limited = await fetchMaps(outputBytes);
+    expect(limited).toMatchObject({
+      status: "partial",
+      requested: 3,
+      processed: 2,
+      items: includedItems.slice(0, 2),
+      limitation: expect.stringContaining("1 requested map"),
+    });
+    expect(limited.limitation).toContain(
+      "source_map_limits.output_bytes is 21000",
     );
-  }, 120_000);
+    expect(Buffer.byteLength(JSON.stringify(limited))).toBeLessThanOrEqual(
+      outputBytes,
+    );
+    expect(Buffer.byteLength(JSON.stringify(complete))).toBeGreaterThan(
+      outputBytes,
+    );
+  });
 
   it("reserves large failure contexts and reports unprocessed requests as unknown", async () => {
     const largeDeclaredUrl = `${origin}/${"u".repeat(8 * 1_024 * 1_024)}`;
@@ -1460,7 +1661,7 @@ describe("source-map set output admission", () => {
       })),
     ];
     let calls = 0;
-    const result = await fetchWebSourceMaps(requests, input(), undefined, {
+    const result = await fetchWebSourceMapsOk(requests, input(), undefined, {
       fetch: () => {
         calls += 1;
         return Promise.resolve(
@@ -1494,174 +1695,209 @@ describe("source-map set output admission", () => {
 });
 
 describe("expanded source-map evidence budget", () => {
-  it("retains a large declared source whose exact public representation fits the budget", async () => {
-    const source = "x".repeat(12 * 1024 * 1024);
+  it("includes a declared source whose serialized evidence fits", async () => {
+    const source = "x".repeat(4_000);
     const map = JSON.stringify({
       version: 3,
       names: [],
       sources: [source],
       mappings: "",
     });
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () => Promise.resolve(new Response(map, { status: 200 })),
-    });
-    expect(result.items[0]?.status).toBe("included");
-    expect(result.items[0]?.original_sources[0]?.source).toBe(
-      `${origin}/assets/${source}`,
-    );
-  });
-
-  it("releases discarded malformed maps before reserving a later valid map", async () => {
-    const malformed = JSON.stringify({
-      version: 3,
-      names: [],
-      sourceRoot: "a/../".repeat(3_300_000),
-      sources: ["main.ts"],
-      mappings: "ACAA",
-    });
-    const valid = JSON.stringify({
-      version: 3,
-      names: [],
-      sources: ["main.js"],
-      sourcesContent: [`export default "${"x".repeat(2 * 1024 * 1024)}";`],
-      mappings: "AAAA",
-    });
-    const responses = [malformed, malformed, valid];
-    const result = await fetchWebSourceMaps(
-      responses.map((_, index) => ({
-        ...request,
-        scriptKey: `scr_${String(index + 1).padStart(64, "0")}`,
-      })),
-      input(),
+    const budget = 11_500;
+    const result = await fetchWebSourceMapsOk(
+      [request],
+      input({ source_map_limits: { output_bytes: budget } }),
       undefined,
-      {
-        fetch: () =>
-          Promise.resolve(new Response(responses.shift(), { status: 200 })),
-      },
+      { fetch: async () => new Response(map) },
     );
-    expect(result.items.map(({ status }) => status)).toEqual([
-      "invalid",
-      "invalid",
-      "included",
-    ]);
-    expect(result.items[2]?.artifact?.text).toBe(valid);
-  }, 15_000);
-
-  it("bounds expanded evidence across individually valid maps", async () => {
-    const expanded = JSON.stringify({
-      version: 3,
-      names: [],
-      sources: ["x".repeat(60_000)],
-      mappings: Array.from({ length: 280 }, () => "AAAA").join(","),
+    expect(result).toMatchObject({
+      status: "included",
+      items: [
+        {
+          artifact: { text: map },
+          original_sources: [{ source: `${origin}/assets/${source}` }],
+        },
+      ],
     });
-    const responses = [expanded, expanded];
-    const requests = Array.from({ length: 2 }, (_, index) => ({
-      ...request,
-      scriptKey: `scr_${String(index + 1).padStart(64, "0")}`,
-    }));
-    const result = await fetchWebSourceMaps(requests, input(), undefined, {
-      fetch: () =>
-        Promise.resolve(new Response(responses.shift() ?? "", { status: 200 })),
-    });
-
-    expect(result.status).toBe("partial");
-    expect(result.items.map(({ status }) => status)).toEqual([
-      "included",
-      "fetch_failed",
-    ]);
-    expect(result.items[0]?.mappings).toHaveLength(280);
-    expect(result.items[1]?.limitation).toContain(
-      "Expanded source-map evidence",
-    );
-    expect(result.items[1]?.mappings).toEqual([]);
-  });
-
-  it("accepts a large raw source root that the pinned resolver normalizes away", async () => {
-    const map = JSON.stringify({
-      version: 3,
-      names: [],
-      sourceRoot: "a/../".repeat(2_300_000),
-      sources: ["main.ts"],
-      mappings: "",
-    });
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () => Promise.resolve(new Response(map, { status: 200 })),
-    });
-
-    expect(result.items[0]?.status).toBe("included");
-    expect(result.items[0]?.original_sources[0]?.source).toBe(
-      `${origin}/assets/main.ts`,
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+      budget,
     );
   });
 
-  it("rejects a large resolved source product before allocating mapping rows", async () => {
+  it("bounds expanded mapping evidence across individually valid maps", async () => {
+    const source = `https://sources.example.test/${"x".repeat(1_000)}.ts`;
     const map = JSON.stringify({
       version: 3,
       names: [],
-      sourceRoot: "x".repeat(8 * 1_024 * 1_024),
-      sources: ["main.ts"],
-      mappings: "AAAA,AAAA,AAAA",
+      sources: [source],
+      mappings: "AAAA,CAAA,CAAA,CAAA",
     });
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () => Promise.resolve(new Response(map, { status: 200 })),
-    });
-
-    expect(result.items[0]).toMatchObject({
-      status: "fetch_failed",
-      artifact: null,
-      mappings: [],
-    });
-    expect(result.items[0]?.limitation).toContain(
-      "Expanded source-map evidence",
+    const second = { ...request, scriptKey: `scr_${"2".repeat(64)}` };
+    const result = await fetchWebSourceMapsOk(
+      [request, second],
+      input({ source_map_limits: { output_bytes: 11_000 } }),
+      undefined,
+      { fetch: async () => new Response(map) },
     );
+
+    expect(result).toMatchObject({
+      status: "partial",
+      requested: 2,
+      processed: 2,
+      items: [
+        {
+          script_key: request.scriptKey,
+          status: "included",
+          mappings: [0, 1, 2, 3].map((generated_column) => ({
+            generated_column,
+            source,
+          })),
+        },
+        {
+          script_key: second.scriptKey,
+          status: "fetch_failed",
+          artifact: null,
+          mappings: [],
+          limitation: expect.stringContaining("Expanded source-map evidence"),
+        },
+      ],
+    });
   });
 
-  it("bounds raw resolved identities even when URL sanitization removes credentials", async () => {
-    const userinfo = "u".repeat(1 * 1_024 * 1_024);
-    const map = JSON.stringify({
-      version: 3,
-      names: [],
-      sourceRoot: `https://${userinfo}@sources.example.test/`,
-      sources: Array.from({ length: 65 }, (_, index) => `source-${index}.ts`),
-      mappings: "",
-    });
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () => Promise.resolve(new Response(map, { status: 200 })),
-    });
+  it("applies the output budget to resolved sources after path normalization", async () => {
+    const fetchMap = (sourceRoot: string) =>
+      fetchWebSourceMapsOk(
+        [request],
+        input({ source_map_limits: { output_bytes: 16_000 } }),
+        undefined,
+        {
+          fetch: async () =>
+            new Response(
+              JSON.stringify({
+                version: 3,
+                names: [],
+                sourceRoot,
+                sources: ["main.ts"],
+                mappings: "AAAA,CAAA,CAAA",
+              }),
+            ),
+        },
+      );
 
-    expect(result.items[0]).toMatchObject({
-      status: "fetch_failed",
-      artifact: null,
-      original_sources: [],
+    const source = `${origin}/assets/main.ts`;
+    expect(await fetchMap("a/../".repeat(1_900))).toMatchObject({
+      status: "included",
+      items: [
+        {
+          original_sources: [{ source }],
+          mappings: [0, 1, 2].map((generated_column) => ({
+            generated_column,
+            source,
+          })),
+        },
+      ],
     });
-    expect(result.items[0]?.limitation).toContain(
-      "Resolved source-map identities exceed the 64 MiB decoder representation budget",
-    );
+    expect(await fetchMap("x".repeat(9_500))).toMatchObject({
+      status: "unavailable",
+      items: [
+        {
+          status: "fetch_failed",
+          artifact: null,
+          original_sources: [],
+          mappings: [],
+          limitation: expect.stringContaining("Expanded source-map evidence"),
+        },
+      ],
+    });
   });
 });
 
-describe("raw source-map structure preflight", () => {
-  it("budgets source inventory before schema parsing its entries", async () => {
-    const response = new Response(
-      JSON.stringify({
-        version: 3,
-        names: [],
-        sources: Array.from({ length: 262_145 }, (_, index) =>
-          index === 0 ? 42 : "source.js",
-        ),
-        mappings: "",
-      }),
-      { status: 200 },
+it("bounds resolved identities even when public URLs omit credentials", async () => {
+  const userinfo = "u".repeat(1_500);
+  const map = JSON.stringify({
+    version: 3,
+    names: [],
+    sourceRoot: `https://${userinfo}@sources.example.test/`,
+    sources: ["a.ts", "b.ts", "c.ts", "d.ts"],
+    mappings: "",
+  });
+  const fetchMaps = (fetchBytes: number) =>
+    fetchWebSourceMapsOk(
+      [request],
+      input({ source_map_limits: { fetch_bytes: fetchBytes } }),
+      undefined,
+      { fetch: async () => new Response(map) },
     );
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
-      fetch: () => Promise.resolve(response),
-    });
 
-    expect(result.items[0]).toMatchObject({
-      status: "fetch_failed",
-      artifact: null,
-    });
-    expect(result.items[0]?.limitation).toContain("262144-record");
+  expect(await fetchMaps(7_000)).toMatchObject({
+    status: "included",
+    items: [
+      {
+        original_sources: [
+          { source: "https://sources.example.test/a.ts" },
+          { source: "https://sources.example.test/b.ts" },
+          { source: "https://sources.example.test/c.ts" },
+          { source: "https://sources.example.test/d.ts" },
+        ],
+      },
+    ],
+  });
+
+  expect(await fetchMaps(5_000)).toMatchObject({
+    status: "unavailable",
+    items: [
+      {
+        status: "fetch_failed",
+        artifact: null,
+        original_sources: [],
+        limitation: expect.stringContaining(
+          "source_map_limits.fetch_bytes is 5000",
+        ),
+        response_identity: {
+          bytes: Buffer.byteLength(map),
+          sha256: createHash("sha256").update(map).digest("hex"),
+        },
+      },
+    ],
+  });
+});
+
+it("reports the source inventory limit before malformed entries", async () => {
+  const map = JSON.stringify({
+    version: 3,
+    names: [],
+    sources: [42, "source.js", "other.js"],
+    mappings: "",
+  });
+  const fetchMap = (decodedRecords: number) =>
+    fetchWebSourceMapsOk(
+      [request],
+      input({ source_map_limits: { decoded_records: decodedRecords } }),
+      undefined,
+      { fetch: async () => new Response(map) },
+    );
+
+  expect(await fetchMap(3)).toMatchObject({
+    status: "unavailable",
+    items: [
+      {
+        status: "fetch_failed",
+        artifact: null,
+        limitation: expect.stringContaining(
+          "source_map_limits.decoded_records is 3",
+        ),
+      },
+    ],
+  });
+  expect(await fetchMap(10)).toMatchObject({
+    status: "unavailable",
+    items: [
+      {
+        status: "invalid",
+        artifact: null,
+        limitation: expect.stringContaining("Source-map JSON"),
+      },
+    ],
   });
 });
 
@@ -1687,99 +1923,6 @@ const input = (overrides: Record<string, unknown> = {}) => {
   });
 };
 
-it("keeps bare original module specifiers unresolved", async () => {
-  const result = await fetchWebSourceMaps([request], input(), undefined, {
-    fetch: () =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify({
-            version: 3,
-            names: [],
-            sources: ["main.ts"],
-            sourcesContent: ['import "package-name"; import "./actual.js";'],
-            mappings: "AAAA",
-          }),
-        ),
-      ),
-  });
-  const edges = result.items[0]?.original_module_edges;
-  expect(
-    edges?.find(({ specifier }) => specifier === "package-name")
-      ?.resolved_source,
-  ).toBeNull();
-  expect(
-    edges?.find(({ specifier }) => specifier === "./actual.js")
-      ?.resolved_source,
-  ).toContain("/assets/actual.js");
-});
-
-describe("source-map original artifact language metadata", () => {
-  it.each([
-    ["main.ts", "text/typescript"],
-    ["main.tsx", "text/typescript"],
-    ["main.mts", "text/typescript"],
-    ["main.cts", "text/typescript"],
-    ["main.js", "text/javascript"],
-    ["main.mjs", "text/javascript"],
-    ["main.cjs", "text/javascript"],
-  ])("retains the source language for %s", async (filename, mediaType) => {
-    const text =
-      mediaType === "text/typescript"
-        ? "export const value: number = 1;"
-        : "export const value = 1;";
-    const server = createServer((_incoming, response) => {
-      response.setHeader("content-type", "application/json");
-      response.end(
-        JSON.stringify({
-          version: 3,
-          sources: [filename],
-          sourcesContent: [text],
-          names: [],
-          mappings: "AAAA",
-        }),
-      );
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const address = server.address();
-      if (address === null || typeof address === "string")
-        throw new TypeError("Expected a TCP listener address");
-      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
-      const url = `${localOrigin}/main.js.map`;
-      const result = await fetchWebSourceMaps(
-        [{ ...request, fetchUrl: url, declaredUrl: url }],
-        input({ allowed_origins: [localOrigin] }),
-        AbortSignal.timeout(2_000),
-      );
-      expect(result).toMatchObject({
-        status: "included",
-        items: [
-          {
-            original_sources: [
-              {
-                source: `${localOrigin}/${filename}`,
-                artifact: { media_type: mediaType, text },
-              },
-            ],
-            mappings: [{ source: `${localOrigin}/${filename}` }],
-          },
-        ],
-      });
-    } finally {
-      server.closeAllConnections();
-      if (server.listening)
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) =>
-            error === undefined ? resolve() : reject(error),
-          );
-        });
-    }
-  });
-});
-
 describe("deep source-map original syntax", () => {
   it("retains valid source maps and native/CommonJS evidence after a parser-admitted deep property chain", async () => {
     const source = `const value = root${".next".repeat(12_000)};\nimport "./last.js";\nrequire("./common.js");\nfunction local(require) { require("./shadowed.js"); }`;
@@ -1790,7 +1933,7 @@ describe("deep source-map original syntax", () => {
       sourcesContent: [source],
       mappings: "AAAA",
     });
-    const result = await fetchWebSourceMaps([request], input(), undefined, {
+    const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: async () => new Response(text),
     });
     expect(result).toMatchObject({

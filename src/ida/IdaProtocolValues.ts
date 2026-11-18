@@ -11,25 +11,26 @@ export const idaAddressSchema = z
       `0x${BigInt(value.startsWith("0x") || value.startsWith("0X") ? value : `0x${value}`).toString(16)}`,
   );
 
-/** A function observation; size is an enclosing span, never a complete body. */
+/**
+ * Function identity only. Upstream size is an enclosing span, not body coverage;
+ * retain it in the raw observation rather than requiring it for identity.
+ */
 export const idaFunctionSchema = z.union([
   z.object({
     address: idaAddressSchema,
     name: z.string().min(1),
-    size: z.string(),
   }),
   z
     .object({
       addr: idaAddressSchema,
       name: z.string().min(1),
-      size: z.string(),
     })
     .transform(({ addr, ...rest }) => ({ address: addr, ...rest })),
 ]);
 export type IdaFunction = z.infer<typeof idaFunctionSchema>;
 
-/** Legacy metadata describes the recorded input, whereas modern health names live paths. */
-export const legacyMetadataSchema = z
+/** Attached metadata describes the recorded input, whereas modern health names live paths. */
+export const attachedMetadataSchema = z
   .object({
     path: z.string().min(1),
     module: z.string(),
@@ -57,30 +58,32 @@ export const modernHealthSchema = z
 
 /** An upstream cursor must either finish or advance strictly to avoid replay loops. */
 export const cursorSchema = z.union([
-  z.object({ next: z.number().int().nonnegative() }),
+  z.object({ next: z.int().nonnegative() }),
   z.object({ done: z.literal(true) }),
 ]);
-export const nextOffset = (
-  cursor: z.infer<typeof cursorSchema>,
+/** Offset pages and cursors must finish or advance strictly. */
+export const nextPageOffset = (
+  next: number | null,
   current: number,
 ): number | null => {
-  if ("done" in cursor) return null;
-  if (cursor.next <= current)
+  if (next !== null && next <= current)
     throw new AnalysisProtocolError(
       "IDA MCP pagination did not advance its offset.",
     );
-  return cursor.next;
+  return next;
 };
+export const nextOffset = (
+  cursor: z.infer<typeof cursorSchema>,
+  current: number,
+): number | null =>
+  nextPageOffset("done" in cursor ? null : cursor.next, current);
 
-export const legacyPageSchema = z.object({
-  data: z.array(jsonValueSchema),
-  next_offset: z.number().int().nonnegative().nullable(),
-});
+/** One `list_funcs` page: a single-query batch with an offset continuation. */
 export const modernPageSchema = z
   .array(
     z.object({
       data: z.array(jsonValueSchema),
-      next_offset: z.number().int().nonnegative().nullable(),
+      next_offset: z.int().nonnegative().nullable(),
     }),
   )
   .length(1);
@@ -126,26 +129,15 @@ export const modernDecompileSchema = z.object({
   code: z.string().nullable(),
   error: z.string().optional(),
   cursor: cursorSchema,
-  line_count: z.number().int().nonnegative().optional(),
-  total_lines: z.number().int().nonnegative().optional(),
+  line_count: z.int().nonnegative().optional(),
+  total_lines: z.int().nonnegative().optional(),
 });
 
-export const legacyStringSchema = z.object({
-  address: idaAddressSchema,
-  string: z.string(),
-  length: z.number().int().nonnegative(),
-});
-export const modernStringsSchema = z.object({
+export const idaStringsPageSchema = z.object({
   matches: z.array(z.object({ addr: idaAddressSchema, string: z.string() })),
   cursor: cursorSchema,
+  error: z.string().nullish(),
 });
-export const legacyXrefsSchema = z.array(
-  z.object({
-    address: idaAddressSchema,
-    type: z.string(),
-    function: idaFunctionSchema.nullable(),
-  }),
-);
 export const modernXrefsSchema = z
   .array(
     z.object({
@@ -199,15 +191,12 @@ export const modernCallGraphSchema = z
         ),
         truncated: z.boolean().optional(),
         limit_reason: z.string().nullable().optional(),
-        max_edges_per_func: z.number().int().positive().optional(),
+        max_edges_per_func: z.int().positive().optional(),
         per_func_capped: z.boolean().optional(),
       })
       .passthrough(),
   )
   .length(1);
-export const legacyCalleesSchema = z.array(
-  z.object({ address: idaAddressSchema, name: z.string() }).passthrough(),
-);
 
 /** Parsed database lifecycle observations retain explicit ownership information. */
 export const openDatabaseSchema = z
@@ -270,7 +259,7 @@ const hexCoordinate = z
 export const surveySegmentsSchema = z
   .object({
     statistics: z
-      .object({ total_segments: z.number().int().nonnegative().optional() })
+      .object({ total_segments: z.int().nonnegative().optional() })
       .passthrough()
       .optional(),
     segments: z

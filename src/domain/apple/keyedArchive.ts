@@ -1,21 +1,38 @@
 import { z } from "zod";
+import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
-import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../jsonValue.js";
 import { localPathStringSchema } from "../localPath.js";
+import { plistUidValue } from "./plistUid.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+} from "../parseFailure.js";
+import { projectPlistValue } from "./plistValue.js";
 
 /**
  * The selected file is intact but is another kind of file, so another tool
  * applies. A malformed NSKeyedArchiver archive is not this error.
  */
-export class KeyedArchiveKindError extends TypeError {
+export class KeyedArchiveKindError extends ParseFailureError<"unsupported"> {
   override readonly name = "KeyedArchiveKindError";
 
   constructor(
     message: string,
     /** What the selected file is instead. */
-    readonly kind: "nib-archive" | "property-list",
+    readonly fileKind: "nib-archive" | "property-list",
   ) {
-    super(message);
+    super({
+      kind: "unsupported",
+      format: "keyed-archive",
+      detail: message,
+      undecodedContent: false,
+    });
   }
 }
 
@@ -27,62 +44,69 @@ export const keyedArchiveInputSchema = z.strictObject({
   limit: z.number().int().min(1).max(20_000).default(20_000),
 });
 const linkSchema = z.strictObject({
-  source: z.number().int().nonnegative().nullable(),
-  path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
-  target: z.number().int().nonnegative().nullable(),
+  source: z.int().nonnegative().nullable(),
+  path: z.array(z.union([z.string(), z.int().nonnegative()])),
+  target: z.int().nonnegative().nullable(),
   status: z.enum(["resolved", "nil", "unresolved", "malformed"]),
   raw: jsonValueSchema,
 });
 /** Archive object identity is its original $objects index, never a recursive copy. */
-export const keyedArchiveResultSchema = z.strictObject({
-  target_sha256: z.string(),
-  archive_path: z.string(),
-  archive_sha256: z.string(),
-  archive_format: z.enum(["binary-plist", "xml-plist"]),
-  roots: z.record(z.string(), jsonValueSchema),
-  objects: z.array(
-    z.strictObject({
-      id: z.number().int().nonnegative(),
-      kind: z.enum([
-        "nil",
-        "scalar",
-        "array",
-        "dictionary",
-        "class-descriptor",
-        "archived-object",
-      ]),
-      class_id: z.number().int().nonnegative().nullable(),
-      class_name: z.string().nullable(),
-      status: z.enum(["observed", "unknown-class", "unresolved-class", "nil"]),
-      value: jsonValueSchema,
-    }),
-  ),
-  references: z.array(linkSchema),
-  total_objects: z.number().int().nonnegative(),
-  total_references: z.number().int().nonnegative(),
-  offset: z.number().int().nonnegative(),
-  next_offset: z.number().int().nonnegative().nullable(),
-  truncated: z.boolean(),
-  limitations: z.array(z.string()),
-});
+export const keyedArchiveResultSchema = bundleResourceBoundResultSchema(
+  z.string(),
+  {
+    archive_path: z.string(),
+    archive_sha256: z.string(),
+    archive_format: z.enum(["binary-plist", "xml-plist"]),
+    roots: jsonObjectSchema,
+    objects: z.array(
+      z.strictObject({
+        id: z.int().nonnegative(),
+        kind: z.enum([
+          "nil",
+          "scalar",
+          "array",
+          "dictionary",
+          "class-descriptor",
+          "archived-object",
+        ]),
+        class_id: z.int().nonnegative().nullable(),
+        class_name: z.string().nullable(),
+        status: z.enum([
+          "observed",
+          "unknown-class",
+          "unresolved-class",
+          "nil",
+        ]),
+        value: jsonValueSchema,
+      }),
+    ),
+    references: z.array(linkSchema),
+    total_objects: z.int().nonnegative(),
+    total_references: z.int().nonnegative(),
+    offset: z.int().nonnegative(),
+    next_offset: z.int().nonnegative().nullable(),
+    truncated: z.boolean(),
+    limitations: z.array(z.string()),
+  },
+);
 
 const record = (
   value: JsonValue | undefined,
+  wrappedScalars: WeakSet<object>,
 ): Record<string, JsonValue> | undefined =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  !wrappedScalars.has(value)
     ? value
     : undefined;
-/**
- * A UID decodes as a one-key `UID` (binary) or `CF$UID` (XML) dictionary with
- * a numeric value. Any other value means an ordinary dictionary, such as a
- * `$top` that holds a root encoded under the key `UID`.
- */
-const uid = (value: JsonValue | undefined): number | undefined => {
-  const object = record(value);
-  if (object === undefined || Object.keys(object).length !== 1)
-    return undefined;
-  const marker = Object.hasOwn(object, "UID") ? object.UID : object["CF$UID"];
-  return typeof marker === "number" ? marker : undefined;
+/** Only producer-marked binary UIDs or the XML UID convention form references. */
+const uid = (
+  value: JsonValue | undefined,
+  wrappedScalars: WeakSet<object>,
+): number | undefined => {
+  const object = record(value, wrappedScalars);
+  return object === undefined ? undefined : plistUidValue(object);
 };
 
 const archiverMismatch = (
@@ -95,25 +119,54 @@ const archiverMismatch = (
     : "its $archiver is not a string";
 };
 
-/** Interpret serialized Foundation references without instantiating archive classes. */
+const KEYED_ARCHIVE_FORMAT = "keyed-archive";
+/** Decode allowances for one archive; this release has no runtime override. */
+const MAX_OBJECT_TABLE_ENTRIES = 200_000;
+const MAX_VALUES_PER_SCAN = 200_000;
+const MAX_REFERENCE_EDGES = 200_000;
+
+/** Interpret decoded Foundation values without instantiating archive classes. */
 export const projectKeyedArchive = (
   value: unknown,
   selection: { root?: string | undefined; offset: number; limit: number },
 ) => {
-  const archive = record(jsonValueSchema.parse(value));
+  // Classify generated scalar wrappers by their producer identity, never by
+  // a caller-controlled $plist_type field in an ordinary dictionary.
+  const wrappedScalars = new WeakSet<object>();
+  const projected = projectPlistValue(value, (scalar) =>
+    wrappedScalars.add(scalar),
+  );
+  const archive = record(projected.value, wrappedScalars);
   if (archive?.$archiver !== "NSKeyedArchiver")
     throw new KeyedArchiveKindError(
       `Selected property list is not an NSKeyedArchiver archive: ${archiverMismatch(archive)}`,
       "property-list",
     );
   if (!Array.isArray(archive.$objects))
-    throw new TypeError("Expected NSKeyedArchiver with an $objects array");
+    throw malformedInput(
+      KEYED_ARCHIVE_FORMAT,
+      "Expected NSKeyedArchiver with an $objects array",
+      { field: "$objects" },
+    );
   const table = archive.$objects;
-  if (table.length > 200_000)
-    throw new RangeError("Archive exceeds 200000 object-table entries");
-  const top = record(archive.$top);
+  if (table.length > MAX_OBJECT_TABLE_ENTRIES)
+    throw decodeLimit(
+      KEYED_ARCHIVE_FORMAT,
+      `Archive exceeds ${String(MAX_OBJECT_TABLE_ENTRIES)} object-table entries`,
+      {
+        name: "keyed-archive-object-table-entries",
+        maximum: MAX_OBJECT_TABLE_ENTRIES,
+      },
+    );
+  const top = record(archive.$top, wrappedScalars);
   if (top === undefined || Object.keys(top).length === 0)
-    throw new TypeError("Keyed archive has no $top roots");
+    throw malformedInput(
+      KEYED_ARCHIVE_FORMAT,
+      "Keyed archive has no $top roots",
+      {
+        field: "$top",
+      },
+    );
   if (selection.root !== undefined && !Object.hasOwn(top, selection.root))
     throw new AnalysisInputError("inspect_keyed_archive", undefined, [
       {
@@ -128,19 +181,28 @@ export const projectKeyedArchive = (
       ? top
       : { [selection.root]: top[selection.root] ?? null };
   const references: z.infer<typeof linkSchema>[] = [];
-  const scan = (source: number | null, initial: JsonValue) => {
-    const pending: { value: JsonValue; path: (string | number)[] }[] = [
-      { value: initial, path: [] },
-    ];
+  type Pending = { value: JsonValue; path: (string | number)[] };
+  // Nesting needs no bound here: projectPlistValue above refuses the whole
+  // archive past MAX_PLIST_DEPTH, and every scanned value sits at least two
+  // levels below the archive root ($top or $objects, then its key or index).
+  // `initial` is popped from the end, so callers list it in reverse order.
+  const scan = (source: number | null, initial: Pending[]) => {
+    const pending = initial;
     let visited = 0;
     while (pending.length > 0) {
       const item = pending.pop();
       if (item === undefined) break;
-      if (++visited > 200_000 || item.path.length > 128)
-        throw new RangeError(
-          "Archive exceeds 200000 values per object or 128 nesting levels",
+      if (++visited > MAX_VALUES_PER_SCAN)
+        throw decodeLimit(
+          KEYED_ARCHIVE_FORMAT,
+          `Archive exceeds ${String(MAX_VALUES_PER_SCAN)} values per object`,
+          {
+            name: "keyed-archive-values-per-object",
+            maximum: MAX_VALUES_PER_SCAN,
+          },
         );
-      const target = uid(item.value);
+
+      const target = uid(item.value, wrappedScalars);
       if (target !== undefined) {
         const index =
           Number.isSafeInteger(target) && target >= 0 ? target : null;
@@ -165,7 +227,7 @@ export const projectKeyedArchive = (
             pending.push({ value: child, path: [...item.path, index] });
         }
       } else {
-        const fields = record(item.value);
+        const fields = record(item.value, wrappedScalars);
         if (fields !== undefined)
           for (const key of Object.keys(fields).sort().reverse()) {
             const child = fields[key];
@@ -173,20 +235,41 @@ export const projectKeyedArchive = (
               pending.push({ value: child, path: [...item.path, key] });
           }
       }
-      if (references.length > 200_000)
-        throw new RangeError("Archive exceeds 200000 reference edges");
+      if (references.length > MAX_REFERENCE_EDGES)
+        throw decodeLimit(
+          KEYED_ARCHIVE_FORMAT,
+          `Archive exceeds ${String(MAX_REFERENCE_EDGES)} reference edges`,
+          {
+            name: "keyed-archive-reference-edges",
+            maximum: MAX_REFERENCE_EDGES,
+          },
+        );
     }
   };
-  scan(null, roots);
+  // Root names belong to the `$top` map, not to the encoded value. Scanning
+  // that wrapper makes a sole scalar root named `UID` look like a UID marker.
+  // Seed one scan with each value under its key to preserve paths and share
+  // the existing aggregate visit budget across every root.
+  scan(
+    null,
+    Object.keys(roots)
+      .sort()
+      .reverse()
+      .flatMap((key) => {
+        const value = roots[key];
+        return value === undefined ? [] : [{ value, path: [key] }];
+      }),
+  );
   const objects = table.map((value, id) => {
-    scan(id, value);
-    const fields = record(value);
-    const classUid = uid(fields?.$class);
+    scan(id, [{ value, path: [] }]);
+    const fields = record(value, wrappedScalars);
+    const classUid = uid(fields?.$class, wrappedScalars);
     const classId =
       classUid !== undefined && Number.isSafeInteger(classUid) && classUid >= 0
         ? classUid
         : null;
-    const descriptor = classId === null ? undefined : record(table[classId]);
+    const descriptor =
+      classId === null ? undefined : record(table[classId], wrappedScalars);
     const className =
       typeof descriptor?.$classname === "string" ? descriptor.$classname : null;
     const isNil = id === 0 && value === "$null";
@@ -219,6 +302,10 @@ export const projectKeyedArchive = (
   const page = objects.slice(selection.offset, end);
   const ids = new Set(page.map(({ id }) => id));
   return {
+    nonFiniteRealCount: projected.nonFiniteRealCount,
+    negativeZeroRealCount: projected.negativeZeroRealCount,
+    unknownDateCount: projected.unknownDateCount,
+    unknownScalarCount: projected.unknownScalarCount,
     roots,
     objects: page,
     references: references.filter(

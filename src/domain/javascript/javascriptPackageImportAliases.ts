@@ -1,3 +1,5 @@
+import { packageSubpathPatternMatches } from "./javascriptPackageSubpathPatterns.js";
+
 /**
  * Exact package-private import-alias lookup. Node resolves `#` specifiers
  * against the importer's enclosing package `imports` map; this module owns the
@@ -55,9 +57,8 @@ export const isPackageImportPatternKey = (key: string): boolean =>
 
 /**
  * Look up one exact `#` key in a package `imports` value.
- * A missing exact key is reported as missing when every declared key is also
- * exact; if the map contains pattern keys, the miss stays pattern-unresolved
- * rather than claiming the specifier is undefined.
+ * Only a matching wildcard keeps an exact miss unresolved. Unrelated patterns
+ * cannot select a target and therefore do not hide an undefined specifier.
  */
 export const lookupExactPackageImport = (
   imports: unknown,
@@ -72,7 +73,7 @@ export const lookupExactPackageImport = (
       target: Reflect.get(imports, key),
       declared,
     };
-  return declared.some(isPackageImportPatternKey)
+  return declared.some((pattern) => packageSubpathPatternMatches(pattern, key))
     ? { kind: "pattern-unresolved", declared }
     : { kind: "missing-key", declared };
 };

@@ -1,18 +1,18 @@
-import { z } from "incur";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  apktoolInputSchemas,
-  type ApktoolOperation,
-} from "../domain/apktool/apktoolResourceAnalysis.js";
+import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContracts.js";
+import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
+import { contractNamed } from "./contractCliDescription.js";
+import {
+  analyzeWithService,
+  registerContractCommand,
+  type EvidenceInspectionService,
+} from "./contractCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Expose the same explicit Apktool requests through one-shot CLI commands. */
 export const registerApktoolCommands = (
@@ -24,56 +24,55 @@ export const registerApktoolCommands = (
   ),
 ): void => {
   const service = new ApktoolResourceAnalysisService(provider);
-  const execute = (name: string, operation: ApktoolOperation, input: unknown) =>
-    withCommandCancellation((signal) =>
-      logCliCommand(logger, name, async () => {
-        const result = await service.execute(operation, input, { signal });
-        try {
-          await provider.close();
-        } catch (cause) {
-          if (cause instanceof AnalysisError)
-            return projectAnalysisError(cause);
-          throw cause;
-        }
-        return result.ok ? result.value : projectAnalysisError(result.error);
-      }),
-    );
+  const run =
+    (operation: ApktoolOperation) => (): EvidenceInspectionService => ({
+      inspect: (input, { signal }) =>
+        service.execute(operation, input, { signal }),
+      close: () => provider.close(),
+    });
 
-  cli.command(CLI_COMMANDS.inspectApktoolClient, {
-    description:
-      "Inspect the caller-selected apktool launcher without decoding anything",
-    args: z.object({}),
-    run: () =>
-      execute(CLI_COMMANDS.inspectApktoolClient, "inspect_apktool_client", {}),
-  });
-  cli.command(CLI_COMMANDS.decodeAndroidResources, {
-    description:
-      "Decode one APK's manifest, metadata, and string resources with apktool",
-    args: z.object({
-      path: z.string().min(1).describe("Local APK file to decode"),
-    }),
-    // The locale grammar and the string-projection default belong to the
-    // apktool input owner. Read them from that schema rather than restating a
-    // narrower locale pattern, which refused the owner's own advertised
-    // `b+zh+Hans+CN` form at the CLI boundary.
-    options: z.object({
-      locale: apktoolInputSchemas.decode_android_resources.shape.locale,
-      strings: z
-        .boolean()
-        .default(
-          apktoolInputSchemas.decode_android_resources.shape.include_strings.parse(
-            undefined,
-          ),
-        )
-        .describe(
-          "Include string resources; use --no-strings to skip projecting them",
-        ),
-    }),
-    run: ({ args, options }) =>
-      execute(CLI_COMMANDS.decodeAndroidResources, "decode_android_resources", {
-        path: args.path,
-        include_strings: options.strings,
-        ...(options.locale === undefined ? {} : { locale: options.locale }),
-      }),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(APKTOOL_TOOL_CONTRACTS, "inspect_apktool_client"),
+    {
+      description:
+        "Inspect the caller-selected apktool launcher without decoding anything",
+    },
+    analyzeWithService(run("inspect_apktool_client"), "apktool"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(APKTOOL_TOOL_CONTRACTS, "decode_android_resources"),
+    {
+      description:
+        "Decode one APK's manifest, metadata, and string resources with apktool",
+      // The contract admits a relative path, resolved by the provider from
+      // the working directory, so the CLI passes it on as spelled.
+      positionals: ["path"],
+      fields: {
+        include_strings: {
+          name: "strings",
+          description:
+            "Include string resources; use --no-strings to skip projecting them",
+        },
+        locales: {
+          description:
+            "Repeat to project multiple localized string tables, e.g. --locales de --locales pt-BR",
+        },
+      },
+    },
+    (input, { operation, signal }) => {
+      const owned = run("decode_android_resources")();
+      return finishCliEvidenceCommand(
+        input.path,
+        () => owned.inspect(input, { signal }),
+        owned,
+        "apktool",
+        operation,
+        signal,
+      ).then(projectCliAnalysisResult);
+    },
+  );
 };

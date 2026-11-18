@@ -4,17 +4,24 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import {
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderMetadata.js";
+import { hopperProducerIdentity } from "../../../../src/hopper/HopperBridgeSources.js";
+import { packagedSourcesDigest } from "../../../../src/filesystem/ProducerIdentity.js";
+import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
 
+let inspectionResources = createInspectionResources();
 let directory: string | undefined;
 
 afterEach(async () => {
+  await inspectionResources.close();
+  inspectionResources = createInspectionResources();
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
@@ -63,19 +70,25 @@ describe("Hopper analysis profiles", () => {
     expect("loaderArgs" in input).toBe(false);
   });
 
-  it("reports an unresolved profile when the launcher version is unavailable", async () => {
+  it("refuses a profile when the selected launcher cannot be fingerprinted", async () => {
     const resolved = await resolveHopperAnalysisProfile(
       target("elf", "x86_64"),
       {
         launcherPath: "/missing/hopper",
         loaderArgsOverride: [],
         provider: HOPPER_PROVIDER_IDENTITY,
+        resourceScope: inspectionResources.owner,
       },
     );
-    expect(resolved).toEqual({
-      ok: true,
-      value: {
-        profile: null,
+    expect(resolved).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        operation: "resolve_analysis_profile",
+        diagnostics: {
+          launcher_path: "/missing/hopper",
+          system_code: "ENOENT",
+        },
       },
     });
   });
@@ -99,6 +112,7 @@ describe("Hopper analysis profiles", () => {
           launcherPath,
           loaderArgsOverride: scenario.override,
           provider: HOPPER_PROVIDER_IDENTITY,
+          resourceScope: inspectionResources.owner,
         },
       );
       expect(resolved).toMatchObject({
@@ -106,8 +120,7 @@ describe("Hopper analysis profiles", () => {
         value: {
           profile: {
             parameters: {
-              function_dossier_coverage:
-                "observed-facets-and-call-relationships-v1",
+              producer: hopperProducerIdentity(),
               loader: {
                 source: scenario.source,
                 arguments: scenario.arguments,
@@ -119,6 +132,29 @@ describe("Hopper analysis profiles", () => {
     },
   );
 
+  it("commits the REA release and packaged bridge script it runs", async () => {
+    directory = await createTestTempDirectory("rea-hopper-profile-producer-");
+    const launcherPath = join(directory, "hopper");
+    await writeFile(launcherPath, "Hopper build");
+    const resolved = await resolveHopperAnalysisProfile(
+      target("elf", "x86_64"),
+      {
+        launcherPath,
+        loaderArgsOverride: [],
+        provider: HOPPER_PROVIDER_IDENTITY,
+        resourceScope: inspectionResources.owner,
+      },
+    );
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters.producer).toEqual({
+      rea_version: PRODUCT_IDENTITY.packageVersion,
+      sources_sha256: packagedSourcesDigest(
+        new URL("../../../../bridge/", import.meta.url),
+        ["hopper_bridge.py"],
+      ),
+    });
+  });
+
   it("stops launcher hashing when profile resolution is cancelled", async () => {
     directory = await createTestTempDirectory("rea-hopper-profile-cancel-");
     const launcher = join(directory, "hopper");
@@ -128,6 +164,7 @@ describe("Hopper analysis profiles", () => {
       launcherPath: launcher,
       loaderArgsOverride: [],
       provider: HOPPER_PROVIDER_IDENTITY,
+      resourceScope: inspectionResources.owner,
       signal: controller.signal,
     });
 

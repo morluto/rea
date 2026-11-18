@@ -1,23 +1,54 @@
 import { describe, expect, it } from "vitest";
 
 import { CdpCaptureEvents } from "../../../src/browser/CdpCaptureEvents.js";
+import { CdpTargetDocument } from "../../../src/browser/CdpTargetDocument.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { CDP_CAPTURE_SCRIPT_METADATA_LIMITS } from "../../../src/browser/CdpCaptureEventTypes.js";
+import { receiveCdpEvent } from "../../../src/browser/CdpConnection.js";
 
 describe("CDP script metadata admission", () => {
+  it("retains an invalid source-map declaration as unknown", () => {
+    const events = captureEvents();
+    events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-1" }));
+    for (const [scriptId, sourceMapURL] of [
+      ["bad", null],
+      ["absent", undefined],
+      ["empty", ""],
+    ] as const) {
+      events.ingest(
+        receiveCdpEvent({
+          method: "Debugger.scriptParsed",
+          params: {
+            scriptId,
+            url: "https://app.example/app.js",
+            sourceMapURL,
+          },
+        }),
+      );
+      expect(events.scripts.get(scriptId)?.sourceMapUrl).toBeNull();
+    }
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "source_maps",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+  });
+
   it("releases a replaced script ID's prior bytes and resets admission on a new document", () => {
     const events = captureEvents();
     const origin = "https://app.example";
-    events.beginAuthorizedFrame("frame-1");
+    events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-1" }));
     const emit = (scriptId: string, bytes: number): void => {
-      events.ingest({
-        method: "Debugger.scriptParsed",
-        params: {
-          scriptId,
-          url: `${origin}/app.js`,
-          sourceMapURL: `/maps/${"x".repeat(bytes)}.map`,
-        },
-      });
+      events.ingest(
+        receiveCdpEvent({
+          method: "Debugger.scriptParsed",
+          params: {
+            scriptId,
+            url: `${origin}/app.js`,
+            sourceMapURL: `/maps/${"x".repeat(bytes)}.map`,
+          },
+        }),
+      );
     };
 
     emit("same-id", 3 * 1024 * 1024);
@@ -34,19 +65,21 @@ describe("CDP script metadata admission", () => {
       CDP_CAPTURE_SCRIPT_METADATA_LIMITS.retainedBytes,
     );
     const normalizedAway = `./`.repeat(1_200_000) + "map.js.map";
-    events.ingest({
-      method: "Debugger.scriptParsed",
-      params: {
-        scriptId: "normalized-url",
-        url: `${origin}/app.js`,
-        sourceMapURL: normalizedAway,
-      },
-    });
+    events.ingest(
+      receiveCdpEvent({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: "normalized-url",
+          url: `${origin}/app.js`,
+          sourceMapURL: normalizedAway,
+        },
+      }),
+    );
     expect(events.scripts.get("normalized-url")?.sourceMapUrl).toBe(
       `${origin}/map.js.map`,
     );
 
-    events.beginAuthorizedFrame("frame-2");
+    events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-2" }));
     emit("new-document", 5 * 1024 * 1024);
     emit("new-document", 1024 * 1024);
     events.recordScriptMetadataBudgetExclusions();
@@ -59,7 +92,7 @@ describe("CDP script metadata admission", () => {
         ),
     ).toBeUndefined();
 
-    events.beginAuthorizedFrame("frame-3");
+    events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-3" }));
     emit("new-document", 3 * 1024 * 1024);
     expect(events.scripts.get("new-document")?.sourceMapUrl).toContain(
       "x".repeat(3 * 1024 * 1024),
@@ -69,12 +102,14 @@ describe("CDP script metadata admission", () => {
   it("does not retain IDs for scripts rejected by byte or record limits", () => {
     const events = captureEvents();
     const origin = "https://app.example";
-    events.beginAuthorizedFrame("frame-1");
+    events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-1" }));
     const emit = (scriptId: string): void => {
-      events.ingest({
-        method: "Debugger.scriptParsed",
-        params: { scriptId, url: `${origin}/app.js` },
-      });
+      events.ingest(
+        receiveCdpEvent({
+          method: "Debugger.scriptParsed",
+          params: { scriptId, url: `${origin}/app.js` },
+        }),
+      );
     };
 
     emit("x".repeat(CDP_CAPTURE_SCRIPT_METADATA_LIMITS.retainedBytes + 1));
@@ -118,3 +153,99 @@ const captureEvents = (): CdpCaptureEvents =>
     }),
     new Set(["https://app.example"]),
   );
+
+it.each([
+  {
+    name: "absent auxiliary data",
+    auxiliary: undefined,
+    frame: "frame-1",
+    invalid: false,
+  },
+  {
+    name: "conflicting frame",
+    auxiliary: { frameId: "other-frame" },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "empty frame",
+    auxiliary: { frameId: "" },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "null frame",
+    auxiliary: { frameId: null },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "numeric frame",
+    auxiliary: { frameId: 7 },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "malformed auxiliary data",
+    auxiliary: null,
+    frame: null,
+    invalid: true,
+  },
+])(
+  "keeps script ownership uncertain for $name",
+  ({ auxiliary, frame, invalid }) => {
+    const events = captureEvents();
+    events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-1" }));
+    events.ingest(
+      receiveCdpEvent({
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: 7, auxData: { frameId: "frame-1" } } },
+      }),
+    );
+    events.ingest(
+      receiveCdpEvent({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: "script",
+          url: "https://app.example/app.js",
+          executionContextId: 7,
+          ...(auxiliary === undefined
+            ? {}
+            : { executionContextAuxData: auxiliary }),
+        },
+      }),
+    );
+    const script = events.scripts.get("script");
+    if (script === undefined)
+      throw new Error("Expected retained script metadata");
+    expect(script.frameId).toBe(frame);
+    expect(events.frameForScript(script, new Set(["frame-1"]))).toBe(frame);
+    expect(
+      events.completeness
+        .snapshot()
+        .excluded.filter(({ section }) => section === "scripts"),
+    ).toEqual(
+      invalid
+        ? [{ section: "scripts", reason: "invalid_protocol_value", count: 1 }]
+        : [],
+    );
+  },
+);
+
+it("rejects an empty script ID before retaining its metadata", () => {
+  const events = captureEvents();
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-1" }));
+  events.ingest(
+    receiveCdpEvent({
+      method: "Debugger.scriptParsed",
+      params: { scriptId: "", url: "https://app.example/app.js" },
+    }),
+  );
+  expect(events.scripts.size).toBe(0);
+  expect(events.retainedScriptMetadataBytes).toBe(0);
+  expect(events.completeness.snapshot().excluded).toContainEqual({
+    section: "scripts",
+    reason: "invalid_protocol_value",
+    count: 1,
+  });
+});

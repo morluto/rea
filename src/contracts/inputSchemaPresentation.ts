@@ -1,86 +1,72 @@
+import {
+  JsonSchemaReferences,
+  type JsonSchemaScope,
+} from "./jsonSchemaReferences.js";
 import { isDeepStrictEqual } from "node:util";
 
-export const schemaMaps = new Set([
-  "$defs",
-  "definitions",
-  "properties",
-  "patternProperties",
-  "dependentSchemas",
-  "dependencies",
-]);
-export const schemaArrays = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-export const schemaChildren = new Set([
-  "items",
-  "additionalItems",
-  "contains",
-  "additionalProperties",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "propertyNames",
-  "not",
-  "if",
-  "then",
-  "else",
-]);
-
-const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const resolveReference = (
-  root: Readonly<Record<string, unknown>>,
-  reference: string,
-): unknown => {
-  if (reference === "#") return root;
-  if (!reference.startsWith("#/")) return undefined;
-  let value: unknown = root;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (!isObject(value) || !Object.hasOwn(value, key)) return undefined;
-    value = value[key];
-  }
-  return value;
-};
+import type { SchemaAnnotations } from "../domain/schemaAnnotations.js";
+import { isRecord as isObject } from "../kernel/isRecord.js";
+import {
+  schemaArrays,
+  schemaChildren,
+  schemaMaps,
+  schemaPointerSteps,
+} from "./jsonSchemaKeywords.js";
 
 const referencedDescription = (
-  root: Readonly<Record<string, unknown>>,
+  references: JsonSchemaReferences,
   schema: Readonly<Record<string, unknown>>,
+  inherited: JsonSchemaScope | undefined,
 ): string | undefined => {
   let value: unknown = schema;
-  const active = new Set<string>();
+  let scope = inherited;
+  const active = new Set<object>();
   while (isObject(value)) {
-    if (typeof value.description === "string") return value.description;
-    if (typeof value.$ref !== "string" || active.has(value.$ref))
-      return undefined;
-    active.add(value.$ref);
-    value = resolveReference(root, value.$ref);
+    scope = references.enter(value, scope);
+    if (
+      typeof value.description === "string" &&
+      (typeof value.$ref !== "string" || scope?.dialect !== "draft-07")
+    )
+      return value.description;
+    if (typeof value.$ref !== "string" || active.has(value)) return undefined;
+    active.add(value);
+    const target = references.resolve(scope, value.$ref);
+    if (target.kind !== "target") return undefined;
+    value = target.value;
   }
   return undefined;
 };
 
 const describeSchema = (
   schema: unknown,
-  root: Readonly<Record<string, unknown>>,
+  references: JsonSchemaReferences,
+  inherited: JsonSchemaScope | undefined,
   describeProperty: (property: string) => string | undefined,
+  propertyDescription?: string,
 ): unknown => {
   if (!isObject(schema)) return schema;
-  return Object.fromEntries(
+  const scope = references.enter(schema, inherited);
+  const described = Object.fromEntries(
     Object.entries(schema).map(([key, value]) => {
       if (schemaMaps.has(key) && isObject(value))
         return [
           key,
           Object.fromEntries(
             Object.entries(value).map(([name, child]) => {
-              const described = describeSchema(child, root, describeProperty);
-              if (key !== "properties" || !isObject(described))
-                return [name, described];
               const description =
-                referencedDescription(root, described) ??
-                describeProperty(name);
+                key === "properties" && isObject(child)
+                  ? (referencedDescription(references, child, scope) ??
+                    describeProperty(name))
+                  : undefined;
               return [
                 name,
-                description === undefined
-                  ? described
-                  : { ...described, description },
+                describeSchema(
+                  child,
+                  references,
+                  scope,
+                  describeProperty,
+                  description,
+                ),
               ];
             }),
           ),
@@ -88,36 +74,52 @@ const describeSchema = (
       if (schemaArrays.has(key) && Array.isArray(value))
         return [
           key,
-          value.map((child) => describeSchema(child, root, describeProperty)),
+          value.map((child) =>
+            describeSchema(child, references, scope, describeProperty),
+          ),
         ];
       if (schemaChildren.has(key))
         return [
           key,
           Array.isArray(value)
             ? value.map((child) =>
-                describeSchema(child, root, describeProperty),
+                describeSchema(child, references, scope, describeProperty),
               )
-            : describeSchema(value, root, describeProperty),
+            : describeSchema(value, references, scope, describeProperty),
         ];
       // Annotation values and literal const/enum data are not schemas.
       return [key, value];
     }),
   );
+  return propertyDescription === undefined
+    ? described
+    : { ...described, description: propertyDescription };
 };
 
 const objectBranch = (
-  root: Readonly<Record<string, unknown>>,
+  references: JsonSchemaReferences,
   branch: unknown,
 ): Readonly<Record<string, unknown>> | undefined => {
   // Reference siblings evaluate separately from the target in 2020-12, so a
   // merged object could accept inputs the branch rejects.
-  const resolved =
-    isObject(branch) && typeof branch.$ref === "string"
-      ? Object.keys(branch).length === 1
-        ? resolveReference(root, branch.$ref)
-        : undefined
-      : branch;
+  let resolved = branch;
+  if (isObject(branch) && typeof branch.$ref === "string") {
+    if (Object.keys(branch).length !== 1) return undefined;
+    const target = references.resolve(references.rootScope, branch.$ref);
+    if (target.kind !== "target") return undefined;
+    resolved = target.value;
+  }
   return isObject(resolved) &&
+    references.enter(resolved, references.rootScope) === references.rootScope &&
+    ![
+      "$id",
+      "$schema",
+      "$anchor",
+      "$dynamicAnchor",
+      "$recursiveAnchor",
+      "$dynamicRef",
+      "$recursiveRef",
+    ].some((key) => Object.hasOwn(resolved, key)) &&
     resolved.type === "object" &&
     isObject(resolved.properties)
     ? resolved
@@ -146,12 +148,87 @@ const inputGroup = (branch: Readonly<Record<string, unknown>>): string => {
   return [...required, ...optional].join(" + ");
 };
 
-// Anthropic tool input schemas reject anyOf, oneOf, and allOf at the root, and
-// clients then drop the tool or advertise it without parameters. Present a
-// root union of strict object groups as one object whose properties are the
-// union of the groups. The canonical Zod schema still enforces the exact group.
+const isObjectKeyword = (key: string) => schemaMaps.has(key);
+const isArrayKeyword = (key: string) => schemaArrays.has(key);
+const isChildKeyword = (key: string) => schemaChildren.has(key);
+
+/**
+ * Remove every instance default below a schema, not only the one this keyword
+ * carries, keeping the entries at `kept`. A nested default belongs to the group
+ * that declares it: outside that group a client that fills it would send an
+ * object a strict sibling refuses. A default a reference still targets stays
+ * caller data; dropping it would leave that reference dangling.
+ */
+const omitNestedDefaults = (
+  schema: unknown,
+  kept: ReadonlySet<string> = new Set(),
+  path: readonly string[] = [],
+): unknown => {
+  if (Array.isArray(schema))
+    return schema.map((child, index) =>
+      omitNestedDefaults(child, kept, [...path, String(index)]),
+    );
+  if (!isObject(schema)) return schema;
+  return Object.fromEntries(
+    Object.entries(schema).flatMap(([key, value]) => {
+      const childPath = [...path, key];
+      if (kept.has(JSON.stringify(childPath))) return [[key, value]];
+      if (key === "default") return [];
+      return [
+        [
+          key,
+          isObjectKeyword(key) && isObject(value)
+            ? Object.fromEntries(
+                Object.entries(value).map(([name, child]) => [
+                  name,
+                  omitNestedDefaults(child, kept, [...childPath, name]),
+                ]),
+              )
+            : isArrayKeyword(key) && Array.isArray(value)
+              ? value.map((child, index) =>
+                  omitNestedDefaults(child, kept, [
+                    ...childPath,
+                    String(index),
+                  ]),
+                )
+              : isChildKeyword(key)
+                ? Array.isArray(value)
+                  ? value.map((child, index) =>
+                      omitNestedDefaults(child, kept, [
+                        ...childPath,
+                        String(index),
+                      ]),
+                    )
+                  : omitNestedDefaults(value, kept, childPath)
+                : value,
+        ],
+      ];
+    }),
+  );
+};
+
+/** Every path into a `default` that a reference inside `schema` targets. */
+const referencedDefaultPaths = (
+  schema: Readonly<Record<string, unknown>>,
+): ReadonlySet<string> => {
+  const kept = new Set<string>();
+  for (const { target } of new JsonSchemaReferences(schema).references()) {
+    if (target.kind !== "target") continue;
+    const steps = schemaPointerSteps(target.path);
+    const last = steps.at(-1);
+    if (last?.kind !== "value" || last.keyword !== "default") continue;
+    kept.add(JSON.stringify(target.path.slice(0, steps.length)));
+  }
+  return kept;
+};
+
+// The advertised dialect's `root-shape` rule requires a plain object root
+// without a combinator. Present a root union of strict object groups as one
+// object whose properties are the union of the groups. The canonical Zod
+// schema still enforces the exact group.
 const flattenRootObjectUnion = (
   root: Record<string, unknown>,
+  references: JsonSchemaReferences,
 ): Record<string, unknown> => {
   const { anyOf, oneOf, ...rest } = root;
   const alternatives = Array.isArray(anyOf) ? anyOf : oneOf;
@@ -161,7 +238,21 @@ const flattenRootObjectUnion = (
     root.properties !== undefined
   )
     return root;
-  const branches = alternatives.map((branch) => objectBranch(root, branch));
+  // Lifting removes union locations and branch identities. References into those
+  // locations, named anchors or unresolved bases cannot survive that rewrite.
+  for (const { scope, target } of references.references())
+    if (
+      (target.kind === "unresolved" && target.reason === "dynamic") ||
+      (scope === references.rootScope &&
+        (target.kind !== "target" ||
+          target.path.length === 0 ||
+          target.path[0] === "anyOf" ||
+          target.path[0] === "oneOf"))
+    )
+      return root;
+  const branches = alternatives.map((branch) =>
+    objectBranch(references, branch),
+  );
   if (!branches.every((branch) => branch !== undefined)) return root;
   const variants = new Map<string, unknown[]>();
   for (const branch of branches)
@@ -172,6 +263,48 @@ const flattenRootObjectUnion = (
       variants.set(name, known);
     }
   const required = sharedRequiredProperties(branches);
+  // A default lifted out of an input group can make a client send a field
+  // rejected by another strict group. Keep it only when every group owns the
+  // property and supplies the same default. A property some group omits takes
+  // its nested defaults too: filling only the inner property would otherwise
+  // still send an object that sibling group refuses. A default the nested
+  // property carries inside a group that does accept the parent stays, so
+  // callers keep that guidance.
+  for (const [name, schemas] of variants) {
+    const properties = branches.map((branch) =>
+      isObject(branch.properties) ? branch.properties[name] : undefined,
+    );
+    const ownedByEveryGroup = properties.every(isObject);
+    const defaults = properties.map((property) =>
+      isObject(property) ? property.default : undefined,
+    );
+    if (
+      defaults.every(
+        (value) => value !== undefined && isDeepStrictEqual(value, defaults[0]),
+      )
+    )
+      continue;
+    const withoutDefaults: unknown[] = [];
+    for (const schema of schemas) {
+      const withoutDefault = ownedByEveryGroup
+        ? isObject(schema) && Object.hasOwn(schema, "default")
+          ? Object.fromEntries(
+              Object.entries(schema).filter(([key]) => key !== "default"),
+            )
+          : schema
+        : omitNestedDefaults(
+            schema,
+            isObject(schema) ? referencedDefaultPaths(schema) : new Set(),
+          );
+      if (
+        !withoutDefaults.some((known) =>
+          isDeepStrictEqual(known, withoutDefault),
+        )
+      )
+        withoutDefaults.push(withoutDefault);
+    }
+    variants.set(name, withoutDefaults);
+  }
   // A coarse property minimum rejects underspecified objects. Partner fields
   // and exact group membership remain enforced by the canonical runtime parser.
   const fewestRequired = Math.min(
@@ -208,114 +341,128 @@ const flattenRootObjectUnion = (
   };
 };
 
-/** Describe canonical input fields and present the root as one object. */
+/** Preserve opt-in discriminator relationships without a root union. */
+const presentDiscriminatedRoot = (
+  canonical: Record<string, unknown>,
+  discriminator: string | undefined,
+): Record<string, unknown> => {
+  const references = new JsonSchemaReferences(canonical);
+  const flattened = flattenRootObjectUnion(canonical, references);
+  if (discriminator === undefined || flattened === canonical) return flattened;
+  const alternatives = canonical.anyOf ?? canonical.oneOf;
+  if (!Array.isArray(alternatives) || alternatives.length !== 2)
+    throw new TypeError(
+      "A presented root discriminator requires two object alternatives",
+    );
+  const branches = alternatives.map((alternative) => {
+    const branch = objectBranch(references, alternative);
+    if (branch === undefined || branch.additionalProperties !== false)
+      throw new TypeError(
+        "A presented root discriminator requires strict objects",
+      );
+    return branch;
+  });
+  const requiredBranch = branches.find((branch) =>
+    requiredProperties(branch).includes(discriminator),
+  );
+  const fallback = branches.find(
+    (branch) => !requiredProperties(branch).includes(discriminator),
+  );
+  const literal = (
+    branch: Readonly<Record<string, unknown>> | undefined,
+  ): unknown => {
+    const properties = branch?.properties;
+    const schema = isObject(properties) ? properties[discriminator] : undefined;
+    return isObject(schema) ? schema.const : undefined;
+  };
+  const selected = literal(requiredBranch),
+    otherwise = literal(fallback);
+  if (
+    requiredBranch === undefined ||
+    fallback === undefined ||
+    typeof selected !== "string" ||
+    typeof otherwise !== "string" ||
+    selected === otherwise
+  )
+    throw new TypeError(
+      "A presented root discriminator requires distinct literals and one default alternative",
+    );
+  const properties = Object.fromEntries(
+    Object.entries(
+      isObject(flattened.properties) ? flattened.properties : {},
+    ).map(([key, schema]) => {
+      if (!isObject(schema) || !Array.isArray(schema.anyOf))
+        return [key, schema];
+      const possible = schema.anyOf.filter(
+        (alternative) =>
+          alternative !== false &&
+          !(
+            isObject(alternative) &&
+            isObject(alternative.not) &&
+            Object.keys(alternative.not).length === 0
+          ),
+      );
+      return [key, possible.length === 1 ? possible[0] : schema];
+    }),
+  );
+  const commonRequired = new Set(requiredProperties(flattened));
+  const constraints = (branch: Readonly<Record<string, unknown>>) => {
+    const own = isObject(branch.properties) ? branch.properties : {};
+    const differences = Object.fromEntries(
+      Object.entries(properties).flatMap(([key, schema]) => {
+        if (key === discriminator || isDeepStrictEqual(schema, own[key]))
+          return [];
+        return [[key, Object.hasOwn(own, key) ? own[key] : false]];
+      }),
+    );
+    const required = requiredProperties(branch).filter(
+      (key) => !commonRequired.has(key),
+    );
+    return {
+      ...(Object.keys(differences).length === 0
+        ? {}
+        : { properties: differences }),
+      ...(required.length === 0 ? {} : { required }),
+    };
+  };
+  // The canonical branch predicates supply validation; omit generic group
+  // guidance that would describe the forbidden never-valued property as optional.
+  const { description: _description, ...presentation } = flattened;
+  return {
+    ...presentation,
+    properties,
+    ...(canonical.description === undefined
+      ? {}
+      : { description: canonical.description }),
+    if: {
+      properties: { [discriminator]: { const: selected } },
+      required: [discriminator],
+    },
+    then: constraints(requiredBranch),
+    else: constraints(fallback),
+  };
+};
+
+/**
+ * Describe canonical input fields and present the root as one object. Every
+ * other portability rule (patterns, literals, dependencies as prose) belongs
+ * to the advertised dialect projection that the listed presentation applies.
+ */
 export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
+  annotations: Pick<SchemaAnnotations, "rootDiscriminator"> = {},
 ): Record<string, unknown> => {
-  const flattened = flattenRootObjectUnion(root);
-  const described = describeSchema(flattened, flattened, describeProperty);
-  if (!isObject(described)) return flattened;
-  const {
-    dependencies: _dependencies,
-    dependentRequired: _dependentRequired,
-    ...presentation
-  } = described;
-  const rootDependencies = isObject(described.dependentRequired)
-    ? described.dependentRequired
-    : isObject(described.dependencies)
-      ? described.dependencies
-      : undefined;
-  const dependencyGuidance =
-    rootDependencies === undefined
-      ? []
-      : Object.entries(rootDependencies).flatMap(([property, partners]) =>
-          Array.isArray(partners) &&
-          partners.every((partner) => typeof partner === "string")
-            ? [
-                `When ${property} is provided, also provide ${partners.join(" and ")}.`,
-              ]
-            : [],
-        );
-  if (dependencyGuidance.length === 0) return presentation;
-  const description = [
-    typeof presentation.description === "string"
-      ? presentation.description
-      : undefined,
-    ...dependencyGuidance,
-  ].filter((text) => text !== undefined);
-  return { ...presentation, description: description.join(" ") };
+  const flattened = presentDiscriminatedRoot(
+    root,
+    annotations.rootDiscriminator,
+  );
+  const references = new JsonSchemaReferences(flattened);
+  const described = describeSchema(
+    flattened,
+    references,
+    references.rootScope,
+    describeProperty,
+  );
+  return isObject(described) ? { ...described } : flattened;
 };
-
-/**
- * Clients that render advertised inputs into SDK declarations expand
- * schema-local references with a shared per-input budget: Pi 1.1.0 code-mode
- * allows 32 expansions and degrades every later reference to `unknown`
- * (morluto/rea#1632), hiding the fields those references describe. The budget
- * counts conservatively — every resolvable, non-cyclic reference occurrence
- * in every schema position — so any reference-resolving client stays within
- * its measured limit.
- */
-export const advertisedReferenceExpansionBudget = 32;
-
-const definitionKeys = new Set(["$defs", "definitions"]);
-
-const countReferenceExpansions = (
-  node: unknown,
-  root: Readonly<Record<string, unknown>>,
-  active: ReadonlySet<string>,
-  count: { value: number },
-): void => {
-  if (Array.isArray(node)) {
-    node.forEach((child) =>
-      countReferenceExpansions(child, root, active, count),
-    );
-    return;
-  }
-  if (!isObject(node)) return;
-  if (typeof node.$ref === "string" && !active.has(node.$ref)) {
-    const target = resolveReference(root, node.$ref);
-    if (target !== undefined) {
-      count.value += 1;
-      countReferenceExpansions(
-        target,
-        root,
-        new Set([...active, node.$ref]),
-        count,
-      );
-      return;
-    }
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (definitionKeys.has(key)) continue;
-    if (schemaMaps.has(key) && isObject(value)) {
-      for (const child of Object.values(value))
-        countReferenceExpansions(child, root, active, count);
-    } else if (schemaArrays.has(key) || schemaChildren.has(key)) {
-      countReferenceExpansions(value, root, active, count);
-    }
-  }
-};
-
-/** Conservative client expansion count over every schema position. */
-export const countLocalReferenceExpansions = (
-  schema: Record<string, unknown>,
-): number => {
-  const count = { value: 0 };
-  countReferenceExpansions(schema, schema, new Set(), count);
-  return count.value;
-};
-
-/**
- * Keep the shared-definition form of an advertised input while clients can
- * still resolve it. Once rendering would exhaust the reference budget, fall
- * back to the inline projection, which carries no shared definitions for the
- * nonrecursive schemas this repository advertises, so every field renders
- * with complete structure in every reference-resolving client.
- */
-export const inputSchemaWithinReferenceExpansionBudget = (
-  shared: Record<string, unknown>,
-  inline: () => Record<string, unknown>,
-  budget: number,
-): Record<string, unknown> =>
-  countLocalReferenceExpansions(shared) <= budget ? shared : inline();

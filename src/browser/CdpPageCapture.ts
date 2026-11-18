@@ -1,14 +1,26 @@
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
+import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
+import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import { captureStorage } from "./CdpCaptureStorage.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
+import {
+  cdpRootDocument,
+  unverifiedDocumentLimitation,
+} from "./CdpTargetSession.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import {
@@ -16,16 +28,25 @@ import {
   captureDom,
   captureFrames,
   captureResources,
+  emptyDomCapture,
+  excludeDocumentEvidence,
   type CapturedResource,
   type DomCapture,
-  mainFrameUrl,
 } from "./CdpCaptureDocuments.js";
-import { capturedSvgNodeKind } from "./CdpCaptureDomSvg.js";
+import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
+import {
+  CdpMalformedReply,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
+import { capturedSvgNodeKind } from "./CdpCaptureDomNamespaces.js";
 import {
   allowedSanitizedUrl,
   delayWithCancellation,
 } from "./CdpCaptureValues.js";
-import { captureScripts } from "./CdpPageCaptureScripts.js";
+import {
+  captureScripts,
+  finalizeScriptInventory,
+} from "./CdpPageCaptureScripts.js";
 import { captureWorkers } from "./CdpPageCaptureWorkers.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
@@ -73,22 +94,25 @@ export const capturePage = async (
 ): Promise<CapturedPage> => {
   const allowedOrigins = new Set(context.input.allowed_origins);
   const events = new CdpCaptureEvents(context.input, allowedOrigins);
-  const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId !== context.sessionId) return;
-    events.ingest(event);
-  });
+  const removeListener = onCdpTargetEvent(
+    context.connection,
+    context.sessionId,
+    (event) => events.ingest(event),
+  );
   const state: CaptureState = {
     context,
     events,
     allowedOrigins,
     limitations: [
+      ...(context.discovery.limitations ?? []),
       "Observation starts when REA attaches; prior network and console activity is unavailable.",
+      "Worker targets are a final inventory snapshot, not worker-session observation. Their attached flag describes any debugging client; this page-session collector does not observe worker network, console, or script events, and short-lived workers may be absent from the snapshot.",
       "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
       "Source maps are reported only as declarative URLs and are not fetched.",
       "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
       ...(context.target.attached === null
         ? [
-            "CDP discovery omitted the target attachment state; attached is reported as unknown.",
+            "CDP discovery could not establish the target's debugger attachment state.",
           ]
         : []),
     ],
@@ -96,8 +120,47 @@ export const capturePage = async (
   };
   try {
     return await captureAuthorizedPage(state);
+  } catch (cause: unknown) {
+    // A navigation can invalidate an in-flight script ID or another document
+    // read. Report the observed capture invalidation before its stale-read
+    // symptom, while preserving caller cancellation.
+    if (
+      context.signal?.aborted !== true &&
+      !(cause instanceof AnalysisCancelledError) &&
+      !(cause instanceof AnalysisError && cause.userCategory === "cancelled")
+    )
+      assertObservedCaptureValid(state, cause);
+    throw cause;
   } finally {
     removeListener();
+    events.document?.close();
+  }
+};
+
+/**
+ * A document change is reported first, carrying any failure it caused. Scope
+ * applies to the current document only when the selected one is unchanged.
+ */
+const assertObservedCaptureValid = (
+  state: CaptureState,
+  cause?: unknown,
+): void => {
+  const reason =
+    state.events.document?.changed === true
+      ? "target_changed"
+      : state.events.unknownRootIdentity
+        ? "protocol_error"
+        : state.events.originViolation
+          ? "target_not_allowed"
+          : undefined;
+  if (reason === "target_not_allowed")
+    throw cdpOriginScopeRefusal(state.context.operation, { cause });
+  if (reason !== undefined) {
+    if (cause instanceof BrowserObservationError && cause.reason === reason)
+      throw cause;
+    throw new BrowserObservationError(state.context.operation, reason, {
+      cause,
+    });
   }
 };
 
@@ -105,7 +168,7 @@ const captureAuthorizedPage = async (
   state: CaptureState,
 ): Promise<CapturedPage> => {
   const { context, allowedOrigins, limitations } = state;
-  const { connection, sessionId, input, signal } = context;
+  const { input } = context;
   await authorizeObservationWindow(state);
   await captureJsonResponseBodies(state);
   const frameResult = await authorizedMainFrame({
@@ -114,8 +177,9 @@ const captureAuthorizedPage = async (
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
+    document: state.events.document,
   });
-  const attachedUrl = mainFrameUrl(frameResult) ?? "";
+  const attachedUrl = observedFrameUrl(frameResult.root.url) ?? "";
   const frameCapture = captureFrames(
     frameResult,
     allowedOrigins,
@@ -123,15 +187,11 @@ const captureAuthorizedPage = async (
     state.events.completeness,
   );
   const frames = frameCapture.items;
-  const captureFrame = frames[0];
-  if (captureFrame === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  state.events.beginFinalCapture(captureFrame.frame_id);
-  const resourceCapture = captureResources(
-    await connection.send("Page.getResourceTree", {}, sessionId, signal),
-    allowedOrigins,
-    state.events.completeness,
-  );
+  const captureDocument = cdpRootDocument(frameResult);
+  if (frameCapture.root === undefined || captureDocument === undefined)
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  assertObservedCaptureValid(state);
+  const resourceCapture = await capturePageResources(state);
   const resources = stableWebResources(
     resourceCapture.items.map(publicResource),
   );
@@ -162,22 +222,12 @@ const captureAuthorizedPage = async (
       null,
     );
   await report(context.progress, 3, "Normalizing browser evidence");
-  const completedFrameResult = await authorizedMainFrame({
-    connection: context.connection,
-    sessionId: context.sessionId,
-    signal: context.signal,
-    allowedOrigins,
-    operation: context.operation,
-  });
-  const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
-  if (state.events.originViolation)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
+  await assertCompletedDocument(state);
   // Body IDs were enumerated before asynchronous CDP reads. Events remain
   // enabled through the final capture, so account for eligible responses that
   // arrived while those reads were pending.
   state.events.settleUnexaminedResponseBodies();
+  const scriptInventory = finalizeScriptInventory(scripts, state.events);
   state.events.recordScriptMetadataBudgetExclusions();
   return {
     inspection: normalizedInspection(state, {
@@ -185,13 +235,67 @@ const captureAuthorizedPage = async (
       frames,
       dom,
       accessibility,
-      scripts: scripts.inventory,
+      scripts: scriptInventory,
       resources,
       workers,
       storage: storageCapture.value,
     }),
     sourceMapRequests: scripts.sourceMapRequests,
   };
+};
+
+/** Compare the final document first; scope then applies to that document. */
+const assertCompletedDocument = async (state: CaptureState): Promise<void> => {
+  const { context, allowedOrigins, events } = state;
+  const completed = await context.connection.send(
+    "Page.getFrameTree",
+    {},
+    context.sessionId,
+    context.signal,
+  );
+  const comparison = events.document?.observeTree(completed);
+  assertObservedCaptureValid(state);
+  if (comparison === undefined)
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  await authorizedMainFrame({
+    connection: context.connection,
+    sessionId: context.sessionId,
+    signal: context.signal,
+    allowedOrigins,
+    operation: context.operation,
+    initial: completed,
+    document: events.document,
+  });
+  // Navigation events can arrive while an unavailable URL is retried.
+  assertObservedCaptureValid(state);
+  if (events.document?.unknown === true) {
+    events.completeness.attachLimited("frames");
+    state.limitations.push(
+      unverifiedDocumentLimitation(events.document.selected),
+    );
+  }
+};
+
+/** A malformed resource tree omits only the resource inventory, never empties it. */
+const capturePageResources = async (
+  state: CaptureState,
+): Promise<ReturnType<typeof captureResources>> => {
+  const { connection, sessionId, signal } = state.context;
+  try {
+    return captureResources(
+      await connection.send("Page.getResourceTree", {}, sessionId, signal),
+      state.allowedOrigins,
+      state.events.completeness,
+    );
+  } catch (cause: unknown) {
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
+    state.events.completeness.exclude(
+      "resources",
+      "invalid_protocol_value",
+      null,
+    );
+    return { items: [] };
+  }
 };
 
 const captureJsonResponseBodies = async (
@@ -207,9 +311,11 @@ const captureJsonResponseBodies = async (
       state.events.responseBodyUnavailable(candidate);
       continue;
     }
-    let result: unknown;
+    let reply: Awaited<
+      ReturnType<typeof optionalCdpCommand<"Network.getResponseBody">>
+    >;
     try {
-      result = await optionalCdpCommand(
+      reply = await optionalCdpCommand(
         state.context,
         "Network.getResponseBody",
         { requestId: candidate.requestId },
@@ -229,8 +335,11 @@ const captureJsonResponseBodies = async (
       );
       continue;
     }
-    if (result !== undefined) {
-      state.events.ingestResponseBody(candidate, result);
+    if (reply.ok || reply.error._tag === "CdpMalformedReply") {
+      state.events.ingestResponseBody(
+        candidate,
+        reply.ok ? reply.value : "malformed",
+      );
       continue;
     }
     for (const remaining of requests.slice(index))
@@ -253,33 +362,45 @@ const authorizeObservationWindow = async (
     allowedOrigins,
     operation: context.operation,
   });
-  const mainFrame = captureFrames(initialFrameResult, allowedOrigins).items[0];
-  if (mainFrame === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  events.beginAuthorizedFrame(mainFrame.frame_id);
-  await enableObservationDomains(connection, sessionId, signal);
+  const mainFrame = captureFrames(initialFrameResult, allowedOrigins).root;
+  const document = cdpRootDocument(initialFrameResult);
+  if (mainFrame === undefined || document === undefined)
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  events.beginAuthorizedFrame(CdpTargetDocument.watch(context, document));
+  await enableObservationDomains(state);
   await report(context.progress, 2, "Observing page events");
   await delayWithCancellation(
     context.input.observation_ms,
     context.operation,
     signal,
   );
-  if (events.originViolation)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  assertObservedCaptureValid(state);
 };
 
 const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
   const { context, allowedOrigins } = state;
-  const result = await context.connection.send(
-    "DOMSnapshot.captureSnapshot",
-    {
-      computedStyles: [],
-      includePaintOrder: false,
-      includeDOMRects: false,
-    },
-    context.sessionId,
-    context.signal,
-  );
+  let result: CdpCommandResult<"DOMSnapshot.captureSnapshot">;
+  try {
+    result = await context.connection.send(
+      "DOMSnapshot.captureSnapshot",
+      {
+        computedStyles: [],
+        includePaintOrder: false,
+        includeDOMRects: false,
+      },
+      context.sessionId,
+      context.signal,
+    );
+  } catch (cause: unknown) {
+    // A malformed snapshot leaves the DOM and its derived metadata unknown.
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
+    excludeDocumentEvidence(
+      state.events.completeness,
+      "invalid_protocol_value",
+      null,
+    );
+    return emptyDomCapture;
+  }
   const capture = captureDom(
     result,
     allowedOrigins,
@@ -307,8 +428,10 @@ const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
           ),
         );
       } catch (cause: unknown) {
-        // A detached node can disappear between snapshot and description.
+        // A detached node can disappear between snapshot and description, and
+        // one malformed description leaves only that node's kind unknown.
         // Preserve partial metadata, but propagate transport/cancellation errors.
+        if (cause instanceof CdpMalformedReply) return undefined;
         if (!(cause instanceof CdpCommandRejection)) throw cause;
         if (cause.code === -32_601) descriptionUnavailable = true;
         else if (cause.code !== -32_000) throw cause;
@@ -320,7 +443,7 @@ const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
       step = capture.next(await Promise.all(pending));
     } catch (cause: unknown) {
       // Stop and settle this bounded batch before the session can be detached.
-      pendingController.abort();
+      pendingController.abort(OwnerCancellation.noLongerNeeded);
       await Promise.allSettled(pending);
       throw cause;
     }
@@ -349,7 +472,11 @@ const normalizedInspection = (
   },
   completeness: state.events.completeness.snapshot(),
   frames: [...captured.frames],
-  dom: { total_nodes: captured.dom.total, nodes: [...captured.dom.nodes] },
+  dom: {
+    total_nodes: captured.dom.total,
+    node_value_length_unit: captured.dom.nodeValueLengthUnit,
+    nodes: [...captured.dom.nodes],
+  },
   accessibility: {
     total_nodes: captured.accessibility.total,
     text_capture: captured.accessibility.textCapture,
@@ -360,12 +487,12 @@ const normalizedInspection = (
   network: {
     requests: [...state.events.network.values()],
     websocket_connections: [...state.events.webSocketConnectionsById.values()],
-    coverage_started_at: state.startedAt,
+    coverage_started_at: state.events.coverageStartedAt("Network"),
     prior_activity_available: false,
   },
   console: {
     events: [...state.events.console],
-    coverage_started_at: state.startedAt,
+    coverage_started_at: state.events.coverageStartedAt("Runtime"),
     prior_activity_available: false,
   },
   workers: [...captured.workers],
@@ -383,14 +510,13 @@ const normalizedInspection = (
   limitations: state.limitations,
 });
 
-const enableObservationDomains = async (
-  connection: CdpConnection,
-  sessionId: string | undefined,
-  signal?: AbortSignal,
-): Promise<void> => {
+const enableObservationDomains = async (state: CaptureState): Promise<void> => {
+  const { connection, sessionId, signal } = state.context;
   await connection.send("Runtime.enable", {}, sessionId, signal);
+  state.events.markDomainEnabled("Runtime");
   await connection.send("Debugger.enable", {}, sessionId, signal);
   await connection.send("Network.enable", {}, sessionId, signal);
+  state.events.markDomainEnabled("Network");
 };
 
 const accessibilityForFrames = async (
@@ -398,22 +524,29 @@ const accessibilityForFrames = async (
   frames: readonly { readonly frame_id: string }[],
 ): Promise<ReturnType<typeof captureAccessibility>> => {
   const { context, limitations, events } = state;
-  const results: unknown[] = [];
+  const results: CdpCommandResult<"Accessibility.getFullAXTree">[] = [];
   let unavailable = false;
   for (const frame of frames) {
-    const result = await optionalCdpCommand(
+    const reply = await optionalCdpCommand(
       context,
       "Accessibility.getFullAXTree",
       { frameId: frame.frame_id },
       limitations,
     );
-    if (result === undefined) unavailable = true;
-    else results.push(result);
+    if (reply.ok) results.push(reply.value);
+    else if (reply.error._tag === "CdpCommandUnavailable") unavailable = true;
+    else
+      events.completeness.exclude(
+        "accessibility",
+        "invalid_protocol_value",
+        null,
+      );
   }
   if (unavailable) events.completeness.unavailable("accessibility");
   const capture = captureAccessibility(results, {
     includeText: context.input.include_accessibility_text,
     ...(results.length === 0 && unavailable ? { unavailable: true } : {}),
+    completeness: events.completeness,
   });
   if (!context.input.include_accessibility_text)
     events.completeness.exclude(
@@ -421,7 +554,8 @@ const accessibilityForFrames = async (
       "not_approved",
       capture.textCapture.excluded_fields,
     );
-  if (capture.treeIncomplete) events.completeness.truncate("accessibility");
+  if (capture.hasUnobservedChildren)
+    events.completeness.truncate("accessibility");
   return capture;
 };
 

@@ -1,18 +1,23 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
+import type { z } from "zod";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { javascriptDisplayText } from "../../domain/javascript/javascriptAstValues.js";
 import {
-  createJavaScriptSemanticGraphNode,
-  createJavaScriptSemanticGraphRelation,
+  createOwnedJavaScriptSemanticGraphNode,
+  createOwnedJavaScriptSemanticGraphUnknown,
+  createOwnedJavaScriptSemanticGraphRelation,
   JavaScriptSemanticEvidenceContextRegistry,
-  javaScriptSemanticNodeId,
+  withJavaScriptSemanticNodeApplicationIds,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type {
+  JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
   JavaScriptSemanticGraphUnknown,
+  JavaScriptSemanticUnknownOmission,
+  javaScriptSemanticUnknownInputSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
@@ -24,8 +29,12 @@ import {
 /** Mutable local projection state hidden from graph callers. */
 export interface SemanticGraphProjectionState {
   readonly nodes: Map<string, JavaScriptSemanticGraphNode>;
+  readonly nodesByLookupKey: Map<string, JavaScriptSemanticGraphNode>;
   readonly relations: Map<string, JavaScriptSemanticGraphRelation>;
   readonly unknowns: Map<string, JavaScriptSemanticGraphUnknown>;
+  /** Absolute retained unknown count allowed during this file; null outside admission. */
+  unknownCapacity: number | null;
+  readonly unknownOmissions: Map<string, JavaScriptSemanticUnknownOmission>;
   readonly evidenceContexts: JavaScriptSemanticEvidenceContextRegistry;
   readonly roots: Set<string>;
   /**
@@ -56,6 +65,8 @@ export interface SemanticNodeConstructionInput {
   readonly label: string | null;
   readonly functionNodeId: string | null;
   readonly properties?: Readonly<Record<string, JsonValue>>;
+  /** Evidence for inferred semantic identities; defaults to exact syntax. */
+  readonly evidence?: ApplicationGraphEvidence;
 }
 
 /** Input for one directed static semantic relationship. */
@@ -72,8 +83,11 @@ export interface SemanticRelationConstructionInput {
 export const createSemanticGraphProjectionState =
   (): SemanticGraphProjectionState => ({
     nodes: new Map(),
+    nodesByLookupKey: new Map(),
     relations: new Map(),
     unknowns: new Map(),
+    unknownCapacity: null,
+    unknownOmissions: new Map(),
     evidenceContexts: new JavaScriptSemanticEvidenceContextRegistry(),
     roots: new Set(),
   });
@@ -87,18 +101,26 @@ export const bindSemanticGraphApplicationNodes = (
     applicationGraph.nodes,
   );
   for (const [identifier, node] of state.nodes) {
-    state.nodes.set(identifier, {
-      ...node,
-      application_node_ids: [
-        ...(applicationNodeIdsByLocation.get(
-          applicationLocationKey(
-            node.identity.artifact_sha256,
-            node.identity.module_path,
-            node.identity.source_range,
-          ),
-        ) ?? []),
-      ],
-    });
+    const matched = applicationNodeIdsByLocation.get(
+      applicationLocationKey(
+        node.identity.artifact_sha256,
+        node.identity.module_path,
+        node.identity.source_range,
+      ),
+    );
+    if (matched === undefined && node.application_node_ids.length === 0)
+      continue;
+    const updated = withJavaScriptSemanticNodeApplicationIds(
+      node,
+      matched ?? [],
+    );
+    if (updated !== node) {
+      state.nodes.set(identifier, updated);
+      state.nodesByLookupKey.set(
+        semanticNodeIdentityLookupKey(updated),
+        updated,
+      );
+    }
   }
 };
 
@@ -108,7 +130,7 @@ export const constructSemanticGraphNode = (
   input: SemanticNodeConstructionInput,
   state: SemanticGraphProjectionState,
 ): JavaScriptSemanticGraphNode =>
-  createJavaScriptSemanticGraphNode(
+  createOwnedJavaScriptSemanticGraphNode(
     {
       kind: input.kind,
       identity: {
@@ -121,9 +143,30 @@ export const constructSemanticGraphNode = (
       application_node_ids: [],
       label: input.label === null ? null : javascriptDisplayText(input.label),
       properties: input.properties ?? {},
-      evidence: observedSemanticEvidence(file, input.location),
+      evidence:
+        input.evidence ?? observedSemanticEvidence(file, input.location),
     },
     state.evidenceContexts,
+  );
+
+const semanticNodeLookupKey = (
+  kind: JavaScriptSemanticGraphNode["kind"],
+  artifactSha256: string,
+  modulePath: string,
+  sourceRange: JavaScriptSourceRange | null,
+  roleKey: string,
+): string =>
+  `${kind}:${artifactSha256}:${String(modulePath.length)}:${modulePath}:${sourceRange === null ? "-" : javascriptSourceRangeKey(sourceRange)}:${roleKey}`;
+
+export const semanticNodeIdentityLookupKey = (
+  node: Pick<JavaScriptSemanticGraphNode, "kind" | "identity">,
+): string =>
+  semanticNodeLookupKey(
+    node.kind,
+    node.identity.artifact_sha256,
+    node.identity.module_path,
+    node.identity.source_range,
+    node.identity.role_key,
   );
 
 /** Reuse retained identities and reject exhausted budgets before allocation. */
@@ -132,16 +175,14 @@ export const retainSemanticGraphNode = (
   file: JavaScriptArtifactFile,
   input: SemanticNodeConstructionInput,
 ): JavaScriptSemanticGraphNode | null => {
-  const identifier = javaScriptSemanticNodeId({
-    kind: input.kind,
-    identity: {
-      artifact_sha256: file.sha256,
-      module_path: file.path,
-      source_range: input.location,
-      role_key: input.roleKey,
-    },
-  });
-  const existing = state.nodes.get(identifier);
+  const lookupKey = semanticNodeLookupKey(
+    input.kind,
+    file.sha256,
+    file.path,
+    input.location,
+    input.roleKey,
+  );
+  const existing = state.nodesByLookupKey.get(lookupKey);
   if (existing !== undefined) return existing;
   if (typeof state.fileNodeBudget === "number" && state.fileNodeBudget <= 0) {
     state.fileNodesDropped = true;
@@ -150,13 +191,15 @@ export const retainSemanticGraphNode = (
   return addSemanticGraphNode(
     state,
     constructSemanticGraphNode(file, input, state),
+    lookupKey,
   );
 };
 
 /** Retain one canonical semantic node. */
-export const addSemanticGraphNode = (
+const addSemanticGraphNode = (
   state: SemanticGraphProjectionState,
   node: JavaScriptSemanticGraphNode,
+  knownLookupKey?: string,
 ): JavaScriptSemanticGraphNode | null => {
   const existing = state.nodes.get(node.node_id);
   if (existing !== undefined) return existing;
@@ -169,6 +212,10 @@ export const addSemanticGraphNode = (
     state.fileNodeBudget = budget - 1;
   }
   state.nodes.set(node.node_id, node);
+  state.nodesByLookupKey.set(
+    knownLookupKey ?? semanticNodeIdentityLookupKey(node),
+    node,
+  );
   return node;
 };
 
@@ -185,7 +232,7 @@ export const addSemanticGraphRelation = (
     input.source.node_id === input.target.node_id
   )
     return;
-  const value = createJavaScriptSemanticGraphRelation(
+  const value = createOwnedJavaScriptSemanticGraphRelation(
     {
       source_node_id: input.source.node_id,
       target_node_id: input.target.node_id,
@@ -204,11 +251,45 @@ export const addSemanticGraphRelation = (
   state.relations.set(value.relation_id, value);
 };
 
-/** Retain one unresolved frontier. */
+/** Aggregate examined omissions without retaining unbounded discarded identities. */
+export const recordSemanticUnknownOmission = (
+  state: SemanticGraphProjectionState,
+  omission: JavaScriptSemanticUnknownOmission,
+): void => {
+  const key = `${omission.family}:${omission.reason}`;
+  const occurrences =
+    (state.unknownOmissions.get(key)?.occurrences ?? 0) + omission.occurrences;
+  if (!Number.isSafeInteger(occurrences))
+    throw new RangeError("Semantic unknown omission count overflow");
+  state.unknownOmissions.set(key, { ...omission, occurrences });
+};
+
+/** Admit unknown provenance only while its independent retained capacity allows it. */
 export const addSemanticGraphUnknown = (
   state: SemanticGraphProjectionState,
-  unknown: JavaScriptSemanticGraphUnknown,
+  input: Omit<
+    z.input<typeof javaScriptSemanticUnknownInputSchema>,
+    "relation_kinds" | "candidate_node_ids"
+  > & {
+    readonly relation_kinds: readonly JavaScriptSemanticGraphRelation["relation"][];
+    readonly candidate_node_ids: readonly string[];
+  },
 ): void => {
+  if (
+    state.unknownCapacity !== null &&
+    state.unknowns.size >= state.unknownCapacity
+  ) {
+    recordSemanticUnknownOmission(state, {
+      family: input.family,
+      reason: input.reason,
+      occurrences: 1,
+    });
+    return;
+  }
+  const unknown = createOwnedJavaScriptSemanticGraphUnknown(
+    input,
+    state.evidenceContexts,
+  );
   if (state.unknowns.has(unknown.unknown_id)) return;
   state.unknowns.set(unknown.unknown_id, unknown);
 };
@@ -220,7 +301,7 @@ export const addSemanticFallbackRoot = (
 ): void => {
   const node = addSemanticGraphNode(
     state,
-    createJavaScriptSemanticGraphNode(
+    createOwnedJavaScriptSemanticGraphNode(
       {
         kind: "module",
         identity: {
@@ -295,7 +376,5 @@ const applicationLocationKey = (
   [
     artifactSha256,
     path,
-    range === null
-      ? "artifact-path"
-      : `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+    range === null ? "artifact-path" : javascriptSourceRangeKey(range),
   ].join("\u0000");

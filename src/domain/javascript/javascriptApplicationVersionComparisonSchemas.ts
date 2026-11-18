@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { emptyArraySchema } from "../emptyArraySchema.js";
-import { evidenceSchema } from "../evidence.js";
 import {
   isValidatedImmutableJavaScriptApplicationGraph,
   javascriptApplicationGraphSchema,
@@ -9,10 +8,11 @@ import {
 } from "./javascriptApplicationGraph.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
+import { applicationCoverageStatusSchema } from "./javascriptApplicationEvidenceSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const textSchema = z.string().min(1);
 
 /** Check paired version identities and per-side native identity uniqueness. */
 const validateApplicationVersionIdentities = (
@@ -57,16 +57,6 @@ export const applicationVersionIdentitiesSchema = z
     right: evidenceIdentitySchema,
     left_native_observations: z.array(evidenceIdentitySchema),
     right_native_observations: z.array(evidenceIdentitySchema),
-  })
-  .superRefine(validateApplicationVersionIdentities);
-
-/** Two authenticated application versions and their native observations. */
-export const compareApplicationVersionsInputSchema = z
-  .strictObject({
-    left: evidenceSchema,
-    right: evidenceSchema,
-    left_native_observations: z.array(evidenceSchema).default([]),
-    right_native_observations: z.array(evidenceSchema).default([]),
   })
   .superRefine(validateApplicationVersionIdentities);
 
@@ -139,7 +129,7 @@ const comparisonItemContextShape = {
     ]),
   ),
   evidence_links: z.array(evidenceIdSchema).min(2),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const comparisonItemSchema = z.union([
@@ -181,11 +171,15 @@ const comparisonItemSchema = z.union([
 ]);
 
 const comparisonCoverageSchema = z.strictObject({
-  left_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
-  right_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
-  left_graph_omitted_count: z.number().int().min(0).nullable(),
-  right_graph_omitted_count: z.number().int().min(0).nullable(),
-  status: z.enum(["complete-within-inputs", "partial", "truncated"]),
+  left_graph_status: applicationCoverageStatusSchema,
+  right_graph_status: applicationCoverageStatusSchema,
+  left_graph_omitted_count: z.int().min(0).nullable(),
+  right_graph_omitted_count: z.int().min(0).nullable(),
+  /**
+   * `unknown` when either source graph's coverage is unknown or unavailable;
+   * `truncated` and `partial` are known gaps.
+   */
+  status: z.enum(["complete-within-inputs", "partial", "truncated", "unknown"]),
 });
 
 /** Tiered module/entity matching plus its complete cross-version change graph. */
@@ -203,27 +197,27 @@ export const applicationVersionComparisonResultSchema = z
       root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     }),
     summary: z.strictObject({
-      unchanged: z.number().int().min(0),
-      added: z.number().int().min(0),
-      removed: z.number().int().min(0),
-      changed: z.number().int().min(0),
-      unknown: z.number().int().min(0),
+      unchanged: z.int().min(0),
+      added: z.int().min(0),
+      removed: z.int().min(0),
+      changed: z.int().min(0),
+      unknown: z.int().min(0),
     }),
     matching: z.strictObject({
-      exact_node_identity: z.number().int().min(0),
-      exact_content_digest: z.number().int().min(0),
-      exact_module_source_digest: z.number().int().min(0),
-      source_map_identity: z.number().int().min(0),
-      structural_fingerprint: z.number().int().min(0),
-      semantic_key: z.number().int().min(0),
-      ambiguous: z.number().int().min(0),
-      unmatched: z.number().int().min(0),
+      exact_node_identity: z.int().min(0),
+      exact_content_digest: z.int().min(0),
+      exact_module_source_digest: z.int().min(0),
+      source_map_identity: z.int().min(0),
+      structural_fingerprint: z.int().min(0),
+      semantic_key: z.int().min(0),
+      ambiguous: z.int().min(0),
+      unmatched: z.int().min(0),
     }),
     items: z.array(comparisonItemSchema),
     graph: javascriptApplicationGraphSchema,
     coverage: comparisonCoverageSchema,
     evidence_links: z.array(evidenceIdSchema).min(2),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const sourceGraphsComplete =
@@ -237,6 +231,17 @@ export const applicationVersionComparisonResultSchema = z
         code: "custom",
         path: ["coverage", "status"],
         message: "Comparison coverage must match source graph completeness",
+      });
+    const sourceGraphUnknown = [
+      result.coverage.left_graph_status,
+      result.coverage.right_graph_status,
+    ].some((status) => status === "unknown" || status === "unavailable");
+    if ((result.coverage.status === "unknown") !== sourceGraphUnknown)
+      context.addIssue({
+        code: "custom",
+        path: ["coverage", "status"],
+        message:
+          "Comparison coverage is unknown exactly when a source graph's coverage is unknown or unavailable",
       });
   });
 

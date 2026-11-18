@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
 
 const bytecode = (hex: string) => {
@@ -107,12 +107,44 @@ it("keeps the compiler version beside a shortest-form empty text", () => {
   expect(result.entries).toHaveLength(2);
 });
 
+it("decodes distinct byte keys and distinct nested-container keys", () => {
+  expect(
+    inspectSolidityMetadata(bytecode("a2410101410202")).entries.map(
+      ({ key }) => key,
+    ),
+  ).toEqual([
+    { kind: "bytes", value: "01" },
+    { kind: "bytes", value: "02" },
+  ]);
+  expect(inspectSolidityMetadata(bytecode("a2810101810202"))).toMatchObject({
+    status: "partial",
+  });
+  expect(inspectSolidityMetadata(bytecode("a281800181a002"))).toMatchObject({
+    status: "partial",
+  });
+  expect(
+    inspectSolidityMetadata(bytecode("a264736f6c634300081e6178a2410101410202")),
+  ).toMatchObject({
+    status: "partial",
+    compiler_version: { representation: "release-bytes", value: "0.8.30" },
+  });
+});
+
 it.each([
   ["invalid text", "a1617861ff"],
   ["truncated value", "a16178"],
   ["unsupported tag", "a16178c000"],
   ["floating point", "a16178fa3f800000"],
   ["duplicate key", "a2617801617802"],
+  ["duplicate byte key", "a2410101410102"],
+  [
+    "duplicate byte key in nested map",
+    "a264736f6c634300081e6178a2410101410102",
+  ],
+  ["duplicate byte key in map inside array", "a1617881a2410101410102"],
+  ["duplicate array key", "a280018002"],
+  ["duplicate map key", "a2a001a002"],
+  ["duplicate map key in another order", "a2a20102030401a20304010202"],
   ["excessive nesting", "a16178" + "81".repeat(65) + "00"],
   ["impossible collection", "a161788a00"],
 ])("keeps exact ranges and unavailable interpretation for %s", (_name, hex) => {
@@ -121,6 +153,46 @@ it.each([
     bytecode_offset: 1,
     entries: [],
     compiler_version: null,
+  });
+});
+
+it("rejects repeated deeply nested container keys promptly", () => {
+  const key = "81".repeat(62) + "00";
+  // Each key's identity serializes its one leaf scalar once; a per-level
+  // re-serialization of nested keys would grow with depth or worse.
+  const stringify = JSON.stringify.bind(JSON);
+  let serialized = 0;
+  const spy = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
+    if (++serialized > 4) throw new Error("Key identity budget exceeded");
+    return stringify(...(args as Parameters<typeof JSON.stringify>));
+  });
+  let result: ReturnType<typeof inspectSolidityMetadata>;
+  try {
+    result = inspectSolidityMetadata(bytecode("a2" + key + "01" + key + "02"));
+  } finally {
+    spy.mockRestore();
+  }
+  expect(serialized).toBe(2);
+  expect(result).toMatchObject({
+    status: "not-decoded",
+    diagnostic: "repeated_map_key",
+    admission: {
+      code: "repeated_map_key",
+      detail: { key_length: expect.any(Number) },
+    },
+  });
+});
+
+it("records the profile depth when CBOR nesting is refused", () => {
+  expect(
+    inspectSolidityMetadata(bytecode("a16178" + "81".repeat(65) + "00")),
+  ).toMatchObject({
+    status: "not-decoded",
+    diagnostic: "nesting_exceeds_profile",
+    admission: {
+      code: "nesting_exceeds_profile",
+      detail: { max_depth: 64 },
+    },
   });
 });
 

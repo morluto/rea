@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { attestGhidraDosComLoadImage } from "./GhidraLoadImageValues.js";
 import { fixtureDosComLoadImage } from "./GhidraLoadImage.fixture.js";
-import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
+import {
+  nativeLoadImageObservationSchema,
+  nativeLoadImageSchema,
+  type NativeLoadImageObservation,
+} from "../domain/native/nativeLoadImage.js";
 
 const mutations: ReadonlyArray<
   readonly [string, (o: NativeLoadImageObservation) => void]
@@ -76,6 +80,7 @@ const mutations: ReadonlyArray<
         offset: 0x100,
         status: "APPLIED",
         type: 0,
+        symbol: null,
         values: [],
         original_bytes_hex: null,
         memory_bytes_hex: null,
@@ -120,6 +125,41 @@ describe("COM independent load-image checks", () => {
       value: { status: "mismatch", observations: f.observation },
     });
   });
+  it("refuses an observation without measured permissions or relocation symbols", () => {
+    const f = fixtureDosComLoadImage();
+    const { readable: _r, ...unmeasured } = f.observation.mappings[0]!;
+    const withoutPermissions = nativeLoadImageObservationSchema.safeParse({
+      ...f.observation,
+      mappings: [unmeasured, ...f.observation.mappings.slice(1)],
+    });
+    expect(withoutPermissions.success).toBe(false);
+    expect(withoutPermissions.error?.issues[0]?.path).toEqual([
+      "mappings",
+      0,
+      "readable",
+    ]);
+    const withoutSymbol = nativeLoadImageObservationSchema.safeParse({
+      ...f.observation,
+      relocations: [
+        {
+          address: "0x10100",
+          segment: 0x1000,
+          offset: 0x100,
+          status: "APPLIED",
+          type: 0,
+          values: [],
+          original_bytes_hex: null,
+          memory_bytes_hex: null,
+        },
+      ],
+    });
+    expect(withoutSymbol.error?.issues[0]?.path).toEqual([
+      "relocations",
+      0,
+      "symbol",
+    ]);
+  });
+
   it("rejects stale snapshot identity", () => {
     const f = fixtureDosComLoadImage();
     expect(

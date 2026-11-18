@@ -1,26 +1,48 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
+import { z } from "zod";
 
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../../../src/application/jeb/JebAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/jeb/JebAnalysisPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
+import { JebMcpCleanupFailure } from "../../../src/jeb/JebMcpConnectionOwner.js";
+import { jebMcpTimeoutGuidance } from "../../../src/jeb/JebMcpDeadline.js";
+import type { JebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
 import { ok } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  expandToolAvailability,
+  toolAvailabilityInventory,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+
+import { JebProvider } from "../../../src/jeb/JebProvider.js";
+import {
+  startJebMcpFixture,
+  jebPrimaryResponses,
+} from "../../fixtures/jebMcp.js";
 
 const identity = { id: "jeb", name: "JEB", version: "5.48.0" } as const;
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it("discovers current JEB operation support and recovery through binary_session", async () => {
   let availability: JebAnalysisAvailability = {
     status: "unavailable",
     code: "not_configured",
-    reason: "Start JEB at REA_JEB_MCP_URL",
+    reason: "The JEB MCP endpoint did not respond.",
+    remediation: "Start JEB at REA_JEB_MCP_URL",
     diagnostics: {},
   };
   let probes = 0;
@@ -37,37 +59,32 @@ it("discovers current JEB operation support and recovery through binary_session"
   const session = createTestBinarySession(() => {
     throw new Error("Status must not start a deep provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { environment: {}, jebAnalysis: provider },
-  );
-  const client = new Client({ name: "jeb-availability", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { environment: {}, jebAnalysis: provider },
+    clientIdentity: { name: "jeb-availability", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const read = async () => {
     const result = await client.callTool({
       name: "binary_session",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     const status = toolContract("binary_session").outputSchema.parse(
       result.structuredContent,
     ).result;
-    return expandToolAvailability(status.tool_availability).filter(
-      (tool) => tool.surface === "jeb-provider",
-    );
+    return expandToolAvailability(
+      toolAvailabilityInventory.parse(status.tool_availability),
+    ).filter((tool) => tool.surface === "jeb-provider");
   };
   const unavailable = await read();
   expect(unavailable).toHaveLength(4);
   expect(
     unavailable.every(
-      (tool) => !tool.available && tool.remediation === availability.reason,
+      (tool) =>
+        !tool.available &&
+        availability.status === "unavailable" &&
+        tool.remediation === availability.remediation,
     ),
   ).toBe(true);
   availability = {
@@ -96,6 +113,73 @@ it("discovers current JEB operation support and recovery through binary_session"
     remediation: expect.stringContaining("does not advertise"),
   });
   expect(probes).toBe(2);
+});
+
+it("preserves the JEB discovery timeout when availability cleanup is incomplete", async () => {
+  const resource = "fixture JEB MCP client";
+  const cleanup = new ProviderCleanupError("jeb", [resource], {
+    reason: "connection close failed",
+  });
+  const lease = new AnalysisCleanupLease(() => Promise.resolve(), [resource]);
+  lease.bindCleanupError(cleanup);
+  const timeout = new AnalysisTimeoutError("jeb_mcp_catalog", 250, {
+    ...jebMcpTimeoutGuidance("discovery", 250, "setting"),
+  });
+  const failure = new JebMcpCleanupFailure(timeout, cleanup, "jeb_mcp_catalog");
+  const connection: JebMcpConnection = {
+    sessionGeneration: 0,
+    async connect() {
+      throw failure;
+    },
+    async listTools() {
+      throw failure;
+    },
+    async call() {
+      throw new Error("Availability must not call a JEB tool");
+    },
+    close: () => lease.release(),
+  };
+  const provider = new JebProvider({ connectionFactory: () => connection });
+  onTestFinished(() => provider.close());
+  const { client } = await createApplicationMcpHarness({
+    serverOptions: { environment: {}, jebAnalysis: provider },
+  });
+  const result = await client.callTool({
+    name: "binary_session",
+    arguments: { detail: "complete" },
+  });
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "cleanup_incomplete",
+      details: {
+        resources: [resource],
+        execution_failure: "provider_timeout",
+        diagnostics: {
+          primary_error: {
+            code: "provider_timeout",
+            remediation: {
+              action: expect.stringContaining("REA_JEB_MCP_TIMEOUT_MS"),
+            },
+          },
+        },
+      },
+    },
+  });
+  // The MCP response is a snapshot; retain the provider error to check recovery.
+  const returned = await provider
+    .inspectAvailability()
+    .catch((cause: unknown) => cause);
+  if (!(returned instanceof AnalysisError))
+    throw new Error("Expected availability to throw a retained analysis error");
+  for (const error of [cleanup, failure, returned]) {
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toEqual([resource]);
+  }
+  await provider.close();
+  for (const error of [cleanup, failure, returned])
+    expect(error.cleanupIncomplete).toBe(false);
+  expect(failure.cleanupResources).toEqual([]);
+  expect(returned.cleanupResources).toEqual([]);
 });
 
 it("advertises exact valid JEB schemas and records inline evidence through MCP", async () => {
@@ -134,20 +218,12 @@ it("advertises exact valid JEB schemas and records inline evidence through MCP",
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { jebAnalysis: provider },
-  );
-  const client = new Client({ name: "jeb-contract", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { jebAnalysis: provider },
+    clientIdentity: { name: "jeb-contract", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_jeb_client",
   );
@@ -155,7 +231,8 @@ it("advertises exact valid JEB schemas and records inline evidence through MCP",
     throw new Error("JEB tools must publish both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
-  const outputSchema: Record<string, unknown> = advertised.outputSchema ?? {};
+  const outputSchema: Record<string, unknown> =
+    canonicalOutputSchema(advertised.name) ?? {};
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(advertised.inputSchema, {})).toBe(true);
   expect(ajv.validate(advertised.inputSchema, { unexpected: 1 })).toBe(false);
@@ -222,20 +299,12 @@ it("preserves JEB provider failure reasons through the MCP boundary", async () =
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { jebAnalysis: unavailable },
-  );
-  const client = new Client({ name: "jeb-failure", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { jebAnalysis: unavailable },
+    clientIdentity: { name: "jeb-failure", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const failed = await client.callTool({
     name: "list_jeb_units",
     arguments: {},
@@ -252,20 +321,14 @@ it("keeps the MCP server usable when REA_JEB_MCP_URL is invalid", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { environment: { REA_JEB_MCP_URL: "http://localhost:8425/mcp" } },
-  );
-  const client = new Client({ name: "jeb-invalid-endpoint", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: {
+      environment: { REA_JEB_MCP_URL: "http://localhost:8425/mcp" },
+    },
+    clientIdentity: { name: "jeb-invalid-endpoint", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   expect((await client.listTools()).tools.length).toBeGreaterThan(0);
   const failed = await client.callTool({
     name: "inspect_jeb_client",
@@ -289,3 +352,124 @@ it("keeps the MCP server usable when REA_JEB_MCP_URL is invalid", async () => {
     },
   });
 });
+
+it.each(
+  [
+    { operation: "list_jeb_units", tool: "list_units", input: { count: 2 } },
+    {
+      operation: "decompile_jeb_item",
+      tool: "decompile_code_item",
+      input: {
+        item_address: "LSample;->value()I",
+        item_kind: "method",
+        unit_path: "sample.dex",
+      },
+    },
+    {
+      operation: "open_jeb_project",
+      tool: "open_project",
+      input: { path: "sample.apk" },
+    },
+  ].flatMap((request) =>
+    ["refusal", "unknown-version"].map((metadata) => ({
+      ...request,
+      metadata,
+    })),
+  ),
+)(
+  "preserves requested $operation through MCP with metadata $metadata",
+  async ({ operation, tool, input, metadata }) => {
+    let informationCalls = 0;
+    const refusal = {
+      success: false,
+      message: "Client information temporarily refused",
+      error: {
+        code: "future_metadata_code",
+        recovery_required_before_retry: true,
+        recovery_tool: "get_client_information",
+      },
+    };
+    const fixture = await startJebMcpFixture((name) => {
+      if (name !== "get_client_information") return jebPrimaryResponses[name]!;
+      informationCalls++;
+      return metadata === "refusal" || informationCalls > 1
+        ? refusal
+        : { success: true, gui_client: false };
+    });
+    onTestFinished(() => fixture.close());
+    const provider = new JebProvider({
+      environment: { REA_JEB_MCP_URL: fixture.endpoint },
+    });
+    const session = createTestBinarySession(() => {
+      throw new Error("JEB must not start a deep provider");
+    });
+    const { client } = await createApplicationMcpHarness({
+      session,
+      serverOptions: { jebAnalysis: provider, environment: {} },
+      clientIdentity: { name: "jeb-attribution", version: "1" },
+      schemaValidator: schemaValidation,
+    });
+    const call = () => client.callTool({ name: operation, arguments: input });
+    if (metadata === "unknown-version") {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const called = await call();
+        expect(called.isError).not.toBe(true);
+        const text = called.content
+          .map((block) => (block.type === "text" ? block.text : ""))
+          .join("");
+        const evidence = parseEvidence(JSON.parse(text));
+        expect(evidence.provider.version).toBeNull();
+        expect(evidence.normalized_result).toMatchObject({
+          engine: { version: null, gui_client: false },
+        });
+        expect(evidence.raw_result).toEqual(jebPrimaryResponses[tool]);
+      }
+      expect(fixture.calls).toEqual([tool, "get_client_information", tool]);
+    } else {
+      const failed = await client.callTool({
+        name: operation,
+        arguments: input,
+      });
+      expect(failed.isError).toBe(true);
+      const text = failed.content
+        .map((block) => (block.type === "text" ? block.text : ""))
+        .join("");
+      expect(JSON.parse(text)).toMatchObject({
+        error: {
+          code: "execution_failure",
+          message: refusal.message,
+          details: {
+            provider_id: "jeb",
+            operation,
+            diagnostics: {
+              endpoint: fixture.endpoint,
+              upstream_response: refusal,
+            },
+            partial_observation: {
+              kind: "retained-evidence",
+              evidence_id: expect.any(String),
+            },
+          },
+        },
+      });
+      const partial = z
+        .object({
+          error: z.object({
+            details: z.object({
+              partial_observation: z.object({
+                kind: z.literal("retained-evidence"),
+                evidence_id: z.string(),
+              }),
+            }),
+          }),
+        })
+        .parse(JSON.parse(text)).error.details.partial_observation;
+      expect(session.evidenceById(partial.evidence_id)).toMatchObject({
+        evidence_id: partial.evidence_id,
+        operation,
+        raw_result: jebPrimaryResponses[tool],
+      });
+      expect(fixture.calls).toEqual([tool, "get_client_information"]);
+    }
+  },
+);

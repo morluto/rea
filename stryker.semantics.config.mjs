@@ -37,12 +37,13 @@ export default {
     ]),
     ...mutationRanges("src/rizin/RizinDebugSessionManager.ts", [
       {
-        kind: "declaration",
-        name: "isRizinCommandDeadlineExpired",
+        kind: "expression",
+        text: "remaining <= 0",
       },
       {
         kind: "declaration",
-        name: "createRizinCommandTimeoutError",
+        name: "snapshot",
+        withinBlockWithBinding: "output",
       },
       {
         kind: "declaration",

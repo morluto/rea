@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchemaObject } from "ajv";
@@ -7,7 +8,9 @@ import {
   jsonResult,
 } from "./enhancedToolsHarness.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-import type { SegmentSummary } from "../../../src/domain/hopperValues.js";
+import { err } from "../../../src/domain/result.js";
+import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import type { SegmentSummary } from "../../../src/domain/native/nativeSegments.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -25,6 +28,16 @@ const overviewClient = (segments: SegmentSummary[]) =>
   connect({
     execute: (name) => {
       switch (name) {
+        case "read_binary_inventory_summary":
+          return Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                name,
+                "No native overview",
+              ),
+            ),
+          );
         case "current_document":
           return Promise.resolve(ok("fixture"));
         case "list_documents":
@@ -43,10 +56,7 @@ const overviewClient = (segments: SegmentSummary[]) =>
 
 it("preserves observed coordinates and main's optional-string output contract after SDK conversion", async () => {
   const client = await overviewClient([segment]);
-  const schema = (await client.listTools()).tools.find(
-    ({ name }) => name === "binary_overview",
-  )?.outputSchema;
-  if (schema === undefined) throw new Error("Missing overview output schema");
+  const schema = canonicalOutputSchema("binary_overview");
   const validate = new Ajv2020({ strict: false }).compile(
     schema as AnySchemaObject,
   );

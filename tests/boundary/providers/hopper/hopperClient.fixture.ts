@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { onTestFinished, vi } from "vitest";
+import { onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { ok } from "../../../../src/domain/result.js";
@@ -11,6 +11,12 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { waitForExit } from "../../../support/process/processFixture.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
+import type { HopperReplyContracts } from "../../../../src/hopper/HopperReplyContracts.js";
+import {
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../../../../src/domain/jsonValue.js";
+import { waitFor } from "../../../support/testWait.js";
 
 export const hopperFixturePath = fileURLToPath(
   new URL("../../../fixtures/fakeHopper.mjs", import.meta.url),
@@ -36,6 +42,12 @@ export class HopperFixtureLauncher implements BridgeLauncher {
     readonly tokenOverride?: string,
     readonly diagnosticMode: "quiet" | "noisy" | "noisy_no_socket" = "quiet",
     readonly healthMode: "ready" | "gated" = "ready",
+    readonly shutdownMode: "acknowledge" | "exit-without-ack" = "acknowledge",
+    readonly inventoryFailure:
+      | "none"
+      | "capability_unavailable"
+      | "bridge_exception" = "none",
+    readonly advertisedRequestBytes?: number,
   ) {}
 
   launch(session: BridgeSession) {
@@ -50,9 +62,13 @@ export class HopperFixtureLauncher implements BridgeLauncher {
         session.socketPath,
         this.tokenOverride ?? session.token,
         session.runId,
-        "acknowledge",
+        this.shutdownMode,
         this.diagnosticMode,
         this.healthMode,
+        this.inventoryFailure,
+        ...(this.advertisedRequestBytes === undefined
+          ? []
+          : [String(this.advertisedRequestBytes)]),
       ],
       { stdio: ["ignore", "pipe", "pipe", "ipc"] },
     );
@@ -83,19 +99,16 @@ export class HopperFixtureLauncher implements BridgeLauncher {
 
   /** Wait for acknowledgement that the fixture actually received a request. */
   waitForRequest(method: string, gate?: string): Promise<FixtureRequest> {
-    return vi.waitFor(
-      () => {
-        const request = this.requests.find(
-          (value) =>
-            value.method === method &&
-            (gate === undefined || value.params?.gate === gate),
-        );
-        if (request === undefined)
-          throw new Error(`Waiting for Hopper fixture request ${method}`);
-        return request;
-      },
-      { timeout: 10_000 },
-    );
+    return waitFor(() => {
+      const request = this.requests.find(
+        (value) =>
+          value.method === method &&
+          (gate === undefined || value.params?.gate === gate),
+      );
+      if (request === undefined)
+        throw new Error(`Waiting for Hopper fixture request ${method}`);
+      return request;
+    });
   }
 
   /** Release a response held by the fixture's gate parameter. */
@@ -111,8 +124,24 @@ export class HopperFixtureLauncher implements BridgeLauncher {
   }
 }
 
+/**
+ * Transport tests call the fake bridge's own methods (`echo`, `hang`, ...), so
+ * every method's reply contract is any JSON value. Production contracts are
+ * covered by the provider and reply-contract suites.
+ */
+export type TransportReplyContracts = Readonly<
+  Record<string, z.ZodType<JsonValue, JsonValue>>
+>;
+export const transportReplyContracts: TransportReplyContracts = new Proxy(
+  {},
+  { get: () => ownedJsonValueSchema },
+);
+export type TransportHopperClient = HopperClient<TransportReplyContracts>;
+
 /** Register owned client cleanup before any startup assertion can fail. */
-export const trackHopperClient = (client: HopperClient): HopperClient => {
+export const trackHopperClient = <Contracts extends HopperReplyContracts>(
+  client: HopperClient<Contracts>,
+): HopperClient<Contracts> => {
   onTestFinished(async () => {
     await client.close();
   });
@@ -122,11 +151,14 @@ export const trackHopperClient = (client: HopperClient): HopperClient => {
 /** Start a real fixture session with test-scoped cleanup. */
 export const startHopperFixtureClient = async (
   launcher = new HopperFixtureLauncher(),
-): Promise<HopperClient> => {
+  options: Partial<ConstructorParameters<typeof HopperClient>[0]> = {},
+): Promise<TransportHopperClient> => {
   const client = trackHopperClient(
     new HopperClient({
       launcher,
       startupTimeoutMs: 10_000,
+      ...options,
+      replyContracts: transportReplyContracts,
     }),
   );
   const started = await client.start();

@@ -1,17 +1,19 @@
 import { z } from "zod";
 
+import {
+  MCP_OUTPUT_SCHEMA_PROFILES,
+  type McpOutputSchemaProfile,
+} from "../contracts/mcpSchemaPresentation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-/** Select whether tools/list carries the large output contracts. */
-export const mcpOutputSchemaProfileSchema = z.enum(["full", "off"]);
-
-export type McpOutputSchemaProfile = z.infer<
-  typeof mcpOutputSchemaProfileSchema
->;
-
 const profileConstraint =
-  'REA_MCP_OUTPUT_SCHEMA_PROFILE must be "full" (default) or "off". The off profile omits output schemas from tools/list while REA validates every successful result against its canonical tool contract and returns complete structured content.';
+  'REA_MCP_OUTPUT_SCHEMA_PROFILE must be "off" (default) or "compact". The off profile omits output schemas; compact advertises every output schema within a 4,096-byte budget. The "full" output profile was removed: remove the setting or select "compact". Both keep canonical server-side validation and complete structured content.';
+
+/** Select whether tools/list carries bounded output contracts. */
+export const mcpOutputSchemaProfileSchema = z.enum(MCP_OUTPUT_SCHEMA_PROFILES, {
+  error: profileConstraint,
+});
 
 /** Parse the output schema advertisement selection at server composition. */
 export const parseMcpOutputSchemaProfile = (

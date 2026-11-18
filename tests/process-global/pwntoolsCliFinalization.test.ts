@@ -1,27 +1,25 @@
+import { SIMULATED_LINUX_X64 } from "../fixtures/simulatedHost.js";
 import { z } from "zod";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  it,
-  onTestFinished,
-  vi,
-} from "vitest";
+import { afterEach, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import { BinaryLayoutService } from "../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { createCli } from "../../src/cli.js";
 import * as composition from "../../src/composition/binaryDiagnostics.js";
+import { resolvedAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { PwntoolsLayoutProvider } from "../../src/native/pwntools/PwntoolsLayoutProvider.js";
 import type { PwntoolsLauncher } from "../../src/native/pwntools/PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js";
+import {
+  waitForProviderProcessReady,
+  stopProviderProcessFixture,
+} from "../fixtures/providerProcess.js";
 import { binaryLayoutFixture } from "../fixtures/binaryDiagnostics/layout.js";
 import {
   createTestWorkspace,
@@ -29,23 +27,12 @@ import {
 } from "../support/workspace/workspaceFixture.js";
 
 const supportedHost = process.platform !== "win32";
-const platform = Object.getOwnPropertyDescriptor(process, "platform");
-const architecture = Object.getOwnPropertyDescriptor(process, "arch");
 const exitCode = process.exitCode;
 
 beforeAll(() =>
   supportedHost ? prepareProcessOwnershipInspection() : undefined,
 );
-beforeEach(() => {
-  // Prepare the real host inspector first; only decoder availability is simulated.
-  Object.defineProperty(process, "platform", { value: "linux" });
-  Object.defineProperty(process, "arch", { value: "x64" });
-});
 afterEach(() => {
-  if (platform !== undefined)
-    Object.defineProperty(process, "platform", platform);
-  if (architecture !== undefined)
-    Object.defineProperty(process, "arch", architecture);
   process.exitCode = exitCode;
   vi.restoreAllMocks();
 });
@@ -122,6 +109,7 @@ it.runIf(supportedHost).each(["decoded", "failed"] as const)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const output = await runCli(provider, path);
@@ -137,10 +125,8 @@ it.runIf(supportedHost).each(["decoded", "failed"] as const)(
       expect(output).toMatchObject({
         code: "execution_failure",
         details: {
-          diagnostics: {
-            exit_code: 2,
-            captured_output: { stdout: "decoder output" },
-          },
+          diagnostics: { exit_code: 2 },
+          captured_output: { stdout: "decoder output" },
         },
       });
       expect(output).not.toHaveProperty("details.cleanup");
@@ -172,6 +158,7 @@ it.runIf(supportedHost)(
         };
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     expect(await runCli(provider, path)).toMatchObject({
@@ -211,6 +198,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       removalAllowed = true;
@@ -249,6 +237,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       removalAllowed = true;
@@ -275,6 +264,7 @@ it.runIf(supportedHost)(
   async () => {
     const { path, root, launch } = await fixture();
     const controller = new AbortController();
+    const reason = { stage: "final cleanup" };
     let removals = 0;
     const provider = new PwntoolsLayoutProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },
@@ -283,12 +273,13 @@ it.runIf(supportedHost)(
         path: root.path,
         close: async () => {
           if (++removals === 1) {
-            controller.abort();
+            controller.abort(reason);
             throw new Error("transient removal failure");
           }
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspectAndClose(
@@ -297,12 +288,194 @@ it.runIf(supportedHost)(
     );
     if (result.ok)
       throw new Error("Cancelled inspection must not publish success");
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.partialObservation).toBeDefined();
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "cancelled",
       details: {
         captured_output: { stdout: "decoder output", truncated: false },
       },
     });
+    await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(supportedHost).each(["inspect", "inspectAndClose"] as const)(
+  "preserves pre-admission reasons without acquiring resources: %s",
+  async (method) => {
+    const reason = { stage: "pre-admission" };
+    const controller = new AbortController();
+    controller.abort(reason);
+    const provider = new PwntoolsLayoutProvider(
+      {},
+      undefined,
+      undefined,
+      SIMULATED_LINUX_X64,
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider[method](
+      { path: "/not-acquired" },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected pre-admission cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    const retry = await provider.inspect({ path: "/not-acquired" });
+    if (retry.ok) throw new Error("Unconfigured provider must fail");
+    expect(retry.error.message).not.toContain("Provider is closing");
+  },
+);
+
+it.runIf(supportedHost)(
+  "normalizes cancellation from the actual snapshot write boundary",
+  async () => {
+    const { path, root, launch } = await fixture();
+    const reason = { stage: "snapshot write" };
+    const controller = new AbortController();
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      launch,
+      async () => {
+        controller.abort(reason);
+        return root;
+      },
+      SIMULATED_LINUX_X64,
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected snapshot write cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(supportedHost).each(["AbortError-name", "same-as-reason"])(
+  "preserves a physical runtime acquisition failure despite late cancellation: %s",
+  async (scenario) => {
+    const { path, root, launch } = await fixture();
+    onTestFinished(() => root.close());
+    const physical = Object.assign(
+      new Error("owned runtime acquisition failed"),
+      { name: scenario === "AbortError-name" ? "AbortError" : "Error" },
+    );
+    const controller = new AbortController();
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      launch,
+      async () => {
+        controller.abort(
+          scenario === "same-as-reason" ? physical : { late: true },
+        );
+        throw physical;
+      },
+      SIMULATED_LINUX_X64,
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected runtime acquisition failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
+    expect(result.error.cause).toBe(physical);
+  },
+);
+
+it.runIf(supportedHost)(
+  "preserves cancellation across a late owned process handshake",
+  async () => {
+    const { path, root } = await fixture();
+    const controller = new AbortController();
+    const reason = { stage: "late owned handshake" };
+    let child:
+      | Awaited<ReturnType<typeof spawnOwnedProviderProcess>>["process"]
+      | undefined;
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (input) => {
+        const launched = await spawnOwnedProviderProcess({
+          ...input,
+          arguments: [
+            "-e",
+            "process.stdout.write('ready\\n'); setInterval(() => {}, 1000)",
+          ],
+        });
+        child = launched.process;
+        await waitForProviderProcessReady(launched.process);
+        controller.abort(reason);
+        return launched;
+      },
+      async () => root,
+      SIMULATED_LINUX_X64,
+    );
+    onTestFinished(async () => {
+      try {
+        await provider.close();
+      } finally {
+        if (child !== undefined) await stopProviderProcessFixture(child);
+      }
+    });
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected handshake cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    expect(child).toBeDefined();
+    expect(child?.exitCode !== null || child?.signalCode !== null).toBe(true);
+    await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(supportedHost)(
+  "retains cancellation and decoded facts until failed final cleanup is retried",
+  async () => {
+    const { path, root, launch } = await fixture();
+    const controller = new AbortController();
+    const reason = { stage: "failed final cleanup" };
+    let removalAllowed = false;
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      launch,
+      async () => ({
+        path: root.path,
+        close: async () => {
+          if (!removalAllowed) {
+            controller.abort(reason);
+            throw new Error("root removal refused");
+          }
+          await root.close();
+        },
+      }),
+      SIMULATED_LINUX_X64,
+    );
+    onTestFinished(async () => {
+      removalAllowed = true;
+      await provider.close();
+    });
+    const result = await provider.inspectAndClose(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok)
+      throw new Error("Expected cancelled finalization with retained cleanup");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { diagnostics: { primary_error: { code: "cancelled" } } },
+    });
+    expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    expect(result.error.partialObservation).toBeDefined();
+    expect(result.error.capturedOutput?.stdout).toBe("decoder output");
+    expect(result.error.cleanupResources).toEqual([root.path]);
+    removalAllowed = true;
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(resolvedAnalysisError(result.error).cause).toBe(reason);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

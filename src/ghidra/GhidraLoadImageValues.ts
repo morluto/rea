@@ -1,56 +1,84 @@
-import { createHash } from "node:crypto";
+import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
-  type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
-import { parseDosMzHeader, type DosMzHeader } from "../domain/dosMz.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import type { DosMzHeader, MzHeaderEvidence } from "../domain/dosMz.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
+const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
+  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.";
 const limitations = [
-  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Mapping ends are inclusive.",
+  GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
   "Appended overlay bytes are identified by file extent and included in FileBytes identity; they must not be mapped as initialized header/module memory. Uninitialized allocations are reported but their contents and DOS runtime behavior are not verified.",
   "The fixed load segment 0x1000 describes Ghidra's analysis image, not a running DOS process. Verified import does not establish original source ownership or recovered program behavior.",
   "A mismatching memory digest identifies the reported source range; it does not locate the first differing byte inside that range.",
 ];
 
-/** Verify measured MZ import state against the session's immutable snapshot. */
-export const attestGhidraDosLoadImage = (
+export type GhidraDosImage = {
+  readonly header: DosMzHeader;
+  readonly loadSegment: number;
+  readonly modified: Buffer;
+  /** The independent DOS check does not attest Ghidra's symbol name. */
+  readonly expectedRelocations: readonly Omit<
+    NativeLoadImageObservation["relocations"][number],
+    "symbol"
+  >[];
+};
+
+/** Prepare initialized bytes and relocation facts without copying overlays. */
+export const prepareGhidraDosLoadImage = (
   bytes: Buffer,
-  targetSha256: string,
-  observations: NativeLoadImageObservation,
-): Result<NativeLoadImage, string> => {
-  if (sha256(bytes) !== targetSha256)
-    return err(
-      "Ghidra load-image snapshot digest does not match the admitted target",
-    );
-  const parsed = parseDosMzHeader(bytes);
+  evidence: MzHeaderEvidence,
+): Result<GhidraDosImage, string> => {
+  if (evidence.windowsHeader.state === "candidate")
+    return err("MZ Windows new-header candidate is unresolved");
+  if (evidence.windowsHeader.state === "header-needed")
+    return err("MZ Windows new-header pointer is outside the bounded prefix");
+  if (evidence.windowsHeader.state === "signature-needed")
+    return err("MZ Windows new-header signature is outside the bounded prefix");
+  if (evidence.windowsHeader.state === "declared")
+    return err("MZ declares a Windows new header; it is not a DOS-only image");
+  const parsed = evidence.dos;
   if (!parsed.ok) return parsed;
   const header = parsed.value;
+  if (header.imageBytes > bytes.length)
+    return err("DOS MZ initialized image was not completely captured");
   const loadSegment = 0x1000;
-  const modified = Buffer.from(bytes);
-  const expectedRelocations = [];
-  for (let index = 0; index < header.relocationCount; index += 1) {
-    const table = header.relocationTableOffset + index * 4;
-    const offset = bytes.readUInt16LE(table);
-    const segment = bytes.readUInt16LE(table + 2);
-    const fileOffset = header.headerBytes + segment * 16 + offset;
+  const modified = Buffer.from(bytes.subarray(0, header.imageBytes));
+  const applied = [];
+  for (const {
+    segment,
+    offset,
+    moduleOffset,
+    fileOffset,
+  } of header.relocations) {
     const original = modified
       .subarray(fileOffset, fileOffset + 2)
       .toString("hex");
     const relocated =
       (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
-    expectedRelocations.push({
-      address: address(loadSegment * 16 + segment * 16 + offset),
+    applied.push({
+      segment,
+      offset,
+      moduleOffset,
+      fileOffset,
+      original,
+      relocated,
+    });
+  }
+  // Application records describe their own fixup; the bridge reads memory
+  // once all fixups have completed, including later overlapping writes.
+  const expectedRelocations = applied.map(
+    ({ segment, offset, moduleOffset, fileOffset, original, relocated }) => ({
+      address: address(loadSegment * 16 + moduleOffset),
       segment: (loadSegment + segment) & 0xffff,
       offset,
       status: "APPLIED",
@@ -60,25 +88,30 @@ export const attestGhidraDosLoadImage = (
       memory_bytes_hex: modified
         .subarray(fileOffset, fileOffset + 2)
         .toString("hex"),
-    });
-  }
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
+    }),
+  );
+  return ok({ header, loadSegment, modified, expectedRelocations });
+};
+
+export type GhidraDosLoadImageSource = {
+  readonly sha256: string;
+  readonly fileBytes: number;
+  readonly modifiedSha256: string;
+  readonly image: GhidraDosImage;
+};
+
+/** Verify measured MZ import state against complete identity and prepared image facts. */
+export const attestGhidraDosLoadImage = (
+  source: GhidraDosLoadImageSource,
+  targetSha256: string,
+  observations: NativeLoadImageObservation,
+): Result<NativeLoadImage, string> => {
+  if (source.sha256 !== targetSha256)
+    return err(
+      "Ghidra load-image snapshot digest does not match the admitted target",
+    );
+  const { header, loadSegment, modified, expectedRelocations } = source.image;
+  const { checks, check } = createLoadImageChecks();
   check(
     "executable_format",
     "Old-style DOS Executable (MZ)",
@@ -89,23 +122,33 @@ export const attestGhidraDosLoadImage = (
   check("image_base", "0x0", observations.image_base);
   check("default_address_space", "ram", observations.default_address_space);
   check("source_file_count", 1, observations.source_files.length);
-  const source = observations.source_files[0];
-  check("source_file_size", bytes.length, source?.size ?? null);
-  check("original_file_sha256", targetSha256, source?.original_sha256 ?? null);
+  const observedSource = observations.source_files[0];
+  check("source_file_size", source.fileBytes, observedSource?.size ?? null);
+  check(
+    "original_file_sha256",
+    targetSha256,
+    observedSource?.original_sha256 ?? null,
+  );
   check(
     "modified_file_sha256",
-    sha256(modified),
-    source?.modified_sha256 ?? null,
+    source.modifiedSha256,
+    observedSource?.modified_sha256 ?? null,
   );
   const entryAddress = address(
     ((loadSegment + header.entrySegment) & 0xffff) * 16 + header.entryOffset,
   );
   check("entry_points", [entryAddress], [...observations.entry_points].sort());
   // A multiset preserves duplicate relocations and aliases; iteration order is not semantic.
-  const rows = (values: NativeLoadImageObservation["relocations"]): string[] =>
+  const rows = (
+    values: readonly (GhidraDosImage["expectedRelocations"][number] & {
+      readonly symbol?: string | null;
+    })[],
+  ): string[] =>
     values
-      .map(({ segment: _segment, offset: _offset, ...value }) =>
-        JSON.stringify(value),
+      // The independent DOS check does not attest Ghidra's symbol name.
+      .map(
+        ({ segment: _segment, offset: _offset, symbol: _symbol, ...value }) =>
+          JSON.stringify(value),
       )
       .sort();
   check(
@@ -124,7 +167,7 @@ export const attestGhidraDosLoadImage = (
     rows(observations.relocations),
   );
 
-  checkMappings(header, loadSegment * 16, bytes, modified, observations, check);
+  checkMappings(header, loadSegment * 16, modified, observations, check);
   return ok(
     nativeLoadImageSchema.parse({
       status: checks.every((item) => item.matched) ? "verified" : "mismatch",
@@ -149,16 +192,9 @@ export const attestGhidraDosLoadImage = (
 const checkMappings = (
   header: Pick<DosMzHeader, "headerBytes" | "imageBytes">,
   loadBase: number,
-  bytes: Buffer,
   modified: Buffer,
   observations: NativeLoadImageObservation,
-  check: (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset?: number | null,
-    location?: string | null,
-  ) => void,
+  check: ReturnType<typeof createLoadImageChecks>["check"],
 ): void => {
   const backed = observations.mappings.filter(
     (mapping) => mapping.source_file_index !== null,
@@ -227,8 +263,8 @@ const checkMappings = (
     check(`${at}.end`, expectedEnd, mapping.end, start, mapping.end);
     check(
       `${at}.memory_sha256`,
-      start !== null && end !== null && end <= bytes.length
-        ? sha256(modified.subarray(start, end))
+      start !== null && end !== null && end <= modified.length
+        ? sha256Hex(modified.subarray(start, end))
         : null,
       mapping.sha256,
       start,
@@ -252,27 +288,11 @@ export const attestGhidraDosComLoadImage = (
   targetSha256: string,
   observations: NativeLoadImageObservation,
 ): Result<NativeLoadImage, string> => {
-  if (sha256(bytes) !== targetSha256)
+  if (sha256Hex(bytes) !== targetSha256)
     return err("Ghidra COM snapshot digest does not match the admitted target");
   const length = validateDosComLength(bytes.length);
   if (!length.ok) return length;
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
+  const { checks, check } = createLoadImageChecks();
   const source = observations.source_files[0];
   check("executable_format", "Raw Binary", observations.executable_format);
   check("language_id", "x86:LE:16:Real Mode", observations.language_id);
@@ -301,7 +321,6 @@ export const attestGhidraDosComLoadImage = (
   checkMappings(
     { headerBytes: 0, imageBytes: bytes.length },
     0x10100,
-    bytes,
     bytes,
     observations,
     check,
@@ -343,23 +362,7 @@ export const attestGhidraRawBinaryLoadImage = (
   const language = ghidraRawBinaryLanguage(target.architecture);
   const base = BigInt(target.entryPoint);
   const last = hexAddress(base + BigInt(snapshot.bytes) - 1n);
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
+  const { checks, check } = createLoadImageChecks();
   const source = observations.source_files[0];
   const fileMappings = observations.mappings.filter(
     (item) => item.source_file_index !== null,
@@ -453,10 +456,10 @@ export const attestGhidraRawBinaryLoadImage = (
       checks,
       limitations: [
         "Raw binary is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
-        "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the caller-supplied entry, and the bound little-endian Ghidra language. File offset 0 is mapped at the entry address.",
+        "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the caller-supplied entry, and the bound Ghidra language with its fixed byte order. File offset 0 is mapped at the entry address.",
         "Ghidra may report additional language-defined external entries outside the mapped image. They are preserved as observations; verification requires the caller-supplied entry and does not attest other entries.",
         "Language-defined uninitialized memory, such as 6502 zero page and stack, is preserved as observations but is not attested as file-backed bytes.",
-        "Reset vectors, memory-mapped I/O, big-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
+        "Reset vectors, memory-mapped I/O, alternate-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
         "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
       ],
     }),

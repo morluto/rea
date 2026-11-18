@@ -3,6 +3,7 @@ export interface ReadinessPullRequest {
   readonly state: "open" | "closed";
   readonly draft: boolean;
   readonly body: string | null;
+  readonly user: { readonly id: number } | null;
   readonly head: { readonly sha: string };
   readonly base: { readonly ref: string };
 }
@@ -11,6 +12,14 @@ export interface ReadinessResult {
   readonly description: string;
 }
 export interface ReadinessGitHub {
+  graphql(
+    query: string,
+    variables: {
+      readonly owner: string;
+      readonly name: string;
+      readonly after: string | null;
+    },
+  ): Promise<unknown>;
   readonly rest: {
     readonly pulls: {
       get(input: {
@@ -45,7 +54,7 @@ export interface ReadinessGitHub {
   >;
 }
 export function evaluateReadiness(
-  pull: Pick<ReadinessPullRequest, "body" | "draft">,
+  pull: Pick<ReadinessPullRequest, "body" | "draft" | "user">,
   template: string,
 ): ReadinessResult;
 export function runReadinessCheck(input: {

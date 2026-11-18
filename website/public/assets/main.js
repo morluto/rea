@@ -165,7 +165,9 @@ async function initializeWebsite() {
     }
   }
 
-  initializeGitHubStars();
+  return initializeGitHubStars();
 }
 
-initializeWebsite();
+initializeWebsite().catch((cause) => {
+  console.error("Website initialization failed", cause);
+});

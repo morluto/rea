@@ -1,41 +1,164 @@
-import { execFile } from "node:child_process";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
+import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { itWithCaptureCapability as captureTest } from "../../boundary/process/processCaptureCapability.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import {
+  connectLocalToolsMcp,
+  lazyLocalToolsMcp,
+} from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createCliCommandSession } from "../../support/cli/cliCommandSession.js";
+import {
+  cliProcessEnvironment,
+  definedCliEnvironment,
+} from "../../support/cli/cliFixture.js";
 
-const execute = promisify(execFile);
-const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
+const sharedMcp = lazyLocalToolsMcp();
+const cliSession = createCliCommandSession();
+afterAll(() => cliSession.close());
+const cliSessionEnvironment = definedCliEnvironment(
+  cliProcessEnvironment(undefined),
+);
+const runSharedCli = (arguments_: readonly string[]) =>
+  cliSession.run({
+    arguments: arguments_,
+    cwd: process.cwd(),
+    environment: cliSessionEnvironment,
+  });
 const nul = "/tmp/selected\0filename";
 const electron = {
   executable_path: "/tmp/Electron",
   application_path: "/tmp/main.js",
 };
 
+const captureResult = (value: unknown): ProcessCapture => {
+  const normalized = toolContract(
+    "capture_process_scenario",
+  ).outputSchema.parse(value).normalized_result;
+  if ("status" in normalized && normalized.status === "planned")
+    throw new Error("expected process capture output");
+  return normalized as ProcessCapture;
+};
+
+it("keeps overall replay verification unknown when capture divergence is unknown", async () => {
+  const { call } = await connectLocalToolsMcp();
+  const captureEvidence = (
+    side: "left" | "right",
+    {
+      environmentUnknown = false,
+      exitCode = 0,
+    }: {
+      readonly environmentUnknown?: boolean;
+      readonly exitCode?: number;
+    } = {},
+  ) =>
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: { side },
+      result: {
+        ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+        exit: { ...EMPTY_PROCESS_CAPTURE_EXAMPLE.exit, code: exitCode },
+        residual_unknowns: environmentUnknown
+          ? [
+              {
+                scope: "environment",
+                reason:
+                  "Inherited host environment variables are not recorded.",
+              },
+            ]
+          : [],
+      },
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: {
+        id: "fixture-process",
+        platform: "fixture",
+        architecture: "fixture",
+        isolation: "process",
+      },
+    });
+  const compare = async (left: unknown, right: unknown) => {
+    const response = await call("compare_process_captures", { left, right });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    return toolContract("compare_process_captures").outputSchema.parse(
+      response.structuredContent,
+    );
+  };
+  const verify = async (
+    comparison: { readonly evidence_id: string },
+    dimension: "overall" | "terminal",
+  ) => {
+    const response = await call("verify_reconstruction", {
+      specification: {
+        name: "Overall replay compatibility",
+        claims: [
+          {
+            kind: "behavioral",
+            claim_id: dimension,
+            title: "Replay behavior agrees",
+            comparison_evidence_id: comparison.evidence_id,
+            dimension,
+          },
+        ],
+      },
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    return toolContract("verify_reconstruction").outputSchema.parse(
+      response.structuredContent,
+    ).normalized_result;
+  };
+
+  const complete = await compare(
+    captureEvidence("left"),
+    captureEvidence("right"),
+  );
+  expect((await verify(complete, "overall")).status).toBe("pass");
+
+  const incomplete = await compare(
+    captureEvidence("left", { environmentUnknown: true }),
+    captureEvidence("right", { environmentUnknown: true }),
+  );
+  expect(incomplete.normalized_result).toMatchObject({
+    status: "unchanged",
+    first_divergence: {
+      status: "unknown",
+      reason: "Residual unknowns prevent proving that no divergence occurred.",
+    },
+  });
+  const overall = await verify(incomplete, "overall");
+  expect(overall.status).toBe("unknown");
+  expect(overall.claims.items[0]?.limitations).toContain(
+    "Residual unknowns prevent proving that no divergence occurred.",
+  );
+  expect((await verify(incomplete, "terminal")).status).toBe("pass");
+
+  const changed = await compare(
+    captureEvidence("left", { environmentUnknown: true }),
+    captureEvidence("right", { environmentUnknown: true, exitCode: 1 }),
+  );
+  expect((await verify(changed, "overall")).status).toBe("fail");
+});
+
 const runCliExpectingInputError = async (
   scenarioPath: string,
 ): Promise<unknown> => {
-  const failure = await execute(process.execPath, [
-    cli,
+  const failure = await runSharedCli([
     "capture-process",
     scenarioPath,
     "--json",
-  ]).then(
-    () => undefined,
-    (cause: unknown) => cause,
-  );
-  expect(failure).toMatchObject({ code: 1 });
-  if (!(failure instanceof Error) || !("stdout" in failure))
-    throw new Error("Expected the CLI to report an input error on stdout");
-  return JSON.parse(String(failure.stdout)) as unknown;
+  ]);
+  expect(failure.exitCode, failure.stdout + failure.stderr).toBe(1);
+  return JSON.parse(failure.stdout) as unknown;
 };
 
 const pathRequests: readonly [string, Record<string, unknown>][] = [
@@ -53,11 +176,26 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     "inspect_android_method",
     { path: nul, class_name: "probe.Class", method_name: "run" },
   ],
+  [
+    "inspect_android_class",
+    { path: "/tmp/probe.apk", class_name: "probe.Class", mapping_path: nul },
+  ],
+  [
+    "inspect_android_method",
+    {
+      path: "/tmp/probe.apk",
+      class_name: "probe.Class",
+      method_name: "run",
+      mapping_path: nul,
+    },
+  ],
   ["trace_android_references", { path: nul, class_name: "probe.Class" }],
   ["inspect_firmware_regions", { path: nul }],
   ["extract_firmware", { path: nul, output_directory: "/tmp/out" }],
   ["extract_firmware", { path: "/tmp/firmware.bin", output_directory: nul }],
   ["inspect_plist", { path: nul }],
+  ["inspect_with_objdump", { path: nul, operation: "file_headers" }],
+  ["execute_rizin_command", { path: nul, command: "iI" }],
   ...[
     { kind: "function", name: "main\0suffix" },
     { kind: "function", name: "main", module: "lib.dylib\0suffix" },
@@ -116,6 +254,27 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     { capture_path: nul, output_directory: "/tmp/exported-scripts" },
   ],
   ["inspect_pe_resources", { path: nul }],
+  ["inspect_pe_certificates", { path: nul }],
+  ["inspect_pe_imports", { path: nul }],
+  ["inspect_windows_shortcut", { path: nul }],
+  ["inspect_native_exports", { path: nul }],
+  ["inspect_elf_notes", { path: nul }],
+  ["inspect_dwarf_units", { path: nul }],
+  ["inspect_elf_debug_link", { path: nul }],
+  ["inspect_elf_debug_link", { path: "/tmp/prog", candidate_path: nul }],
+  ["inspect_native_initializers", { path: nul }],
+  ["inspect_elf_unwind_ranges", { path: nul }],
+  ["inspect_apple_ips", { path: nul }],
+  ["inspect_devicetree", { path: nul }],
+  ["inspect_kernel_module", { path: nul }],
+  ["inspect_elf_dependencies", { path: nul }],
+  ["inspect_kernel_build_config", { path: nul }],
+  ["inspect_pe_load_config", { path: nul }],
+  ["audit_release_exposure", { path: nul }],
+  ["inspect_binary_hardening", { path: nul }],
+  ["inspect_python_pyc", { path: nul }],
+  ["inspect_nuget_nupkg", { path: nul }],
+  ["inspect_erlang_beam", { path: nul }],
   ["inspect_binary_layout", { path: nul }],
   ["inspect_recorded_crash", { path: nul }],
   ["inspect_wasm_artifact", { path: nul }],
@@ -190,22 +349,110 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["start_gdb_session", { inferior_tty: nul }],
 ];
 
+const nulIssuePaths = (
+  value: unknown,
+  path: readonly (string | number)[] = [],
+): (string | number)[][] => {
+  if (typeof value === "string") return value.includes("\0") ? [[...path]] : [];
+  if (Array.isArray(value))
+    return value.flatMap((item, index) =>
+      nulIssuePaths(item, [...path, index]),
+    );
+  if (typeof value === "object" && value !== null)
+    return Object.entries(value).flatMap(([key, item]) =>
+      nulIssuePaths(item, [...path, key]),
+    );
+  return [];
+};
+
 it("rejects OS-invalid local inputs through the real advertised MCP contracts", async () => {
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await sharedMcp();
+  const checked: string[] = [];
   for (const [name, arguments_] of pathRequests) {
-    const response = await call(name, arguments_);
-    expect(response.isError, name).toBe(true);
-    expect(JSON.stringify(response.content), name).toContain("NUL");
+    const paths = nulIssuePaths(arguments_);
+    expect(paths.length, name).toBeGreaterThan(0);
+    const error = parseMcpToolError(await call(name, arguments_)).error;
+    expect(error, name).toMatchObject({
+      code: "invalid_request",
+      details: { operation: name },
+    });
+    const issues = z
+      .object({
+        issues: z.array(
+          z.object({
+            path: z.array(z.union([z.string(), z.number()])),
+            reason: z.string(),
+            message: z.string(),
+            expected: z.unknown().optional(),
+          }),
+        ),
+      })
+      .parse(error.details).issues;
+    expect(issues, name).toEqual(
+      expect.arrayContaining(
+        paths.map((path) =>
+          expect.objectContaining({
+            path,
+            reason: "invalid_format",
+            expected: "regex",
+            message: expect.stringMatching(/\bNUL\b|null byte|zero byte/i),
+          }),
+        ),
+      ),
+    );
+    checked.push(name);
   }
-  const relative = await call("extract_firmware", {
-    path: "/tmp/firmware.bin",
-    output_directory: "relative-output",
-  });
-  expect(relative.isError).toBe(true);
-  expect(JSON.stringify(relative.content)).toContain(
-    "absolute local filesystem path",
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "extract_firmware",
+      "inspect_wasm_artifact",
+      "demangle_swift",
+      "capture_electron_scenario",
+    ]),
   );
 });
+
+// The MCP server's working directory is not the caller's, so a relative local
+// path would resolve against the wrong directory.
+it.each([
+  [
+    "extract_firmware",
+    { path: "/tmp/firmware.bin", output_directory: "relative-output" },
+    "output_directory",
+  ],
+  ["inspect_pcap_capture", { path: "capture.pcap" }, "path"],
+  [
+    "start_rizin_debug_session",
+    { path: "program", inferior_tty: "/dev/pts/7" },
+    "path",
+  ],
+  [
+    "start_rizin_debug_session",
+    { path: "/tmp/program", inferior_tty: "pts/7" },
+    "inferior_tty",
+  ],
+  ["start_gdb_session", { inferior_tty: "pts/7" }, "inferior_tty"],
+] as const)(
+  "refuses a relative local path for %s through the advertised MCP contract",
+  async (name, arguments_, field) => {
+    const { call } = await sharedMcp();
+    expect(parseMcpToolError(await call(name, arguments_)).error).toMatchObject(
+      {
+        code: "invalid_request",
+        details: {
+          operation: name,
+          issues: [
+            expect.objectContaining({
+              path: [field],
+              reason: "invalid_format",
+              expected: "regex",
+            }),
+          ],
+        },
+      },
+    );
+  },
+);
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },
@@ -234,7 +481,7 @@ captureTest(
         marker,
       ],
     };
-    const { call } = await connectLocalToolsMcp();
+    const { call } = await sharedMcp();
     const invalid = [
       ...ignoredOptions,
       ...["", "KEY=VALUE", "KEY\0VALUE", "REA_PROCESS_RUN_ID"].map((key) => ({
@@ -258,27 +505,20 @@ captureTest(
         }),
       ),
     ];
-    // Each CLI case initializes its own runtime. Bound subprocess fanout too,
-    // so one test cannot oversubscribe the host beyond the Vitest workers.
-    for (let start = 0; start < invalid.length; start += 2)
-      await Promise.all(
-        invalid.slice(start, start + 2).map(async (options, offset) => {
-          const request = { ...scenario, ...options };
-          expect(
-            (await call("capture_process_scenario", request)).isError,
-            JSON.stringify(options),
-          ).toBe(true);
-          const path = join(root, `scenario-${String(start + offset)}.json`);
-          await writeFile(path, JSON.stringify(request));
-          await expect(
-            execute(process.execPath, [cli, "capture-process", path, "--json"]),
-            JSON.stringify(options),
-          ).rejects.toMatchObject({
-            code: 1,
-            stdout: expect.stringContaining("invalid_request"),
-          });
-        }),
-      );
+    for (const [index, options] of invalid.entries()) {
+      const request = { ...scenario, ...options };
+      expect(
+        (await call("capture_process_scenario", request)).isError,
+        JSON.stringify(options),
+      ).toBe(true);
+      const path = join(root, `scenario-${String(index)}.json`);
+      await writeFile(path, JSON.stringify(request));
+      const cliResult = await runSharedCli(["capture-process", path, "--json"]);
+      expect(cliResult, JSON.stringify(options)).toMatchObject({
+        exitCode: 1,
+        stdout: expect.stringContaining("invalid_request"),
+      });
+    }
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
     const missing = join(root, "missing-executable");
     const failed = await call("capture_process_scenario", {
@@ -362,7 +602,6 @@ captureTest(
       },
     });
   },
-  60_000,
 );
 
 captureTest.each(["untruncated", "truncated"] as const)(
@@ -387,32 +626,34 @@ captureTest.each(["untruncated", "truncated"] as const)(
       limits: captureState === "truncated" ? { output_bytes: 128 } : {},
     });
     expect(captured.isError, JSON.stringify(captured)).not.toBe(true);
-    const capture = toolContract("capture_process_scenario").outputSchema.parse(
+    const source = toolContract("capture_process_scenario").outputSchema.parse(
       captured.structuredContent,
     );
-    const source = capture;
-    if (captureState === "untruncated")
-      expect(
-        capture.normalized_result.frames.map((frame) => frame.data).join(""),
-      ).toContain("value ordinary-evidence caller-value");
-    else expect(capture.normalized_result.truncated).toBe(true);
-    const environment = await call("capture_process_scenario", {
-      executable: "/usr/bin/printenv",
-      arguments: ["1"],
-      environment: { "1": "numbered" },
-    });
-    const environmentEnvelope = toolContract(
-      "capture_process_scenario",
-    ).outputSchema.parse(environment.structuredContent);
-    const received = environmentEnvelope.normalized_result.frames
-      .map((frame) => frame.data)
-      .join("");
-    expect(received).toBe("numbered\r\n");
+    const capture = captureResult(source);
+    if (captureState === "untruncated") {
+      expect(capture.frames.map((frame) => frame.data).join("")).toContain(
+        "value ordinary-evidence caller-value",
+      );
+      const environment = await call("capture_process_scenario", {
+        executable: "/usr/bin/printenv",
+        arguments: ["1"],
+        environment: { "1": "numbered" },
+      });
+      const environmentEnvelope = toolContract(
+        "capture_process_scenario",
+      ).outputSchema.parse(environment.structuredContent);
+      const received = captureResult(environmentEnvelope)
+        .frames.map((frame) => frame.data)
+        .join("");
+      expect(received).toBe("numbered\r\n");
+    } else {
+      expect(capture.truncated).toBe(true);
+    }
     expect(await readFile(join(root, "state"), "utf8")).toBe("selected");
-    expect(capture.normalized_result.filesystem_effects).toEqual(
+    expect(capture.filesystem_effects).toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "created" })]),
     );
-    expect(capture.normalized_result.cleanup).toMatchObject({
+    expect(capture.cleanup).toMatchObject({
       owned_process_group: "verified",
       temporary_root: "removed",
     });
@@ -494,21 +735,21 @@ captureTest.each(["untruncated", "truncated"] as const)(
     );
     const path = join(root, "capture.json");
     await writeFile(path, JSON.stringify(source));
-    const cliComparison = await execute(process.execPath, [
-      cli,
+    const cliComparison = await runSharedCli([
       "compare-process-captures",
       path,
       path,
       "--json",
     ]);
-    expect(parseEvidence(JSON.parse(cliComparison.stdout))).toEqual(comparison);
+    expect(cliComparison.exitCode, cliComparison.stderr).toBe(0);
+    expect(parseEvidence(cliComparison.json)).toEqual(comparison);
   },
 );
 
 captureTest(
   "accepts NUL as actual terminal input while preserving capture defaults",
   async () => {
-    const { call } = await connectLocalToolsMcp();
+    const { call } = await sharedMcp();
     const response = await call("capture_process_scenario", {
       executable: process.execPath,
       arguments: [
@@ -518,18 +759,16 @@ captureTest(
       events: [{ type: "input", at_ms: 1000, data: "\0" }],
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    const capture = toolContract("capture_process_scenario").outputSchema.parse(
-      response.structuredContent,
+    const capture = captureResult(response.structuredContent);
+    expect(capture.frames.map((frame) => frame.data).join("")).toContain(
+      "stdin-byte:0",
     );
-    expect(
-      capture.normalized_result.frames.map((frame) => frame.data).join(""),
-    ).toContain("stdin-byte:0");
-    expect(capture.normalized_result.manifest.scenario).toMatchObject({
+    expect(capture.manifest.scenario).toMatchObject({
       environment: {},
       filesystem_observation_paths: [],
       terminal: { columns: 80, rows: 24, scrollback: 1000 },
     });
-    expect(capture.normalized_result.interaction_events).toEqual(
+    expect(capture.interaction_events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "input",

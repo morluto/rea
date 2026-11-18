@@ -4,13 +4,20 @@ import {
 } from "../../domain/adb/adbDeviceAnalysis.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 
 /** ADB device inspection and acquisition over a caller-supplied binary. */
 export const ADB_TOOL_CONTRACTS = [
   {
     name: "inspect_adb_client",
-    ...toolContractMetadata("inspect_adb_client"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_adb_client",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+      }),
+    ),
     description:
       "Inspect the caller-selected adb client: resolved binary, version, and install path. Never contacts devices and never starts the adb server. REA never installs platform tools; select a binary with REA_ADB_PATH (absolute) or adb on PATH.",
     kind: "adb-provider",
@@ -20,9 +27,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "list_adb_devices",
-    ...toolContractMetadata("list_adb_devices"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_adb_devices",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
-      "List attached devices exactly as `adb devices -l` reports them: serial, state, transport, model metadata, and an inferred emulator/physical kind with its evidence basis. Emulators and USB or network devices appear alike; REA neither starts nor manages them. May start the local adb server on first use.",
+      "List attached devices exactly as `adb devices -l` reports them: serial, state, transport, model metadata, and an inferred emulator/physical kind with its evidence basis. Emulators and USB or network devices appear alike; REA neither starts nor manages them. transport_id_text preserves exact full-range transport identity; transport_id is its safe numeric projection or null. May start the local adb server on first use.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.list_adb_devices,
     outputSchema: evidenceResultOf(adbResultSchemas.list_adb_devices),
@@ -30,9 +45,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_adb_device",
-    ...toolContractMetadata("inspect_adb_device"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_adb_device",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
-      "Inspect one device's build identity through a fixed `getprop` whitelist: Android and SDK versions, security patch, fingerprint, product identity, CPU ABIs, and debuggable flag, plus the observed emulator indicator ro.kernel.qemu. Read-only with respect to the device.",
+      "Inspect one device's build identity through a fixed `getprop` whitelist: Android and SDK versions, security patch, fingerprint, product identity, CPU ABIs, and debuggable flag, plus the observed emulator indicator ro.kernel.qemu. Present properties retain empty values; omitted keys were not reported. Read-only with respect to the device.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.inspect_adb_device,
     outputSchema: evidenceResultOf(adbResultSchemas.inspect_adb_device),
@@ -42,7 +65,15 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "list_adb_packages",
-    ...toolContractMetadata("list_adb_packages"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_adb_packages",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
       "List installed packages on one device with each base APK's device path, optionally scoped to third-party or system packages. Paths are device filesystem paths, not host-local. Read-only.",
     kind: "adb-provider",
@@ -57,7 +88,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "pull_adb_package",
-    ...toolContractMetadata("pull_adb_package"),
+    cli: true,
+    ...toolContractMetadata(
+      "pull_adb_package",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+        accessesNetwork: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Pull one installed package's complete APK set (base plus every split, as `pm path` reports) from the device into a caller-selected output directory, creating a package-named subdirectory that must not already exist. Every pulled file is digested with SHA-256; partial pulls keep successful artifacts and per-file failure reasons. The device keeps the originals.",
     kind: "adb-provider",
@@ -76,7 +117,15 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "read_adb_logcat",
-    ...toolContractMetadata("read_adb_logcat"),
+    cli: true,
+    ...toolContractMetadata(
+      "read_adb_logcat",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
       "Read a bounded dump of the device log (`logcat -d -t`) for one buffer, optionally restricted to a process id. No streaming, no clearing; the newest lines are kept when the count cap trims. Read-only.",
     kind: "adb-provider",
@@ -91,9 +140,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_adb_package",
-    ...toolContractMetadata("inspect_adb_package"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_adb_package",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
-      "Inspect one installed package through `dumpsys package`: version name/code, install and update times, installer, user id, flags, and the requested-permission count. A fixed projection of version-dependent output; unknown sections are ignored rather than guessed. Read-only.",
+      "Inspect installed-package versions, install times, installer, user id, flags, and requested-permission count through read-only `dumpsys package`. Malformed numeric declarations are retained in bounded numeric_issues and make coverage partial; version_code stays exact text. Unknown sections are not inferred.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.inspect_adb_package,
     outputSchema: evidenceResultOf(adbResultSchemas.inspect_adb_package),
@@ -106,7 +163,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "pull_adb_file",
-    ...toolContractMetadata("pull_adb_file"),
+    cli: true,
+    ...toolContractMetadata(
+      "pull_adb_file",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+        accessesNetwork: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Pull one absolute device path (a database, shared-preferences XML, or any readable file) into a caller-selected output directory, digesting it with SHA-256. The local copy must not already exist. Read-only with respect to the device.",
     kind: "adb-provider",
@@ -125,9 +192,21 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "push_adb_file",
-    ...toolContractMetadata("push_adb_file"),
+    cli: true,
+    ...toolContractMetadata(
+      "push_adb_file",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+        accessesNetwork: true,
+        mutatesDevice: true,
+        idempotent: false,
+      }),
+    ),
     description:
-      "Push one local file to an absolute device path. A device-mutating tool: checks for an existing device file before transfer and refuses it unless overwrite is explicitly requested; this check is not an atomic create and another process can create the path before adb writes. When the device provides sha256sum, the transfer is verified by comparing it with the local digest.",
+      "Push one local file to an absolute device path. If the destination is an existing directory, adb places the file inside it under the local basename and the result reports that file path. A device-mutating tool: checks for an existing destination file before transfer and refuses it unless overwrite is explicitly requested; this check is not atomic and another process can create the path before adb writes. The private staged copy remains non-writable and preserves source executable bits. When the device provides sha256sum, the transfer is verified by comparing it with the local digest.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.push_adb_file,
     outputSchema: evidenceResultOf(adbResultSchemas.push_adb_file),
@@ -144,7 +223,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "capture_adb_screen",
-    ...toolContractMetadata("capture_adb_screen"),
+    cli: true,
+    ...toolContractMetadata(
+      "capture_adb_screen",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+        accessesNetwork: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Capture one frame of the device screen as a PNG (`screencap -p` through exec-out, no device-side file) into a caller-selected output directory, digesting it and reporting its dimensions. No recording or interaction.",
     kind: "adb-provider",
@@ -162,7 +251,15 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "list_adb_processes",
-    ...toolContractMetadata("list_adb_processes"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_adb_processes",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
       "List running processes exactly as `ps -A` reports them: user, pid, ppid, rss, state, and name. Useful for pairing with instrumentation lanes. Read-only.",
     kind: "adb-provider",
@@ -172,7 +269,15 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "list_adb_directory",
-    ...toolContractMetadata("list_adb_directory"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_adb_directory",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
       "List the immediate children of one absolute device directory, including hidden entries: names, kinds, permissions, owner, group, sizes, dates, and symlink targets. Names and targets preserve embedded newlines. Recognizes the standard errors for absent paths and denied reads. Read-only.",
     kind: "adb-provider",
@@ -190,7 +295,15 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "list_adb_features",
-    ...toolContractMetadata("list_adb_features"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_adb_features",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
       "List the device's declared hardware and software features (`pm list features`) for device fingerprinting. Read-only.",
     kind: "adb-provider",
@@ -200,7 +313,15 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "list_adb_services",
-    ...toolContractMetadata("list_adb_services"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_adb_services",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
       "List the device's binder services with their interfaces (`service list`). Read-only.",
     kind: "adb-provider",
@@ -210,9 +331,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_adb_display",
-    ...toolContractMetadata("inspect_adb_display"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_adb_display",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
-      "Report the display's physical and any overridden size (`wm size`) and density (`wm density`) as the device declares them. Read-only; setting values is not exposed.",
+      "Read physical and override size/density from `wm size` and `wm density`. Malformed numeric declarations are retained in numeric_issues with partial coverage; optional values remain null. Required physical-size failures retain partial display facts. Read-only.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.inspect_adb_display,
     outputSchema: evidenceResultOf(adbResultSchemas.inspect_adb_display),
@@ -222,9 +351,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_adb_window",
-    ...toolContractMetadata("inspect_adb_window"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_adb_window",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
-      "Report the window manager's current focus declarations (mCurrentFocus and mFocusedApp from `dumpsys window windows`, or from `dumpsys window displays` when the windows section declares neither, as on Android 16) — what is on screen at read time without any interaction. Read-only.",
+      "Report the window manager's focus declarations with display context, original lines and explicit summary status. Reads `dumpsys window windows`, falling back to `displays` only when no focus field is declared. Singular fields are unknown for multiple contexts or repeated declarations; inspect focus_contexts for every observation. Read-only; no interaction occurs.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.inspect_adb_window,
     outputSchema: evidenceResultOf(adbResultSchemas.inspect_adb_window),
@@ -234,7 +371,15 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "read_adb_setting",
-    ...toolContractMetadata("read_adb_setting"),
+    cli: true,
+    ...toolContractMetadata(
+      "read_adb_setting",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
       "Read one settings value (`settings get`) from the system, secure, or global namespace. Absent keys report the device's own null observation. Read-only; writing settings is not exposed.",
     kind: "adb-provider",
@@ -253,7 +398,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "collect_adb_bugreport",
-    ...toolContractMetadata("collect_adb_bugreport"),
+    cli: true,
+    ...toolContractMetadata(
+      "collect_adb_bugreport",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+        accessesNetwork: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Collect one device-generated bugreport archive (`adb bugreport`) into a caller-selected output directory, digesting the zip. The archive contains the device's own dumpstate, dumpsys, and logcat report; collection can take minutes. Read-only with respect to configuration.",
     kind: "adb-provider",
@@ -271,9 +426,17 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "resolve_adb_packages",
-    ...toolContractMetadata("resolve_adb_packages"),
+    cli: true,
+    ...toolContractMetadata(
+      "resolve_adb_packages",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     description:
-      "Find installed packages by case-insensitive substring of the package name (e.g. `whatsapp` → `com.whatsapp`), returning each match's base APK device path. The first step of an easy get: resolve, then pull_adb_package the exact name. Read-only.",
+      "Find installed packages by case-insensitive package-name substring and return each base APK device path. Pass an exact returned name to pull_adb_package to retrieve its base and split APKs. Read-only.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.resolve_adb_packages,
     outputSchema: evidenceResultOf(adbResultSchemas.resolve_adb_packages),
@@ -286,7 +449,18 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "install_adb_package",
-    ...toolContractMetadata("install_adb_package"),
+    cli: true,
+    ...toolContractMetadata(
+      "install_adb_package",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        mutatesDevice: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Install one local APK on the device (`adb install [-r]`), recording the APK's host digest and byte size. A device-mutating tool: `replace_requested` records whether `-r` was selected; `replaced` is null because install success does not establish prior package state. The device's own Success/Failure verdict is preserved with its reason.",
     kind: "adb-provider",
@@ -309,9 +483,20 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "uninstall_adb_package",
-    ...toolContractMetadata("uninstall_adb_package"),
+    cli: true,
+    ...toolContractMetadata(
+      "uninstall_adb_package",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        mutatesDevice: true,
+        idempotent: false,
+      }),
+    ),
     description:
-      "Uninstall one package from the device (`adb uninstall`), removing its data for user 0. A device-mutating tool; absent packages report the device's own refusal reason.",
+      "Request package removal for user 0 (`adb shell pm uninstall --user 0`) without data retention. A device-mutating tool; absent packages report the device's own refusal reason.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.uninstall_adb_package,
     outputSchema: evidenceResultOf(adbResultSchemas.uninstall_adb_package),
@@ -324,7 +509,18 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "start_adb_app",
-    ...toolContractMetadata("start_adb_app"),
+    cli: true,
+    ...toolContractMetadata(
+      "start_adb_app",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        mutatesDevice: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Start one installed app's resolved launcher activity with `am start -W -n`. A device-mutating tool for dynamic analysis. The full wait report determines success; failures retain launch-attempt facts and raw output. Pair with `read_adb_logcat` (pid filter) and `list_adb_processes` to observe the app, and `stop_adb_app` to end the run.",
     kind: "adb-provider",
@@ -339,7 +535,18 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "start_adb_activity",
-    ...toolContractMetadata("start_adb_activity"),
+    cli: true,
+    ...toolContractMetadata(
+      "start_adb_activity",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        mutatesDevice: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Start an intent with `am start -W`: one action, optional data URI, optional explicit component, and up to 16 typed extras (string, boolean, int, long, float). A device-mutating tool; the full wait report determines success, with failed-attempt facts and raw output retained.",
     kind: "adb-provider",
@@ -366,7 +573,18 @@ export const ADB_TOOL_CONTRACTS = [
   },
   {
     name: "stop_adb_app",
-    ...toolContractMetadata("stop_adb_app"),
+    cli: true,
+    ...toolContractMetadata(
+      "stop_adb_app",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        mutatesDevice: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Force-stop every process of one package (`am force-stop`), ending a dynamic-analysis run. A device-mutating tool; it succeeds whether or not the package had running processes.",
     kind: "adb-provider",

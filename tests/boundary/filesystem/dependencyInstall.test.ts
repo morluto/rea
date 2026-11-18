@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const script = join(process.cwd(), "scripts", "check-dependency-install.mjs");
 const sourceRoot = process.cwd();
@@ -140,7 +141,7 @@ describe("dependency install freshness", () => {
     const cached = await runTurbo(root);
     expect(cached.status, cached.stderr).toBe(0);
     expect(`${cached.stdout}${cached.stderr}`).toMatch(/cache hit/u);
-  }, 60_000);
+  });
 
   it("preserves caller resource controls in strict cached builds without hashing their values", async () => {
     const root = await createBuildCacheFixture();
@@ -173,7 +174,7 @@ describe("dependency install freshness", () => {
     expect(cached.status, `${cached.stdout}${cached.stderr}`).toBe(0);
     expect(`${cached.stdout}${cached.stderr}`).toMatch(/cache hit/u);
     expect(`${cached.stdout}${cached.stderr}`).not.toMatch(/cache miss/u);
-  }, 60_000);
+  });
 });
 
 const createBuildCacheFixture = async (): Promise<string> => {
@@ -195,13 +196,6 @@ const createBuildCacheFixture = async (): Promise<string> => {
     "turbo.json",
     "tsconfig.json",
     "tsconfig.build.json",
-    "scripts/check-dependency-install.mjs",
-    "scripts/run-exclusive.mjs",
-    "scripts/run-exclusive-command.mjs",
-    "scripts/generate-skill-metadata.mjs",
-    "scripts/clean-build-output.mjs",
-    "scripts/generate-package-metadata.mjs",
-    "scripts/lib/generated-file.mjs",
     ".agents/skills/reverse-engineer-anything/SKILL.md",
     "src/generatedPackageMetadata.ts",
   ];
@@ -211,6 +205,21 @@ const createBuildCacheFixture = async (): Promise<string> => {
       await mkdir(dirname(destination), { recursive: true });
       await copyFile(join(sourceRoot, path), destination);
     }),
+  );
+  // The check and the package scripts it runs spawn these entry points.
+  await copyScriptsWithImports(
+    [
+      "scripts/check-dependency-install.mjs",
+      "scripts/run-turbo.mjs",
+      "scripts/run-typescript.mjs",
+      "scripts/run-exclusive.mjs",
+      "scripts/run-exclusive-command.mjs",
+      "scripts/generate-skill-metadata.mjs",
+      "scripts/clean-build-output.mjs",
+      "scripts/generate-package-metadata.mjs",
+    ],
+    root,
+    sourceRoot,
   );
   await writeFile(
     join(root, "package.json"),
@@ -228,7 +237,8 @@ const createBuildCacheFixture = async (): Promise<string> => {
 await writeFile("resource-controls.json", JSON.stringify(Object.fromEntries(["GOMAXPROCS", "GOMEMLIMIT", "UV_THREADPOOL_SIZE", "REA_TEST_UNLISTED_ENV"].map((name) => [name, process.env[name] ?? null]))));
 await mkdir("dist", { recursive: true });
 await writeFile("dist/cache-fixture.js", "built");
-await writeFile("dist/catalogIdentity.js", "export const CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");
+await mkdir("dist/contracts/catalog", { recursive: true });
+await writeFile("dist/contracts/catalog/catalogIdentity.js", "export const DEFAULT_CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");
 await writeFile("dist/identity.js", ${JSON.stringify(`export const PRODUCT_IDENTITY = ${JSON.stringify({ packageSpecifier: `${packageJson.name}@latest`, registrationPackageSpecifier: `${packageJson.name}@${packageJson.version}` })};\n`)});
 `,
   );
@@ -276,7 +286,7 @@ const runTurbo = (cwd: string, environment: NodeJS.ProcessEnv = process.env) =>
   run(
     process.execPath,
     [
-      join(cwd, "node_modules", "turbo", "bin", "turbo"),
+      join(cwd, "scripts", "run-turbo.mjs"),
       "run",
       "artifacts:skills",
       "--output-logs=full",

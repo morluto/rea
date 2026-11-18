@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -24,7 +26,7 @@ const unknownInput = (question: string) =>
     recommended_probes: [],
     relationships: [],
   });
-const evidence = createEvidence(undefined, provider, {
+const evidence = createEvidence(unknownTarget("not-observed"), provider, {
   operation: "inspect-fixture",
   parameters: {},
   result: true,
@@ -85,18 +87,25 @@ describe("investigation record ownership", () => {
       unknownMutationEvidence(undefined, { operation: "record_unknown", input })
         .evidence_id,
     );
-    expect(mutation?.subject).toBeNull();
+    expect(mutation?.subject.identity.kind).toBe("unknown");
     expect(mutation?.parameters).toEqual(input);
     expect(records.listUnknowns()).toHaveLength(2);
   });
 
   it("rolls back Evidence when the linked Unknown fails validation", () => {
     const records = new InvestigationRecords();
+    const missingId = `ev_${"f".repeat(64)}`;
     const invalid = {
       ...unknownInput("Is the missing Evidence present?"),
-      supporting_evidence_ids: [`ev_${"f".repeat(64)}`],
+      supporting_evidence_ids: [missingId],
     };
-    expect(records.recordEvidenceWithUnknown(evidence, invalid).ok).toBe(false);
+    const refused = records.recordEvidenceWithUnknown(evidence, invalid);
+    if (refused.ok) throw new Error("Expected invalid Unknown references");
+    expect(refused.error).toMatchObject({
+      _tag: "UnknownRegistryError",
+      constraint: { kind: "missing_evidence", evidence_id: missingId },
+    });
+    expect(refused.error.partialObservation).toBeUndefined();
     expect(records.hasEvidence(evidence.evidence_id)).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
   });
@@ -129,8 +138,10 @@ describe("investigation record ownership", () => {
     });
     const bundle = records.exportEvidenceBundle();
     expect(
-      bundle.records.find(({ operation }) => operation === "update_unknown")
-        ?.subject?.digest.sha256,
+      fileIdentity(
+        bundle.records.find(({ operation }) => operation === "update_unknown")
+          ?.subject,
+      ).sha256,
     ).toBe(target.sha256);
     expect(
       bundle.records.find(({ operation }) => operation === "update_unknown")
@@ -158,7 +169,7 @@ describe("investigation record ownership", () => {
         recordsAdded: 0,
         unknownsAdded: 1,
         changed: true,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     expect(records.mergeEvidenceBundle(bundle)).toEqual({
@@ -167,7 +178,7 @@ describe("investigation record ownership", () => {
         recordsAdded: 0,
         unknownsAdded: 0,
         changed: false,
-        metadataChanged: false,
+        replacements: [],
       },
     });
     records.clear();
@@ -229,4 +240,42 @@ it("retains complete mutation intent and distinguishes independent update reques
     return mutation;
   });
   expect(mutations[0]?.evidence_id).not.toBe(mutations[1]?.evidence_id);
+});
+
+it("rejects changed creation intent after the original unknown was updated", () => {
+  const records = new InvestigationRecords();
+  const input = unknownInput("Which observation explains this result?");
+  const created = records.recordEvidenceWithUnknown(evidence, input);
+  if (!created.ok) throw created.error;
+  if (created.value === null) throw new Error("Expected a new unknown");
+  const { question: _question, domain: _domain, ...details } = input;
+  const updated = records.updateUnknown({
+    ...details,
+    unknown_id: created.value.unknown_id,
+    expected_revision: 1,
+    status: "investigating",
+    severity: "high",
+    resolution: null,
+  });
+  if (!updated.ok) throw updated.error;
+  const retained = records.exportEvidenceBundle();
+  const addition = createEvidence(unknownTarget("not-observed"), provider, {
+    operation: "another-derived-result",
+    parameters: {},
+    result: true,
+    confidence: "derived",
+    authority: "analyst-inference",
+  });
+  for (const result of [evidence, addition]) {
+    expect(
+      records.recordEvidenceWithUnknown(result, {
+        ...input,
+        severity: "high",
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "UnknownRegistryError", reason: "already-exists" },
+    });
+    expect(records.exportEvidenceBundle()).toEqual(retained);
+  }
 });
