@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -10,8 +9,8 @@ import { promisify } from "node:util";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
-import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraInstallationPolicy.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraProvider } from "../dist/ghidra/GhidraProvider.js";
 import { silentLogger } from "../dist/logger.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
@@ -20,6 +19,10 @@ import {
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const exec = promisify(execFile);
 const run = createVerifierRun();
@@ -35,7 +38,7 @@ assert.ok(
 );
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: config.value.ghidraInstallDir,
   javaHome: config.value.ghidraJavaHome,
@@ -46,11 +49,22 @@ const fixtures = fileURLToPath(
   new URL("../tests/conformance/ghidra", import.meta.url),
 );
 const bridge = fileURLToPath(new URL("../bridge/ghidra", import.meta.url));
-const workspace = await mkdtemp(join(tmpdir(), "rea-ghidra-noreturn-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-noreturn-",
+});
+const workspace = workspaceFixture.path;
 let cleaned = true;
 let report;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-try {
+// The workspace stays while an owned Ghidra process or server may still use
+// it: this cleanup confirms only once their cleanup was verified.
+workspaceFixture.releaseAfter(() => {
+  if (!cleaned)
+    throw new Error(
+      `Owned Ghidra cleanup is unverified; retaining ${workspace}.`,
+    );
+});
+await withVerifierFixture(workspaceFixture, async () => {
   const targetPath = join(
     workspace,
     process.platform === "darwin" ? "noreturn.dylib" : "noreturn.so",
@@ -160,7 +174,7 @@ try {
   assert.ok(profile.value.profile);
   assert.equal(
     profile.value.profile.parameters.no_return_repair,
-    "returning-imports-decoded-return-v2",
+    "returning-imports-decoded-return",
   );
   const client = provider.createClient(target.value, profile.value.profile);
   cleaned = false;
@@ -215,9 +229,7 @@ try {
     scope:
       "Real Ghidra ELF or Mach-O analysis with injected flags; real read-only TCP Evidence projection. No target execution; exact Amethyst artifact and Windows are unverified.",
   };
-} finally {
-  if (cleaned) await rm(workspace, { recursive: true, force: true });
-}
+});
 console.log(
   JSON.stringify({
     ...report,

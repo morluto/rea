@@ -1,11 +1,12 @@
-import { z } from "incur";
-import { resolve } from "node:path";
-import { evmInterfaceModule } from "../composition/evm.js";
-import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
+
+import { evmInterfaceModule } from "../composition/evm.js";
+import {
+  inspectWithService,
+  registerContractCommand,
+} from "./contractCommand.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Resolve operator paths and preserve explicit encoding through the shared workflow. */
 export const registerEvmCommands = (
@@ -14,33 +15,27 @@ export const registerEvmCommands = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   const service = evmInterfaceModule.create(environment);
-  cli.command(evmInterfaceModule.cliCommand, {
-    description: "Infer interface candidates from explicit local EVM bytecode",
-    args: z.object({
-      path: z.string().describe("Local bytecode carrier"),
-      encoding: z
-        .enum(["raw", "hex"])
-        .describe("Selected carrier representation"),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            evmInterfaceModule.cliCommand,
-            async () => {
-              const result = await service.inspect(
-                { path: resolve(args.path), encoding: args.encoding },
-                { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    evmInterfaceModule.contract,
+    {
+      command: evmInterfaceModule.cliCommand,
+      description:
+        "Infer interface candidates from explicit local EVM bytecode",
+      positionals: ["path", "encoding"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      fields: {
+        path: { description: "Local bytecode carrier" },
+        encoding: { description: "Selected carrier representation" },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+      },
+      omit: {
+        detail:
+          "One-shot output is complete Evidence; this command has no summary delivery",
+      },
+    },
+    inspectWithService(() => service, "evmole-interface"),
+  );
 };

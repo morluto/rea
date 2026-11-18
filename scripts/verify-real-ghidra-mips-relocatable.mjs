@@ -2,8 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -12,8 +11,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsRelocatableFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
   assertMipsRelocations,
@@ -21,6 +20,8 @@ import {
 } from "../tests/conformance/ghidra/mips-relocatable-checks.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 // Optional cross-target lane for ET_REL objects. No tool acquisition, no
 // linking and no target execution.
@@ -34,7 +35,7 @@ if (!["linux", "darwin"].includes(process.platform))
   );
 if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -48,7 +49,19 @@ if (installation.status !== "available")
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-mips-rel-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("mips-relocatable");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-mips-rel-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -194,7 +207,7 @@ async function verifyFixture(byteOrder, kernelModule) {
       "Missing call to the external function",
     );
     const dossier = functionDossierSchema.parse(
-      await call("analyze_function", { procedure: entry }),
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
     );
     for (const name of [
       "rea_mips_rel_leaf",
@@ -207,6 +220,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     const scaled = functionDossierSchema.parse(
       await call("analyze_function", {
         procedure: named("rea_mips_rel_scaled"),
+        detail: "complete",
       }),
     );
     assert.match(scaled.pseudocode, /\bpowf\(1\.5,2\.5\)/u);
@@ -219,7 +233,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     assert.equal(parameters.mips_elf.type, 1);
     assert.equal(
       parameters.mips_support_lane,
-      "elf32-rel-o32-arch32r2-standard-v1",
+      "elf32-rel-o32-arch32r2-standard",
     );
     assert.equal(
       parameters.mips_soft_float_storage,
@@ -264,8 +278,8 @@ async function verifyFixture(byteOrder, kernelModule) {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const evidence = parseEvidence(JSON.parse(cli.stdout));
-    assert.equal(evidence.subject?.architecture, "mips");
-    assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+    assert.equal(evidence.subject?.identity.architecture, "mips");
+    assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
     assert.equal(
       functionDossierSchema.parse(evidence.normalized_result).procedure.address,
       dossier.procedure.address,
@@ -319,14 +333,14 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw new Error(
+  throw retainWorkspace(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 if (primaryFailure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `MIPS relocatable verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
-await rm(workspace, { recursive: true, force: true });
+await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

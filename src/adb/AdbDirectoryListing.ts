@@ -1,5 +1,10 @@
 import { isUtf8 } from "node:buffer";
 
+import {
+  collectUnparsedLines,
+  type AdbUnparsedLines,
+} from "./AdbUnparsedLines.js";
+
 interface AdbDirectoryEntry {
   readonly name: string;
   readonly kind: "directory" | "file" | "symlink" | "other";
@@ -71,35 +76,35 @@ export const parseAdbDirectoryListing = (
   stdout: Buffer,
 ): {
   entries: readonly AdbDirectoryEntry[];
-  unparsedLines: readonly string[];
+  unparsedLines: AdbUnparsedLines;
 } => {
   const entries: AdbDirectoryEntry[] = [];
-  const unparsedLines: string[] = [];
+  const unparsed = collectUnparsedLines();
   let offset = 0;
   while (offset < stdout.length) {
     const metadataEnd = stdout.indexOf(0, offset);
     const nameEnd = metadataEnd < 0 ? -1 : stdout.indexOf(0, metadataEnd + 1);
     const targetEnd = nameEnd < 0 ? -1 : stdout.indexOf(0, nameEnd + 1);
     if (targetEnd < 0) {
-      unparsedLines.push(describeUnparsedRecord(stdout.subarray(offset)));
+      unparsed.add(describeUnparsedRecord(stdout.subarray(offset)));
       break;
     }
     const rawRecord = stdout.subarray(offset, targetEnd + 1);
     if (!isUtf8(rawRecord)) {
-      unparsedLines.push(describeUnparsedRecord(rawRecord));
+      unparsed.add(describeUnparsedRecord(rawRecord));
     } else {
       const entry = parseEntry(
         stdout.toString("utf8", offset, metadataEnd),
         stdout.toString("utf8", metadataEnd + 1, nameEnd),
         stdout.toString("utf8", nameEnd + 1, targetEnd),
       );
-      if (entry === null) unparsedLines.push(rawRecord.toString("utf8"));
+      if (entry === null) unparsed.add(rawRecord.toString("utf8"));
       else entries.push(entry);
     }
     offset = targetEnd + 1;
   }
 
-  return { entries, unparsedLines };
+  return { entries, unparsedLines: unparsed.facts() };
 };
 
 const describeUnparsedRecord = (record: Buffer): string =>

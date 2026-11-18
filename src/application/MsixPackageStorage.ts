@@ -2,6 +2,7 @@ import { lstat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * How one MSIX-packaged client reads its AppData configuration. A package
@@ -30,8 +31,8 @@ export const windowsAppDataRoots = (
   home: string,
   env: Readonly<NodeJS.ProcessEnv>,
 ): { readonly roaming: string; readonly local: string } => ({
-  roaming: env.APPDATA?.trim() || join(home, "AppData", "Roaming"),
-  local: env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
+  roaming: env.APPDATA || join(home, "AppData", "Roaming"),
+  local: env.LOCALAPPDATA || join(home, "AppData", "Local"),
 });
 
 /** The per-user root of MSIX package data containers. */
@@ -54,7 +55,7 @@ const pathWithin = (path: string, root: string): boolean => {
  * processes see those files at virtual AppData locations; other processes do
  * not, and Windows removes them with the package.
  */
-export const packagePrivateStorageFamily = (
+const packagePrivateStorageFamily = (
   canonicalPath: string,
   packagesDirectory: string,
 ): string | undefined => {
@@ -132,7 +133,7 @@ const canonicalDestination = (
       }
       return err({
         path,
-        detail: cause instanceof Error ? cause.message : String(cause),
+        detail: errorMessage(cause),
       });
     }
   }
@@ -141,7 +142,7 @@ const canonicalDestination = (
 export const redirectedWriteBlocker = (
   view: MsixPackageView | undefined,
   targets: readonly string[],
-  operation: "setup" | "uninstall",
+  operation: "setup" | "uninstall" | "mcp add",
   canonicalPath: (path: string) => string = realpathSync.native,
 ): string | undefined => {
   if (view?.processView !== "redirected" || targets.length === 0)
@@ -165,6 +166,14 @@ export const redirectedWriteBlocker = (
   return `This process was started by MSIX package ${view.packageFamilyName}, which redirects its writes under ${view.virtualizedRoots.join(" and ")} into the package's private storage. Changes to ${redirected.join(", ")} would not reach the files other apps read. Rerun ${operation} from a terminal that this app did not start.`;
 };
 
+/** An unavailable read-target observation does not establish a target change. */
+interface MsixReadTargetInspectionFailure {
+  readonly _tag: "MsixReadTargetInspectionFailure";
+  readonly path: string;
+  readonly detail: string;
+  readonly cause: unknown;
+}
+
 /**
  * Whether the package began reading its private copy after the AppData file
  * was chosen, for example by saving its settings when it quit.
@@ -172,16 +181,23 @@ export const redirectedWriteBlocker = (
 export const packageReadTargetChanged = async (
   view: MsixPackageView,
   configPath: string,
-): Promise<boolean> => {
-  if (configPath !== view.appDataConfigPath) return false;
+): Promise<Result<boolean, MsixReadTargetInspectionFailure>> => {
+  if (configPath !== view.appDataConfigPath) return ok(false);
   try {
     await lstat(view.privateConfigPath);
-    return true;
+    return ok(true);
   } catch (cause: unknown) {
-    return !(
+    if (
       cause instanceof Error &&
       "code" in cause &&
       (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-    );
+    )
+      return ok(false);
+    return err({
+      _tag: "MsixReadTargetInspectionFailure",
+      path: view.privateConfigPath,
+      detail: errorMessage(cause),
+      cause,
+    });
   }
 };

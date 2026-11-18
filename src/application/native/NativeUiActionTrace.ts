@@ -1,6 +1,9 @@
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
+import { permitsCapabilityFallback } from "../CapabilityFallback.js";
+import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import type { EnhancedResult } from "../EnhancedToolTypes.js";
 import type { enhancedInputSchemas } from "../../contracts/enhancedInputs.js";
 import { interfaceBuilderAnalysisSchema } from "../../domain/apple/interfaceBuilderGraph.js";
@@ -12,6 +15,7 @@ import {
 } from "../../domain/native/nativeInvestigationGraph.js";
 import { nativeDispatchMetadataResultSchema } from "../../domain/native/objcSwiftMetadata.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
+import { parseProcedureAddress } from "../ProcedureAddressResolution.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {
@@ -23,6 +27,13 @@ import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 type Input = z.output<typeof enhancedInputSchemas.trace_native_ui_action>;
+
+/** Source roles used by execution and route availability. */
+export const NATIVE_UI_ACTION_OPERATIONS = {
+  interfaceBuilder: "decode_interface_builder",
+  nativeSeed: "procedure_address",
+} as const;
+
 /** Build a UI-to-code trace from the active app and selected native provider. */
 export const traceNativeUiAction = async (
   analysis: AnalysisOperationPort,
@@ -31,7 +42,7 @@ export const traceNativeUiAction = async (
 ): EnhancedResult => {
   const [uiExecution, metadataExecution] = await Promise.all([
     analysis.execute(
-      "decode_interface_builder",
+      NATIVE_UI_ACTION_OPERATIONS.interfaceBuilder,
       {
         max_documents: 64,
         max_objects: input.max_nodes,
@@ -39,11 +50,35 @@ export const traceNativeUiAction = async (
       },
       signal === undefined ? {} : { signal },
     ),
-    inspectNativeDispatch(analysis, 20_000, signal),
+    inspectNativeDispatch(analysis, 20_000, { signal }),
   ]);
-  if (!uiExecution.ok && uiExecution.error._tag === "AnalysisCancelledError")
-    return err(uiExecution.error);
-  if (!metadataExecution.ok) return err(metadataExecution.error);
+  if (!uiExecution.ok && !metadataExecution.ok) {
+    const primary =
+      uiExecution.error._tag === "AnalysisCancelledError"
+        ? uiExecution.error
+        : metadataExecution.error;
+    const secondary =
+      primary === uiExecution.error
+        ? metadataExecution.error
+        : uiExecution.error;
+    if (secondary.cleanupIncomplete)
+      return err(
+        analysisErrorWithCleanupDependencies(
+          primary,
+          secondary,
+          "trace_native_ui_action",
+        ),
+      );
+    if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
+    return err(primary);
+  }
+  if (
+    !uiExecution.ok &&
+    (uiExecution.error._tag === "AnalysisCancelledError" ||
+      uiExecution.error.cleanupIncomplete)
+  )
+    return uiExecution;
+  if (!metadataExecution.ok) return metadataExecution;
   const metadata = nativeDispatchMetadataResultSchema.parse(
     metadataExecution.value,
   );
@@ -58,6 +93,8 @@ export const traceNativeUiAction = async (
 
   let graph = emptyGraph(targetSha256, metadata.provider);
   const coverage = [];
+  let uiOutputBoundReached = false;
+  let sourceGraphTruncated = false;
   if (uiExecution.ok) {
     const decoded = interfaceBuilderAnalysisSchema.safeParse(
       uiExecution.value.result,
@@ -65,14 +102,14 @@ export const traceNativeUiAction = async (
     if (!decoded.success)
       return err(
         new AnalysisOutputError(
-          "decode_interface_builder",
+          NATIVE_UI_ACTION_OPERATIONS.interfaceBuilder,
           "artifact provider returned an invalid interface graph",
         ),
       );
     if (decoded.data.target_sha256 !== targetSha256)
       return err(
         new AnalysisOutputError(
-          "decode_interface_builder",
+          NATIVE_UI_ACTION_OPERATIONS.interfaceBuilder,
           "UI and native provider results refer to different target SHA-256 values",
         ),
       );
@@ -80,27 +117,31 @@ export const traceNativeUiAction = async (
     const archiveDecode = decoded.data.graph.coverage.find(
       (facet) => facet.facet === "archive_decode",
     );
-    const documentsFound = decoded.data.documents.length > 0;
-    coverage.push({
-      facet: "interface_builder_archives",
-      status:
-        archiveDecode?.status === "partial" ||
-        archiveDecode?.status === "complete" ||
-        archiveDecode?.status === "unsupported"
-          ? archiveDecode.status
-          : documentsFound
-            ? "complete"
-            : "unsupported",
-      reason:
-        archiveDecode?.reason ??
-        (documentsFound
-          ? null
-          : "no_compiled_interface_builder_archives_found"),
-      examined: archiveDecode?.examined ?? decoded.data.documents.length,
-      omitted: archiveDecode?.omitted ?? 0,
-    });
+    coverage.push(
+      archiveDecode !== undefined
+        ? { ...archiveDecode, facet: "interface_builder_archives" }
+        : decoded.data.documents.length > 0
+          ? // Documents were found but their decode coverage was not
+            // reported: how many archives decoded is unknown, not complete.
+            {
+              facet: "interface_builder_archives",
+              status: "unknown",
+              reason: "archive_decode_coverage_not_reported",
+              examined: decoded.data.documents.length,
+              omitted: null,
+            }
+          : {
+              facet: "interface_builder_archives",
+              status: "unsupported",
+              reason: "no_compiled_interface_builder_archives_found",
+              examined: 0,
+              omitted: 0,
+            },
+    );
+    sourceGraphTruncated = graph.truncated;
     const bounded = boundUiGraph(graph, input.max_nodes, input.max_edges);
     graph = bounded.graph;
+    uiOutputBoundReached = bounded.truncated;
     if (bounded.truncated)
       coverage.push({
         facet: "interface_builder_graph",
@@ -123,38 +164,34 @@ export const traceNativeUiAction = async (
   let selected = resolveUiAction(graph, input.action);
   if (selected.nodeId === null && selected.candidates.length === 0) {
     const native = await analysis.execute(
-      "procedure_address",
+      NATIVE_UI_ACTION_OPERATIONS.nativeSeed,
       { procedure: input.action },
       signal === undefined ? {} : { signal },
     );
-    if (!native.ok && native.error._tag === "AnalysisCancelledError")
-      return err(native.error);
-    if (
-      !native.ok &&
-      native.error._tag !== "AnalysisCapabilityUnavailableError"
-    )
+    if (!native.ok && !permitsCapabilityFallback(native.error))
       return err(native.error);
     if (native.ok) {
-      const address = z.string().safeParse(native.value.result);
-      if (!address.success || native.value.subject?.sha256 !== targetSha256)
+      const address = parseProcedureAddress(native.value.result);
+      if (!address.ok) return address;
+      if (native.value.subject?.sha256 !== targetSha256)
         return err(
           new AnalysisOutputError(
-            "procedure_address",
-            "Native seed lacks a validated address or matching target identity",
+            NATIVE_UI_ACTION_OPERATIONS.nativeSeed,
+            "Native seed lacks matching target identity",
           ),
         );
-      const id = `native:function:${address.data}`;
+      const id = `native:function:${address.value}`;
       graph.nodes.push({
         id,
         kind: "function",
         name: input.action,
-        location: { address: address.data, file_offset: null },
+        location: { address: address.value, file_offset: null },
         attributes: { resolved_by: native.value.provider.id },
         evidence: [
           {
             kind: "reference",
             description: `Provider resolved the explicit native seed ${input.action}`,
-            location: { address: address.data, file_offset: null },
+            location: { address: address.value, file_offset: null },
             artifact_path: null,
             artifact_sha256: targetSha256,
           },
@@ -174,7 +211,7 @@ export const traceNativeUiAction = async (
       edges: [],
       unresolved: [],
       reached_depth: 0,
-      truncated: graph.truncated,
+      truncated: graph.truncated || uiOutputBoundReached,
       reason: selected.reason,
       coverage,
       limitations: [
@@ -195,7 +232,7 @@ export const traceNativeUiAction = async (
       max_edges: input.max_edges,
     },
   });
-  const expanded = await addDirectCallees({
+  const expanded = await expandNativeCalls({
     analysis,
     graph,
     initial,
@@ -226,7 +263,7 @@ export const traceNativeUiAction = async (
     nodes: expanded.nodes,
     edges: expanded.edges,
     coverage: [...graph.coverage, ...coverage],
-    truncated: graph.truncated || expanded.truncated,
+    truncated: sourceGraphTruncated,
   });
   const trace = traceNativeInvestigationGraph(finalGraph, {
     start: selected.nodeId,
@@ -237,19 +274,40 @@ export const traceNativeUiAction = async (
       max_edges: input.max_edges,
     },
   });
+  // Expansion starts from the bounded initial trace; its omitted relationships
+  // cannot be recovered merely by tracing that reduced graph again.
+  const initialCutoffReason =
+    initial.truncated && initial.reason !== "source_graph_truncated"
+      ? initial.reason
+      : null;
+  const reason =
+    trace.reason !== null && trace.reason !== "source_graph_truncated"
+      ? trace.reason
+      : (initialCutoffReason ??
+        (uiOutputBoundReached ? "native_trace_output_bound_reached" : null) ??
+        (expanded.truncated ? "native_call_traversal_bound_reached" : null) ??
+        trace.reason);
   return ok(
     jsonValueSchema.parse(
       nativeInvestigationTraceSchema.parse({
         ...trace,
-        truncated: trace.truncated || expanded.truncated || graph.truncated,
-        reason:
-          expanded.truncated && trace.reason === null
-            ? "native_call_traversal_bound_reached"
-            : graph.truncated && trace.reason === null
-              ? "native_trace_output_bound_reached"
-              : trace.reason,
+        truncated:
+          trace.truncated ||
+          initial.truncated ||
+          expanded.truncated ||
+          uiOutputBoundReached,
+        reason,
         limitations: [
           ...trace.limitations,
+          ...(initialCutoffReason !== null && initialCutoffReason !== reason
+            ? [
+                `The initial UI graph trace stopped traversal: ${initialCutoffReason}.`,
+              ]
+            : []),
+          ...(expanded.truncated &&
+          reason !== "native_call_traversal_bound_reached"
+            ? ["Native call expansion stopped at a traversal bound."]
+            : []),
           ...renderSourceLimitations(expanded.limitations),
         ],
       }),
@@ -365,7 +423,7 @@ const resolveUiAction = (
   };
 };
 
-const addDirectCallees = async (input: {
+const expandNativeCalls = async (input: {
   readonly analysis: AnalysisOperationPort;
   readonly graph: z.infer<typeof nativeInvestigationGraphSchema>;
   readonly initial: z.infer<typeof nativeInvestigationTraceSchema>;
@@ -428,14 +486,10 @@ const addDirectCallees = async (input: {
       "provider",
     );
     examined += 1;
-    sourceLimitations.push(
-      ...(execution.ok ? execution.value.limitations : execution.limitations),
-    );
-    if (!execution.ok && execution.error._tag === "AnalysisCancelledError")
-      return { error: execution.error };
-    const unknowns = execution.ok
-      ? execution.value.unknowns
-      : execution.unknowns;
+    sourceLimitations.push(...execution.limitations);
+    if (!execution.outcome.ok && stopsTraversal(execution.outcome.error))
+      return { error: execution.outcome.error };
+    const unknowns = execution.unknowns;
     for (const [index, unknown] of unknowns.entries()) {
       if (edges.size >= input.input.max_edges) {
         truncated = true;
@@ -463,75 +517,57 @@ const addDirectCallees = async (input: {
         limitations: [],
       });
     }
-    if (!execution.ok) {
-      if (edges.size >= input.input.max_edges) {
-        truncated = true;
-        omitted += 1;
-        continue;
-      }
-      const id = `unknown-callees:${current.address}`;
-      edges.set(id, {
-        id,
-        from: current.node.id,
-        to: null,
-        relation: "direct_call",
-        resolution: "unresolved",
-        reason: projectAnalysisError(execution.error).message,
-        evidence: [],
-        limitations: [
-          "The provider could not enumerate resolved direct callees.",
-        ],
-      });
-      continue;
-    }
-    for (const [index, route] of execution.value.routes.entries()) {
+    for (const [index, route] of execution.routes.entries()) {
       const address = route.address;
-      if (edges.size >= input.input.max_edges) {
+      const targetId = `native:function:${address}`;
+      const targetOmitted =
+        !nodes.has(targetId) && nodes.size >= input.input.max_nodes;
+      const edgeId = `${targetOmitted ? "unknown-node-bound" : "call"}:${current.address}:${route.site}:${address}:${route.relation}`;
+      if (!edges.has(edgeId) && edges.size >= input.input.max_edges) {
         truncated = true;
-        omitted += execution.value.routes.length - index;
+        omitted += execution.routes.length - index;
         break;
       }
-      const targetId = `native:function:${address}`;
-      const evidence = [
-        {
-          kind: "reference" as const,
-          provider: execution.value.provider,
-          description: `${execution.value.provider.name} reported ${route.relation} from ${current.address} to ${address}`,
-          location: { address: route.site, file_offset: null },
-          artifact_path: null,
-          artifact_sha256: input.targetSha256,
-        },
-      ];
+      const evidence = edges.get(edgeId)?.evidence ?? [];
+      evidence.push({
+        kind: "reference",
+        provider: route.provider,
+        description: `${route.provider.name} reported ${route.relation} from ${current.address} to ${address}`,
+        location: { address: route.site, file_offset: null },
+        ...(route.callReference === undefined
+          ? {}
+          : { call_reference: route.callReference }),
+        artifact_path: null,
+        artifact_sha256: input.targetSha256,
+      });
+      if (targetOmitted) {
+        truncated = true;
+        omitted += 1;
+        edges.set(edgeId, {
+          id: edgeId,
+          from: current.node.id,
+          to: null,
+          relation: route.relation,
+          resolution: "unresolved",
+          reason: "native_trace_node_bound_reached",
+          evidence,
+          limitations: [],
+        });
+        continue;
+      }
       if (!nodes.has(targetId)) {
-        if (nodes.size >= input.input.max_nodes) {
-          truncated = true;
-          omitted += 1;
-          const id = `unknown-node-bound:${current.address}:${address}`;
-          edges.set(id, {
-            id,
-            from: current.node.id,
-            to: null,
-            relation: "direct_call",
-            resolution: "unresolved",
-            reason: "native_trace_node_bound_reached",
-            evidence,
-            limitations: [],
-          });
-          continue;
-        }
         const name = addressNames.get(address) ?? address;
         const node = {
           id: targetId,
           kind: "function" as const,
           name,
           location: { address, file_offset: null },
-          attributes: { resolved_by: execution.value.provider.id },
+          attributes: { resolved_by: route.provider.id },
           evidence,
         };
         nodes.set(targetId, node);
         queue.push({ node, address, depth: current.depth + 1 });
       }
-      const edgeId = `call:${current.address}:${route.site}:${address}`;
       edges.set(edgeId, {
         id: edgeId,
         from: current.node.id,
@@ -542,6 +578,24 @@ const addDirectCallees = async (input: {
         limitations: [
           "A resolved static call edge does not establish runtime reachability.",
         ],
+      });
+    }
+    if (!execution.outcome.ok) {
+      if (edges.size >= input.input.max_edges) {
+        truncated = true;
+        omitted += 1;
+        continue;
+      }
+      const id = `unknown-callees:${current.address}`;
+      edges.set(id, {
+        id,
+        from: current.node.id,
+        to: null,
+        relation: "provider_call",
+        resolution: "unresolved",
+        reason: projectAnalysisError(execution.outcome.error).message,
+        evidence: [],
+        limitations: ["The provider could not complete callee enumeration."],
       });
     }
   }

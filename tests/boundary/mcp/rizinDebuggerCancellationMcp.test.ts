@@ -1,23 +1,24 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
 import { silentLogger } from "../../../src/logger.js";
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
-import type { RizinDebugToolManager } from "../../../src/server/registerRizinDebugTools.js";
+import type { RizinDebugToolOptions } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createBinarySessionTargets,
@@ -28,6 +29,7 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "reports Rizin launch provenance and lossy frame decoding through MCP",
@@ -54,23 +56,18 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const manager = createRizinTestManager({ REA_RIZIN_COMMAND: provider });
-    const server = new McpServer({
-      name: "rizin-evidence-provenance",
-      version: "1",
-    });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = rizinDebugMcpServer("rizin-evidence-provenance", manager);
+    const client = new Client(
+      {
+        name: "rizin-evidence-provenance",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({
-      name: "rizin-evidence-provenance",
-      version: "1",
-    });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const callerPath = "./relative/../rizin-fixture.bin";
+    // An absolute spelling that resolution changes: interior "." is removed.
+    const callerPath = "/tmp/./relative/../rizin-fixture.bin";
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
@@ -92,13 +89,15 @@ process.stdin.on("data", (chunk) => {
       const evidence = evidenceSchema.parse(command.structuredContent);
       expect(evidence.parameters.launch_provenance).toEqual({
         caller_selected_path: callerPath,
-        resolved_path: resolve(callerPath),
+        resolved_path: absoluteCallerPath(callerPath),
       });
       expect(evidence.normalized_result).toMatchObject({
         output_invalid_utf8: true,
       });
-      expect(evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
 
       const status = await validateDebuggerStatusResponse(
@@ -109,9 +108,14 @@ process.stdin.on("data", (chunk) => {
       expect(status.output_invalid_utf8).toBe(true);
       expect(status.recent_output).toContain("�");
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );
@@ -124,7 +128,7 @@ it("admits Rizin startup across a bound analysis session", async () => {
   expect((await analysisSession.open(target)).ok).toBe(true);
   const initialRunId = z
     .object({ analysis_run: z.object({ run_id: z.string() }) })
-    .parse(analysisSession.status()).analysis_run.run_id;
+    .parse(await analysisSession.status()).analysis_run.run_id;
   const manager = {
     start: async () => ({
       ok: true,
@@ -138,17 +142,16 @@ it("admits Rizin startup across a bound analysis session", async () => {
     status: () => undefined,
     close: async () => ({ ok: true, value: { target_state: "unknown" } }),
     retryCleanupFailures: async () => ok(null),
-  } satisfies RizinDebugToolManager;
-  const server = new McpServer({ name: "rizin-start-admission", version: "1" });
-  registerRizinDebugTools(
-    server,
+  } satisfies RizinDebugToolOptions["manager"];
+  const server = rizinDebugMcpServer(
+    "rizin-start-admission",
     manager,
-    silentLogger,
-    createToolResultDelivery(undefined),
-    undefined,
     analysisSession,
   );
-  const client = new Client({ name: "rizin-start-admission", version: "1" });
+  const client = new Client(
+    { name: "rizin-start-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -169,12 +172,18 @@ it("admits Rizin startup across a bound analysis session", async () => {
     expect((await analysisSession.open(target)).ok).toBe(true);
     const currentRunId = z
       .object({ analysis_run: z.object({ run_id: z.string() }) })
-      .parse(analysisSession.status()).analysis_run.run_id;
+      .parse(await analysisSession.status()).analysis_run.run_id;
     expect(currentRunId).not.toBe(initialRunId);
     expect(analysisSession.activeTarget()?.path).toBe(target);
   } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-    await analysisSession.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await analysisSession.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   }
 });
 
@@ -201,14 +210,11 @@ process.stdin.on("data", async (chunk) => {
     const manager = createRizinTestManager({
       REA_RIZIN_COMMAND: provider,
     });
-    const server = new McpServer({ name: "rizin-cancellation", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = rizinDebugMcpServer("rizin-cancellation", manager);
+    const client = new Client(
+      { name: "rizin-cancellation", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "rizin-cancellation", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -243,9 +249,14 @@ process.stdin.on("data", async (chunk) => {
       expect(status.state).toBe("closed");
       expect(status).toHaveProperty("diagnostics_truncated");
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );

@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
@@ -8,26 +10,40 @@ import {
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   jsonObjectSchema,
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { registerOfficialTools } from "../../../src/server/registerOfficialTools.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
+import type { WithAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { mcpResponseOverflowProjection } from "../../../src/server/ToolResultDelivery.js";
+import {
+  MINIMUM_RESPONSE_BYTES,
+  nodeStringCeilingRecovery,
+  stdioResponseBudgetRecovery,
+} from "../../../src/config/mcpResponseBudget.js";
+import {
+  MCP_RESULT_STRING_LIMIT,
+  NODE_MAX_STRING_LENGTH,
+  encodeToolResult,
+} from "../../../src/server/toolResultEncoding.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { encodeToolResult } from "../../../src/server/toolResultEncoding.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
@@ -49,21 +65,33 @@ const callPseudoCode = async (
     recordEvidence,
     delivery,
   );
-  registerOfficialTools(server, {
-    logger: silentLogger,
-    activeTarget: undefined,
-    recordEvidence,
-    withAdmittedAnalysis: async (_operationName, _signal, operation) =>
-      ok(
-        await operation({
-          execute: () =>
-            Promise.resolve(
-              ok(createAnalysisExecution(payload, provider, { rawResult })),
-            ),
-        }),
-      ),
-  });
-  const client = new Client({ name: "complete-evidence-client", version: "1" });
+  const withAdmittedAnalysis: WithAdmittedAnalysis = async (
+    _operationName,
+    _signal,
+    operation,
+  ) =>
+    ok(
+      await operation({
+        execute: () =>
+          Promise.resolve(
+            ok(createAnalysisExecution(payload, provider, { rawResult })),
+          ),
+      }),
+    );
+  registerServiceTools(
+    server,
+    {
+      providerOperations: {
+        contracts: OFFICIAL_TOOL_CONTRACTS,
+        activeTarget: undefined,
+      },
+    },
+    { logger: silentLogger, recordEvidence, withAdmittedAnalysis },
+  );
+  const client = new Client(
+    { name: "complete-evidence-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const send = serverTransport.send.bind(serverTransport);
@@ -79,7 +107,7 @@ const callPseudoCode = async (
     const advertised = (await client.listTools()).tools.find(
       ({ name }) => name === "procedure_pseudo_code",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Missing named procedure_pseudo_code output schema");
     const result = await client.callTool({
       name: "procedure_pseudo_code",
@@ -89,12 +117,99 @@ const callPseudoCode = async (
       result,
       responseWire,
       records,
-      outputSchema: jsonObjectSchema.parse(advertised.outputSchema),
+      outputSchema: jsonObjectSchema.parse(
+        canonicalOutputSchema(advertised.name),
+      ),
     };
   } finally {
     await Promise.all([client.close(), server.close()]);
   }
 };
+
+describe("MCP response budget recovery", () => {
+  it("names the stdio setting, floor, restart, and the separate string ceiling", () => {
+    const projected = mcpResponseOverflowProjection({
+      completed: true,
+      constraint: "receive-buffer",
+      effectiveResponseBytes: MINIMUM_RESPONSE_BYTES,
+      nextStep: "Use complete CLI JSON output to consume the analysis.",
+    });
+    expect(NODE_MAX_STRING_LENGTH - MCP_RESULT_STRING_LIMIT).toBe(1024);
+    const guidance = stdioResponseBudgetRecovery(
+      MINIMUM_RESPONSE_BYTES,
+      MCP_RESULT_STRING_LIMIT,
+      NODE_MAX_STRING_LENGTH,
+    );
+    expect(projected.reason).toContain(guidance);
+    expect(projected.remediationAction).toContain(guidance);
+    expect(projected.reason).toContain(
+      "Use complete CLI JSON output to consume the analysis.",
+    );
+  });
+
+  it("does not offer REA_MCP_MAX_RESPONSE_BYTES as a way to raise the string ceiling", () => {
+    const projected = mcpResponseOverflowProjection({
+      completed: false,
+      constraint: "string-length",
+      effectiveResponseBytes: MINIMUM_RESPONSE_BYTES * 2,
+      nextStep: "Use complete CLI JSON output when the analysis completed.",
+    });
+    const guidance = nodeStringCeilingRecovery(
+      MCP_RESULT_STRING_LIMIT,
+      NODE_MAX_STRING_LENGTH,
+    );
+    expect(projected.reason).toContain(guidance);
+    expect(projected.remediationAction).toContain(guidance);
+    expect(projected.reason).toContain(
+      "Use complete CLI JSON output when the analysis completed.",
+    );
+  });
+
+  it("keeps summary discovery when a complete evidence bundle exceeds the budget", () => {
+    const tight = createToolResultDelivery(2048);
+    const delivered = tight.toCallToolResult(
+      ok({ records: "x".repeat(1500) }),
+      toolContract("get_evidence_bundle"),
+    );
+    expect(delivered.isError).toBe(true);
+    const action = z
+      .object({
+        error: z.object({ remediation: z.object({ action: z.string() }) }),
+      })
+      .parse(delivered.structuredContent).error.remediation.action;
+    expect(action).toContain("get_evidence_bundle and detail: summary");
+    expect(action).toContain(
+      stdioResponseBudgetRecovery(
+        2048,
+        MCP_RESULT_STRING_LIMIT,
+        NODE_MAX_STRING_LENGTH,
+      ),
+    );
+  });
+
+  it("keeps export advice when the evidence summary itself exceeds the budget", () => {
+    const tight = createToolResultDelivery(2048);
+    const delivered = tight.toCallToolResult(
+      ok({
+        kind: "evidence-bundle-summary",
+        records: "x".repeat(1500),
+      }),
+      toolContract("get_evidence_bundle"),
+    );
+    expect(delivered.isError).toBe(true);
+    const { error } = z
+      .object({ error: analysisErrorProjectionSchema })
+      .parse(delivered.structuredContent);
+    const action = error.remediation.action;
+    expect(error.details).toMatchObject({
+      reported_limits: { next_operation: "export_evidence_bundle" },
+    });
+    expect(action).not.toContain("get_evidence_bundle and detail: summary");
+    expect(action).toContain("export_evidence_bundle");
+    expect(action).toContain("caller-selected path");
+    expect(action).toContain("or use complete CLI JSON output");
+  });
+});
 
 describe("large complete Evidence MCP delivery", () => {
   it("delivers a two MiB provider result with raw observations and one normalized payload", async () => {
@@ -169,7 +284,9 @@ describe("large complete Evidence MCP delivery", () => {
     expect(encoded.bytes).toBe(Buffer.byteLength(JSON.stringify(result)));
     expect(JSON.parse(responseWire).result.structuredContent).toEqual(evidence);
   });
+});
 
+describe("oversized Evidence MCP retention", () => {
   it("reports a true escaped-wire overrun and keeps acknowledged evidence recoverable", async () => {
     // Control characters expand once in structured JSON and again in the text mirror.
     const payload = "\u0000".repeat(
@@ -181,6 +298,9 @@ describe("large complete Evidence MCP delivery", () => {
       true,
     );
     expect(result.isError).toBe(true);
+    expect(result._meta).toEqual({
+      provenance: { untrusted_content: true, source: "analysis_target" },
+    });
     const limits = z
       .object({
         error: z.object({
@@ -208,7 +328,7 @@ describe("large complete Evidence MCP delivery", () => {
   });
 
   it("does not claim retention without a recording acknowledgment", () => {
-    const evidence = createEvidence(undefined, provider, {
+    const evidence = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_pseudo_code",
       parameters: {},
       result: "x".repeat(Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2)),
@@ -226,17 +346,25 @@ describe("large complete Evidence MCP delivery", () => {
       .object({
         error: z.object({
           message: z.string(),
+          remediation: z.object({ action: z.string() }),
           details: z.object({
             reported_limits: z.record(z.string(), z.unknown()),
           }),
         }),
       })
       .parse(detached.structuredContent).error;
-    expect(limits.message).toContain("larger MCP response budget");
+    const guidance = stdioResponseBudgetRecovery(
+      STDIO_DEFAULT_MAX_BUFFER_SIZE,
+      MCP_RESULT_STRING_LIMIT,
+      NODE_MAX_STRING_LENGTH,
+    );
+    expect(limits.message).toContain(guidance);
     expect(limits.message).not.toContain("Export retained evidence");
+    expect(limits.remediation.action).toContain(guidance);
     expect(limits.details.reported_limits).not.toHaveProperty(
       "evidence_reference",
     );
+    expect(limits.details.reported_limits).not.toHaveProperty("next_operation");
     expect(limits.details.reported_limits).toHaveProperty(
       "evidence_id",
       evidence.evidence_id,

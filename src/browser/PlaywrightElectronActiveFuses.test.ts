@@ -22,20 +22,15 @@ describe("assertNodeCliInspectArgumentsSupported", () => {
     const image = thinFuseImage(OBSIDIAN_FUSE_BYTES); // index 3 is disabled
     await writeFile(binaryPath, image.bytes);
 
-    await expect(
-      assertNodeCliInspectArgumentsSupported(binaryPath),
-    ).rejects.toThrow(AnalysisUnsupportedTargetError);
-
-    try {
-      await assertNodeCliInspectArgumentsSupported(binaryPath);
-    } catch (error) {
-      expect(error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-      const targetError = error as AnalysisUnsupportedTargetError;
-      expect(targetError.operation).toBe("capture_electron_scenario");
-      expect(targetError.path).toBe(binaryPath);
-      expect(targetError.message).toContain("EnableNodeCliInspectArguments");
-      expect(targetError.remediationAction).toContain("inspect_electron_page");
-    }
+    const error: unknown = await assertNodeCliInspectArgumentsSupported(
+      binaryPath,
+    ).catch((cause: unknown) => cause);
+    if (!(error instanceof AnalysisUnsupportedTargetError))
+      throw new Error("Expected unsupported target error", { cause: error });
+    expect(error.operation).toBe("capture_electron_scenario");
+    expect(error.path).toBe(binaryPath);
+    expect(error.message).toContain("EnableNodeCliInspectArguments");
+    expect(error.remediationAction).toContain("inspect_electron_page");
   });
 
   it("passes when EnableNodeCliInspectArguments fuse is enabled", async () => {
@@ -132,19 +127,14 @@ describe("assertNodeCliInspectArgumentsSupported", () => {
     const frameworkBinary = join(frameworkDir, "Electron Framework");
     await writeFile(frameworkBinary, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
 
-    await expect(
-      assertNodeCliInspectArgumentsSupported(launcherBinary),
-    ).rejects.toThrow(AnalysisUnsupportedTargetError);
-
-    try {
-      await assertNodeCliInspectArgumentsSupported(launcherBinary);
-    } catch (error) {
-      expect(error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-      const targetError = error as AnalysisUnsupportedTargetError;
-      expect(targetError.operation).toBe("capture_electron_scenario");
-      expect(targetError.path).toBe(launcherBinary);
-      expect(targetError.message).toContain("EnableNodeCliInspectArguments");
-    }
+    const error: unknown = await assertNodeCliInspectArgumentsSupported(
+      launcherBinary,
+    ).catch((cause: unknown) => cause);
+    if (!(error instanceof AnalysisUnsupportedTargetError))
+      throw new Error("Expected unsupported target error", { cause: error });
+    expect(error.operation).toBe("capture_electron_scenario");
+    expect(error.path).toBe(launcherBinary);
+    expect(error.message).toContain("EnableNodeCliInspectArguments");
   });
 
   it("evaluates matching architecture slice in universal Mach-O binary", async () => {

@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { verifyNoTokenOwnedProcesses } from "../../dist/process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../../dist/process/ProcessOwnershipEvidence.js";
 import {
   observeProcessStartIdentity,
   signalProcessWithStartIdentity,
@@ -64,6 +65,7 @@ export async function verifyLinuxHopperOwnerExit({
         const relation = {
           leaderPid: ownerPid,
           processGroupId: ownerProcess.processGroupId,
+          evidenceOwner: new ProcessOwnershipEvidenceOwner(),
         };
         requireMcpLifecycleResult(
           await client.callTool(
@@ -93,16 +95,16 @@ export async function verifyLinuxHopperOwnerExit({
         const runId = status.analysis_run?.run_id;
         assert.equal(typeof runId, "string");
         assert.equal(status.analysis_provider_binding?.provider.id, "hopper");
-        assert.equal(
-          (
-            await verifyNoTokenOwnedProcesses(
-              runId,
-              systemProcessOwnershipHost,
-              baseline,
-              relation,
-            )
-          ).cleaned,
-          false,
+        const active = await verifyNoTokenOwnedProcesses(
+          runId,
+          systemProcessOwnershipHost,
+          baseline,
+          relation,
+        );
+        assert.equal(active.cleaned, false, JSON.stringify(active));
+        assert.ok(
+          relation.evidenceOwner.coverage.retainedOwned > 0,
+          `The active Hopper session has no token-verified process ownership evidence: ${JSON.stringify(active)}`,
         );
         if (mode === "graceful") await client.close();
         else {
@@ -127,7 +129,7 @@ export async function verifyLinuxHopperOwnerExit({
           if (cleanup.cleaned) break;
           await delay(100);
         } while (Date.now() < deadline);
-        assert.equal(cleanup.cleaned, true, cleanup.reason);
+        assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
         // The SIGKILL case must recover the stale lease for both target identities.
         for (const target of [primary, secondary]) {
           const result = await execFileAsync(

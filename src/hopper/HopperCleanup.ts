@@ -1,9 +1,8 @@
 import type { Socket } from "node:net";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { HopperError } from "../domain/hopperErrors.js";
-import { HopperProcessError } from "../domain/hopperErrors.js";
+import { HopperProcessError } from "./HopperErrors.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -23,21 +22,30 @@ import {
   providerCleanupFailure,
 } from "./HopperDiagnostics.js";
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
-import {
-  isHopperCleanupRequired,
-  isHopperShutdownAcknowledgement,
-} from "./HopperSessionValues.js";
+import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 interface CleanupIssue {
   readonly resource: string;
   readonly reason: string;
 }
 
+/** Exit evidence for an authenticated external application, when it applies. */
+type ExternalApplicationExitObservation =
+  | Awaited<ReturnType<typeof observeProcessStartIdentityExit>>
+  | undefined;
+
 interface CleanupState {
   readonly issues: CleanupIssue[];
   readonly resources: Set<string>;
   cleanupResult: ProcessCleanupResult | undefined;
   processStopped: boolean;
+  /** Why document shutdown was or was not confirmed by the bridge request. */
+  shutdownRequest: JsonValue | undefined;
+  /** The final external-application exit observation before retention. */
+  applicationExit: ExternalApplicationExitObservation;
 }
 
 /** Owned capabilities survive failed cleanup until their release is verified. */
@@ -52,6 +60,8 @@ export interface HopperOwnedResources {
         readonly identity: ProcessIdentityObservation;
       }
     | undefined;
+  /** Descriptors a failed bridge identity read left open, released by cleanup. */
+  readonly inspections: ArtifactResourceScope;
 }
 
 export interface HopperCleanupInput {
@@ -64,7 +74,7 @@ export interface HopperCleanupInput {
   readonly onDiagnostic: ((event: HopperDiagnostic) => void) | undefined;
   request(
     method: "shutdown" | "shutdown_document",
-  ): Promise<Result<JsonValue, HopperError>>;
+  ): Promise<Result<JsonValue, AnalysisError>>;
   releaseTransport(socket: Socket | undefined): void;
 }
 
@@ -77,6 +87,8 @@ export const cleanupHopperSession = async (
     resources: new Set(),
     cleanupResult: undefined,
     processStopped: input.resources.processSupervisor === undefined,
+    shutdownRequest: undefined,
+    applicationExit: undefined,
   };
   await confirmExternalApplicationExit(
     input.resources,
@@ -99,6 +111,12 @@ export const cleanupHopperSession = async (
   )
     input.releaseTransport(input.socket);
   await stopProcess(input, state);
+  // A late authenticated application may exit while shutdown is in flight.
+  state.applicationExit = await confirmExternalApplicationExit(
+    input.resources,
+    input.socket,
+    input.releaseTransport,
+  );
   recordUnconfirmedDocument(input, state);
   await report(input.progress, 0.75, "removing Hopper private runtime files");
   if (
@@ -127,11 +145,30 @@ export const cleanupHopperSession = async (
       state.resources.add("hopper-lease");
       state.issues.push({
         resource: "hopper-lease",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
   }
+  await releaseInspections(input, state);
   return cleanupOutcome(input, state);
+};
+
+/** Retry descriptors whose identity read could not close them. */
+const releaseInspections = async (
+  input: HopperCleanupInput,
+  state: CleanupState,
+): Promise<void> => {
+  try {
+    await input.resources.inspections.retryCleanup();
+  } catch (cause: unknown) {
+    const resources = input.resources.inspections.cleanupResources;
+    for (const resource of resources.length === 0
+      ? ["hopper-process-inspection"]
+      : resources) {
+      state.resources.add(resource);
+      state.issues.push({ resource, reason: errorMessage(cause) });
+    }
+  }
 };
 
 export const confirmExternalApplicationExit = async (
@@ -139,21 +176,34 @@ export const confirmExternalApplicationExit = async (
   socket: Socket | undefined,
   releaseTransport: (socket: Socket | undefined) => void,
   observeExit: typeof observeProcessStartIdentityExit = observeProcessStartIdentityExit,
-): Promise<void> => {
+): Promise<ExternalApplicationExitObservation> => {
   const application = resources.externalApplication;
   if (
     resources.shutdownConfirmed ||
     resources.launch?.providerLifetime !== "external-application" ||
     application?.identity.state !== "readable"
   )
-    return;
-  if (
-    (await observeExit(application.pid, application.identity.identity)) ===
-    "exited"
-  ) {
+    return undefined;
+  let observed: Awaited<ReturnType<typeof observeExit>>;
+  try {
+    observed = await observeExit(
+      application.pid,
+      application.identity.identity,
+    );
+  } catch (cause: unknown) {
+    // Exit stays unverified; descriptors the read left open stay owned.
+    if (
+      retainArtifactCommandCleanup(cause, resources.inspections, "close_binary")
+        .length === 0
+    )
+      throw cause;
+    return "unverified";
+  }
+  if (observed === "exited") {
     resources.shutdownConfirmed = true;
     releaseTransport(socket);
   }
+  return observed;
 };
 
 const requestShutdown = async (
@@ -166,6 +216,16 @@ const requestShutdown = async (
     input.socket.destroyed ||
     input.activeRequest !== null
   ) {
+    state.shutdownRequest = {
+      status: "not_sent",
+      reason: input.resources.shutdownConfirmed
+        ? "shutdown_already_confirmed"
+        : input.socket === undefined
+          ? "no_bridge_transport"
+          : input.socket.destroyed
+            ? "bridge_transport_closed"
+            : "bridge_operation_active",
+    };
     if (input.activeRequest !== null)
       input.logger.warn(
         {
@@ -185,22 +245,51 @@ const requestShutdown = async (
   const shutdown = await input
     .request(method)
     .catch((cause: unknown) => err(shutdownRequestFailure(method, cause)));
+  const outcome = shutdown.ok
+    ? parseHopperShutdownReply(method, shutdown.value)
+    : undefined;
+  let fallback: Result<JsonValue, AnalysisError> | undefined;
   if (
-    shutdown.ok &&
-    isHopperCleanupRequired(shutdown.value) &&
+    outcome?.ok === true &&
+    outcome.value === "cleanup_required" &&
     input.resources.launch?.shutdownMode === "process-cleanup"
   ) {
     state.cleanupResult = await input.resources.launch
       .cleanup()
       .catch(providerCleanupFailure);
     if (!state.cleanupResult.cleaned) {
-      input.resources.shutdownConfirmed = await fallbackDocumentShutdown(input);
+      fallback = await fallbackDocumentShutdown(input);
+      input.resources.shutdownConfirmed =
+        fallback.ok &&
+        isConfirmed(
+          parseHopperShutdownReply("shutdown_document", fallback.value),
+        );
     }
-  } else if (shutdown.ok) {
-    input.resources.shutdownConfirmed = isHopperShutdownAcknowledgement(
-      shutdown.value,
-    );
+  } else if (outcome !== undefined) {
+    input.resources.shutdownConfirmed = isConfirmed(outcome);
   }
+  state.shutdownRequest = {
+    method,
+    status: !shutdown.ok
+      ? "failed"
+      : input.resources.shutdownConfirmed
+        ? "confirmed"
+        : "unconfirmed",
+    ...(shutdown.ok ? {} : shutdownErrorDetails(shutdown.error)),
+    ...(fallback === undefined
+      ? {}
+      : {
+          fallback: {
+            method: "shutdown_document",
+            status: !fallback.ok
+              ? "failed"
+              : input.resources.shutdownConfirmed
+                ? "confirmed"
+                : "unconfirmed",
+            ...(fallback.ok ? {} : shutdownErrorDetails(fallback.error)),
+          },
+        }),
+  };
   if (
     !shutdown.ok ||
     (!input.resources.shutdownConfirmed && state.cleanupResult === undefined)
@@ -209,6 +298,7 @@ const requestShutdown = async (
       {
         status: shutdown.ok ? "invalid-acknowledgement" : "failed",
         ...(shutdown.ok ? {} : shutdownFailureDetails(shutdown.error)),
+        ...replyContractDetails(outcome),
       },
       "Hopper document shutdown was not confirmed",
     );
@@ -216,24 +306,38 @@ const requestShutdown = async (
 
 const fallbackDocumentShutdown = async (
   input: HopperCleanupInput,
-): Promise<boolean> => {
+): Promise<Result<JsonValue, AnalysisError>> => {
   const fallback = await input
     .request("shutdown_document")
     .catch((cause: unknown) =>
       err(shutdownRequestFailure("shutdown_document", cause)),
     );
-  const confirmed =
-    fallback.ok && isHopperShutdownAcknowledgement(fallback.value);
-  if (!confirmed)
+  const outcome = fallback.ok
+    ? parseHopperShutdownReply("shutdown_document", fallback.value)
+    : undefined;
+  if (outcome === undefined || !isConfirmed(outcome))
     input.logger.warn(
       {
         status: fallback.ok ? "invalid-acknowledgement" : "failed",
         ...(fallback.ok ? {} : shutdownFailureDetails(fallback.error)),
+        ...replyContractDetails(outcome),
       },
       "Hopper document shutdown fallback was not confirmed",
     );
-  return confirmed;
+  return fallback;
 };
+
+const isConfirmed = (
+  outcome: ReturnType<typeof parseHopperShutdownReply>,
+): boolean => outcome.ok && outcome.value === "confirmed";
+
+/** Name the fields of a reply outside the shutdown contract. */
+const replyContractDetails = (
+  outcome: ReturnType<typeof parseHopperShutdownReply> | undefined,
+): Record<string, JsonValue> =>
+  outcome === undefined || outcome.ok
+    ? {}
+    : { reply_contract: outcome.error.diagnostics ?? null };
 
 const shutdownRequestFailure = (
   operation: "shutdown" | "shutdown_document",
@@ -242,8 +346,18 @@ const shutdownRequestFailure = (
   return new HopperProcessError(null, { operation, cause });
 };
 
+/** Name the shutdown failure in retained-cleanup details without its cause text. */
+const shutdownErrorDetails = (
+  error: AnalysisError,
+): Record<string, JsonValue> => ({
+  error_tag: error._tag,
+  ...(error instanceof HopperProcessError
+    ? { provider_state: error.providerState }
+    : {}),
+});
+
 const shutdownFailureDetails = (
-  error: HopperError,
+  error: AnalysisError,
 ): Record<string, JsonValue> => ({
   errorTag: error._tag,
   ...(error instanceof HopperProcessError && error.operation !== undefined
@@ -379,15 +493,39 @@ const cleanupOutcome = (
 ): Result<null, AnalysisError> => {
   if (state.issues.length === 0) return ok(null);
   return err(
-    new ProviderCleanupError("hopper", [...state.resources], {
-      issues: cleanupIssueDetails(state.issues),
-      ...(input.resources.runtimeRoot === undefined
-        ? {}
-        : { runtime_root: input.resources.runtimeRoot.path }),
-      ...(input.activeRequest === null
-        ? {}
-        : { active_request: activityDetails(input.activeRequest) }),
-    }),
+    new ProviderCleanupError(
+      "hopper",
+      [...state.resources],
+      {
+        issues: cleanupIssueDetails(state.issues),
+        ...(input.resources.runtimeRoot === undefined
+          ? {}
+          : { runtime_root: input.resources.runtimeRoot.path }),
+        ...(input.activeRequest === null
+          ? {}
+          : { active_request: activityDetails(input.activeRequest) }),
+        ...(state.resources.has("hopper-document")
+          ? {
+              authenticated_application:
+                input.resources.externalApplication === undefined
+                  ? "not_observed"
+                  : input.resources.externalApplication.identity.state,
+              ...(state.shutdownRequest === undefined
+                ? {}
+                : { shutdown_request: state.shutdownRequest }),
+              ...(state.applicationExit === undefined
+                ? {}
+                : { application_exit: state.applicationExit }),
+            }
+          : {}),
+      },
+      state.resources.has("hopper-document")
+        ? {
+            remediationAction:
+              "Export the Evidence bundle before close_binary clears session records. Let Hopper finish initial analysis or complete its pending dialog, then retry close_binary on this connection so REA can authenticate and close the retained document. If no matching bridge becomes available, manually close the reported document in Hopper, then restart the MCP connection. A helper exit or open:false does not establish that retained cleanup is complete.",
+          }
+        : undefined,
+    ),
   );
 };
 
@@ -411,12 +549,14 @@ const report = async (
   message: string,
 ): Promise<void> => {
   // best-effort cleanup: progress reporting must not fail session cleanup.
-  await progress
-    ?.report({
+  try {
+    await progress?.report({
       phase: "hopper_cleanup",
       completed,
       total: 1,
       message,
-    })
-    .catch(() => undefined);
+    });
+  } catch {
+    // Observer failures cannot prevent release of the session's owned resources.
+  }
 };

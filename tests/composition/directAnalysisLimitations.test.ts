@@ -1,7 +1,8 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { expect, it } from "vitest";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { runDirectAnalysis } from "../../src/application/DirectAnalysis.js";
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { ok } from "../../src/domain/result.js";
 import {
   createBinarySessionTargets,
@@ -36,11 +37,13 @@ it("retains provider coverage caveats in a composed CLI result and closes the se
       createBinarySession: createSession,
       createManagedBinarySession: createSession,
       createArtifactBinarySession: createSession,
+      createNativeDispatchBinarySession: createSession,
+      createNativeBinarySession: createSession,
     },
     path,
     "binary_overview",
     {},
-  );
+  ).then(projectCliAnalysisResult);
   expect(output).toMatchObject({
     limitations: [
       "Derived by an REA composed workflow.",

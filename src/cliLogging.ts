@@ -1,18 +1,33 @@
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "./contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "./contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./domain/analysisErrorProjectionSchema.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "./domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
+import { isRecord } from "./kernel/isRecord.js";
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+type CliFailureIdentity = Pick<
+  AnalysisErrorProjection,
+  "code" | "category" | "retryable"
+>;
+interface CliOperationFailure {
+  readonly payload: unknown;
+  readonly identity?: CliFailureIdentity;
+}
+const loggedFailures = new WeakMap<object, CliOperationFailure | undefined>();
 
-const loggedFailures = new WeakMap<object, unknown>();
+const canonicalFailure = (
+  projection: AnalysisErrorProjection,
+): CliOperationFailure => ({
+  payload: projection,
+  identity: {
+    code: projection.code,
+    category: projection.category,
+    retryable: projection.retryable,
+  },
+});
 
 /** Return the canonical failure projection owned by the CLI result boundary. */
 const projectCliOperationFailure = (
@@ -50,11 +65,13 @@ const projectCliOperationFailure = (
   return undefined;
 };
 
-/** Return the canonical projection or original record classified as failed. */
-const inferCliOperationFailure = (value: unknown): unknown | undefined => {
+/** Keep the classified payload and its canonical identity under one owner. */
+const inferCliOperationFailure = (
+  value: unknown,
+): CliOperationFailure | undefined => {
   const projection = projectCliOperationFailure(value);
-  if (projection !== undefined) return projection;
-  if (isRecord(value) && value.healthy === false) return value;
+  if (projection !== undefined) return canonicalFailure(projection);
+  if (isRecord(value) && value.healthy === false) return { payload: value };
   return undefined;
 };
 
@@ -62,13 +79,35 @@ export const cliOperationFailurePayload = (
   value: unknown,
 ): unknown | undefined => {
   if (isRecord(value) && loggedFailures.has(value))
-    return loggedFailures.get(value);
-  return inferCliOperationFailure(value);
+    return loggedFailures.get(value)?.payload;
+  const failure = inferCliOperationFailure(value);
+  if (failure !== undefined && isRecord(value))
+    loggedFailures.set(value, failure);
+  return failure?.payload;
 };
 
 /** Identify caller-visible CLI outcomes that mean the requested operation failed. */
 export const isCliOperationFailure = (value: unknown): boolean =>
   cliOperationFailurePayload(value) !== undefined;
+
+/** Already classified identity, without traversing payloads during recovery. */
+export const cliOperationFailureIdentity = (
+  value: unknown,
+): CliFailureIdentity | undefined =>
+  isRecord(value) ? loggedFailures.get(value)?.identity : undefined;
+
+/** Keep failure classification and recovery identity when a CLI wrapper projects an error record. */
+export const rebindLoggedCliFailure = (
+  previous: unknown,
+  next: unknown,
+): void => {
+  if (previous === next || !isRecord(previous) || !isRecord(next)) return;
+  if (!loggedFailures.has(previous)) return;
+  loggedFailures.set(
+    next,
+    inferCliOperationFailure(next) ?? loggedFailures.get(previous),
+  );
+};
 
 /** Log one CLI command with duration and a stable success or failure status. */
 export const logCliCommand = async <Value>(
@@ -85,7 +124,7 @@ export const logCliCommand = async <Value>(
     if (isRecord(value))
       loggedFailures.set(
         value,
-        failed ? (inferredFailure ?? value) : undefined,
+        failed ? (inferredFailure ?? { payload: value }) : undefined,
       );
     logger[failed ? "error" : "info"](
       {
@@ -95,10 +134,10 @@ export const logCliCommand = async <Value>(
       },
       failed ? "CLI command failed" : "CLI command completed",
     );
-    if (failed) process.exitCode = 1;
+    if (failed) process.exitCode ||= 1;
     return value;
   } catch (cause: unknown) {
-    process.exitCode = 1;
+    process.exitCode ||= 1;
     logger.error(
       {
         command,
@@ -108,8 +147,9 @@ export const logCliCommand = async <Value>(
       "CLI command failed",
     );
     if (cause instanceof AnalysisError) {
-      process.exitCode = 1;
-      return projectAnalysisError(cause);
+      const projection = projectAnalysisError(cause);
+      loggedFailures.set(projection, canonicalFailure(projection));
+      return projection;
     }
     throw cause;
   }

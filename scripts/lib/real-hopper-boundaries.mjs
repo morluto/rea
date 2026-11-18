@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { copyFile, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
@@ -40,15 +41,19 @@ export async function verifyHopperBoundaryContracts(
       ajv.validateSchema(tool.inputSchema),
       `${tool.name} input schema`,
     );
-    assert.ok(tool.outputSchema, `${tool.name} omitted its output schema`);
     assert.ok(
-      ajv.validateSchema(tool.outputSchema),
+      canonicalOutputSchema(tool.name),
+      `${tool.name} omitted its output schema`,
+    );
+    assert.ok(
+      ajv.validateSchema(canonicalOutputSchema(tool.name)),
       `${tool.name} output schema`,
     );
     validators.set(
       tool.name,
-      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
-        ajv.compile(tool.outputSchema),
+      (canonicalOutputSchema(tool.name)?.$id &&
+        ajv.getSchema(canonicalOutputSchema(tool.name).$id)) ||
+        ajv.compile(canonicalOutputSchema(tool.name)),
     );
   }
   let successfulCalls = 0;
@@ -96,7 +101,14 @@ export async function verifyHopperBoundaryContracts(
     ...(await verifyHopperSearch(call, invalid, procedure)),
     ...(await verifyHopperRegexIsolation(client, options, call, address)),
   };
+  const originalBookmark = (await call("list_bookmarks")).find(
+    (item) => item.address === address,
+  );
+  let bookmarkReplacement;
+  const boundaryFailures = [];
   try {
+    if (originalBookmark !== undefined)
+      assert.equal(await call("unset_bookmark", { address }), true);
     if (foreignDocument !== undefined) {
       await invalid(
         "read_bytes",
@@ -127,6 +139,49 @@ export async function verifyHopperBoundaryContracts(
         ),
       );
     }
+
+    assert.equal(
+      await call("set_bookmark", {
+        address,
+        name: "REA boundary bookmark before clear",
+      }),
+      true,
+    );
+    const beforeClear = (await call("list_bookmarks")).find(
+      (item) => item.address === address,
+    );
+    assert.deepEqual(beforeClear, {
+      address,
+      name: "REA boundary bookmark before clear",
+    });
+    assert.equal(await call("set_bookmark", { address, name: "" }), true);
+    const afterClear = (await call("list_bookmarks")).find(
+      (item) => item.address === address,
+    );
+    assert.deepEqual(afterClear, { address, name: null });
+
+    const replacementName = "REA boundary bookmark replacement";
+    assert.equal(
+      await call("set_bookmark", { address, name: replacementName }),
+      true,
+    );
+    const afterReplacement = (await call("list_bookmarks")).find(
+      (item) => item.address === address,
+    );
+    assert.deepEqual(afterReplacement, { address, name: replacementName });
+    assert.equal(await call("set_bookmark", { address }), true);
+    const afterOmittedName = (await call("list_bookmarks")).find(
+      (item) => item.address === address,
+    );
+    assert.deepEqual(afterOmittedName, {
+      address,
+      name: replacementName,
+    });
+    bookmarkReplacement = {
+      existingNameCleared: afterClear?.name === null,
+      nonemptyNameReplaced: afterReplacement?.name === replacementName,
+      omittedNamePreserved: afterOmittedName?.name === replacementName,
+    };
 
     for (const [setter, getter] of [
       ["set_comment", "comment"],
@@ -184,7 +239,12 @@ export async function verifyHopperBoundaryContracts(
       ),
     );
     assert.equal(
-      (await call("analyze_function", { procedure: address })).procedure.name,
+      (
+        await call("analyze_function", {
+          procedure: address,
+          detail: "complete",
+        })
+      ).procedure.name,
       renamed,
     );
     assert.equal(
@@ -283,14 +343,51 @@ export async function verifyHopperBoundaryContracts(
       "idle",
       "a live GUI bridge must remain healthy after its launcher helper exits",
     );
+  } catch (error) {
+    boundaryFailures.push(error);
+    throw error;
   } finally {
-    await call("set_address_name", { address, name: originalName ?? "" });
-    await call("set_comment", { address, comment: originalComment ?? "" });
-    await call("set_inline_comment", {
-      address,
-      comment: originalInlineComment ?? "",
-    });
-    await call("unset_bookmark", { address });
+    const restorations = [
+      () => call("set_address_name", { address, name: originalName ?? "" }),
+      () => call("set_comment", { address, comment: originalComment ?? "" }),
+      () =>
+        call("set_inline_comment", {
+          address,
+          comment: originalInlineComment ?? "",
+        }),
+      async () => {
+        await call("unset_bookmark", { address });
+        if (originalBookmark === undefined) return;
+        assert.equal(
+          await call("set_bookmark", {
+            address,
+            ...(originalBookmark.name === null
+              ? {}
+              : { name: originalBookmark.name }),
+          }),
+          true,
+          "Could not restore the original disposable-target bookmark",
+        );
+        const restored = (await call("list_bookmarks")).find(
+          (item) => item.address === address,
+        );
+        assert.deepEqual(restored, originalBookmark);
+      },
+    ];
+    const restorationErrors = [];
+    for (const restore of restorations) {
+      try {
+        await restore();
+      } catch (error) {
+        restorationErrors.push(error);
+      }
+    }
+    if (restorationErrors.length > 0) {
+      throw new AggregateError(
+        [...boundaryFailures, ...restorationErrors],
+        "Could not restore all disposable Hopper boundary state",
+      );
+    }
   }
   return {
     schemaCount: catalog.tools.length,
@@ -301,6 +398,7 @@ export async function verifyHopperBoundaryContracts(
     navigationAndText,
     workflows,
     search,
+    bookmarkReplacement,
   };
 }
 
@@ -338,6 +436,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
     assert.ok(entry, "primary fixture omitted its entry procedure");
     const expectedFunction = await call("analyze_function", {
       procedure: entry.value,
+      detail: "complete",
     });
     const firstDocument = await call("current_document");
     const linuxApplicationIsolation =
@@ -430,6 +529,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       assert.ok(delegate, "Objective-C fixture omitted its tail-call method");
       const expected = await call("analyze_function", {
         procedure: delegate.address,
+        detail: "complete",
       });
       await call("close_binary");
       const analyzed = await runCli([

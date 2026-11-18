@@ -10,11 +10,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "built CLI reports a date the decoder cannot represent as unknown",
+  "built CLI preserves dates with years beyond four digits",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-keyed-archive-date-");
     const path = join(root, "archive.plist");
-    // plutil writes years past 9999 unsigned, which the decoder rejects.
+    // XML property-list dates use an extended ISO year in the public schema.
     const xml = build({
       $archiver: "NSKeyedArchiver",
       $version: 100000,
@@ -33,16 +33,23 @@ cliTest(
     const result = keyedArchiveResultSchema.parse(
       parseEvidence(output.json).normalized_result,
     );
-    expect(result.objects.map(({ id, value }) => ({ id, value }))).toEqual([
-      { id: 0, value: "$null" },
-      { id: 1, value: { $plist_type: "date", iso8601: null } },
+    expect(
+      result.objects.map(({ id, kind, value }) => ({ id, kind, value })),
+    ).toEqual([
+      { id: 0, kind: "nil", value: "$null" },
+      {
+        id: 1,
+        kind: "scalar",
+        value: { $plist_type: "date", iso8601: "+011507-08-17T05:20:00.000Z" },
+      },
       {
         id: 2,
+        kind: "scalar",
         value: { $plist_type: "date", iso8601: "2020-01-01T00:00:00.000Z" },
       },
     ]);
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("1 date value(s)"),
+    expect(result.limitations).not.toContainEqual(
+      expect.stringContaining("date value(s)"),
     );
   },
 );

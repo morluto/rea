@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -103,17 +102,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "unnamed-empty.js":
         "export const answer = 42;\n//# sourceMappingURL=unnamed-empty.js.map\n",
     });
-    for (const [mapPath, expectedSource] of [
-      ["absent.js.map", "unembedded.ts"],
-      ["mixed.js.map", "original.ts"],
-      ["unnamed-empty.js.map", "original.ts"],
-    ] as const)
-      expect(
-        originalPositionFor(new TraceMap(maps[mapPath], `file:///${mapPath}`), {
-          line: 1,
-          column: 0,
-        }).source,
-      ).toBe(`file:///${expectedSource}`);
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
     const digest = (text: string) =>
       createHash("sha256").update(text).digest("hex");
@@ -190,44 +178,67 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "rejects non-string source-map names without inventing originals through %s",
+  "preserves source-root declarations and URL path identity through %s",
   async (surface, { cli }) => {
-    const root = await createTestTempDirectory("rea-invalid-map-source-");
-    const mapText = JSON.stringify({
-      version: 3,
-      sources: [42, "discarded.ts"],
-      sourcesContent: [null, "export const answer: number = 42;"],
-      names: [],
-      mappings: "ACAA",
-    });
-    await writeFixtureFiles(root, { "invalid.js.map": mapText });
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    expect(graph.coverage.status).toBe("partial");
-    expect(
-      graph.nodes.some(
-        (node) => node.identity.strategy === "source-map-original",
-      ),
-    ).toBe(false);
-    expect(graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "unknown",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              operation: "parse-local-source-map",
-            }),
-            evidence: expect.objectContaining({
-              artifact: expect.objectContaining({
-                sha256: createHash("sha256").update(mapText).digest("hex"),
-              }),
-              limitations: expect.arrayContaining([
-                "Source map contains a non-string source name.",
-              ]),
-            }),
-          }),
-        ]),
+    const root = await createTestTempDirectory("rea-source-root-identity-");
+    const cases = [
+      {
+        sourceRoot: "https://cdn.example/src//",
+        resolution: { kind: "suffix", path: "cdn.example/src//a.js" },
+      },
+      {
+        sourceRoot: "webpack://",
+        resolution: {
+          kind: "unresolved",
+          reason:
+            "Source reference uses a non-hierarchical URL without a file pathname.",
+        },
+      },
+      {
+        sourceRoot: "webpack:///",
+        resolution: { kind: "suffix", path: "a.js" },
+      },
+    ] as const;
+    const maps = cases.map(({ sourceRoot }, index) => ({
+      path: `${String(index)}.js.map`,
+      text: JSON.stringify({
+        version: 3,
+        sourceRoot,
+        sources: ["a.js"],
+        names: [],
+        mappings: "AAAA",
       }),
+    }));
+    await writeFixtureFiles(
+      root,
+      Object.fromEntries(maps.map(({ path, text }) => [path, text])),
     );
-    expect(await readFile(join(root, "invalid.js.map"), "utf8")).toBe(mapText);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    for (const [index, { sourceRoot, resolution }] of cases.entries()) {
+      const map = maps[index]!;
+      expect(graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind: "source-module",
+          identity: expect.objectContaining({
+            strategy: "source-map-original",
+            source_map_sha256: createHash("sha256")
+              .update(map.text)
+              .digest("hex"),
+            original_source: "a.js",
+          }),
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              source_map_reference: {
+                source_name: "a.js",
+                source_root: sourceRoot,
+                map_path: map.path,
+                resolution,
+              },
+            }),
+          ]),
+        }),
+      );
+      expect(await readFile(join(root, map.path), "utf8")).toBe(map.text);
+    }
   },
 );

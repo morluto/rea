@@ -16,7 +16,7 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
@@ -33,7 +33,7 @@ export const collectJavaScriptSemanticObjects = (
     output,
     writeTargets: new Map(),
   };
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       const ownerCallableId = callableStack.callables.at(-1) ?? null;
@@ -65,7 +65,24 @@ export const collectJavaScriptSemanticObjects = (
         t.isVariableDeclarator(node) &&
         (t.isObjectPattern(node.id) || t.isArrayPattern(node.id))
       )
-        collectDestructuring(node, ownerCallableId, state, output);
+        collectDestructuring(
+          node.id,
+          node.init,
+          ownerCallableId,
+          state,
+          output,
+        );
+      else if (
+        t.isAssignmentExpression(node, { operator: "=" }) &&
+        (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
+      )
+        collectDestructuring(
+          node.left,
+          node.right,
+          ownerCallableId,
+          state,
+          output,
+        );
     },
     exit: (node) => callableStack.exit(node),
   });
@@ -126,46 +143,62 @@ const collectMember = (
 };
 
 const collectDestructuring = (
-  node: t.VariableDeclarator,
+  root: t.Node,
+  initializer: t.Node | null | undefined,
   ownerCallableId: string | null,
   state: JavaScriptSemanticAnalysisState,
   output: JavaScriptSemanticObjectOperation[],
 ): void => {
-  const source = expressionObjectIdentity(node.init, state);
-  const visit = (pattern: t.Node, path: readonly string[]): void => {
+  const source = expressionObjectIdentity(initializer, state);
+  const pending: {
+    readonly pattern: t.Node;
+    readonly path: readonly string[];
+  }[] = [{ pattern: root, path: [] }];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (next === undefined) break;
+    const { path } = next;
+    const occurrence = unwrapJavaScriptExpression(next.pattern).node;
+    const pattern = t.isAssignmentPattern(occurrence)
+      ? unwrapJavaScriptExpression(occurrence.left).node
+      : occurrence;
     if (t.isObjectPattern(pattern)) {
-      for (const property of pattern.properties) {
+      for (const property of pattern.properties.toReversed()) {
         if (!t.isObjectProperty(property)) continue;
         const name = semanticStaticPropertyKey(property.key, property.computed);
-        if (name !== null) visit(property.value, [...path, name]);
+        if (name !== null)
+          pending.push({ pattern: property.value, path: [...path, name] });
       }
-      return;
+      continue;
     }
     if (t.isArrayPattern(pattern)) {
-      pattern.elements.forEach((element, index) => {
-        if (element !== null && !t.isRestElement(element))
-          visit(element, [...path, String(index)]);
-      });
-      return;
+      for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
+        const element = pattern.elements[index];
+        if (
+          element !== null &&
+          element !== undefined &&
+          !t.isRestElement(element)
+        )
+          pending.push({ pattern: element, path: [...path, String(index)] });
+      }
+      continue;
     }
-    const target = bindingIdentifier(pattern);
-    if (target === null) return;
+    if (!t.isIdentifier(pattern)) continue;
     addObjectOperation(
       {
-        node: pattern,
+        node: occurrence,
         kind: "destructure",
         ownerCallableId,
         objectBindingId: source.bindingId,
         targetBindingId:
-          resolveSemanticBindingState(state, target, target.name)?.bindingId ??
-          null,
+          resolveSemanticBindingState(state, pattern, pattern.name)
+            ?.bindingId ?? null,
         propertyPath: source.path === null ? null : [...source.path, ...path],
       },
       state,
       output,
     );
-  };
-  visit(node.id, []);
+  }
 };
 
 interface AddObjectOperationInput {
@@ -239,11 +272,4 @@ const expressionObjectIdentity = (
       : null,
     path: staticPath ? path.reverse() : null,
   };
-};
-
-const bindingIdentifier = (node: t.Node): t.Identifier | null => {
-  if (t.isIdentifier(node)) return node;
-  if (t.isAssignmentPattern(node) && t.isIdentifier(node.left))
-    return node.left;
-  return null;
 };

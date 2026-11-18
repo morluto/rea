@@ -1,0 +1,95 @@
+import { mkdir, open, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect } from "vitest";
+import { z } from "zod";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+
+for (const { command, limit, recovery, cliFlag } of [
+  {
+    command: "inspect-go-binary",
+    limit: 256 * 1024 * 1024,
+    recovery: "max_input_bytes",
+    cliFlag: "--max-input-bytes",
+  },
+  {
+    command: "inspect-rust-binary",
+    limit: 256 * 1024 * 1024,
+    recovery: "producer_limits.input_bytes",
+    // The provider binds producer_limits.input_bytes; the CLI names the
+    // option that sets the whole field.
+    cliFlag: "--producer-limits",
+  },
+  {
+    command: "inspect-il2cpp-metadata",
+    limit: 256 * 1024 * 1024,
+    recovery: "within the fixed IL2CPP input allowance",
+  },
+  {
+    command: "inspect-wasm-artifact",
+    limit: 8 * 1024 * 1024,
+    recovery: "max_input_bytes",
+    cliFlag: "--max-input-bytes",
+  },
+] as readonly {
+  readonly command: string;
+  readonly limit: number;
+  readonly recovery: string;
+  readonly cliFlag?: string;
+}[]) {
+  cliTest.skipIf(process.platform === "win32")(
+    `${command} identifies input-size refusal and applicable recovery`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-artifact-input-limit-");
+      const selected = join(root, "oversized.bin");
+      const handle = await open(selected, "wx");
+      try {
+        await handle.truncate(limit + 1);
+      } finally {
+        await handle.close();
+      }
+      const tools = join(root, "tools");
+      await mkdir(tools);
+      for (const tool of ["wasm-validate", "wasm-objdump", "wasm2wat"])
+        await writeFile(
+          join(tools, tool),
+          `#!/bin/sh
+if [ "$1" = --version ]; then printf '1.0.42\\n'; exit 0; fi
+printf 'Unexpected analysis command\\n' >&2
+exit 1
+`,
+          { mode: 0o700 },
+        );
+      const output = await cli.run({
+        arguments: [command, selected, "--json"],
+        environment: { REA_WABT_BIN_DIRECTORY: tools },
+      });
+      expect(output.exitCode).toBe(1);
+      const refusal = z
+        .object({
+          code: z.literal("resource_constraint"),
+          category: z.literal("resource_constraint"),
+          retryable: z.literal(false),
+          details: z.object({
+            resource: z.literal("file-size"),
+            reported_limits: z.object({
+              maximum_input_bytes: z.literal(limit),
+            }),
+          }),
+          remediation: z.object({ action: z.string() }),
+        })
+        .parse(output.json);
+      // Raising the evidence-reply allowance cannot admit an oversized input.
+      expect(refusal.remediation.action).toContain(recovery);
+      if (cliFlag !== undefined) {
+        expect(output.json).toMatchObject({
+          details: { limit: { parameter: recovery, cli_flag: cliFlag } },
+        });
+        expect(refusal.remediation.action).not.toContain("--");
+      }
+      expect(refusal.remediation.action).not.toMatch(
+        /allowance for the evidence reply/u,
+      );
+    },
+  );
+}

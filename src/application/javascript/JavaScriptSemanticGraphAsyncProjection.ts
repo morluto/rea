@@ -1,5 +1,4 @@
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
-import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type {
   JavaScriptSemanticEventOperation,
@@ -10,8 +9,16 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
-import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import {
+  inferredSemanticEvidenceAt,
+  unknownSemanticEvidence,
+  builtinSemanticNode,
+  builtinSemanticRelation,
+} from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  projectSemanticResultBindings,
+  type SemanticFlowProjectionContext,
+} from "./JavaScriptSemanticGraphFlowProjection.js";
 
 /** Project literal EventEmitter registrations, removals, and dispatches. */
 export const projectSemanticEvents = (
@@ -33,6 +40,7 @@ export const projectSemanticEvents = (
         source: eventEmitterNode(context, operation),
         target: event,
         relation,
+        evidence: inferredSemanticEvidenceAt(context.file, operation.location),
         resolution:
           operation.resolution === "complete" ? "resolved" : "candidate",
       });
@@ -42,6 +50,7 @@ export const projectSemanticEvents = (
         source: event,
         target: listener,
         relation,
+        evidence: inferredSemanticEvidenceAt(context.file, operation.location),
         resolution:
           operation.resolution === "complete" ? "resolved" : "candidate",
       });
@@ -125,24 +134,18 @@ const addEventUnknown = (
   event: JavaScriptSemanticGraphNode,
   relation: ReturnType<typeof eventRelation>,
 ): void => {
-  addSemanticGraphUnknown(
-    context.state,
-    createJavaScriptSemanticGraphUnknown(
-      {
-        node_id: event.node_id,
-        family: "event",
-        relation_kinds: [relation],
-        reason: "ambiguous-target",
-        detail:
-          operation.eventName === null
-            ? `Dynamic ${operation.method} event name remains unresolved.`
-            : `Static ${operation.method} emitter identity is partial.`,
-        candidate_node_ids: [],
-        evidence: unknownSemanticEvidence(context.file, operation.location),
-      },
-      context.state.evidenceContexts,
-    ),
-  );
+  addSemanticGraphUnknown(context.state, {
+    node_id: event.node_id,
+    family: "event",
+    relation_kinds: [relation],
+    reason: "ambiguous-target",
+    detail:
+      operation.eventName === null
+        ? `Dynamic ${operation.method} event name remains unresolved.`
+        : `Static ${operation.method} emitter identity is partial.`,
+    candidate_node_ids: [],
+    evidence: unknownSemanticEvidence(context.file, operation.location),
+  });
 };
 
 /** Project Node timer scheduling and exact local handle cancellation. */
@@ -162,10 +165,10 @@ export const projectSemanticTimers = (
         location: operation.location,
         label: operation.method,
         functionNodeId: owner?.node_id ?? null,
-        properties: {
+        ...builtinSemanticNode(context.file, operation, {
           delay_milliseconds: operation.delayMilliseconds,
           method: operation.method,
-        },
+        }),
       });
       return timer === null ? [] : [[operation.timerId, timer] as const];
     }),
@@ -181,23 +184,38 @@ const projectTimerSchedule = (
   operation: JavaScriptSemanticTimerOperation,
   timerNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    "resolved",
+  );
+  const candidateEvidence = authority.evidence;
   addSemanticGraphRelation(context.state, {
     source: context.callSiteAt(operation.location),
     target: timerNodes.get(operation.timerId),
     relation: "schedules-timer",
-    resolution: "resolved",
+    ...authority,
+    ...(candidateEvidence === undefined
+      ? {}
+      : {
+          properties: { builtin_authority: "candidate" },
+        }),
   });
-  for (const projected of operation.projectedResultBindings)
-    addSemanticGraphRelation(context.state, {
-      source: timerNodes.get(operation.timerId),
-      target: context.bindingNodes.get(projected.bindingId),
-      relation: "destructures",
-      resolution:
-        projected.resolution === "complete" ? "resolved" : "candidate",
-      properties: {
-        projection_path: [...projected.projectionPath],
-        projection_resolution: projected.resolution,
-      },
+  projectSemanticResultBindings(
+    context,
+    timerNodes.get(operation.timerId),
+    operation.projectedResultBindings,
+    candidateEvidence,
+  );
+  if (candidateEvidence !== undefined)
+    addSemanticGraphUnknown(context.state, {
+      node_id: timerNodes.get(operation.timerId)?.node_id ?? null,
+      family: "timer",
+      relation_kinds: ["schedules-timer"],
+      reason: "ambiguous-target",
+      detail: "The timer identity is conditional on loader or mutation facts.",
+      candidate_node_ids: [],
+      evidence: unknownSemanticEvidence(context.file, operation.location),
     });
 };
 
@@ -207,6 +225,12 @@ const projectTimerCancellation = (
   timerNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
   const callSite = context.callSiteAt(operation.location);
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    operation.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const candidateEvidence = authority.evidence;
   const target =
     operation.linkedTimerId === null
       ? undefined
@@ -215,22 +239,25 @@ const projectTimerCancellation = (
     source: callSite,
     target,
     relation: "cancels-timer",
-    resolution: operation.resolution === "complete" ? "resolved" : "candidate",
+    ...authority,
+    ...(candidateEvidence === undefined
+      ? {}
+      : {
+          properties: { builtin_authority: "candidate" },
+        }),
   });
-  if (operation.resolution === "complete") return;
-  addSemanticGraphUnknown(
-    context.state,
-    createJavaScriptSemanticGraphUnknown(
-      {
-        node_id: callSite?.node_id ?? null,
-        family: "timer",
-        relation_kinds: ["cancels-timer"],
-        reason: "ambiguous-target",
-        detail: `Static ${operation.method} handle resolution was ${operation.resolution}.`,
-        candidate_node_ids: [],
-        evidence: unknownSemanticEvidence(context.file, operation.location),
-      },
-      context.state.evidenceContexts,
-    ),
-  );
+  if (operation.resolution === "complete" && candidateEvidence === undefined)
+    return;
+  addSemanticGraphUnknown(context.state, {
+    node_id: callSite?.node_id ?? null,
+    family: "timer",
+    relation_kinds: ["cancels-timer"],
+    reason: "ambiguous-target",
+    detail:
+      candidateEvidence === undefined
+        ? `Static ${operation.method} handle resolution was ${operation.resolution}.`
+        : `The ${operation.method} identity is conditional on loader or mutation facts.`,
+    candidate_node_ids: [],
+    evidence: unknownSemanticEvidence(context.file, operation.location),
+  });
 };

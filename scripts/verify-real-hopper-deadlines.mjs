@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { firstProcedureAddress } from "../dist/application/RealHopperAssertions.js";
+import { firstProcedureAddress } from "./lib/real-hopper-assertions.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
 import { resolveHopperAnalysisProfile } from "../dist/hopper/HopperAnalysisProfile.js";
 import { HopperApplicationLauncher } from "../dist/hopper/BridgeLauncher.js";
 import { HopperClient } from "../dist/hopper/HopperClient.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderMetadata.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 
 // These options belong to the native client, below the CLI/MCP tool surface.
@@ -22,13 +27,32 @@ const fixtures = await loadRealHopperFixtureTargets(
   process.env.REA_HOPPER_CONFORMANCE_MANIFEST_PATH ??
     "build/conformance/manifest.json",
 );
-const root = await realpath(
-  await mkdtemp(join(tmpdir(), "rea-hopper-deadlines-")),
-);
+const workspace = await VerifierFixture.open({
+  prefix: "rea-hopper-deadlines-",
+  private: false,
+});
+const root = workspace.path;
 const target = join(root, "deadline-fixture");
+const profileResources = new ArtifactResourceScope();
+const profileResourceScope = {
+  retain: (owner, resource) =>
+    profileResources.retain({
+      kind: "lease",
+      resource,
+      lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+    }),
+  run: (operation) => profileResources.run(operation),
+};
 let client;
-let primaryFailure;
-try {
+// The root is removed only after the client and then the profile resources
+// it used confirm; a failed one is retried by the next release.
+workspace.releaseAfter(async () => {
+  if (client === undefined) return;
+  const closed = await client.close();
+  if (!closed.ok) throw closed.error;
+});
+workspace.releaseAfter(() => profileResources.close());
+await withVerifierFixture(workspace, async () => {
   await copyFile(fixtures.primary.path, target);
   const parsed = await parseBinaryTarget(target);
   if (!parsed.ok) throw parsed.error;
@@ -39,6 +63,7 @@ try {
     launcherPath,
     loaderArgsOverride: [],
     provider: HOPPER_PROVIDER_IDENTITY,
+    resourceScope: profileResourceScope,
   });
   if (!resolved.ok) throw resolved.error;
   const profile = resolved.value.profile;
@@ -134,19 +159,4 @@ try {
       2,
     ),
   );
-} catch (cause) {
-  primaryFailure = cause;
-  throw cause;
-} finally {
-  if (client !== undefined) {
-    const closed = await client.close();
-    if (!closed.ok)
-      throw primaryFailure === undefined
-        ? closed.error
-        : new AggregateError(
-            [primaryFailure, closed.error],
-            "Hopper verification and cleanup failed",
-          );
-  }
-  await rm(root, { recursive: true, force: true });
-}
+});

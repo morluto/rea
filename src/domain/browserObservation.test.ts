@@ -4,12 +4,43 @@ import {
   browserEndpointSchema,
   browserObservationEndpointSchema,
   browserOriginSchema,
+  recordedBrowserOriginSchema,
   recordedBrowserObservationEndpointSchema,
+  browserUrlTargetIdentity,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
+import { unknownTarget, urlTargetIdentitySchema } from "./targetIdentity.js";
+import { webPageInspectionSchema } from "./browserObservationSchemas.js";
+import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
 describe("browser observation contracts", () => {
+  it.each(["127.0.0.1", "[::1]"])(
+    "preserves explicitly supplied default endpoint ports on %s",
+    (host) => {
+      const http = `http://${host}:80`;
+      expect(browserEndpointSchema.parse(http)).toBe(http);
+      expect(
+        browserEndpointSchema.parse(browserEndpointSchema.parse(http)),
+      ).toBe(http);
+      expect(recordedBrowserObservationEndpointSchema.parse(http)).toBe(http);
+      const socket = `ws://${host}:80/devtools/browser/id`;
+      expect(browserObservationEndpointSchema.parse(socket)).toEqual({
+        transport: "browser_websocket",
+        url: socket,
+        recorded: `ws://${host}:80/devtools/browser/[REDACTED]`,
+      });
+      for (const value of [
+        `http://${host}`,
+        `ws://${host}/devtools/browser/id`,
+        "http://192.0.2.1:80",
+      ])
+        expect(
+          browserObservationEndpointSchema.safeParse(value).success,
+          value,
+        ).toBe(false);
+    },
+  );
   it("normalizes exact HTTP origins without accepting broader URL scopes", () => {
     expect(browserOriginSchema.parse("https://Example.COM:443")).toBe(
       "https://example.com",
@@ -27,6 +58,20 @@ describe("browser observation contracts", () => {
       "file:///tmp/page.html",
     ])
       expect(browserOriginSchema.safeParse(value).success, value).toBe(false);
+  });
+
+  it("accepts only canonical recorded HTTP origins", () => {
+    expect(recordedBrowserOriginSchema.parse("https://app.example.test")).toBe(
+      "https://app.example.test",
+    );
+    for (const value of [
+      "https://%2A.example.com",
+      "https://*.example.com",
+      "https://Example.COM:443",
+    ])
+      expect(recordedBrowserOriginSchema.safeParse(value).success, value).toBe(
+        false,
+      );
   });
 
   it("accepts only literal loopback HTTP CDP endpoints", () => {
@@ -101,6 +146,54 @@ describe("browser observation contracts", () => {
   });
 });
 
+it("normalizes equivalent loopback browser-socket spellings while keeping IPv4, IPv6, and socket IDs distinct", () => {
+  expect(
+    browserObservationEndpointSchema.parse(
+      "WS://[0:0:0:0:0:0:0:1]:09222/devtools/browser/0b1c-socket-id",
+    ),
+  ).toEqual({
+    transport: "browser_websocket",
+    url: "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+    recorded: "ws://[::1]:9222/devtools/browser/[REDACTED]",
+  });
+  expect(
+    browserObservationEndpointSchema.parse(
+      "WS://127.0.0.1:0080/devtools/browser/0b1c-socket-id",
+    ),
+  ).toEqual({
+    transport: "browser_websocket",
+    url: "ws://127.0.0.1:80/devtools/browser/0b1c-socket-id",
+    recorded: "ws://127.0.0.1:80/devtools/browser/[REDACTED]",
+  });
+  expect(
+    browserObservationEndpointSchema.parse(
+      "WS://[0000:0000:0000:0000:0000:0000:0000:0001]:09222/devtools/browser/0b1c-socket-id",
+    ).url,
+  ).toBe(
+    browserObservationEndpointSchema.parse(
+      "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+    ).url,
+  );
+  expect(
+    browserObservationEndpointSchema.parse(
+      "ws://127.0.0.1:9222/devtools/browser/0b1c-socket-id",
+    ).url,
+  ).not.toBe(
+    browserObservationEndpointSchema.parse(
+      "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+    ).url,
+  );
+  expect(
+    browserObservationEndpointSchema.parse(
+      "ws://127.0.0.1:9222/devtools/browser/Socket-Id",
+    ).url,
+  ).not.toBe(
+    browserObservationEndpointSchema.parse(
+      "ws://127.0.0.1:9222/devtools/browser/socket-id",
+    ).url,
+  );
+});
+
 describe("browser observation sensitive surfaces and retention", () => {
   it("removes only URL userinfo and preserves the original query and fragment", () => {
     expect(
@@ -121,6 +214,42 @@ describe("browser observation sensitive surfaces and retention", () => {
     );
     expect(sanitized.url).not.toContain("user:pass");
     expect(sanitized.redacted).toBe(true);
+  });
+
+  it("preserves path userinfo-like text after a special-scheme backslash", () => {
+    const suffix = String.raw`\path@tail/../keep?x=1#frag`;
+    expect(
+      sanitizeBrowserUrl(`https://user:pass@app.example.test${suffix}`),
+    ).toEqual({
+      url: `https://app.example.test${suffix}`,
+      origin: "https://app.example.test",
+      query_parameter_names: ["x"],
+      redacted: true,
+    });
+    expect(sanitizeBrowserUrl(`https://app.example.test${suffix}`)).toEqual({
+      url: `https://app.example.test${suffix}`,
+      origin: "https://app.example.test",
+      query_parameter_names: ["x"],
+      redacted: false,
+    });
+    expect(
+      sanitizeBrowserUrl(
+        String.raw`custom://user:pass@host\name@tail/path?x=1#frag`,
+      ),
+    ).toEqual({
+      url: "custom://tail/path?x=1#frag",
+      origin: null,
+      query_parameter_names: ["x"],
+      redacted: true,
+    });
+    expect(
+      sanitizeBrowserUrl("https://us\ter:pass@app.example.test/path?x=1#frag"),
+    ).toEqual({
+      url: "https://app.example.test/path?x=1#frag",
+      origin: "https://app.example.test",
+      query_parameter_names: ["x"],
+      redacted: true,
+    });
   });
 
   it("retains ordinary query values and malformed URL diagnostics", () => {
@@ -158,5 +287,100 @@ describe("browser observation sensitive surfaces and retention", () => {
     expect(sanitizeEndpointCandidate("/api/search?q=rea#results")).toBe(
       "/api/search?q=rea#results",
     );
+  });
+});
+
+describe("page inspection producer facts", () => {
+  const inspection = () =>
+    createWebPageInspection([
+      {
+        source: "fetch('/api');",
+        scriptKey: `scr_${"a".repeat(64)}`,
+        url: "https://app.example.test/main.js",
+        origin: "https://app.example.test",
+        cdpHash: "hash",
+      },
+    ]);
+  const axNode = {
+    node_id: "root",
+    parent_id: null,
+    role: "RootWebArea",
+    name: null,
+    description: null,
+    ignored: false,
+    states: [],
+  };
+  const worker = {
+    target_id: "worker-1",
+    type: "worker",
+    url: "https://app.example.test/worker.js",
+    origin: "https://app.example.test",
+    attached: false,
+    opener_target_id: null,
+    parent_frame_id: null,
+  };
+
+  it.each([
+    ["script frame_id", ["scripts", "items", 0, "frame_id"]],
+    ["accessibility states", ["accessibility", "nodes", 0, "states"]],
+    ["worker opener_target_id", ["workers", 0, "opener_target_id"]],
+    ["worker parent_frame_id", ["workers", 0, "parent_frame_id"]],
+  ] as const)("refuses an inspection without the %s", (_label, path) => {
+    const base = inspection();
+    const input = structuredClone({
+      ...base,
+      accessibility: { ...base.accessibility, nodes: [axNode] },
+      workers: [worker],
+    });
+    expect(webPageInspectionSchema.safeParse(input).success).toBe(true);
+    const parent = path
+      .slice(0, -1)
+      .reduce<unknown>(
+        (value, key) => Reflect.get(value as object, key),
+        input,
+      );
+    Reflect.deleteProperty(parent as object, path.at(-1)!);
+    const parsed = webPageInspectionSchema.safeParse(input);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((issue) => issue.path)).toContainEqual(
+      path,
+    );
+  });
+});
+
+describe("browser URL target identity", () => {
+  it("names the reported page URL without userinfo, keeping its query and fragment", () => {
+    const identity = browserUrlTargetIdentity(
+      "https://user:pass@app.example.test/path?token=secret#part",
+    );
+    expect(identity).toEqual({
+      kind: "url",
+      url: "https://app.example.test/path?token=secret#part",
+      origin: "https://app.example.test",
+    });
+    expect(urlTargetIdentitySchema.parse(identity)).toEqual(identity);
+
+    const backslash = browserUrlTargetIdentity(
+      String.raw`https:\\user:pass@app.example.test/path`,
+    );
+    expect(urlTargetIdentitySchema.parse(backslash)).toMatchObject({
+      origin: "https://app.example.test",
+    });
+    expect(JSON.stringify(backslash)).not.toContain("user:pass");
+  });
+
+  it("names an opaque origin as null", () => {
+    expect(browserUrlTargetIdentity("about:blank")).toEqual({
+      kind: "url",
+      url: "about:blank",
+      origin: null,
+    });
+  });
+
+  it("does not identify a document whose URL was withheld or is not a URL", () => {
+    for (const value of ["[unsupported-url]", ""])
+      expect(browserUrlTargetIdentity(value)).toEqual(
+        unknownTarget("not-observed"),
+      );
   });
 });

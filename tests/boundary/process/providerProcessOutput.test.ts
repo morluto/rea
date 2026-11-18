@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { Socket } from "node:net";
+import type { Writable } from "node:stream";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
@@ -10,6 +11,36 @@ import {
   spawnProviderProcessFixture,
   stopProviderProcessFixture,
 } from "../../fixtures/providerProcess.js";
+
+it.skipIf(process.platform === "win32")(
+  "drains inherited stderr after real leader exit before output close",
+  async () => {
+    const child = spawnProviderProcessFixture("late-stderr");
+    const owner = new ProviderProcessSupervisor({
+      process: child,
+      ownsProcessLifetime: true,
+    });
+    const release = child.stdio[3] as Writable;
+    try {
+      expect(await owner.waitForExit(2000)).toBe(true);
+      expect(await owner.waitForOutputClose(0)).toBe(false);
+      const stopped = owner.stop();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release.end();
+      await expect(stopped).resolves.toEqual({ status: "already-exited" });
+      expect(owner.snapshot().stderr).toMatchObject({
+        text: "final-tail",
+        observedBytes: 10,
+      });
+      expect(owner.snapshot().outputIncomplete).toBeUndefined();
+      expect(await owner.waitForOutputClose(0)).toBe(true);
+    } finally {
+      release.end();
+      await owner.stop();
+      await stopProviderProcessFixture(child);
+    }
+  },
+);
 
 it("unreferences inherited output streams without closing them", async () => {
   const child = spawnProviderProcessFixture("stubborn");

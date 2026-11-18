@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect } from "vitest";
 
@@ -11,6 +13,7 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { openProductionTarget } from "../../support/mcp/productionSession.js";
 
 const demangledSchema = evidenceResultOf(demangleSwiftSchema);
+const execute = promisify(execFile);
 
 describe.skipIf(process.platform !== "darwin")(
   "native Swift demangling through MCP",
@@ -86,19 +89,40 @@ describe.skipIf(process.platform !== "darwin")(
               ...decodable.map((prefix) => `${prefix}4main3FooV`),
               ...prefixes.map((prefix) => `${prefix}Bogus`),
               "_Tprintf",
+              // Current swift-demangle prints these undecoded names as
+              // _T0Bogus, __stack_chk_fail and $strlen.
+              "__T0Bogus",
+              "___stack_chk_fail",
+              "strlen",
             ],
           },
         });
         expect(called.isError, JSON.stringify(called.content)).not.toBe(true);
-        expect(
-          demangledSchema
-            .parse(called.structuredContent)
-            .normalized_result.symbols.map(({ status }) => status),
-        ).toEqual([
+        const result = demangledSchema.parse(
+          called.structuredContent,
+        ).normalized_result;
+        const { symbols } = result;
+        expect(symbols.map(({ status }) => status)).toEqual([
           ...decodable.map(() => "demangled"),
           ...prefixes.map(() => "invalid"),
           "unchanged",
+          "invalid",
+          "unchanged",
+          "unchanged",
         ]);
+        // Toolchain versions can differ in their undecoded spelling. Compare
+        // retained Evidence with the actual producer instead of rewriting it
+        // to match the input or requiring one toolchain's adjustment.
+        const command = result.provenance.find(
+          ({ tool }) => tool === "swift-demangle",
+        )?.command;
+        const executable = command?.[0];
+        if (executable === undefined || command === undefined)
+          throw new Error("Missing demangler command provenance");
+        const { stdout } = await execute(executable, command.slice(1));
+        expect(symbols.map(({ output }) => output)).toEqual(
+          stdout.replace(/\n$/u, "").split("\n"),
+        );
       },
     );
   },

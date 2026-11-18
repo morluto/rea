@@ -14,7 +14,12 @@ import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVer
 
 const ARTIFACT_SHA = "a".repeat(64);
 
-const moduleNode = (name: string, source: string, structure?: string) =>
+const moduleNode = (
+  name: string,
+  source: string,
+  structure?: string,
+  algorithm = "fixture",
+) =>
   fixtureNode(
     "javascript-module",
     {
@@ -30,7 +35,7 @@ const moduleNode = (name: string, source: string, structure?: string) =>
         ? {}
         : {
             structural_fingerprint_sha256: structure.repeat(64),
-            structural_fingerprint_algorithm: "fixture",
+            structural_fingerprint_algorithm: algorithm,
           }),
     },
     artifactEvidence(ARTIFACT_SHA, `${name}.js`),
@@ -64,6 +69,52 @@ const compare = (
     leftNativeEvidence: [],
     rightNativeEvidence: [],
   });
+
+it("matches equal digests only within the same archived fingerprint algorithm", () => {
+  const left = [
+    moduleNode("left-v1", "1", "a", "babel-ast-v1"),
+    moduleNode("left-v2", "2", "a", "babel-ast-v2"),
+    moduleNode("left-v3", "3", "a", "babel-ast-v3"),
+    moduleNode("left-incompatible", "4", "b", "babel-ast-v1"),
+  ] as const;
+  const right = [
+    moduleNode("right-v3", "5", "a", "babel-ast-v3"),
+    moduleNode("right-v2", "6", "a", "babel-ast-v2"),
+    moduleNode("right-v1", "7", "a", "babel-ast-v1"),
+    moduleNode("right-incompatible", "8", "b", "babel-ast-v3"),
+  ] as const;
+  const result = compare(graph([...left]), graph([...right]));
+  expect(result.items).toHaveLength(5);
+  for (const [before, after] of [
+    [left[0], right[2]],
+    [left[1], right[1]],
+    [left[2], right[0]],
+  ] as const) {
+    expect(
+      result.items.find(({ left_node_id }) => left_node_id === before.node_id),
+    ).toMatchObject({
+      right_node_id: after.node_id,
+      status: "changed",
+      match: { status: "matched", basis: "structural-fingerprint" },
+    });
+  }
+  expect(
+    result.items.find(({ left_node_id }) => left_node_id === left[3].node_id),
+  ).toMatchObject({
+    right_node_id: null,
+    status: "removed",
+    match: { status: "unmatched" },
+  });
+  expect(
+    result.items.find(
+      ({ right_node_id }) => right_node_id === right[3].node_id,
+    ),
+  ).toMatchObject({
+    left_node_id: null,
+    status: "added",
+    match: { status: "unmatched" },
+  });
+});
 
 describe("application version matching", () => {
   it("does not revisit a source group that becomes unique after identity matching", () => {

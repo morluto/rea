@@ -1,3 +1,9 @@
+/** Maximum complete class-file buffer retained for FAT/JVM disambiguation. */
+export const MAX_JVM_CLASS_IDENTITY_BYTES = 16 * 1024 * 1024;
+
+export const JVM_CLASS_IDENTITY_LIMIT_REASON =
+  "FAT/JVM identity is unresolved because the class identity scan exceeds the 16 MiB limit";
+
 /** Class-file identity used to disambiguate JVM CAFEBABE from Mach-O FAT. */
 class ClassFileCursor {
   private offset = 0;
@@ -250,7 +256,14 @@ export const isJvmClassFile = (bytes: Uint8Array): boolean => {
   )
     return false;
   const interfaces = cursor.u2();
-  if (interfaces === null || !cursor.skip(interfaces * 2)) return false;
+  if (interfaces === null) return false;
+  // JVMS 4.1: every interface index must name CONSTANT_Class_info, just
+  // like this_class and nonzero super_class. Framing alone is insufficient
+  // to establish JVM identity when the same magic also identifies FAT.
+  for (let index = 0; index < interfaces; index += 1) {
+    const reference = cursor.u2();
+    if (reference === null || !poolHasTag(pool, reference, 7)) return false;
+  }
   if (!readMembers(cursor, pool) || !readMembers(cursor, pool)) return false;
   const attributes = cursor.u2();
   return (

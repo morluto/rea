@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -16,6 +15,8 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 if (
   process.env.GHIDRA_INSTALL_DIR === undefined ||
@@ -26,7 +27,19 @@ if (
   );
 const execute = promisify(execFile);
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-mips-shared-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("mips-shared");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-mips-shared-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -243,11 +256,13 @@ try {
         );
         const dossier = await call("analyze_function", {
           procedure: compressed,
+          detail: "complete",
         });
         assert.match(dossier.pseudocode, /\^\s*0x5a/u);
         assert.match(dossier.pseudocode, /\+\s*(?:7|0x7)\b/u);
         const standardDossier = await call("analyze_function", {
           procedure: standard,
+          detail: "complete",
         });
         assert.match(standardDossier.pseudocode, /\+\s*(?:3|0x3)\b/u);
         const snapshotPath = join(
@@ -260,7 +275,7 @@ try {
         );
         assert.equal(
           snapshot.binding.analysis_profile.parameters.language_selection,
-          "provider-pinned-v1",
+          "provider-pinned",
         );
         assert.equal(
           snapshot.binding.analysis_profile.parameters.language_id,
@@ -326,13 +341,16 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw new Error(`Cleanup unverified; retained workspace: ${workspace}`, {
-    cause: failure,
-  });
+  throw retainWorkspace(
+    `Cleanup unverified; retained workspace: ${workspace}`,
+    {
+      cause: failure,
+    },
+  );
 if (failure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `MIPS16 shared verification failed; retained workspace: ${workspace}`,
     { cause: failure },
   );
-await rm(workspace, { recursive: true, force: true });
+await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

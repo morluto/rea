@@ -110,6 +110,26 @@ describe("detached binary PGP publisher verification", () => {
     ).toMatchObject({ ok: false, error: { reason: "cancelled" } });
   });
 
+  it.each([null, "caller stop", { phase: "publisher-key" }])(
+    "preserves the caller's exact abort reason %j as the cancellation cause",
+    async (reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      const result = await verifyDetachedPgpSignature(
+        bytes,
+        signatures[0]!,
+        publicKey,
+        fingerprint,
+        controller.signal,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "cancelled" },
+      });
+      expect(result.ok ? undefined : result.error.cause).toBe(reason);
+    },
+  );
+
   it("preserves cancellation while loading the publisher key, before classifying its identity", async () => {
     const controller = new AbortController();
     const verification = verifyDetachedPgpSignature(

@@ -1,12 +1,16 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import { ADB_TOOL_CONTRACTS } from "../../../src/contracts/adb/adbToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 
 const identity = { id: "adb", name: "Android Debug Bridge", version: null };
@@ -33,9 +37,31 @@ const results: Readonly<Record<string, unknown>> = {
         product: "sdk_gphone64_x86_64",
         model: "sdk_gphone64_x86_64",
         device: "emu64xa",
-        transport_id: 1,
+        transport_identity: {
+          status: "reported",
+          decimal: "1",
+          source_token: "1",
+          source_line: "emulator-5554 device transport_id:1",
+        },
         kind: "emulator",
         kind_basis: "emulator_serial_prefix",
+      },
+      {
+        serial: "exact-serial",
+        state: "device",
+        transport: "usb",
+        product: "product",
+        model: "Pixel",
+        device: "device",
+        transport_identity: {
+          status: "reported",
+          decimal: "18446744073709551615",
+          source_token: "18446744073709551615",
+          source_line:
+            "exact-serial device model:Pixel transport_id:18446744073709551615",
+        },
+        kind: "physical",
+        kind_basis: "usb_transport",
       },
     ],
     may_have_started_adb_server: false,
@@ -101,6 +127,7 @@ const results: Readonly<Record<string, unknown>> = {
     user_id: 10234,
     pkg_flags: "[ HAS_CODE ]",
     requested_permissions_count: 2,
+    numeric_issues: { sample: [], total: 0 },
     coverage: "complete",
   },
   pull_adb_file: {
@@ -190,13 +217,31 @@ const results: Readonly<Record<string, unknown>> = {
     override_size: null,
     physical_density: 420,
     override_density: null,
+    numeric_issues: { sample: [], total: 0 },
+    coverage: "complete",
   },
   inspect_adb_window: {
     client: clientIdentity,
     serial: "emulator-5554",
+    source_section: "windows",
+    focus_summary: "single_context",
+    focus_contexts: [
+      {
+        scope: "unscoped",
+        display_id: null,
+        header_line: null,
+        declarations: [
+          {
+            field: "mCurrentFocus",
+            value: "Window{abcdef u0 com.example.app/Main}",
+            raw_line: "mCurrentFocus=Window{abcdef u0 com.example.app/Main}",
+          },
+        ],
+      },
+    ],
     focused_window: "Window{abcdef u0 com.example.app/Main}",
     focused_app: null,
-    observed_lines: ["Window{abcdef u0 com.example.app/Main}"],
+    observed_lines: ["mCurrentFocus=Window{abcdef u0 com.example.app/Main}"],
   },
   read_adb_setting: {
     client: clientIdentity,
@@ -225,6 +270,7 @@ const results: Readonly<Record<string, unknown>> = {
       },
     ],
     exact_match: true,
+    unparsed_lines: [],
     coverage: "complete",
   },
   install_adb_package: {
@@ -286,41 +332,56 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "adb-boundary", version: "0.0.0" });
+  const client = new Client(
+    { name: "adb-boundary", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 
   const { tools } = await client.listTools();
-  const names = tools.map((tool) => tool.name);
-  const operationNames = [
-    "inspect_adb_client",
-    "list_adb_devices",
-    "inspect_adb_device",
-    "list_adb_packages",
-    "pull_adb_package",
-    "read_adb_logcat",
-    "inspect_adb_package",
-    "pull_adb_file",
-    "push_adb_file",
-    "capture_adb_screen",
-    "list_adb_processes",
-    "list_adb_directory",
-    "list_adb_features",
-    "list_adb_services",
-    "inspect_adb_display",
-    "inspect_adb_window",
-    "read_adb_setting",
-    "collect_adb_bugreport",
-    "resolve_adb_packages",
-    "install_adb_package",
-    "uninstall_adb_package",
-    "start_adb_app",
-    "start_adb_activity",
-    "stop_adb_app",
-  ] as const;
-  for (const name of operationNames) expect(names, name).toContain(name);
-
+  // Every ADB contract must be advertised once, with its input schema intact.
+  const operationNames = ADB_TOOL_CONTRACTS.map(({ name }) => name);
   assertAdvertisedMcpContracts(operationNames, tools);
+  const listed = await client.callTool({
+    name: "list_adb_devices",
+    arguments: {},
+  });
+  expect(listed.isError).not.toBe(true);
+  const listing = parseEvidence(listed.structuredContent);
+  expect(listing.normalized_result).toMatchObject({
+    devices: [
+      {
+        serial: "emulator-5554",
+        transport_id: 1,
+        transport_id_text: "1",
+        transport_id_status: "reported",
+      },
+      {
+        serial: "exact-serial",
+        transport_id: null,
+        transport_id_text: "18446744073709551615",
+        transport_id_status: "reported",
+      },
+    ],
+  });
+  expect(listing.raw_result).toMatchObject({
+    transport_id_observations: [
+      { serial: "emulator-5554", source_token: "1" },
+      { serial: "exact-serial", source_token: "18446744073709551615" },
+    ],
+  });
+  const listingSchema = canonicalOutputSchema("list_adb_devices");
+  const validation = createMcpSchemaValidation();
+  onTestFinished(() => validation.clear());
+  expect(validation.assertions.validateSchema(listingSchema)).toBe(true);
+  expect(validation.assertions.validate(listingSchema, listing)).toBe(true);
+  const malformed = structuredClone(listing);
+  const report = malformed.normalized_result as {
+    devices: { transport_id_text: string | null }[];
+  };
+  report.devices[1]!.transport_id_text = "not-a-decimal";
+  expect(validation.assertions.validate(listingSchema, malformed)).toBe(false);
 
   const pulled = await client.callTool({
     name: "pull_adb_package",
@@ -366,7 +427,10 @@ it("rejects invalid tool input before reaching the provider", async () => {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "adb-boundary-invalid", version: "0.0.0" });
+  const client = new Client(
+    { name: "adb-boundary-invalid", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 
@@ -375,8 +439,23 @@ it("rejects invalid tool input before reaching the provider", async () => {
     arguments: { serial: "bad serial" },
   });
   expect(rejected.isError).toBe(true);
-  const text = (rejected.content as { readonly text?: string }[])
-    .map((part) => part.text ?? "")
-    .join("");
-  expect(text).toContain("Invalid arguments for tool inspect_adb_device");
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "inspect_adb_device",
+      },
+      details: {
+        operation: "inspect_adb_device",
+        issues: [
+          {
+            path: ["serial"],
+            reason: "invalid_format",
+            expected: "regex",
+          },
+        ],
+      },
+    },
+  });
 });

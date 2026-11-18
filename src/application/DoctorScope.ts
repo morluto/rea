@@ -1,15 +1,20 @@
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
+import { blocksProcessStart } from "../config/processStart.js";
 import type {
   ClientRegistrationStatus,
   UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import { manualRegistrationRemediation } from "./SupportedClients.js";
+import { isDesktopBuildInformationalCheck } from "./DesktopBuildDoctor.js";
+import {
+  DESKTOP_BUILD_PROVIDER_ID,
+  isDesktopBuildCheck,
+} from "../domain/doctorProviderIds.js";
+import type { DoctorScope, DoctorSkillState } from "./Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
-  DoctorScope,
-  DoctorSkillState,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {
@@ -71,26 +76,58 @@ export const scopeDoctorChecks = (
       input.registrations.find((candidate) => candidate.client === client),
     ),
   );
+  const environmentChecks = input.checks.filter((check) =>
+    registrationEnvironmentInScope(check, input.scope),
+  );
   const skillChecks = input.scope.skill
     ? [selectedSkillCheck(input.skillState, input.checks)]
     : [];
   const selectedProviderChecks = input.scope.providers.flatMap((providerId) =>
-    selectedProviderChecksFor(providerId, providerChecks, input.providers),
+    providerId === DESKTOP_BUILD_PROVIDER_ID
+      ? requiredDesktopBuildChecks(input.checks)
+      : selectedProviderChecksFor(providerId, providerChecks, input.providers),
   );
   const hopperHostChecks = input.scope.providers.includes("hopper")
     ? input.checks.filter(({ name }) => name === "host")
     : [];
+  // parseConfig rejects these before the MCP server starts. Hopper's own
+  // scope already includes hopper-startup-timeout through its provider checks.
+  const blocksMcpStartup = (check: DoctorCheck): boolean =>
+    check.name.startsWith("runtime-configuration:") ||
+    check.name === "hopper-startup-timeout";
+  const blocksProcess = (check: DoctorCheck): boolean => {
+    const setting = check.details?.setting;
+    return (
+      check.name.startsWith("runtime-configuration:") &&
+      typeof setting === "string" &&
+      blocksProcessStart(setting)
+    );
+  };
+  const exercisesMcpStartup =
+    input.scope.clients.length > 0 || input.scope.providers.length > 0;
+  const startupChecks = (
+    exercisesMcpStartup
+      ? input.checks.filter(blocksMcpStartup)
+      : input.checks.filter(blocksProcess)
+  ).filter(
+    (check) =>
+      check.name !== "hopper-startup-timeout" ||
+      !input.scope.providers.includes("hopper"),
+  );
   const scopeChecks = [
     ...coreChecks,
+    ...startupChecks,
     ...hopperHostChecks,
     ...selectedProviderChecks,
     ...clientChecks,
+    ...environmentChecks,
     ...skillChecks,
   ];
   const selectedNames = new Set(scopeChecks.map(({ name }) => name));
   return {
     healthy:
       coreChecks.every(({ ok }) => ok) &&
+      startupChecks.every(({ ok }) => ok) &&
       hopperHostChecks.every(({ ok }) => ok) &&
       clientChecks.every(({ ok }) => ok) &&
       skillChecks.every(({ ok }) => ok) &&
@@ -100,6 +137,22 @@ export const scopeDoctorChecks = (
       ({ name }) => !selectedNames.has(name),
     ),
   };
+};
+
+/** Follow the caller's question: a named client, or a provider it relies on. */
+const registrationEnvironmentInScope = (
+  { name, details }: DoctorCheck,
+  scope: DoctorScopeReport,
+): boolean => {
+  const [family, client] = name.split(":");
+  if (family !== "registration_environment" || client === undefined)
+    return false;
+  const providers = details?.providers;
+  return (
+    scope.clients.includes(client) ||
+    (Array.isArray(providers) &&
+      scope.providers.some((provider) => providers.includes(provider)))
+  );
 };
 
 const isProviderCheck = (
@@ -136,6 +189,27 @@ const selectedProviderChecksFor = (
       remediation: `Configure the ${providerId} provider, then rerun rea doctor.`,
     },
   ];
+};
+
+/** Informational desktop build checks stay outside the scope that decides health. */
+const requiredDesktopBuildChecks = (
+  checks: readonly DoctorCheck[],
+): readonly DoctorCheck[] => {
+  const required = checks.filter(
+    ({ name }) =>
+      isDesktopBuildCheck(name) && !isDesktopBuildInformationalCheck(name),
+  );
+  return required.length > 0
+    ? required
+    : [
+        {
+          name: `provider:${DESKTOP_BUILD_PROVIDER_ID}`,
+          ok: false,
+          classification: "unknown",
+          detail: "This doctor host does not check desktop build hosts.",
+          remediation: "Run rea doctor --provider desktop_build from the CLI.",
+        },
+      ];
 };
 
 const selectedRegistrationCheck = (
@@ -186,7 +260,12 @@ const selectedSkillCheck = (
   checks.find(({ name }) => name === "skill:identity") ?? {
     name: "skill:identity",
     ok: state === "aligned",
-    classification: state === "aligned" ? "healthy" : "config_drift",
+    classification:
+      state === "aligned"
+        ? "healthy"
+        : state === "unknown"
+          ? "unknown"
+          : "config_drift",
     ...(state === "aligned"
       ? { detail: "Installed REA skill identity is aligned." }
       : {
