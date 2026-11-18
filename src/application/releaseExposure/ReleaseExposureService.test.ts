@@ -2252,6 +2252,7 @@ describe("ReleaseExposureService Go linker -r search list", () => {
   it.each([
     ["-r=$ORIGIN/../lib:/opt/private-runtime", ["/opt/private-runtime"]],
     ["-r /opt/a:$ORIGIN/lib:vendor/lib", ["/opt/a", "vendor/lib"]],
+    ["-r a:$ORIGIN:/opt/private-runtime", ["a", "/opt/private-runtime"]],
   ])("reads each ELF entry of the search list in %s", async (value, paths) => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
@@ -2332,6 +2333,8 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
       ["/opt/a", "/opt/b"],
     ],
     ["-Wl,-rpath-link,/opt/a:vendor/lib", ["/opt/a", "vendor/lib"]],
+    ["-Wl,-rpath,a:/opt/private-runtime", ["a", "/opt/private-runtime"]],
+    ["-Wl,-rpath-link,a:vendor/lib", ["a", "vendor/lib"]],
   ])("reads each entry of the search list in %s", async (value, paths) => {
     const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");

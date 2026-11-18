@@ -74,11 +74,6 @@ const LINKER_RUNTIME_TOKENS: Record<NativeImageFormat, RegExp | null> = {
 /** `-rpath` and `-rpath-link` take a search list, not one directory. */
 const LINKER_SEARCH_LIST_FLAG = /^-{1,2}(?:rpath|rpath-link)(?==|$)/u;
 /**
- * The `:` between search list entries. A `:` after a lone drive letter, as in
- * `C:\lib`, is part of the entry.
- */
-const LINKER_SEARCH_LIST_SEPARATOR = /(?<!(?:^|:)[A-Za-z]):/u;
-/**
  * The options `go tool link -h` documents as taking a directory, path or file,
  * as `-L dir` or `-L=dir`, never attached. `-extld` and `-extar` name
  * programs, so only their rooted values read as paths. `-libgcc` takes a file
@@ -180,9 +175,9 @@ const searchListEntries = (
   format: NativeImageFormat,
 ): string[] => {
   const token = LINKER_RUNTIME_TOKENS[format];
-  return (
-    format === "elf" ? list.split(LINKER_SEARCH_LIST_SEPARATOR) : [list]
-  ).filter((entry) => entry.length > 0 && token?.test(entry) !== true);
+  return (format === "elf" ? list.split(":") : [list]).filter(
+    (entry) => entry.length > 0 && token?.test(entry) !== true,
+  );
 };
 
 /** Consume compiler operands before interpreting any remaining forwarding syntax. */
