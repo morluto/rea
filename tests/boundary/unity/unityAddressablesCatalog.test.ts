@@ -592,19 +592,26 @@ it("refuses overlapping binary location sets before copying them", () => {
   expect(failure(bytes).reason).toBe("location-set-overlap");
 });
 
-it("checks a multi-megabyte base64 table at constant stack", () => {
-  const bytes = jsonCatalog(sampleCatalog(), {
-    patch: (catalog) => {
-      const extra = Buffer.from(catalog.m_ExtraDataString as string, "base64");
-      // Unused trailing extra data: about 8.4 million base64 characters.
-      catalog.m_ExtraDataString = Buffer.concat([
-        extra,
-        Buffer.alloc(6_300_000),
-      ]).toString("base64");
-    },
-  });
-  expect(decode(bytes).format).toBe("json");
-}, 60_000);
+it(
+  "checks a multi-megabyte base64 table at constant stack",
+  { tags: ["long-running"] },
+  () => {
+    const bytes = jsonCatalog(sampleCatalog(), {
+      patch: (catalog) => {
+        const extra = Buffer.from(
+          catalog.m_ExtraDataString as string,
+          "base64",
+        );
+        // Unused trailing extra data: about 8.4 million base64 characters.
+        catalog.m_ExtraDataString = Buffer.concat([
+          extra,
+          Buffer.alloc(6_300_000),
+        ]).toString("base64");
+      },
+    });
+    expect(decode(bytes).format).toBe("json");
+  },
+);
 
 it("reports null bundle request options as malformed, not a reader error", () => {
   const catalog = sampleCatalog();
