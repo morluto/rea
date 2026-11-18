@@ -818,6 +818,7 @@
 * **environment:** isolate manifest pointer admission ([#11915](https://github.com/morluto/rea/issues/11915)) ([5cdd7d5](https://github.com/morluto/rea/commit/5cdd7d54bf253586307b422cbf5ee0cf842c6327))
 * **environment:** prove replay selection precedence ([#11912](https://github.com/morluto/rea/issues/11912)) ([9e7db13](https://github.com/morluto/rea/commit/9e7db13005874a073f012ba409bd8e87d64ea643))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
+* **environment:** shrink catalog display fixtures ([#11941](https://github.com/morluto/rea/issues/11941)) ([df12107](https://github.com/morluto/rea/commit/df12107af58f4f583956048cc3d62088ecc1caf4))
 * **environment:** shrink the request-body read-budget fixture ([#11903](https://github.com/morluto/rea/issues/11903)) ([518a2ad](https://github.com/morluto/rea/commit/518a2ad434896d7c33890f4007b3400c1e8cfffb))
 * **environment:** use the compiled standalone card proof ([#11935](https://github.com/morluto/rea/issues/11935)) ([01e691f](https://github.com/morluto/rea/commit/01e691f4a20ce8df343622da75e6436327672f9c))
 * **environment:** verify escaped card capacity at the wire boundary ([#11937](https://github.com/morluto/rea/issues/11937)) ([4f68939](https://github.com/morluto/rea/commit/4f68939830d96cb35a9e5c10ae8992dc20c4c236))
