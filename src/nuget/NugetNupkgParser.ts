@@ -14,8 +14,8 @@ import {
 } from "@zip.js/zip.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
-import { ArtifactReaderFailure } from "../resources/index.js";
 import {
+  ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
   typedZipFailure,
@@ -214,6 +214,9 @@ interface OpcManifestTarget {
 const targetLabel = (display: string | null): string =>
   display === null ? "[URL withheld]" : JSON.stringify(display);
 
+const NUGET_MANIFEST_RELATIONSHIP =
+  "http://schemas.microsoft.com/packaging/2010/07/manifest";
+
 const opcManifestTargets = (
   xml: string,
   limitations: string[],
@@ -240,7 +243,7 @@ const opcManifestTargets = (
   const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of childrenNamed(root, "Relationship")) {
     const type = attribute(relationship, "Type");
-    if (type === null || !type.toLowerCase().endsWith("/manifest")) continue;
+    if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
     const target = attribute(relationship, "Target");
     if (target === null) continue;
     const displayedTarget = redactRecordedTransportUrl(target).url;

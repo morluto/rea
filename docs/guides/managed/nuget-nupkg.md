@@ -64,8 +64,8 @@ came from an OPC `_rels/.rels` manifest relationship or a unique root `.nuspec`.
 When selection is missing or ambiguous, `nuspec` is `null` and the inventory
 still succeeds with a limitation.
 
-The `.nuspec` is chosen from a unique OPC relationship whose Type ends in
-`/manifest` when that target exists in the ZIP. Otherwise a unique `.nuspec` at
+The `.nuspec` is chosen from a unique OPC relationship with Type
+`http://schemas.microsoft.com/packaging/2010/07/manifest` when that target exists in the ZIP. Otherwise a unique `.nuspec` at
 the package root is used. Multiple conflicting manifests are not decoded.
 
 ## Limits and failures

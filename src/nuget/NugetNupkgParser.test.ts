@@ -379,6 +379,25 @@ const manifestRels = (target: string) => `<?xml version="1.0" encoding="utf-8"?>
 </Relationships>
 `;
 
+it("uses the root nuspec when an unrelated relationship ends in /manifest", async () => {
+  const bytes = await nugetNupkgFixture({
+    includeRels: false,
+    extraMembers: {
+      "_rels/.rels": manifestRels("content/Other.nuspec").replace(
+        "http://schemas.microsoft.com/packaging/2010/07/manifest",
+        "https://example.invalid/manifest",
+      ),
+      "content/Other.nuspec": ungroupedNuspec,
+    },
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.nuspec).toMatchObject({
+    path: "Demo.Package.nuspec",
+    source: "root-nuspec",
+  });
+  expect(report.identity?.id).toBe("Demo.Package");
+});
+
 it.for(["manifests/./Actual.nuspec", "/manifests/extra/../Actual.nuspec"])(
   "resolves dot segments in the manifest relationship Target %s",
   async (target) => {
