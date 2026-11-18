@@ -820,6 +820,7 @@
 * **adb:** expect the CLI key for a refused output directory ([#11432](https://github.com/morluto/rea/issues/11432)) ([1b8ffaa](https://github.com/morluto/rea/commit/1b8ffaa37ca07f56a734f291efa803e84e137d6f))
 * advance the Rizin and build computer fixed waits instead of sleeping through them ([#11026](https://github.com/morluto/rea/issues/11026)) ([f46cd67](https://github.com/morluto/rea/commit/f46cd6770c8dd05e22ead3f082acf4e214bfd8b4))
 * **agentenv:** skip /proc session tests off Linux and release held descendants ([#11495](https://github.com/morluto/rea/issues/11495)) ([9b1c739](https://github.com/morluto/rea/commit/9b1c739da6175b292366d8dae265a92bf895648a))
+* align Cutter and loader fixtures with current contracts ([#12088](https://github.com/morluto/rea/issues/12088)) ([30006cf](https://github.com/morluto/rea/commit/30006cfd24641d1ca3e958d07e467d91577f01bf))
 * **apple:** run the ARM32 IPS join through the shared CLI fixture ([ffc8318](https://github.com/morluto/rea/commit/ffc8318da3229900263fd6cc34196cf52b6eac0f)), closes [#10201](https://github.com/morluto/rea/issues/10201)
 * **architecture:** count hand-built resource-constraint refusals ([#11518](https://github.com/morluto/rea/issues/11518)) ([f81525e](https://github.com/morluto/rea/commit/f81525efb090c40f1989b918f074928145757986))
 * **architecture:** ratchet top-level layer direction and mutual imports ([#10584](https://github.com/morluto/rea/issues/10584)) ([8c052bd](https://github.com/morluto/rea/commit/8c052bdec583ea46be1259bfc2fe40fc010a0085))
