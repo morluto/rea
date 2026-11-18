@@ -8,11 +8,39 @@ import {
   elf64AliasedInitializers,
   elfUnmappedInitializerTargets,
   machoArm64Initializers,
+  machoIndirectInitializerGolden,
 } from "../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const contract = toolContract("inspect_native_initializers");
+
+cliTest(
+  "does not name an initializer from an LLVM indirect-symbol string index",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-native-init-indirect-cli-");
+    const path = join(root, "program.o");
+    const bytes = machoIndirectInitializerGolden();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.entries).toMatchObject([
+      {
+        value_va: "0x8",
+        value_file_offset: 376,
+        symbol: null,
+        resolution: "raw",
+      },
+    ]);
+    expect(report.artifact.sha256).toBe(
+      "dc67f456f3b98a7e2279971a5049b089668fadbbd75f0c4e630383d413f713bf",
+    );
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "keeps an unrelocated ELF alias's value and source identity through the CLI",
