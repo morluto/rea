@@ -4372,7 +4372,7 @@ msgstr "Copiar buscar la página"
 #: website/public/guides/browser/index.html:363
 msgctxt "page:guides/browser/index.html"
 msgid "Copy capture the next ten seconds"
-msgstr "Copiar el prompt de captura de los próximos diez segundos"
+msgstr "Copiar el comando para capturar los próximos diez segundos"
 
 #: website/public/guides/browser/index.html:428
 msgctxt "page:guides/browser/index.html"
