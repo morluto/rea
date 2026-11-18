@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export const PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION =
   "Captured response-body bytes are the result of Playwright's Response.body() API. Playwright may satisfy that API with a credentialed follow-up load of the request URL when CDP has no body, so transaction and event links do not verify that retained bytes came from the original network transaction.";
@@ -90,7 +90,7 @@ export const browserNetworkBodySchema = z.union([
           path: ["bytes"],
           message: "Network body byte count disagrees with retained bytes",
         });
-      if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256)
+      if (sha256Hex(bytes) !== artifact.sha256)
         context.addIssue({
           code: "custom",
           path: ["sha256"],

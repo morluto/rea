@@ -5,25 +5,15 @@ import { Ajv2020 } from "ajv/dist/2020.js";
  * Verify canonical names, converted JSON Schemas, and session catalog metadata.
  * Only this operation needs built contracts; path checks remain source-only.
  */
-export const verifyCompleteToolCatalog = async (
-  client,
-  options,
-  environment = {},
-) => {
+export const verifyCompleteToolCatalog = async (client, options) => {
   const [
     { requireMcpLifecycleResult, sortVerifierNames },
     { TOOL_CONTRACTS },
     dialect,
-    { ADVERTISED_INPUT_DIALECT_BASELINE, ADVERTISED_OUTPUT_DIALECT_BASELINE },
-    { mcpInputSchemaProfileSchema },
-    { mcpOutputSchemaProfileSchema },
   ] = await Promise.all([
     import("./mcp-verifier-results.mjs"),
     import("../../dist/contracts/toolContracts.js"),
     import("../../dist/contracts/advertisedDialect.js"),
-    import("../../dist/contracts/advertisedDialectBaseline.js"),
-    import("../../dist/config/mcpInputSchemaProfile.js"),
-    import("../../dist/config/mcpOutputSchemaProfile.js"),
   ]);
   const listed = await client.listTools(undefined, options);
   const canonical = sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name));
@@ -50,31 +40,19 @@ export const verifyCompleteToolCatalog = async (
         );
     }
   }
-  // Compare the advertisement with the profiles actually passed to the server.
-  const inputProfile = mcpInputSchemaProfileSchema.parse(
-    environment.REA_MCP_INPUT_SCHEMA_PROFILE ?? "compact",
-  );
-  const outputProfile = mcpOutputSchemaProfileSchema.parse(
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE ?? "full",
-  );
-  const regressions = [
-    ...dialect.advertisedDialectRegressions(
-      dialect.countAdvertisedDialectViolations(
-        listed.tools.flatMap(dialect.advertisedInputDialectViolations),
-      ),
-      ADVERTISED_INPUT_DIALECT_BASELINE[inputProfile],
-    ),
-    ...dialect.advertisedDialectRegressions(
-      dialect.countAdvertisedDialectViolations(
-        listed.tools.flatMap(dialect.advertisedOutputPatternViolations),
-      ),
-      ADVERTISED_OUTPUT_DIALECT_BASELINE[outputProfile],
-    ),
-  ];
-  if (regressions.length > 0)
-    throw new Error(
-      `packaged MCP advertises constructs outside the portable schema dialect: ${regressions.join("; ")}`,
+  const violations = listed.tools.flatMap((tool) => [
+    ...dialect.advertisedInputDialectViolations(tool),
+    ...dialect.advertisedOutputPatternViolations(tool),
+  ]);
+  if (violations.length > 0) {
+    const diagnostics = violations.map(
+      ({ tool, schema, path, rule, detail }) =>
+        `${tool} ${schema} ${path}: ${detail === undefined ? rule : `${rule} ${detail}`}`,
     );
+    throw new Error(
+      `packaged MCP advertises constructs outside the portable schema dialect: ${diagnostics.join("; ")}`,
+    );
+  }
   const sessionDefinition = listed.tools.find(
     ({ name }) => name === "binary_session",
   );
@@ -106,4 +84,29 @@ export const pathExists = async (path) => {
       return false;
     throw cause;
   }
+};
+
+/**
+ * Run bounded concurrent work, stop taking new items after the first failure,
+ * and wait for every started worker to settle before propagating failures.
+ */
+export const runSettledConcurrent = async (items, concurrency, worker) => {
+  if (items.length === 0) return;
+  let index = 0;
+  const failures = [];
+  await Promise.allSettled(
+    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (failures.length === 0 && index < items.length) {
+        const current = index++;
+        try {
+          await worker(items[current]);
+        } catch (cause) {
+          failures.push(cause);
+        }
+      }
+    }),
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "Concurrent verifier tasks failed");
 };

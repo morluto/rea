@@ -7,8 +7,8 @@ import { expect, it } from "vitest";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 it.skipIf(process.platform === "win32")(
   "projects inventoried special-entry omissions into partial application coverage",

@@ -1,5 +1,4 @@
 import { captureBudgets } from "./CaptureBudgets.js";
-import { createHash } from "node:crypto";
 import { LosslessNumber } from "lossless-json";
 import { parseCaptureJson } from "./CaptureJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -16,6 +15,7 @@ import {
 } from "./CaptureRedaction.js";
 import { createHarValidator } from "./HarSchema.js";
 import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,
@@ -33,7 +33,9 @@ export const decodeHarCapture = (
 ): DecodedCapture => {
   const raw = parseCaptureJson(text, "HAR");
   const validation = projectHar(raw, [], "validation");
-  const ipv6Adaptation = createHarValidator()(validation.reported);
+  const adaptations = createHarValidator()(validation.reported);
+  const ipv6Adaptation = adaptations.bracketedIpv6;
+  const failedRequests = new Set(adaptations.failedRequests);
   const adaptedIpv6Entries = new Set(ipv6Adaptation?.entries);
   const ipv6Limitations =
     ipv6Adaptation === null
@@ -46,7 +48,7 @@ export const decodeHarCapture = (
     !captureObject(raw.log) ||
     !Array.isArray(raw.log.entries)
   )
-    throw new CaptureFormatError("format", "HAR must contain log.entries.");
+    throw new CaptureFormatError("malformed", "HAR must contain log.entries.");
   if (raw.log.version !== "1.2")
     throw new CaptureFormatError(
       "unsupported",
@@ -82,6 +84,11 @@ export const decodeHarCapture = (
       limitations: [
         "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
         ...(adaptedIpv6Entries.has(ordinal) ? ipv6Limitations : []),
+        ...(failedRequests.has(ordinal)
+          ? [
+              "This capture declares Playwright 1.64.1 and records a failed request with unavailable timings (-1). The original failure and timing sentinels are retained; only the validation copy substitutes nonnegative timings. Producer declarations are not authenticated.",
+            ]
+          : []),
         ...(recordsExcluded
           ? [
               "This record's payload and sidecars are excluded because its structural ancestor property was explicitly marked sensitive.",
@@ -142,7 +149,7 @@ const projectHar = (
   ): JsonValue => {
     if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
         `HAR exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
@@ -161,7 +168,7 @@ const projectHar = (
       ) {
         const bytes = decodeHarBase64(item, pointer);
         const contentBase64 = bytes.toString("base64");
-        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const sha256 = sha256Hex(bytes);
         const hidden =
           redactor.sensitiveBytes(bytes) ||
           sensitiveValues.some(
@@ -240,7 +247,7 @@ const projectHar = (
         }),
       );
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR parser returned a non-JSON value.",
       pointer,
     );
@@ -280,7 +287,7 @@ const decodeHarBase64 = (value: string, pointer: string): Buffer => {
   const compact = value.replace(/[\t\n\r ]/g, "");
   if (!isCanonicalBase64(compact))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR content declares base64 but its text is not valid canonical base64 (ASCII whitespace is allowed).",
       pointer,
     );

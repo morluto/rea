@@ -125,12 +125,20 @@ cliTest.for([
   })),
   ...[1, 2_147_483_647].map((timeoutMs) => ({
     name: `valid timeout ${String(timeoutMs)}`,
-    registration: { command: "provider-must-not-launch", timeoutMs },
+    registration: {
+      command: "provider-must-not-launch",
+      protocol: "native",
+      timeoutMs,
+    },
     constraint: undefined,
   })),
   {
     name: "valid registration",
-    registration: { command: "provider-must-not-launch", args: [] },
+    registration: {
+      command: "provider-must-not-launch",
+      args: [],
+      protocol: "native",
+    },
     constraint: undefined,
   },
 ] as const)(

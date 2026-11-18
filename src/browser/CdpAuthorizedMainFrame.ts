@@ -5,6 +5,7 @@ import type { CdpConnection } from "./CdpConnection.js";
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { delayWithCancellation } from "./CdpCaptureValues.js";
 import type { CdpFrameTree } from "./protocol/CdpFrameTree.js";
+import type { CdpTargetDocument } from "./CdpTargetDocument.js";
 
 interface AuthorizedMainFrameOptions {
   readonly connection: CdpConnection;
@@ -12,6 +13,14 @@ interface AuthorizedMainFrameOptions {
   readonly signal: AbortSignal | undefined;
   readonly allowedOrigins: ReadonlySet<string>;
   readonly operation: BrowserObservationOperation;
+  /** A reply already read for another check, used as the first attempt. */
+  readonly initial?: CdpFrameTree;
+  /**
+   * The document already selected for this target. Every reply, including a
+   * retry, is compared with it before scope, so a proven change is reported as
+   * `target_changed` rather than hidden by a retry or a scope refusal.
+   */
+  readonly document?: CdpTargetDocument | undefined;
 }
 
 /** Wait for the attached target's main frame to enter its approved origin. */
@@ -21,14 +30,19 @@ export const authorizedMainFrame = async ({
   signal,
   allowedOrigins,
   operation,
+  initial,
+  document,
 }: AuthorizedMainFrameOptions): Promise<CdpFrameTree> => {
   for (let attempt = 0; attempt < 80; attempt += 1) {
-    const tree = await connection.send(
-      "Page.getFrameTree",
-      {},
-      sessionId,
-      signal,
-    );
+    const tree =
+      attempt === 0 && initial !== undefined
+        ? initial
+        : await connection.send("Page.getFrameTree", {}, sessionId, signal);
+    if (document !== undefined) {
+      document.observeTree(tree);
+      if (document.changed)
+        throw new BrowserObservationError(operation, "target_changed");
+    }
     const observed = tree.root.url;
     const facts = classifyCdpFrameUrl(observed, allowedOrigins);
     if (facts.scope === "outside_policy")

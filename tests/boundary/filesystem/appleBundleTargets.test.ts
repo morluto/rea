@@ -230,9 +230,11 @@ describe("Apple bundle directories that fail closed", () => {
     expect(projected.details).toMatchObject({
       constraint: "bundle_executable_undeclared",
       info_plist: plist,
+      related_operations: ["inspect_plist"],
     });
     expect(projected.remediation.action).toContain(plist);
     expect(projected.remediation.action).toContain("inspect_plist");
+    expect(projected.remediation.action).not.toContain("rea inspect-plist");
   });
 
   it("names the Info.plist when the declared program file is absent", async () => {

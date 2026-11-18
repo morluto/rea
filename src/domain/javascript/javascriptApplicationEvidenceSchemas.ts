@@ -1,3 +1,4 @@
+import { coverageStatusSchema, type CoverageStatus } from "../coverage.js";
 import { z } from "zod";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
@@ -203,6 +204,20 @@ export const applicationCoverageSchema = z.union([
 ]);
 export type ApplicationCoverage = z.infer<typeof applicationCoverageSchema>;
 
+/**
+ * An application graph's coverage status: the shared coverage vocabulary plus
+ * `unavailable`, for a graph whose producer could not run.
+ */
+export const applicationCoverageStatusSchema = z.enum([
+  ...coverageStatusSchema.options,
+  "unavailable",
+]);
+
+/** What an application graph's coverage says about its inputs: a graph whose producer could not run cannot tell. */
+export const applicationCoverageKnowledge = (
+  status: z.infer<typeof applicationCoverageStatusSchema>,
+): CoverageStatus => (status === "unavailable" ? "unknown" : status);
+
 /** Construct complete bounded coverage under the stated configured limits. */
 export const completeApplicationCoverage = (
   limits: ApplicationCoverage["limits"] = [],
@@ -255,10 +270,20 @@ export const applicationGraphEvidenceContextSchema =
   applicationGraphEvidenceBaseSchema.omit({ location: true });
 
 type EvidenceValue = z.infer<typeof applicationGraphEvidenceBaseSchema>;
+type EvidenceContextValue = z.infer<
+  typeof applicationGraphEvidenceContextSchema
+>;
+type EvidenceIssueSink = {
+  addIssue(issue: {
+    readonly code: "custom";
+    readonly path?: PropertyKey[];
+    readonly message: string;
+  }): void;
+};
 
 const checkAuthorityState = (
-  evidence: EvidenceValue,
-  context: z.RefinementCtx,
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
   if (
     evidence.authority === "static-relationship-inference" &&
@@ -299,8 +324,8 @@ const checkAuthorityState = (
 };
 
 const checkStateConfidence = (
-  evidence: EvidenceValue,
-  context: z.RefinementCtx,
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
   if (
     ["unknown", "unavailable"].includes(evidence.state) &&
@@ -334,16 +359,10 @@ const checkStateConfidence = (
     });
 };
 
-const checkTraceability = (
-  evidence: EvidenceValue,
-  context: z.RefinementCtx,
+const checkContextTraceability = (
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
-  if (evidence.state === "observed" && !evidence.location.available)
-    context.addIssue({
-      code: "custom",
-      path: ["location"],
-      message: "Observed facts require an actionable location",
-    });
   if (evidence.state === "inferred" && evidence.limitations.length === 0)
     context.addIssue({
       code: "custom",
@@ -361,9 +380,30 @@ const checkTraceability = (
     });
 };
 
-const checkArtifactBacking = (
+/** Whether a validated evidence context permits the fact's source location. */
+export const isCompatibleApplicationGraphEvidenceLocation = (
+  evidence: Pick<EvidenceContextValue, "state">,
+  location: z.infer<typeof applicationGraphEvidenceLocationSchema>,
+): boolean => evidence.state !== "observed" || location.available;
+
+const checkTraceability = (
   evidence: EvidenceValue,
-  context: z.RefinementCtx,
+  context: EvidenceIssueSink,
+): void => {
+  if (
+    !isCompatibleApplicationGraphEvidenceLocation(evidence, evidence.location)
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["location"],
+      message: "Observed facts require an actionable location",
+    });
+  checkContextTraceability(evidence, context);
+};
+
+const checkArtifactBacking = (
+  evidence: EvidenceContextValue,
+  context: EvidenceIssueSink,
 ): void => {
   const artifactBacked = [
     "artifact-bytes",
@@ -382,6 +422,23 @@ const checkArtifactBacking = (
       path: ["artifact"],
       message: "Artifact-backed facts require a content digest",
     });
+};
+
+/** Whether shared non-location provenance satisfies all context-level invariants. */
+export const isValidApplicationGraphEvidenceContext = (
+  evidence: EvidenceContextValue,
+): boolean => {
+  let valid = true;
+  const sink: EvidenceIssueSink = {
+    addIssue: () => {
+      valid = false;
+    },
+  };
+  checkAuthorityState(evidence, sink);
+  checkStateConfidence(evidence, sink);
+  checkContextTraceability(evidence, sink);
+  checkArtifactBacking(evidence, sink);
+  return valid;
 };
 
 /** Provenance, authority, uncertainty, and bounds for one graph fact. */
@@ -471,3 +528,20 @@ export type ApplicationGraphEvidenceContext = z.infer<
 export type ApplicationNodeIdentity = z.infer<
   typeof applicationNodeIdentitySchema
 >;
+
+/** Qualify a source interpretation while preserving its location and artifact identity. */
+export const qualifyJavaScriptLoaderEvidence = (
+  evidence: ApplicationGraphEvidence,
+  condition: string,
+): ApplicationGraphEvidence => ({
+  ...evidence,
+  confidence:
+    evidence.confidence === "exact" || evidence.confidence === "high"
+      ? "medium"
+      : evidence.confidence,
+  coverage:
+    evidence.coverage.status === "complete"
+      ? { ...evidence.coverage, status: "partial" }
+      : evidence.coverage,
+  limitations: [...evidence.limitations, condition],
+});

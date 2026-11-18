@@ -1,4 +1,4 @@
-import type { HopperDiagnosticType } from "../domain/hopperErrors.js";
+import type { HopperDiagnosticType } from "./HopperErrors.js";
 import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
 import type {
   ProviderProcessLaunch,

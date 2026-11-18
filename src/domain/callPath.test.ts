@@ -8,7 +8,11 @@ import {
 import { buildCallPath } from "./callPath.js";
 import { combineFunctionRelationshipCoverage } from "./functionCallCoverage.js";
 import { callPathResultSchema, type CallPathInput } from "./callPathSchemas.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "./evidence.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { RelationshipCoverage } from "./relationshipCoverage.js";
 import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
@@ -23,6 +27,7 @@ const observe = (
     readonly relationshipCoverage?: RelationshipCoverage;
     readonly calleeUnavailable?: string;
     readonly analysisProfile?: AnalysisProfileCommitment;
+    readonly target?: EvidenceSubjectTarget;
   } = {},
 ): Evidence => {
   const value = {
@@ -69,7 +74,11 @@ const observe = (
         }),
   } satisfies JsonValue;
   return createEvidence(
-    { path: "/tmp/a", sha256: "a".repeat(64), format: "mach-o" },
+    options.target ?? {
+      path: "/tmp/a",
+      sha256: "a".repeat(64),
+      format: "mach-o",
+    },
     { id: provider, name: provider, version: "1" },
     {
       operation: "analyze_function",
@@ -792,6 +801,38 @@ describe("call path evidence admission", () => {
         goal: { address: "overlay%ZZ:0x4000" },
       }),
     ).toThrow();
+  });
+
+  it("refuses functions from the same bytes opened at different entry points", () => {
+    const raw = (entryPoint: string): EvidenceSubjectTarget => ({
+      path: "/tmp/a.bin",
+      sha256: "a".repeat(64),
+      format: "raw-binary",
+      architecture: "arm64",
+      selection: { kind: "entry-point", entry_point: entryPoint },
+    });
+    const start = observe("0x1000", ["0x4000"], "rea-workflow", {
+      target: raw("0x0"),
+    });
+    expect(
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x0") }),
+      ]).status,
+    ).toBe("found");
+    let refused: unknown;
+    try {
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x100") }),
+      ]);
+    } catch (cause: unknown) {
+      refused = cause;
+    }
+    expect(refused).toBeInstanceOf(AnalysisInputError);
+    expect(JSON.stringify((refused as AnalysisInputError).issues)).toContain(
+      "Call-path Evidence mixes artifact subjects",
+    );
   });
 
   it("requires an observed start function", () => {

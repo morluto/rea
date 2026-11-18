@@ -1,7 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { JADX_BRIDGE_IDENTITY } from "../../../src/android/JadxRelease.ts";
+import { jadxBridgeIdentity } from "../../../src/android/JadxRelease.ts";
+
+const packagedBridgeVersion = () => {
+  const identity = jadxBridgeIdentity();
+  if (!identity.ok) throw new Error(identity.error);
+  return identity.value.version;
+};
 
 // An actual child MCP server exercising the production stdio/process seam.
 // It is a protocol fixture, not evidence of JADX decompiler support.
@@ -21,7 +27,7 @@ const server = new McpServer({
       ? ""
       : mode === "version"
         ? "99.0.0"
-        : JADX_BRIDGE_IDENTITY.version,
+        : packagedBridgeVersion(),
 });
 const requestedCount = Number.parseInt(
   process.env.REA_FAKE_JADX_CLASS_COUNT ?? "",
@@ -233,7 +239,7 @@ register("get_method_body", ({ method_name, overload_index }) => {
   const selected = methods.filter((method) => method.name === method_name)[
     overload_index
   ];
-  return json({
+  const identity = {
     class_name: "fixture.Target",
     method_name,
     full_name: `fixture.Target.${method_name}`,
@@ -241,7 +247,18 @@ register("get_method_body", ({ method_name, overload_index }) => {
       mode === "wrong-method" ? overload_index + 1 : overload_index,
     overload_count: method_name === "choose" ? 2 : 1,
     dex_descriptor:
-      mode === "wrong-descriptor" ? "()V" : selected.dex_descriptor,
+      mode === "wrong-descriptor" || mode === "unavailable-wrong-descriptor"
+        ? "()V"
+        : selected.dex_descriptor,
+  };
+  if (mode === "unavailable-body" || mode === "unavailable-wrong-descriptor")
+    return json({
+      ...identity,
+      mode: "unavailable",
+      body_unavailable_reason: `Disassembly could not establish one selected method: ${selected.raw_name}${selected.dex_descriptor}`,
+    });
+  return json({
+    ...identity,
     mode:
       mode === "smali" || mode === "selected-overload-smali" ? "smali" : "java",
     fell_back: mode === "smali" || mode === "selected-overload-smali",

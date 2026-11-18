@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { writeFile, readFile, copyFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { releaseAfter } from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import {
   assertVerifierCleanupComplete,
   createVerifierRun,
@@ -39,7 +38,7 @@ if (process.platform !== "linux" || process.arch !== "x64")
   throw new Error("verify:recorded:crash requires Linux x64.");
 const run = createVerifierRun();
 environment.REA_PROCESS_RUN_ID = run.run_id;
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-core-verifier-" });
+const root = await VerifierFixture.open({ prefix: "rea-core-verifier-" });
 const options = { root: root.path, environment, runId: run.run_id };
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
@@ -97,13 +96,9 @@ try {
     advertised.filter((tool) => tool.name === "inspect_recorded_crash").length,
     1,
   );
-  const catalog = await verifyCompleteToolCatalog(
-    basic.client,
-    {
-      timeout: 90_000,
-    },
-    environment,
-  );
+  const catalog = await verifyCompleteToolCatalog(basic.client, {
+    timeout: 90_000,
+  });
   for (const name of [
     "inspect_binary_layout",
     "inspect_recorded_crash",
@@ -352,19 +347,14 @@ try {
 } finally {
   // Sessions, the sentinel and any surviving descendant may still use files
   // under the root, so it is released only after all of them are proven gone.
+  for (const session of sessions) root.releaseAfter(() => session.close());
+  if (sentinel) root.releaseAfter(() => sentinel.close());
+  root.releaseAfter(async () => {
+    verifier = await completeVerifierRun(run);
+    assertVerifierCleanupComplete(verifier.process_lineage);
+  });
   try {
-    await releaseAfter(
-      [
-        ...sessions.map((session) => () => session.close()),
-        ...(sentinel ? [() => sentinel.close()] : []),
-        async () => {
-          verifier = await completeVerifierRun(run);
-          assertVerifierCleanupComplete(verifier.process_lineage);
-        },
-      ],
-      () => root.close(),
-      root.path,
-    )();
+    await root.release();
   } catch (cause) {
     failures.push(cause);
   }

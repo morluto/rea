@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { copyAndHash } from "../../../../src/kuna/KunaCommand.js";
 import {
   MACHO_LOAD_COMMAND_PREFIX,

@@ -9,7 +9,7 @@ import { err, ok } from "../../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
 
 it("retains the binary reader refusal when the symbol fallback also fails", async () => {
@@ -73,4 +73,30 @@ it("retains both the reader refusal and malformed symbol observation", async () 
       partial_observation: expect.any(Object),
     },
   });
+});
+
+it("accepts symbol rows with provider fields the name contract does not name", async () => {
+  const direct = new AnalysisCapabilityUnavailableError(
+    "native-macos",
+    "inspect_native_dispatch_metadata",
+    "Unsupported 32-bit Mach-O metadata",
+  );
+  const rows = [
+    { address: "0x1000", value: "_OBJC_CLASS_$_Widget", provider_rank: 1 },
+  ];
+  const analysis: AnalysisOperationPort = {
+    execute: async (operation) =>
+      operation === "list_names"
+        ? ok(
+            createAnalysisExecution(rows, {
+              id: "fixture",
+              name: "Fixture",
+              version: "1",
+            }),
+          )
+        : err(direct),
+  };
+  const result = await inspectNativeDispatch(analysis, 10);
+  if (!result.ok) throw result.error;
+  expect(JSON.stringify(result.value)).toContain("Widget");
 });

@@ -1,17 +1,24 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { compareTestDiscovery } from "./lib/test-discovery.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const execute = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 
-const temporary = await mkdtemp(join(tmpdir(), "rea-test-discovery-"));
+const temporaryFixture = await VerifierFixture.open({
+  prefix: "rea-test-discovery-",
+  private: false,
+});
+const temporary = temporaryFixture.path;
 let discovered;
-try {
+await withVerifierFixture(temporaryFixture, async () => {
   const output = join(temporary, "discovery.json");
   await execute(
     process.execPath,
@@ -61,9 +68,7 @@ try {
     console.error(JSON.stringify(report, null, 2));
     process.exitCode = 1;
   } else discovered = report.discovered;
-} finally {
-  await rm(temporary, { recursive: true, force: true });
-}
+});
 if (discovered !== undefined)
   console.log(
     `Discovered all ${discovered} test and spec files in src and tests exactly once.`,

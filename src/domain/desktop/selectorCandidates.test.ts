@@ -43,14 +43,55 @@ describe("childConditions", () => {
         { name: "body", attributes: {}, children: [text] },
       ],
     });
-    const huge = element(`a b ${"x".repeat(4 * 1024 * 1024)}`);
+    const length = 4 * 1024 * 1024;
+    const huge = element(`a b ${"x".repeat(length)}`);
 
-    const started = performance.now();
-    const conditions = childConditions(huge);
-    const elapsed = performance.now() - started;
+    // A selector names a member by at most 64 characters. Count the characters
+    // read one at a time, and refuse any whole-string rewrite of the long
+    // text, as collapsing all of it before measuring would do.
+    const allowed = 1024;
+    let read = 0;
+    const string = String.prototype;
+    const { [Symbol.iterator]: iterate } = string;
+    const rewrites = ["replace", "replaceAll", "split"] as const;
+    const originals = rewrites.map((name) => [name, string[name]] as const);
+    Object.defineProperty(string, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      *value(this: string) {
+        for (const character of iterate.call(this)) {
+          if (++read > allowed) throw new Error("read the whole child text");
+          yield character;
+        }
+      },
+    });
+    for (const [name, original] of originals)
+      Object.defineProperty(string, name, {
+        configurable: true,
+        writable: true,
+        value(this: string, ...args: never[]) {
+          if (this.length >= length)
+            throw new Error(`${name} on the long text`);
+          return (original as (...values: never[]) => unknown).apply(
+            this,
+            args,
+          );
+        },
+      });
+    let conditions: string[];
+    try {
+      conditions = childConditions(huge);
+    } finally {
+      string[Symbol.iterator] = iterate;
+      for (const [name, original] of originals)
+        Object.defineProperty(string, name, {
+          configurable: true,
+          writable: true,
+          value: original,
+        });
+    }
 
     expect(conditions).toEqual(["[>title=Budget]"]);
-    // Building the whole collapsed text took about half a second.
-    expect(elapsed).toBeLessThan(100);
+    expect(read).toBeLessThanOrEqual(allowed);
   });
 });

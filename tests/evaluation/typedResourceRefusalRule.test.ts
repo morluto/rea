@@ -17,7 +17,7 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
     valid: [
       {
         code: construct(""),
-        filename: resolve("src/application/JsonAuthenticationHeadroom.ts"),
+        filename: resolve("src/model/ModelArtifactProvider.ts"),
       },
       construct(', fixedAllowanceOptions("The allowance", "count")'),
       construct(
@@ -32,12 +32,12 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
     invalid: [
       {
         code: construct("") + construct(""),
-        filename: resolve("src/application/JsonAuthenticationHeadroom.ts"),
+        filename: resolve("src/model/ModelArtifactProvider.ts"),
         errors: [{ messageId: "untyped" }, { messageId: "untyped" }],
       },
       {
         code: "const value = 1;",
-        filename: resolve("src/application/JsonAuthenticationHeadroom.ts"),
+        filename: resolve("src/model/ModelArtifactProvider.ts"),
         errors: [{ messageId: "stale", data: { allowed: "1", actual: "0" } }],
       },
       { code: construct(""), errors: [{ messageId: "untyped" }] },

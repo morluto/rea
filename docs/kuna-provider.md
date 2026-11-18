@@ -36,6 +36,15 @@ export REA_KUNA_COMMAND=/absolute/path/to/kuna
 rea doctor --provider kuna
 ```
 
+Doctor and runtime share one readiness decision: valid Kuna settings and a
+`REA_KUNA_COMMAND` that is an executable regular file. Doctor reports it as the
+`installation` check, and the provider is available when it passes. Doctor also
+reports two health checks beside it that do not decide availability: `version`
+runs `kuna --version` and fingerprints the executable, and `cache` inspects the
+cache root without creating it. Runtime does not run these probes when it
+reports availability; opening a target runs the version probe. `rea setup`
+lists Kuna as a ready provider only when every Kuna check passes.
+
 Select it explicitly with `--provider kuna`, MCP's `open_binary.provider_id: "kuna"`, or `REA_ANALYSIS_PROVIDER=kuna`. With Kuna and another provider configured for the same target, `auto` reports `ambiguous` instead of choosing one.
 
 Ordinary readiness cancellation returns `cancelled` (CLI SIGINT/SIGTERM exits
@@ -174,8 +183,9 @@ REA writes Kuna's exports only inside `REA_KUNA_CACHE_DIR`:
 
 The cache key includes the selected launcher and resolved executable paths, plus
 the target's native basename: that name determines the export filenames and
-appears in generated source. REA accepts one current manifest layout. Older
-exports are rebuilt on demand and retired through normal owned-cache cleanup;
+appears in generated source. The key and manifest also name the REA release
+that wrote the entry, and REA accepts only entries from its own release. Exports
+from other releases are rebuilt on demand and retired through normal owned-cache cleanup;
 no manual deletion or migration is needed. Manifests must name the producer's
 exact flat file layout, with matching basenames and producing inputs. Replaced
 entry, project or manifest symlinks are refused before their targets are read;

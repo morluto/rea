@@ -29,6 +29,8 @@ and tallies per-row reasons, so the limitations list stays bounded.
 - `ElfInitializerSymbols.ts` loads symbol tables under one total symbol
   budget and decodes section REL / RELA records under one total record budget,
   checking the caller signal during that walk.
+  `elfSymbolSectionIndex.ts` owns companion-table framing and tagged section
+  references shared with CUDA, so reserved markers never become directory indices.
 - `MachoInitializers.ts` reuses the shared Mach-O container and chained-fixup
   decoders, reads symbols under one budget across every `LC_SYMTAB`, and
   names target sections through the same address index.
