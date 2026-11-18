@@ -170,7 +170,7 @@ export interface UtmpRecord {
   /** `ut_addr_v6` as four signed 32-bit words, in the record's own encoding. */
   readonly addressV6: readonly number[];
   /** Fixed-width fields whose bytes were not well-formed UTF-8. */
-  readonly undecodedFields: readonly string[];
+  readonly undecodedFields: readonly UndecodedField[];
 }
 
 export type UtmpIssue =
@@ -286,6 +286,20 @@ const exactSigned = (
 interface DecodedField {
   readonly text: string;
   readonly decoded: boolean;
+  /** Every byte of the field up to its terminator, as lowercase hex. */
+  readonly hex: string;
+}
+
+/** A fixed-width member whose bytes were not well-formed UTF-8. */
+export interface UndecodedField {
+  readonly field: string;
+  /**
+   * The member's bytes up to its terminator, losslessly.
+   *
+   * The readable `text` keeps only the longest valid prefix, so `alice` + `0xff` +
+   * `-admin` and a genuine `alice` would otherwise be indistinguishable.
+   */
+  readonly hex: string;
 }
 
 const decodeFixedWidth = (
@@ -300,8 +314,9 @@ const decodeFixedWidth = (
   // its whole width is well formed without a terminator; only malformed UTF-8
   // makes it unreadable.
   const used = end === -1 ? raw : raw.subarray(0, end);
+  const hex = Buffer.from(used).toString("hex");
   if (isStrictUtf8(used))
-    return { text: decodeStrictUtf8(used, "preserve"), decoded: true };
+    return { text: decodeStrictUtf8(used, "preserve"), decoded: true, hex };
   // Malformed bytes: keep the longest valid prefix and mark the field, so one bad
   // byte cannot abort the file or discard the records decoded before it.
   let prefix = used.length;
@@ -312,6 +327,7 @@ const decodeFixedWidth = (
         ? ""
         : decodeStrictUtf8(used.subarray(0, prefix), "preserve"),
     decoded: false,
+    hex,
   };
 };
 
@@ -400,7 +416,7 @@ const decodeRecords = (
       }),
       undecodedFields: fields
         .filter(([, decoded]) => !decoded.decoded)
-        .map(([field]) => field),
+        .map(([field, decoded]) => ({ field, hex: decoded.hex })),
     });
   }
 

@@ -304,9 +304,44 @@ describe("utmp diagnostics and bounds", () => {
     if (!result.ok)
       throw new Error("expected a parsed record, not a throw or an error");
     expect(result.value.records[0]?.user).toBe("keep");
-    expect(result.value.records[0]?.undecodedFields).toEqual(["user"]);
+    expect(result.value.records[0]?.undecodedFields).toEqual([
+      { field: "user", hex: "6b656570fffe" },
+    ]);
     expect(result.value.issues).toEqual([
       { kind: "undecoded_field", fileOffset: 0, field: "user" },
+    ]);
+  });
+
+  it("keeps a malformed field distinguishable from its valid prefix", () => {
+    // `alice` + 0xff + `-admin` and a plain `alice` both read as "alice"; only the
+    // retained bytes say which record wrote what.
+    const write = (suffix: readonly number[]): Uint8Array => {
+      const bytes = recordBytes(glibc32, login({ user: "alice" }));
+      bytes.set(suffix, 44 + 5);
+      bytes[44 + 5 + suffix.length] = 0;
+      return bytes;
+    };
+    const malformed = parseUtmpFile(write([0xff, ...Buffer.from("-admin")]), {
+      source: "utmp",
+      profile: glibc32,
+    });
+    const plain = parseUtmpFile(write([]), {
+      source: "utmp",
+      profile: glibc32,
+    });
+    if (!malformed.ok || !plain.ok) throw new Error("expected both to parse");
+    expect(malformed.value.records[0]?.user).toBe("alice");
+    expect(plain.value.records[0]?.user).toBe("alice");
+    expect(plain.value.records[0]?.undecodedFields).toEqual([]);
+    expect(malformed.value.records[0]?.undecodedFields).toEqual([
+      {
+        field: "user",
+        hex: Buffer.from([
+          ...Buffer.from("alice"),
+          0xff,
+          ...Buffer.from("-admin"),
+        ]).toString("hex"),
+      },
     ]);
   });
 });

@@ -108,8 +108,10 @@ accepting them would make the retained records, `omitted`, and the
 
 The fixed-width string members are `__attribute_nonstring__`, so a field that
 fills its whole width is well formed without a terminator. Only malformed UTF-8
-marks a field: the readable prefix is kept, the field is named in
-`undecodedFields`, and the remaining records still decode.
+marks a field: the readable prefix is kept, the remaining records still decode, and
+`undecodedFields` carries that member's bytes up to its terminator as hex. The
+prefix alone would collapse `alice` + `0xff` + `-admin` and a genuine `alice` into
+the same user, which a forensic record cannot do.
 
 | Issue                      | Cause                                                                         |
 | -------------------------- | ----------------------------------------------------------------------------- |
