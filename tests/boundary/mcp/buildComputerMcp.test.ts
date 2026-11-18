@@ -10,10 +10,11 @@ import { join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
 import {
   buildComputerFakes as fakes,
   bundleFolder,
@@ -25,9 +26,11 @@ import {
 import { COMPUTER_START_TIMING } from "../../../src/desktop/AgentEnvComputer.js";
 import {
   FAKE_FRAME_PNG,
+  startFakeComputer,
   type FakeApp,
   type FakeComputer,
 } from "../../fixtures/fakeAgentEnvComputer.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { waitFor } from "../../support/testWait.js";
 
@@ -665,66 +668,67 @@ it.each([
   },
 );
 
-it("runs one computer's calls in the order they arrive and another computer's beside them", async () => {
-  const app = slowApp(4);
-  const { runner } = await fakes({ app });
-  const other = await fakes();
-  const client = await connect(runner.environment);
+it("reports progress for a queued action while another computer can act independently", async () => {
+  const app = slowApp(Number.POSITIVE_INFINITY);
+  const { computer, runner } = await fakes({ app });
+  const other = await startFakeComputer();
+  onTestFinished(() => other.close());
+  const client = await connect(runner.environment, undefined, undefined, {
+    ...COMPUTER_START_TIMING,
+    progressMs: 100,
+  });
   const first = await startBuildComputer(client, {
     kind: "bundle",
     path: await bundleFolder(),
   });
   const second = await startBuildComputer(client, {
     kind: "bundle",
-    path: await bundleFolder(other.computer),
+    path: await bundleFolder(other),
   });
+  const initialCalls = computer.calls.length;
   const act = (id: string, action: string) =>
     callOk(client, "act_on_build_computer", { computer_id: id, action });
   const order: string[] = [];
   const reset = act(first, "reset").then(() => order.push("reset"));
-  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
-  const behind = act(first, "screenshot").then(() =>
-    order.push("screenshot behind the reset"),
+  await awaitAcknowledgement(
+    waitFor(() => expect(app.methods).toEqual(["data/reset"])),
+    reset,
+    "app reset",
   );
-  await act(second, "screenshot");
-  order.push("other computer's screenshot");
-  await Promise.all([reset, behind]);
-  expect(order).toEqual([
-    "other computer's screenshot",
-    "reset",
-    "screenshot behind the reset",
-  ]);
-});
-
-it("sends progress while an action waits for the call before it on its computer", async () => {
-  const app = slowApp(2);
-  const { runner } = await fakes({ app });
-  // A short heartbeat lets the queued action report progress while the reset
-  // before it is still polling the relaunched app.
-  const client = await connect(runner.environment, undefined, undefined, {
-    ...COMPUTER_START_TIMING,
-    progressMs: 100,
-  });
-  const id = await startBuildComputer(client, {
-    kind: "bundle",
-    path: await bundleFolder(),
-  });
-  const reset = callOk(client, "act_on_build_computer", {
-    computer_id: id,
-    action: "reset",
-  });
-  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
-  const progress: unknown[] = [];
-  const waited = await client.callTool(
-    {
-      name: "act_on_build_computer",
-      arguments: { computer_id: id, action: "screenshot" },
-    },
-    { onprogress: (update) => progress.push(update) },
+  const progress = createDeferred<void>();
+  const queued = client
+    .callTool(
+      {
+        name: "act_on_build_computer",
+        arguments: { computer_id: first, action: "screenshot" },
+      },
+      { onprogress: () => progress.resolve() },
+    )
+    .then((result) => {
+      order.push("queued screenshot");
+      return result;
+    });
+  const independent = act(second, "screenshot").then(() =>
+    order.push("independent screenshot"),
   );
-  expect(waited.isError, JSON.stringify(waited)).not.toBe(true);
-  expect(progress.length).toBeGreaterThan(0);
+  try {
+    await awaitAcknowledgement(
+      Promise.all([progress.promise, independent]),
+      Promise.race([reset, queued]),
+      "queued progress and independent screenshot",
+    );
+    expect(computer.calls.slice(initialCalls)).toEqual([]);
+  } finally {
+    app.unready = 0;
+    await Promise.allSettled([reset, queued, independent]);
+  }
+  expect((await queued).isError).not.toBe(true);
   await reset;
+  expect(order).toEqual([
+    "independent screenshot",
+    "reset",
+    "queued screenshot",
+  ]);
 });
 
 it("cancels a computer's call in progress on close and refuses the calls waiting behind it", async () => {
