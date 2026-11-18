@@ -30,18 +30,38 @@ def run_bundle(*args, **kwargs):
     return Result()
 '''
 
-# Windows cannot deliver an external POSIX SIGTERM with Popen.send_signal.
-# Raise it in CPython after the real helper installed both handlers instead.
-WINDOWS_SIGNAL = '''import runpy, signal, sys, threading
+# Ack at the read boundary. The baseline's BufferedReader already holds its lock
+# when it calls FileIO.readall. The fixed helper reads the descriptor directly.
+# Windows exercises the registered handlers with an in-process signal because
+# Popen.send_signal cannot deliver an external POSIX SIGTERM on that platform.
+SIGNAL_DRIVER = '''import os, runpy, signal, sys
 helper, signum, bundle = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-original = signal.signal
-def install(signum, handler):
-    previous = original(signum, handler)
-    if signum == signal.SIGINT:
-        threading.Timer(0.5, lambda: signal.raise_signal(requested)).start()
-    return previous
-signal.signal = install
-requested = signum
+stdin_fd = sys.stdin.fileno()
+raw = sys.stdin.buffer.raw
+original_readall = raw.readall
+original_read = os.read
+announced = False
+
+def acknowledge():
+    global announced
+    if announced:
+        return
+    announced = True
+    os.write(sys.stderr.fileno(), b"stdin-reader-ready\\n")
+    if os.name == "nt":
+        signal.raise_signal(signum)
+
+def readall():
+    acknowledge()
+    return original_readall()
+
+def read(fd, size):
+    if fd == stdin_fd:
+        acknowledge()
+    return original_read(fd, size)
+
+raw.readall = readall
+os.read = read
 sys.argv = [helper, bundle]
 runpy.run_path(helper, run_name="__main__")
 '''
@@ -65,11 +85,12 @@ class ComputerHelperTests(unittest.TestCase):
             if no_computer:
                 env["NO_COMPUTER"] = "1"
             signum = getattr(signal, shutdown) if shutdown != "eof" else None
-            arguments = [sys.executable, "-B", "-X", "utf8", str(HELPER), str(root)]
-            if os.name == "nt" and signum is not None:
-                wrapper = root / "raise-helper-signal.py"
-                wrapper.write_text(WINDOWS_SIGNAL)
-                arguments = [sys.executable, "-B", "-X", "utf8", str(wrapper), str(HELPER), str(int(signum)), str(root)]
+            interpreter = [sys.executable, "-B", "-S", "-X", "utf8"]
+            arguments = [*interpreter, str(HELPER), str(root)]
+            if signum is not None:
+                wrapper = root / "drive-helper-signal.py"
+                wrapper.write_text(SIGNAL_DRIVER)
+                arguments = [*interpreter, str(wrapper), str(HELPER), str(int(signum)), str(root)]
             child = subprocess.Popen(arguments, env=env, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             # Bound readiness too: communicate() would close stdin and hide this regression.
@@ -89,10 +110,10 @@ class ComputerHelperTests(unittest.TestCase):
                         child.stdin.flush()
                         self.assertFalse(down.exists(), "data must not stand in for EOF")
                     child.stdin.close()
-                elif os.name != "nt":
-                    # Let the already-started reader block with the pipe still open.
-                    threading.Event().wait(0.2)
-                    child.send_signal(signum)
+                else:
+                    self.assertEqual(child.stderr.readline().rstrip(b"\r\n"), b"stdin-reader-ready")
+                    if os.name != "nt":
+                        child.send_signal(signum)
                 child.wait(timeout=10)
                 stderr = child.stderr.read().decode("utf-8")
                 self.assertNotIn("_enter_buffered_busy", stderr)

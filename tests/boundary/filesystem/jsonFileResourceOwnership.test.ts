@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { readJsonFile } from "../../../src/application/JsonFiles.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
@@ -56,7 +56,6 @@ it("retains and retries a JSON file owner after a persistent close failure", asy
     });
   try {
     const result = await readJsonFile(path, undefined, resources);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a typed JSON cleanup failure");
     expect(result.error).toBeInstanceOf(EvidenceFileError);
     expect(result.error.cleanupIncomplete).toBe(true);

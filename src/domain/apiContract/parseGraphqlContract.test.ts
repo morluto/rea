@@ -225,7 +225,6 @@ it("retains partial source metadata and source-located neutral diagnostics on sc
   const result = parse(
     'type Query { field: "https://name:FAKE_GQL_SECRET@example.invalid" }',
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected syntax refusal");
   expect(result.error._tag).toBe("AnalysisInputError");
   const partial = graphqlContractSchema.parse(result.error.partialObservation);
@@ -256,7 +255,6 @@ it("refuses deep ASTs through a typed resource result with retained schema facts
     "type Query { child: Query }",
     "{ child ".repeat(90) + "}".repeat(90),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected nesting admission refusal");
   expect(result.error._tag).toBe("AnalysisResourceConstraintError");
   expect(

@@ -82,7 +82,7 @@ it("rejects a root path replaced between its initial stat and open", async () =>
     classifyAndHashRoot(path, false, expectedMetadata),
   ).rejects.toMatchObject({
     reason: "integrity",
-    message: `Root artifact changed before inventory: ${path}`,
+    integrityCheck: "container-identity",
   });
 });
 
@@ -135,7 +135,7 @@ it("retains root identity without asserting absent children for an unclassified 
   ]);
   expect(inventory.coverage).toEqual({ scope: "root", status: "complete" });
   expect(inventory.limitations).toEqual([
-    "Inventory covers root bytes only; child container entries were not examined.",
+    expect.stringMatching(/root bytes only.*child.*not examined/iu),
   ]);
 });
 

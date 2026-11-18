@@ -9,11 +9,12 @@ import { compareProcessCaptures } from "../../../src/domain/process/processCompa
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
 import { processSourceTruncated } from "../../../src/domain/process/processCaptureCoverage.js";
-import { compareProcessTraces } from "../../../src/domain/process/processTraceComparison.js";
+import { evaluateProcessTraceComparison } from "../../../src/domain/process/processTraceComparison.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const exec = promisify(execFile);
 const capture = async (
@@ -41,7 +42,10 @@ const capture = async (
     throw new Error("Capture must not launch a binary provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "truncation-coverage", version: "1" });
+  const client = new Client(
+    { name: "truncation-coverage", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -110,9 +114,10 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
         variants: [{ id: "observed", trace: events.map(({ id }) => id) }],
       },
     };
-    expect(compareProcessTraces(result, result, specification).verdict).toBe(
-      "equivalent",
-    );
+    expect(
+      evaluateProcessTraceComparison(result, result, specification).result
+        .verdict,
+    ).toBe("equivalent");
     const { truncation_details: _details, ...withoutCoverage } = result;
     expect(() => parseProcessCapture(withoutCoverage)).toThrow(
       "truncation_details",

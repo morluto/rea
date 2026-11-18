@@ -51,6 +51,122 @@ const gated = (rows: readonly TimedCaptureRow[], tool: string) => {
 
 const RENAMED = renamedBook(FIRST_BOOK, "Renamed Book", 3);
 
+it.each([
+  ["read", "1", null],
+  ["read", "2", { ordinal: 4, pointer: "" }],
+  ["source", "1", null],
+  ["source", "2", { ordinal: 5, pointer: "" }],
+] as const)(
+  "does not borrow an entity read across an overlapping %s write to book %s",
+  (phase, target, expected) => {
+    const rows = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+        200,
+        undefined,
+        0,
+        5,
+      ],
+      ["GET", "/api/books/1", { id: 1, name: "A" }, 200, undefined, 1, 5],
+      ["GET", "/api/books/2", { id: 2, name: "B" }, 200, undefined, 2, 5],
+      ...(phase === "source"
+        ? [
+            [
+              "POST",
+              `/api/books/${target}/archive`,
+              null,
+              204,
+              {},
+              3,
+              10_000,
+            ] as const,
+          ]
+        : []),
+      [
+        "PATCH",
+        "/api/books/1",
+        null,
+        204,
+        { name: "Z" },
+        phase === "source" ? 4 : 3,
+        5,
+      ],
+      [
+        "GET",
+        "/api/books/1",
+        { id: 1, name: "Z" },
+        200,
+        undefined,
+        phase === "source" ? 5 : 4,
+        phase === "source" ? 5 : 1_500,
+      ],
+      ...(phase === "read"
+        ? [
+            [
+              "POST",
+              `/api/books/${target}/archive`,
+              null,
+              204,
+              {},
+              5,
+              5,
+            ] as const,
+          ]
+        : []),
+      [
+        "GET",
+        "/api/books/1",
+        { id: 1, name: "Z" },
+        200,
+        undefined,
+        phase === "source" ? 14 : 6,
+        5,
+      ],
+    ] as const;
+    const entries = rows.map(
+      ([method, path, body, status, request, time, duration]) => ({
+        startedDateTime: new Date(
+          Date.UTC(2026, 0, 1, 0, 0, time),
+        ).toISOString(),
+        time: duration,
+        request: {
+          method,
+          url: `http://app.example${path}`,
+          bodySize:
+            request === undefined
+              ? 0
+              : Buffer.byteLength(JSON.stringify(request)),
+          ...(request === undefined
+            ? {}
+            : {
+                postData: {
+                  mimeType: "application/json",
+                  text: JSON.stringify(request),
+                },
+              }),
+        },
+        response: {
+          status,
+          content: { mimeType: "application/json", text: JSON.stringify(body) },
+        },
+      }),
+    );
+    const capture = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(entries),
+    );
+    const plan = environmentStateViewOf(capture).writes.find(
+      ({ tool }) => tool === "patch_books_by_id",
+    );
+    expect(plan?.observation).toEqual(expected);
+    if (target === "1") expect(plan?.served).toBe(false);
+  },
+);
+
 /** A book whose constant names organisation 1, created at exchange `seconds`. */
 const tiedToOrgOne = (id: number, name: string, seconds: number): Book => ({
   ...book(id, name, bookClock(seconds)),
@@ -1302,7 +1418,7 @@ describe("encoded parent spellings", () => {
       path: "/api/orgs/uid/acme1/books",
       query: undefined,
       status: 200,
-      timing: { start: undefined, endMs: undefined },
+      timing: { start: undefined, end: undefined, endMs: undefined },
     };
     const lines = checkedLines({
       tools: [tool],
@@ -1505,7 +1621,7 @@ describe("resolved encoded item observations", () => {
       path: "/api/orgs/acme1/books/%61",
       query: undefined,
       status: 204,
-      timing: { start: undefined, endMs: undefined },
+      timing: { start: undefined, end: undefined, endMs: undefined },
     };
     const target = itemTarget(state, "/api/orgs/{org_id}/books", write);
     const itemView = {
@@ -1526,12 +1642,13 @@ describe("resolved encoded item observations", () => {
         path: "/api/orgs/acme1/books/%61",
         query: undefined,
         status: 200,
-        timing: { start: undefined, endMs: undefined },
+        timing: { start: undefined, end: undefined, endMs: undefined },
       },
     ];
     const search: ObservationSearch = {
       records,
       chronology: new StateRecordChronology(records, "record-order"),
+      overlapsWrite: () => false,
       from: 0,
       viewOf: () => itemView,
       withBody: (_ordinal, use) => use({ id: "%61", name: "After" }),
@@ -2191,23 +2308,53 @@ describe("reads and calls on an entity an unmodelled write left unknown", () => 
     {},
   ];
 
-  it("keeps the entity unknown through a failed read that is no absence, for a later read to check", () => {
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", [named("A"), other]],
-      ["GET", "/api/books/1", named("A")],
-      ["GET", "/api/books/2", other],
-      ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
-      ARCHIVE,
-      // The application was briefly unavailable, so this answer shows nothing of the book.
-      ["GET", "/api/books/1", { error: "unavailable" }, 503],
-      ["GET", "/api/books/1", named("Z")],
-    ];
-    expect(gated(rows, "patch_books_by_id")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [6],
-      contradicted_by: null,
-    });
-  });
+  it.each([
+    { label: "scalar", read: "unavailable", served: false },
+    { label: "array", read: [], served: false },
+    { label: "object", read: named("A"), served: true },
+  ])(
+    "requires a usable item baseline after an unmodelled write ($label)",
+    ({ read, served }) => {
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books", [named("A"), other]],
+        ["GET", "/api/books/1", named("A")],
+        ["GET", "/api/books/2", other],
+        ARCHIVE,
+        ["GET", "/api/books/1", read],
+        ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
+        ["GET", "/api/books/1", named("Z")],
+      ];
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served,
+        checked_record_ordinals: served ? [6] : [],
+      });
+    },
+  );
+
+  it.each([
+    { status: 503, body: { error: "unavailable" } },
+    { status: 200, body: "unavailable" },
+    { status: 200, body: [] },
+  ])(
+    "keeps pending effects through an unusable item read ($status, $body)",
+    ({ status, body }) => {
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books", [named("A"), other]],
+        ["GET", "/api/books/1", named("A")],
+        ["GET", "/api/books/2", other],
+        ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
+        ARCHIVE,
+        // Neither failure nor a successful non-object response shows the book.
+        ["GET", "/api/books/1", body, status],
+        ["GET", "/api/books/1", named("Z")],
+      ];
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served: true,
+        checked_record_ordinals: [6],
+        contradicted_by: null,
+      });
+    },
+  );
 
   it("confirms no update of a volatile field by a read that shows the entity again, as no other read does", () => {
     const seen = (id: number, count: number) => ({
@@ -2351,7 +2498,7 @@ describe("entities an unmodelled write made", () => {
       path: "/api/books/3",
       query: undefined,
       status: 200,
-      timing: { start: undefined, endMs: undefined },
+      timing: { start: undefined, end: undefined, endMs: undefined },
     };
     expect(
       unseen.adopt(view as unknown as StateItemView, { record, index: 1 }),
@@ -2376,7 +2523,7 @@ describe("entities an unmodelled write made", () => {
         path: "/api/books/3",
         query: undefined,
         status: 200,
-        timing: { start: undefined, endMs: undefined },
+        timing: { start: undefined, end: undefined, endMs: undefined },
       },
       index,
     });
@@ -3084,7 +3231,7 @@ it("learns omitted fields using the raw ID resolved by the item owner", () => {
     path: "/api/books/%63",
     query: undefined,
     status: 200,
-    timing: { start: undefined, endMs: undefined },
+    timing: { start: undefined, end: undefined, endMs: undefined },
   };
   const target = itemTarget(state, view.type, record);
   expect(target.id).toBe("%63");

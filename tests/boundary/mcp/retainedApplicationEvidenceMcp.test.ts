@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -23,7 +25,7 @@ const application = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
 const pair = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
 const exportPair = JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE;
 
-async function connect(profile?: "full" | "compact") {
+async function connect(profile?: "compact") {
   const session = createTestBinarySession(() => {
     throw new Error("references must not launch a provider");
   });
@@ -42,7 +44,7 @@ it("advertises semantic discovery paging and validates the returned Evidence", a
   const { client } = await connect();
   const { tools } = await client.listTools();
   const tool = tools.find(({ name }) => name === "trace_application_feature");
-  if (tool?.outputSchema === undefined)
+  if (tool === undefined)
     throw new Error("Missing feature trace output schema");
   const input = {
     application,
@@ -50,7 +52,7 @@ it("advertises semantic discovery paging and validates the returned Evidence", a
     semantic_page: { offset: 0, limit: 1 },
   };
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema = tool.outputSchema as AnySchema;
+  const outputSchema = canonicalOutputSchema(tool.name) as AnySchema;
   expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.compile(tool.inputSchema)(input)).toBe(true);
@@ -62,7 +64,7 @@ it("advertises semantic discovery paging and validates the returned Evidence", a
   });
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "advertises the primitive literal seeds accepted by semantic tracing (%s)",
   async (profile) => {
     const { client } = await connect(profile);
@@ -92,7 +94,7 @@ it.each(["full", "compact"] as const)(
           direction: "backward-provenance",
         },
       };
-      if (expectedPrimitive || profile === "full")
+      if (expectedPrimitive)
         expect(validate(arguments_), JSON.stringify(value)).toBe(
           expectedPrimitive,
         );
@@ -255,12 +257,12 @@ it("preserves validation for the referenced record's operation, predicate, and s
   const { client, session } = await connect();
   for (const record of [
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "inventory_artifact", parameters: {}, result: {} },
     ),
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "analyze_javascript_application",

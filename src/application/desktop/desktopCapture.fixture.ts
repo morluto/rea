@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -124,6 +125,7 @@ export const capture = (): DesktopApplicationCapture => ({
   state: {
     roots: [HOME],
     content_roots: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
+    baseline_non_files: [],
     excluded: [],
     state_directories: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
     checkpoints: [
@@ -214,6 +216,42 @@ export const seedEndCapture = (): DesktopApplicationCapture => {
   };
 };
 
+/** The note once bread is added after the eggs, and with the eggs then misspelled. */
+export const BREAD_NOTE = "milk\neggs\nbread\n";
+export const NEAR_EGGS_NOTE = "milk\negs\nbread\n";
+
+/**
+ * Two tasks in one capture: eggs added by `end`, bread on top by
+ * `end-add-bread`, then the eggs misspelled by checkpoint `near`, before the
+ * stop. Write it with `EDITED_NOTE`, `BREAD_NOTE` and `NEAR_EGGS_NOTE` as extra content.
+ */
+export const severalEndsCapture = (near: string): DesktopApplicationCapture => {
+  const base = seedEndCapture();
+  const { checkpoints } = base.state;
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        ...checkpoints.slice(0, 3),
+        checkpoint(
+          "end-add-bread",
+          "request",
+          [change(NOTE, { before: EDITED_NOTE, after: BREAD_NOTE })],
+          [retained(NOTE, BREAD_NOTE)],
+        ),
+        checkpoint(
+          near,
+          "request",
+          [change(NOTE, { before: BREAD_NOTE, after: NEAR_EGGS_NOTE })],
+          [retained(NOTE, NEAR_EGGS_NOTE)],
+        ),
+        ...checkpoints.slice(3),
+      ],
+    },
+  };
+};
+
 export const writeCaptureFolder = async (
   result: DesktopApplicationCapture,
   operation = DESKTOP_OPERATION,
@@ -230,14 +268,18 @@ export const writeCaptureFolder = async (
     ...extraContent,
   ])
     await writeFile(join(folder, "content", sha256(text)), text);
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-application-capture",
-    operation,
-    parameters: {},
-    result,
-    confidence: "observed",
-    authority: "controlled-replay",
-  });
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-application-capture",
+      operation,
+      parameters: {},
+      result,
+      confidence: "observed",
+      authority: "controlled-replay",
+    },
+  );
   await writeFile(join(folder, "capture.json"), JSON.stringify(evidence));
   return folder;
 };

@@ -10,7 +10,7 @@ import { createPackage } from "@electron/asar";
 import { expect, it } from "vitest";
 
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import {
   inventoryArtifact,
   withArtifactResourceScope,

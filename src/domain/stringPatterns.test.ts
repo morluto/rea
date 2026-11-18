@@ -3,15 +3,12 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import {
-  BASE64_QUARTET_LENGTH_PATTERN,
-  INVALID_BASE64_CHARACTER_PATTERN,
-  INVALID_BASE64_PADDING_PATTERN,
-  INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
   IDENTIFIER_PATTERN,
   STABLE_IDENTIFIER_PATTERN,
   canonicalBase64Schema,
   isCanonicalBase64,
   isPaddedBase64,
+  rejectUnpairedSurrogates,
 } from "./stringPatterns.js";
 
 it("preserves identifier grammars under Unicode and Unicode-set compilation", () => {
@@ -88,61 +85,21 @@ it("preserves canonical and permissive padded base64 validation", () => {
   }
 });
 
-it("advertises every portable base64 constraint and keeps large inputs stack-safe", () => {
-  const jsonSchema = z.toJSONSchema(canonicalBase64Schema, {
-    target: "draft-2020-12",
-  });
-  expect(jsonSchema).toMatchObject({
-    allOf: expect.arrayContaining([
-      { pattern: BASE64_QUARTET_LENGTH_PATTERN.source },
-      { not: { pattern: INVALID_BASE64_CHARACTER_PATTERN.source } },
-      { not: { pattern: INVALID_BASE64_PADDING_PATTERN.source } },
-      { not: { pattern: INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN.source } },
-    ]),
-  });
-
-  const body = Buffer.alloc(24 * 1024 * 1024 - 3, 0x81);
-  const encoded = body.toString("base64");
-  for (const flag of ["", "u", "v"]) {
-    expect(
-      new RegExp(BASE64_QUARTET_LENGTH_PATTERN.source, flag).test(encoded),
-      flag,
-    ).toBe(true);
-    expect(
-      new RegExp(INVALID_BASE64_CHARACTER_PATTERN.source, flag).test(encoded),
-      flag,
-    ).toBe(false);
-    expect(
-      new RegExp(INVALID_BASE64_PADDING_PATTERN.source, flag).test(encoded),
-      flag,
-    ).toBe(false);
-    expect(
-      new RegExp(INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN.source, flag).test(
-        encoded,
-      ),
-      flag,
-    ).toBe(false);
-    expect(
-      new RegExp(INVALID_BASE64_CHARACTER_PATTERN.source, flag).test(
-        `${encoded.slice(0, -1)}!`,
-      ),
-      flag,
-    ).toBe(true);
-    expect(
-      new RegExp(INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN.source, flag).test(
-        `${encoded.slice(0, -3)}R==`,
-      ),
-      flag,
-    ).toBe(true);
-  }
-  expect(isCanonicalBase64(encoded)).toBe(true);
-});
-
-it("validates complete projected canonical schemas at the encoded-input budget", () => {
+it("validates the projected base64 schema in Unicode and Unicode-set modes at the encoded-input budget", () => {
   const projected = z.toJSONSchema(canonicalBase64Schema, {
     target: "draft-2020-12",
   });
   const validate = new Ajv2020({ strict: true }).compile(projected);
+  const unicodeSetsRegExp = Object.assign(
+    (pattern: string) => new RegExp(pattern, "v"),
+    { code: '(pattern => new RegExp(pattern, "v"))' },
+  );
+  const validateUnicodeSets = new Ajv2020({
+    strict: true,
+    // The default pass validates the schema. Here only the projected patterns use v.
+    validateSchema: false,
+    code: { regExp: unicodeSetsRegExp },
+  }).compile(projected);
   const encoded = Buffer.alloc(24 * 1024 * 1024 - 3, 0x81).toString("base64");
   for (const { value, expected } of [
     { value: encoded, expected: true },
@@ -152,5 +109,25 @@ it("validates complete projected canonical schemas at the encoded-input budget",
   ]) {
     expect(canonicalBase64Schema.safeParse(value).success).toBe(expected);
     expect(validate(value)).toBe(expected);
+    expect(validateUnicodeSets(value)).toBe(expected);
   }
+});
+
+it("rejects unpaired surrogates at runtime without advertising a pattern", () => {
+  const schema = rejectUnpairedSurrogates(z.string(), "Must be well-formed");
+  for (const value of ["\ud800", "a\udc00", "\udc00\ud800", "\ud83d"])
+    expect(
+      schema.safeParse(value).error?.issues,
+      JSON.stringify(value),
+    ).toEqual([
+      {
+        code: "invalid_format",
+        format: "regex",
+        message: "Must be well-formed",
+        path: [],
+      },
+    ]);
+  for (const value of ["", "plain", "\ud83d\ude00", "\ufffd", "\uffff"])
+    expect(schema.safeParse(value).success, JSON.stringify(value)).toBe(true);
+  expect(z.toJSONSchema(schema, { io: "input" })).not.toHaveProperty("pattern");
 });

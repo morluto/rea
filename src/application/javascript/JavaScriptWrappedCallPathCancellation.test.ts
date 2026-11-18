@@ -42,7 +42,7 @@ it("cancels actual call-path work while its first seed indexes a long block", as
   ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
   expect(work.next()).toEqual({ done: true, value: undefined });
   expect(accumulator.ipc).toEqual([]);
-  expect(accumulator.electronCallPathLimitReached).toBeUndefined();
+  expect(accumulator.electronCallPathLimits).toBeUndefined();
 
   // A new analysis owns a new index and can still complete the same source.
   const completed = createJavaScriptAnalysisAccumulator(source.length);
@@ -57,5 +57,5 @@ it("cancels actual call-path work while its first seed indexes a long block", as
       ),
     ),
   ).toContainEqual(expect.objectContaining({ entry: "first", conditions: [] }));
-  expect(completed.electronCallPathLimitReached).toBeUndefined();
+  expect(completed.electronCallPathLimits).toBeUndefined();
 });

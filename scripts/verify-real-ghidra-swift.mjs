@@ -1,15 +1,8 @@
 #!/usr/bin/env node
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -23,6 +16,10 @@ import {
 } from "../dist/process/ProviderProcess.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const execute = promisify(execFile);
 const run = createVerifierRun();
@@ -43,7 +40,12 @@ try {
     { cause },
   );
 }
-const root = await mkdtemp(join(tmpdir(), "rea-ghidra-swift-"));
+// Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-swift-",
+  private: false,
+});
+const root = rootFixture.path;
 const client = new Client({ name: "ghidra-swift-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -71,9 +73,23 @@ const literalObjects = ["decoder-safeguards.S", "unresolved-string-jump.s"].map(
   }),
 );
 const reports = [];
+let connected = false;
+let verifierRun;
 let literalReport;
 let decoderCleaned = true;
-try {
+// The root is removed only after the session, client and decoder confirm.
+rootFixture.releaseAfter(async () => {
+  if (connected) await call("close_binary", {});
+});
+rootFixture.releaseAfter(() => client.close());
+rootFixture.releaseAfter(() => transport.close());
+rootFixture.releaseAfter(async () => {
+  assert.equal(decoderCleaned, true, "Owned decoder cleanup remains pending");
+  verifierRun = await completeVerifierRun(run);
+  assert.equal(verifierRun.process_lineage.status, "verified");
+  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+await withVerifierFixture(rootFixture, async () => {
   await execute("swiftc", ["-O", "-g", source, "-o", binary], {
     timeout: 60_000,
   });
@@ -110,12 +126,13 @@ try {
   );
   await verifyDecoderSafeguards();
   await client.connect(transport);
+  connected = true;
   for (const [variant, path] of [
     ["debug", binary],
     ["without-dsym", copied],
   ]) {
     await call("open_binary", { path, provider_id: "ghidra" });
-    try {
+    await withVerifierCleanup(async () => {
       const procedures = await call("list_procedures", {});
       const inventory = await call("analyze_swift_types", {});
       assert(
@@ -183,16 +200,10 @@ try {
         metadata_accessors: metadata.total,
         unclassified: inventory.unclassified.length,
       });
-    } finally {
-      await call("close_binary", {});
-    }
+    }, [() => call("close_binary", {})]);
   }
   literalReport = await verifyStringLiterals();
-} finally {
-  await client.close();
-  await transport.close();
-  if (decoderCleaned) await rm(root, { recursive: true, force: true });
-}
+});
 console.log(
   JSON.stringify(
     {
@@ -200,7 +211,7 @@ console.log(
       provider: "ghidra",
       fixtures: reports,
       swift_string_literals: literalReport,
-      verifier_run: await completeVerifierRun(run),
+      verifier_run: verifierRun,
     },
     null,
     2,
@@ -220,7 +231,7 @@ async function call(name, arguments_) {
 // Literal text lives only in register constants, so it must come from the decoded pairs.
 async function verifyStringLiterals() {
   await call("open_binary", { path: literalBinary, provider_id: "ghidra" });
-  try {
+  return withVerifierCleanup(async () => {
     const procedures = await call("list_procedures", {});
     const expected = {
       smallLiteral: [["SleepDisabled", "small"]],
@@ -281,9 +292,7 @@ async function verifyStringLiterals() {
     decoded.unresolvedStringJump =
       unresolvedDossier.swift_string_literal_omissions.length;
     return decoded;
-  } finally {
-    await call("close_binary", {});
-  }
+  }, [() => call("close_binary", {})]);
 }
 
 // Exercise the Java producer inside an ephemeral Ghidra database. The explicit

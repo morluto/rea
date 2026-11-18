@@ -1,7 +1,7 @@
-import { isAbsolute } from "node:path";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { getHeapStatistics } from "node:v8";
 import { version } from "graphql";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import {
   primaryAnalysisError,
   type AnalysisError,
@@ -87,9 +87,7 @@ const decode = (
       ),
     );
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes),
-    );
+    return ok(decodeStrictUtf8(bytes, "preserve"));
   } catch (cause) {
     if (!(cause instanceof TypeError)) throw cause;
     return err(
@@ -153,13 +151,6 @@ export const importGraphqlContract = async (
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ) => {
-  if (input.operations_path !== undefined && !isAbsolute(input.operations_path))
-    return err(
-      inputFailure(
-        "operations_path",
-        "Expected an absolute filesystem path on this host.",
-      ),
-    );
   const loaded = await readApiContract(input, resources, signal);
   if (!loaded.ok) return loaded;
   const artifact = {

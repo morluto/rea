@@ -301,8 +301,8 @@ describe("macOS application roots and bundle roles", () => {
     );
     expect(result.application_roots).toEqual([]);
     expect(result.bundles).toEqual([]);
-    expect(result.limitations).toContain(
-      "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/no application bundle.*inventory/iu),
     );
   });
 });
@@ -492,8 +492,8 @@ describe("Apple bundle layouts and containers", () => {
       status: "partial",
       inventory_complete: true,
     });
-    expect(result.limitations).toContain(
-      "The DMG's contents were not inventoried on this host; bundle absence is unknown.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/DMG.*not inventoried.*absence is unknown/i),
     );
   });
 
@@ -540,8 +540,9 @@ describe("Apple bundle layouts and containers", () => {
               "manifest",
               "root_format",
             ],
-            message:
-              "Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got asar)",
+            message: expect.stringMatching(
+              /requires.*IPA.*directory.*ZIP.*DMG.*inventory Evidence.*got.*asar/iu,
+            ),
           }),
         ],
       });
@@ -690,8 +691,8 @@ describe("macOS application scope", () => {
           [source, target].every((path) => path.startsWith("Fixture.app/")),
       ),
     ).toBe(true);
-    expect(result.limitations).toContain(
-      "4 inventoried entries outside every application root are not attributed to the application.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/4 inventoried entries outside.*not attributed/i),
     );
   });
 
@@ -896,7 +897,9 @@ describe("Apple path conventions", () => {
     expect(result.limitations).toEqual(
       expect.arrayContaining([
         "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
-        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+        expect.stringMatching(
+          /bridge basis.*inferred.*native path.*every managed component/iu,
+        ),
       ]),
     );
   });

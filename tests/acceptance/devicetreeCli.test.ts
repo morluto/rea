@@ -7,7 +7,8 @@ import { createEvidence } from "../../src/domain/evidence.js";
 import {
   cells,
   devicetreeFixture,
-} from "../../src/firmware/devicetree/Devicetree.fixture.js";
+  emptyStringsAtReservationBoundaryFixture,
+} from "../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -143,6 +144,32 @@ cliTest("inspects a relative DTB and preserves the source", async ({ cli }) => {
   });
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
+for (const version of [16, 17] as const) {
+  cliTest(
+    `inspects a v${version} DTB with empty strings at arbitrary in-blob offsets`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-dtb-empty-strings-");
+      for (const offset of [0, 44, 56, 60, 72]) {
+        const path = join(root, `board-${String(offset)}.dtb`);
+        const bytes = emptyStringsAtReservationBoundaryFixture(version);
+        bytes.writeUInt32BE(offset, 12);
+        await writeFile(path, bytes);
+        const result = await cli.run({
+          arguments: ["inspect-devicetree", path, "--json"],
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const report = toolContract("inspect_devicetree").outputSchema.parse(
+          result.json,
+        ).normalized_result;
+        expect(report).toMatchObject({
+          nodes: [{ path: "/" }],
+          reservations: [],
+        });
+        expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+      }
+    },
+  );
+}
 cliTest(
   "does not resolve through a legacy phandle when the canonical value is malformed",
   async ({ cli }) => {
@@ -178,8 +205,10 @@ cliTest(
       hex: "",
       derived: { cells: null },
     });
-    expect(report.limitations).toContain(
-      "phandle at /target is not a single cell; this node's reference identity remains unresolved.",
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        /phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
     );
   },
 );

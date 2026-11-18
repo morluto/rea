@@ -14,9 +14,25 @@ export interface ZipMember {
   readonly madeBy?: number;
   /** External attributes; a slash-ended name gets the MS-DOS directory bit. */
   readonly external?: number;
+  readonly centralExtra?: Uint8Array;
 }
 
 const UTF8_NAME = 0x800;
+
+/** A version-1 Info-ZIP Unicode Path claim bound to the stored filename bytes. */
+export const unicodePathExtra = (
+  name: string,
+  path: string | Uint8Array,
+): Buffer => {
+  const text = Buffer.from(path);
+  const field = Buffer.alloc(9 + text.length);
+  field.writeUInt16LE(0x7075);
+  field.writeUInt16LE(field.length - 4, 2);
+  field[4] = 1;
+  field.writeUInt32LE(crc32(Buffer.from(name)), 5);
+  text.copy(field, 9);
+  return field;
+};
 
 /** A zip archive of the members in order, framed from the PKWARE APPNOTE records. */
 export const zipArchive = (members: readonly ZipMember[]): Buffer => {
@@ -59,6 +75,7 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     central.writeUInt32LE(fields.compressed, 20);
     central.writeUInt32LE(fields.size, 24);
     central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(member.centralExtra?.length ?? 0, 30);
     central.writeUInt32LE(
       member.external ?? (member.name.endsWith("/") ? 0x10 : 0),
       38,
@@ -66,6 +83,8 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     central.writeUInt32LE(offset, 42);
     locals.push(local, name, stored);
     centrals.push(central, name);
+    if (member.centralExtra !== undefined)
+      centrals.push(Buffer.from(member.centralExtra));
     offset += local.length + name.length + stored.length;
   }
   const directory = Buffer.concat(centrals);

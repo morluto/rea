@@ -1,25 +1,22 @@
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
+  readStableArtifact,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-  artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { BeamPort } from "../application/erlang/BeamPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import type { BeamPort } from "../ports/erlang/BeamPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -52,9 +49,10 @@ export class BeamProvider implements BeamPort {
   }
 
   async inspect(input: InspectErlangBeamInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -74,7 +72,7 @@ export class BeamProvider implements BeamPort {
         );
       });
     } catch (cause) {
-      return err(beamFailure(cause, input));
+      return err(beamFailure(cause, input, snapshot));
     }
   }
 }
@@ -107,27 +105,12 @@ const beamFailurePrimary = (
   input: InspectErlangBeamInput,
 ) => {
   const { cause, origin } = facts;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -155,17 +138,7 @@ const beamFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -193,7 +166,11 @@ const beamFailurePrimary = (
   );
 };
 
-const beamFailure = (cause: unknown, input: InspectErlangBeamInput) => {
+const beamFailure = (
+  cause: unknown,
+  input: InspectErlangBeamInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = beamFailurePrimary(artifactFilePrimaryFacts(cause), input);
   return projectStableArtifactFailure(
     cause,
@@ -201,5 +178,6 @@ const beamFailure = (cause: unknown, input: InspectErlangBeamInput) => {
     input.path,
     ERLANG_BEAM_PROVIDER_IDENTITY.id,
     OPERATION,
+    snapshot,
   );
 };

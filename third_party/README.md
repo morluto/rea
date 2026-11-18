@@ -57,4 +57,4 @@ extractors or download/install firmware engines during analysis.
 
 On updates: inspect actual pinned CLI and report producers, preserve licenses,
 update gitlinks/release records, run report regressions and the real firmware
-lane. See [firmware setup and coverage](../docs/firmware-analysis.md).
+lane. See [firmware setup and coverage](../docs/guides/firmware/firmware-analysis.md).

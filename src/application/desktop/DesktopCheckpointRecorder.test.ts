@@ -1,13 +1,45 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import { walkHomeState } from "../../desktop/HomeStateWalker.js";
 import { CheckpointRecorder } from "./DesktopCheckpointRecorder.js";
 
 const unprivileged = process.platform !== "win32" && process.getuid?.() !== 0;
+
+it.skipIf(process.platform === "win32")(
+  "records baseline non-file paths without following symlinks",
+  async () => {
+    const root = await createTestTempDirectory("desktop-recorder-nonfiles-");
+    const home = join(root, "home");
+    const directory = join(home, "app");
+    const link = join(directory, "state.db-wal");
+    await mkdir(directory, { recursive: true });
+    await symlink("elsewhere", link);
+    await mkdir(join(root, "capture"));
+    const store = new DesktopContentStore(join(root, "capture"), 1024, 4096);
+    await store.prepare();
+    const recorder = new CheckpointRecorder(
+      {
+        roots: [home],
+        contentRoots: [directory],
+        stateDirectories: [directory],
+        excluded: [],
+        maxEntries: 100,
+      },
+      store,
+      walkHomeState,
+    );
+    await recorder.record("baseline", "baseline", 0);
+    expect(recorder.baselineNonFiles).toContainEqual({
+      path: link,
+      type: "symlink",
+    });
+  },
+);
 
 describe.skipIf(!unprivileged)("CheckpointRecorder", () => {
   it("does not pair a later file version with a digest read from an earlier one", async () => {
@@ -29,6 +61,7 @@ describe.skipIf(!unprivileged)("CheckpointRecorder", () => {
         maxEntries: 100,
       },
       store,
+      walkHomeState,
     );
     await recorder.record("baseline", "baseline", 0);
     // The directory cannot be listed while the file changes.

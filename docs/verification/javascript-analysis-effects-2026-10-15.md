@@ -3,7 +3,7 @@
 Tracks #3867 under #4027. The canonical effect record omitted existing internal
 worker launches and source staging. `CapabilityInventory` and SDK registration
 already consume that owner directly; no adapter override is required. The
-[worker](../../src/javascript/analysis/JavaScriptAnalysisWorker.ts) creates a
+[worker](https://github.com/morluto/rea/blob/main/src/javascript/analysis/JavaScriptAnalysisWorker.ts) creates a
 private runtime root, stages `.source` files and launches an owned REA worker.
 These are source-derived facts; the analyzed application code is not executed.
 
@@ -49,7 +49,7 @@ Fresh MCP sessions do not establish an OS-cold cache. Shared-host scheduling and
 filesystem/build warmness were uncontrolled; one pair establishes neither a
 performance improvement nor an equivalence bound. Linux x64 static ASAR analysis
 was executed; live Electron and other platforms were not exercised locally.
-[Compact records and source hashes](javascript-analysis-effects-2026-10-15.json)
+[Compact records and source hashes](https://github.com/morluto/rea/blob/main/docs/verification/javascript-analysis-effects-2026-10-15.json)
 preserve these distinctions without archiving the downloadable application.
 
 ## Reproduce
