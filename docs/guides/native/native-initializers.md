@@ -135,6 +135,13 @@ identity plus offset in relocatable objects. Distinct slots that share source
 file bytes keep independent values and overlap checks; a write to one does not
 relocate or invalidate the other.
 
+ELF symbols using `SHN_XINDEX` get their actual section from the uniquely
+linked `SHT_SYMTAB_SHNDX` table. Missing, conflicting, compressed or malformed
+companions leave affected symbols unresolved with incomplete coverage; ordinary
+symbols remain available. Extended section numbers stay distinct from equally
+numbered special markers. `SHN_ABS` values have no section-relative file mapping,
+and tentative `SHN_COMMON` values are not treated as allocated addresses.
+
 An absolute relocation against an `STT_GNU_IFUNC` symbol is `unresolved`: the
 symbol value is the resolver, and the loader stores whatever the resolver
 returns.
