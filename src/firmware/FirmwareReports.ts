@@ -144,11 +144,6 @@ const known = new Set([
   "MultiFileReport",
 ]);
 
-const dependencyFailure = z.object({
-  __typename__: z.literal("ExtractorDependencyNotFoundReport"),
-  dependencies: z.array(z.string().min(1)).min(1),
-});
-
 /** Collect the named extractors from any dependency report nested in one value. */
 const diagnosticDependencyNames = (value: unknown): string[] => {
   // Producer-controlled name volume must not make deduplication quadratic;
@@ -160,11 +155,16 @@ const diagnosticDependencyNames = (value: unknown): string[] => {
       return;
     }
     if (typeof node !== "object" || node === null) return;
-    const failure = dependencyFailure.safeParse(node);
+    const failure = missingDependency.safeParse(node);
     if (failure.success) {
-      for (const dependency of failure.data.dependencies) found.add(dependency);
-      return;
+      // Empty names carry unknown identity, not evidence against the known
+      // names in the same declaration. Ownership facts retain that unknown;
+      // diagnostics project only names and keep the complete source report.
+      for (const dependency of failure.data.dependencies)
+        if (dependency !== "") found.add(dependency);
     }
+    // A declaration may also carry nested producer diagnostics. Its own
+    // admission does not determine whether those independent reports exist.
     for (const child of Object.values(node)) visit(child);
   };
   visit(value);
@@ -302,7 +302,14 @@ export const normalizeUnblobReport = (
   const taskFailures = new Set<string>();
   const missingDependencies = new Map<string, DependencyFacts>();
   /** Dependencies reported by one chunk's extraction, keyed with its chunk id. */
-  const chunkMissingDependencies = new Map<string, DependencyFacts>();
+  const chunkMissingDependencies = new Map<
+    string,
+    {
+      readonly input_path: string;
+      readonly provider_id: string;
+      readonly facts: DependencyFacts;
+    }
+  >();
   const dependencyRows = (
     facts: DependencyFacts,
   ): readonly { dependencies: readonly string[] }[] => [
@@ -409,11 +416,21 @@ export const normalizeUnblobReport = (
           detail?.extraction_reports ?? [],
         );
         // Chunk-nested reports retain their owning chunk, not the whole task.
-        accumulateDependencies(
-          chunkMissingDependencies,
-          JSON.stringify([path, parsed.id]),
-          problems.dependencies,
-        );
+        if (problems.dependencies !== null) {
+          const chunkKey = JSON.stringify([path, parsed.id]);
+          const knownChunk = chunkMissingDependencies.get(chunkKey);
+          if (knownChunk === undefined) {
+            chunkMissingDependencies.set(chunkKey, {
+              input_path: path,
+              provider_id: parsed.id,
+              facts: problems.dependencies,
+            });
+          } else {
+            for (const name of problems.dependencies.names)
+              knownChunk.facts.names.add(name);
+            knownChunk.facts.unnamed ||= problems.dependencies.unnamed;
+          }
+        }
         if (detail !== null)
           for (const problem of detail.extraction_reports) {
             diagnostics.push(
@@ -540,28 +557,46 @@ export const normalizeUnblobReport = (
       "extract_firmware",
       "Report contains tasks disconnected from the selected input",
     );
-  // A producer can emit no UnknownChunkReport for an opaque file. Compute
-  // examined byte coverage from reported intervals rather than from empty errors.
+  // A producer can emit no UnknownChunkReport for an opaque file, including
+  // nested outputs. Each regular file owns its byte coverage; decompressed
+  // child offsets do not establish offsets in the original firmware.
   const unclassifiedRanges: {
     input_path: string;
     range: { offset: number; length: number };
-    root_file_range: { offset: number; length: number };
+    root_file_range: { offset: number; length: number } | null;
   }[] = [];
-  let coveredEnd = 0;
-  const gap = (offset: number, length: number) =>
-    unclassifiedRanges.push({
-      input_path: "$input",
-      range: { offset, length },
-      root_file_range: { offset: context.offset + offset, length },
-    });
-  for (const chunk of chunks
-    .filter((chunk) => chunk.input_path === "$input")
-    .sort((left, right) => left.range.offset - right.range.offset)) {
-    if (chunk.range.offset > coveredEnd)
-      gap(coveredEnd, chunk.range.offset - coveredEnd);
-    coveredEnd = Math.max(coveredEnd, chunk.range.offset + chunk.range.length);
+  const chunksByPath = new Map<string, (typeof chunks)[number][]>();
+  for (const chunk of chunks) {
+    const owned = chunksByPath.get(chunk.input_path) ?? [];
+    owned.push(chunk);
+    chunksByPath.set(chunk.input_path, owned);
   }
-  if (coveredEnd < context.length) gap(coveredEnd, context.length - coveredEnd);
+  for (const [path, size] of [...sizes].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
+    if (!files.has(path)) continue;
+    let coveredEnd = 0;
+    const gap = (offset: number, length: number) =>
+      unclassifiedRanges.push({
+        input_path: path,
+        range: { offset, length },
+        root_file_range:
+          path === "$input"
+            ? { offset: context.offset + offset, length }
+            : null,
+      });
+    for (const chunk of (chunksByPath.get(path) ?? []).sort(
+      (left, right) => left.range.offset - right.range.offset,
+    )) {
+      if (chunk.range.offset > coveredEnd)
+        gap(coveredEnd, chunk.range.offset - coveredEnd);
+      coveredEnd = Math.max(
+        coveredEnd,
+        chunk.range.offset + chunk.range.length,
+      );
+    }
+    if (coveredEnd < size) gap(coveredEnd, size - coveredEnd);
+  }
   return {
     files,
     sizes,
@@ -593,15 +628,14 @@ export const normalizeUnblobReport = (
             ? 1
             : 0,
       ),
-    chunk_missing_dependencies: [...chunkMissingDependencies.entries()]
-      .flatMap(([key, facts]) => {
-        const [input_path, provider_id] = JSON.parse(key) as [string, string];
-        return dependencyRows(facts).map(({ dependencies }) => ({
+    chunk_missing_dependencies: [...chunkMissingDependencies.values()]
+      .flatMap(({ input_path, provider_id, facts }) =>
+        dependencyRows(facts).map(({ dependencies }) => ({
           input_path,
           provider_id,
           dependencies,
-        }));
-      })
+        })),
+      )
       .sort((left, right) =>
         `${left.input_path}\u0000${left.provider_id}` <
         `${right.input_path}\u0000${right.provider_id}`

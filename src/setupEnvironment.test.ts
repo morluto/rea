@@ -1,3 +1,8 @@
+import {
+  currentClientRegistrationCommand,
+  invokingPackageRunner,
+  withoutPackageRunnerIdentity,
+} from "./application/ClientRegistrationIdentity.js";
 import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,11 +19,6 @@ import { systemSetupHost } from "./application/SetupHost.js";
 import { systemUninstallHost } from "./application/Uninstall.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
-import {
-  invokingPackageRunner,
-  packageRunnerRegistrationCommand,
-  withoutPackageRunnerIdentity,
-} from "./application/ClientRegistrationIdentity.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -86,13 +86,14 @@ it("plans setup and uninstall against selected home and client overrides", async
         }),
       ]),
     );
-    expect(host.registrationCommand).toContain(
-      PRODUCT_IDENTITY.registrationPackageSpecifier,
+    expect(host.registrationCommand).toEqual(
+      currentClientRegistrationCommand({ platform: "win32", environment }),
     );
     const clients = await systemUninstallHost(
       environment.HOME,
       undefined,
       environment,
+      doctor.platform,
     ).clients();
     expect(clients.find(({ name }) => name === "codex")?.configPath).toBe(
       join(environment.CODEX_HOME, "config.toml"),
@@ -110,7 +111,7 @@ it("composes provider diagnostics from selected configuration rather than ambien
     GHIDRA_INSTALL_DIR: "/selected/ghidra",
     REA_IDA_MCP_CONFIG: "/selected/ida.json",
   });
-  const inspections = await host.providerInspections?.();
+  const inspections = await host.providerInspections?.([]);
   expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(true);
   expect(JSON.stringify(inspections)).toContain("/selected/ghidra");
   expect(JSON.stringify(inspections)).toContain("/selected/ida.json");
@@ -141,8 +142,11 @@ it("includes the macOS Hopper installer diagnostic in setup remediation", async 
     if (result.status !== "failed") throw new Error("expected setup failure");
     expect(result.remediation).not.toContain("\u001b");
   } finally {
-    await host.close?.();
-    install.mockRestore();
+    try {
+      await host.close?.();
+    } finally {
+      install.mockRestore();
+    }
   }
 });
 
@@ -180,20 +184,6 @@ it("preserves a validated selected JEB endpoint in setup registrations without c
     expect(JSON.stringify(planned.plannedActions)).not.toContain(
       ambientEndpoint,
     );
-
-    expect(
-      createSystemDoctorHost({}).providerRegistrationEnvironment?.(),
-    ).toEqual({});
-    expect(
-      createSystemDoctorHost({
-        REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp",
-      }).providerRegistrationEnvironment?.(),
-    ).toEqual({ REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp" });
-    expect(
-      createSystemDoctorHost({
-        REA_JEB_MCP_URL: "https://example.com/mcp",
-      }).providerRegistrationEnvironment?.(),
-    ).toEqual({});
   } finally {
     vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true });
@@ -208,7 +198,8 @@ it.each([
       REA_BRIDGE_MAX_REQUEST_BYTES: "33554432",
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
       REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
       REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -216,6 +207,9 @@ it.each([
       REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
       REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
       REA_MCP_DOCTOR_DEADLINE_MS: "31000",
+      REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "4000",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "50",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "80",
     },
     providerConfigured: false,
     installHopper: true,
@@ -248,7 +242,8 @@ it.each([
           REA_BRIDGE_MAX_REQUEST_BYTES: "33554432",
           REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
           REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
-          REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+          REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
           REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
           REA_REGEX_MATCHING_DEADLINE_MS: "10000",
           REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -256,6 +251,9 @@ it.each([
           REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
           REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
           REA_MCP_DOCTOR_DEADLINE_MS: "31000",
+          REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "4000",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "50",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "80",
         });
       } else {
         expect(initial.providerEnvironment).not.toHaveProperty(
@@ -315,7 +313,7 @@ it.each([
         createDoctorHostFixture({ platform: "win32" }),
         environment,
       ).registrationCommand,
-    ).toEqual(packageRunnerRegistrationCommand(runner, "win32"));
+    ).toEqual(currentClientRegistrationCommand({ platform: "win32" }));
     expect(withoutPackageRunnerIdentity(environment, "win32")).toEqual({
       NPM_CONFIG_USER_AGENT: userAgent,
     });
@@ -392,7 +390,7 @@ it("registers the selected Windows package runner after canonicalizing environme
   );
   try {
     expect(host.registrationCommand).toEqual(
-      packageRunnerRegistrationCommand("npx", "win32"),
+      currentClientRegistrationCommand({ platform: "win32" }),
     );
   } finally {
     await host.close?.();

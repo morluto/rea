@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { JsonValue } from "../jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
@@ -51,6 +51,77 @@ const ISO_SECONDS = {
 
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
+
+it("retains learned clock rules but withholds their serving when the global clock is unknown", () => {
+  const baseline = stateOf(BOOK_ROWS);
+  const unknown = stateOf([
+    ...BOOK_ROWS,
+    ["GET", "/api/health", { ready: true }, 200, undefined, -1],
+  ]);
+  expect(baseline.write_clock).not.toBeNull();
+  expect(unknown.write_clock).toBeNull();
+  const generatesClock = (plan: StateView["writes"][number]) =>
+    plan.rules.some((rule) =>
+      ["clock", "held-clock", "nested-clock"].includes(rule.rule),
+    );
+  const clockPlans = baseline.writes.filter(
+    (plan) => plan.served && generatesClock(plan),
+  );
+  expect(clockPlans.length).toBeGreaterThan(0);
+  for (const plan of clockPlans)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual({
+      ...plan,
+      served: false,
+      reason: "unknown-clock",
+    });
+  const independent = baseline.writes.filter(
+    (plan) => plan.served && !generatesClock(plan),
+  );
+  expect(independent.length).toBeGreaterThan(0);
+  for (const plan of independent)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual(plan);
+});
+
+it.each([
+  ["000000000", 0, "2026-10-17T18:00:12.000Z"],
+  ["000001", 0, "2026-10-17T18:00:13.000Z"],
+  ["000000001", 0, "2026-10-17T18:00:13.000Z"],
+  ["123000000", 0, "2026-10-17T18:00:13.000Z"],
+  ["999999", 0.001, "2026-10-17T18:00:13.000Z"],
+  ["999999", 0.001001, "2026-10-17T18:00:14.000Z"],
+])(
+  "starts the served clock after a final captured fractional instant .%s plus %sms",
+  (fraction, duration, expected) => {
+    const evidence = timedCaptureEvidence([
+      ...BOOK_ROWS,
+      ["GET", "/api/health", { ready: true }, 200, undefined, 0],
+    ]);
+    const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    const state = environmentStateViewOf({
+      ...evidence,
+      normalized_result: {
+        ...capture,
+        records: capture.records.map((record, index) =>
+          index === capture.records.length - 1
+            ? {
+                ...record,
+                reported: {
+                  ...jsonObjectSchema.parse(record.reported),
+                  startedDateTime: `2026-10-17T18:00:12.${fraction}Z`,
+                  time: duration,
+                },
+              }
+            : record,
+        ),
+      },
+    });
+    expect(state.write_clock).toBe(expected);
+  },
+);
 
 it.each(["delete", "mismatched-query"])(
   "does not parse unused request content for %s under a bounded state allowance",
@@ -2315,6 +2386,7 @@ describe("evidence a learned sort keeps answering to", () => {
     expect(state.writes).toEqual([
       expect.objectContaining({ served: false, reason: "contradicted" }),
     ]);
+    expect(state.views.length).toBeGreaterThan(0);
     for (const view of state.views)
       expect(view).not.toHaveProperty("sorted_arrays");
   });

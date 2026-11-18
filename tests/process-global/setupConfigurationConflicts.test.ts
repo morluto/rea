@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const writers = vi.hoisted(() => ({
   before: undefined as undefined | ((path: string) => Promise<void>),
@@ -66,6 +67,7 @@ vi.mock("../../src/process/BoundedFileBytes.js", async (importOriginal) => {
 
 import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 afterEach(() => {
   writers.before = undefined;
@@ -85,6 +87,7 @@ it("reports a conflict when a file changes while the freshness snapshot is being
   expect(
     await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     }),
@@ -107,13 +110,14 @@ it.each(["before", "after"] as const)(
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: path,
         format: "json",
       }),
     ).toMatchObject({ status: "failed", reason: "conflict" });
     expect(Buffer.compare(await readFile(path), changed)).toBe(0);
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
-    expect(await readdir(root)).toEqual([
+    expect((await readdir(root)).sort()).toEqual([
       "config.json",
       "config.json.rea.backup",
     ]);
@@ -132,6 +136,7 @@ it("preserves an unrelated concurrent edit when a matching recovery backup alrea
 
   const result = await configureClientConfiguration({
     name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
     configPath: path,
     format: "json",
   });
@@ -139,13 +144,14 @@ it("preserves an unrelated concurrent edit when a matching recovery backup alrea
   expect(result).toMatchObject({ status: "failed", reason: "conflict" });
   expect(await readFile(path, "utf8")).toBe(changed);
   expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
-  expect(await readdir(root)).toEqual([
+  expect((await readdir(root)).sort()).toEqual([
     "config.json",
     "config.json.rea.backup",
   ]);
   writers.before = undefined;
   const retry = await configureClientConfiguration({
     name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
     configPath: path,
     format: "json",
   });
@@ -160,6 +166,7 @@ it("preserves an unrelated concurrent edit when a matching recovery backup alrea
   expect(
     await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     }),
@@ -175,6 +182,7 @@ it("does not overwrite a file created by another writer during first-run setup",
   expect(
     await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     }),
@@ -192,6 +200,7 @@ it("does not recreate a configuration deleted during setup", async () => {
   expect(
     await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     }),
@@ -209,6 +218,7 @@ it("preserves an external edit made after the atomic write without rolling it ba
   expect(
     await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     }),
@@ -230,6 +240,7 @@ it("does not adopt another writer's replacement merely because its bytes match",
   expect(
     await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     }),
@@ -251,6 +262,7 @@ it("detects a replacement of the original file even when its contents are identi
   expect(
     await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     }),
@@ -277,6 +289,7 @@ it.skipIf(process.platform === "win32")(
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: path,
         format: "json",
       }),
@@ -293,6 +306,7 @@ it.each(["absolute", "relative"])(
     const path = join(root, "config.json");
     const client = {
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     } as const;
@@ -333,30 +347,33 @@ it.skipIf(process.platform === "win32")(
       if (presence === "existing") await writeFile(realPath, "{}\n");
 
       const entered: string[] = [];
-      let releaseFirst!: () => void;
-      const release = new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
-      let markStarted!: () => void;
-      const started = new Promise<void>((resolve) => {
-        markStarted = resolve;
-      });
+      const writer = phaseGate();
       writers.before = async (target) => {
         entered.push(target);
         if (entered.length === 1) {
-          markStarted();
-          await release;
+          await writer.hold();
         }
       };
 
       const first = configureClientConfiguration(
-        { name: "cursor", configPath: realPath, format: "json" },
+        {
+          name: "cursor",
+          registrationProfile: supportedClientRegistrationProfile("cursor"),
+          configPath: realPath,
+          format: "json",
+        },
         { FIRST: "1" },
       );
+      let second: ReturnType<typeof configureClientConfiguration> | undefined;
       try {
-        await started;
-        const second = configureClientConfiguration(
-          { name: "cursor", configPath: aliasPath, format: "json" },
+        await writer.reached(first, "setup configuration writer");
+        second = configureClientConfiguration(
+          {
+            name: "cursor",
+            registrationProfile: supportedClientRegistrationProfile("cursor"),
+            configPath: aliasPath,
+            format: "json",
+          },
           { SECOND: "2" },
         );
         const secondReachedWriter = await new Promise<boolean>((resolve) => {
@@ -375,7 +392,7 @@ it.skipIf(process.platform === "win32")(
         });
         expect(secondReachedWriter).toBe(false);
         expect(entered).toEqual([realPath]);
-        releaseFirst();
+        writer.release();
         const [firstResult, secondResult] = await Promise.all([first, second]);
         expect([firstResult.status, secondResult.status]).toEqual([
           "configured",
@@ -388,8 +405,9 @@ it.skipIf(process.platform === "win32")(
           await readFile(realPath, "utf8"),
         );
       } finally {
-        releaseFirst();
+        writer.release();
         writers.before = undefined;
+        await Promise.allSettled([first, second]);
       }
     }
   },
@@ -407,6 +425,7 @@ it.skipIf(process.platform === "win32")(
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: path,
         format: "json",
       }),
@@ -420,43 +439,49 @@ it.skipIf(process.platform === "win32")(
 it("releases a failed setup transaction so a queued request can configure the file", async () => {
   const root = await createTestTempDirectory("rea-config-queued-failure-");
   const path = join(root, "config.json");
-  const client = { name: "cursor", configPath: path, format: "json" } as const;
-  let markStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    markStarted = resolve;
-  });
-  let releaseWriter!: () => void;
-  const release = new Promise<void>((resolve) => {
-    releaseWriter = resolve;
-  });
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    configPath: path,
+    format: "json",
+  } as const;
+  const writer = phaseGate();
   writers.before = async () => {
     writers.before = undefined;
-    markStarted();
-    await release;
+    await writer.hold();
     throw new Error("The first writer could not stage its configuration");
   };
 
   const first = configureClientConfiguration(client, { FIRST: "1" });
-  await started;
-  const second = configureClientConfiguration(client, { SECOND: "2" });
-  releaseWriter();
-  const [failed, queued] = await Promise.all([first, second]);
+  let second: ReturnType<typeof configureClientConfiguration> | undefined;
+  try {
+    await writer.reached(first, "setup configuration writer");
+    second = configureClientConfiguration(client, { SECOND: "2" });
+    writer.release();
+    const [failed, queued] = await Promise.all([first, second]);
 
-  expect(failed).toMatchObject({
-    status: "failed",
-    reason: "write",
-    failure: {
-      operation: "publish",
-      path,
-      detail: "The first writer could not stage its configuration",
-    },
-  });
-  expect(queued.status).toBe("configured");
-  expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual({
-    SECOND: "2",
-  });
-  expect(await readdir(root)).toEqual(["config.json"]);
-  expect(await configureClientConfiguration(client)).toEqual({
-    status: "unchanged",
-  });
+    expect(failed).toMatchObject({
+      status: "failed",
+      reason: "write",
+      failure: {
+        operation: "publish",
+        path,
+        detail: "The first writer could not stage its configuration",
+      },
+    });
+    expect(queued.status).toBe("configured");
+    expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual(
+      {
+        SECOND: "2",
+      },
+    );
+    expect(await readdir(root)).toEqual(["config.json"]);
+    expect(await configureClientConfiguration(client)).toEqual({
+      status: "unchanged",
+    });
+  } finally {
+    writer.release();
+    writers.before = undefined;
+    await Promise.allSettled([first, second]);
+  }
 });

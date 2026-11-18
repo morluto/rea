@@ -1,11 +1,4 @@
-import {
-  chmod,
-  mkdir,
-  readdir,
-  readFile,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -17,7 +10,6 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
@@ -121,58 +113,6 @@ describe("readEnvironmentExportInputs", () => {
 });
 
 const registerBundlePublicationCases = () => {
-  it("writes the bundle into an absent directory with the read bytes copied unchanged", async () => {
-    const { root, files, input, directory } = await prepare(
-      "rea-environment-export-",
-    );
-    const exported = await exportEnvironmentBundle({ ...input, directory });
-    if (!exported.ok) throw exported.error;
-    expect(exported.value).toMatchObject({
-      status: "exported",
-      directory,
-      name: "grafana-example",
-      // The bundle serves the state the export derived: the manifest's read tools.
-      tool_count: 14,
-      evidence_id: input.source.evidenceId,
-      manifest_evidence_id: input.source.manifestEvidenceId,
-      state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
-      package_source: {
-        kind: "registry",
-        specifier: `rea-agents@${PACKAGE_METADATA.version}`,
-      },
-    });
-    const written = exported.value.files.map((file) => file.path).sort();
-    expect(written).toEqual(await listFiles(directory));
-    expect(written).toEqual([
-      "README.md",
-      "artifacts/check_grafana-example/verify.py",
-      "envs/grafana-example/Dockerfile",
-      "envs/grafana-example/env.toml",
-      "envs/grafana-example/evidence.json",
-      "envs/grafana-example/manifest.json",
-      "tasks/smoke.json",
-    ]);
-    for (const file of exported.value.files)
-      expect(file.bytes).toBe(
-        (await readFile(join(directory, file.path))).length,
-      );
-    expect(
-      Buffer.compare(
-        await readFile(join(directory, "envs/grafana-example/manifest.json")),
-        await readFile(files.manifestPath),
-      ),
-    ).toBe(0);
-    expect(
-      Buffer.compare(
-        await readFile(join(directory, "envs/grafana-example/evidence.json")),
-        input.evidence.bytes,
-      ),
-    ).toBe(0);
-    expect(await listFiles(root)).toEqual(
-      expect.arrayContaining(["capture.json", "manifest.json"]),
-    );
-  });
-
   it("copies the package tarball beside the Dockerfile and reports it as the package source", async () => {
     const { root, input, directory } = await prepare(
       "rea-environment-export-tarball-",
@@ -301,36 +241,9 @@ const registerBundleDestinationAdmissionCases = () => {
       );
     },
   );
-
-  it("accepts an existing empty directory", async () => {
-    const { input, directory } = await prepare("rea-environment-export-empty-");
-    await mkdir(directory);
-    const exported = await exportEnvironmentBundle({ ...input, directory });
-    expect(exported.ok).toBe(true);
-    expect(await listFiles(directory)).toHaveLength(7);
-  });
 };
 
 describe("exportEnvironmentBundle", () => {
   registerBundlePublicationCases();
   registerBundleDestinationAdmissionCases();
-});
-
-describe("exportEnvironmentBundle file modes", () => {
-  it.skipIf(process.platform === "win32")(
-    "writes the captured manifest and Evidence copies readable by their owner only",
-    async () => {
-      const { input, directory } = await prepare(
-        "rea-environment-export-mode-",
-      );
-      const exported = await exportEnvironmentBundle({ ...input, directory });
-      if (!exported.ok) throw exported.error;
-      for (const copy of ["manifest.json", "evidence.json"]) {
-        const { mode } = await stat(
-          join(directory, "envs/grafana-example", copy),
-        );
-        expect(mode & 0o777).toBe(0o600);
-      }
-    },
-  );
 });

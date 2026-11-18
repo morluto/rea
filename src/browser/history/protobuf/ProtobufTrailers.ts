@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import type { ProtobufBudget } from "./ProtobufWire.js";
 
@@ -7,7 +8,11 @@ interface TrailerFacts {
 }
 
 type TrailerFailure = TrailerFacts & {
-  readonly kind: "invalid-utf8-value" | "invalid-name" | "invalid-value";
+  readonly kind:
+    | "invalid-utf8-value"
+    | "invalid-name"
+    | "invalid-value"
+    | "invalid-boundary";
   readonly reason: string;
 };
 
@@ -16,7 +21,7 @@ export const parseGrpcWebTrailers = (
   bytes: Uint8Array,
   budget: ProtobufBudget,
 ): Result<TrailerFacts, TrailerFailure> => {
-  let decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  let decoder = strictUtf8Decoder("preserve");
   const trailers: TrailerFacts["trailers"] = [];
   let examinedBytes = 0;
   const facts = (): TrailerFacts => ({
@@ -36,9 +41,15 @@ export const parseGrpcWebTrailers = (
     const lineExaminedBytes = hasSeparator ? end + 2 : lineEnd;
     if (lineEnd === start) {
       if (!hasSeparator) break;
+      if (lineExaminedBytes < bytes.length)
+        return err({
+          ...facts(),
+          examined_bytes: lineExaminedBytes,
+          kind: "invalid-boundary",
+          reason: "gRPC-web trailer block has bytes after a blank line",
+        });
       examinedBytes = lineExaminedBytes;
-      start = end + 2;
-      continue;
+      break;
     }
     let colon = start;
     while (colon < lineEnd && bytes[colon] !== 58) colon += 1;
@@ -93,7 +104,7 @@ export const parseGrpcWebTrailers = (
       value = decoder.decode(bytes.subarray(valueStart, valueEnd));
     } catch (cause) {
       if (!(cause instanceof TypeError)) throw cause;
-      decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+      decoder = strictUtf8Decoder("preserve");
       opaqueValueFailure ??= {
         ...facts(),
         kind: "invalid-utf8-value",

@@ -16,6 +16,7 @@ import { verifyAndroidMetadata } from "./metadata.mjs";
 import { verifyAndroidClassSearch } from "./class-search.mjs";
 import { verifyAndroidFailureRecovery } from "./failure-recovery.mjs";
 import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { HOST_PLATFORM } from "../../../dist/platform/HostPlatform.js";
 import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsAndroidLifecycle } from "./windows-lifecycle.mjs";
 
@@ -24,7 +25,7 @@ const apk = process.env.REA_ANDROID_TEST_APK;
 const jar = process.env.REA_JADX_MCP_JAR;
 if (apk === undefined || jar === undefined)
   throw new Error(
-    "verify:android requires REA_ANDROID_TEST_APK and REA_JADX_MCP_JAR. Run npm run fixtures:android and select the downloaded files; see docs/android-analysis.md.",
+    "verify:android requires REA_ANDROID_TEST_APK and REA_JADX_MCP_JAR. Run npm run fixtures:android and select the downloaded files; see docs/guides/android/android-analysis.md.",
   );
 await access(apk);
 await access(jar);
@@ -41,6 +42,7 @@ assert.equal(
 const configuration = await resolveJadxConfigurationInputs(
   process.env,
   "inspect_android_package",
+  HOST_PLATFORM,
 );
 await validateVerifierJadxConfiguration(
   configuration,
@@ -124,7 +126,7 @@ for (const task of tasks) {
     },
   );
   const evidence = parseEvidence(JSON.parse(response.stdout));
-  assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+  assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
   assert.equal(evidence.operation, task.name);
   cliResults.set(task.name, evidence);
   console.log(`PASS CLI ${task.name}`);
@@ -159,8 +161,8 @@ try {
     assert.deepEqual(evidence.parameters, cliResults.get(task.name).parameters);
     assert.deepEqual(evidence.provider, cliResults.get(task.name).provider);
     assert.deepEqual(
-      evidence.subject.digest,
-      cliResults.get(task.name).subject.digest,
+      evidence.subject.identity,
+      cliResults.get(task.name).subject.identity,
     );
     assert.deepEqual(
       evidence.limitations,
@@ -230,6 +232,24 @@ assert.equal(packageResult.min_sdk, "26");
 assert.equal(packageResult.target_sdk, "33");
 assert.equal(packageResult.manifest.status, "complete");
 assert.ok(packageResult.manifest.text.includes(fixture.package));
+// Binary manifest contains nested class names with '$'; JADX's ordinary
+// class-aware XML renderer substitutes Java display aliases with dots.
+const nestedActivity =
+  "io.appium.android.apis.app.FragmentLayout$DetailsActivity";
+assert.ok(packageResult.manifest.text.includes(nestedActivity));
+assert.ok(packageResult.manifest.text.includes("@bool/atLeastHoneycomb"));
+assert.ok(
+  packageResult.manifest.text.includes(
+    'android:name=".app.LocalSampleInstrumentation"',
+  ),
+);
+assert.ok(
+  packageResult.components.items.some(
+    (component) =>
+      component.declared_name === nestedActivity &&
+      component.name === nestedActivity,
+  ),
+);
 assert.ok(packageResult.permissions.includes("android.permission.INTERNET"));
 assert.equal(packageResult.signature_verification, "not_performed");
 assert.ok(

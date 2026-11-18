@@ -8,6 +8,7 @@ import {
   type GhidraSessionFailureFactory,
 } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 
 /** Inputs needed to complete the post-connection bridge handshake. */
 export interface GhidraStartupHandshakeOptions {
@@ -42,6 +43,25 @@ export async function completeGhidraStartupHandshake(
       options.deadline.interruption !== undefined
         ? interruptionFailure(options)
         : ping.error;
+    if (
+      failure.kind === "remote" &&
+      (failure.remoteCode === "import_identity_unavailable" ||
+        failure.remoteCode === "import_identity_mismatch")
+    ) {
+      const admitted = options.failure(
+        "admission",
+        failure.message,
+        new GhidraAdmissionError(failure.remoteCode, undefined, {
+          cause: failure,
+        }),
+        { remoteCode: failure.remoteCode },
+      );
+      return err(
+        failure.cleanupFailure === undefined
+          ? admitted
+          : admitted.withCleanupFailure(failure.cleanupFailure),
+      );
+    }
     return err(failure);
   }
   const parsed = options.parseSessionInfo(ping.value);

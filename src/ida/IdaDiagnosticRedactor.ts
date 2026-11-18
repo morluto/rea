@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   redactIdaJsonDiagnostic,
   redactIdaUnclassifiedDiagnostic,
@@ -8,10 +9,11 @@ import {
   writeIdaDiagnostic,
   type IdaDiagnosticMatch,
 } from "./IdaDiagnosticWriter.js";
+import { idaExplicitSensitiveValues } from "./IdaRegistrationIdentity.js";
 import {
-  isIdaAuthenticationHeader,
-  idaExplicitSensitiveValues,
-} from "./IdaRegistrationIdentity.js";
+  explicitValueSpans,
+  isTransportCredentialHeader,
+} from "../domain/explicitSensitiveValues.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 
@@ -42,9 +44,7 @@ const basicPayloads = (payload: string): readonly string[] => {
   if (octets.some((value) => value < 0x20 || value === 0x7f)) return [];
   const candidates = [octets.toString("latin1")];
   try {
-    candidates.push(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(octets),
-    );
+    candidates.push(decodeStrictUtf8(octets, "preserve"));
   } catch {
     // Invalid UTF-8 has no decoded Unicode candidate. Exact Latin-1 preserves
     // each octet; do not invent a replacement-character credential.
@@ -146,6 +146,7 @@ export const createIdaDiagnosticRedactor = (
   config?: IdaConfiguration,
 ): Readonly<{
   text(message: string): string;
+  url(message: string): string;
   json(message: string): string;
   blocks(messages: readonly string[]): string;
   message(prefix: string, ownedBody: string): string;
@@ -155,58 +156,30 @@ export const createIdaDiagnosticRedactor = (
       ? Object.entries(config.headers)
       : [];
   const values = headers.flatMap(([name, value]) => {
-    if (!isIdaAuthenticationHeader(name)) return [];
+    if (!isTransportCredentialHeader(name)) return [];
     // Fetch normalizes surrounding HTTP whitespace before sending headers.
     const normalized = value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
     if (normalized.length === 0) return [];
+    const field = name.toLowerCase();
     return [
       value,
       normalized,
-      ...(name.toLowerCase() === "cookie"
+      ...(field === "cookie"
         ? cookiePayloads(normalized)
-        : authorizationPayloads(normalized)),
+        : field === "set-cookie"
+          ? // RFC 6265 4.1: only the leading cookie-pair carries the credential;
+            // attributes such as Path=/ are not secrets.
+            cookiePayloads(normalized.split(";", 1)[0] ?? "")
+          : authorizationPayloads(normalized)),
     ];
   });
-  const secrets = [
-    ...new Set(
-      [...values, ...idaExplicitSensitiveValues(config)].filter(
-        (value) => value.length > 0,
-      ),
-    ),
-  ].sort((left, right) => right.length - left.length);
+  const secrets = [...values, ...idaExplicitSensitiveValues(config)].filter(
+    (value) => value.length > 0,
+  );
   const replacement =
     secrets.length === 0 ? IDA_REDACTION_MARKER : redactionMarker(secrets);
-  const alternatives = secrets
-    .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
-    .join("|");
-  // Look ahead at each source position; a global consuming match loses overlap.
-  // Longest-first alternatives cover every shorter match at the same position.
-  const pattern =
-    alternatives.length === 0
-      ? undefined
-      : new RegExp("(?=(" + alternatives + "))", "gu");
-  const matches = function* (value: string): Iterable<IdaDiagnosticMatch> {
-    if (pattern === undefined) return;
-    let pending: IdaDiagnosticMatch | undefined;
-    for (const match of value.matchAll(pattern)) {
-      const credential = match[1];
-      if (credential === undefined || credential.length === 0)
-        throw new AnalysisProtocolError(
-          "IDA diagnostic matching omitted its credential span.",
-        );
-      const span = { start: match.index, end: match.index + credential.length };
-      if (pending !== undefined && span.start < pending.end) {
-        pending = {
-          start: pending.start,
-          end: Math.max(pending.end, span.end),
-        };
-      } else {
-        if (pending !== undefined) yield pending;
-        pending = span;
-      }
-    }
-    if (pending !== undefined) yield pending;
-  };
+  const matches = (value: string): Iterable<IdaDiagnosticMatch> =>
+    explicitValueSpans(value, secrets);
   const text = boundedDiagnostic((message) =>
     writeIdaDiagnostic(message, matches(message), replacement),
   );
@@ -215,8 +188,75 @@ export const createIdaDiagnosticRedactor = (
       ? message
       : redactIdaJsonDiagnostic(message, matches, replacement),
   );
+  // A URL may carry the same known credential in percent-encoded form. Map
+  // decoded characters back to their original spans so unrelated spelling is
+  // preserved, including mixed encoded and literal characters.
+  const url = boundedDiagnostic((message) => {
+    let decoded = "";
+    const spans: IdaDiagnosticMatch[] = [];
+    const query = message.indexOf("?");
+    const fragment = message.indexOf("#", query + 1);
+    for (let index = 0; index < message.length;) {
+      const first = message.slice(index, index + 3);
+      const byte = /^%[\dA-Fa-f]{2}$/u.test(first)
+        ? Number.parseInt(first.slice(1), 16)
+        : undefined;
+      const width =
+        byte === undefined
+          ? 0
+          : byte < 0x80
+            ? 1
+            : byte >= 0xc2 && byte <= 0xdf
+              ? 2
+              : byte >= 0xe0 && byte <= 0xef
+                ? 3
+                : byte >= 0xf0 && byte <= 0xf4
+                  ? 4
+                  : 0;
+      const encoded =
+        width === 0 ? undefined : message.slice(index, index + width * 3);
+      if (encoded !== undefined && /^(?:%[\dA-Fa-f]{2})+$/u.test(encoded)) {
+        try {
+          const value = decodeURIComponent(encoded);
+          let offset = index;
+          for (const scalar of value) {
+            const end = offset + Buffer.byteLength(scalar, "utf8") * 3;
+            decoded += scalar;
+            for (let unit = 0; unit < scalar.length; unit++)
+              spans.push({ start: offset, end });
+            offset = end;
+          }
+          index += encoded.length;
+          continue;
+        } catch {
+          // Invalid percent-encoded UTF-8 has no decoded Unicode identity.
+        }
+      }
+      const scalar = String.fromCodePoint(message.codePointAt(index)!);
+      const end = index + scalar.length;
+      decoded +=
+        scalar === "+" &&
+        query >= 0 &&
+        index > query &&
+        (fragment < 0 || index < fragment)
+          ? " "
+          : scalar;
+      for (let unit = 0; unit < scalar.length; unit++)
+        spans.push({ start: index, end });
+      index = end;
+    }
+    const decodedSpans = [...matches(decoded)].map((match) => ({
+      start: spans[match.start]!.start,
+      end: spans[match.end - 1]!.end,
+    }));
+    const all = [...matches(message), ...decodedSpans].sort(
+      (left, right) => left.start - right.start || left.end - right.end,
+    );
+    return writeIdaDiagnostic(message, all, replacement);
+  });
   return {
     text,
+    url,
     json,
     blocks(messages) {
       let bytes = 0;

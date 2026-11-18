@@ -25,15 +25,17 @@ import {
 } from "../il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const countsSchema = z.strictObject({
   sections: z.number().int().nonnegative(),
@@ -519,9 +521,12 @@ const selection = (view: Request, report: Report) => {
 /** Reuse retained facts; source indices stay distinct from filtered page offsets. */
 export const projectIl2cppMetadataView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "il2cpp-metadata")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof il2cppMetadataViewRequestSchema>
+  >(admitted, "summary", "il2cpp-metadata");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -535,11 +540,10 @@ export const projectIl2cppMetadataView = (
   const parsed = parseMetadataReport(parent);
   if (!parsed.ok) return parsed;
   const { report, counts } = parsed.value;
+  const subject = evidenceFileTarget(parent);
   if (
-    parent.subject != null &&
-    (parent.subject.format !== "file" ||
-      parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    subject != null &&
+    (subject.format !== "file" || subject.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
@@ -629,7 +633,7 @@ export const projectIl2cppMetadataView = (
         : report.binary.generic_methods == null
           ? "Addresses come from static binary tables; runtime behavior and generic instance code remain unknown."
           : "Addresses come from static binary tables; runtime behavior and generic instances outside genericMethodTable remain unknown.",
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
           ]
@@ -653,7 +657,7 @@ export const projectIl2cppMetadataView = (
                 }),
           }))(report.binary);
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -661,7 +665,7 @@ export const projectIl2cppMetadataView = (
         ...(binary === undefined ? {} : { binary }),
         counts,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   const nativeUnavailable =
@@ -729,7 +733,7 @@ export const projectIl2cppMetadataView = (
     }
   }
   return ok({
-    kind: "il2cpp-metadata",
+    kind: "il2cpp-metadata" as const,
     view,
     ...shared,
     items,

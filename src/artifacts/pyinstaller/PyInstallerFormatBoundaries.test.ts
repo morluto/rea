@@ -23,7 +23,7 @@ import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEv
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 
 it.each([0, 1, 2])(
   "identifies malformed CArchive compression at table index %i",
@@ -167,11 +167,10 @@ it.each(["unused compressed input", "wrong declared size"])(
         });
         await expect(buffer(await reader.open(module))).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining(
+          integrityCheck:
             fault === "unused compressed input"
-              ? "complete declared source span"
-              : "size disagrees",
-          ),
+              ? "read-coverage"
+              : "declared-size",
         });
       },
     );
@@ -463,7 +462,6 @@ it.each(["empty", "span"])(
         : parsed.value.kind === "opaque"
           ? parsed.value.limitation
           : undefined;
-      expect(message).toBeDefined();
       expect(message?.length).toBeLessThan(256);
       expect(message).toContain("table index 0");
     });
@@ -528,7 +526,7 @@ for (const typeCode of ["o", "d"] as const) {
           scanCanonicalArtifactInventory(path),
         ).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("declaration"),
+          integrityCheck: "layout-consistency",
         });
       });
     },
@@ -615,16 +613,18 @@ it("keeps genuine destination collisions on files without annotating same-path m
           note.includes("case-insensitive destination"),
         ),
       ).toBe(false);
+      const files = inventory.occurrences.filter(
+        (row) => row.entry_kind === "file" && row.logical_path !== ".",
+      );
+      expect(files.map((row) => row.logical_path).sort()).toEqual(
+        [logical, logical.toUpperCase()].sort(),
+      );
       expect(
-        inventory.occurrences
-          .filter(
-            (row) => row.entry_kind === "file" && row.logical_path !== ".",
-          )
-          .every((row) =>
-            row.limitations.some((note) =>
-              note.includes("case-insensitive destination"),
-            ),
+        files.every((row) =>
+          row.limitations.some((note) =>
+            note.includes("case-insensitive destination"),
           ),
+        ),
       ).toBe(true);
     },
   );
@@ -833,7 +833,10 @@ it.each([
   await withPyInstallerReader(image, async (_reader, handle) => {
     await expect(
       readPyzArchive(handle, 0, image.length),
-    ).resolves.toMatchObject({ ok: false, error: { reason: "integrity" } });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { reason: "integrity", integrityCheck: "layout-consistency" },
+    });
   });
 });
 
@@ -1158,7 +1161,7 @@ it.each([1, 2])(
           scanCanonicalArtifactInventory(path),
         ).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("payload region"),
+          integrityCheck: "layout-consistency",
         });
       },
     );
@@ -1288,7 +1291,7 @@ for (const container of ["carchive", "outer-pyz", "inner-pyz"] as const) {
         };
         await expect(consume()).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("complete declared source span"),
+          integrityCheck: "read-coverage",
         });
       });
     },

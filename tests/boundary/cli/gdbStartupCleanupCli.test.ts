@@ -1,48 +1,25 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
+
 import pino from "pino";
 import { expect, it, vi } from "vitest";
 
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
-import type { CliInstance } from "../../../src/cli/types.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { answerFakeGdbStartup } from "../providers/gdbTestHelpers.js";
 
-const registerGdbCommand = (
-  createManager: () => GdbSessionManager,
-): {
-  run(input: {
-    args: { command: string };
-    options: { inferiorTty: string };
-  }): Promise<unknown>;
-} => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: { command: string };
-        options: { inferiorTty: string };
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (
-      name: string,
-      definition: {
-        run(input: {
-          args: { command: string };
-          options: { inferiorTty: string };
-        }): Promise<unknown>;
-      },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
+const registerGdbCommand = (createManager: () => GdbSessionManager) => {
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(cli, pino({ enabled: false }), {}, () =>
     createManager(),
   );
-  const command = commands.get(CLI_COMMANDS.debugWithGdb);
+  const command = cliCommand(cli, CLI_COMMANDS.debugWithGdb)?.definition;
   if (command === undefined)
     throw new Error("GDB CLI command was not registered");
   return command;
@@ -62,6 +39,7 @@ it.each([
   } as unknown as GdbSessionManager;
   const command = registerGdbCommand(() => manager);
   const result = await command.run({
+    formatExplicit: false,
     args: { command: inputCommand },
     options: { inferiorTty: "/dev/pts/42" },
   });
@@ -92,6 +70,7 @@ it("retries retained GDB cleanup when CLI session startup fails", async () => {
 
   try {
     const result = await command.run({
+      formatExplicit: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
@@ -120,10 +99,16 @@ it("marks the CLI failed when retained GDB cleanup remains incomplete", async ()
 
   try {
     const result = await command.run({
+      formatExplicit: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
-    expect(result).toMatchObject({ code: "unreadable_output" });
+    expect(result).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: { primary_error: { code: "unreadable_output" } },
+      },
+    });
     expect(manager.closeAll).toHaveBeenCalledOnce();
     expect(process.exitCode).toBe(1);
   } finally {
@@ -135,12 +120,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
   "keeps selected GDB launch recovery in the public CLI for %s",
   async (code) => {
     const selected = "/selected/gdb command";
-    const launchFailure = Object.assign(
-      new Error(`spawn ${selected} ${code}`),
-      {
-        code,
-      },
-    );
+    const launchFailure = spawnFailure(code, selected);
     const spawnProcess = vi.fn(async () => {
       throw launchFailure;
     });
@@ -153,6 +133,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
     const previousExitCode = process.exitCode;
     try {
       const result = await command.run({
+        formatExplicit: false,
         args: { command: "show version" },
         options: { inferiorTty: "/dev/pts/42" },
       });
@@ -161,7 +142,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
         message: expect.stringContaining(JSON.stringify(selected)),
         remediation: { action: expect.stringContaining("REA_GDB_COMMAND") },
         details: {
-          reason: launchFailure.message,
+          reason: expect.stringContaining(JSON.stringify(selected)),
           diagnostics: {
             boundary: "provider-launch",
             command: selected,
@@ -199,3 +180,138 @@ it("keeps prelaunch caller cancellation distinct from executable refusal", async
     await manager.closeAll();
   }
 });
+
+class FakeGdb extends EventEmitter {
+  pid = process.pid + 1;
+  stdout = new PassThrough();
+  stderr = new PassThrough();
+  stdin = new PassThrough();
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  kill(signal: NodeJS.Signals) {
+    this.exitCode = 0;
+    this.signalCode = signal;
+    this.stdout.end();
+    this.stderr.end();
+    this.stdin.destroy();
+    this.emit("exit", 0, signal);
+    this.emit("close", 0, signal);
+    return true;
+  }
+}
+
+const modeledGdbReplies = new Map([
+  ["-gdb-set auto-load off", "^done"],
+  ['-inferior-tty-set "/dev/pts/7"', "^done"],
+  ["-inferior-tty-show", '^done,inferior_tty_terminal="/dev/pts/7"'],
+  ['-interpreter-exec console "info files"', "^done"],
+  ["-list-thread-groups --recurse 1", "^done,groups=[]"],
+  ["-gdb-exit", "^exit"],
+]);
+
+it.each(["incomplete", "interrupt", "control"] as const)(
+  "reports final GDB cleanup %s as a typed outcome",
+  async (mode) => {
+    const child = new FakeGdb();
+    const unmodeled: string[] = [];
+    let requests = 0;
+    child.stdout.write("(gdb)\n");
+    child.stdin.on("data", (chunk) => {
+      for (const line of String(chunk).split("\n")) {
+        const match = /^(\d+)(.*)$/u.exec(line);
+        if (!match) continue;
+        requests++;
+        const token = match[1] ?? "";
+        const tail = match[2] ?? "";
+        if (answerFakeGdbStartup(child.stdout, token, tail)) continue;
+        const reply = modeledGdbReplies.get(tail);
+        if (reply === undefined) unmodeled.push(line);
+        child.stdout.write(
+          `${token}${reply ?? '^error,msg="unmodeled request"'}\n`,
+        );
+      }
+    });
+    let calls = 0;
+    let recovering = false;
+    let retainedId: string | undefined;
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      spawnProcess: async (options) => ({
+        process: child,
+        ownership: {
+          runId: options.runId,
+          leaderPid: child.pid,
+          processGroupId: child.pid,
+          expectedParentPid: process.pid,
+        },
+      }),
+      stopProcess: async () => {
+        calls++;
+        if (mode === "interrupt" && calls === 1) process.emit("SIGINT");
+        if (mode === "incomplete" && !recovering)
+          return {
+            status: "incomplete",
+            code: "stop-failed",
+            reason: "synthetic stop remains pending",
+          };
+        child.kill("SIGTERM");
+        return { status: "stopped" };
+      },
+    });
+    const originalStart = manager.start.bind(manager);
+    manager.start = async (...args) => {
+      const started = await originalStart(...args);
+      if (started.ok) retainedId = started.value.session_id;
+      return started;
+    };
+    const command = registerGdbCommand(() => manager);
+    const previous = process.exitCode;
+    try {
+      process.exitCode = 0;
+      const result = await command.run({
+        formatExplicit: false,
+        args: { command: "info files" },
+        options: { inferiorTty: "/dev/pts/7" },
+      });
+      expect(requests).toBeGreaterThan(0);
+      expect(unmodeled).toEqual([]);
+      if (mode === "control") {
+        expect(result).toMatchObject({
+          operation: "gdb_console",
+          parameters: { session_id: retainedId },
+          normalized_result: { completion_status: "complete" },
+        });
+        expect(process.exitCode).toBe(0);
+      } else if (mode === "interrupt") {
+        expect(result).toMatchObject({
+          code: "cancelled",
+          details: {
+            partial_observation: {
+              operation: "gdb_console",
+              parameters: { session_id: retainedId },
+            },
+          },
+        });
+        expect(process.exitCode).toBe(130);
+      } else {
+        expect(result).toMatchObject({
+          code: "cleanup_incomplete",
+          details: {
+            cleanup: "incomplete",
+            resources: [retainedId],
+            partial_observation: {
+              operation: "gdb_console",
+              parameters: { session_id: retainedId },
+            },
+          },
+        });
+        expect(process.exitCode).toBe(1);
+        expect(retainedId).toBeDefined();
+      }
+    } finally {
+      recovering = true;
+      await manager.closeAll();
+      process.exitCode = previous;
+    }
+  },
+);

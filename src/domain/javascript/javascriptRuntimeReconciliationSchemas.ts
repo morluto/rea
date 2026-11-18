@@ -3,15 +3,15 @@ import { z } from "zod";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { logicalPathEscapesRoot } from "../artifactIdentity.js";
 import { evidenceSchema } from "../evidence.js";
+import type { EvidenceRequestFrameInput } from "../evidenceInputContract.js";
 import { javascriptRuntimeUnresolvedLocationSchema } from "./javascriptRuntimeObservation.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { urlDeclaresQueryOrFragment } from "../urlComponents.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const boundedTextSchema = z.string().min(1);
 const safePrefixSchema = z
   .string()
   .refine(
@@ -95,41 +95,65 @@ function runtimeMappingKey(mapping: RuntimeLocationMapping): string {
     : `url-prefix\0${mapping.prefix}\0${mapping.artifact_prefix}`;
 }
 
+const validateReconciliationIdentities = (
+  input: {
+    readonly static_layers: readonly {
+      readonly role: "application" | "cache" | "assets";
+      readonly analysis: { readonly evidence_id: string };
+    }[];
+    readonly runtime_observations: readonly { readonly evidence_id: string }[];
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (
+    input.static_layers.filter(({ role }) => role === "application").length !==
+    1
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["static_layers"],
+      message: "Exactly one application static layer is required",
+    });
+  const staticIds = input.static_layers.map(
+    ({ analysis }) => analysis.evidence_id,
+  );
+  if (new Set(staticIds).size !== staticIds.length)
+    context.addIssue({
+      code: "custom",
+      path: ["static_layers"],
+      message: "Static layer Evidence must be unique",
+    });
+  const runtimeIds = input.runtime_observations.map(
+    ({ evidence_id: id }) => id,
+  );
+  if (new Set(runtimeIds).size !== runtimeIds.length)
+    context.addIssue({
+      code: "custom",
+      path: ["runtime_observations"],
+      message: "Runtime observation Evidence must be unique",
+    });
+};
+
+/** Verify layer roles and source uniqueness without copying retained payloads. */
+export const runtimeReconciliationIdentitiesSchema = z
+  .object({
+    static_layers: z.array(
+      z.object({
+        role: z.enum(["application", "cache", "assets"]),
+        analysis: z.object({ evidence_id: evidenceIdSchema }),
+      }),
+    ),
+    runtime_observations: z.array(z.object({ evidence_id: evidenceIdSchema })),
+  })
+  .superRefine(validateReconciliationIdentities);
+
 /** Evidence-backed static layers and passive captures to reconcile. */
 export const reconcileJavaScriptRuntimeInputSchema = z
   .strictObject({
     static_layers: z.array(staticLayerSchema).min(1),
     runtime_observations: z.array(evidenceSchema).min(1),
   })
-  .superRefine((input, context) => {
-    if (
-      input.static_layers.filter(({ role }) => role === "application")
-        .length !== 1
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["static_layers"],
-        message: "Exactly one application static layer is required",
-      });
-    const staticIds = input.static_layers.map(
-      ({ analysis }) => analysis.evidence_id,
-    );
-    if (new Set(staticIds).size !== staticIds.length)
-      context.addIssue({
-        code: "custom",
-        path: ["static_layers"],
-        message: "Static layer Evidence must be unique",
-      });
-    const runtimeIds = input.runtime_observations.map(
-      ({ evidence_id: id }) => id,
-    );
-    if (new Set(runtimeIds).size !== runtimeIds.length)
-      context.addIssue({
-        code: "custom",
-        path: ["runtime_observations"],
-        message: "Runtime observation Evidence must be unique",
-      });
-  });
+  .superRefine(validateReconciliationIdentities);
 
 const layerSummarySchema = z.strictObject({
   layer_id: prefixedDigestSchema("jrl"),
@@ -147,7 +171,7 @@ const captureSummarySchema = z.strictObject({
   capture_sha256: digestSchema,
   kind: z.enum(["browser", "electron", "v8-inspector", "electron-active"]),
   target_node_id: nodeIdSchema,
-  target_key: boundedTextSchema,
+  target_key: nonEmptyTextSchema,
   target_location: z
     .string()
     .min(1)
@@ -258,10 +282,19 @@ export const javascriptRuntimeReconciliationResultSchema = z.strictObject({
     used_for_primary_matching: z.literal(false),
     static_layer_count: z.int().min(0),
     runtime_script_declarations: z.int().min(0),
-    limitation: boundedTextSchema,
+    limitation: nonEmptyTextSchema,
   }),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial", "truncated"]),
+    /**
+     * `unknown` when a static graph's coverage is unknown or unavailable;
+     * `truncated` and `partial` are known gaps.
+     */
+    status: z.enum([
+      "complete-within-inputs",
+      "partial",
+      "truncated",
+      "unknown",
+    ]),
     truncated: z.boolean(),
     omitted_runtime_entities: z.int().min(0),
     omitted_reconciliation_items: z.int().min(0),
@@ -269,12 +302,15 @@ export const javascriptRuntimeReconciliationResultSchema = z.strictObject({
     omitted_graph_items: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ReconcileJavaScriptRuntimeInput = z.infer<
   typeof reconcileJavaScriptRuntimeInputSchema
 >;
+/** Admitted ordinary request facts; each source still needs owner authentication. */
+export type ReconcileJavaScriptRuntimeFrame =
+  EvidenceRequestFrameInput<ReconcileJavaScriptRuntimeInput>;
 export type JavaScriptRuntimeReconciliationResult = z.infer<
   typeof javascriptRuntimeReconciliationResultSchema
 >;

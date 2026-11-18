@@ -1,7 +1,10 @@
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
-import { digestCanonicalValue } from "./canonicalDigest.js";
+import {
+  CanonicalDigestError,
+  digestCanonicalValue,
+} from "./canonicalDigest.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 
 const complete = <Value>(steps: Iterator<void, Value>): Value => {
@@ -78,7 +81,19 @@ describe("cooperative canonical JSON digest", () => {
     sparse.length = 2;
     const cycle: { [key: string]: JsonValue } = {};
     cycle.self = cycle;
-    for (const value of [sparse, Number.NaN, cycle])
-      expect(() => complete(canonicalJsonDigestSteps(value))).toThrow();
+    expect(() => complete(canonicalJsonDigestSteps(sparse))).toThrow();
+    for (const [value, code] of [
+      [Number.NaN, "nan"],
+      [cycle, "circular"],
+    ] as const) {
+      let failure: unknown;
+      try {
+        complete(canonicalJsonDigestSteps(value));
+      } catch (cause) {
+        failure = cause;
+      }
+      expect(failure).toBeInstanceOf(CanonicalDigestError);
+      expect(failure).toMatchObject({ code });
+    }
   });
 });

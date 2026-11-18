@@ -1,12 +1,15 @@
 import type { EvidenceWriter } from "./InvestigationRecordPort.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
+import { preserveCompletedSourceEvidence } from "./sourcePublicationRecovery.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 
 /** Source facts remain available even when a completed observation is cancelled. */
-export type AnalysisResultWithSources<Value> = Result<Value, AnalysisError> & {
+export type AnalysisResultWithSources<Value, Failure = AnalysisError> = Result<
+  Value,
+  Failure
+> & {
   readonly sourceEvidence?: readonly Evidence[];
 };
 
@@ -18,15 +21,18 @@ export const withEvidenceSources = <
 ): Outcome & { readonly sourceEvidence?: readonly Evidence[] } =>
   sources.length === 0 ? result : { ...result, sourceEvidence: sources };
 
-/** Never deliver links to records a plain-port adapter cannot retain. */
+/** Retain producer sources; caller-owned records remain available without a writer. */
 export const retainAnalysisResultSources = <Value>(
   operation: string,
   recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
   result: AnalysisResultWithSources<Value>,
+  options: { readonly sourceOwner?: "caller" } = {},
 ): Result<Value, AnalysisError> => {
   const sources = result.sourceEvidence ?? [];
   const retained =
-    sources.length > 0 && recordEvidence === undefined
+    sources.length > 0 &&
+    recordEvidence === undefined &&
+    options.sourceOwner !== "caller"
       ? err(
           new AnalysisCapabilityUnavailableError(
             "rea",
@@ -49,10 +55,22 @@ export const retainAnalysisResultSources = <Value>(
 export const recordEvidenceSources = (
   recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
   sources: readonly Evidence[],
-): Result<null, EvidenceIntegrityError> => {
+  completed?: {
+    readonly evidence: Evidence;
+    readonly evidenceForAnalysis?: (id: string) => Evidence | undefined;
+  },
+): Result<null, AnalysisError> => {
   for (const source of sources) {
     const recorded = recordEvidence?.(source);
-    if (recorded !== undefined && !recorded.ok) return recorded;
+    if (recorded !== undefined && !recorded.ok) {
+      if (completed !== undefined)
+        preserveCompletedSourceEvidence(
+          recorded.error,
+          completed.evidence,
+          completed.evidenceForAnalysis,
+        );
+      return recorded;
+    }
   }
   return ok(null);
 };

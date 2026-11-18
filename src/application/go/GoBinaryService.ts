@@ -1,7 +1,10 @@
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { GoBinaryPort } from "./GoBinaryPort.js";
+import {
+  machoSelectionAnswersArchitecture,
+  metadataReportSubjectFormat,
+} from "../../domain/apple/machoTargetSelection.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { GoBinaryPort } from "../../ports/go/GoBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -29,7 +32,7 @@ export class GoBinaryService {
   constructor(readonly provider: GoBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */
@@ -53,11 +56,18 @@ export class GoBinaryService {
     const inspected = await this.provider.inspect(providerInput, options);
     if (!inspected.ok) return inspected;
     const report = goBinarySchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.value.path)
+    if (
+      !report.success ||
+      report.data.artifact.path !== input.value.path ||
+      !machoSelectionAnswersArchitecture(
+        report.data.selected_slice,
+        input.value.architecture,
+      )
+    )
       return err(
         new AnalysisOutputError(
           OPERATION,
-          "Go build-information reader returned malformed metadata or changed the selected artifact identity.",
+          "Go build-information reader returned malformed metadata or changed the selected artifact or slice identity.",
         ),
       );
     const value = report.data;

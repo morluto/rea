@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
@@ -204,4 +204,22 @@ it("widens a cycle that rewrites the path head while increasing its depth", () =
   expect(result.references.map(({ node }) => node)).toContain(
     returnedExpression(parsed.program, "target"),
   );
+});
+
+it("retains both finite class-prototype callable selections", () => {
+  const { parsed, state } = indexed(`
+    class C { first(){return firstResult} second(){return secondResult} }
+    const selected=flag?C.prototype.first:C.prototype.second;
+    selected();
+  `);
+  const [read] = callReads(parsed.program, "selected");
+  if (read === undefined)
+    throw new Error("Missing selected prototype method call");
+  const result = createSemanticReturnedReferences(state)(read);
+  expect(result.precision).toBe("exact");
+  expect(
+    result.references
+      .map(({ node }) => (t.isIdentifier(node) ? node.name : null))
+      .sort(),
+  ).toEqual(["firstResult", "secondResult"]);
 });

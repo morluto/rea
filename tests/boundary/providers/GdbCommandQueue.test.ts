@@ -1,3 +1,9 @@
+import {
+  expectNoUnmodeledGdbCommands,
+  FAKE_GDB_SESSION_REPLIES,
+  fakeGdbModeledReplies,
+  fakeGdbStartupPreamble,
+} from "./gdbTestHelpers.js";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,11 +16,19 @@ let directory: string | undefined;
 const managers: GdbSessionManager[] = [];
 
 afterEach(async () => {
-  await Promise.all(
-    managers
-      .splice(0)
-      .map((manager) => manager.closeAll().catch(() => undefined)),
+  const closing = managers.splice(0);
+  const outcomes = await Promise.allSettled(
+    closing.map((manager) => manager.closeAll()),
   );
+  const failures: unknown[] = [];
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === "rejected") {
+      managers.push(closing[index]!);
+      failures.push(outcome.reason);
+    }
+  });
+  if (failures.length > 0)
+    throw new AggregateError(failures, "GDB queue cleanup failed");
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
@@ -25,9 +39,18 @@ it("bounds active and queued GDB commands, including cancelled placeholders", as
   const provider = join(directory, "fake-gdb-queue.mjs");
   const activePath = join(directory, "active-command");
   const releasePath = join(directory, "release-command");
+  const unmodeledPath = join(directory, "unmodeled");
+  const consoleReplies = Object.fromEntries(
+    ["hold", "admitted-after-drain", "after-drain"].map((command) => [
+      `-interpreter-exec console "${command}"`,
+      "^done",
+    ]),
+  );
   await writeFile(
     provider,
     `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath, { ...FAKE_GDB_SESSION_REPLIES, ...consoleReplies })}
 import { access, writeFile } from "node:fs/promises";
 process.stdout.write("(gdb)\\n");
 let input = "";
@@ -49,7 +72,7 @@ process.stdin.on("data", async (chunk) => {
         catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
       }
     }
-    process.stdout.write(match[1] + "^done\\n");
+    answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -142,4 +165,5 @@ process.stdin.on("data", async (chunk) => {
     ok: true,
     value: { result: { completion_status: "complete" } },
   });
+  await expectNoUnmodeledGdbCommands(unmodeledPath);
 });

@@ -20,6 +20,8 @@ const options = {
 it("leaves an unset ceiling out of the Hopper bootstrap", () => {
   const source = bridgeBootstrapSource(session, options, true, "/target");
   expect(source).not.toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+  // The reconnect control is a fixed 30-second bridge value, not a launch setting.
+  expect(source).toContain("REA_RECONNECT_TIMEOUT_SECONDS = 30\n");
   expect(source).toContain("exec(compile");
 });
 
@@ -36,4 +38,17 @@ it("injects a caller-selected ceiling before the bridge is executed", () => {
   const injected = source.indexOf("REA_BRIDGE_MAX_REQUEST_BYTES = 8192");
   expect(injected).toBeGreaterThanOrEqual(0);
   expect(injected).toBeLessThan(source.indexOf("exec(compile"));
+});
+
+it("injects a runtime ceiling before the bridge is executed", () => {
+  const source = bridgeBootstrapSource(
+    session,
+    {
+      ...options,
+      bridgeMaxRequestBytes: { maximumBytes: 65_536, source: "runtime" },
+    },
+    true,
+    "/target",
+  );
+  expect(source).toContain("REA_BRIDGE_MAX_REQUEST_BYTES = 65536");
 });

@@ -46,6 +46,9 @@ const LIMIT = new Set([
   "count",
   "itemsperpage",
   "limit",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "page_size",
   "pagesize",
   "per_page",
@@ -203,7 +206,11 @@ const readCall = (
       call.page = { index: number, first: parameter.first };
     else return undefined;
   }
-  return call;
+  // A direction cannot identify the field being ordered. Leaving it unused
+  // would turn a recorded direction into permission to answer its opposite.
+  return call.direction !== undefined && call.sort === undefined
+    ? undefined
+    : call;
 };
 
 /** Entities in the order a sort value names, ties in state order, and those whose place state order decides: all without a sort, else those tied with a neighbour; undefined when it names no field. */
@@ -601,7 +608,7 @@ export const queryTotalCount = (
 
 /** A query answer: the base line's envelope with the selected entities, counters at the number listed and totals at the number matched. */
 export const renderQueryList = (
-  view: Pick<StateListView, "pointer" | "counters"> & {
+  view: Pick<StateListView, "pointer" | "counters" | "listed_ids"> & {
     readonly query: Pick<ListQuery, "totals">;
   },
   base: JsonValue,
@@ -615,5 +622,5 @@ export const renderQueryList = (
         ? body
         : withCounter(body, name, formatItemCount(total, recorded!));
     },
-    renderStateList(view, base, items),
+    renderStateList(view, base, items, total === items.length),
   );

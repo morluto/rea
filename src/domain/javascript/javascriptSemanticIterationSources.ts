@@ -11,29 +11,23 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
 
-interface IterationSourceValue {
-  readonly node: t.Node;
-  readonly projection: JavaScriptSemanticPropertyPath;
-  readonly iterationSources?: readonly IterationSourceValue[];
-}
-
-/** An iterator receiver or property reference store, with default guards. */
-export interface SemanticIterationSource extends IterationSourceValue {
-  readonly iterationSources?: readonly IterationSourceValue[];
-  readonly kind: "iteration" | "reference-store";
-  readonly mutation: t.Node;
-  readonly target?: t.MemberExpression;
-  readonly fallbackSources?: readonly IterationSourceValue[];
-  readonly requiredSources?: readonly IterationSourceValue[];
-}
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
+import { javaScriptExecutions } from "./javascriptSemanticExecutionPoints.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
+import type {
+  IterationSourceValue,
+  SemanticIterationSource,
+} from "./javascriptSemanticIterationFacts.js";
 
 /** A property value obtained by destructuring or an own-enumerable copy. */
 export interface SemanticPropertyReadSource
   extends IterationSourceValue, SourceGuards {
   readonly mutation: t.Node;
   readonly lookup: "prototype" | "own";
+  /** The language protocol invokes a callable value read from this slot. */
+  readonly invoke?: true;
 }
 
 interface PatternSource extends IterationSourceValue {
@@ -281,6 +275,42 @@ const emptySourceFacts: SemanticSourceFacts = {
   iterations: [],
   propertyReads: [],
 };
+// Immutable AST subtree summaries are reused by enclosing and nested catches.
+// Property reads can invoke getters; tags and coercions can execute user code.
+const guardedExecutions = new WeakMap<t.Node, boolean>();
+const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
+  const pending: { node: t.Node; parent: t.Node | null; finish: boolean }[] = [
+    { node: body, parent: null, finish: false },
+  ];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (frame === undefined || guardedExecutions.has(frame.node)) continue;
+    const { node, parent } = frame;
+    const children = [...childNodes(node)].filter(
+      (child) =>
+        !t.isFunction(node) || semanticMethodDefinitionExpression(node, child),
+    );
+    if (!frame.finish) {
+      pending.push({ node, parent, finish: true });
+      for (const child of children)
+        pending.push({ node: child, parent: node, finish: false });
+    } else {
+      // Without scope proof an identifier may resolve through a global accessor,
+      // including when its enclosing operator itself performs no coercion.
+      const direct =
+        javaScriptExecutions(node, parent).length > 0 ||
+        (t.isIdentifier(node) &&
+          parent !== null &&
+          t.isReferenced(node, parent));
+      guardedExecutions.set(
+        node,
+        direct ||
+          children.some((child) => guardedExecutions.get(child) === true),
+      );
+    }
+  }
+  return guardedExecutions.get(body) === true;
+};
 const sourceFacts = new WeakMap<
   t.Node,
   { readonly parent: t.Node | null; readonly facts: SemanticSourceFacts }
@@ -297,7 +327,9 @@ const semanticSourceFacts = (
       t.isAssignmentExpression(node) ||
       t.isForOfStatement(node) ||
       t.isSpreadElement(node) ||
+      t.isAwaitExpression(node) ||
       t.isYieldExpression(node) ||
+      t.isCatchClause(node) ||
       t.isFunction(node)
     )
   )
@@ -331,15 +363,29 @@ const semanticSourceFacts = (
         mutation: node,
         lookup: "own",
       });
-  } else if (
-    t.isYieldExpression(node) &&
-    node.delegate &&
-    node.argument != null
-  )
+  } else if (t.isAwaitExpression(node))
+    propertyReads.push({
+      node: node.argument,
+      projection: ["then"],
+      mutation: node,
+      lookup: "prototype",
+      invoke: true,
+    });
+  else if (t.isYieldExpression(node) && node.delegate && node.argument != null)
     add(sources, { node: node.argument, projection: [] }, node, {});
+  else if (
+    t.isCatchClause(node) &&
+    node.param != null &&
+    t.isTryStatement(parent) &&
+    guardedBodyMayCall(parent.block)
+  )
+    visit(context, node.param, { node: node.param, projection: [null] });
   else if (t.isFunction(node))
     for (const parameter of runtimeFunctionParameters(node))
-      visit(context, parameter, undefined);
+      // A caller-supplied value is unknown, not an absent property-read source.
+      // Retain the owning pattern as an unresolved source, including alongside
+      // default-value projections, instead of dropping its property lookups.
+      visit(context, parameter, { node: parameter, projection: [] });
   const facts = { iterations: sources, propertyReads };
   sourceFacts.set(node, { parent, facts });
   return facts;
@@ -351,8 +397,28 @@ export const semanticIterationSources = (
 ): readonly SemanticIterationSource[] =>
   semanticSourceFacts(node, parent).iterations;
 
+/** Pattern reads from an explicitly retained source, including thrown values. */
+export const semanticPatternPropertyReadSources = (
+  pattern: t.Node,
+  source: IterationSourceValue,
+  mutation: t.Node,
+): readonly SemanticPropertyReadSource[] => {
+  const propertyReads: SemanticPropertyReadSource[] = [];
+  visit({ sources: [], propertyReads, mutation }, pattern, source);
+  return propertyReads;
+};
+
 export const semanticPropertyReadSources = (
   node: t.Node,
   parent: t.Node | null,
-): readonly SemanticPropertyReadSource[] =>
-  semanticSourceFacts(node, parent).propertyReads;
+  supplemental?: {
+    readonly implicitPropertyReads: WeakMap<
+      t.Node,
+      readonly SemanticPropertyReadSource[]
+    >;
+  },
+): readonly SemanticPropertyReadSource[] => {
+  const ordinary = semanticSourceFacts(node, parent).propertyReads;
+  const implicit = supplemental?.implicitPropertyReads.get(node);
+  return implicit === undefined ? ordinary : [...ordinary, ...implicit];
+};

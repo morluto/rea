@@ -1,3 +1,4 @@
+import { jsonPointerTokens } from "../jsonPointer.js";
 import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
@@ -12,12 +13,13 @@ import {
   collectionPathOf,
   isObject,
   listItems,
+  listsIds,
   pointerTo,
-  pointerTokens,
   recordedItemCount,
   same,
   scalarText,
   type JsonObject,
+  type ListedIds,
 } from "./environmentStateRules.js";
 
 /** The latest recordings that list their whole collection in state order, and the counters that equal the item count on each of them, or on every line when none does. */
@@ -29,10 +31,12 @@ export const listFacts = (
   readonly whole: ReadonlySet<number>;
   readonly counters: string[];
   readonly minted: string[];
+  readonly listedIds: ListedIds[];
 } => {
   const field = context.idField(plan.type);
   const whole = new Set<number>();
   const counting = new Map<number, string[]>();
+  const listing = new Set<string>();
   const names = mintedFor(context.minted, plan.latest);
   const minted = new Set<string>();
   for (const record of plan.latest)
@@ -44,6 +48,14 @@ export const listFacts = (
         minted.add(name);
       items.forEach((item) => union.add(item));
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
+      // A member listing the ids of two or more items does so by design, not by chance.
+      if (items.length >= 2)
+        for (const [name, value] of Object.entries(parent))
+          if (
+            name !== jsonPointerTokens(plan.pointer)[0] &&
+            listsIds(value, items, field)
+          )
+            listing.add(name);
       const counted = itemTotals(parent, plan.pointer).filter(
         ([, value]) => recordedItemCount(value) !== undefined,
       );
@@ -60,7 +72,7 @@ export const listFacts = (
         counted.some(
           ([, value]) => recordedItemCount(value) !== items.length,
         ) ||
-        Object.keys(parent).some((name) => continues(name, parent[name]))
+        hasContinuation(parent, plan.pointer)
       )
         return;
       const ids = items.map((item) => scalarText(ownMember(item, field)) ?? "");
@@ -72,7 +84,12 @@ export const listFacts = (
   // Counter presence is per envelope. Keep every observed page counter;
   // renderStateList updates only one the selected base actually counted.
   const counters = [...new Set([...counting.values()].flat())].sort(compare);
-  return { whole, counters, minted: [...minted].sort(compare) };
+  return {
+    whole,
+    counters,
+    minted: [...minted].sort(compare),
+    listedIds: [...listing].sort(compare).map((member) => ({ member, field })),
+  };
 };
 
 /**
@@ -84,7 +101,7 @@ export const itemTotals = (
   parent: JsonObject,
   listPointer: string,
 ): [counter: string, value: JsonValue | undefined][] => {
-  const root = pointerTokens(listPointer)[0];
+  const root = jsonPointerTokens(listPointer)[0];
   const totals: [string, JsonValue | undefined][] = [];
   for (const [name, value] of Object.entries(parent))
     if (isItemTotal(name))
@@ -133,3 +150,15 @@ const continues = (name: string, value: JsonValue | undefined): boolean =>
   value !== null &&
   value !== false &&
   value !== "";
+
+/** Continuation facts in the envelope or its sibling paging objects, never inside the list payload. */
+const hasContinuation = (parent: JsonObject, listPointer: string): boolean => {
+  const root = jsonPointerTokens(listPointer)[0];
+  return Object.entries(parent).some(
+    ([name, value]) =>
+      continues(name, value) ||
+      (name !== root &&
+        isObject(value) &&
+        Object.entries(value).some(([inner, flag]) => continues(inner, flag))),
+  );
+};

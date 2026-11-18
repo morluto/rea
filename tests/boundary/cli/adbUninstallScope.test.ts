@@ -24,6 +24,7 @@ for (const { verdict, exit, succeeds } of [
         `#!/usr/bin/env node
 import { appendFileSync } from 'node:fs';
 const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === 'start-server') process.exit(0);
 appendFileSync(process.argv[1] + '.calls', JSON.stringify(args) + '\\n');
 if (args.length === 1 && args[0] === 'version') {
   console.log('Android Debug Bridge version 1.0.41\\nVersion 34.0.5-fixture');
@@ -70,8 +71,10 @@ if (args.length === 1 && args[0] === 'version') {
           serial: input.serial,
           package_name: input.package,
         });
-        expect(evidence.limitations).toContain(
-          "Uninstall explicitly requests user 0 without data retention (-k); device enforcement is not independently verified",
+        expect(evidence.limitations).toContainEqual(
+          expect.stringMatching(
+            /uninstall.*user 0.*without data retention.*-k.*device enforcement.*not independently verified/iu,
+          ),
         );
         expect(response.isError).not.toBe(true);
         expect(

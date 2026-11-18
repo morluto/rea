@@ -91,7 +91,8 @@ try {
       typed
         ? {
             ...process.env,
-            GOMAXPROCS: process.env.GOMAXPROCS ?? "2",
+            // One worker reuses its checker caches across the full file queue.
+            GOMAXPROCS: process.env.GOMAXPROCS ?? "1",
             GOMEMLIMIT: process.env.GOMEMLIMIT ?? "1024MiB",
           }
         : process.env,

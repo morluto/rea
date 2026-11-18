@@ -1,13 +1,20 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  withEvidenceCallerInputPath,
+} from "../../../src/domain/evidence.js";
+import { wasmArtifactFixture } from "../../fixtures/wasm/artifact.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -85,6 +92,7 @@ ${body}
           references: [
             {
               value: "./selected.wasm",
+              association: "local-path-candidate",
               candidate_paths: [selected],
             },
           ],
@@ -98,15 +106,18 @@ ${body}
     const invocation = await cli.run({
       arguments: [
         "inspect-wasm-artifact",
-        selected,
+        "./selected.wasm",
         "--candidate_paths",
-        candidate,
+        "./candidate.wasm",
+        "--candidate_paths",
+        "./candidate.wasm",
         "--glue_paths",
-        glue,
+        "./glue.js",
         "--format",
         "json",
       ],
       environment,
+      cwd: directory,
     });
     expect(invocation.exitCode, invocation.stderr).toBe(1);
     const cliError = analysisErrorProjectionSchema.parse(invocation.json);
@@ -114,46 +125,127 @@ ${body}
       code: "invalid_request",
       details: {
         partial_observation: {
+          caller_input_paths: {
+            candidate_paths: ["./candidate.wasm", "./candidate.wasm"],
+            glue_paths: ["./glue.js"],
+          },
           normalized_result: expected,
         },
       },
     });
 
     const { client, call } = await connectLocalToolsMcp(environment);
-    const response = await call("inspect_wasm_artifact", {
-      path: selected,
-      candidate_paths: [candidate],
-      glue_paths: [glue],
-    });
-    const mcpError = parseMcpToolError(response).error;
-    expect(mcpError.code).toBe("invalid_request");
-    const partialReference = z
-      .object({
-        kind: z.literal("retained-evidence"),
-        evidence_id: z.string(),
-      })
-      .parse(
-        z
-          .object({ partial_observation: z.unknown() })
-          .passthrough()
-          .parse(mcpError.details).partial_observation,
+    try {
+      const response = await call("inspect_wasm_artifact", {
+        path: selected,
+        candidate_paths: [candidate],
+        glue_paths: [glue],
+      });
+      const mcpError = parseMcpToolError(response).error;
+      expect(mcpError.code).toBe("invalid_request");
+      const partialReference = z
+        .object({
+          kind: z.literal("retained-evidence"),
+          evidence_id: z.string(),
+        })
+        .parse(
+          z
+            .object({ partial_observation: z.unknown() })
+            .passthrough()
+            .parse(mcpError.details).partial_observation,
+        );
+      const retainedReply = await call("get_evidence_bundle", {
+        detail: "complete",
+      });
+      expect(retainedReply.isError).not.toBe(true);
+      const retainedBundle = toolContract(
+        "get_evidence_bundle",
+      ).outputSchema.parse(retainedReply.structuredContent).result;
+      if ("kind" in retainedBundle)
+        throw new Error("Expected complete retained Evidence");
+      const retained = parseEvidence(
+        retainedBundle.records.find(
+          (record) => record.evidence_id === partialReference.evidence_id,
+        ),
       );
-    const retainedReply = await call("get_evidence_bundle", {
-      detail: "complete",
+      expect(retained.evidence_id).toBe(partialReference.evidence_id);
+      expect(retained.normalized_result).toMatchObject(expected);
+      await client.ping();
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+cliTest(
+  "advertises ordered WASM caller selections through the SDK output schema",
+  async () => {
+    const { client } = await connectLocalToolsMcp();
+    try {
+      const schema = await advertisedMcpToolSchemas(
+        client,
+        "inspect_wasm_artifact",
+      );
+      const valid = withEvidenceCallerInputPath(
+        createEvidence(
+          unknownTarget("not-observed"),
+          { id: "fixture-wabt", name: "fixture", version: "1" },
+          {
+            operation: "inspect_wasm_artifact",
+            parameters: {},
+            result: wasmArtifactFixture(),
+            confidence: "observed",
+          },
+        ),
+        "./selected.wasm",
+        {
+          candidate_paths: ["./candidate.wasm", "./candidate.wasm"],
+          glue_paths: ["./glue.js"],
+        },
+      );
+      expect(
+        schema.ajv.validate(schema.outputSchema, valid),
+        JSON.stringify(schema.ajv.errors),
+      ).toBe(true);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+cliTest(
+  "names max_artifact_paths by field and the CLI flag that sets it before reading selections",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-wasm-paths-");
+    const invocation = await cli.run({
+      arguments: [
+        "inspect-wasm-artifact",
+        "./selected.wasm",
+        "--glue_paths",
+        "./first.js",
+        "--glue_paths",
+        "./second.js",
+        "--max-artifact-paths",
+        "1",
+        "--format",
+        "json",
+      ],
+      environment: { HOME: directory, XDG_CONFIG_HOME: directory },
+      cwd: directory,
     });
-    expect(retainedReply.isError).not.toBe(true);
-    const retainedBundle = toolContract(
-      "get_evidence_bundle",
-    ).outputSchema.parse(retainedReply.structuredContent).result;
-    if ("kind" in retainedBundle)
-      throw new Error("Expected complete retained Evidence");
-    const retained = parseEvidence(
-      retainedBundle.records.find(
-        (record) => record.evidence_id === partialReference.evidence_id,
-      ),
-    );
-    expect(retained.evidence_id).toBe(partialReference.evidence_id);
-    expect(retained.normalized_result).toMatchObject(expected);
-    await client.ping();
+    expect(invocation.exitCode, invocation.stderr).toBe(1);
+    const cliError = analysisErrorProjectionSchema.parse(invocation.json);
+    expect(cliError).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_artifact_paths",
+          effective_value: 1,
+          cli_flag: "--max-artifact-paths",
+        },
+      },
+    });
+    expect(JSON.stringify(cliError.remediation)).not.toContain("--");
   },
 );

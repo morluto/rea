@@ -112,7 +112,7 @@ export const cArchiveEntryMetadata = (
       source_name: entry.name,
       type_code: entry.typeCode,
       relative_offset: entry.offset,
-      compression_flag: entry.compressionFlag === 1 ? 1 : 0,
+      compression_flag: entry.compressionFlag,
     },
     entry.role === "script" || isCArchivePythonModule(entry),
     header,

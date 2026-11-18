@@ -1,5 +1,8 @@
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
+import {
+  readElfProgramHeader,
+  type ElfProgramHeader,
+} from "../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
 import type { FileHandle } from "node:fs/promises";
 import type {
@@ -123,7 +126,7 @@ export const readMipsElfMetadata = async (
     return err("extended or reserved MIPS ELF table numbering is unsupported");
   let record: Buffer | undefined;
   let sharedLoad: MipsElfMetadata["sharedLoad"];
-  let programHeaders: Buffer | undefined;
+  let programHeaders: ElfProgramHeader[] | undefined;
   const relocationSections: MipsElfRelocationSection[] = [];
   const limitations: string[] = [];
   let gnuAttributes: MipsGnuAttributes | null = null;
@@ -154,7 +157,7 @@ export const readMipsElfMetadata = async (
       table.label,
     );
     if (!contents.ok) return contents;
-    if (!table.optional && metadata.type === 3) programHeaders = contents.value;
+    if (!table.optional && metadata.type === 3) programHeaders = [];
     let found = false;
     for (let i = 0; i < count; i += 1) {
       checkCancelled();
@@ -172,11 +175,20 @@ export const readMipsElfMetadata = async (
           );
       if (!parsedRecord.ok) return err(parsedRecord.error.message);
       const declaration = parsedRecord.value;
+      if ("fileSize" in declaration) programHeaders?.push(declaration);
       const { type } = declaration;
       const declaredOffset = Number(declaration.offset);
       const declaredSize = Number(
         "fileSize" in declaration ? declaration.fileSize : declaration.size,
       );
+      if (
+        "compressed" in declaration &&
+        declaration.compressed &&
+        (type === table.recordType || type === SHT_GNU_ATTRIBUTES)
+      )
+        return err(
+          `MIPS section header ${i} declares compressed ${type === SHT_GNU_ATTRIBUTES ? "GNU attributes" : "ABI flags"} at file offset ${declaredOffset}; decoded declarations are unavailable`,
+        );
       if (table.optional && type === SHT_GNU_ATTRIBUTES) {
         if (gnuAttributes !== null)
           return err("duplicate MIPS GNU attribute sections");
@@ -206,6 +218,7 @@ export const readMipsElfMetadata = async (
           offset: declaredOffset,
           size: declaredSize,
           entrySize: Number(declaration.entrySize),
+          compressed: declaration.compressed,
         });
       if (type !== table.recordType) continue;
       if (found) return err(`duplicate MIPS ABI records in ${table.label}`);

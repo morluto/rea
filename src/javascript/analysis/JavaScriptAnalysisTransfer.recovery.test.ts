@@ -6,7 +6,6 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   javaScriptForwardedTransferRemediation,
   javaScriptTransferByteBudget,
-  javaScriptTransferCeilingRemediation,
   measureJavaScriptModuleTransfer,
 } from "./JavaScriptAnalysisTransfer.js";
 
@@ -35,9 +34,15 @@ it("distinguishes the adjustable transfer file ceiling from the fixed record and
       },
     },
   });
-  expect(projected.remediation.action).toBe(
-    javaScriptTransferCeilingRemediation(measured.bytes - 1),
+  expect(projected.remediation.action).toContain(String(measured.bytes - 1));
+  expect(projected.remediation.action).toMatch(
+    /8388608.byte.*2147483648.byte.*no runtime override/iu,
   );
+  expect(projected.remediation.action).toMatch(
+    /source_paths.*effective file allowance/iu,
+  );
+  expect(projected.remediation.action).toMatch(/max_heap_mb does not raise/iu);
+  expect(projected.remediation.action).toMatch(/repeated unchanged/iu);
   const forwarded = javaScriptForwardedTransferRemediation(
     caught.reportedLimits,
   );
@@ -45,7 +50,10 @@ it("distinguishes the adjustable transfer file ceiling from the fixed record and
   const recordOnly = javaScriptForwardedTransferRemediation({
     transfer_record_bytes: 8_388_608,
   });
-  expect(recordOnly).toBe(javaScriptTransferCeilingRemediation(undefined));
+  expect(recordOnly).toMatch(
+    /effective transfer file ceiling follows.*parent.*heap/iu,
+  );
+  expect(recordOnly).toMatch(/record ceiling.*maximum.*no runtime override/iu);
   expect(javaScriptForwardedTransferRemediation(null)).toBeUndefined();
 });
 
@@ -53,7 +61,9 @@ it("keeps the 2 GiB transfer file maximum fixed", () => {
   const maximum = 2_147_483_648;
   expect(javaScriptTransferByteBudget(maximum * 8)).toBe(maximum);
   expect(javaScriptTransferByteBudget(maximum * 16)).toBe(maximum);
-  expect(
-    javaScriptForwardedTransferRemediation({ transfer_file_bytes: maximum }),
-  ).toBe(javaScriptTransferCeilingRemediation(maximum));
+  const recovery = javaScriptForwardedTransferRemediation({
+    transfer_file_bytes: maximum,
+  });
+  expect(recovery).toMatch(/2147483648.byte.*maximum.*no runtime override/iu);
+  expect(recovery).toMatch(/fewer source_paths does not raise.*maximum/iu);
 });

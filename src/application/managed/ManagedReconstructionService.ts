@@ -10,38 +10,70 @@ import {
 } from "../../domain/managed/managedReconstruction.js";
 import { ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
 
 const OPERATION = "import_managed_reconstruction" as const;
 
 /** Validate the request envelope and authenticate its managed Evidence source once. */
-export const resolveManagedReconstructionEvidenceInput = (
+const resolveManagedReconstructionEvidenceInput = (
   rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<ResolvedManagedReconstructionImport, AnalysisError> => {
-  const parsed = parseAnalysisInput(
+  const parsed = resolveEvidenceRequest(
     OPERATION,
     rawInput,
     managedReconstructionImportRequestSchema,
+    lookup,
+    options,
   );
   if (!parsed.ok) return parsed;
-  return resolveManagedReconstructionImport(parsed.value);
+  return resolveManagedReconstructionImport(parsed.value.input);
 };
 
-/** Execute from the source facts returned by the resolver. */
-export const importManagedReconstructionEvidenceResolved = (
-  resolved: ResolvedManagedReconstructionImport,
-): Result<Evidence, AnalysisError> => {
-  const result = executeManagedReconstructionImport(resolved);
-  return ok(createManagedReconstructionEvidence(resolved.request, result));
+/**
+ * Validate the raw request envelope, then authenticate and import its source;
+ * the authenticated static Evidence is the import's source.
+ */
+export const importManagedReconstructionExecution = (
+  rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const resolved = resolveManagedReconstructionEvidenceInput(
+    rawInput,
+    lookup,
+    options,
+  );
+  if (!resolved.ok) return resolved;
+  const result = executeManagedReconstructionImport(resolved.value);
+  return ok({
+    evidence: createManagedReconstructionEvidence(
+      resolved.value.request,
+      result,
+    ),
+    sources: [resolved.value.staticEvidence],
+    unknown: undefined,
+  });
 };
 
 /** Validate the raw request envelope, then authenticate and import its source. */
 export const importManagedReconstructionEvidence = (
   rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<Evidence, AnalysisError> => {
-  const resolved = resolveManagedReconstructionEvidenceInput(rawInput);
-  if (!resolved.ok) return resolved;
-  return importManagedReconstructionEvidenceResolved(resolved.value);
+  const imported = importManagedReconstructionExecution(
+    rawInput,
+    lookup,
+    options,
+  );
+  return imported.ok ? ok(imported.value.evidence) : imported;
 };
 
 const createManagedReconstructionEvidence = (

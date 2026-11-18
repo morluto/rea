@@ -50,7 +50,8 @@ const tableFailure = (
   const minimumWidth = kind === "program" ? (wide ? 56 : 32) : wide ? 64 : 40;
   const label = `${kind} header table`;
   if (table.width < minimumWidth) return `invalid ELF ${label} entry width`;
-  if (table.offset < BigInt(wide ? 64 : 52))
+  // e_ehsize can extend past the class minimum. Bytes below it are the header.
+  if (table.offset < BigInt(header.headerSize))
     return `ELF ${label} overlaps the fixed header`;
   return rangeFailure(
     label,
@@ -104,6 +105,22 @@ const extendedCounts = (
   return ok(counts);
 };
 
+/** A name index or extended count cannot refer to an absent section table. */
+export const validateElfSectionTablePresence = (tables: {
+  readonly programs: { readonly count: number };
+  readonly sections: {
+    readonly offset: bigint;
+    readonly count: number;
+    readonly namesIndex: number;
+  };
+}): Result<null, string> =>
+  tables.sections.offset === 0n &&
+  (tables.sections.count !== 0 ||
+    tables.sections.namesIndex !== 0 ||
+    tables.programs.count === 0xffff)
+    ? err("ELF section table is missing")
+    : ok(null);
+
 /** Canonical table declarations, including extended counts in inactive section zero. */
 export function* readElfTableDeclarations(
   bytes: Buffer,
@@ -122,11 +139,8 @@ export function* readElfTableDeclarations(
   let programCount = BigInt(programs.count);
   let sectionCount = BigInt(sections.count);
   let namesIndex = sections.namesIndex;
-  if (
-    sectionOffset === 0n &&
-    (sectionCount !== 0n || namesIndex !== 0 || programCount === 0xffffn)
-  )
-    return err("ELF section table is missing");
+  const presence = validateElfSectionTablePresence(raw.value);
+  if (!presence.ok) return presence;
   if (
     sectionOffset !== 0n &&
     (sectionCount === 0n || namesIndex === 0xffff || programCount === 0xffffn)

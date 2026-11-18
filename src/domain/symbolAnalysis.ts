@@ -1,32 +1,21 @@
-import { objcClassSymbol } from "./objcClassSymbol.js";
+import { objcClassSymbol, objcSymbolLeaf } from "./objcClassSymbol.js";
 import type { JsonValue } from "./jsonValue.js";
-import type { AddressedName } from "./hopperValues.js";
+import type { AddressedName } from "./native/nativeInventory.js";
 import type {
   MachoImportBinding,
-  ObjcClassImportBindingCoverage,
+  ObjcClassDiscoveryCoverage,
 } from "./native/objcSwiftMetadata.js";
 import {
   classifySwiftSymbol,
-  isSwiftMangledSymbolName,
+  isSwiftSymbolName,
   type SwiftTypeCategory,
 } from "./swiftSymbolClassification.js";
 
 /** Local class records emitted by Apple's fragile Objective-C ABI. */
 const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
 
-/**
- * Objective-C protocol declaration marker. `PROTOCOL_REFERENCE` slots
- * share the substring but are uses, not definitions.
- */
-const OBJC_PROTOCOL_MARKER = "OBJC_PROTOCOL_$_" as const;
-
-export interface ObjcClassDiscoveryCoverage {
-  readonly status:
-    | ObjcClassImportBindingCoverage["status"]
-    | "unknown"
-    | "not_applicable";
-  readonly reason: string | null;
-}
+/** Objective-C protocol declaration labels with their object-file prefixes. */
+const OBJC_PROTOCOL_SYMBOL = /^_{0,2}OBJC_PROTOCOL_\$_[^\s]+$/u;
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];
@@ -74,7 +63,7 @@ export const discoverObjcProtocols = (
   const protocols = uniqueByName(
     names.filter(
       ({ name }) =>
-        name.includes(OBJC_PROTOCOL_MARKER) ||
+        OBJC_PROTOCOL_SYMBOL.test(objcSymbolLeaf(name)) ||
         classifySwiftSymbol(name)?.protocolIdentity === true,
     ),
   );
@@ -83,16 +72,6 @@ export const discoverObjcProtocols = (
     protocols: protocols.map(toJsonEntry),
   };
 };
-
-/**
- * A Swift symbol carries either a demangler mangling or a name the category
- * decoder already accepts, including visible runtime class names (`_Tt…`) and
- * the optional leading underscore of legacy encodings (`__T0…`). Whether the
- * nominal category can be decoded is a separate question, so it must not decide
- * whether the symbol is Swift at all.
- */
-const isSwiftSymbolName = (name: string): boolean =>
-  isSwiftMangledSymbolName(name) || classifySwiftSymbol(name) !== undefined;
 
 /** Categorize procedure names using Swift manglings at their exact addresses. */
 export const categorizeSwiftTypes = (

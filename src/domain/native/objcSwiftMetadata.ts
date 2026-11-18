@@ -1,12 +1,16 @@
 import { objcClassSymbol } from "../objcClassSymbol.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   BINARY_ARCHITECTURES,
-  isMachOFormat,
   type BinaryTarget,
 } from "../binaryTargetTypes.js";
 import { providerSchema } from "../evidence.js";
-import { isSwiftMangledSymbolName } from "../swiftSymbolClassification.js";
+import {
+  targetApplicabilityRefusal,
+  type TargetApplicability,
+} from "../targetApplicability.js";
+import { isSwiftSymbolName } from "../swiftSymbolClassification.js";
 import { nativeCallReferenceSchema } from "./nativeCallReference.js";
 import { machoTargetSelectionSchema } from "../apple/machoTargetSelection.js";
 import {
@@ -20,8 +24,15 @@ import {
 } from "../unicodeCodePointOrder.js";
 
 /** Targets admitted to the Apple byte reader; the reader validates slice support. */
+export const APPLE_DISPATCH_TARGET_APPLICABILITY: TargetApplicability = {
+  kinds: ["executable"],
+  formats: ["mach-o", "mach-o-universal"],
+  reason:
+    "Binary Apple metadata requires Mach-O; other providers can report symbol-only metadata",
+};
 export const isAppleDispatchMetadataTarget = (target: BinaryTarget): boolean =>
-  target.kind === "executable" && isMachOFormat(target.format);
+  targetApplicabilityRefusal(APPLE_DISPATCH_TARGET_APPLICABILITY, target) ===
+  undefined;
 
 /** Objective-C method type. */
 export const objcMethodTypeSchema = z.enum([
@@ -194,6 +205,27 @@ type ObjcDispatchImplementation = z.infer<
   typeof objcDispatchImplementationSchema
 >;
 
+/** Interpret category qualification only within the Objective-C method-symbol grammar. */
+const objcMethodSymbolOwner = (owner: string) => {
+  const categoryOwner = /^([^()]+)\(([^()]+)\)$/u.exec(owner);
+  return {
+    class_name: categoryOwner?.[1] ?? owner,
+    ...(categoryOwner?.[2] === undefined ? {} : { category: categoryOwner[2] }),
+  };
+};
+
+/** The accepted provider method-symbol spelling. */
+const parseObjcMethodSymbol = (symbol: string) => {
+  const match = /^([+-])\[([^\s\]]+)\s+([^\]]+)\]$/u.exec(symbol);
+  if (match?.[1] === undefined || !match[2] || !match[3]) return undefined;
+  return {
+    ...objcMethodSymbolOwner(match[2]),
+    reported_owner: match[2],
+    selector: match[3],
+    method_type: match[1] === "+" ? ("class" as const) : ("instance" as const),
+  };
+};
+
 /** Project class declarations without selecting an ambiguous or unrepresentable address. */
 export const projectObjcClassMethods = (
   implementations: readonly ObjcDispatchImplementation[],
@@ -251,8 +283,8 @@ export type MachoImportBinding = z.infer<typeof machoImportBindingSchema>;
 /** Swift protocol conformance and its associated witness-table location. */
 export const swiftConformanceSchema = z.strictObject({
   type_name: z.string().min(1).nullable(),
-  /** Raw three-bit Swift ABI type-reference kind; absent in older Evidence. */
-  type_reference_kind: z.number().int().min(0).max(7).optional(),
+  /** Raw three-bit Swift ABI type-reference kind. */
+  type_reference_kind: z.number().int().min(0).max(7),
   /** Address of the descriptor, class-name string, or resolved ObjC class reference. */
   type_reference_target: nativeMetadataLocationSchema.optional(),
   type_binding: machoImportBindingSchema.nullable().optional(),
@@ -307,7 +339,11 @@ type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
 /** Per-facet coverage; empty arrays are meaningful only with this record. */
 export const nativeMetadataCoverageSchema = z.strictObject({
   facet: z.string().min(1),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
+  status: z.enum([
+    ...knownCoverageStatusSchema.options,
+    "unsupported",
+    "not_requested",
+  ]),
   reason: z.string().nullable(),
   examined: z.int().nonnegative(),
   decoded: z.int().nonnegative(),
@@ -316,23 +352,38 @@ export const nativeMetadataCoverageSchema = z.strictObject({
 export const objcClassImportIdentitySchema = machoImportBindingSchema.omit({
   requested_address: true,
 });
-export const objcClassImportBindingCoverageSchema = z.strictObject({
-  facet: z.literal("objc_class_import_bindings"),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
-  reason: z.string().nullable(),
-  examined: z.number().int().nonnegative(),
-  decoded: z.number().int().nonnegative(),
-});
-export type ObjcClassImportBindingCoverage = z.infer<
-  typeof objcClassImportBindingCoverageSchema
+export const objcClassImportBindingCoverageSchema =
+  nativeMetadataCoverageSchema.extend({
+    facet: z.literal("objc_class_import_bindings"),
+    /** `unknown` when the caller did not state whether the candidates are complete. */
+    status: z.enum([
+      ...nativeMetadataCoverageSchema.shape.status.options,
+      "unknown",
+    ]),
+    examined: z.number().int().nonnegative(),
+    decoded: z.number().int().nonnegative(),
+  });
+
+/** Discovery retains unknown or inapplicable import identity separately from scan coverage. */
+export const objcClassDiscoveryCoverageSchema = nativeMetadataCoverageSchema
+  .pick({ status: true, reason: true })
+  .extend({
+    status: z.enum([
+      ...nativeMetadataCoverageSchema.shape.status.options,
+      "unknown",
+      "not_applicable",
+    ]),
+  });
+export type ObjcClassDiscoveryCoverage = z.infer<
+  typeof objcClassDiscoveryCoverageSchema
 >;
 
-/** Nominal Swift type kinds recorded by `__swift5_types` descriptors. */
+/** Nominal Swift type kinds recorded by `__swift5_types` and `__swift5_types2` descriptors. */
 export const swiftDeclKindSchema = z.enum(["class", "struct", "enum", "actor"]);
 
 /**
  * One nominal type context descriptor. `location` is the descriptor itself;
- * evidence cites its `__swift5_types` record. `qualified_name` is null when a
+ * evidence cites its type record by section. `qualified_name` is null when a
  * parent context is unresolved, rather than a shortened guess.
  */
 export const swiftDeclSchema = z.strictObject({
@@ -425,7 +476,7 @@ export const nativeDispatchMetadataInputSchema = z.strictObject({
   objc_class_import_addresses_complete: z
     .boolean()
     .describe(
-      "Whether the candidate addresses include every selected class-label row; false keeps binding coverage partial when the existing record budget truncates the scan.",
+      "Whether the candidate addresses include every selected class-label row. false keeps binding coverage partial when the existing record budget truncates the scan; omitted makes binding coverage unknown.",
     )
     .optional(),
   max_input_bytes: z
@@ -504,13 +555,21 @@ export const inspectNativeDispatchMetadata = (
     const classSymbol = objcClassSymbol(entry.name);
     if (classSymbol !== undefined) classNames.add(classSymbol.name);
 
-    const methodMatch = /^([+-])\[([^\s\]]+)\s+([^\]]+)\]$/u.exec(entry.name);
-    if (methodMatch?.[1] !== undefined && methodMatch[2] && methodMatch[3]) {
-      const methodType = methodMatch[1] === "+" ? "class" : "instance";
-      const selector = methodMatch[3];
+    const method = parseObjcMethodSymbol(entry.name);
+    if (method !== undefined) {
+      const {
+        method_type: methodType,
+        selector,
+        class_name: className,
+        category,
+      } = method;
+      // The provider's method-symbol grammar owns category qualification. Binary
+      // class names are identities, not display strings for downstream
+      // consumers to split. Keep the original symbol in Evidence.
       const key = parsedAddress.success
         ? compositeKey([
-            methodMatch[2],
+            className,
+            category ?? null,
             selector,
             methodType,
             parsedAddress.data,
@@ -521,7 +580,8 @@ export const inspectNativeDispatchMetadata = (
       if (previous !== undefined) previous.evidence.push(...evidence);
       else
         implementations.set(key, {
-          class_name: methodMatch[2],
+          class_name: className,
+          ...(category === undefined ? {} : { category }),
           selector,
           method_type: methodType,
           implementation_address: address,
@@ -529,10 +589,10 @@ export const inspectNativeDispatchMetadata = (
           decode: { status: "partial", reason: "symbol_name_only" },
           evidence,
         });
-      classNames.add(methodMatch[2]);
+      classNames.add(className);
     }
 
-    if (isSwiftMangledSymbolName(entry.name) || entry.name.startsWith("_Tt"))
+    if (isSwiftSymbolName(entry.name))
       swiftSymbols.push({
         mangled_name: entry.name,
         address,
@@ -570,12 +630,14 @@ export const inspectNativeDispatchMetadata = (
           left.selector,
           left.method_type,
           left.implementation_address ?? "",
+          left.category ?? null,
         ]),
         compositeKey([
           right.class_name,
           right.selector,
           right.method_type,
           right.implementation_address ?? "",
+          right.category ?? null,
         ]),
       ),
   );

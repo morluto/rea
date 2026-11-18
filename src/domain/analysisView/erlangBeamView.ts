@@ -1,18 +1,19 @@
 import { z } from "zod";
 import { erlangBeamSchema, type ErlangBeam } from "../erlang/beam.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { selectViewRows } from "./selectViewRows.js";
 
@@ -110,17 +111,13 @@ export const erlangBeamSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: erlangBeamViewRequestSchema.exactOptional(),
 };
-export const erlangBeamDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(erlangBeamCompleteDeliveryShape),
-  z.strictObject(erlangBeamSummaryDeliveryShape),
-]);
 const readReport = createAnalysisViewResultReader(erlangBeamSchema);
 type Table = "atoms" | "exports" | "imports" | "lambdas" | "chunks";
 type Row = NonNullable<ErlangBeam[Table]>[number];
 type BeamView = z.infer<typeof erlangBeamViewRequestSchema>;
 
 /** Select already parsed rows; original atom/lambda indexes are never repurposed. */
-const selectRows = (rows: readonly Row[] | null, view: BeamView) => {
+const selectRows = (source: readonly Row[], view: BeamView) => {
   const names = view.names === undefined ? undefined : new Set(view.names);
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
@@ -138,7 +135,6 @@ const selectRows = (rows: readonly Row[] | null, view: BeamView) => {
     ),
     source_index,
   });
-  const source = rows ?? [];
   if (names === undefined && indices === undefined && modules === undefined)
     return {
       rows: source
@@ -165,9 +161,12 @@ const selectRows = (rows: readonly Row[] | null, view: BeamView) => {
 /** Project retained BEAM facts without reopening files or reinterpreting chunks. */
 export const projectErlangBeamView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "beam")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof erlangBeamViewRequestSchema>
+  >(admitted, "summary", "beam");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -215,15 +214,25 @@ export const projectErlangBeamView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(chunks.length, chunks.length),
+      coverage: completeWithinViewCoverage(chunks.length),
     });
-  const selected = selectRows(parsed.value[view.collection], view);
+  const rows = parsed.value[view.collection];
+  if (rows === null)
+    return ok({
+      ...shared,
+      kind: "beam" as const,
+      view,
+      beam: summary,
+      page: { collection: view.collection, items: [] },
+      coverage: unavailableViewCoverage(),
+    });
+  const selected = selectRows(rows, view);
   return ok({
     ...shared,
-    kind: "beam",
+    kind: "beam" as const,
     view,
     beam: summary,
     page: { collection: view.collection, items: selected.rows },

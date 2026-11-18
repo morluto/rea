@@ -67,6 +67,9 @@ cliTest(
       expect(
         await readFile(join(extraction.output_root, "a.txt"), "utf8"),
       ).toBe("hello world\n");
+      expect(
+        await readFile(join(extraction.output_root, "d/b.txt"), "utf8"),
+      ).toBe("x\n");
     } finally {
       await rm(extraction.output_root, { force: true, recursive: true });
     }

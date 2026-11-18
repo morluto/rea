@@ -15,15 +15,17 @@ import {
 import { err, ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget, evidenceSubjectDisplay } from "../evidence.js";
 
 const page = {
   kind: z.literal("interface-builder"),
@@ -131,10 +133,10 @@ const parseInterfaceBuilderReport = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  const subject = evidenceFileTarget(parent);
   if (
     report.graph.target_sha256 !== report.target_sha256 ||
-    (parent.subject != null &&
-      parent.subject.digest.sha256 !== report.target_sha256)
+    (subject !== undefined && subject.sha256 !== report.target_sha256)
   )
     return err(
       analysisViewInputError([
@@ -176,16 +178,19 @@ const summarizeInterfaceBuilder = (
       truncated: graph.truncated,
       limitation_count: limitationCount,
     }),
-    coverage: completeWithinViewCoverage(total, total),
+    coverage: completeWithinViewCoverage(total),
   };
 };
 
 /** Project retained decode_interface_builder Evidence without reopening archives. */
 export const projectInterfaceBuilderView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "interface-builder")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof interfaceBuilderViewRequestSchema>
+  >(admitted, "summary", "interface-builder");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -210,7 +215,7 @@ export const projectInterfaceBuilderView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: {
       path:
-        parent.subject?.local_path ??
+        evidenceSubjectDisplay(parent)?.local_path ??
         report.resource_root?.canonical_path ??
         "",
       sha256: report.target_sha256,
@@ -230,7 +235,7 @@ export const projectInterfaceBuilderView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       ...summarizeInterfaceBuilder(report, limitations.length),
@@ -262,7 +267,7 @@ export const projectInterfaceBuilderView = (
           ? selectDocumentRows(graph.nodes, view, document)
           : selectDocumentRows(graph.edges, view, document);
   return ok({
-    kind: "interface-builder",
+    kind: "interface-builder" as const,
     view,
     items: selected.rows,
     ...shared,

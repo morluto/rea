@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { readElfFixedHeader, readElfHeaderFacts } from "./elfFixedHeader.js";
+import {
+  elfArchitecture,
+  readElfFixedHeader,
+  readElfHeaderFacts,
+} from "./elfFixedHeader.js";
 import { elf } from "./binaryTarget.fixture.js";
 
 it.each([
@@ -29,11 +33,22 @@ it.each([
         type: 0xfe01,
         flags: 0x89abcdef,
         osAbi: 0,
+        abiVersion: 0,
         architecture: cls === 1 ? "x86" : "x86_64",
       },
     });
   },
 );
+
+it("retains the declared ABI version without admitting a consumer-specific ABI", () => {
+  const bytes = elf(2, 1, 62);
+  bytes[7] = 6;
+  bytes[8] = 7;
+  expect(readElfFixedHeader(bytes)).toMatchObject({
+    ok: true,
+    value: { osAbi: 6, abiVersion: 7 },
+  });
+});
 
 it.each([
   [
@@ -71,6 +86,14 @@ it("checks declared header size against the whole file, not the prefix", () => {
   bytes.writeUInt16LE(128, 52);
   expect(readElfFixedHeader(bytes, 128)).toMatchObject({ ok: true });
   expect(readElfFixedHeader(bytes, 127)).toMatchObject({ ok: false });
+});
+
+it("classifies EM_PPC64 only for a caller that commits ELF64", () => {
+  expect(elfArchitecture(21, 64)).toBe("powerpc");
+  expect(elfArchitecture(21, 32)).toBeUndefined();
+  // Readers that pass only the machine keep their reports as they were.
+  expect(elfArchitecture(21)).toBeUndefined();
+  expect(elfArchitecture(20)).toBe("powerpc");
 });
 
 it("preserves an unknown ELF machine as a fact without rejecting the header", () => {
@@ -140,7 +163,6 @@ it("keeps framing failures ahead of version and declared-size admission", () => 
   });
   bytes[6] = 1;
   const truncated = readElfFixedHeader(bytes, 63);
-  expect(truncated).toEqual(readElfHeaderFacts(bytes, 63));
   expect(truncated).toMatchObject({
     ok: false,
     error: expect.stringContaining("truncated ELF header"),

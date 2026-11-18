@@ -2666,17 +2666,16 @@ pre code {
     width: calc(100% - 2.5rem);
   }
   .navigation {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    justify-content: space-between;
     gap: 0.5rem 0.8rem;
     font-size: 0.875rem;
   }
+  /* Share the row evenly, but never narrower than a link's longest word. */
   .navigation a {
-    min-width: 0;
+    flex: 1 1 0;
+    max-width: 100%;
     min-height: 40px;
     white-space: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
   .hero {
     padding-block: 3.5rem 3rem;

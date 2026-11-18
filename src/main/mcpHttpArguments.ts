@@ -1,4 +1,5 @@
-import { Help, z } from "incur";
+import { formatCommandHelp } from "../cli/help.js";
+import { z } from "zod";
 import type { HttpHostname } from "../domain/httpHostname.js";
 
 import {
@@ -29,7 +30,7 @@ const MCP_HTTP_OPTIONS = z.object({
     .array(z.string())
     .optional()
     .describe(
-      "Host/Origin names a non-loopback bind may serve; default MCP_ALLOWED_HOSTS, else the bind is refused",
+      "Host/Origin names a non-loopback bind may serve; repeat or separate names with commas; default MCP_ALLOWED_HOSTS, else the bind is refused",
     ),
   help: z.boolean().optional().describe("Show help"),
 });
@@ -45,11 +46,10 @@ const VALUED_FLAGS: ReadonlySet<string> = new Set([
   "--allowed-hosts",
 ]);
 
-/** Render help for the dispatcher entry, which accepts no Incur global options. */
+/** Render help for the dispatcher entry, which accepts no global options. */
 export const renderMcpHttpHelp = (): string =>
-  Help.formatCommand(MCP_HTTP_COMMAND, {
+  formatCommandHelp(MCP_HTTP_COMMAND, {
     description: MCP_HTTP_DESCRIPTION,
-    hideGlobalOptions: true,
     options: MCP_HTTP_OPTIONS,
     alias: MCP_HTTP_ALIAS,
     hint: "This entry accepts only the options above. The bound URL is logged as one JSON line on stderr.",
@@ -85,6 +85,7 @@ export const parseMcpHttpArguments = (
   arguments_: readonly string[],
 ): McpHttpArguments => {
   const values = new Map<string, string>();
+  const allowedHostValues: string[] = [];
   let http = false;
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index] ?? "";
@@ -100,7 +101,8 @@ export const parseMcpHttpArguments = (
     if (inline === undefined) index += 1;
     if (value === undefined || (inline === undefined && value.startsWith("-")))
       return invalid(`Missing value for ${flag}`);
-    values.set(flag, value);
+    if (flag === "--allowed-hosts") allowedHostValues.push(value);
+    else values.set(flag, value);
   }
   if (!http) return invalid("--host and --port require --http");
   const host = values.get("--host")?.trim();
@@ -111,7 +113,8 @@ export const parseMcpHttpArguments = (
     portText === undefined ? undefined : mcpHttpPortSchema.safeParse(portText);
   if (port !== undefined && !port.success)
     return invalid(`Invalid --port: ${MCP_HTTP_PORT_CONSTRAINT}`);
-  const allowedHostsText = values.get("--allowed-hosts");
+  const allowedHostsText =
+    allowedHostValues.length === 0 ? undefined : allowedHostValues.join(",");
   const allowedHosts =
     allowedHostsText === undefined
       ? undefined

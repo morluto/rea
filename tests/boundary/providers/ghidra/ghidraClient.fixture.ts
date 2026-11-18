@@ -8,6 +8,7 @@ import type {
   GhidraLaunchSession,
   GhidraLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import { phaseArrival } from "../../../support/lifecycleHarness.js";
 
 /** Shared real-socket producer for Ghidra client and public MCP regressions. */
 export const ghidraFixturePath = fileURLToPath(
@@ -15,10 +16,21 @@ export const ghidraFixturePath = fileURLToPath(
 );
 
 type FixtureMode =
+  | "checkpoint"
+  | "checkpoint_fail_close"
+  | "checkpoint_hold_startup"
+  | "checkpoint_hold_close"
+  | "unicode_search"
   | "reject_first_connection"
   | "reject_all_connections"
   | "success"
   | "fragmented"
+  | "invalid_utf8"
+  | "invalid_utf8_split"
+  | "invalid_utf8_end"
+  | "valid_utf8_end"
+  | "valid_then_invalid"
+  | "valid_then_invalid_split"
   | "oversized_result"
   | "wrong_identity"
   | "malformed"
@@ -26,7 +38,11 @@ type FixtureMode =
   | "future_id"
   | "analysis_timeout"
   | "remote_error"
+  | "decompile_timed_out"
   | "remote_startup_error"
+  | "import_identity_unavailable"
+  | "import_identity_mismatch"
+  | "late_identity_failure"
   | "shutdown_error"
   | "invalid_shutdown_ack"
   | "hang_after_start"
@@ -55,10 +71,14 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
   readonly tokens: string[] = [];
   readonly processes: ChildProcess[] = [];
   readonly requests: string[] = [];
+  readonly packedPrograms: GhidraLaunchSession["packedProgram"][] = [];
+  /** The fixture child holds its checkpoint request open (an IPC event). */
+  readonly checkpointHold = phaseArrival();
 
   constructor(readonly mode: FixtureMode = "success") {}
 
   async launch(session: GhidraLaunchSession) {
+    this.packedPrograms.push(session.packedProgram);
     this.runtimeRoots.push(session.runtimeRoot);
     this.endpointPaths.push(session.endpointPath);
     this.tokens.push(session.token);
@@ -81,6 +101,13 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
       },
     });
     process_.on("message", (value: unknown) => {
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "event" in value &&
+        value.event === "checkpoint-held"
+      )
+        this.checkpointHold.arrive();
       if (
         typeof value === "object" &&
         value !== null &&

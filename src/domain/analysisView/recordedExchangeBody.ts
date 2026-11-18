@@ -1,3 +1,4 @@
+import { isRecord } from "../../kernel/isRecord.js";
 /** Parsed declarations borrow source strings; they do not decode bodies or normalize media types. */
 export type RecordedRequestBody =
   | { readonly kind: "request-unavailable" }
@@ -19,9 +20,7 @@ export type RecordedRequestBody =
     };
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? (value as Record<string, unknown>) : undefined;
 
 /** Read HAR request body declarations once without turning omission or null into absence. */
 export const readRecordedRequestBody = (
