@@ -26,25 +26,24 @@ export interface ZipEndOfCentralDirectory {
 export function* zipEndOfCentralDirectoryCandidates(
   bytes: Uint8Array,
 ): Generator<ZipEndOfCentralDirectory> {
-  const buffer = Buffer.isBuffer(bytes)
-    ? bytes
-    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const reader = new BinaryReader(buffer, true, "zip");
   const earliest = Math.max(
     0,
-    buffer.length - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES,
+    bytes.byteLength - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES,
   );
-  for (
-    let searchFrom = buffer.length - ZIP_EOCD_BYTES;
-    searchFrom >= earliest;
-  ) {
-    const offset = buffer.lastIndexOf(EOCD_SIGNATURE, searchFrom);
-    if (offset < earliest) break;
+  const tail = Buffer.from(
+    bytes.buffer,
+    bytes.byteOffset + earliest,
+    bytes.byteLength - earliest,
+  );
+  const reader = new BinaryReader(tail, true, "zip");
+  for (let searchFrom = tail.length - ZIP_EOCD_BYTES; searchFrom >= 0;) {
+    const offset = tail.lastIndexOf(EOCD_SIGNATURE, searchFrom);
+    if (offset < 0) break;
     searchFrom = offset - 1;
     const commentLength = reader.u16(offset + 20);
-    if (offset + ZIP_EOCD_BYTES + commentLength !== buffer.length) continue;
+    if (offset + ZIP_EOCD_BYTES + commentLength !== tail.length) continue;
     yield {
-      offset,
+      offset: earliest + offset,
       disk: reader.u16(offset + 4),
       directoryDisk: reader.u16(offset + 6),
       entriesOnDisk: reader.u16(offset + 8),

@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { zipEndOfCentralDirectoryCandidates } from "./zipEndOfCentralDirectory.js";
 
 // Wire sizes for the fixture and its expectations are independent of the reader.
@@ -107,4 +107,32 @@ it("does not promote short records or non-ending EOCD-like bytes to candidates",
   const withoutSignature = Buffer.alloc(CLASSIC_END_RECORD_BYTES);
   withoutSignature.writeUInt16LE(1, 19);
   expect([...zipEndOfCentralDirectoryCandidates(withoutSignature)]).toEqual([]);
+});
+
+it("restricts reverse signature search to the maximum EOCD tail window", () => {
+  const prefixBytes = 100_000;
+  const bytes = Buffer.alloc(
+    prefixBytes + CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES,
+    0xa5,
+  );
+  record(bytes, 16, MAXIMUM_COMMENT_BYTES);
+  record(bytes, bytes.length - CLASSIC_END_RECORD_BYTES, 0);
+
+  const spy = vi.spyOn(Buffer.prototype, "lastIndexOf");
+  try {
+    const candidates = [...zipEndOfCentralDirectoryCandidates(bytes)];
+    expect(candidates.map(({ offset }) => offset)).toEqual([
+      bytes.length - CLASSIC_END_RECORD_BYTES,
+    ]);
+    expect(spy).toHaveBeenCalled();
+    for (const receiver of spy.mock.contexts) {
+      const searched = receiver as Buffer;
+      expect(searched.byteOffset).toBe(bytes.byteOffset + prefixBytes);
+      expect(searched.length).toBe(
+        CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES,
+      );
+    }
+  } finally {
+    spy.mockRestore();
+  }
 });
