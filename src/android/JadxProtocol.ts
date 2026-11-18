@@ -139,18 +139,28 @@ export const jadxExternalReferenceSummarySchema = z.object({
   observed_method_count: count,
   prototypes: z.array(jadxMethodMetadataSchema).min(1),
 });
-export const jadxMethodSchema = z.object({
+const jadxMethodIdentity = {
   class_name: z.string(),
   method_name: z.string(),
   full_name: z.string(),
   overload_index: count,
   overload_count: count,
   dex_descriptor: dexDescriptorSchema,
-  mode: z.enum(["java", "smali"]),
-  fell_back: z.boolean(),
-  markers: z.array(z.string()),
-  body: z.string(),
-});
+};
+export const jadxMethodSchema = z.discriminatedUnion("mode", [
+  z.object({
+    ...jadxMethodIdentity,
+    mode: z.enum(["java", "smali"]),
+    fell_back: z.boolean(),
+    markers: z.array(z.string()),
+    body: z.string(),
+  }),
+  z.strictObject({
+    ...jadxMethodIdentity,
+    mode: z.literal("unavailable"),
+    body_unavailable_reason: z.string().min(1),
+  }),
+]);
 export const jadxXrefsSchema = z.object({
   target: z.string(),
   reference_target: z.literal("external").optional(),

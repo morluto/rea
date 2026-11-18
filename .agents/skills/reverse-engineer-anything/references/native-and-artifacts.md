@@ -817,9 +817,13 @@ and detach the mount you created when finished. REA's inspection mount is
 temporary, not a retained export of the image's contents.
 
 For headerless DOS COM, explicitly open with `format: "dos-com"` (CLI
-`--target-format dos-com`). Inspect the load image before trusting function
-analysis: the entry is `0x10100`, file offset zero, with imposed real-mode segment
-context. PSP/stack/device state remains unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
+`--target-format dos-com`). Do not pass a loader or base. Inspect the load
+image before trusting function analysis. A Ghidra ComLoader import records
+`loader: "ComLoader"` and `load_address: "0000:0100"` (linear entry `0x100`,
+file offset zero) plus a zero-filled PSP placeholder at `0000:0000`. An image
+ComLoader rejects records `loader: "BinaryLoader"`, `load_address: "1000:0100"`
+(linear `0x10100`), and `loader_fallback.reason`. Segment context is imposed for
+analysis. PSP contents, stack, and device state remain unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
 Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
 
