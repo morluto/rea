@@ -1,11 +1,60 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import {
   javaScriptStaticParseStatus,
   unexaminedJavaScriptStaticCoverage,
 } from "./javascriptStaticCoverage.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
+import {
+  javaScriptRuntimeContext,
+  javaScriptProgramStrictness,
+  parseJavaScriptSource,
+  parseRecoveredJavaScript,
+  parserPluginsForPath,
+} from "./javascriptSourceParser.js";
+
+it.each(["main.js", ".js", ".mjs"])(
+  "retains the unknown loader condition without inventing syntax errors for %s",
+  (path) => {
+    const source = '\uFEFF#!/usr/bin/env node\nimport "./dep.mjs";';
+    const application = parseJavaScriptSource(source, path, "unknown");
+    expect(application).not.toBeNull();
+    const historical = parseRecoveredJavaScript(
+      source,
+      path,
+      { plugins: parserPluginsForPath(path) },
+      "unknown",
+    ).file;
+    for (const file of [application!, historical]) {
+      expect(file.errors).toEqual([]);
+      expect(javaScriptRuntimeContext(file.program)).toBe("unknown");
+      expect(javaScriptProgramStrictness(file.program)).toBe("unknown");
+      const result = analyzeParsedJavaScriptStaticSource(source, file);
+      expect(result.parse_status).toBe("partial");
+      expect(result.analysis_coverage).toMatchObject({
+        syntax: { status: "complete", error_count: 0 },
+        semantics: { unknown_findings: 0, uncertainty: ["conditional-loader"] },
+      });
+      expect(result.references).toMatchObject([
+        {
+          kind: "static-import",
+          specifier: "./dep.mjs",
+          location: {
+            start: { line: 2, column: 0 },
+            end: { line: 2, column: 19 },
+          },
+        },
+      ]);
+      expect(result.limitations).toContainEqual(
+        expect.stringContaining("only if Node loads it as an ES module"),
+      );
+    }
+  },
+);
 
 it("separates dynamic semantic uncertainty from completed syntax and examination", () => {
   const result = analyzeCommonJsStaticFixture(

@@ -690,6 +690,12 @@ const createFileTarget = (
           path: file.path,
           operation: "inventory-relevant-file",
           coverage: completeApplicationCoverage(),
+          limitations:
+            javascript?.analysis_coverage.semantics.uncertainty.includes(
+              "conditional-loader",
+            )
+              ? javascript.limitations
+              : [],
         }),
       },
     ],
