@@ -78,9 +78,6 @@ const readRows = <Item>(
   return items;
 };
 
-const heapExtent = (layout: ManagedMetadataLayout): number =>
-  Math.max(layout.strings.size, layout.blob?.size ?? 0);
-
 const validateIdentityTableCounts = (
   layout: ManagedMetadataLayout,
   issues: ManagedParseIssue[],
@@ -109,11 +106,13 @@ export const readManagedModuleIdentity = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
 ): Pick<ManagedMetadataInventory, "module" | "issues"> => {
-  const issues: ManagedParseIssue[] = [];
+  const issues: ManagedParseIssue[] =
+    layout.guid.issue === null ? [] : [layout.guid.issue];
+  if (layout.blob?.issue) issues.push(layout.blob.issue);
   validateIdentityTableCounts(layout, issues);
   const module =
     readManagedValue(
-      () => readModule(bytes, layout, heapExtent(layout)),
+      () => readModule(bytes, layout, layout.strings.size),
       issues,
     ) ?? null;
   return { module, issues };
@@ -127,16 +126,17 @@ const readReferences = (
   readonly references: readonly AssemblyReference[];
   readonly referenceNames: readonly string[];
 } => {
-  const references = readRows(layout.table(35), (row) =>
-    readManagedValue(
-      () => readAssemblyReference(bytes, layout, row, heapExtent(layout)),
+  const referenceNames = new Set<string>();
+  const references = readRows(layout.table(35), (row) => {
+    const observed = readManagedValue(
+      () => readAssemblyReference(bytes, layout, row, layout.strings.size),
       issues,
-    ),
-  );
-  return {
-    references,
-    referenceNames: [...new Set(references.map(({ name }) => name))].sort(),
-  };
+    );
+    if (observed === undefined) return undefined;
+    referenceNames.add(observed.name);
+    return observed.reference ?? undefined;
+  });
+  return { references, referenceNames: [...referenceNames].sort() };
 };
 
 const readResources = ({
@@ -177,15 +177,7 @@ const readAttributes = (
   const attributes = readRows(layout.table(12), (row) =>
     readManagedValue(
       () =>
-        readCustomAttribute(
-          bytes,
-          layout,
-          row,
-          heapExtent(layout),
-          issues,
-          memberLists,
-          typeNames,
-        ),
+        readCustomAttribute(bytes, layout, row, issues, memberLists, typeNames),
       issues,
     ),
   );
@@ -219,7 +211,7 @@ export const readManagedMetadataInventory = (
   const { module } = identity;
   const assembly =
     readManagedValue(
-      () => readAssembly(bytes, layout, heapExtent(layout)),
+      () => readAssembly(bytes, layout, layout.strings.size),
       issues,
     ) ?? null;
   const { references, referenceNames } = readReferences(bytes, layout, issues);
