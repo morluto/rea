@@ -35,10 +35,12 @@ with a source that `inspect_analysis_view` also accepts:
 this session, or `{"kind": "evidence-file", "path": "/absolute/evidence.json"}`
 for a saved record or bundle. Add `evidence_id` to select one record from a
 bundle that holds more than one. Complete inline Evidence is still accepted as
-the third form. The comparison cites the records that the sources resolve to,
-so all three forms give the same comparison Evidence. A retained reference that
-the session cannot resolve is refused with `evidence_integrity_mismatch` and
-`details.reason: "missing"`.
+the third form. For Evidence stored in a snapshot, follow the
+[snapshot Evidence workflow](../getting-started/cli.md#use-snapshot-evidence-in-file-based-workflows)
+before selecting the exported file. The comparison cites the records that the
+sources resolve to, so all three forms give the same comparison Evidence. A
+retained reference that the session cannot resolve is refused with
+`evidence_integrity_mismatch` and `details.reason: "missing"`.
 
 `compare_artifacts` can also resolve an artifact summary to its exact retained
 parent in the session, or from the authenticated bundle containing a file-selected
@@ -1259,9 +1261,25 @@ An unverified release may still be usable; the optional remediation preserves
 the caller's choice. Omission means verification was not reported. Target-free
 discovery does not probe a version solely to populate this fact.
 
+`open_binary` and `binary_session` report the inspected file in `path` and its
+SHA-256. When the selected spelling differs, `caller_input_path` carries that
+spelling verbatim. An alias that changes only this spelling, such as a second
+POSIX symlink to the same executable, refreshes the selection and can reuse the
+live analysis engine. Reuse still requires the same provider profile, source
+admission path, and artifact selection and companions. Use the canonical `path`
+for an explicit provider `document` selector when that provider identifies its
+document by path.
+
+Inline provider and composed workflow Evidence for that file includes the
+current `caller_input_path` when the selection differs from the canonical path. The alias is outside the
+Evidence ID and snapshot binding. Ordinary recording of a duplicate retains the
+first record, including its selection metadata, so later inline responses may
+carry a different alias from the bundled record with the same ID. The bundle
+records retained observations and does not log every target selection.
+
 When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
-records the canonical binary path and SHA-256, resource root (including its
-caller-selected path), or absence of selection at
+records the canonical binary path and SHA-256 with its differing caller path,
+a resource root with its caller-selected path, or absence of selection at
 the end of that serialized attempt. This is a past observation: a queued or
 later operation may already have changed the selection. No selection does not
 establish that cleanup is complete. Call `binary_session` for current state

@@ -34,6 +34,24 @@ Select an exact name or address from the returned inventory, then use it with
 that every target names its entry function `entry`. MCP uses `open_binary` and
 focused tools such as `list_procedures` and `analyze_function` on the same session.
 
+For analysis-inferred x86-32 Ghidra signatures, `native_api.prototype_conflicts` can
+identify a direct `EBP`-framed stack argument read beyond a zero-parameter
+inference, or an immediate `RET` cleanup (including zero) that disagrees with an
+inferred `stdcall` prototype whose parameters are simple four-byte stack slots.
+Each
+diagnostic retains the inferred claim, decoded instruction address/text,
+observed offset or cleanup size, and unresolved assumptions. It does **not**
+change the inferred signature or establish source-level parameters. The default
+`analyze_function` summary reports the diagnostic count; request the complete
+dossier, `inspect_native_api`, or a retained `native_api` view for the records.
+An omitted conflict list means this check was not recorded (including other
+providers and architectures); an empty list does not prove a correct prototype.
+The `EBP` read check requires an explicit `PUSH EBP; MOV EBP, ESP` entry frame,
+a reachable direct `[EBP + displacement]` operand on a path that has not
+overwritten `EBP`, and no inferred parameters. Return
+cleanup covers immediate `RET` instructions in the owned body or a direct,
+one-hop shared epilogue without expanding body ownership.
+
 | Question                                                     | Section                                                                                |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
 | Which instructions, calls, references, or types are present? | [Native primitives](#native-instruction-call-and-type-primitives)                      |
@@ -795,6 +813,13 @@ ranges to container offsets by adding the observed slice offset. Zero-fill
 segments do not produce file ranges. When the selected slice's container offset
 is unknown, those mapped locations are omitted with an explicit limitation;
 architecture inventory locations remain available.
+
+If a load-command or FAT table allowance stops inspection, the refusal reports
+the producer's budget name in `details.reported_limits.boundary` and its
+effective maximum in `details.reported_limits.maximum`. For example,
+`macho_load_command_projected_bytes` names the retained-output allowance and
+`macho_fat_slice_records` names the selected-slice table allowance. The native
+command timeout does not raise these budgets.
 
 `inspect_macho.encryption` reports the `LC_ENCRYPTION_INFO(_64)` state of every
 slice, not only the selected one. It decodes only the FAT table, slice headers

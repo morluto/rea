@@ -52,8 +52,6 @@ export interface FakeOptions {
   ) => readonly CdpEvent[] | undefined;
   /** Delay each HTTP discovery document so a short command deadline can be observed separately. */
   readonly discoveryDelayMs?: number;
-  /** Delay WebSocket upgrade acceptance so handshake and attach deadlines stay distinct. */
-  readonly handshakeDelayMs?: number;
   /**
    * Hold each WebSocket upgrade (by request URL) until the test releases the
    * gate. A held socket the client abandons is destroyed, not accepted.

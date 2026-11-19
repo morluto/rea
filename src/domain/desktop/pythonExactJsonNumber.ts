@@ -34,4 +34,32 @@ def _exact_number(text: str):
     return int(text) if re.fullmatch(r"-?[0-9]+", text) else value
 
 
+_INEXACT = object()
+_LEVEL_END = object()
+
+
+def _number_or_mark(spelling: str):
+    """Retain an inexact-number mark until duplicate object keys have settled."""
+    try:
+        return _exact_number(spelling)
+    except _Inexact:
+        return _INEXACT
+
+
+def _holds_inexact(value, summarized_inexact=_INEXACT) -> bool:
+    """Inspect retained values with one iterator per level; bounded readers may also mark a summarized subtree."""
+    levels = [iter((value,))]
+    while levels:
+        item = next(levels[-1], _LEVEL_END)
+        if item is _LEVEL_END:
+            levels.pop()
+        elif item is _INEXACT or item is summarized_inexact:
+            return True
+        elif isinstance(item, dict):
+            levels.append(iter(item.values()))
+        elif isinstance(item, list):
+            levels.append(iter(item))
+    return False
+
+
 `;

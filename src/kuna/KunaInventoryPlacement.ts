@@ -1,3 +1,4 @@
+import { isMachoZeroFillSection } from "../domain/apple/machoSectionHeader.js";
 import { MAX_LOAD_COMMAND_BYTES } from "../domain/apple/machoLoadCommandReader.js";
 import {
   readMachoHeaderDeclarations,
@@ -51,6 +52,7 @@ interface PlacedRegion {
   readonly start: bigint;
   readonly end: bigint;
   readonly name: string;
+  readonly executableFileBytes: boolean;
   readonly placement: Exclude<KunaEntryPlacement, { kind: "unplaced" }>;
 }
 
@@ -164,15 +166,22 @@ export const readKunaMachoLayout = async (head: {
     for (const section of sections ?? []) {
       if (section.size === 0n) continue;
       const region = `${name(section.segmentName)},${name(section.name)}`;
+      const executableSegment = (segment.protection & VM_PROT_EXECUTE) !== 0;
+      const end = section.address + section.size;
+      const delta = section.address - segment.address;
       regions.push({
         start: section.address,
-        end: section.address + section.size,
+        end,
         name: region,
-        placement: sectionPlacement(
-          section.flags,
-          region,
-          (segment.protection & VM_PROT_EXECUTE) !== 0,
-        ),
+        executableFileBytes:
+          executableSegment &&
+          !isMachoZeroFillSection(section.flags) &&
+          delta >= 0n &&
+          BigInt(section.fileOffset) === segment.fileOffset + delta &&
+          delta + section.size <= segment.fileSize &&
+          end <= segment.address + segment.memorySize &&
+          BigInt(section.fileOffset) + section.size <= BigInt(bytes),
+        placement: sectionPlacement(section.flags, region, executableSegment),
       });
     }
   }
@@ -192,12 +201,10 @@ export const readKunaMachoLayout = async (head: {
   return { status: "mach-o", regions, header };
 };
 
-/** Where a Mach-O layout places one address; a section takes precedence over the header. */
-const placeAddress = (
-  layout: Extract<KunaInventoryLayout, { status: "mach-o" }>,
+const regionAt = (
+  regions: readonly PlacedRegion[],
   address: bigint,
-): KunaEntryPlacement => {
-  const { regions, header } = layout;
+): PlacedRegion | undefined => {
   let low = 0;
   let high = regions.length - 1;
   let found: PlacedRegion | undefined;
@@ -209,7 +216,32 @@ const placeAddress = (
       low = middle + 1;
     } else high = middle - 1;
   }
-  if (found !== undefined && address < found.end) return found.placement;
+  return found !== undefined && address < found.end ? found : undefined;
+};
+
+/** The validated section containing a complete, aligned arm64 instruction. */
+export const kunaExecutableInstructionRegion = (
+  layout: KunaInventoryLayout,
+  address: string,
+): string | undefined => {
+  if (layout.status !== "mach-o") return undefined;
+  const start = BigInt(address);
+  if (start % 4n !== 0n) return undefined;
+  const region = regionAt(layout.regions, start);
+  return region?.executableFileBytes === true &&
+    region.placement.kind !== "import-slot" &&
+    start + 4n <= region.end
+    ? region.name
+    : undefined;
+};
+
+/** Where a Mach-O layout places one address; a section takes precedence over the header. */
+const placeAddress = (
+  { regions, header }: Extract<KunaInventoryLayout, { status: "mach-o" }>,
+  address: bigint,
+): KunaEntryPlacement => {
+  const region = regionAt(regions, address);
+  if (region !== undefined) return region.placement;
   if (header !== null && address >= header.start && address < header.end)
     return { kind: "data", region: MACHO_HEADER_REGION, codePossible: false };
   return UNPLACED;

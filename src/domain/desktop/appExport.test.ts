@@ -4,7 +4,7 @@ import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 
 import {
-  capturedHomePath,
+  capturedHomePlan,
   exportedStateFiles,
   appModuleFile,
   className,
@@ -19,6 +19,9 @@ import {
   type DesktopAppExportPlan,
 } from "./appExport.js";
 import type { LaunchDocument } from "./seedDocument.js";
+
+const capturedHomePath = (capture: DesktopApplicationCapture) =>
+  capturedHomePlan(capture).homePath;
 
 const plan: DesktopAppExportPlan = {
   name: "mousepad",

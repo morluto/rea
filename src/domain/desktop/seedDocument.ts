@@ -14,6 +14,16 @@ export type LaunchDocument =
   /** No document, for the reason given, which follows "since". */
   | { readonly kind: "none"; readonly reason: string };
 
+/** An inferred argument under a traversed root can still lack path evidence. */
+export type TraversingSeedPath =
+  | { readonly kind: "mapped"; readonly path: string }
+  | { readonly kind: "unobserved" };
+
+type MapTraversal = (
+  absolutePath: string,
+  as: "explicit" | "inferred",
+) => TraversingSeedPath | undefined;
+
 /** Parse a captured Linux file URL independently of the exporter host OS. */
 export const capturedFileUrl = (
   value: string,
@@ -38,6 +48,7 @@ const homePathOf = (
   known: (path: string) => boolean,
   knownSeed: (path: string) => boolean,
   mapOutside?: (path: string) => string | null,
+  mapTraversal?: MapTraversal,
 ):
   | (({ readonly homePath: string } | { readonly seedPath: string }) & {
       readonly source: string;
@@ -59,6 +70,16 @@ const homePathOf = (
     if (parsed === undefined) return undefined;
     input = parsed.path;
     parsedUrl = parsed.url;
+  }
+  if (parsedUrl === undefined && mapTraversal !== undefined) {
+    // Only filesystem paths can traverse a captured symlink. File URLs
+    // above have already been interpreted under their URL rules.
+    const absolute = posix.isAbsolute(input);
+    const raw = absolute ? input : `${workingDirectory}/${input}`;
+    const replayed = mapTraversal(raw, absolute ? "explicit" : "inferred");
+    if (replayed?.kind === "unobserved") return undefined;
+    if (replayed?.kind === "mapped")
+      return { seedPath: replayed.path, source: raw, url: undefined };
   }
   const path = posix.resolve(workingDirectory, input);
   if (path.startsWith(`${home}/`))
@@ -96,6 +117,8 @@ export const openSeedDocument = (
     readonly isCaptured?: (homePath: string) => boolean;
     /** The selected seed spelling for a captured absolute path outside the home. */
     readonly mapOutside?: (absolutePath: string) => string | null;
+    /** A portable replay name established from the raw captured traversal. */
+    readonly mapTraversal?: MapTraversal;
   },
 ): { readonly argv: readonly string[]; readonly opens: LaunchDocument } => {
   const { home, exec, documents } = facts;
@@ -130,11 +153,14 @@ export const openSeedDocument = (
       namesCaptured,
       isCapturedSeed,
       facts.mapOutside,
+      facts.mapTraversal,
     );
     if (parsed === undefined) return value;
     const absolute =
       "seedPath" in parsed
-        ? `${home}/${parsed.seedPath}`
+        ? parsed.seedPath === ""
+          ? home
+          : `${home}/${parsed.seedPath}`
         : absoluteSeed(parsed.homePath);
     if (absolute === undefined) return value;
     if (parsed.url === undefined) return absolute;
@@ -204,6 +230,7 @@ export const openSeedDocument = (
         namesCaptured,
         isCapturedSeed,
         facts.mapOutside,
+        facts.mapTraversal,
       );
     })
     .map((path) =>

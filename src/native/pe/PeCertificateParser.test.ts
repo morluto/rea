@@ -815,6 +815,17 @@ it("admits ASN.1 nesting at the depth budget and refuses one level more", () => 
   });
 });
 
+it("retains overlay certificate evidence with unrelated section bytes outside the file", () => {
+  const bytes = peCertificateFixture();
+  const section = 0x98 + 224;
+  bytes.writeUInt32LE(512, section + 16);
+  bytes.writeUInt32LE(bytes.length, section + 20);
+  expect(parse(bytes)).toMatchObject({
+    coverage: { status: "complete", certificates: 1 },
+    entries: [{ location: { offset: 0x200 } }],
+  });
+});
+
 it("rejects headers whose section table does not fit SizeOfHeaders", () => {
   const bytes = peWithoutCertificateTableFixture();
   bytes.writeUInt16LE(0xffff, 0x86);

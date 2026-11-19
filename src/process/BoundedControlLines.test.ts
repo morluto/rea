@@ -24,6 +24,7 @@ const collect = async (
 };
 
 const exceeded: BoundedControlLine = err({ _tag: "ControlLineLimitExceeded" });
+const malformed: BoundedControlLine = err({ _tag: "ControlLineMalformedUtf8" });
 const multibyte = Buffer.from("é😀\n", "utf8");
 const exactCrLf = Buffer.from("éa\r\n", "utf8");
 const crLfPartitions: { first: number; second: number }[] = [];
@@ -61,14 +62,14 @@ describe("bounded control line decoding", () => {
   );
 
   it.each([
-    { bytes: [0xff, 0x0a], maximum: 3, expected: [ok("�")] },
-    { bytes: [0xff, 0x0a], maximum: 2, expected: [exceeded] },
-    { bytes: [0xe2, 0x82], maximum: 3, expected: [ok("�")] },
-    { bytes: [0xe2, 0x82], maximum: 2, expected: [exceeded] },
-    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 7, expected: [ok("�(�")] },
-    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 6, expected: [exceeded] },
+    { bytes: [0xff, 0x0a], maximum: 1, expected: [malformed] },
+    { bytes: [0xff, 0x0a], maximum: 0, expected: [exceeded] },
+    { bytes: [0xe2, 0x82], maximum: 2, expected: [malformed] },
+    { bytes: [0xe2, 0x82], maximum: 1, expected: [exceeded] },
+    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 3, expected: [malformed] },
+    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 2, expected: [exceeded] },
   ])(
-    "counts replacement characters against decoded bytes: $bytes / $maximum",
+    "distinguishes invalid UTF-8 from wire byte overflow: $bytes / $maximum",
     async ({ bytes, maximum, expected }) => {
       const encoded = Buffer.from(bytes);
       expect(await collect([encoded], maximum)).toEqual(expected);
@@ -88,6 +89,7 @@ describe("bounded control line boundaries", () => {
     { text: "\n\r\n", maximum: 0, expected: [ok(""), ok("")] },
     { text: " \t \n", maximum: 3, expected: [ok(" \t ")] },
     { text: "a\rb\n", maximum: 3, expected: [ok("a\rb")] },
+    { text: "\uFEFF�\n", maximum: 6, expected: [ok("\uFEFF�")] },
     { text: "abc", maximum: 3, expected: [ok("abc")] },
     { text: "ab\r", maximum: 3, expected: [ok("ab\r")] },
     { text: "abc\r", maximum: 3, expected: [exceeded] },
@@ -124,10 +126,10 @@ describe("bounded control line boundaries", () => {
     },
   );
 
-  it("recovers from malformed-byte expansion before the following frame", async () => {
+  it("reports malformed wire bytes before the following valid frame", async () => {
     expect(
       await collect([Uint8Array.of(0xff, 0x0a, 0x6f, 0x6b, 0x0a)], 2),
-    ).toEqual([exceeded, ok("ok")]);
+    ).toEqual([malformed, ok("ok")]);
   });
 });
 
