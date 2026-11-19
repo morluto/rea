@@ -220,6 +220,49 @@ it.each(["ci.yml", "release.yml"])(
   },
 );
 
+it("excludes skipped artifact steps even when GitHub supplies timestamps", async () => {
+  const at = "2026-10-13T00:00:10Z";
+  const fixture = await createFixture([
+    {
+      jobs: [
+        {
+          name: "Portable tests",
+          status: "completed",
+          conclusion: "failure",
+          steps: [
+            {
+              name: "Publish successful timing history",
+              conclusion: "skipped",
+              started_at: at,
+              completed_at: at,
+            },
+            {
+              name: "Upload reports artifact",
+              conclusion: "success",
+              started_at: at,
+              completed_at: "2026-10-13T00:00:11Z",
+            },
+          ],
+        },
+      ],
+    },
+  ]);
+  await runReporter(fixture);
+  const report = JSON.parse(
+    await readFile(join(fixture.outputDirectory, "report.json"), "utf8"),
+  );
+  expect(report.jobs[0].steps[0]).toMatchObject({
+    name: "Publish successful timing history",
+    duration: { seconds: null, reason: "step was skipped" },
+  });
+  expect(report.stepCosts.artifactUpload).toEqual([
+    expect.objectContaining({
+      name: "Upload reports artifact",
+      duration: { seconds: 1, reason: null },
+    }),
+  ]);
+});
+
 it("marks invalid and out-of-order timestamps unknown instead of emitting negative durations", async () => {
   const fixture = await createFixture([
     {
