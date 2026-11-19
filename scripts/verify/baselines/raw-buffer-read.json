@@ -1,7 +1,4 @@
 {
-  "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
-  "src/domain/apkSignature/apkSigningBlock.ts": 2,
-  "src/domain/apkSignature/apkV1Signature.ts": 5,
   "src/domain/apple/appleMachoFixups.ts": 22,
   "src/domain/apple/appleMachoSelection.ts": 2,
   "src/domain/apple/jvmClassFile.ts": 2,
