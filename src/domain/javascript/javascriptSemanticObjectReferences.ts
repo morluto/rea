@@ -6,6 +6,7 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   isRuntimeJavaScriptClassProperty,
+  javaScriptExpressionWrapperTarget,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -15,7 +16,10 @@ import {
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticArrayLiteralLayout } from "./javascriptSemanticArrayLayout.js";
+import {
+  semanticArrayLiteralElementOwner,
+  semanticArrayLiteralLayout,
+} from "./javascriptSemanticArrayLayout.js";
 import {
   SemanticGetterQuery,
   type GetterQueryJob,
@@ -374,6 +378,13 @@ const objectReceiverReference = (
   while (true) {
     const parent = state.parentsByNode.get(current);
     if (
+      parent !== undefined &&
+      javaScriptExpressionWrapperTarget(parent) === current
+    ) {
+      current = parent;
+      continue;
+    }
+    if (
       t.isVariableDeclarator(parent) &&
       parent.init === current &&
       t.isIdentifier(parent.id)
@@ -398,21 +409,10 @@ const objectReceiverReference = (
         },
       ];
     if (t.isArrayExpression(parent)) {
-      let minimumIndex = 0;
-      let uncertainIndex = false;
-      for (const element of parent.elements) {
-        if (element === current) break;
-        if (t.isSpreadElement(element)) uncertainIndex = true;
-        else minimumIndex++;
-      }
-      // A spread contributes an unknown number of slots. Retain the known
-      // prefix without treating the element's syntax position as its index.
-      projection.unshift(
-        uncertainIndex
-          ? { excludedKeys: [], startIndex: minimumIndex }
-          : minimumIndex,
-      );
-      current = parent;
+      const slot = semanticArrayLiteralElementOwner(current, parent, state);
+      if (slot === undefined) break;
+      projection.unshift(slot.key);
+      current = slot.array;
       continue;
     }
     if (t.isObjectProperty(parent) && parent.value === current) {

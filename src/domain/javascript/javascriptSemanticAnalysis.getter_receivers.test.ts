@@ -42,6 +42,18 @@ const getterReceivers = [
     "const arr = [, { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[1].x;",
   ],
   [
+    "array element copied by spread",
+    "const arr = [...[{ x: 1, get self() { return this; } }]]; arr[0].self.x = 2; return arr[0].x;",
+  ],
+  [
+    "saved receiver from a nested spread",
+    "const arr = [...[{ x: 1 }, ...[{ x: 1, get self() { return this; } }]]]; const saved = arr[1].self; saved.x = 2; return arr[1].x;",
+  ],
+  [
+    "receiver in a wrapped spread operand",
+    "const arr = [...([{ x: 1, get self() { return this; } }] satisfies object[])]; arr[0].self.x = 2; return arr[0].x;",
+  ],
+  [
     "mixed object and array owners",
     "const outer = { rows: [{ box: { x: 1, get self() { return this; } } }] }; outer.rows[0].box.self.x = 2; return outer.rows[0].box.x;",
   ],
@@ -150,6 +162,14 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
     [
       "unrelated array element",
       "const arr = [{ x: 1, get self() { return this; } }, { x: 1 }]; arr[0].self.x = 2; return arr[1].x;",
+    ],
+    [
+      "unrelated array element copied before a getter receiver",
+      "const arr = [...[{ x: 1 }], { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[0].x;",
+    ],
+    [
+      "unrelated field on a copied getter receiver",
+      "const arr = [...[{ x: 1, y: 1, get self() { return this; } }]]; arr[0].self.y = 2; return arr[0].x;",
     ],
     [
       "array replacement after a receiver was captured",

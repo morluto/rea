@@ -1,6 +1,10 @@
 import * as t from "@babel/types";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  javaScriptExpressionWrapperTarget,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+import type { JavaScriptSemanticPropertySelection } from "./javascriptSemanticPropertyPaths.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 /** Shared intrinsic reached through a native array iterator's prototype. */
@@ -97,6 +101,52 @@ export function* semanticArrayLiteralLayout(
     }
   }
 }
+
+/** Find where a literal element's identity is stored, including inline copies. */
+export const semanticArrayLiteralElementOwner = (
+  element: t.Node,
+  array: t.ArrayExpression,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | {
+      readonly array: t.ArrayExpression;
+      readonly key: number | JavaScriptSemanticPropertySelection;
+    }
+  | undefined => {
+  const { parentsByNode } = state;
+  while (true) {
+    let operand: t.Node = array;
+    let spread = parentsByNode.get(operand);
+    while (
+      spread !== undefined &&
+      javaScriptExpressionWrapperTarget(spread) === operand
+    ) {
+      operand = spread;
+      spread = parentsByNode.get(operand);
+    }
+    if (!t.isSpreadElement(spread) || spread.argument !== operand) break;
+    const destination = parentsByNode.get(spread);
+    if (!t.isArrayExpression(destination)) break;
+    array = destination;
+  }
+  let minimumIndex = 0;
+  let uncertainIndex = false;
+  for (const part of semanticArrayLiteralLayout(array, state)) {
+    if (part.kind === "opaque-spread") {
+      uncertainIndex = true;
+      continue;
+    }
+    if (part.element === element)
+      return {
+        array,
+        key: uncertainIndex
+          ? { excludedKeys: [], startIndex: minimumIndex }
+          : minimumIndex,
+      };
+    minimumIndex++;
+  }
+  return undefined;
+};
 
 /** A complete index for consumers that need repeated lookups in one query. */
 export const semanticArrayLiteralSlots = (
