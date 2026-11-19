@@ -453,50 +453,65 @@ describe("single-stanza APT source identity", () => {
     ).toBeUndefined();
   });
 
-  it("uses APT's configured architecture for both exact-path source identity and attribution", () => {
-    const suite = "unstable/binary-$(ARCH)/";
-    const uri = "https://vendor.invalid/archive";
-    const stanzas = parseDeb822Sources(
-      `Types: deb\nURIs: ${uri}\nSuites: ${suite}\n`,
-      deb822LookupFile,
-    );
-    const description = `${uri} unstable/binary-amd64/ Packages`;
-    // Offline APT emits the expanded Release and no per-target Architecture
-    // on this flat index. The source file and index still retain different facts.
-    const transcript = [
-      `Description: ${description}`,
-      "Filename: /var/lib/apt/lists/apt-owned-Packages",
-      `Base-URI: ${uri}/unstable/binary-amd64/`,
-      `Repo-URI: ${uri}/`,
-      "Release: unstable/binary-amd64/",
-      `Sourcesentry: ${deb822LookupFile}:1`,
-    ].join("\n");
-    const repository = {
-      source: description,
-      uri,
-      repo_uri: `${uri}/`,
-      sources_file: deb822LookupFile,
-      uri_credentials_removed: false,
-      suite,
-      components: [],
-    };
-    for (const architecture of ["amd64", "arm64", undefined]) {
-      const [target] = parseAptIndexTargets(transcript, architecture);
-      if (target === undefined) throw new Error("Missing APT target");
-      const entry = entryForTarget(target, stanzas);
-      const files = declaredPackageFiles(
-        [repository],
-        new Map([[description, target]]),
+  it.each([
+    {
+      field: "suite",
+      uri: "https://vendor.invalid/archive",
+      suite: "unstable/binary-$(ARCH)/",
+    },
+    {
+      field: "URI",
+      uri: "https://vendor.invalid/archive-$(ARCH)",
+      suite: "unstable/binary-amd64/",
+    },
+  ])(
+    "uses APT's configured architecture in a deb822 $field for identity and attribution",
+    ({ field, uri, suite }) => {
+      const observedUri = uri.replace("$(ARCH)", "amd64");
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${uri}\nSuites: ${suite}\n`,
+        deb822LookupFile,
       );
-      if (architecture === "amd64") {
-        expect(entry).toMatchObject({ suite, components: [] });
-        expect(files).toEqual(new Set([description]));
-      } else {
-        expect(entry).toBeUndefined();
-        expect(files).toEqual(new Set());
+      const description = `${observedUri} unstable/binary-amd64/ Packages`;
+      // Offline APT emits the expanded Release and no per-target Architecture
+      // on this flat index. The source file and index still retain different facts.
+      const transcript = [
+        `Description: ${description}`,
+        "Filename: /var/lib/apt/lists/apt-owned-Packages",
+        `Base-URI: ${observedUri}/unstable/binary-amd64/`,
+        `Repo-URI: ${observedUri}/`,
+        "Release: unstable/binary-amd64/",
+        `Sourcesentry: ${deb822LookupFile}:1`,
+      ].join("\n");
+      const repository = {
+        source: description,
+        uri,
+        repo_uri: `${observedUri}/`,
+        sources_file: deb822LookupFile,
+        uri_credentials_removed: false,
+        suite,
+        components: [],
+      };
+      for (const architecture of ["amd64", "arm64", undefined]) {
+        const [target] = parseAptIndexTargets(transcript, architecture);
+        if (target === undefined) throw new Error("Missing APT target");
+        const entry = entryForTarget(target, stanzas);
+        const files = declaredPackageFiles(
+          [repository],
+          new Map([[description, target]]),
+        );
+        if (architecture === "amd64") {
+          expect(entry).toMatchObject({ uri, suite, components: [] });
+          expect(files).toEqual(new Set([description]));
+        } else {
+          expect(entry).toBeUndefined();
+          // A historical capture can replay an already materialized Repo-URI.
+          // The authored suite has no separate expanded value in that contract.
+          expect(files).toEqual(new Set(field === "URI" ? [description] : []));
+        }
       }
-    }
-  });
+    },
+  );
 });
 
 describe("APT source URI lookup", () => {

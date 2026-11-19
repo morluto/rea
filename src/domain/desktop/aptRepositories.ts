@@ -107,17 +107,24 @@ const inlineKeyBlock = (value: string): string | null => {
   return `${lines.slice(begin, end < begin ? lines.length : end + 1).join("\n")}\n`;
 };
 
+/** APT expands this variable in repository URIs and suites using APT::Architecture. */
+const expandAptArchitecture = (
+  value: string,
+  architecture: string | undefined,
+): string | undefined => {
+  const variable = "$(ARCH)";
+  if (!value.includes(variable)) return value;
+  return architecture === undefined
+    ? undefined
+    : value.replaceAll(variable, architecture);
+};
+
 /** Match the selected release without changing an authored suite. */
 const isRelease = (suite: string, target: AptIndexTarget): boolean => {
-  const architectureVariable = "$(ARCH)";
-  if (suite.includes(architectureVariable)) {
-    if (target.configuredArchitecture === undefined) return false;
-    suite = suite.replaceAll(
-      architectureVariable,
-      target.configuredArchitecture,
-    );
-  }
-  return suite === target.release || (suite === "/" && target.release === "");
+  const selected = expandAptArchitecture(suite, target.configuredArchitecture);
+  return (
+    selected === target.release || (selected === "/" && target.release === "")
+  );
 };
 
 const stanza = (
@@ -355,9 +362,16 @@ export const entryForTarget = (
   // A one-line entry has one URI and one suite. Only deb822 needs a URI lookup.
   const matches = single
     ? uris
-    : uris.filter(
-        ({ uri }) => uri !== null && deb822RepoUri(uri) === target.repoUri,
-      );
+    : uris.filter(({ uri }) => {
+        if (uri === null) return false;
+        const selected = expandAptArchitecture(
+          uri,
+          target.configuredArchitecture,
+        );
+        return (
+          selected !== undefined && deb822RepoUri(selected) === target.repoUri
+        );
+      });
   const first = matches[0];
   if (first === undefined) return undefined;
   const uri =

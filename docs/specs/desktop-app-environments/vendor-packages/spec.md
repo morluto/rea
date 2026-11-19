@@ -22,9 +22,9 @@ that key, with those libraries, and starts it.
   bytes leaves repository attribution unknown. Flat repositories
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
   and architecture options are read; a deb822 stanza's URIs and suites are
-  kept as lists, never expanded into every pair. REA matches a suite's
-  `$(ARCH)` against the effective architecture read from `apt-config` and
-  keeps the authored suite for replay. A template match requires that
+  kept as lists, never expanded into every pair. REA matches `$(ARCH)` in
+  a URI or suite against the effective architecture read from `apt-config`
+  and keeps the authored URI and suite. A template match requires that
   configuration fact. `release` is the release's
   Suite (`a=`), or else its Codename, from the same index target. A user name
   or password in a URI, up to the last `@` before its path as apt reads it,
