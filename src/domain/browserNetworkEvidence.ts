@@ -74,6 +74,9 @@ export const browserNetworkBodySchema = z.union([
       bytes: z.int().min(0),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       media_type: z.string().nullable(),
+      media_type_source: z
+        .enum(["content-type-header", "independent"])
+        .optional(),
       redacted: z.boolean(),
     })
     .superRefine((artifact, context) => {

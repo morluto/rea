@@ -195,11 +195,11 @@ Its reason argument is required: an aborted `AbortSignal`, an earlier
 `AnalysisCancelledError`, a `carriedReason(...)` recovered from an inner
 failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
 architecture guard rejects a direct `new AnalysisCancelledError(` outside that
-module. Files that still construct one directly are listed with their counts in
-`scripts/verify/baselines/analysis-cancelled-constructor.json`; a file may not
-exceed its count, and after removing copies run
-`node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
-Each counted guard keeps its baseline in its own
+module. No file is allowed one, so this guard has no baseline file; a guard
+without one allows zero copies. Other counted guards still list the files that
+keep copies, with their counts; a file may not exceed its count, and after
+removing copies run `node scripts/verify/architecture-guards.mjs --shrink-baselines`
+to lower it. Each counted guard keeps its baseline in its own
 `scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
 changes to different guards never edit the same file. Resolve a conflict in one
 of these files by keeping both sides' entries (the higher count where they
@@ -737,6 +737,13 @@ consumers. Add [lifecycle regressions](#lifecycle-regressions) when resource
 ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
+When consolidating interpretation across consumers, use the same authored
+input and an independently specified expected fact at the boundary where
+each consumer previously made its own decision. Allow differences in
+recovery or display when those belong to the consumer. For generated
+installers and verifiers, exercise the emitted artifact in its supported
+runtime so the test covers the code that actually receives the input.
+
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |
@@ -913,7 +920,10 @@ For ZIP extraction, replace the pathname after inventory reader close while the
 admitted root descriptor remains owned. Verify that identical member bytes in a
 different carrier, a directory, or a missing pathname cannot switch the
 materialized source. Exercise descriptor close failure and retry before output
-publication.
+publication. Inject a producer finalization failure after its output sink
+closes and verify that the consumer observes the failure. Successful EOF
+requires the producer to settle successfully, even when all output bytes have
+arrived.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
 Include a physical I/O failure reused as the abort reason and genuine

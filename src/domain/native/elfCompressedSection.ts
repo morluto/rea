@@ -1,5 +1,6 @@
 import { BinaryReader } from "../binaryContainer.js";
 import { constants, inflateSync, zstdDecompressSync } from "node:zlib";
+import { nodeCodecResult } from "../../kernel/nodeCodecResult.js";
 
 const SHF_COMPRESSED = 0x800n;
 const ELFCOMPRESS_ZLIB = 1;
@@ -61,6 +62,12 @@ export const readElfCompressedSectionHeader = (
   )
     return { state: "unsupported", compressionType };
   const declaredSize = reader.word(bits === 64 ? 8 : 4, bits);
+  const alignment = reader.word(bits === 64 ? 16 : 8, bits);
+  if ((alignment & (alignment - 1n)) !== 0n)
+    return {
+      state: "malformed",
+      message: `${subject} has an invalid decoded alignment`,
+    };
   return { state: "compressed", compressionType, declaredSize, headerBytes };
 };
 
@@ -141,21 +148,32 @@ const inflateDeclared = (
   subject: string,
 ): ElfCompressedSectionResult => {
   const expected = Number(declaredSize);
+  const inflatedBytes = Math.max(expected, payload.length);
   let decoded: Buffer;
   try {
     const maxOutputLength = Math.max(1, expected);
-    decoded =
-      compression === "zstd"
-        ? zstdDecompressSync(payload, {
-            maxOutputLength,
-            // Retain Zstandard's default maximum decoder window of 128 MiB.
-            params: { [constants.ZSTD_d_windowLogMax]: 27 },
-          })
-        : inflateSync(payload, { maxOutputLength });
+    if (compression === "zstd") {
+      decoded = zstdDecompressSync(payload, {
+        maxOutputLength,
+        // Retain Zstandard's default maximum decoder window of 128 MiB.
+        params: { [constants.ZSTD_d_windowLogMax]: 27 },
+      });
+    } else {
+      const result = nodeCodecResult(
+        inflateSync(payload, { info: true, maxOutputLength }),
+      );
+      if (result.consumedBytes !== payload.length)
+        return {
+          state: "malformed",
+          message: `${subject} has bytes after its zlib stream`,
+          inflatedBytes,
+        };
+      decoded = result.buffer;
+    }
   } catch (cause: unknown) {
     return {
       state: "malformed",
-      inflatedBytes: Math.max(expected, payload.length),
+      inflatedBytes,
       message: `${subject} could not be decompressed: ${cause instanceof Error ? cause.message : "invalid compressed data"}`,
     };
   }
@@ -163,13 +181,13 @@ const inflateDeclared = (
     return {
       state: "malformed",
       message: `${subject} size is inconsistent`,
-      inflatedBytes: Math.max(expected, payload.length),
+      inflatedBytes,
     };
   return {
     state: "available",
     bytes: decoded,
     compressed: true,
     compression,
-    inflatedBytes: Math.max(decoded.length, payload.length),
+    inflatedBytes,
   };
 };

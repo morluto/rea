@@ -5,7 +5,7 @@ import type {
   HeaderArchitecture,
   RawOnlyArchitecture,
 } from "./binaryTargetTypes.js";
-import type { ExecutableFormatHint } from "./dosCom.js";
+import type { TargetFormatHint } from "./targetFormats.js";
 import { err, ok, type Result } from "./result.js";
 
 /** Caller-visible CPU families admitted for headerless raw binaries. */
@@ -157,7 +157,7 @@ export const admitRawBinary = (input: {
 
 /** Describe the format/architecture/entry pairing without performing I/O. */
 export const rawBinarySelectionError = (input: {
-  readonly format?: ExecutableFormatHint;
+  readonly format?: TargetFormatHint;
   readonly architecture?: unknown;
   readonly entryPoint?: unknown;
 }): string | undefined => {

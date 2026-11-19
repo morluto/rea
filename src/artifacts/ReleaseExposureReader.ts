@@ -2038,17 +2038,27 @@ const examineInlineMaps = (
       noteLocalMapReference(state, member, url);
       continue;
     }
-    const comma = url.indexOf(",");
-    if (state.mapsRead >= MAX_RELEASE_EXPOSURE_SOURCE_MAPS || comma < 0) {
+    if (state.mapsRead >= MAX_RELEASE_EXPOSURE_SOURCE_MAPS) {
       state.skippedMaps += 1;
       continue;
     }
     try {
-      const metadata = url.slice(0, comma);
-      const payload = url.slice(comma + 1);
+      // The data URL processor retains the query and excludes the fragment.
+      const dataUrl = new URL(url);
+      dataUrl.hash = "";
+      const serialized = dataUrl.href;
+      const comma = serialized.indexOf(",");
+      if (comma < 0) {
+        state.skippedMaps += 1;
+        continue;
+      }
+      const metadata = serialized.slice(0, comma);
+      const payload = decodeURIComponent(serialized.slice(comma + 1));
+      // Data URLs use forgiving base64: ASCII whitespace and omitted padding
+      // are valid, but other characters must not be silently dropped.
       const decoded = /;base64$/iu.test(metadata)
-        ? Buffer.from(decodeURIComponent(payload), "base64")
-        : Buffer.from(decodeURIComponent(payload), "utf8");
+        ? Buffer.from(atob(payload), "latin1")
+        : Buffer.from(payload, "utf8");
       if (decoded.length > MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES) {
         state.skippedMaps += 1;
         continue;

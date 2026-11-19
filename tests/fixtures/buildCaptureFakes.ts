@@ -342,7 +342,8 @@ const realCliOutputs = async (
  * `env` adds to the stand-in's environment; `install` replaces the captured
  * package, the archive's `notes`, and names the packages the real export
  * installs beside it; `screenshotDelaysMs` delays the computer's
- * screenshots in order. `recorded` replaces what the capture records, with
+ * screenshots in order and `jpegScreenshotData` supplies encoded JPEG
+ * screenshot replies. `recorded` replaces what the capture records, with
  * `exportRefused` when its export refuses BUILD_TASK, or `tasks` in its
  * place, and `extraContent` the
  * retained bytes it holds beyond the note's; `selected` is what it records
@@ -356,6 +357,7 @@ export const buildCaptureFakes = async (
     readonly env?: Readonly<Record<string, string>>;
     readonly install?: CapturedInstall;
     readonly screenshotDelaysMs?: readonly number[];
+    readonly jpegScreenshotData?: readonly string[];
     readonly recorded?: DesktopApplicationCapture;
     readonly exportRefused?: boolean;
     readonly extraContent?: readonly string[];
@@ -400,6 +402,9 @@ export const buildCaptureFakes = async (
     ...(options.screenshotDelaysMs === undefined
       ? {}
       : { screenshotDelaysMs: options.screenshotDelaysMs }),
+    ...(options.jpegScreenshotData === undefined
+      ? {}
+      : { jpegScreenshotData: options.jpegScreenshotData }),
     exec: {
       home: rea.home,
       bin: rea.bin,

@@ -26,7 +26,8 @@ import {
 } from "./serveStreamableHttp.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
-import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
+import { classifyCliEntrypoint } from "../../cliBuiltinArguments.js";
+import { validateMcpHttpCommand } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 import { waitFor } from "../../../tests/support/testWait.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -354,12 +355,18 @@ it.each([
 });
 
 it("serves every declared repeated host while refusing undeclared hosts and origins", async () => {
-  const parsed = parseMcpHttpArguments([
-    "--http",
-    "--allowed-hosts",
-    "a.example",
-    "--allowed-hosts=b.example",
-  ]);
+  const entry = classifyCliEntrypoint(
+    [
+      "mcp",
+      "--http",
+      "--allowed-hosts",
+      "a.example",
+      "--allowed-hosts=b.example",
+    ],
+    {},
+  );
+  if (entry.kind !== "mcp-http") throw new Error("Expected an MCP HTTP entry");
+  const parsed = validateMcpHttpCommand(entry.command);
   if (!parsed.ok || parsed.allowedHosts === undefined)
     throw new Error("Expected valid repeated host lists");
   const { served } = await start({
