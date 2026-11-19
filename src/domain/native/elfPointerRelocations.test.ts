@@ -59,6 +59,113 @@ const drain = (bytes: Buffer): ElfPointerWrite[] => {
   return writes;
 };
 
+const relrImage = (tags: readonly (readonly [bigint, bigint])[]): Buffer => {
+  const bytes = Buffer.alloc(0x400);
+  tags.forEach(([tag, value], index) => {
+    bytes.writeBigUInt64LE(tag, index * 16);
+    bytes.writeBigUInt64LE(value, index * 16 + 8);
+  });
+  bytes.writeBigUInt64LE(0x300n, 0x100);
+  bytes.writeBigUInt64LE(3n, 0x108);
+  bytes.writeBigUInt64LE(0x1234n, 0x300);
+  bytes.writeBigUInt64LE(0x5678n, 0x308);
+  return bytes;
+};
+
+it("keeps the same RELR values and record provenance for Android's tag aliases", () => {
+  const standard = relrImage([
+    [36n, 0x100n],
+    [35n, 16n],
+    [37n, 8n],
+  ]);
+  const android = relrImage([
+    [0x6fffe000n, 0x100n],
+    [0x6fffe001n, 16n],
+    [0x6fffe003n, 8n],
+  ]);
+  expect(drain(android)).toEqual(drain(standard));
+  expect(
+    drain(android).map(({ address, value, source }) => ({
+      address,
+      value,
+      source,
+    })),
+  ).toEqual([
+    {
+      address: 0x300n,
+      value: 0x1234n,
+      source: { encoding: "relr", record_file_offset: 0x100, kind: null },
+    },
+    {
+      address: 0x308n,
+      value: 0x5678n,
+      source: { encoding: "relr", record_file_offset: 0x108, kind: null },
+    },
+  ]);
+});
+
+it.each([
+  { tags: [[0x6fffe001n, 8n]], caseName: "size without address" },
+  { tags: [[0x6fffe000n, 0x100n]], caseName: "Android address without size" },
+  { tags: [[36n, 0x100n]], caseName: "standard address without size" },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [0x6fffe001n, 7n],
+    ],
+    caseName: "invalid size",
+  },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [0x6fffe001n, 16n],
+      [0x6fffe003n, 4n],
+    ],
+    caseName: "invalid entry width",
+  },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [0x6fffe000n, 0x100n],
+    ],
+    caseName: "duplicate Android address",
+  },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [35n, 16n],
+    ],
+    caseName: "mixed Android address and standard size",
+  },
+  {
+    tags: [
+      [36n, 0x100n],
+      [0x6fffe000n, 0x100n],
+    ],
+    caseName: "mixed standard and Android addresses",
+  },
+] as const)("refuses malformed RELR declarations: $caseName", ({ tags }) => {
+  const parse = () => drain(relrImage(tags));
+  expect(parse).toThrow(ElfPointerRelocationFailure);
+  expect(parse).toThrow(
+    expect.objectContaining({
+      reason: "malformed-container",
+      failure: expect.objectContaining({ kind: "malformed" }),
+    }),
+  );
+});
+
+it("accepts an explicitly empty Android RELR table", () => {
+  expect(
+    drain(
+      relrImage([
+        [0x6fffe000n, 0x100n],
+        [0x6fffe001n, 0n],
+      ]),
+    ),
+  ).toEqual([]);
+});
+
 it("returns the decoded record type, symbol index and addend with each write", () => {
   const writes = drain(image());
   expect(

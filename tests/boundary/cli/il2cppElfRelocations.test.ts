@@ -165,3 +165,61 @@ cliTest(
     expect(report(metadataOnly.structuredContent).binary).toBeNull();
   },
 );
+
+cliTest.for([
+  {
+    name: "CodeRegistration module array",
+    fixture: { duplicateCodeRegistration: true },
+    pointerOffset: 0x688,
+    ambiguity: "A possible CodeRegistration has an unresolved module array",
+  },
+  {
+    name: "MetadataRegistration type table",
+    fixture: { duplicateMetadataRegistration: true },
+    pointerOffset: 0x8b8,
+    ambiguity:
+      "A possible MetadataRegistration has unresolved candidate fields",
+  },
+])(
+  "rules out a competing $name only when its pointer is imported",
+  async ({ fixture, pointerOffset, ambiguity }, { cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-elf-registration-");
+    const metadataPath = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "libil2cpp.so");
+    await writeFile(metadataPath, createLinkedIl2cppMetadataFixture().bytes);
+
+    const image = createIl2cppBinaryFixture(fixture);
+    // Replace the duplicate's local pointer without emitting a second relocation
+    // at the same address. Its matching counts and other pointers stay intact.
+    image.writeBigUInt64LE(0n, pointerOffset);
+    const inspect = async (value: bigint) => {
+      await writeFile(
+        binaryPath,
+        createElfFixture(image, {
+          symbolDefinition: { value, section: 0 },
+          unresolvedRelocations: [{ offset: pointerOffset, kind: 1025 }],
+        }),
+      );
+      return cli.run({
+        arguments: [
+          "inspect-il2cpp-metadata",
+          metadataPath,
+          "--binary",
+          binaryPath,
+          "--json",
+        ],
+      });
+    };
+
+    const linked = await inspect(0n);
+    expect(linked.exitCode, JSON.stringify(linked.json)).toBe(0);
+    expect(report(linked.json).binary).toMatchObject({
+      code_gen_modules_field: `0x${(FIXTURE_BINARY_BASE + 0x600n).toString(16)}`,
+      types_field: `0x${(FIXTURE_BINARY_BASE + 0x830n).toString(16)}`,
+    });
+
+    const unresolved = await inspect(FIXTURE_BINARY_BASE + 0xe00n);
+    expect(unresolved.exitCode).toBe(1);
+    expect(JSON.stringify(unresolved.json)).toContain(ambiguity);
+  },
+);

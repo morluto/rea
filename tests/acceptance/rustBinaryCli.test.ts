@@ -11,15 +11,19 @@ import {
   compressRustElfSectionNames,
   createRustHashOverflowImage,
   createRustImage,
+  createRustWasmModule,
   createRustImageWithGoSection,
   RUSTC_HASH,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "rejects misaligned 64-bit Mach-O through Rust CLI and stdio MCP",
@@ -99,6 +103,59 @@ cliTest(
         { name: "itoa", version: "1.0.18" },
         { name: "sample", version: "0.1.0", root: true },
       ],
+    });
+  },
+);
+
+cliTest(
+  "reports cargo-auditable packages from a WebAssembly module",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-wasm-");
+    const path = join(root, "sample.wasm");
+    await writeFile(path, createRustWasmModule());
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    expect(fileIdentity(evidence.subject)).toMatchObject({
+      format: "file",
+      architecture: null,
+    });
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(report.format).toBe("wasm");
+    expect(report.architecture).toBe("wasm");
+    expect(report.bits).toBeNull();
+    expect(report.byte_order).toBe("little");
+    expect(report.auditable_metadata).toMatchObject({
+      section_name: ".dep-v0",
+      root_package_index: 1,
+      packages: [
+        { name: "itoa", version: "1.0.18" },
+        { name: "sample", version: "0.1.0", root: true },
+      ],
+    });
+  },
+);
+
+cliTest(
+  "refuses a WebAssembly component as an unsupported target",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-component-");
+    const path = join(root, "component.wasm");
+    await writeFile(path, Buffer.from("0061736d0d000100", "hex"));
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_rust_binary",
+        reason: expect.stringContaining("components are unsupported"),
+      },
     });
   },
 );
