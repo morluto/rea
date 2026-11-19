@@ -262,6 +262,7 @@
 * **desktop:** check retained reader JSON numbers ([#11833](https://github.com/morluto/rea/issues/11833)) ([458f583](https://github.com/morluto/rea/commit/458f583e1496a55f05d00017143364cd33525143))
 * **desktop:** exclude configured APT status from repository sources ([#11932](https://github.com/morluto/rea/issues/11932)) ([e98a767](https://github.com/morluto/rea/commit/e98a767428bf8b5fcdfa5c86d3d2021672334626))
 * **desktop:** expand ELF origin paths as literal directory names ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
+* **desktop:** honor env working directories in launch commands ([#12111](https://github.com/morluto/rea/issues/12111)) ([bd5c985](https://github.com/morluto/rea/commit/bd5c985b3fc8b3f26caaa94d88b66a0953dc66a8))
 * **desktop:** ignore relative XDG bases in capture inventory ([4b5d00b](https://github.com/morluto/rea/commit/4b5d00bebd02f1f67e62b9b5cbc4432cce7322c7))
 * **desktop:** keep denied path probes unknown instead of absent ([d68383f](https://github.com/morluto/rea/commit/d68383f98d885e409912b816af2e8380fcfc37c8))
 * **desktop:** keep the advertised apt suite pattern valid in v-mode ([fee2677](https://github.com/morluto/rea/commit/fee267759d19be81bad8ccc39354328d70115e5e)), closes [#10389](https://github.com/morluto/rea/issues/10389)
