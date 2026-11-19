@@ -30,7 +30,6 @@ import {
   base64PrefixChars,
   readRecordedResponseBody,
   readRecordedResponseDeclaration,
-  recordedResponseStatus,
   recordedResponseBodyIsEmpty,
   type RecordedResponseBody,
 } from "./recordedResponseBody.js";
@@ -242,9 +241,8 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   ): Result<() => void, AnalysisError> {
     const parsed = unlocatedWriteSchema.safeParse(record.reported);
     if (!parsed.success) return ok(() => undefined);
-    const status = recordedResponseStatus(
-      readRecordedResponseDeclaration(record.reported),
-    );
+    const status =
+      readRecordedResponseDeclaration(record.reported)?.status ?? null;
     const facts: StateRecordFacts = {
       ordinal: record.ordinal,
       method: parsed.data.request.method,
