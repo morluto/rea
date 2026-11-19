@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **debuggers:** preserve exact Cutter output and GNU MI escapes ([#12457](https://github.com/morluto/rea/issues/12457))
 * **ghidra:** A DOS COM file that ComLoader accepts now loads at linear 0x100 instead of 0x10100. Read load_address. The BinaryLoader fallback remains at 1000:0100.
 * **ghidra:** Ghidra 12.1.x is rejected. Use Ghidra 12.2 or another 12.x build at or above minor 2, and a JDK inside that installation's declared range (25 or newer for the verified 12.2 build).
 * **cli:** Markdown argument diagnostics use REA's literal escaping, table widths and token counts. Flag-shaped unknown MCP subcommands honor the selected format. Completion --schema/--version routes use the canonical REA-owned hook rather than the retired SDK generator. Refresh affected literal snapshots and regenerate completion hooks with rea completions <shell>.
@@ -303,6 +304,7 @@
 * **cutter:** explain empty discovery when Cutter 2.5.0 rejects the plugin ([#10310](https://github.com/morluto/rea/issues/10310)) ([cb8096d](https://github.com/morluto/rea/commit/cb8096d522166d2d2deb0c930360a053426406c6))
 * **cutter:** report undeclared output truncation and document generation as unknown ([#10726](https://github.com/morluto/rea/issues/10726)) ([52d6725](https://github.com/morluto/rea/commit/52d6725d6355a2d21de5ffa3f8f1dfb830a19c9f))
 * **debuggers:** keep stopped Rizin and GDB sessions explainable ([ee339e5](https://github.com/morluto/rea/commit/ee339e5db500ce1ea4ae5f43310e19d3de50d65e)), closes [#8024](https://github.com/morluto/rea/issues/8024)
+* **debuggers:** preserve exact Cutter output and GNU MI escapes ([#12457](https://github.com/morluto/rea/issues/12457)) ([a3759e7](https://github.com/morluto/rea/commit/a3759e714e8d0c7cd5b0c5846cd64291dbdada57))
 * **decompile:** derive the body-coverage caveat from retained records ([9d082b1](https://github.com/morluto/rea/commit/9d082b144a7a6a87bd1229a0500af13ab01f70e5)), closes [#8351](https://github.com/morluto/rea/issues/8351)
 * **decompile:** keep each successful batch item's own limitations ([9d2a57f](https://github.com/morluto/rea/commit/9d2a57fd8d9c02346f98f4ddbd62c494b61eabbc)), closes [#8350](https://github.com/morluto/rea/issues/8350)
 * **decompile:** keep the provider's null-pseudocode reason on inline failures ([c9f33aa](https://github.com/morluto/rea/commit/c9f33aaa826e80301e316844c2dbc8fb2970cf10))
@@ -384,6 +386,7 @@
 * **elf:** retain Android relocation declarations in MIPS coverage ([ed05170](https://github.com/morluto/rea/commit/ed051704243f90bfbc6d38080f820d08a716b340))
 * **elf:** share dynamic table framing and admission ([#12445](https://github.com/morluto/rea/issues/12445)) ([49981ca](https://github.com/morluto/rea/commit/49981ca7094b5f6463e47b6c88aa3046ee43d576))
 * **elf:** validate note framing before entry limits ([#12380](https://github.com/morluto/rea/issues/12380)) ([5bcf33f](https://github.com/morluto/rea/commit/5bcf33f6aca19dbc71b8abd70228c744ed4914d5))
+* **elf:** validate section-name backing before decode budget ([#12449](https://github.com/morluto/rea/issues/12449)) ([0b12a65](https://github.com/morluto/rea/commit/0b12a6533bc1d31938e03b48823b22e04e632264))
 * **environment:** admit the output root before creating its parents ([5e1d504](https://github.com/morluto/rea/commit/5e1d504664362649aec19c03f768d0bbf939b482))
 * **environment:** apply collection mappings to identifier lists ([#12354](https://github.com/morluto/rea/issues/12354)) ([0a55ccb](https://github.com/morluto/rea/commit/0a55ccba71edeba515ec19d7f4b750b7a12ffce5))
 * **environment:** map id-list elements when a scalar set also changed ([#7161](https://github.com/morluto/rea/issues/7161)) ([6a782c3](https://github.com/morluto/rea/commit/6a782c3573a7e6d423366c6611422b63c2d23371))
@@ -496,6 +499,7 @@
 * **managed:** keep empty definition names out of member identity ([#12448](https://github.com/morluto/rea/issues/12448)) ([4377c1a](https://github.com/morluto/rea/commit/4377c1a392749a2999b8fbc483135992e387f5dd))
 * **managed:** preserve duplicate GUID stream ambiguity ([#12217](https://github.com/morluto/rea/issues/12217)) ([ae8fb57](https://github.com/morluto/rea/commit/ae8fb57ef0789f90404f6c3d3e08ac31cdd9a013))
 * **managed:** preserve Module identity with an unresolved name ([#12265](https://github.com/morluto/rea/issues/12265)) ([a4bf59f](https://github.com/morluto/rea/commit/a4bf59f661f5c7dffdab2252b17798c84eb447df))
+* **managed:** reject empty names in saved member comparisons ([#12451](https://github.com/morluto/rea/issues/12451)) ([f6a7db0](https://github.com/morluto/rea/commit/f6a7db002594e8442a8cd83fb6b08594086d7ba8))
 * **managed:** report a managed graph over an unavailable source as unknown ([#11280](https://github.com/morluto/rea/issues/11280)) ([c931ba4](https://github.com/morluto/rea/commit/c931ba43ab1379d12e2a3dc984f4e902bcc525b2))
 * **managed:** report comparison and native-verification coverage unknown when an input cannot tell ([#11257](https://github.com/morluto/rea/issues/11257)) ([067f4ff](https://github.com/morluto/rea/commit/067f4ff98b5e1a98ef57e65fb4ef084af8720a87))
 * **managed:** require unique Module rows with ambiguous string heaps ([#12277](https://github.com/morluto/rea/issues/12277)) ([b406649](https://github.com/morluto/rea/commit/b406649be0e4ab8afb203a4a448885172107dfbf))
@@ -561,6 +565,7 @@
 * **nib:** validate row framing before decode capacity ([#12327](https://github.com/morluto/rea/issues/12327)) ([9b64217](https://github.com/morluto/rea/commit/9b642175b061e1cd4df92e0e772298cc5a2093f9))
 * **nib:** validate table extents before decode budgets ([#12315](https://github.com/morluto/rea/issues/12315)) ([23ad8ce](https://github.com/morluto/rea/commit/23ad8ce57894727afd5732e04c6791ae2eaf44ee))
 * **node-sea:** bound duplicate blob verification work ([#11736](https://github.com/morluto/rea/issues/11736)) ([4491c84](https://github.com/morluto/rea/commit/4491c84c82140a43fa12390b727840a433875ba8))
+* **node-sea:** read blobs with a declared main code format ([#12454](https://github.com/morluto/rea/issues/12454)) ([3d76312](https://github.com/morluto/rea/commit/3d763126cc92066a80f917077d560e4686853fd8))
 * **node-sea:** reserve framing for required blob fields ([#12317](https://github.com/morluto/rea/issues/12317)) ([96dae7d](https://github.com/morluto/rea/commit/96dae7de70954db12458f766de6886010013c7b5))
 * **node-sea:** validate Mach-O segment bounds before blob limits ([#12263](https://github.com/morluto/rea/issues/12263)) ([b74b314](https://github.com/morluto/rea/commit/b74b314fbddffadb731d7cff43ea214f7808133d))
 * **ntfs:** reject invalid FILE_NAME namespaces ([#11986](https://github.com/morluto/rea/issues/11986)) ([f52229a](https://github.com/morluto/rea/commit/f52229a4a64235a72e9ddf8a744907ea77616911))
@@ -581,6 +586,7 @@
 * **pcap:** resolve tshark and capinfos on the Windows PATH ([#11734](https://github.com/morluto/rea/issues/11734)) ([8a10fa9](https://github.com/morluto/rea/commit/8a10fa9c006a4b1032e713a4b862773039713049))
 * **pcap:** retain admitted DNS truncation facts ([#12373](https://github.com/morluto/rea/issues/12373)) ([7eac002](https://github.com/morluto/rea/commit/7eac002d5e99bf5d9eb552f00e569b0862e7881d))
 * **pe:** admit Authenticode nesting depth of signed Windows binaries ([#12082](https://github.com/morluto/rea/issues/12082)) ([0b95fa7](https://github.com/morluto/rea/commit/0b95fa7d6977efd733efc2adc824d0cb9e7121d9))
+* **pe:** bound TLS and export reads by declared section content ([#12432](https://github.com/morluto/rea/issues/12432)) ([16e3263](https://github.com/morluto/rea/commit/16e3263b105de4a8c73ef432065d02a753df7133))
 * **pe:** distinguish positional resource framing from capacity ([#12402](https://github.com/morluto/rea/issues/12402)) ([0eac372](https://github.com/morluto/rea/commit/0eac37277d13a332320d8c9cf6fe5ce81e34b80c))
 * **pe:** enforce DER extension critical encoding ([#10212](https://github.com/morluto/rea/issues/10212)) ([937d10d](https://github.com/morluto/rea/commit/937d10df1c709c8b2f5af8d9406ef735d0b3a2dc))
 * **pe:** frame certificate entries before count admission ([15150b0](https://github.com/morluto/rea/commit/15150b017a1012ecc3bbd9e992f5086457a527c6))
@@ -808,6 +814,7 @@
 * **android:** build mobile-provider cancellations with a required reason ([#10590](https://github.com/morluto/rea/issues/10590)) ([ef15353](https://github.com/morluto/rea/commit/ef15353c69109f4eda522aed013242229663e4b5))
 * **android:** carry mapping limits from the parser ([#12302](https://github.com/morluto/rea/issues/12302)) ([a752cf9](https://github.com/morluto/rea/commit/a752cf99c295e0cc79ae2ba5bd56150c62ea8075))
 * **android:** take the host in JADX configuration, doctor and workspace roots ([#11086](https://github.com/morluto/rea/issues/11086)) ([5d4e9b8](https://github.com/morluto/rea/commit/5d4e9b85320ff5ab15b2740f2cb45b6b5bcd7d94))
+* **apk:** read signing block and v1 local header fields through BinaryReader ([#12450](https://github.com/morluto/rea/issues/12450)) ([d58942a](https://github.com/morluto/rea/commit/d58942a4ead2a02bb47fc932bbc85ea9cc344284)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **apple-ips:** report crash-report format failures through ParseFailure ([#10665](https://github.com/morluto/rea/issues/10665)) ([d482bb9](https://github.com/morluto/rea/commit/d482bb936946e3cc36cc750dc7d12c6926fd8cb1))
 * **apple:** project IPS parser budgets from owned limit facts ([#12289](https://github.com/morluto/rea/issues/12289)) ([224e5e2](https://github.com/morluto/rea/commit/224e5e231f38e5f7fe549b3b8a272e0c98837d95))
 * **application:** build application cancellations with a required reason ([#10574](https://github.com/morluto/rea/issues/10574)) ([2826592](https://github.com/morluto/rea/commit/28265927594d6929f6c84d6c65ddd6d72a0b6ee6))
