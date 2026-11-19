@@ -263,6 +263,7 @@
 * **desktop:** align exported task whitespace interpretation ([#11947](https://github.com/morluto/rea/issues/11947)) ([a7c4ee8](https://github.com/morluto/rea/commit/a7c4ee8394c62c67fdd5738c1a3009c1be7319b8))
 * **desktop:** bound exported XML selector traversal ([#12105](https://github.com/morluto/rea/issues/12105)) ([c6033aa](https://github.com/morluto/rea/commit/c6033aaaca3be2e0bae086ae42dd4a66a035488c))
 * **desktop:** check retained reader JSON numbers ([#11833](https://github.com/morluto/rea/issues/11833)) ([458f583](https://github.com/morluto/rea/commit/458f583e1496a55f05d00017143364cd33525143))
+* **desktop:** discover application state under its launch home ([#12114](https://github.com/morluto/rea/issues/12114)) ([8062a14](https://github.com/morluto/rea/commit/8062a14a3ad455b4b767128e864094506555ffb5))
 * **desktop:** exclude configured APT status from repository sources ([#11932](https://github.com/morluto/rea/issues/11932)) ([e98a767](https://github.com/morluto/rea/commit/e98a767428bf8b5fcdfa5c86d3d2021672334626))
 * **desktop:** expand ELF origin paths as literal directory names ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
 * **desktop:** honor env working directories in launch commands ([#12111](https://github.com/morluto/rea/issues/12111)) ([bd5c985](https://github.com/morluto/rea/commit/bd5c985b3fc8b3f26caaa94d88b66a0953dc66a8))
