@@ -1,8 +1,5 @@
-import { z } from "zod";
-
-import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
-import type { TaskCheckOutcome, TaskFileView } from "./appTaskChecks.js";
+import type { TaskCheckOutcome } from "./appTaskChecks.js";
 import type { ComputerAction } from "./computerActions.js";
 
 /**
@@ -60,7 +57,14 @@ const EXPECTATIONS: Readonly<Record<WitnessStage, WitnessExpectation>> = {
 };
 
 /** Actions that change the app through its own interface; a reset restores the seed instead. */
-const INPUT = ["click", "drag", "scroll", "type", "key"] as const;
+const INPUT = [
+  "click",
+  "drag",
+  "scroll",
+  "type",
+  "type_secret",
+  "key",
+] as const;
 
 export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
   EXPECTATIONS[stage];
@@ -153,7 +157,7 @@ const notAnEdit = (
   },
 ): string | undefined => {
   if (latest.input < latest.from)
-    return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type or key was applied since ${since}, and a reset does not count.`;
+    return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type, type_secret or key was applied since ${since}, and a reset does not count.`;
   if (
     latest.unsettledReset > latest.reset &&
     latest.unsettledReset > latest.input
@@ -167,9 +171,9 @@ const notAnEdit = (
 /**
  * Whether `stage` may be checked now, given the stages already checked and
  * the action log; its value is where this stage's actions end. The edit and
- * the near miss each need an applied click, drag, scroll, type or key since
- * the stage before, with no reset after the last of them; the check after
- * reset needs a reset since the stage before as the last change.
+ * the near miss each need an applied click, drag, scroll, type, typed secret
+ * or key since the stage before, with no reset after the last of them; the
+ * check after reset needs a reset since the stage before as the last change.
  */
 export const admitWitnessStage = (
   stages: readonly WitnessStageRecord[],
@@ -212,42 +216,4 @@ export const admitWitnessStage = (
       "Before checking after_reset, reset the app with act_on_build_computer action reset, and change nothing after it.",
     );
   return ok(log.total);
-};
-
-const fileViewSchema = z.looseObject({
-  format: z.string().nullable(),
-  view: jsonValueSchema.nullable(),
-  error: z.string().nullish(),
-});
-const statePartSchema = z.looseObject({
-  kind: z.literal("data"),
-  data: z.looseObject({ state: z.record(z.string(), fileViewSchema) }),
-});
-
-/**
- * The typed views an exported app's `data/get` returns beside its files,
- * keyed by home path: the shape the task checks read.
- */
-export const appStateViews = (
-  parts: readonly unknown[],
-): Result<ReadonlyMap<string, TaskFileView>, string> => {
-  for (const part of parts) {
-    const parsed = statePartSchema.safeParse(part);
-    if (parsed.success)
-      return ok(
-        new Map(
-          Object.entries(parsed.data.data.state).map(([path, entry]) => [
-            path,
-            {
-              format: entry.format,
-              view: entry.view,
-              error: entry.error ?? null,
-            },
-          ]),
-        ),
-      );
-  }
-  return err(
-    "The app's data/get returned no state views; witness a bundle exported by REA, whose app serves them.",
-  );
 };

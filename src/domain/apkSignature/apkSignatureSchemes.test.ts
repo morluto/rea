@@ -5,9 +5,11 @@ import {
   contentDigestAlgorithm,
   decodeRotationLineage,
   decodeSigners,
-  MAX_LINEAGE_NODES,
-  MAX_SIGNERS,
 } from "./apkSignatureSchemes.js";
+
+// Fixed input boundaries exercise the decoder without importing its internal limits.
+const MAX_SIGNERS = 32;
+const MAX_LINEAGE_NODES = 32;
 
 const ATTR_ID = 0xbeeff00d;
 

@@ -20,8 +20,21 @@ requires an absolute filesystem path:
 }
 ```
 
-A universal Mach-O requires `architecture` to select one slice. ELF files and
-thin Mach-O files do not take it.
+A universal Mach-O requires `architecture` (`x86`, `x86_64`, `arm`, `arm64` or
+`arm64e`) to select one slice. A CPU family with one slice is selected by its
+family name; `arm64e` reads only an `arm64e` slice. When several slices share
+the family, such as the `arm64` and `arm64e` slices of stock macOS tools, the
+value must name the slice's subtype, as `lipo -thin` does: `arm64` reads the
+`arm64` (or `arm64v8`) slice, `arm64e` the `arm64e` (or `arm64e.x1`) slice, and
+`x86_64` the canonical `x86_64` slice. REA does not choose a slice by
+preference. When no slice or several slices carry the named subtype (capability
+bits are ignored when comparing), the request fails on `architecture`; `arm64e`
+beside `arm64e.x1`, for example, is refused. `slice` reports the selected
+subtype, and `limitations` lists the same-family slices that were not read and
+the value, if any, that selects each. A slice whose Mach-O header does not match
+its FAT declaration, such as a different CPU subtype, is listed as unverified,
+and no value is offered for it. ELF files and thin Mach-O files do not take
+`architecture`.
 
 ## Sources
 
@@ -54,7 +67,11 @@ Each `entries[]` item reports:
   limitation says so.
 - `value_va`, `value_file_offset` and `section`: the resolved target address,
   its file offset and its containing section. These are null when the value
-  was not established. A file offset is also null when load segments map the
+  was not established. In a linked ELF, file offsets come only from `PT_LOAD`:
+  an unmapped or zero-filled target keeps its observed address but has a null
+  file offset, even if a section header declares bytes at that address. ET_REL
+  targets retain their relocation symbol's section-relative coordinates.
+  A file offset is also null when load segments map the
   address ambiguously (overlapping segments with different file offsets, or
   file and zero-fill memory), and the report is then `incomplete`.
 - `symbol`: a defined symbol whose value equals the target exactly, or the
@@ -82,21 +99,62 @@ Symbol and section names are untrusted file text and carry
 For PIE executables and shared objects the array slots are usually zero on
 disk. A slot is reported `unresolved`, never as its stored zero, when the
 dynamic relocation tables use an encoding this inspection does not decode
-(for example Android packed relocations or an unsupported machine). Relative
-relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
-also `unresolved` when a dynamic relocation writes only part of it, starts
+(for example legacy Android APS1 relocations or an unsupported machine). Relative
+relocations are decoded for x86-64, i386, AArch64, 32-bit ARM and RISC-V
+(RV32/RV64). RISC-V word-sized absolute relocations also resolve defined
+symbols in section tables; imported symbols remain unresolved imports. TLS
+and indirect-function resolver results are not treated as function addresses.
+A slot is also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
+
+Android APS2 packed REL/RELA tables are decoded through the same relocation
+rules, including grouped offsets, signed addend deltas and zero-addend groups.
+Their relative slots use `relative_addend`; unresolved symbolic or indirect
+values remain unresolved. APS2 and standard RELR tables can coexist.
+
+RELR address/bitmap tables support both standard `DT_RELR`/`DT_RELRSZ`/
+`DT_RELRENT` and Android's older `DT_ANDROID_RELR`/`DT_ANDROID_RELRSZ`/
+`DT_ANDROID_RELRENT` tags. Both retain `relr` slot provenance and the original
+record file offsets. Repeated declarations and mixtures of the two tag
+families are refused instead of choosing, combining or applying tables twice.
+
+A `COPY` relocation writes as many bytes as the image's own dynamic symbol
+records, and a TLS descriptor relocation writes two words. A slot outside
+those bytes keeps its stored word, so a non-PIE executable that copies `stdout`
+or `environ` into `.bss` still lists its `init_array` targets as `raw`. When a
+`COPY` symbol's size cannot be read, or the `COPY` sizes add up to more than
+the file's byte count, relocation coverage is unknown and stored words are
+`unresolved`.
 
 Section `REL` / `RELA` tables are applied to slots that no dynamic relocation
 covers. When such a table is skipped for an unexpected entry size, cannot be
 read, or lies past the record budget, every slot it could reach that has no
 relocation found is `unresolved`, and a `.ctors` slot is not dropped as a
 sentinel. A section record that writes only part of a slot, starts inside it,
-or repeats it also leaves the slot `unresolved`. In a relocatable object a
+or repeats it also leaves the slot `unresolved`. In a linked image, a section
+`COPY` record covers the size that its table's linked symbol records, as a
+dynamic one does. When that symbol was not read, or the section `COPY` sizes
+add up to more than the file's byte count, the table counts as not fully read.
+A record that writes memory with no file bytes, such as zero-fill `.bss`,
+changes only the slots it overlaps in memory, provided its extent is known: a
+kind with a fixed width, or a sized `COPY`. A record of any other kind there
+leaves its table not fully read. In a relocatable object a
 table reaches only the section named by its `sh_info`. In a linked image, a relocation section without `SHF_ALLOC`
 (such as one kept by `--emit-relocs`) was already applied by the static
 linker, so the slot's stored word is used rather than applying the record
 again.
+
+Relocation ownership follows virtual addresses in linked images and section
+identity plus offset in relocatable objects. Distinct slots that share source
+file bytes keep independent values and overlap checks; a write to one does not
+relocate or invalidate the other.
+
+ELF symbols using `SHN_XINDEX` get their actual section from the uniquely
+linked `SHT_SYMTAB_SHNDX` table. Missing, conflicting, compressed or malformed
+companions leave affected symbols unresolved with incomplete coverage; ordinary
+symbols remain available. Extended section numbers stay distinct from equally
+numbered special markers. `SHN_ABS` values have no section-relative file mapping,
+and tentative `SHN_COMMON` values are not treated as allocated addresses.
 
 An absolute relocation against an `STT_GNU_IFUNC` symbol is `unresolved`: the
 symbol value is the resolver, and the loader stores whatever the resolver
@@ -132,11 +190,28 @@ visible.
 
 ## Paging and limits
 
+Each APS2 table has a fixed 16 MiB compressed-input and decode-work allowance.
+Before group expansion, the declared count multiplied by the equivalent
+unpacked REL/RELA record width must fit 16 MiB. This bounds interpretation work
+even when a tiny group encodes millions of records; it is separate from retained
+pointer-index and result limits, and has no runtime override. Decoding yields
+within groups for cancellation. Only zero linker padding is accepted after the
+declared records.
+
 `offset` and `limit` page the ordered list (default limit 64, maximum 4096).
 `coverage.examined_entries` counts every slot read, including omitted
 sentinels, and `total_entries` (the listed entries) is set when the inventory
-is complete. At most 65536 slots are examined; beyond that, or when relocation
-coverage is unknown, `status` and `coverage.status` are `incomplete`.
+is complete. At most 65536 slots are examined. Any gap makes `status`
+`incomplete`, and `coverage.status` says which kind it is:
+
+- `partial`: declared slots or names were examined but not reported. Examples
+  are the 65536-slot budget, an array that is compressed, not file-backed,
+  has no size tag or has trailing bytes, and a name over the 1024-byte budget.
+- `unknown`: whether the listed facts are complete cannot be determined.
+  Examples are unknown relocation, fixup, symbol or mapping coverage, a
+  duplicate dynamic tag and a `PT_DYNAMIC` without `DT_NULL`.
+
+When both kinds occur, `coverage.status` is `unknown`.
 
 ELF symbol names come from at most 65536 symbols across all `SHT_SYMTAB` and
 `SHT_DYNSYM` tables together, and section `REL` / `RELA` relocations from at
@@ -146,9 +221,19 @@ together; a repeated `LC_SYMTAB` over the same ranges is ignored with a
 limitation. Reaching any of these budgets makes the report `incomplete` with a
 limitation.
 
-A symbol name that cannot be read, because its string table is missing or its
-offset lies outside the table, is reported as no name and makes the report
-`incomplete` with a counted limitation. Name offset 0 is the empty name.
+A symbol name that cannot be read, because its string table is missing, its
+offset lies outside the table, or its terminator cannot be established, is
+reported as no name. It makes coverage `unknown` with a counted limitation.
+Name offset 0 is the empty name. When the name crosses the byte budget, a
+NUL at the end of the table establishes a terminator without a longer scan.
+A name withheld in this way makes coverage `partial` when a collected
+initializer needs it. A long name that does
+not label a collected initializer does not widen coverage.
+
+ELF sections marked `SHF_COMPRESSED` are not decoded as initializer slots,
+symbols, names or relocation records. Affected facts remain unresolved and
+coverage is incomplete; other readable tables remain available. An explicit
+`DT_SYMTAB` must identify the decoded symbol table used for dynamic relocations.
 
 The dynamic relocation tables are read in steps that yield to other work and
 observe cancellation, so a large `DT_RELR` table does not block the server.

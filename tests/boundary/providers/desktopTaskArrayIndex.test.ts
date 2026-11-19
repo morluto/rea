@@ -50,3 +50,21 @@ print(json.dumps(results))
     }),
   );
 });
+
+it("evaluates root-array member counts in the exported Python verifier", async () => {
+  const folder = await createTestTempDirectory("task-root-count-");
+  const script = join(folder, "fixture.py");
+  await writeFile(
+    script,
+    `import json, re, math
+${PYTHON_TASK_EVALUATOR}
+check = {"id": "count", "kind": "member_count", "file": "state.json", "pointer": "", "equals": 3}
+print(json.dumps([evaluate([check], {"state.json": {"format": "json", "view": values, "truncated": False}})[0]["result"] for values in [[1, 2], [1, 2, 3]]]))
+`,
+  );
+  expect(
+    JSON.parse(
+      execFileSync("python3", ["-I", "-B", script], { encoding: "utf8" }),
+    ),
+  ).toEqual([false, true]);
+});

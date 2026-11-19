@@ -5,7 +5,7 @@ import {
   MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   inspectErlangBeamInputSchema,
 } from "../domain/erlang/beam.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   erlangBeamChunksFixture,
   erlangBeamRowsFixture,
@@ -16,7 +16,7 @@ import {
 } from "./Beam.fixture.js";
 import { BeamCapacityFailure, parseErlangBeam } from "./BeamParser.js";
 import { BeamProvider } from "./BeamProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 const defaults = inspectErlangBeamInputSchema.parse({
   path: "/artifacts/app.beam",

@@ -1,16 +1,16 @@
-import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
 import {
   goBinarySchema,
   goBuildInfoSchema,
-  goMaxStringLiteralsSchema,
   goModuleMetadataSchema,
   goModuleSchema,
   goStringLiteralSchema,
+  goStringLiteralsSchema,
+  type GoBinary,
 } from "../go/goBinary.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
   ownedView,
   type AdmittedView,
@@ -20,6 +20,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -80,6 +81,7 @@ export const goBinaryViewContextSchema = z.strictObject({
     build_info_available: z.boolean(),
     module_parse_complete: z.boolean().nullable(),
     runtime_dependencies: z.literal("unknown"),
+    // domain-vocabulary: whether the optional static (ptr, len) scan was not requested, finished within its budgets, or stopped at a budget.
     string_literals: z.enum(["not-requested", "complete", "truncated"]),
   }),
 });
@@ -116,19 +118,59 @@ export const goBinarySummarySchema = z.strictObject({
         }),
     })
     .nullable(),
-  string_literals: z
-    .strictObject({
-      evidence_kind: z.literal("inferred"),
-      available_count: count,
-      discovered_count: count,
-      aggregate_bytes: count,
-      max_items: goMaxStringLiteralsSchema,
-      truncated: z.boolean(),
-    })
+  string_literals: goStringLiteralsSchema
+    .omit({ items: true })
+    .extend({ available_count: count })
     .exactOptional(),
 });
 
 const parseReport = createAnalysisViewResultReader(goBinarySchema);
+
+const GO_BINARY_RUNTIME_UNKNOWN =
+  "Embedded build records do not establish complete runtime dependencies or target behavior.";
+
+/** Unknowns owned by the Go build-information view. Other projections reuse them. */
+export const goBinaryUnknowns = (
+  report: GoBinary,
+): {
+  readonly values: readonly string[];
+  readonly required: readonly string[];
+} => {
+  const info = report.build_info;
+  const stringLiterals = report.string_literals;
+  return {
+    required: [GO_BINARY_RUNTIME_UNKNOWN],
+    values: [
+      GO_BINARY_RUNTIME_UNKNOWN,
+      ...(info === null
+        ? [
+            "Build information is unavailable; language and dependencies remain unknown.",
+          ]
+        : [
+            ...(info.module.complete
+              ? []
+              : [
+                  "Some module records were not parsed; consult the complete parent Evidence for original lines and bytes.",
+                ]),
+            ...(info.module.main === null
+              ? [
+                  "No main module was decoded; embedded dependency coverage remains unknown.",
+                ]
+              : []),
+          ]),
+      ...(stringLiterals === undefined
+        ? []
+        : [
+            "Recovered string_literals reflect static (ptr, len) pairs into read-only data; stack/immediate strings and runtime reachability remain unknown.",
+            ...(stringLiterals.truncated
+              ? [
+                  "Static (ptr, len) string_literals were truncated by item, aggregate-byte or scan budgets; additional candidates remain uninspected.",
+                ]
+              : []),
+          ]),
+    ],
+  };
+};
 
 /** Query the existing metadata owner's facts; never reopen or reinterpret a file. */
 export const projectGoBinaryView = (
@@ -144,64 +186,23 @@ export const projectGoBinaryView = (
         {
           path: ["view"],
           reason: "invalid_value",
-          message: "Go build Evidence supports summary and go views.",
+          message:
+            "Go build Evidence supports summary, go and cyclonedx views.",
         },
       ]),
     );
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
-  if (
-    subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
-    subject.format !== metadataReportSubjectFormat(report) ||
-    subject.architecture !==
-      (binaryMetadataArchitecture(report.architecture) ?? null)
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Go parent subject must identify the report's exact artifact.",
-        },
-      ]),
-    );
+  const subject = requireMetadataReportSubject(
+    parent,
+    report,
+    "Go parent subject must identify the report's exact artifact.",
+  );
+  if (!subject.ok) return subject;
   const info = report.build_info;
+  const unknowns = goBinaryUnknowns(report);
   const stringLiterals = report.string_literals;
-  const runtimeUnknown =
-    "Embedded build records do not establish complete runtime dependencies or target behavior.";
-  const unknowns = [
-    runtimeUnknown,
-    ...(info === null
-      ? [
-          "Build information is unavailable; language and dependencies remain unknown.",
-        ]
-      : [
-          ...(info.module.complete
-            ? []
-            : [
-                "Some module records were not parsed; consult the complete parent Evidence for original lines and bytes.",
-              ]),
-          ...(info.module.main === null
-            ? [
-                "No main module was decoded; embedded dependency coverage remains unknown.",
-              ]
-            : []),
-        ]),
-    ...(stringLiterals === undefined
-      ? []
-      : [
-          "Recovered string_literals reflect static (ptr, len) pairs into read-only data; stack/immediate strings and runtime reachability remain unknown.",
-          ...(stringLiterals.truncated
-            ? [
-                "Static (ptr, len) string_literals were truncated by item, aggregate-byte or scan budgets; additional candidates remain uninspected.",
-              ]
-            : []),
-        ]),
-  ];
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_go_binary" as const,
@@ -223,11 +224,21 @@ export const projectGoBinaryView = (
       parent.evidenceId,
       "limitations",
     ),
-    unknowns: boundedViewMessages(unknowns, parent.evidenceId, "unknowns", [
-      runtimeUnknown,
-    ]),
+    unknowns: boundedViewMessages(
+      unknowns.values,
+      parent.evidenceId,
+      "unknowns",
+      unknowns.required,
+    ),
   };
-  if (view.kind === "summary")
+  if (view.kind === "summary") {
+    let stringSummary: z.output<
+      typeof goBinarySummarySchema
+    >["string_literals"];
+    if (stringLiterals !== undefined) {
+      const { items, ...facts } = stringLiterals;
+      stringSummary = { ...facts, available_count: items.length };
+    }
     return ok({
       kind: "summary" as const,
       view,
@@ -263,21 +274,15 @@ export const projectGoBinaryView = (
                   },
                 },
               },
-        ...(stringLiterals === undefined
+        ...(stringSummary === undefined
           ? {}
           : {
-              string_literals: {
-                evidence_kind: stringLiterals.evidence_kind,
-                available_count: stringLiterals.items.length,
-                discovered_count: stringLiterals.discovered_count,
-                aggregate_bytes: stringLiterals.aggregate_bytes,
-                max_items: stringLiterals.max_items,
-                truncated: stringLiterals.truncated,
-              },
+              string_literals: stringSummary,
             }),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
+  }
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
   const fields =
@@ -327,10 +332,18 @@ export const projectGoBinaryView = (
       ),
     });
   }
+  if (info === null)
+    return ok({
+      kind: "go" as const,
+      view,
+      ...shared,
+      page: { collection: view.collection, rows: [] },
+      coverage: unavailableViewCoverage(),
+    });
   if (view.collection === "dependencies") {
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
     const selected = selectViewRows(
-      info?.module.dependencies ?? [],
+      info.module.dependencies,
       view,
       (row, index) =>
         (indices?.has(index) ?? true) && (paths?.has(row.path) ?? true),
@@ -358,7 +371,7 @@ export const projectGoBinaryView = (
   }
   const keys = view.keys === undefined ? undefined : new Set(view.keys);
   const selected = selectViewRows(
-    info?.module.settings ?? [],
+    info.module.settings,
     view,
     (row, index) =>
       (indices?.has(index) ?? true) && (keys?.has(row.key) ?? true),

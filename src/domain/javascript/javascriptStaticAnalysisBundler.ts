@@ -25,7 +25,6 @@ import {
   modulePropertyName,
   range,
   registrationKey,
-  sha256Text,
   sourceSlice,
   staticArrayValues,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -35,6 +34,7 @@ import type {
   JavaScriptBundlerRegistration,
 } from "./javascriptStaticAnalysisTypes.js";
 import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "./javascriptStaticAnalysisTypes.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Inspect a bundler registration call and recover its module table. */
 export const inspectBundlerRegistration = (
@@ -48,12 +48,12 @@ export const inspectBundlerRegistration = (
   if (runtime === undefined || !t.isArrayExpression(entry)) return;
   const chunkIds = entry.elements[0];
   const table = entry.elements[1];
+  if (!t.isArrayExpression(chunkIds) || !t.isObjectExpression(table)) return;
   const runtimeValue = runtimeMetadata(
     entry.elements[2],
     bindings,
     accumulator,
   );
-  if (!t.isArrayExpression(chunkIds) || !t.isObjectExpression(table)) return;
   const recovered = recoverBundlerModules(source, table, accumulator, {
     runtime,
     bindings,
@@ -230,7 +230,7 @@ const recoverBundlerModules = (
     );
     if (recovered === null) continue;
     modules.push(recovered.module);
-    asyncChunkKeys.push(...recovered.asyncChunkKeys);
+    for (const key of recovered.asyncChunkKeys) asyncChunkKeys.push(key);
     unknownAsyncChunkKeys += recovered.unknownAsyncChunkKeys;
   }
   return {
@@ -295,7 +295,7 @@ const recoverBundlerModule = (
     module: {
       module_key: key,
       factory_require_name: requireName,
-      source_sha256: sha256Text(sourceSlice(source, factory)),
+      source_sha256: sha256Hex(sourceSlice(source, factory)),
       structural_fingerprint_sha256: fingerprint,
       structural_fingerprint_algorithm: JAVASCRIPT_AST_FINGERPRINT_ALGORITHM,
       exports,

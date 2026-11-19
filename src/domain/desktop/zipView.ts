@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -9,15 +7,13 @@ import {
 } from "./stateFormats.js";
 import { locatePointer } from "./viewPointer.js";
 
-const MIB = 1024 * 1024;
-/** Entries a zip view lists; past them it counts entries and is truncated. */
-export const MAX_ZIP_ENTRIES = 1000;
-/** Largest entry read, uncompressed. */
-export const MAX_ZIP_ENTRY_BYTES = 16 * MIB;
-/** Uncompressed bytes read from one archive, the same as the largest file the state view reads. */
-const MAX_ZIP_BYTES = 64 * MIB;
-/** Most an entry may expand over its compressed size; a zip bomb expands about a thousand times. */
-export const MAX_ZIP_RATIO = 100;
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewByteDisplay,
+  type DesktopViewPolicy,
+} from "./desktopViewPolicy.js";
+import { isRecord } from "../../kernel/isRecord.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Why an archive has no view; the exported reader words it the same. */
 export const UNREADABLE_ZIP = "not a readable zip archive";
@@ -37,16 +33,17 @@ export interface ZipEntryHeader {
 export const zipEntryRefusal = (
   header: ZipEntryHeader,
   spent: number,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): string | undefined => {
   if (header.encrypted) return "encrypted, so it is not read";
   if (header.method !== 0 && header.method !== 8)
     return `compressed with method ${String(header.method)}, which the view does not read`;
-  if (header.size > MAX_ZIP_ENTRY_BYTES)
-    return `larger than the ${String(MAX_ZIP_ENTRY_BYTES / MIB)} MiB an entry's view reads`;
-  if (header.size > MAX_ZIP_RATIO * header.compressedSize)
-    return `expands more than ${String(MAX_ZIP_RATIO)} times, so it is not read`;
-  if (spent + header.size > MAX_ZIP_BYTES)
-    return `past the ${String(MAX_ZIP_BYTES / MIB)} MiB read from one archive`;
+  if (header.size > policy.zip_entry_bytes)
+    return `larger than the ${desktopViewByteDisplay(policy.zip_entry_bytes)} an entry's view reads`;
+  if (header.size > policy.zip_ratio * header.compressedSize)
+    return `expands more than ${String(policy.zip_ratio)} times, so it is not read`;
+  if (spent + header.size > policy.zip_bytes)
+    return `past the ${desktopViewByteDisplay(policy.zip_bytes)} read from one archive`;
   return undefined;
 };
 
@@ -67,13 +64,14 @@ export const unreadZipEntry = (
 const entryView = (
   format: DesktopStateFormat,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy,
 ): Result<JsonValue, string> => {
   switch (format) {
     case "text":
     case "json":
     case "keyfile":
     case "xml":
-      return textualView(format, bytes);
+      return textualView(format, bytes, policy);
     case "sqlite":
       return err("a SQLite database inside an archive is not read");
     case "dconf":
@@ -89,13 +87,14 @@ const entryView = (
 export const zipEntry = (
   header: ZipEntryHeader,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const format = detectStateFormat(header.name, bytes);
-  const read = entryView(format, bytes);
+  const format = detectStateFormat(header.name, bytes, policy);
+  const read = entryView(format, bytes, policy);
   return {
     name: header.name,
     size: header.size,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sha256: sha256Hex(bytes),
     format,
     view: read.ok ? read.value : null,
     view_error: read.ok ? null : read.error,
@@ -111,11 +110,6 @@ export const zipView = (
   entry_count: count,
   truncated: count > entries.length,
 });
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Whether an entry's view is missing or holds only part of it. */
 const entryLeavesOut = (entry: JsonValue): boolean =>

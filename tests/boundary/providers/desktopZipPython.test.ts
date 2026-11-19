@@ -1,6 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
+import { Uint8ArrayReader, ZipReader } from "@zip.js/zip.js";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,11 +13,17 @@ import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
 import {
   emptyEntriesArchive,
   odtArchive,
+  unicodePathExtra,
   withZip64End,
   zipArchive,
   type ZipMember,
 } from "../../../src/domain/desktop/zipArchive.fixture.js";
 import { zipEntryRefusal } from "../../../src/domain/desktop/zipView.js";
+import {
+  desktopViewPolicy,
+  pythonDesktopViewPolicy,
+} from "../../../src/domain/desktop/desktopViewPolicy.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   expectSameCheckResults,
   expectSameFileViews,
@@ -23,6 +31,11 @@ import {
   pythonFileViews,
   writeFiles,
 } from "../../support/desktopExportPython.js";
+import {
+  decodeZipEntryText,
+  ZIP_READER_OPTIONS,
+  zipEntryPath,
+} from "../../../src/resources/index.js";
 
 const MIB = 1024 * 1024;
 const FIXTURES = join(import.meta.dirname, "../../fixtures/freecad");
@@ -66,13 +79,7 @@ const sqliteHeader = Buffer.concat([
 
 it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", async () => {
   const storedName = "legacy.txt";
-  const unicodeName = Buffer.from("café.json");
-  const extra = Buffer.alloc(9 + unicodeName.length);
-  extra.writeUInt16LE(0x7075);
-  extra.writeUInt16LE(extra.length - 4, 2);
-  extra[4] = 1;
-  extra.writeUInt32LE(crc32(Buffer.from(storedName)), 5);
-  unicodeName.copy(extra, 9);
+  const extra = unicodePathExtra(storedName, "café.json");
   const archive = zipArchive([
     { name: storedName, data: "42", flags: 0x800, centralExtra: extra },
     { name: "other.txt", data: "42", centralExtra: extra },
@@ -83,6 +90,149 @@ it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", 
       { name: storedName, format: "text" },
       { name: "other.txt", format: "text" },
     ],
+  });
+});
+
+it.each([
+  "crc",
+  "version",
+  "short",
+  "superseded-utf8",
+  "flagged",
+  "empty",
+  "nul",
+])(
+  "keeps the ZIP decoder's final Unicode Path choice through bounded views (%s)",
+  async (kind) => {
+    const name = "settings.json";
+    const displayed =
+      kind === "empty" ? "" : kind === "nul" ? "kept\0.json" : name;
+    const first = unicodePathExtra(
+      name,
+      kind === "superseded-utf8" ? Buffer.from([0xff]) : "hidden/",
+    );
+    let last = unicodePathExtra(name, displayed);
+    if (kind === "crc") last.writeUInt32LE(0, 5);
+    if (kind === "version") last[4] = 2;
+    if (kind === "short") last = Buffer.from([0x75, 0x70, 1, 0, 1]);
+    const archive = zipArchive([
+      {
+        name,
+        data: '{"zoom":2}',
+        flags: kind === "flagged" ? 0x800 : 0,
+        centralExtra: Buffer.concat([first, last]),
+      },
+      { name: "control.txt", data: "unaffected" },
+    ]);
+    // The complete production decoder is the semantic control for the bounded
+    // preflight, including invalid final claims falling back to the raw name.
+    const reader = new ZipReader(
+      new Uint8ArrayReader(archive),
+      ZIP_READER_OPTIONS,
+    );
+    try {
+      expect(
+        (await reader.getEntries({ decodeText: decodeZipEntryText })).map(
+          (entry) => ({
+            name: zipEntryPath(entry),
+            directory: entry.directory,
+          }),
+        ),
+      ).toEqual([
+        { name: displayed, directory: false },
+        { name: "control.txt", directory: false },
+      ]);
+    } finally {
+      await reader.close();
+    }
+    expect(await sameView(archive)).toMatchObject({
+      entries: [
+        {
+          name: displayed,
+          format: "json",
+          view: { zoom: 2 },
+          view_error: null,
+        },
+        { name: "control.txt", view_error: null },
+      ],
+      entry_count: 2,
+      truncated: false,
+    });
+  },
+);
+
+it("refuses invalid UTF-8 in the selected Unicode claim while preserving an unrelated extra field", async () => {
+  const name = "settings.json";
+  const opaque = Buffer.from([0xfe, 0xca, 3, 0, 1, 2, 3]);
+  const archive = (last: Buffer) =>
+    zipArchive([
+      {
+        name,
+        data: '{"zoom":2}',
+        centralExtra: Buffer.concat([
+          unicodePathExtra(name, "hidden/"),
+          opaque,
+          last,
+        ]),
+      },
+    ]);
+  expect(await sameView(archive(unicodePathExtra(name, name)))).toMatchObject({
+    entry_count: 1,
+    entries: [{ name, view: { zoom: 2 } }],
+    truncated: false,
+  });
+  const invalid = archive(unicodePathExtra(name, Buffer.from([0xff])));
+  await expectSameViews([invalid]);
+  expect(await readZipView(invalid)).toEqual({
+    ok: false,
+    error: "not a readable zip archive",
+  });
+});
+
+it("refuses a central extra field whose payload extends past the containing record's extra bytes", async () => {
+  const name = "report.txt";
+  const opaque = Buffer.from([0xfe, 0xca, 2, 0, 1]);
+  const unicode = unicodePathExtra(name, "renamed.txt");
+  unicode.writeUInt16LE(unicode.length - 3, 2);
+  const archives = [
+    zipArchive([{ name, data: "observed", centralExtra: opaque }]),
+    zipArchive([{ name, data: "observed", centralExtra: unicode }]),
+    zipArchive([
+      { name: "directory/", centralExtra: opaque },
+      { name, data: "observed" },
+    ]),
+  ];
+  const fromPython = await pythonFileViews(saved(archives));
+  for (const [index, archive] of archives.entries()) {
+    expect.soft(await readZipView(archive)).toEqual({
+      ok: false,
+      error: "not a readable zip archive",
+    });
+    expect.soft(fromPython[index]).toEqual({
+      format: "zip",
+      view: null,
+      error: "not a readable zip archive",
+    });
+  }
+});
+
+it("excludes a final Unicode directory without consuming a retained file slot", async () => {
+  const name = "settings.json";
+  const archive = zipArchive([
+    {
+      name,
+      data: "not a file view",
+      centralExtra: Buffer.concat([
+        unicodePathExtra(name, name),
+        unicodePathExtra(name, "hidden/"),
+      ]),
+    },
+    { name: "control.json", data: '{"kept":true}' },
+  ]);
+  expect(await sameView(archive)).toMatchObject({
+    entries: [{ name: "control.json", view: { kept: true } }],
+    entry_count: 1,
+    truncated: false,
   });
 });
 
@@ -284,6 +434,190 @@ describe("zip directories in the exported module", () => {
       });
   });
 
+  it.each([false, true])(
+    "follows the Zip64 locator over a fixed-size signature in opaque extension bytes (%s)",
+    async (sentinels) => {
+      const extension = Buffer.alloc(6 + 56);
+      extension.writeUInt16LE(0xfffe, 0);
+      extension.writeUInt32LE(56, 2);
+      extension.writeUInt32LE(0x06064b50, 6);
+      const archive = withZip64End(
+        zipArchive([{ name: "notes.txt", data: "retained" }]),
+        sentinels,
+        extension,
+      );
+      const result = await sameView(archive);
+      expect(result).toMatchObject({
+        entry_count: 1,
+        entries: [{ name: "notes.txt", view: { lines: ["retained"] } }],
+        truncated: false,
+      });
+    },
+  );
+
+  it("retains the fixed Zip64 fallback when a prefix shifts its relative locator", async () => {
+    // Keep a recognized ZIP opening for desktop format detection. Only the
+    // real recorded local entry and central directory contribute to the view.
+    const prefix = Buffer.from("PK\x03\x04inert prefix");
+    const archive = Buffer.concat([
+      prefix,
+      withZip64End(zipArchive([{ name: "notes.txt", data: "retained" }])),
+    ]);
+    const result = await sameView(archive);
+    expect(result).toMatchObject({
+      entry_count: 1,
+      entries: [{ name: "notes.txt", view: { lines: ["retained"] } }],
+      truncated: false,
+    });
+  });
+});
+
+it("refuses inconsistent classic and Zip64 directory record counts", async () => {
+  const classic = zipArchive([
+    { name: "doc/", data: "" },
+    { name: "doc/settings.json", data: '{"zoom":2}' },
+  ]);
+  const zip64 = withZip64End(classic);
+  const classicDiskCount = Buffer.from(classic);
+  classicDiskCount.writeUInt16LE(1, classicDiskCount.length - 14);
+  const classicTotal = Buffer.from(classicDiskCount);
+  classicTotal.writeUInt16LE(1, classicTotal.length - 12);
+  const zip64DiskCount = Buffer.from(zip64);
+  zip64DiskCount.writeBigUInt64LE(1n, zip64DiskCount.length - 74);
+  const zip64Total = Buffer.from(zip64DiskCount);
+  zip64Total.writeBigUInt64LE(1n, zip64Total.length - 66);
+  const archives = [classicDiskCount, classicTotal, zip64DiskCount, zip64Total];
+
+  const python = await pythonFileViews(saved(archives));
+  expect(python).toEqual(
+    archives.map(() => ({
+      format: "zip",
+      view: null,
+      error: "not a readable zip archive",
+    })),
+  );
+  for (const archive of archives)
+    expect(await readZipView(archive)).toEqual({
+      ok: false,
+      error: "not a readable zip archive",
+    });
+
+  for (const archive of [classic, zip64])
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "doc/settings.json" }],
+      entry_count: 1,
+    });
+});
+
+describe("ZIP directory counts and volume admission in the exported module", () => {
+  it("retains the selected ZIP count at and beyond the classic sentinel", async () => {
+    const path = join(
+      await createTestTempDirectory("rea-zip64-count-"),
+      "many.zip",
+    );
+    // An independent writer emits an original Zip64 archive, not a decoder-copy fixture.
+    execFileSync("python3", [
+      "-I",
+      "-B",
+      "-c",
+      `import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as archive:
+    for index in range(65536):
+        archive.writestr(f"entry-{index:05d}.bin", b"ab")
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    assert len(archive.infolist()) == 65536`,
+      path,
+    ]);
+    const bytes = await readFile(path);
+    for (const keep of [65_535, 65_536]) {
+      const policy = desktopViewPolicy({
+        zip_entries: keep,
+        zip_entry_bytes: 1,
+      });
+      const result = await readZipView(bytes, undefined, policy);
+      const host = result.ok
+        ? (result.value as {
+            entries: { name: string }[];
+            entry_count: number;
+            truncated: boolean;
+          })
+        : null;
+      const python: unknown = JSON.parse(
+        exportedPython(
+          `${pythonDesktopViewPolicy(policy)}
+result = _view(Path(json.load(sys.stdin)))
+view = result.get("view")
+print(json.dumps(None if view is None else {
+    "listed": len(view["entries"]), "count": view["entry_count"],
+    "truncated": view["truncated"], "last": view["entries"][-1]["name"]
+}))`,
+          path,
+        ),
+      );
+      expect([
+        host === null
+          ? null
+          : {
+              listed: host.entries.length,
+              count: host.entry_count,
+              truncated: host.truncated,
+              last: host.entries.at(-1)?.name,
+            },
+        python,
+      ]).toEqual(
+        Array.from({ length: 2 }, () => ({
+          listed: keep,
+          count: 65_536,
+          truncated: keep < 65_536,
+          last: `entry-${String(keep - 1).padStart(5, "0")}.bin`,
+        })),
+      );
+    }
+  });
+
+  it("refuses archives whose selected directory or Zip64 locator names another volume", async () => {
+    const classic = zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]);
+    const zip64 = withZip64End(classic);
+    const variants = [
+      ["classic disk", classic, 22, 4, 1],
+      ["classic directory disk", classic, 22, 6, 1],
+      ["classic disk in Zip64", zip64, 22, 4, 1],
+      ["Zip64 record disk", zip64, 98, 16, 1],
+      ["Zip64 directory disk", zip64, 98, 20, 1],
+      ["Zip64 locator disk", zip64, 42, 4, 1],
+      ["Zip64 locator disk count", zip64, 42, 16, 2],
+    ] as const;
+    const archives = variants.map(([, bytes, end, field, value]) => {
+      const copy = Buffer.from(bytes);
+      copy.writeUInt16LE(value, copy.length - end + field);
+      return copy;
+    });
+    const python = await pythonFileViews(saved(archives));
+    for (const [index, [description]] of variants.entries()) {
+      expect(await readZipView(archives[index]!), description).toEqual({
+        ok: false,
+        error: "not a readable zip archive",
+      });
+      expect(python[index], description).toEqual({
+        format: "zip",
+        view: null,
+        error: "not a readable zip archive",
+      });
+    }
+  });
+
+  it("uses the Zip64 record when the classic disk numbers defer to it", async () => {
+    const archive = withZip64End(
+      zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]),
+    );
+    archive.writeUInt16LE(0xffff, archive.length - 18);
+    archive.writeUInt16LE(0xffff, archive.length - 16);
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "settings.json", view: { zoom: 2 } }],
+      entry_count: 1,
+    });
+  });
+
   it("keeps the classic values when bytes before the end record only look like a Zip64 locator", async () => {
     // The last name ends in a locator signature and 16 more bytes, which sit just before the end record.
     const name = `c-PK\u0006\u0007${"0".repeat(16)}`;
@@ -356,7 +690,7 @@ describe("zip entries the exported module cannot fully read", () => {
     );
     // Parsing the 4,200,004-byte entry before refusing it traced about 110 MB here.
     expect(peak).toBeLessThan(4 * objects.length);
-  }, 60_000);
+  });
 
   it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
     const nested = (levels: number) =>

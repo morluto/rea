@@ -3,6 +3,7 @@ import {
   checkItemPlan,
   type StateGateContext,
 } from "./environmentStateGate.js";
+import { locateItem, locateItems } from "./environmentStateRules.js";
 import type {
   JsonObject,
   StateEntity,
@@ -21,7 +22,7 @@ const check = (
     path: `/api/books/${ordinal + 1}`,
     query: undefined,
     status: 200,
-    timing: { start: undefined, endMs: undefined },
+    timing: { start: undefined, end: undefined, endMs: undefined },
   }));
   const bodies: JsonObject[] = clocks.map(([, stamp], index) => ({
     id: index + 1,
@@ -72,7 +73,9 @@ describe("clock spelling facts at the read gate", () => {
   ])(
     "does not learn a spelling from distinct sub-millisecond instants (%s)",
     (stored, shown) => {
-      expect(check([[stored, shown]]).view).not.toHaveProperty("clock_formats");
+      const { view } = check([[stored, shown]]);
+      expect(view).toMatchObject({ shape: "item" });
+      expect(view).not.toHaveProperty("clock_formats");
     },
   );
 
@@ -101,18 +104,56 @@ describe("clock spelling facts at the read gate", () => {
   });
 
   it("keeps only a mixed marker after incompatible other-instant formats", () => {
-    const clocks = (count: number) =>
-      Array.from(
+    const stored = "2026-10-21T17:06:13Z";
+    const clocks = (count: number) => [
+      ...Array.from(
         { length: count },
         (_, index) =>
           [
-            "2026-10-21T17:06:13Z",
+            stored,
             `2026-10-20T17:06:13+${String(Math.floor(index / 60) % 24).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}`,
           ] as const,
-      );
+      ),
+      [stored, "2026-10-21T17:06:13+00:00"] as const,
+    ];
     const small = check(clocks(4));
-    const large = check(clocks(1024));
+    const large = check(clocks(1024), small.bytes);
+    expect(large.view).toMatchObject({ shape: "item" });
     expect(large.view).not.toHaveProperty("clock_formats");
     expect(large.bytes).toBe(small.bytes);
+  });
+});
+
+describe("item response identity selection", () => {
+  it("uses the known identity field before choosing an envelope tier", () => {
+    const body = { request_id: "42", data: { id: "42", name: "Book" } };
+    expect(locateItem(body, "42", "id")).toEqual({
+      pointer: "/data",
+      keys: ["id"],
+    });
+    expect(locateItem(body, "42")).toEqual({
+      pointer: "",
+      keys: ["request_id"],
+    });
+    expect(locateItem(body, "42", "uid")).toBeUndefined();
+  });
+
+  it("retains ambiguity between objects carrying the known identity", () => {
+    const body = { request_id: "42", left: { id: "42" }, right: { id: "42" } };
+    expect(locateItem(body, "42", "id")).toBeUndefined();
+    expect(locateItems(body, "42", "id")).toEqual([
+      { pointer: "/left", keys: ["id"] },
+      { pointer: "/right", keys: ["id"] },
+    ]);
+    expect(locateItems(body, "42", "uid")).toEqual([]);
+  });
+
+  it("admits an explicitly known custom identity in a sole array element", () => {
+    const body = { data: [{ bookNumber: "42", name: "Book" }] };
+    expect(locateItem(body, "42", "bookNumber")).toEqual({
+      pointer: "/data/0",
+      keys: ["bookNumber"],
+    });
+    expect(locateItem(body, "42")).toBeUndefined();
   });
 });

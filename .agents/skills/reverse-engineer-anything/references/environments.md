@@ -367,7 +367,10 @@ as `"5.0000000000000000"`, with a number. Check what the user wrote in a
 document with `text_equals` on its paragraph element, not `value_equals` on a
 text node: apps such as AbiWord and Writer split a paragraph into runs as they
 save, so its first text node holds only part of it; use `text_contains` for a
-value within a sentence, such as a time. The
+value within a sentence, such as a time. A binary document, such as GIMP's
+`.xcf`, has no view: give the task a `readers` entry, the app's own headless
+command printing `REA ` lines, and a check naming it in `reader`, as
+[desktop builds](desktop-build.md#read-a-binary-file-with-a-reader) shows. The
 [desktop application tasks](https://github.com/morluto/rea/blob/main/docs/desktop-application-tasks.md)
 guide has the exact rules.
 
@@ -378,7 +381,8 @@ Write the task as JSON with a `name`, the `prompt` and the `checks`, then run
 the task only when its checks fail on the seed and all pass on the captured
 end state. A refusal names the check: one that fails on the end state does not
 match what the user left; "every check already passes on the seed" means no
-check captures the change.
+check captures the change. For several tasks from one capture, repeat
+`--task` and name each later task's end with `--task-end NAME=CHECKPOINT`.
 
 When the export refuses an application that no apt repository installs, ask
 the user for the `.deb` file they installed it from and capture with

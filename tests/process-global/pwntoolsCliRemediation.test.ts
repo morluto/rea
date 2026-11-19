@@ -1,5 +1,6 @@
+import { SIMULATED_LINUX_X64 } from "../fixtures/simulatedHost.js";
 import { writeFile } from "node:fs/promises";
-import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
 import * as composition from "../../src/composition/binaryDiagnostics.js";
@@ -12,20 +13,9 @@ import {
   removeTestWorkspace,
 } from "../support/workspace/workspaceFixture.js";
 
-const platform = Object.getOwnPropertyDescriptor(process, "platform");
-const architecture = Object.getOwnPropertyDescriptor(process, "arch");
 const exitCode = process.exitCode;
 
-beforeEach(() => {
-  // Exercise configuration admission on this host without starting Python.
-  Object.defineProperty(process, "platform", { value: "linux" });
-  Object.defineProperty(process, "arch", { value: "x64" });
-});
 afterEach(() => {
-  if (platform !== undefined)
-    Object.defineProperty(process, "platform", platform);
-  if (architecture !== undefined)
-    Object.defineProperty(process, "arch", architecture);
   process.exitCode = exitCode;
   vi.restoreAllMocks();
 });
@@ -73,12 +63,24 @@ it
     for (const { environment, message, key } of configurations) {
       if (command === "inspect-binary-layout")
         vi.spyOn(composition, "createBinaryLayoutService").mockReturnValue(
-          new BinaryLayoutService(new PwntoolsLayoutProvider(environment)),
+          new BinaryLayoutService(
+            new PwntoolsLayoutProvider(
+              environment,
+              undefined,
+              undefined,
+              SIMULATED_LINUX_X64,
+            ),
+          ),
         );
       else
         vi.spyOn(composition, "createRecordedCrashService").mockReturnValue(
           new RecordedCrashService(
-            new PwntoolsRecordedCrashProvider(environment),
+            new PwntoolsRecordedCrashProvider(
+              environment,
+              undefined,
+              undefined,
+              SIMULATED_LINUX_X64,
+            ),
           ),
         );
       let stdout = "";

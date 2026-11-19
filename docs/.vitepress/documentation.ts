@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF separate debug files",
+        source: "guides/native/elf-debug-link.md",
+        route: "/elf-debug-link",
+      },
+      {
         text: "ELF and Mach-O initializer functions",
         source: "guides/native/native-initializers.md",
         route: "/native-initializers",
@@ -67,6 +72,11 @@ export const documentationSections = [
         text: "Windows Shell Link shortcuts",
         source: "guides/native/windows-shortcut.md",
         route: "/windows-shortcut",
+      },
+      {
+        source: "guides/native/ntfs-metadata.md",
+        route: "/ntfs-metadata",
+        text: "Acquired NTFS metadata",
       },
     ],
   },
@@ -202,6 +212,11 @@ export const documentationSections = [
         text: "Managed-code analysis",
         source: "guides/managed/managed-code-analysis.md",
         route: "/managed-code-analysis",
+      },
+      {
+        text: "NuGet packages",
+        source: "guides/managed/nuget-nupkg.md",
+        route: "/nuget-nupkg",
       },
     ],
   },
@@ -354,9 +369,19 @@ export const documentationSections = [
     text: "Development and verification",
     items: [
       {
+        text: "Documentation ownership and authoring",
+        source: "development/documentation.md",
+        route: "/development/documentation",
+      },
+      {
         text: "Settings and recovery",
         source: "design/limits-and-recovery.md",
         route: "/design/limits-and-recovery",
+      },
+      {
+        text: "REA limit inventory",
+        source: "design/rea-limit-inventory.md",
+        route: "/design/rea-limit-inventory",
       },
       {
         text: "MCP tool design",
@@ -524,9 +549,19 @@ export const documentationSections = [
         route: "/agent-environments",
       },
       {
+        text: "Android boot and vendor_boot images",
+        source: "android-boot-image.md",
+        route: "/android-boot-image",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",
+      },
+      {
+        text: "Android OTA update payloads",
+        source: "guides/firmware/android-ota-payload.md",
+        route: "/android-ota-payload",
       },
       {
         text: "Apple IPS crash reports",
@@ -549,11 +584,21 @@ export const documentationSections = [
         route: "/devicetree",
       },
       {
+        text: "DWARF compile units",
+        source: "guides/native/dwarf-units.md",
+        route: "/dwarf-units",
+      },
+      {
         text: "Electron fuse state",
         source: "electron-fuses.md",
         route: "/electron-fuses",
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
+      {
+        text: "ELF dependency tables",
+        source: "elf-dependencies.md",
+        route: "/elf-dependencies",
+      },
       {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",
@@ -606,6 +651,11 @@ export const documentationSections = [
         route: "/kuna-provider",
       },
       {
+        text: "Maven POM and Gradle module metadata",
+        source: "maven-gradle-metadata.md",
+        route: "/maven-gradle-metadata",
+      },
+      {
         text: "Model file declarations",
         source: "model-artifacts.md",
         route: "/model-artifacts",
@@ -651,6 +701,11 @@ export const documentationSections = [
         route: "/reconstruction-coverage",
       },
       {
+        text: "Release exposure",
+        source: "release-exposure.md",
+        route: "/release-exposure",
+      },
+      {
         text: "Reverse-engineering tool integrations",
         source: "reverse-engineering-tools.md",
         route: "/reverse-engineering-tools",
@@ -659,6 +714,11 @@ export const documentationSections = [
         text: "Rust binary dependency metadata",
         source: "rust-binaries.md",
         route: "/rust-binaries",
+      },
+      {
+        text: "CycloneDX dependencies",
+        source: "guides/native/cyclonedx-view.md",
+        route: "/cyclonedx-view",
       },
       {
         text: "U-Boot legacy uImage containers",

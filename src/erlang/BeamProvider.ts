@@ -1,28 +1,22 @@
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-  artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { BeamPort } from "../application/erlang/BeamPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import type { BeamPort } from "../ports/erlang/BeamPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -111,27 +105,12 @@ const beamFailurePrimary = (
   input: InspectErlangBeamInput,
 ) => {
   const { cause, origin } = facts;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -159,17 +138,7 @@ const beamFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

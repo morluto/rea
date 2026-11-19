@@ -1,20 +1,20 @@
 import { MAX_INSIDE_STEPS } from "./viewSelector.js";
 
-/** The verifier's XML elements, pointers and selectors, kept equal to `viewPointer`'s; it relies on `INDEX` and `_collapse_whitespace`. */
+/** The verifier's XML elements, pointers and selectors, kept equal to `viewPointer`'s; it relies on `INDEX`, `_trim` and `_collapse_whitespace`. */
 export const PYTHON_POINTER = String.raw`def _is_element(value) -> bool:
     return (isinstance(value, dict) and isinstance(value.get("name"), str) and isinstance(value.get("attributes"), dict)
             and isinstance(value.get("children"), list))
 
 
-def _element_text(element, attribute=None) -> str:
+def _element_text(element, attribute=None, omit_stamps=False) -> str:
     """An element's text as XPath's string() reads it from what the view keeps: every text node among its children
     and its descendants', in document order. With attribute, the values of that attribute on it and its descendants
-    instead, in document order, and no text node."""
+    instead, in document order, and no text node. With omit_stamps, skip text nodes recognized as save times."""
     parts, pending = [], [element]
     while pending:
         node = pending.pop()
         if isinstance(node, str):
-            if attribute is None:
+            if attribute is None and (not omit_stamps or not _is_saved_time(node)):
                 parts.append(node)
         elif _is_element(node):
             if attribute is not None and isinstance(node["attributes"].get(attribute), str):
@@ -53,17 +53,13 @@ _ASCTIME_STAMP = re.compile(
 
 
 def _is_saved_time(text: str) -> bool:
-    stripped = text.strip()
+    stripped = _trim(text)
     return _ISO_STAMP.fullmatch(stripped) is not None or _ASCTIME_STAMP.fullmatch(stripped) is not None
 
 
 def _text_without_stamps(node) -> str:
     """An element's text with save-time leaves removed, matching the selector that named it."""
-    if isinstance(node, str):
-        return "" if _is_saved_time(node) else node
-    if not _is_element(node):
-        return ""
-    return "".join(_text_without_stamps(child) for child in node["children"])
+    return _element_text(node, omit_stamps=True)
 
 
 def _condition_text(child) -> str:
@@ -97,7 +93,10 @@ def _holds_inside(member, path: str, value: str, form) -> bool:
     a JSON record the string at those keys."""
     steps = path.split("/")
     if form == "xml":
-        return _is_element(member) and _element_holds(member, steps, value)
+        return _is_element(member) and (
+            _collapse_whitespace(_element_text(member)) == value if steps == ["text()"]
+            else _element_holds(member, steps, value)
+        )
     found = member
     for step in steps:
         if not isinstance(found, dict) or step not in found:

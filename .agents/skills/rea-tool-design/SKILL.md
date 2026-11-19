@@ -26,6 +26,13 @@ claims. Check relevant rendered MCP prompts, guided workflows and packaged skill
 advice against the live contracts and exercise their suggested handoffs. Report
 working alternatives and evidence limits as well as findings.
 
+For wording audits and agent trials, use
+[focused tool-description trials](../../../docs/development/client-verification.md#focused-tool-description-trials).
+Start with representative workflow boundaries and repeat failures or ambiguous
+outcomes; keep actual arguments and supported final claims separate. Reuse the
+repository's evaluation tooling and report actual runtime/model versions and
+synthetic versus production coverage rather than copying a harness into a skill.
+
 For a design request, return the proposed boundary, input/result shape, Evidence
 semantics, nearest alternative, and verification approach. Implement when
 requested, preserving the user's scope and existing authorization.

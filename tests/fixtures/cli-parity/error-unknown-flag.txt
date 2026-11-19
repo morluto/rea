@@ -1,0 +1,8 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --no-such-flag
+exit: 1
+--- stdout
+code: UNKNOWN
+message: "Unknown flag: --no-such-flag"
+<end>
+--- stderr
+<end>

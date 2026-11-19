@@ -26,7 +26,10 @@ these files.
    read through the stable artifact read and never executed.
 2. The banner is the first printable `Linux version ` string followed by a
    version token that starts with a digit and ends at a NUL or newline within
-   512 bytes. Version, builder and compiler are split from it. The scan is
+   512 bytes. Version, builder and compiler are split from it. A banner with a
+   space right after `#` or at its end is the kbuild placeholder from
+   `init/version.o`, built without a build number or timestamp; a later banner
+   that repeats its text up to `#` without that gap replaces it. The scan is
    linear in the searched bytes.
 3. A config is `present` only when `IKCFG_ST` is followed by a gzip member that
    ends exactly at the next `IKCFG_ED`, inflates within `max_config_bytes`,
@@ -47,7 +50,9 @@ these files.
    page size. The config search inflates at most 16 candidates and at most
    four times `max_config_bytes` in total, charging a stream that fails
    partway through its full per-candidate allowance. Exhausting the search budget is
-   `incomplete` with `config_search_exhausted`. A member past
+   `incomplete` with `config_search_exhausted` and coverage `partial`; a
+   member cut by the searched bytes is also `partial`. A malformed framed
+   config, or a payload that could not be searched, has coverage `unknown`. A member past
    `max_config_bytes` fails the budget only when no later candidate is
    accepted.
 8. Cancellation is checked between candidates, between banner hits, while

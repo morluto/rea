@@ -1,9 +1,12 @@
-import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import type { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import {
-  registerGdbTools,
-  type GdbToolManager,
-} from "../../../src/server/registerGdbTools.js";
+  registerServiceTools,
+  type GdbToolOptions,
+} from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -15,139 +18,118 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { CompositeProvider } from "../../../src/application/binary/CompositeProvider.js";
 import { runWithExternalMutationAdmission } from "../../../src/server/externalMutationAdmission.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createBinarySessionTargets,
-  createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
-it(
-  "compares cancellation before dispatch, during retirement, and an uncancelled control",
-  { timeout: 8000 },
-  async () => {
-    for (const mode of [
-      "pre-aborted",
-      "during-retirement",
-      "control",
-    ] as const) {
-      const [target] = await createBinarySessionTargets();
-      const entered = createDeferred<void>();
-      const released = createDeferred<void>();
-      let closes = 0;
-      const session = createTestBinarySession(
-        () =>
-          ({
-            execute: async () => ok({ operation: "health", value: null }),
-            close: async () => {
-              closes++;
-              entered.resolve();
-              await released.promise;
-              return ok(null);
-            },
-          }) as never,
+it("compares cancellation before dispatch, during retirement, and an uncancelled control", async () => {
+  for (const mode of ["pre-aborted", "during-retirement", "control"] as const) {
+    const [target] = await createBinarySessionTargets();
+    const sessionRetirement = phaseGate();
+    let closes = 0;
+    const session = createTestBinarySession(
+      () =>
+        ({
+          execute: async () => ok({ operation: "health", value: null }),
+          close: async () => {
+            closes++;
+            await sessionRetirement.hold();
+            return ok(null);
+          },
+        }) as never,
+    );
+    expect((await session.open(target)).ok).toBe(true);
+    const id = "00000000-0000-4000-8000-000000000001";
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "gdb", name: "GDB", version: null },
+      {
+        predicateType: "rea.debugger.command-observation",
+        operation: "gdb_console",
+        parameters: { session_id: id, command: "info files" },
+        result: { command: "info files", completion_status: "complete" },
+        rawResult: { command: "info files" },
+      },
+    );
+    let handler!: (input: unknown, context: unknown) => Promise<CallToolResult>;
+    const server = {
+      delivery: createToolResultDelivery(undefined),
+      registerTool(name: string, _options: unknown, fn: typeof handler) {
+        if (name === "gdb_console") handler = fn;
+      },
+    } as unknown as EvidenceMcpServer;
+    const execute = vi.fn(async () => ok({ evidence }));
+    const manager = {
+      execute,
+      retryCleanupFailures: async () => ok(null),
+    } as unknown as GdbToolOptions["manager"];
+    const record = vi.fn((value: typeof evidence) =>
+      session.recordEvidence(value),
+    );
+    registerServiceTools(
+      server,
+      { gdb: { manager, session } },
+      { logger: silentLogger, recordEvidence: record },
+    );
+    const controller = new AbortController();
+    const reason = { phase: mode };
+    if (mode === "pre-aborted") controller.abort(reason);
+    try {
+      const pending = handler(
+        { session_id: id, command: "info files", detail: "complete" },
+        { mcpReq: { signal: controller.signal } },
       );
-      expect((await session.open(target)).ok).toBe(true);
-      const id = "00000000-0000-4000-8000-000000000001";
-      const evidence = createEvidence(
-        undefined,
-        { id: "gdb", name: "GDB", version: null },
-        {
-          predicateType: "rea.debugger.command-observation",
-          operation: "gdb_console",
-          parameters: { session_id: id, command: "info files" },
-          result: { command: "info files", completion_status: "complete" },
-          rawResult: { command: "info files" },
-        },
-      );
-      let handler!: (
-        input: unknown,
-        context: unknown,
-      ) => Promise<CallToolResult>;
-      const server = {
-        registerTool(name: string, _options: unknown, fn: typeof handler) {
-          if (name === "gdb_console") handler = fn;
-        },
-      } as unknown as McpServer;
-      const execute = vi.fn(async () => ok({ evidence }));
-      const manager = {
-        execute,
-        retryCleanupFailures: async () => ok(null),
-      } as unknown as GdbToolManager;
-      const record = vi.fn((value: typeof evidence) =>
-        session.recordEvidence(value),
-      );
-      registerGdbTools(
-        server,
-        manager,
-        silentLogger,
-        createToolResultDelivery(undefined),
-        record,
-        session,
-      );
-      const controller = new AbortController();
-      const reason = { phase: mode };
-      if (mode === "pre-aborted") controller.abort(reason);
-      try {
-        const pending = handler(
-          { session_id: id, command: "info files", detail: "complete" },
-          { mcpReq: { signal: controller.signal } },
-        );
-        if (mode !== "pre-aborted") {
-          await awaitAcknowledgement(
-            entered.promise,
-            pending,
-            "session retirement",
-          );
-          expect(execute).toHaveBeenCalledTimes(1);
-          expect(record).not.toHaveBeenCalled();
-          if (mode === "during-retirement") controller.abort(reason);
-        }
-        released.resolve();
-        const result = await pending;
-        const body = result.structuredContent as any;
-        const observation = {
-          mode,
-          aborted: controller.signal.aborted,
-          executions: execute.mock.calls.length,
-          retirementCloses: closes,
-          recordings: record.mock.calls.length,
-          isError: result.isError === true,
-          code: body.error?.code ?? null,
-          hasEvidence: typeof body.evidence_id === "string",
-          stored: session.hasEvidence(evidence.evidence_id),
-        };
-        expect(observation).toEqual({
-          mode,
-          aborted: mode !== "control",
-          executions: mode === "pre-aborted" ? 0 : 1,
-          retirementCloses: mode === "pre-aborted" ? 0 : 1,
-          recordings: mode === "pre-aborted" ? 0 : 1,
-          isError: mode !== "control",
-          code: mode === "control" ? null : "cancelled",
-          hasEvidence: mode === "control",
-          stored: mode !== "pre-aborted",
-        });
-
-        if (mode === "during-retirement")
-          expect(record.mock.calls[0]?.[0]).toEqual(evidence);
-      } finally {
-        released.resolve();
-        await session.close();
+      if (mode !== "pre-aborted") {
+        await sessionRetirement.reached(pending, "session retirement");
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(record).not.toHaveBeenCalled();
+        if (mode === "during-retirement") controller.abort(reason);
       }
+      sessionRetirement.release();
+      const result = await pending;
+      const body = result.structuredContent as any;
+      const observation = {
+        mode,
+        aborted: controller.signal.aborted,
+        executions: execute.mock.calls.length,
+        retirementCloses: closes,
+        recordings: record.mock.calls.length,
+        isError: result.isError === true,
+        code: body.error?.code ?? null,
+        hasEvidence: typeof body.evidence_id === "string",
+        stored: session.hasEvidence(evidence.evidence_id),
+      };
+      expect(observation).toEqual({
+        mode,
+        aborted: mode !== "control",
+        executions: mode === "pre-aborted" ? 0 : 1,
+        retirementCloses: mode === "pre-aborted" ? 0 : 1,
+        recordings: mode === "pre-aborted" ? 0 : 1,
+        isError: mode !== "control",
+        code: mode === "control" ? null : "cancelled",
+        hasEvidence: mode === "control",
+        stored: mode !== "pre-aborted",
+      });
+
+      if (mode === "during-retirement")
+        expect(record.mock.calls[0]?.[0]).toEqual(evidence);
+    } finally {
+      sessionRetirement.release();
+      await session.close();
     }
-  },
-);
+  }
+});
 
 it.each(["completed", "failed"] as const)(
   "preserves a %s command and cleanup ownership when cancellation overlaps failed retirement",
   async (mode) => {
     const [target] = await createBinarySessionTargets();
-    const entered = createDeferred<void>();
-    const released = createDeferred<void>();
+    const failedSessionRetirement = phaseGate();
     const cleanup = new ProviderCleanupError("fixture", ["document"], {});
     let closes = 0;
     const session = createTestBinarySession(
@@ -156,8 +138,7 @@ it.each(["completed", "failed"] as const)(
           execute: async () => ok({ operation: "health", value: null }),
           close: async () => {
             if (++closes === 1) {
-              entered.resolve();
-              await released.promise;
+              await failedSessionRetirement.hold();
               return err(cleanup);
             }
             return ok(null);
@@ -167,7 +148,7 @@ it.each(["completed", "failed"] as const)(
     expect((await session.open(target)).ok).toBe(true);
     const commandFailure = new AnalysisInputError("command");
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "gdb", name: "GDB", version: null },
       {
         operation: "gdb_console",
@@ -185,13 +166,12 @@ it.each(["completed", "failed"] as const)(
         async () => (mode === "completed" ? ok(evidence) : err(commandFailure)),
         (value) => value,
       );
-      await awaitAcknowledgement(
-        entered.promise,
+      await failedSessionRetirement.reached(
         pending,
         "failed session retirement",
       );
       controller.abort(reason);
-      released.resolve();
+      failedSessionRetirement.release();
       const result = await pending;
       if (result.ok) throw new Error("Expected a failure");
       expect(result.error.cleanupIncomplete).toBe(true);
@@ -206,7 +186,7 @@ it.each(["completed", "failed"] as const)(
       expect((await session.close()).ok).toBe(true);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
-      released.resolve();
+      failedSessionRetirement.release();
       await session.close();
     }
   },
@@ -216,15 +196,13 @@ it.each(["started", "failed"] as const)(
   "keeps a %s mutation outcome when successful retirement is cancelled",
   async (mode) => {
     const [target] = await createBinarySessionTargets();
-    const entered = createDeferred<void>();
-    const released = createDeferred<void>();
+    const sessionRetirement = phaseGate();
     const session = createTestBinarySession(
       () =>
         ({
           execute: async () => ok({ operation: "health", value: null }),
           close: async () => {
-            entered.resolve();
-            await released.promise;
+            await sessionRetirement.hold();
             return ok(null);
           },
         }) as never,
@@ -244,13 +222,9 @@ it.each(["started", "failed"] as const)(
         undefined,
         (value) => ({ session_id: value.session_id }),
       );
-      await awaitAcknowledgement(
-        entered.promise,
-        pending,
-        "session retirement",
-      );
+      await sessionRetirement.reached(pending, "session retirement");
       controller.abort(reason);
-      released.resolve();
+      sessionRetirement.release();
       const result = await pending;
       if (result.ok) throw new Error("Expected a failure");
       if (mode === "started") {
@@ -264,7 +238,7 @@ it.each(["started", "failed"] as const)(
         ).toBe(true);
       }
     } finally {
-      released.resolve();
+      sessionRetirement.release();
       await session.close();
     }
   },
@@ -288,7 +262,7 @@ it("follows the original owner of a completed mutation's retirement failure", as
         execute: async () => ok({ operation: "health", value: null }),
         close: async () => {
           if (!closed) return err(cleanup);
-          cleanup.resolveCleanup();
+          releaseOwnedCleanup(cleanup);
           return ok(null);
         },
       }) as never,

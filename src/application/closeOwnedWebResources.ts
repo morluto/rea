@@ -1,6 +1,7 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Attempt every web workflow cleanup owner and report all failures. */
 export const closeOwnedWebResources = async (
@@ -21,7 +22,7 @@ export const closeOwnedWebResources = async (
     throw new ProviderCleanupError(
       "web-workflow",
       [],
-      { reason: failure instanceof Error ? failure.message : String(failure) },
+      { reason: errorMessage(failure) },
       { cause: failure, operation: "close_web_workflow" },
     );
   }
@@ -48,7 +49,7 @@ export const closeOwnedWebResources = async (
         failures: normalized.map(
           ({ cause, projection }) =>
             projection ?? {
-              message: cause instanceof Error ? cause.message : String(cause),
+              message: errorMessage(cause),
             },
         ),
       },

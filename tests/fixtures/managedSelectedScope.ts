@@ -1,13 +1,13 @@
 import { buildManagedNestedTypeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedPeLayout } from "../../src/dotnet/ManagedPeReader.js";
+import { readManagedPeLayout } from "../../src/domain/managed/managedPeReader.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "../../src/dotnet/ManagedMetadataLayout.js";
+} from "../../src/domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   readMetadataBlob,
-} from "../../src/dotnet/ManagedMetadataHeaps.js";
+} from "../../src/domain/managed/managedMetadataHeaps.js";
 import { readMethodDefinitionRow } from "../../src/dotnet/ManagedMethodDefinitionRows.js";
 
 /** Two nested Inner declarations, one with its own Fixture namespace. */
@@ -50,7 +50,7 @@ export const distinctSelectedNestedOwners = () => {
         layout.blob!.size,
       )[2] = 0x0a;
       const field = metadataRowCursor(bytes, layout, 4, 1);
-      field.readUInt16();
+      field.u16();
       field.readIndex(layout.stringIndexSize);
       readMetadataBlob(
         bytes,

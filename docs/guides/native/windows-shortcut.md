@@ -62,8 +62,23 @@ arguments are present, argument character length, target extension, whether
 `ShowCommand` is minimized, and whether the icon location differs from the
 recorded target path. That comparison is `null` unless the icon and a recorded
 target are both full paths: a stored filename, relative path, or `%VAR%` form
-cannot show that two locations differ. This workflow does not emit verdicts
+cannot show that two locations differ. Windows stores the `LinkInfo` path only
+as ANSI when the system code page can represent it. An ANSI path with non-ASCII
+bytes is therefore not compared with a Unicode icon location, or the reverse,
+because the code page is unobserved. This workflow does not emit verdicts
 about intent.
+
+Two ANSI paths can also remain incomparable. Multibyte trail bytes can look
+like ASCII letters or backslashes, so the Latin1 projection cannot safely
+undergo Unicode case folding or path normalization. Exact stored byte spellings
+can establish equality; a byte-identical prefix followed by ASCII filename
+tails can still establish equality or difference. Other opaque ANSI comparisons
+remain unknown. LinkInfo joins involving non-ASCII ANSI parts retain an unknown
+full-path identity; a known suffix extension can still be reported. Non-ASCII
+ANSI extension text stays unknown rather than becoming a guessed Unicode
+extension. Raw fields and artifact identity are preserved. The code page in a
+ConsoleFE block describes the console and does not establish the original
+system ANSI encoding for these paths.
 
 A missing optional section is observed absence of that structure. It is not
 proof the shortcut never carried that data in another container.

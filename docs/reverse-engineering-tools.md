@@ -43,13 +43,21 @@ rea inspect-with-objdump ./program dwarf
 rea inspect-with-objdump ./program dwarf --follow-debug-links
 ```
 
-Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. That cap has no runtime override.
+Captured stdout and stderr share `max_output_bytes` (CLI: `--max-output-bytes`), default 16777216 bytes (16 MiB). Select an integer from 1 to 44651859 bytes. The maximum leaves room for worst-case JSON escaping of both Evidence output mirrors under Node's single-string ceiling. The selected budget applies on the next call without a restart; `output_budget_bytes` reports it and `output_budget_source` distinguishes a default from an explicit request. On exhaustion REA retains a prefix, requests provider termination, marks `output_truncated` with unknown completion, and records the budget as `output_limit`, a `max_output_bytes` parameter control (the CLI `--full-output` envelope names its option in `meta.cli_controls`). Narrow or page the native command, or raise the selected budget. Verify command effects and outstanding cleanup before deciding whether repeating it is safe. Client deadlines and receive buffers remain separate. Concurrent one-shot captures reserve their selected budgets within a 128 MiB aggregate admission and eight-operation capacity; wait for active work or select a smaller output budget when that capacity is occupied.
 
-`inspect_with_objdump`, `rea list-objdump-architectures`, and one-shot `execute_rizin_command` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. Target preflight shares one budget across stat and digest. The one-shot command receives that budget again. It applies on the next call; no restart is required. It does not raise the 16 MiB cap, a Ghidra or Hopper startup deadline, or a debugger session deadline.
+`inspect_with_objdump`, `rea list-objdump-architectures`, and one-shot `execute_rizin_command` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. Target preflight shares one budget across stat and digest. The one-shot command receives that budget again. It applies on the next call; no restart is required. It does not raise the separately selected `max_output_bytes`, a Ghidra or Hopper startup deadline, or a debugger session deadline.
 
 ## GDB
 
-Persistent GDB sessions, including the MCP workflow and one-shot `rea debug-with-gdb` CLI, are available only on Linux. REA verifies a live inferior's output descriptors through `/proc` before detaching it; it does not claim equivalent descriptor verification on macOS. Windows is also unsupported because owned Job Object cleanup can terminate debugger inferiors. On supported Linux hosts, `start_gdb_session`, `gdb_console`, `gdb_session_status`, and `close_gdb_session` manage a persistent GDB/MI session in MCP. The one-shot CLI requires a caller-selected durable TTY: `rea debug-with-gdb --inferior-tty /dev/pts/7 'file ./program'`. The TTY must remain available after GDB exits so a detached inferior can continue writing. MCP starts GDB with `--nx --quiet --interpreter=mi3`, retries initialization with MI2 if MI3 initialization returns an error and cleanup succeeds, waits for its prompt, and disables auto-loading. Pass optional `inferior_tty` to select the terminal that future inferior runs use; REA configures it before the session becomes ready and checks the exact value with GDB/MI. `gdb_session_status` reports the selected path, whether REA still considers the configuration verified, and whether invalid UTF-8 has been observed in MI bytes (`mi_invalid_utf8`) or stderr (`stderr_invalid_utf8`). Commands that can change the inferior TTY or redirect a run revoke that verification permanently for the session, so close retains GDB ownership if a live inferior remains. The complete built-in inspections `show inferior-tty` and `help inferior-tty` preserve verification; compound commands still use the conservative mutation checks. Closing a session with one live inferior and a verified TTY automatically detaches the target, which can resume execution; MCP clients receive destructive-operation annotations for this behavior. The console remains unrestricted and can run shell commands, change target state, access files, and use network in the REA process user's security context. Raw MI records and console/target/log streams are returned with Evidence; command output is retained up to the configured budget (16 MiB by default) and explicitly marked when truncated. A single console, target or log record over the 16 MiB MI line limit is dropped and the command is marked truncated, while an oversized result or async record still stops the session. GDB startup waits 10000 ms with no runtime override. Each MI command defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). `command_timeout_ms` does not change a persistent debugger session.
+Persistent GDB sessions, including the MCP workflow and one-shot `rea debug-with-gdb` CLI, are available only on Linux. REA verifies a live inferior's output descriptors through `/proc` before detaching it; it does not claim equivalent descriptor verification on macOS. Windows is also unsupported because owned Job Object cleanup can terminate debugger inferiors. On supported Linux hosts, `start_gdb_session`, `gdb_console`, `gdb_session_status`, and `close_gdb_session` manage a persistent GDB/MI session in MCP. The one-shot CLI requires a caller-selected durable TTY: `rea debug-with-gdb --inferior-tty /dev/pts/7 --executable ./program 'info files'`. The TTY must remain available after GDB exits so a detached inferior can continue writing. MCP starts GDB with `--nx --quiet --interpreter=mi3`, retries protocol initialization with MI2 when applicable and cleanup succeeds, waits for its prompt, and disables auto-loading. Optional `executable` hashes and loads an initial local file without running it; readiness requires a confirmed load. A refused load is not repeated with MI2. Pass optional `inferior_tty` to select the terminal that future inferior runs use; REA configures it before the session becomes ready and checks the exact value with GDB/MI. `gdb_session_status` reports the selected path, whether REA still considers the configuration verified, and whether invalid UTF-8 has been observed in MI bytes (`mi_invalid_utf8`) or stderr (`stderr_invalid_utf8`). Commands that can change the inferior TTY or redirect a run revoke that verification permanently for the session, so close retains GDB ownership if a live inferior remains. The complete built-in inspections `show inferior-tty` and `help inferior-tty` preserve verification; compound commands still use the conservative mutation checks. Closing a session with one live inferior and a verified TTY automatically detaches the target, which can resume execution; MCP clients receive destructive-operation annotations for this behavior. The console remains unrestricted and can run shell commands, change target state, access files, and use network in the REA process user's security context. Raw MI records and console/target/log streams are returned with Evidence. Its subject names the session and its initial file selection: `{ "kind": "session", "session_kind": "gdb", "id": <session_id>, "target": <file identity or unknown> }`. Selecting `executable` binds the initial stable file hash; omission or a physical hash failure leaves the target unknown, with the failure reason retained. `parameters.launch_provenance` preserves the original and absolute startup paths. Later console loads or attaches do not rebind this initial selection or establish the current inferior's identity; command output is retained up to the configured budget (16 MiB by default) and explicitly marked when truncated. A single console, target or log record over the 16 MiB MI line limit is dropped and the command is marked truncated, while an oversized result or async record still stops the session. GDB startup waits 10000 ms with no runtime override. Each MI command defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). `command_timeout_ms` does not change a persistent debugger session.
+
+A truncated GDB command capture includes `output_limits` with the exact causes
+and effective maxima: `command_bytes`, `command_records`, or `mi_line_bytes`.
+Only byte-budget exhaustion recommends raising
+`REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`. The 16384-record retention ceiling and
+16 MiB single-line protocol ceiling stay fixed; select a command with fewer or
+smaller records when either is reached. These cause facts survive timeout,
+cancellation and process-exit captures as well as successful commands.
 
 With multiple live inferiors, or a live inferior without a verified TTY, manual
 close requests an explicit disposition and keeps the session ready. Use
@@ -84,9 +92,15 @@ close_gdb_session {"session_id":"…"}
 
 `start_rizin_debug_session` and `rea debug-with-rizin` require an explicit `inferior_tty` on Linux. REA asks Rizin to launch the target with stdin, stdout and stderr routed to that caller-selected TTY and `dbg.exitkills=false`; the target can therefore continue running, reading input from the TTY and writing to it after REA closes the debugger. This is a visible target input and output effect, and the caller is responsible for selecting a suitable terminal that remains available. REA sends Rizin its commands on Rizin's own stdin, so a target left on that stream would read them. Before closing, REA serializes after the active command, parses the structured `olj` descriptor list, detaches only a unique `ptrace://` descriptor, confirms its absence, reads back `dbg.exitkills=false`, verifies `/proc/<pid>/fd/1` and `/proc/<pid>/fd/2` still identify the selected TTY by device and inode, and refuses to detach while `/proc/<pid>/fd/0` is Rizin's command stream. A target may close or replace its own stdin. If a previously identified inferior exits after Rizin confirms detach, REA verifies that the original process has ended instead of requiring output descriptors from an exited process. Unresolved identity or ambiguous readback keeps the Rizin session owned for retry. After output limits or a failed command interval, cleanup first waits up to 1000 ms for a fresh private NUL-delimited marker, discarding earlier frames before obtaining that new inferior readback. Synchronization never reopens user command admission. A missing marker, unavailable transport, or unknown inferior identity retains the cleanup owner. Caller cancellation keeps its exact reason and typed cancellation outcome even when cleanup remains incomplete; a successful retry resolves that retained cleanup state. Cancellation during final cleanup retains the captured observation and cleanup owner. An already observed startup or protocol failure remains primary and retains a later cancellation as a secondary failure; recovering the transport does not erase that original diagnosis. Persistent Rizin debugger sessions are unavailable outside Linux because this verification depends on `/proc`.
 
-Persistent command Evidence retains the caller-selected and resolved startup paths in `parameters.launch_provenance`. These paths describe launch provenance, not the current target after unrestricted commands. `rizin_debug_session_status.output_invalid_utf8` reports whether lossy frame decoding has been observed during the session. Command Evidence sets `output_invalid_utf8` only when loss was observed in frames collected for that command, including retained partial output; earlier startup or command frames do not mark later valid output as lossy.
+Persistent command Evidence retains the caller-selected and resolved startup paths in `parameters.launch_provenance`. These paths describe launch provenance, not the current target after unrestricted commands. Command Evidence names the session as its subject, `{ "kind": "session", "session_kind": "rizin", "id": <session_id>, "target": … }`, where `target` is the launch file REA hashed before Rizin started (`{ "kind": "file", "sha256", "format": "file", "architecture": null, "selection": null }`). Later debugger commands do not rebind it. If the launch file cannot be hashed (for example it does not exist or is not a regular file), the session still starts, `target` is `{ "kind": "unknown", "reason": "not-observed" }`, and a limitation records the reason; cancellation or a descriptor that cannot be closed during the hash fails the start. `rizin_debug_session_status.output_invalid_utf8` reports whether lossy frame decoding has been observed during the session. Command Evidence sets `output_invalid_utf8` only when loss was observed in frames collected for that command, including retained partial output; earlier startup or command frames do not mark later valid output as lossy.
 
 Session status retains up to 64 recent protocol frames. Each history entry keeps a complete-character UTF-8 prefix of at most 16 KiB, plus a truncation marker when needed; `recent_output_truncated` reports omitted history. This history budget also accounts for replacement characters from invalid UTF-8. It does not shorten command Evidence, whose output budget defaults to 16 MiB. Rizin debug startup waits 30000 ms with no runtime override. Each command frame defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). The 16777216-byte frame cap and 4096-frame command cap remain fixed. Evidence names the cap that stopped the command. The one-shot `command_timeout_ms` setting does not change a debug session.
+
+### Stopped debugger sessions
+
+A Rizin or GDB session stops accepting commands when REA stops it, for example after an output or frame limit, a command deadline, cancellation or a protocol failure, or when the debugger process exits. REA keeps the stopped session and the first reason it observed until `close_rizin_debug_session` or `close_gdb_session` releases it, including after a retried cleanup succeeds. `rizin_debug_session_status` and `gdb_session_status` then report `state: "closed"` with that reason in `closed_reason` and its code in `closed_reason_code`: `input-stream-failure`, `output-correlation-failure`, `command-deadline`, `command-cancelled`, `server-shutdown`, `close-requested`, `process-exited` or `stopped`. A later `rizin_debug_command` or `gdb_console` on the session fails with `capability_unavailable`; `details.reason` carries the same reason and `details.diagnostics.session_stop` the same code (when that failure also left cleanup incomplete and REA reports `cleanup_incomplete`, the stopping failure and its code are under `details.diagnostics.primary_error`), and the remediation is to close the session and start a new one. A `session_id` that this server never returned, or that close already released, fails with `invalid_request` instead.
+
+When REA cannot confirm that an owned Rizin or GDB process stopped, it keeps the session for cleanup retry and the failure carries `details.diagnostics.debugger_cleanup`: `output-unsettled`, `detach-pending`, `inferior-disposition-unverified`, `inferior-identity-unverified`, `windows-stop-unsafe`, `detach-unsupported`, `detach-timeout`, `detach-unconfirmed`, `inferior-state-unknown`, `multiple-inferiors`, `no-durable-output-sink`, `inferior-tty-changed`, `detach-failed`, `process-did-not-exit` or `stop-failed`. For example, closing a GDB session whose debugger exited before its inferior was detached or confirmed absent reports `inferior-disposition-unverified`, and a GDB session with several live inferiors reports `multiple-inferiors` when REA closes every session. The code is on the returned failure itself, including startup failures, cancellations and composed `cleanup_incomplete` results. When `rea debug-with-gdb` or `rea debug-with-rizin` cannot confirm its final cleanup, `details.diagnostics.debugger_cleanup_codes` lists the codes beside `retained_debugger_pids`.
 
 ### Debugger launch settings
 
@@ -99,10 +113,13 @@ GDB and Rizin share these settings in the environment that launches REA:
 | `REA_DEBUGGER_MAX_SESSIONS`             | 8              | 1 to 64                  |
 | `REA_DEBUGGER_MAX_PENDING_COMMANDS`     | 16             | 1 to 256                 |
 
-Unset settings keep the defaults. Invalid selections fail configuration instead
-of falling back. Restart REA after changing its launch environment; these are
-not `update_analysis_settings` options. For MCP, set the values in the client's
-REA registration and restart that server.
+Unset settings keep the defaults. Invalid values are refused when the setting
+is used instead of falling back. Change the command deadline and output budget
+for subsequent operations with `update_analysis_settings` using
+`debugger.command_deadline_ms` and `debugger.max_command_output_bytes`. Session
+and pending-command capacities require a restart. To change the launch values,
+update REA's environment and restart; for MCP, edit the client registration and
+restart that server.
 
 These settings also apply to one-shot `rea debug-with-gdb` and
 `rea debug-with-rizin` commands. They do not change the fixed initial-prompt
@@ -125,7 +142,9 @@ rea debug-with-rizin --inferior-tty /dev/pts/7 ./program dr
 rea execute-rizin-command ./program iI
 ```
 
-Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override.
+Rizin exits with status 0 even when its shell refuses a statement, so the exit code does not show whether the command ran. Rizin 0.6 through 0.9.1 log one of four stderr lines for such a refusal: `ERROR: Command '…' does not exist.`, ``ERROR: Wrong number of arguments passed to `…`…``, `ERROR: core: Error while executing command: …` (an invalid statement), or `ERROR: core: Error while parsing command: …`. Rizin then skips the refused statement and every later one in the command. When the completed process's stderr contains one of these lines, REA reports `completion_status: "rejected"`, a `refusal` record (`reason`: `unknown_command`, `wrong_argument_count`, `invalid_statement` or `parse_failure`; `command`: the command the line names, or null; `line`: the exact stderr line), and a limitation naming the refusal. stdout then holds only the output of earlier statements, so empty stdout is not an empty result. Other `ERROR:` lines, such as `ERROR: Cannot find function at …`, come from commands that ran; REA keeps them in stderr and reports `complete`. A command that lowers `log.level` or redirects stderr hides refusals from REA.
+
+Captured stdout and stderr use the same `max_output_bytes` (CLI: `--max-output-bytes`) admission and recovery described above, default 16 MiB. One-shot commands independently use `command_timeout_ms`. Raising output admission cannot recover an earlier capture; command effects and cleanup must be checked before another invocation.
 
 ### Decoder and map inputs
 
@@ -252,6 +271,50 @@ they use `%LOCALAPPDATA%\REA\CutterBridge` on Windows when `LOCALAPPDATA` is set
 and `~/.cache/rea/cutter-bridge` otherwise. The two processes must resolve the
 same directory for discovery to find the published sessions.
 
+REA's npm package includes the plugin as `bridge/cutter/rea_bridge.py`. Use the
+copy from the REA version you run (`rea --version`, or the version in an
+`npx rea-agents@<version>` registration). An `npx` installation keeps that
+package in npm's cache rather than a stable folder, so take the file from the
+published package of the same version instead (in Windows PowerShell, use
+`npm.cmd`):
+
+```sh
+npm pack rea-agents@<version>
+tar -xzf rea-agents-<version>.tgz package/bridge/cutter/rea_bridge.py
+```
+
+Copy the extracted `package/bridge/cutter/rea_bridge.py` into the `python`
+subdirectory of Cutter's plugin directory, then restart Cutter. Cutter shows that
+directory and the loaded plugins under Edit > Preferences > Plugins. When no
+session in the bridge directory answers, `list_cutter_sessions` reports
+`no_live_bridge_found` with a limitation that names the possible causes. Whether
+or not a session answers, it also counts descriptor files it could not read,
+without claiming they belong to a session, and published sessions that did not
+answer, because neither is listed. If Cutter lists the plugin as loaded but
+discovery still finds no session, check that the bridge directory is writable
+and has free space: the bridge does not log a failure to publish its session.
+
+Official Cutter 2.5.0 builds have been observed to reject Python plugins at
+startup: Cutter's own sample plugin in the Linux AppImage, and this bridge and a
+minimal independent plugin on macOS arm64
+([rizinorg/cutter#3659](https://github.com/rizinorg/cutter/issues/3659)). The
+log then shows `Plugin's create_cutter_plugin() function did not return an
+instance of CutterPlugin` and `Loaded 0 plugin(s)`, and no session is
+published. Because a minimal plugin fails the same way, a change to REA's
+bridge is not expected to help; the cause is unconfirmed upstream. Cutter 2.4.1
+loaded the bridge on the same macOS arm64 host, where discovery and an `ij`
+command worked. Other hosts and Cutter builds have not been checked.
+
+The plugin publishes the SHA-256 of its own file on its session descriptor.
+Discovery reports each session's `bridge_source`: `packaged` when it matches
+REA's packaged `bridge/cutter/rea_bridge.py`, `modified` when it differs, and
+`unknown` when the plugin predates this field. `cutter_command` refuses a
+`modified` session before sending anything and names the packaged plugin to
+copy into Cutter's `plugins/python` directory. An `unknown` session still runs.
+For `modified` and `unknown` sessions, discovery also returns
+`bridge_source_recovery`, which names the packaged plugin to copy before
+restarting Cutter.
+
 The client and plugin must support the current v2 handshake; older peers are
 rejected before dispatch because they cannot preserve cross-caller recovery proof.
 The client checks the final encoded request against
@@ -287,7 +350,17 @@ never sends its authenticated frame does not hold the bridge accept loop.
 At most 8 connection threads run. A further accept is closed, and a failure to start a thread closes that socket without stopping the listener. A status `completed_connection` is the longest prefix of accepted connections that have terminated. It does not treat an earlier connection as finished because a later status reached the command lock first. Scalar values in one Cutter reply are encoded in bounded batches.
 A command reply that does not fit keeps its completion state and document
 generation, and reports an oversized path as unknown. Cutter response frames use this same ceiling and
-also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper response reads are unchanged.
+also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper and Ghidra reply lines are bounded separately by
+`REA_BRIDGE_MAX_REPLY_BYTES` (`bridge.max_reply_bytes`): default 268435456 bytes
+(256 MiB), from 1048576 to 536870888. The client admits the value with each
+request. A reply line, or an unterminated tail, above it is refused as a typed
+`transport` resource constraint naming the setting; REA discards the bytes and
+closes that bridge connection rather than retaining them.
+`cutter_command` reports `output_truncated` and `document_generation` as `null`
+when the plugin did not declare them, for example when no reply was read, the
+reply was malformed, or an older plugin omitted them. A null generation means
+the document may have changed; list sessions again before choosing an
+`expected_generation`. Evidence carries a limitation for each unknown field.
 Each bridge request waits 25000 ms. The Cutter hello frame still must arrive
 within 1 second. The authenticated command frame is read with one second per
 mebibyte of `REA_BRIDGE_MAX_REQUEST_BYTES`, and that read never waits longer
@@ -318,6 +391,6 @@ generation error.
 
 ## Configuration and coverage
 
-The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
+The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. On Windows, REA searches `PATH` and `PATHEXT` for a bare objdump or Rizin name itself and refuses with `capability_unavailable` (`boundary: "provider-lookup"`) when it is not found, rather than letting Windows also search the current directory. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
 
 Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](reference/mcp-contracts.md#tool-results).

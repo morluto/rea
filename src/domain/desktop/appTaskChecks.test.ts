@@ -11,7 +11,30 @@ import { CHECK_CASES, CHECK_VIEWS } from "./appTaskChecks.fixture.js";
 import { textView, xmlView } from "./stateFormats.js";
 import { elementText } from "./viewPointer.js";
 
-const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
+import { redactSecretsInJson } from "./buildSecrets.js";
+
+it("redacts full check values before shortening descriptions without changing the verdict", () => {
+  const secret = "e-Plum7-Kite-Throwaway-42";
+  const actual = `${"x".repeat(180)}${secret}`;
+  const checks = [
+    {
+      id: "check-1",
+      kind: "value_equals" as const,
+      file: "data.json",
+      pointer: "/value",
+      value: "other",
+    },
+  ];
+  const views = new Map<string, TaskFileView>([
+    ["data.json", { format: "json", view: { value: actual } }],
+  ]);
+  const [result] = evaluateTaskChecks(checks, views, new Map(), (value) =>
+    redactSecretsInJson(value, [{ handle: "master", value: secret }]),
+  );
+  expect(result?.passed).toBe(false);
+  expect(result?.description).not.toContain(secret.slice(0, 8));
+  expect(result?.description).toContain("<secret:master>");
+});
 
 /** A value as a description shows it: caller data and what the view holds, as JSON. */
 const quoted = (value: unknown) => JSON.stringify(value);
@@ -28,10 +51,7 @@ const expectOutcome = (
 };
 
 const task = (checks: readonly unknown[]) =>
-  parseDesktopTask(
-    { name: "edit-notes", prompt: "Edit my notes.", checks },
-    portable,
-  );
+  parseDesktopTask({ name: "edit-notes", prompt: "Edit my notes.", checks });
 
 /** Task changes the parser refuses, each with part of its message. */
 const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
@@ -1046,22 +1066,19 @@ describe("evaluateTaskChecks whole text", () => {
 
 describe("parseDesktopTask", () => {
   it("settles ids and keeps the prompt trimmed", () => {
-    const parsed = parseDesktopTask(
-      {
-        name: "add-milk",
-        prompt: "  Add milk.\n",
-        checks: [
-          { kind: "file_present", file: "Documents/todo.txt" },
-          {
-            id: "milk",
-            kind: "lines_present",
-            file: "Documents/todo.txt",
-            lines: ["milk"],
-          },
-        ],
-      },
-      portable,
-    );
+    const parsed = parseDesktopTask({
+      name: "add-milk",
+      prompt: "  Add milk.\n",
+      checks: [
+        { kind: "file_present", file: "Documents/todo.txt" },
+        {
+          id: "milk",
+          kind: "lines_present",
+          file: "Documents/todo.txt",
+          lines: ["milk"],
+        },
+      ],
+    });
 
     expect(parsed).toMatchObject({
       ok: true,
@@ -1073,15 +1090,12 @@ describe("parseDesktopTask", () => {
   });
 
   it.each(REFUSALS)("refuses %j", (change, message) => {
-    const parsed = parseDesktopTask(
-      {
-        name: "add-milk",
-        prompt: "Add milk.",
-        checks: [{ kind: "file_present", file: "a" }],
-        ...change,
-      },
-      portable,
-    );
+    const parsed = parseDesktopTask({
+      name: "add-milk",
+      prompt: "Add milk.",
+      checks: [{ kind: "file_present", file: "a" }],
+      ...change,
+    });
 
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.error).toContain(message);

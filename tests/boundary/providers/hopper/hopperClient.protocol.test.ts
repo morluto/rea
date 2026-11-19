@@ -1,23 +1,85 @@
+import {
+  transportReplyContracts,
+  type TransportReplyContracts,
+  HopperFixtureLauncher as FixtureLauncher,
+  startHopperFixtureClient as startClient,
+} from "./hopperClient.fixture.js";
 import { once } from "node:events";
 
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, onTestFinished } from "vitest";
+import { z } from "zod";
 
-import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
+import { HopperProcessError } from "../../../../src/hopper/HopperErrors.js";
 import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
+import { HopperReplyContractError } from "../../../../src/hopper/HopperReplyContracts.js";
+import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";
 import { providerCleanupFailure } from "../../../../src/hopper/HopperDiagnostics.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 
-import {
-  HopperFixtureLauncher as FixtureLauncher,
-  startHopperFixtureClient as startClient,
-} from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
+
+const MIB = 1024 * 1024;
 
 describe("HopperClient protocol", () => {
+  it("refuses a method its installed table has no contract for instead of throwing", async () => {
+    const launcher = new FixtureLauncher();
+    // The type argument names the transport table, but none is installed.
+    const client = new HopperClient<TransportReplyContracts>({
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
+    onTestFinished(async () => {
+      await client.close();
+    });
+
+    expect(await client.callTool("echo", { label: "unread" })).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "echo",
+      },
+    });
+  });
+
+  it("validates each reply against its method contract and keeps a rejected reply", async () => {
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({
+      replyContracts: { echo: z.strictObject({ label: z.string() }) },
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
+    onTestFinished(async () => {
+      await client.close();
+    });
+
+    const accepted = await client.callTool("echo", { label: "typed" });
+    expect(accepted).toEqual({ ok: true, value: { label: "typed" } });
+    if (accepted.ok) expectTypeOf(accepted.value.label).toBeString();
+
+    const rejected = await client.callTool(
+      "echo",
+      { label: 7 },
+      { operation: "list_names" },
+    );
+    if (rejected.ok) throw new Error("Expected a contract failure");
+    expect(rejected.error).toBeInstanceOf(HopperReplyContractError);
+    expect(rejected.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "list_names",
+      method: "echo",
+      reply: { label: 7 },
+    });
+  });
+
   it("does not start cold and preserves normal dispatch once ready", async () => {
     const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
     onTestFinished(async () => {
       await client.close();
     });
@@ -49,6 +111,7 @@ describe("HopperClient protocol", () => {
   it("uses the caller-assigned provider run identity", async () => {
     const launcher = new FixtureLauncher();
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       runId: "11111111-1111-4111-8111-111111111111",
       startupTimeoutMs: 1_000,
@@ -63,7 +126,11 @@ describe("HopperClient protocol", () => {
 
   it("keeps the native socket path below macOS sockaddr_un limits", async () => {
     const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 1_000,
+    });
     onTestFinished(async () => {
       await client.close();
     });
@@ -82,7 +149,7 @@ describe("HopperClient protocol", () => {
     void fast.then(() => {
       fastSettled = true;
     });
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(client.requestActivity()).toMatchObject({
         operation: "echo",
         queuedRequests: 1,
@@ -110,18 +177,35 @@ describe("HopperClient protocol", () => {
 });
 
 describe("HopperClient response lifecycle", () => {
+  it.each(["valid_then_invalid", "valid_then_invalid_split"])(
+    "retains a complete reply before later malformed bytes (%s)",
+    async (method) => {
+      const client = await startClient();
+      const completed = client.callTool(method);
+      const later = client.callTool("hang");
+      await expect(completed).resolves.toEqual({
+        ok: true,
+        value: "completed",
+      });
+      await expect(later).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "HopperProtocolError" },
+      });
+    },
+  );
+
   it("reassembles a fragmented Unicode reply from the owned socket", async () => {
     const client = await startClient();
 
     await expect(
-      client.callTool("echo", { label: "雪🦊", fragmented: true }),
+      client.callTool("echo", { label: "�雪🦊", fragmented: true }),
     ).resolves.toEqual({
       ok: true,
-      value: { label: "雪🦊", fragmented: true },
+      value: { label: "�雪🦊", fragmented: true },
     });
   });
 
-  it("accepts an owned-socket response above the former 10 MiB ceiling", async () => {
+  it("accepts an owned-socket response above 10 MiB", async () => {
     const client = await startClient();
     const label = "x".repeat(10 * 1024 * 1024 + 1);
 
@@ -152,6 +236,7 @@ describe("HopperClient response lifecycle", () => {
 
   it("rejects a bridge session with the wrong capability token", async () => {
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: new FixtureLauncher("wrong-token"),
       startupTimeoutMs: 1_000,
     });
@@ -165,6 +250,10 @@ describe("HopperClient response lifecycle", () => {
 
   it.each([
     ["malformed", "HopperProtocolError"],
+    ["invalid_utf8", "HopperProtocolError"],
+    ["invalid_utf8_split", "HopperProtocolError"],
+    ["invalid_utf8_end", "HopperProtocolError"],
+    ["valid_utf8_end", "HopperProcessError"],
     ["wrong_id", "HopperProtocolError"],
     ["wrong_event_id", "HopperProtocolError"],
     ["malformed_event", "HopperProtocolError"],
@@ -200,6 +289,7 @@ describe("HopperClient response lifecycle", () => {
     const launcher = new FixtureLauncher();
     const diagnostics: HopperDiagnostic[] = [];
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 1_000,
       onDiagnostic: (event) => diagnostics.push(event),
@@ -222,6 +312,195 @@ describe("HopperClient response lifecycle", () => {
       category: "bridge_exception",
       message: "safe fake failure",
     });
+  });
+});
+
+describe("HopperClient reply framing", () => {
+  it("delivers a rejection on the reserved id to the request in flight", async () => {
+    const client = await startClient();
+
+    const result = await client.callTool(
+      "unattributed_invalid_request",
+      {},
+      { timeoutMs: 5_000 },
+    );
+
+    expect(
+      result.ok ? undefined : result.error,
+      "an unattributable rejection reaches the caller instead of being dropped",
+    ).toMatchObject({
+      _tag: "HopperRemoteError",
+      diagnosticType: "invalid_request",
+      message: expect.stringContaining("Invalid bridge request JSON"),
+    });
+  });
+
+  it.each([
+    ["an unterminated reply", "unterminated_reply", { bytes: 2 * MIB }],
+    ["a complete reply line", "echo", { label: "x".repeat(2 * MIB) }],
+  ] as const)(
+    "refuses %s above bridge.max_reply_bytes and names the setting",
+    async (_case, method, parameters) => {
+      const client = await startClient(undefined, {
+        bridgeMaxReplyBytes: { maximumBytes: MIB, source: "setting" },
+      });
+
+      const result = await client.callTool(method, parameters, {
+        timeoutMs: 10_000,
+      });
+
+      expect(result.ok ? undefined : result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "transport",
+        limit: {
+          setting: "bridge.max_reply_bytes",
+          effective_value: MIB,
+          source: "setting",
+        },
+      });
+    },
+  );
+
+  it("refuses an invalid reply ceiling seed before launching Hopper", async () => {
+    const invalid = new ConfigurationError("invalid bridge.max_reply_bytes");
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 10_000,
+      bridgeMaxReplyBytes: {
+        get maximumBytes(): number {
+          throw invalid;
+        },
+        source: "setting",
+      },
+    });
+
+    const started = await client.start();
+
+    expect(started.ok ? undefined : started.error).toBe(invalid);
+    expect(launcher.processes, "no bridge was launched").toEqual([]);
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("returns a ceiling seed refused after startup as a configuration error", async () => {
+    // A malformed seed covered by an override at startup is refused by the
+    // runtime view once that override is reset.
+    const refusal = new ConfigurationError("invalid bridge ceiling seed");
+    let seedRefused = false;
+    const setting = (value: number) => ({
+      get maximumBytes(): number {
+        if (seedRefused) throw refusal;
+        return value;
+      },
+      source: "runtime" as const,
+    });
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher, {
+      bridgeMaxRequestBytes: setting(16 * MIB),
+      bridgeMaxReplyBytes: setting(4 * MIB),
+    });
+    // The gate holds the active reply, so the second request stays queued
+    // until the seed is refused and is written outside its caller's context.
+    const active = client.callTool("echo", { label: "active", gate: "held" });
+    const held = await launcher.waitForRequest("echo", "held");
+    const queued = client.callTool("echo", { label: "queued" });
+    await waitFor(() =>
+      expect(client.requestActivity()).toMatchObject({ queuedRequests: 1 }),
+    );
+    seedRefused = true;
+
+    const refused = await client.callTool("echo", { label: "late" });
+    expect(refused.ok ? undefined : refused.error).toBe(refusal);
+    await launcher.release(held);
+    expect((await active).ok).toBe(true);
+    expect(
+      (await queued).ok,
+      "a queued request is written under the ceilings it was admitted with",
+    ).toBe(true);
+  });
+
+  it("shuts the bridge down under the session's ceilings after its seed is refused", async () => {
+    // Cleanup must not depend on the current settings: a refused seed would
+    // otherwise block the shutdown that releases Hopper's document and files.
+    const refusal = new ConfigurationError("invalid bridge ceiling seed");
+    let seedRefused = false;
+    const setting = (value: number) => ({
+      get maximumBytes(): number {
+        if (seedRefused) throw refusal;
+        return value;
+      },
+      source: "runtime" as const,
+    });
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher, {
+      bridgeMaxRequestBytes: setting(16 * MIB),
+      bridgeMaxReplyBytes: setting(4 * MIB),
+    });
+    seedRefused = true;
+
+    const closed = await client.close();
+
+    expect(closed.ok ? undefined : closed.error).toBeUndefined();
+    expect(
+      launcher.requests.map(({ method }) => method),
+      "the shutdown request reached the bridge",
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/^shutdown/u)]));
+  });
+
+  it("bounds each reply by the ceiling its own request admitted", async () => {
+    // The getter-backed runtime setting reads whichever caller admits next.
+    const limit = { maximumBytes: 4 * MIB, source: "runtime" as const };
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher, { bridgeMaxReplyBytes: limit });
+
+    const large = client.callTool(
+      "echo",
+      { label: "x".repeat(2 * MIB), delay: 100 },
+      { timeoutMs: 10_000 },
+    );
+    await waitFor(() =>
+      expect(launcher.requests.map(({ method }) => method)).toContain("echo"),
+    );
+    limit.maximumBytes = MIB;
+    const queued = client.callTool(
+      "echo",
+      { label: "small" },
+      { timeoutMs: 10_000 },
+    );
+
+    expect(
+      (await large).ok,
+      "a request queued with a lower ceiling does not shrink the active one",
+    ).toBe(true);
+    expect((await queued).ok).toBe(true);
+  });
+});
+
+it("preserves caller cancellation while a late valid UTF-8 reply drains", async () => {
+  const launcher = new FixtureLauncher();
+  const client = await startClient(launcher);
+  const controller = new AbortController();
+  const reason = { phase: "UTF-8 reply pending" };
+  const pending = client.callTool(
+    "echo",
+    { label: "�雪🦊", fragmented: true, gate: "cancel-utf8" },
+    { signal: controller.signal },
+  );
+  const request = await launcher.waitForRequest("echo", "cancel-utf8");
+  controller.abort(reason);
+  const result = await pending;
+  if (result.ok) throw new Error("Expected caller cancellation");
+  expect(result.error).toMatchObject({ _tag: "HopperCancelledError" });
+  expect(result.error.cause).toBe(reason);
+  expect(client.requestActivity()).toMatchObject({ callerState: "cancelled" });
+  await launcher.release(request);
+  await waitFor(() => expect(client.requestActivity()).toBeNull());
+  await expect(
+    client.callTool("echo", { label: "next �雪🦊" }),
+  ).resolves.toEqual({
+    ok: true,
+    value: { label: "next �雪🦊" },
   });
 });
 

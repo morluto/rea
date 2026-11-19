@@ -1,14 +1,13 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import type {
   BuildSettle,
   SettleClock,
 } from "../../../src/application/desktop/DesktopBuildSettle.js";
-import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { SettleTiming } from "../../../src/domain/desktop/appSettle.js";
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
@@ -34,6 +33,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cancelDuringCommit } from "../../fixtures/outputTreeCommit.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
 
 const TASK = {
   name: "add-eggs",
@@ -43,6 +43,11 @@ const TASK = {
   ],
 };
 const WITNESS_ORDER = ["seed", "after_edit", "near_miss", "after_reset"];
+/** The build's screenshots a screen-judged bundle ships as its judge's examples, large enough that its verifier passes 1 MiB. */
+const JUDGE_EXAMPLES = {
+  fail: Buffer.alloc(600 * 1024, 1).toString("base64"),
+  pass: Buffer.alloc(600 * 1024, 2).toString("base64"),
+};
 const lines = (...text: string[]) => ({
   "Documents/today.txt": {
     format: "text",
@@ -53,7 +58,7 @@ const lines = (...text: string[]) => ({
 
 /** A bundle folder holding `task` as the export writes it for the app. */
 const taskBundle = async (task: unknown, app: string) => {
-  const parsed = parseDesktopTask(task, isPortableBundleName);
+  const parsed = parseDesktopTask(task);
   if (!parsed.ok) throw new Error(parsed.error);
   const bundle = await bundleFolder();
   const verifier = join(
@@ -63,7 +68,10 @@ const taskBundle = async (task: unknown, app: string) => {
     "verify.py",
   );
   await mkdir(join(verifier, ".."), { recursive: true });
-  await writeFile(verifier, renderTaskVerifier(parsed.value, app));
+  await writeFile(
+    verifier,
+    renderTaskVerifier(parsed.value, app, JUDGE_EXAMPLES),
+  );
   await writeFile(
     join(bundle, "tasks", `${parsed.value.name}.json`),
     renderTaskSteps(parsed.value, app),
@@ -75,8 +83,13 @@ const witnessed = async (
   slowReset = 0,
   options: FakeComputerOptions = {},
   task: unknown = TASK,
-  settle?: BuildSettle,
+  server: {
+    readonly settle?: BuildSettle;
+    /** Find agent-env on PATH instead of REA_AGENT_ENV_COMMAND naming it. */
+    readonly onPath?: boolean;
+  } = {},
 ) => {
+  const { settle, onPath = false } = server;
   const app: FakeApp = {
     name: "notes",
     state: lines("milk"),
@@ -85,7 +98,13 @@ const witnessed = async (
     unreadyAfterReset: slowReset,
   };
   const { computer, runner } = await buildComputerFakes({ ...options, app });
-  const client = await connectBuildServer(runner.environment, settle);
+  const { REA_AGENT_ENV_COMMAND: _named, ...unnamed } = runner.environment;
+  const client = onPath
+    ? await connectBuildServer(unnamed, settle, {
+        searchPath: runner.state,
+        archiveDirectory: runner.state,
+      })
+    : await connectBuildServer(runner.environment, settle);
   const bundle = await taskBundle(task, app.name);
   const id = await startBuildComputer(client, { kind: "bundle", path: bundle });
   const directory = join(await createTestTempDirectory("witness-"), "add-eggs");
@@ -100,7 +119,7 @@ const witnessed = async (
       action,
       ...fields,
     });
-  return { app, bundle, computer, client, id, directory, check, act };
+  return { app, bundle, computer, runner, client, id, directory, check, act };
 };
 
 /** Act on the app and set its state as that act would leave it. */
@@ -138,6 +157,78 @@ const expectUndecided = (
   expect(error.code).toBe("invalid_request");
   for (const fact of [stage, ...facts]) expect(error.message).toContain(fact);
 };
+
+it.each([
+  { kind: "file_present", passed: true },
+  { kind: "file_absent", passed: false },
+] as const)(
+  "grades $kind against an own __proto__ state file over MCP",
+  async ({ kind, passed }) => {
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "selected-file",
+        prompt: "Check the selected file.",
+        checks: [{ kind, file: "__proto__" }],
+      },
+    );
+    witness.app.state = JSON.parse(
+      '{"__proto__":{"format":"json","view":{"count":7}}}',
+    );
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({
+      passed: passed ? 1 : 0,
+      failed: passed ? 0 : 1,
+      results: [{ id: "check-1", passed }],
+    });
+  },
+);
+
+it.each([false, true])(
+  "keeps own row conditions through MCP (only special column: %s)",
+  async (onlySpecial) => {
+    const where = onlySpecial
+      ? JSON.parse('{"__proto__":"other"}')
+      : JSON.parse('{"id":1,"__proto__":"wanted"}');
+    const common = { file: "db.sqlite", table: "rows", where };
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "find-row",
+        prompt: "Check every selected column of the row.",
+        checks: [
+          { kind: "row_present", ...common },
+          { kind: "row_absent", ...common },
+          { kind: "row_count", ...common, equals: onlySpecial ? 1 : 0 },
+        ],
+      },
+    );
+    witness.app.state = {
+      "db.sqlite": {
+        format: "sqlite",
+        view: {
+          tables: {
+            rows: {
+              columns: ["id", "__proto__"],
+              primary_key: ["id"],
+              rows: [[1, "other"]],
+              truncated: false,
+            },
+          },
+          tables_truncated: false,
+        },
+        truncated: false,
+      },
+    };
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({ passed: 2, failed: 1 });
+    expect(report.results.map(({ passed }) => passed)).toEqual(
+      onlySpecial ? [true, false, true] : [false, true, true],
+    );
+  },
+);
 
 it("witnesses a task: the seed fails, the edit passes, a near miss fails and so does the reset seed", async () => {
   const { app, computer, directory, check, act } = await witnessed();
@@ -263,6 +354,165 @@ it("witnesses a task: the seed fails, the edit passes, a near miss fails and so 
   ).toContain("already witnessed");
 });
 
+it("witnesses a task whose check reads a binary file through a reader run in the computer", async () => {
+  const poster = "Documents/poster.xcf";
+  const task = {
+    name: "rename-layer",
+    prompt:
+      "In Pictures, rename the Headline layer to Summer Sale and save it.",
+    checks: [
+      {
+        id: "renamed",
+        kind: "lines_present",
+        file: poster,
+        reader: "layers",
+        lines: ["layer Summer Sale"],
+      },
+    ],
+    readers: [
+      {
+        id: "layers",
+        file: poster,
+        argv: [
+          "python3",
+          "-c",
+          "import sys; print('banner'); print('REA layer ' + open(sys.argv[1], 'rb').read().split(b'\\0')[-1].decode())",
+          "{file}",
+        ],
+        output: "lines",
+      },
+    ],
+  };
+  const home = await createTestTempDirectory("witness-home-");
+  await mkdir(join(home, "Documents"));
+  const save = (layer: string) =>
+    writeFile(join(home, poster), `gimp xcf\0${layer}`);
+  await save("Headline");
+  const { act, check, computer, directory } = await witnessed(
+    0,
+    { exec: { home, bin: home } },
+    task,
+  );
+
+  await check({ task, stage: "seed", directory });
+  await act("type", { text: "Summer Sale\n" });
+  await save("Summer Sale");
+  await check({ task, stage: "after_edit" });
+  await act("type", { text: "Summer Sail\n" });
+  await save("Summer Sail");
+  const near = parsed(await check({ task, stage: "near_miss" }));
+  expect(near.results[0]?.description).toContain(
+    'has no line "layer Summer Sale"',
+  );
+  await act("reset");
+  await save("Headline");
+  const last = await check({ task, stage: "after_reset" });
+  expectNoToken(computer, last);
+  const record = parsed(last).witness?.record;
+  expect(record?.verdict).toBe("held");
+  expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+    false,
+    true,
+    false,
+    false,
+  ]);
+  expect(await readFile(join(home, poster), "utf8")).toBe("gimp xcf\0Headline");
+  const evidence = parseEvidence(
+    JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+  );
+  expect(evidence.limitations.join(" ")).toContain("computer-exec/v1");
+});
+
+/** Stand-ins for the runner's model client, agentenv config and MCP client, whose judge answers what `judge-verdict` holds. */
+const JUDGE_STUBS: Readonly<Record<string, string>> = {
+  "litellm/__init__.py": String.raw`
+import json, os, types
+async def acompletion(model, messages, **_):
+    state = os.environ["FAKE_STATE"]
+    with open(os.path.join(state, "judge-calls"), "a") as log:
+        log.write(json.dumps({"model": model, "images": sum(1 for part in messages[0]["content"] if part["type"] == "image_url")}) + "\n")
+    verdict = open(os.path.join(state, "judge-verdict")).read().strip() == "yes"
+    answer = {"verdict": verdict, "reason": "the window shows the result" if verdict else "the window shows no result"}
+    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=json.dumps(answer)))])
+`,
+  "agent_env/config.py": String.raw`
+import types
+def get_config():
+    call = types.SimpleNamespace(client_kwargs=lambda: {"api_key": "sk-test"})
+    return types.SimpleNamespace(get_model_for_role=lambda role: None, get_litellm_base_url=lambda: "https://models.example",
+                                 resolve_model_call=lambda model: call)
+`,
+  "agentenv_protocol/__init__.py": "",
+  "agentenv_protocol/tool_client.py": "class ToolSession:\n    pass\n",
+};
+
+it.each([
+  ["REA_AGENT_ENV_COMMAND names the runner", false],
+  ["the runner is found on PATH", true],
+])(
+  "witnesses a screen-judged task with the bundle's own judge on a fresh screenshot at each stage when %s",
+  async (_, onPath) => {
+    const task = {
+      name: "result-shown",
+      prompt: "In Notes, show the total and leave it showing.",
+      checks: [
+        {
+          id: "shown",
+          kind: "screen_judge",
+          question: "Does the window show the total?",
+        },
+      ],
+    };
+    const { act, check, computer, directory, runner } = await witnessed(
+      0,
+      {},
+      task,
+      { onPath },
+    );
+    for (const [path, source] of Object.entries(JUDGE_STUBS)) {
+      await mkdir(join(runner.state, "site", path, ".."), { recursive: true });
+      await writeFile(join(runner.state, "site", path), source);
+    }
+    const shows = (verdict: boolean) =>
+      writeFile(join(runner.state, "judge-verdict"), verdict ? "yes" : "no");
+
+    await shows(false);
+    const seed = parsed(await check({ task, stage: "seed", directory }));
+    expect(seed.results[0]).toMatchObject({ id: "shown", passed: false });
+    expect(seed.results[0]?.description).toContain("3 of 3 votes");
+    await act("type", { text: "=" });
+    await shows(true);
+    await check({ task, stage: "after_edit" });
+    await act("type", { text: "x" });
+    await shows(false);
+    await check({ task, stage: "near_miss" });
+    await act("reset");
+    const last = await check({ task, stage: "after_reset" });
+    expectNoToken(computer, last);
+    const record = parsed(last).witness?.record;
+    expect(record?.verdict).toBe("held");
+    expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
+    // Three votes a stage, each shown the two examples and the stage's own screenshot.
+    const calls = (await readFile(join(runner.state, "judge-calls"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { images: number });
+    expect(calls).toHaveLength(12);
+    expect(calls.every(({ images }) => images === 3)).toBe(true);
+    // The record says how its results were reached: the bundle's judge, not data/get.
+    const evidence = parseEvidence(
+      JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+    );
+    expect(evidence.limitations.join(" ")).toContain("judge");
+    expect(evidence.limitations.join(" ")).not.toContain("data/get");
+  },
+);
+
 it("fails the witness at after_reset when the reset leaves the near miss instead of the seed", async () => {
   const task = {
     ...TASK,
@@ -338,11 +588,15 @@ it("ends the witness when the seed already passes, and refuses its later stages"
     parsed(await check({ task: passing, stage: "seed", directory })).witness,
   ).toEqual(seed.witness);
   const elsewhere = `${directory}-elsewhere`;
-  expect(
-    parseMcpToolError(
-      await check({ task: passing, stage: "seed", directory: elsewhere }),
-    ).error.message,
-  ).toContain(`saved to ${directory}, not ${elsewhere}`);
+  const refusal = parseMcpToolError(
+    await check({ task: passing, stage: "seed", directory: elsewhere }),
+  ).error;
+  expect(refusal).toMatchObject({
+    code: "invalid_request",
+    message: expect.stringContaining(
+      `record belongs to ${directory}, not ${elsewhere}`,
+    ),
+  });
   await act("type", { text: "eggs\n" });
   expect(
     parseMcpToolError(await check({ task: passing, stage: "after_edit" })).error
@@ -380,6 +634,39 @@ it("refuses a witness without a folder for its record, or one already holding fi
     parseMcpToolError(await check({ stage: "seed", directory: used })).error
       .message,
   ).toContain("not empty");
+});
+
+it("refuses an unusable witness folder before recording", async () => {
+  const { check, computer, directory } = await witnessed();
+  const root = await createTestTempDirectory("witness-unusable-");
+  const regularFile = join(root, "file");
+  await writeFile(regularFile, "occupied");
+  const candidates = [regularFile, join(regularFile, "out")];
+  if (process.platform !== "win32") {
+    const emptyFolder = join(root, "empty");
+    await mkdir(emptyFolder);
+    const emptyLink = join(root, "empty-link");
+    await symlink(emptyFolder, emptyLink);
+    const danglingLink = join(root, "dangling-link");
+    await symlink(join(root, "absent"), danglingLink);
+    candidates.push(emptyLink, danglingLink);
+  }
+  for (const candidate of candidates) {
+    const response = await check({ stage: "seed", directory: candidate });
+    const { error } = parseMcpToolError(response);
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).not.toContain("not empty");
+    expect(error.details?.issues).toMatchObject([
+      { path: ["directory"], reason: "invalid_value" },
+    ]);
+  }
+  expect(computer.recordingRequests).toEqual([]);
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({
+    stage: "seed",
+    held: true,
+    next_stage: "after_edit",
+  });
 });
 
 it("retries a seed whose state read failed, with the recording it began", async () => {
@@ -548,7 +835,7 @@ it("saves a witness record again after a failed save, without checking again", a
   ).toContain("ended");
 });
 
-it("returns the record a witness saved when the computer closes while the save commits", async () => {
+it("reports cancellation and the saved witness when the computer closes during commit", async () => {
   const witness = await witnessed();
   const { client, id, check, directory } = witness;
   await throughNearMiss(witness);
@@ -560,11 +847,17 @@ it("returns the record a witness saved when the computer closes while the save c
       arguments: { computer_id: id },
     });
   });
-  const saved = parsed(await check({ stage: "after_reset" }));
-  expect(saved.witness?.record).toMatchObject({
-    path: join(directory, "witness.json"),
-    verdict: "held",
+  const failure = parseMcpToolError(
+    await check({ stage: "after_reset" }),
+  ).error;
+  expect(failure).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: expect.any(Object) },
   });
+  const saved = JSON.parse(
+    await readFile(join(directory, "witness.json"), "utf8"),
+  );
+  expect(saved.normalized_result).toMatchObject({ verdict: "held" });
   await closed;
 });
 
@@ -636,13 +929,13 @@ it("keeps a completed reset when the screenshot after it is cancelled", async ()
     },
     { signal: controller.signal },
   );
-  await vi.waitFor(() => expect(witness.app.methods).toContain("data/reset"));
+  await waitFor(() => expect(witness.app.methods).toContain("data/reset"));
   controller.abort();
   await expect(resetting).rejects.toThrow();
   const near = parseMcpToolError(await witness.check({ stage: "near_miss" }));
   expect(near.error.message).toContain("put the seed back");
   expect(witness.app.state).toEqual(lines("milk"));
-}, 30_000);
+});
 
 it("checks after_reset once the reset sent before it has relaunched the app", async () => {
   const witness = await witnessed(4);
@@ -650,7 +943,7 @@ it("checks after_reset once the reset sent before it has relaunched the app", as
   await throughNearMiss(witness);
   const order: string[] = [];
   const reset = witness.act("reset").then(() => order.push("reset"));
-  await vi.waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
+  await waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
   const last = await check({ stage: "after_reset" });
   order.push("check");
   await reset;
@@ -666,7 +959,7 @@ it("checks after_reset once the reset sent before it has relaunched the app", as
     outcome: "applied",
   });
   expect(app.methods.slice(-2)).toEqual(["data/reset", "data/get"]);
-}, 30_000);
+});
 
 it("sends progress while a reset waits for the relaunched app", async () => {
   const witness = await witnessed(14);
@@ -680,7 +973,7 @@ it("sends progress while a reset waits for the relaunched app", async () => {
   );
   expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
   expect(progress.length).toBeGreaterThan(0);
-}, 30_000);
+});
 
 /** The shipped timing scaled down a tenfold: a read every 50 ms, a 300 ms window, a 1.5 s bound. */
 const SETTLE: SettleTiming = { intervalMs: 50, windowMs: 300, boundMs: 1500 };
@@ -724,7 +1017,7 @@ const clocked = () => {
 };
 
 it("grades a stage on what the app saves after the check starts, with progress while it waits", async () => {
-  const witness = await witnessed(0, {}, TASK, clocked().settle);
+  const witness = await witnessed(0, {}, TASK, { settle: clocked().settle });
   const { app, check, directory } = witness;
   expect(
     parsed(await check({ stage: "seed", directory })).witness,
@@ -764,7 +1057,9 @@ it("grades files still changing at the bound on the last read, and records that 
     ],
   };
   const { settle, now } = clocked();
-  const { app, check, directory } = await witnessed(0, {}, passing, settle);
+  const { app, check, directory } = await witnessed(0, {}, passing, {
+    settle: settle,
+  });
   const reads: number[] = [];
   // Every read finds the file changed, with eggs on even reads only.
   app.onGet = () => {
@@ -798,7 +1093,9 @@ it("grades files still changing at the bound on the last read, and records that 
 });
 
 it("grades an app that saved before the check within the window plus one interval", async () => {
-  const { app, check } = await witnessed(0, {}, TASK, clocked().settle);
+  const { app, check } = await witnessed(0, {}, TASK, {
+    settle: clocked().settle,
+  });
   app.state = lines("milk", "eggs");
   const plain = parsed(await check({}));
   expect(plain).toMatchObject({ passed: 1, settled: true });
@@ -808,7 +1105,7 @@ it("grades an app that saved before the check within the window plus one interva
 
 it("counts a slow read's changed files as quiet only from when it returned them", async () => {
   const { settle, pass } = clocked();
-  const { app, check } = await witnessed(0, {}, TASK, settle);
+  const { app, check } = await witnessed(0, {}, TASK, { settle: settle });
   let gets = 0;
   app.onGet = () => {
     gets += 1;
@@ -838,7 +1135,7 @@ it("counts a slow read's changed files as quiet only from when it returned them"
 
 it("ends reads slower than the bound at the bound, grading the last completed read", async () => {
   const { settle, now, pass, fired } = clocked();
-  const { app, check } = await witnessed(0, {}, TASK, settle);
+  const { app, check } = await witnessed(0, {}, TASK, { settle: settle });
   const slow = (SETTLE.boundMs * 2) / 3;
   const reads: number[] = [];
   // Each read takes two thirds of the bound; only the first returns eggs.

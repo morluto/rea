@@ -16,16 +16,12 @@ import {
   guestFileAnswerCeiling,
   guestFileAnswerRefusal,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
+  parseBuildComputerJson,
   runRea as runControllerRea,
-  type ControlledComputer,
 } from "../../desktop/BuildComputerController.js";
-
-export {
-  controller,
-  type Answer,
-} from "../../desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 
 /** The work folder REA keeps under the computer user's home; every capture leaves it out. */
 export const WORK = ".rea-build";
@@ -54,9 +50,6 @@ export interface CommandFailure {
 export type CommandOutput =
   | { readonly kind: "result"; readonly result: unknown }
   | ({ readonly kind: "failure" } & CommandFailure);
-
-export const errorText = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 export const adapterError = (
   operation: string,
@@ -164,7 +157,7 @@ export const readOutput = async (
   if (refusal !== undefined) throw refusal;
   const content = (await computer.homeFiles([path], bytes, signal)).get(path);
   if (content === undefined) throw new Error(`The computer has no ${path}.`);
-  const value: unknown = JSON.parse(content.toString("utf8"));
+  const value = parseBuildComputerJson(content, "REA output");
   const redact = (text: string) => computer.redacted(text);
   if (cliFailureSchema.safeParse(value).success) {
     const reported = jsonObjectSchema.parse(

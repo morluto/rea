@@ -78,8 +78,15 @@ export const machoEncryptionStatusSchema = z.enum([
   "unknown",
 ]);
 
-/** Load-command encryption state of one Mach-O slice. */
-export const machoSliceEncryptionSchema = z.object({
+const malformedKinds = ["structure", "duplicate-commands"] as const;
+const malformedKind = z
+  .enum(malformedKinds)
+  .nullable()
+  .describe(
+    "Malformed cause owned by the structural reader; duplicate-commands means every encryption command was structurally valid. Null for all other statuses.",
+  );
+
+const sliceEncryptionFields = {
   architecture: z
     .string()
     .nullable()
@@ -93,14 +100,37 @@ export const machoSliceEncryptionSchema = z.object({
   status: machoEncryptionStatusSchema.describe(
     "absent only when every load command was read; malformed and unknown carry a reason.",
   ),
+  malformed_kind: malformedKind,
   reason: z.string().nullable(),
   commands: z
     .array(machoEncryptionCommandSchema)
     .describe(
-      "Encryption load commands in table order; a slice with more than two keeps the first two and states the count in reason.",
+      "Encryption load commands in table order; a completed slice with more than two keeps the first two and states the total count in reason. Structural failures identify the invalid command, including commands beyond the retained pair.",
     ),
   range: machoEncryptedRangeSchema.nullable(),
-});
+};
+
+const validateMalformedKind = (
+  slice: { status: string; malformed_kind: string | null },
+  context: z.RefinementCtx,
+): void => {
+  if ((slice.status === "malformed") !== (slice.malformed_kind !== null))
+    context.addIssue({
+      code: "custom",
+      path: ["malformed_kind"],
+      message: "A malformed cause is required exactly when status is malformed",
+    });
+};
+
+/** Load-command encryption state of one newly inspected Mach-O slice. */
+export const machoSliceEncryptionSchema = z
+  .object(sliceEncryptionFields)
+  .superRefine(validateMalformedKind);
+
+/** View rows carry exactly the producer's slice fields. */
+export const machoSliceEncryptionViewSchema = z
+  .strictObject(sliceEncryptionFields)
+  .superRefine(validateMalformedKind);
 
 export type MachoEncryptionCommand = z.infer<
   typeof machoEncryptionCommandSchema

@@ -32,14 +32,65 @@ import {
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { assertSetupActive } from "./SetupCancellation.js";
-import type { SetupSkillInstallError } from "./SetupSkill.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
+import type {
+  SetupSkillInstallError,
+  SkillInstallResult,
+} from "./SetupSkill.js";
 import { planDesktopBuild } from "./SetupDesktopBuild.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
-import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
+import type {
+  SetupHopperInstallFailure,
+  SetupHopperInstallResult,
+} from "./SetupInstallFailure.js";
+
+/** Completed setup facts retained if a later step is cancelled. */
+interface SetupProgress {
+  plannedActions: readonly SetupAction[];
+  appliedActions: string[];
+  clients: Record<string, ClientConfigurationResult>;
+  clientStates: readonly SetupClientState[];
+  desktopFailure?: string | undefined;
+  hopperOutcome?: SetupHopperInstallResult | undefined;
+  skill?: SkillInstallResult | undefined;
+}
+
+const setupProgressFacts = (progress: SetupProgress) => {
+  const skill = progress.skill;
+  return jsonValueSchema.parse({
+    plannedActions: progress.plannedActions,
+    appliedActions: progress.appliedActions,
+    clients: progress.clients,
+    clientStates: progress.clientStates,
+    ...(progress.desktopFailure === undefined
+      ? {}
+      : { desktopFailure: progress.desktopFailure }),
+    ...(progress.hopperOutcome === undefined
+      ? {}
+      : { hopperOutcome: progress.hopperOutcome }),
+    ...(skill === undefined
+      ? {}
+      : {
+          skill: skill.ok
+            ? { status: skill.value }
+            : {
+                status: "failed",
+                path: skill.error.path,
+                stage: skill.error.stage,
+                reason: skill.error.reason,
+                rollbackFailures: skill.error.rollbackFailures,
+                recoveryBackupPaths: skill.error.recoveryBackupPaths,
+                remediation: skill.error.remediation,
+              },
+        }),
+  });
+};
 
 /** Discover, approve, and apply setup actions idempotently. */
 export const runSetup = async (
@@ -47,13 +98,21 @@ export const runSetup = async (
   host: SetupHost = systemSetupHost(),
   confirm?: SetupConfirmation,
 ): Promise<SetupResult> => {
+  const progress: SetupProgress = {
+    plannedActions: [],
+    appliedActions: [],
+    clients: {},
+    clientStates: [],
+  };
   let result: SetupResult | undefined;
   const pending: { skill?: SetupSkillInstallError } = {};
   let primaryFailure: unknown;
   let threw = false;
   try {
-    result = await runSetupWorkflow(options, host, confirm, pending);
+    result = await runSetupWorkflow(options, host, progress, confirm, pending);
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisCancelledError)
+      cause.retainDiagnostics({ setup_progress: setupProgressFacts(progress) });
     threw = true;
     primaryFailure = cause;
   }
@@ -69,11 +128,11 @@ export const runSetup = async (
   if (threw) {
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primaryFailure,
         cleanup,
         "setup",
-      ).bindCleanupDependencies([primaryFailure, cleanup]);
+      );
     throw new AggregateError(
       [primaryFailure, cleanup],
       "Setup and resource cleanup failed.",
@@ -102,15 +161,14 @@ export const runSetup = async (
       };
   }
   // Cancellation observed only during the final doctor or cleanup is not success.
-  if (
-    cleanup === undefined &&
-    result.status === "ready" &&
-    options.signal?.aborted === true
-  )
-    throw new AnalysisCancelledError("setup", {
-      cause: options.signal.reason,
+  if (options.signal?.aborted === true) {
+    const cancelled = cancelledBy("setup", options.signal, {
       diagnostics: { setup_result: jsonValueSchema.parse(result) },
     });
+    if (cleanup !== undefined)
+      throw analysisErrorWithCleanupDependencies(cancelled, cleanup, "setup");
+    throw cancelled;
+  }
   if (cleanup === undefined) return result;
   const cleanupReason = setupCleanupReason(cleanup);
   const cleanupReport: AnalysisCleanupObservation = {
@@ -135,13 +193,14 @@ export const runSetup = async (
 const runSetupWorkflow = async (
   options: SetupOptions,
   host: SetupHost,
+  progress: SetupProgress,
   confirm: SetupConfirmation | undefined,
   pending: { skill?: SetupSkillInstallError },
 ): Promise<SetupResult> => {
   assertSetupActive(options.signal);
-  const appliedActions: string[] = [];
+  const appliedActions = progress.appliedActions;
   let plannedActions: readonly SetupAction[] = [];
-  const clients: Record<string, ClientConfigurationResult> = {};
+  const clients = progress.clients;
   let clientStates: readonly SetupClientState[] = [];
   let readinessScope = options.readinessScope;
   const fail = (remediation: string) =>
@@ -169,15 +228,21 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
-  // The advertised family scope is a registration setting, not a detected
-  // provider fact; merge it after discovery so it cannot suppress the
+  // Catalog loading and family scope are registration settings, not detected
+  // provider facts; merge them after discovery so they cannot suppress the
   // Hopper installation offer on an otherwise unconfigured machine.
   if (options.toolFamilies !== undefined)
     providerEnvironment = {
       ...providerEnvironment,
       REA_MCP_TOOL_FAMILIES: options.toolFamilies,
     };
+  if (options.toolCatalogProfile !== undefined)
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_MCP_TOOL_CATALOG_PROFILE: options.toolCatalogProfile,
+    };
   clientStates = discovery.clientStates;
+  progress.clientStates = clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&
     options.readinessScope?.clients === undefined &&
@@ -290,6 +355,7 @@ const runSetupWorkflow = async (
     clientEnvironments: desktop.clientEnvironments,
   });
   plannedActions = [...desktop.actions, ...planned.plannedActions];
+  progress.plannedActions = plannedActions;
   if (planned.blocker !== undefined) return fail(planned.blocker);
   const hopperRefusal = hopperInstallRefusal(planDiscovery);
   if (hopperRefusal !== undefined) return fail(hopperRefusal);
@@ -335,6 +401,9 @@ const runSetupWorkflow = async (
   if (!approved && confirm !== undefined && !options.structured) {
     const decision = await confirm?.(plannedActions, {
       stage: "confirm",
+      ...(manualRemediation === undefined
+        ? {}
+        : { remediation: manualRemediation }),
       clientStates,
       selectedClientIds,
       clientSelectionAllowed: false,
@@ -381,6 +450,7 @@ const runSetupWorkflow = async (
     options.onProgress,
     options.signal,
   );
+  progress.desktopFailure = desktopFailure;
   assertSetupActive(options.signal);
   let selectedClients: readonly SetupClient[] =
     planSelection.clientsToConfigure;
@@ -397,6 +467,9 @@ const runSetupWorkflow = async (
       selectedClients,
       providerEnvironment,
       clientEnvironments: desktop.clientEnvironments,
+      recordResult: (result) => {
+        progress.hopperOutcome = result;
+      },
     });
     // Hopper is optional: a failed install still applies the client
     // registrations and skill approved with it (#5113).
@@ -440,16 +513,17 @@ const runSetupWorkflow = async (
   if (clientFailure !== undefined)
     return withHopperFailure(await fail(clientFailure));
   if (planSelection.installSkill) {
-    const skillFailure = await installSkillAction(
+    const skill = await installSkillAction(
       host,
       options,
       appliedActions,
       selectedSkillClientIds,
     );
-    if (skillFailure !== undefined) {
-      if (!skillFailure.completed)
-        return withHopperFailure(await failSkill(skillFailure));
-      pending.skill = skillFailure;
+    progress.skill = skill;
+    if (!skill.ok && skill.error.completed) pending.skill = skill.error;
+    assertSetupActive(options.signal);
+    if (!skill.ok && !skill.error.completed) {
+      return withHopperFailure(await failSkill(skill.error));
     }
   }
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
@@ -496,6 +570,7 @@ const installHopperAction = async (input: {
   readonly clientEnvironments: Readonly<
     Record<string, SetupProviderEnvironment>
   >;
+  readonly recordResult: (result: SetupHopperInstallResult) => void;
 }) => {
   const label = "Hopper deep-analysis provider";
   emitProgress(input.options, {
@@ -507,6 +582,7 @@ const installHopperAction = async (input: {
     input.options.installHopper,
     input.options.signal,
   );
+  input.recordResult(installed);
   if (installed.status === "failed") {
     emitProgress(input.options, {
       actionId: "install_hopper",
@@ -551,7 +627,7 @@ const installSkillAction = async (
   options: SetupOptions,
   appliedActions: string[],
   skillClientIds: readonly string[],
-): Promise<SetupSkillInstallError | undefined> => {
+): Promise<SkillInstallResult> => {
   const label = "REA reverse-engineering skill";
   emitProgress(options, {
     actionId: "install_skill",
@@ -559,7 +635,6 @@ const installSkillAction = async (
     state: "started",
   });
   const skill = await host.installSkill(skillClientIds);
-  assertSetupActive(options.signal);
   if (!skill.ok) {
     if (skill.error.completed) appliedActions.push("installed_skill");
     emitProgress(options, {
@@ -568,7 +643,7 @@ const installSkillAction = async (
       state: skill.error.completed ? "warning" : "failed",
       detail: skill.error.message,
     });
-    return skill.error;
+    return skill;
   }
   if (skill.value === "installed") appliedActions.push("installed_skill");
   emitProgress(options, {
@@ -577,7 +652,7 @@ const installSkillAction = async (
     state: skill.value === "installed" ? "completed" : "warning",
     ...(skill.value === "unchanged" ? { detail: "Already current" } : {}),
   });
-  return undefined;
+  return skill;
 };
 
 const setupFailure = async (

@@ -3396,11 +3396,9 @@ msgstr "Windows에서 Ghidra 연결"
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
-"12.1.x installation and a 64-bit JDK 21 or newer:"
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64에서는 고정 로컬 NTFS 드라이브의 네이티브 x86 및 x64 PE 앱과 DLL을 실험적으로 읽기 전용 분석할 수 "
-"있습니다. 기존 Ghidra 12.1.x 설치와 64비트 JDK 21 이상을 사용하세요."
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -4855,10 +4853,8 @@ msgstr "REA로 네이티브 프로그램을 읽으려면 다음 중 하나가 �
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0}Ghidra{ph1} (macOS 또는 Linux, Windows에서는 실험적 지원): 무료이지만 기존 Ghidra 12.1.x"
-" 설치와 64비트 JDK 21 이상이 필요합니다."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -12897,20 +12893,18 @@ msgstr "Ghidra · 무료 분석 도구와 Java 설치하기"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
-msgstr "Java 컴파일러를 포함하는 64비트 JDK 21 이상을 설치하세요. 컴퓨터 아키텍처에 맞는 패키지를 선택하세요."
+msgstr ""
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"릴리스의 Assets 목록에서 Ghidra 12.1.4를 다운로드하고 {ph0} 압축 파일을 푸세요. ‘Source code’가 아닌 "
-"릴리스 압축 파일을 선택하세요."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -12923,17 +12917,17 @@ msgid ""
 "{ph2}."
 msgstr "압축을 푼 폴더 중 {ph0} 또는 {ph1}가 들어 있는 폴더를 찾으세요. 그 폴더를 {ph2}로 지정하세요."
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}JDK 다운로드{ph1} · {ph2}Ghidra 12.1.4 다운로드{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -13488,7 +13482,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -16414,3 +16408,12 @@ msgstr ""
 #~ msgctxt "page:showcase/th04/index.html"
 #~ msgid "{ph0}Angle and velocity · source excerpt{ph1}"
 #~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
+#~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
+#~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+#~ "Windows x64에서는 고정 로컬 NTFS 드라이브의 네이티브 x86 및 x64 PE 앱과 DLL을 실험적으로 읽기 전용 분석할 수 "
+#~ "있습니다. 기존 Ghidra 12.1.x 설치와 64비트 JDK 21 이상을 사용하세요."
