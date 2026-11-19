@@ -15,6 +15,8 @@ export type ParsedJsonWithPolicy =
   | {
       readonly ok: true;
       readonly value: unknown;
+      /** First source member of a root object scanned under the reject policy. */
+      readonly firstObjectMember?: string;
     }
   | {
       readonly ok: false;
@@ -48,9 +50,8 @@ export const parseJsonStringLiteral = (raw: string): unknown =>
  * Parse JSON text under an explicit duplicate-member policy, with an optional
  * `JSON.parse` reviver.
  *
- * When `policy` is `"reject"`, `findDuplicateJsonMember` scans the validated
- * JSON text and attaches the first repeated member name as `duplicate` on the
- * returned result so the caller can raise its format-specific error.
+ * The `"reject"` policy scans the validated JSON text for repeated names and
+ * preserves the first root object member in its original source order.
  */
 export const parseJsonWithDuplicatePolicy = (
   text: string,
@@ -67,11 +68,13 @@ export const parseJsonWithDuplicatePolicy = (
   } catch (cause: unknown) {
     return { ok: false, cause };
   }
-  const duplicate =
-    policy === "reject" ? findDuplicateJsonMember(text) : undefined;
-  return duplicate === undefined
+  if (policy === "last-wins") return { ok: true, value };
+  const members = observeJsonMembers(text);
+  if (members.duplicate !== undefined)
+    return { ok: false, duplicate: members.duplicate };
+  return members.firstObjectMember === undefined
     ? { ok: true, value }
-    : { ok: false, duplicate };
+    : { ok: true, value, firstObjectMember: members.firstObjectMember };
 };
 
 /**
@@ -97,11 +100,14 @@ export const parseLastWinsJson = (
  */
 export const findDuplicateJsonMember = (
   text: string,
-): JsonDuplicateMember | undefined => {
+): JsonDuplicateMember | undefined => observeJsonMembers(text).duplicate;
+
+const observeJsonMembers = (text: string) => {
   // One entry per open container: the names seen so far for an object, or
   // null for an array. `expectName` marks the next string as a member name.
   const open: (Set<string> | null)[] = [];
   let expectName = false;
+  let firstObjectMember: string | undefined;
   for (let index = 0; index < text.length; index++) {
     const code = text.charCodeAt(index);
     if (code === QUOTE) {
@@ -138,7 +144,9 @@ export const findDuplicateJsonMember = (
       const name = raw.includes("\\")
         ? (JSON.parse(raw) as string)
         : raw.slice(1, -1);
-      if (names.has(name)) return { name, offset: start };
+      if (open.length === 1) firstObjectMember ??= name;
+      if (names.has(name))
+        return { firstObjectMember, duplicate: { name, offset: start } };
       names.add(name);
       continue;
     }
@@ -162,5 +170,5 @@ export const findDuplicateJsonMember = (
         break;
     }
   }
-  return undefined;
+  return { firstObjectMember, duplicate: undefined };
 };
