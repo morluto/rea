@@ -21,7 +21,7 @@ import {
   IDENTITY_FIELD,
   keyedByLearnedIds,
   pairElements,
-  translateValue,
+  translateScalarId,
   type IdMap,
 } from "./environmentCompareIds.js";
 import { isRecord } from "../../kernel/isRecord.js";
@@ -326,11 +326,16 @@ class Differ {
     live: JsonValue[],
     env: JsonValue[],
     pointer: string,
-    clockKey: string | undefined,
+    at: {
+      readonly key?: string;
+      readonly own?: boolean;
+      readonly clockKey?: string | undefined;
+    },
     generation: Generation | undefined,
   ): void {
     const own = pointer === this.entity.at;
-    if (this.sameItems(live, env, pointer)) {
+    const clockKey = at.clockKey ?? at.key;
+    if (this.sameItems(live, env, pointer, at.key, own || at.own === true)) {
       // Equal/reordered scalar sets still establish unchanged generated pairs;
       // otherwise another field could split an alias hidden by this fast path.
       if (generation !== undefined)
@@ -373,35 +378,28 @@ class Differ {
   }
 
   /** Arrays of scalars holding the same items in another order differ only in order, as sets an application returns unordered do. */
-  sameItems(live: JsonValue[], env: JsonValue[], pointer: string): boolean {
+  sameItems(
+    live: JsonValue[],
+    env: JsonValue[],
+    pointer: string,
+    field: string | undefined,
+    owned: boolean,
+  ): boolean {
     const scalar = (item: JsonValue): boolean =>
       item === null || typeof item !== "object";
     if (live.length !== env.length || !live.every(scalar) || !env.every(scalar))
       return false;
     // Only identifier lists or known string identifiers are translated; numeric measurements stay literal.
-    const field = pointer.slice(pointer.lastIndexOf("/") + 1);
-    const mapped = live.map((item) => {
-      if (
-        (typeof item === "string" && this.map.isStateReference(item, field)) ||
-        ((typeof item === "number" || typeof item === "string") &&
-          ID_LIST_FIELD.test(field))
-      ) {
-        if (
-          ID_LIST_FIELD.test(field) &&
-          (typeof item === "number" || typeof item === "string")
-        ) {
-          const scoped = this.map.env(item, this.entity.scope);
-          if (scoped !== undefined)
-            return typeof item === "string"
-              ? String(scoped)
-              : typeof scoped === "number"
-                ? scoped
-                : item;
-        }
-        return translateValue(item, this.map);
-      }
-      return item;
-    });
+    const idList = field !== undefined && ID_LIST_FIELD.test(field);
+    const scope = idList && owned ? this.entity.scope : undefined;
+    const mapped = live.map((item) =>
+      idList ||
+      (typeof item === "string" &&
+        field !== undefined &&
+        this.map.isStateReference(item, field))
+        ? translateScalarId(item, this.map, scope)
+        : item,
+    );
     const key = (items: JsonValue[]): string =>
       JSON.stringify(items.map((item) => JSON.stringify(item)).sort());
     if (key(mapped) !== key(env)) return false;
@@ -528,7 +526,7 @@ class Differ {
     generation?: Generation,
   ): void {
     if (Array.isArray(live) && Array.isArray(env))
-      this.array(live, env, pointer, at.clockKey ?? at.key, generation);
+      this.array(live, env, pointer, at, generation);
     else if (isRecord(live) && isRecord(env))
       this.object(
         live,
