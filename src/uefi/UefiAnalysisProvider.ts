@@ -296,16 +296,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     // cannot become one worker per overlapping call.
     const signal = options?.signal;
     if (signal?.aborted) return this.#cancelled(request, signal.reason);
+    const started = { value: false };
     const queued = this.#serialize(async () => {
+      started.value = true;
       // A queued request cancelled while waiting must not run behind the active
       // one; skip it when it reaches the head of the queue.
       if (signal?.aborted) return this.#cancelled(request, signal.reason);
       return this.#executeWithDeadline(request, options);
     });
-    // Let a caller stop waiting on a queued request immediately.
+    // Let a caller stop waiting on a not-yet-started request immediately.
     return signal === undefined
       ? queued
-      : this.#raceWithAbort(queued, request, signal);
+      : this.#raceWithAbort(queued, request, signal, started);
   }
 
   #cancelled(
@@ -322,12 +324,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     queued: Promise<Result<AnalysisExecution, AnalysisError>>,
     request: UefiRequest,
     signal: AbortSignal,
+    started: { value: boolean },
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (signal.aborted) {
+    if (signal.aborted && !started.value) {
       return Promise.resolve(this.#cancelled(request, signal.reason));
     }
     return new Promise<Result<AnalysisExecution, AnalysisError>>((resolve) => {
-      const onAbort = () => resolve(this.#cancelled(request, signal.reason));
+      const onAbort = () => {
+        // Only a not-yet-started job may return early; a started job must finish
+        // so its cleanup and completed work are preserved.
+        if (!started.value) resolve(this.#cancelled(request, signal.reason));
+      };
       signal.addEventListener("abort", onAbort, { once: true });
       queued.then(
         (result) => {
@@ -377,14 +384,25 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     }
     try {
       const result = await this.#executeWithSignal(request, controller.signal);
-      // An internal deadline must surface as a timeout, not as a caller
-      // cancellation that runOwnedCommand reports for any external abort.
-      if (!result.ok && deadlineExceeded) {
+      // Reclassify only the deadline-induced cancellation as a timeout, and
+      // keep its cause and cleanup observations; never override a different
+      // primary failure that already explains what went wrong.
+      if (
+        !result.ok &&
+        deadlineExceeded &&
+        result.error instanceof AnalysisCancelledError
+      ) {
         return {
           ok: false,
           error: new AnalysisTimeoutError(
             request.operation,
             UEFI_FIRMWARE_LIMITS.timeoutMs,
+            {
+              cause: result.error,
+              ...(result.error.cleanup === undefined
+                ? {}
+                : { cleanup: result.error.cleanup }),
+            },
           ),
         };
       }
