@@ -27,10 +27,8 @@ import type {
   InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import {
-  androidNoteTypeName,
-  coreNoteTypeName,
+  elfNoteTypeName,
   elfObjectTypeName,
-  gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
@@ -40,6 +38,7 @@ import {
   readElfSectionNameTableHeader,
 } from "../../domain/native/elfSectionNameTable.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { decodeFdoNote, type FdoDecodeBudget } from "./ElfFdoNote.js";
 
 const PT_NOTE = 4;
 const SHT_STRTAB = 3;
@@ -843,6 +842,11 @@ export const parseElfNotes = (
     scans: new Map(),
     maxGnuBuildIdBytes: options.maxGnuBuildIdBytes,
   };
+  const fdo: FdoDecodeBudget = {
+    decoded: 0,
+    retained: 0,
+    descriptors: new Map(),
+  };
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();
   if (shnum !== 0 && shstrndx !== 0) {
@@ -936,7 +940,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "program", index, header, text));
+        parsed.push(toEntry(note, "program", index, header, text, fdo));
     }
   }
   if (shnum !== 0) {
@@ -992,7 +996,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "section", index, header, text));
+        parsed.push(toEntry(note, "section", index, header, text, fdo));
     }
   }
   const absent = tables.length === 0;
@@ -1013,6 +1017,13 @@ export const parseElfNotes = (
     limitations: [
       ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
       ...sectionNameLimitations,
+      ...(parsed.some(
+        ({ fdo: note }) => note !== null && note.metadata !== null,
+      )
+        ? [
+            "FDO packaging and dlopen metadata are unverified producer declarations.",
+          ]
+        : []),
       ...(parsed.some(({ owner }) => owner === "CORE")
         ? [
             isLinuxCoreProfile(header)
@@ -1030,11 +1041,12 @@ const toEntry = (
   tableIndex: number,
   header: ElfFixedHeader,
   text: TextBudget,
+  fdo: FdoDecodeBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const little = header.byteOrder === "little";
-  const gnuOwner = note.owner === "GNU";
-  const coreOwner = note.owner === "CORE" && isLinuxCoreProfile(header);
-  const androidOwner = note.owner === "Android";
+  const linuxCore = isLinuxCoreProfile(header);
+  const typeName = elfNoteTypeName(note.owner, note.type, linuxCore);
+  const coreOwner = note.owner === "CORE" && linuxCore;
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
@@ -1049,13 +1061,7 @@ const toEntry = (
     namesz: note.namesz,
     descsz: note.descsz,
     type: note.type,
-    type_name: gnuOwner
-      ? gnuNoteTypeName(note.type)
-      : coreOwner
-        ? coreNoteTypeName(note.type)
-        : androidOwner
-          ? androidNoteTypeName(note.type)
-          : "unknown",
+    type_name: typeName,
     owner: note.owner,
     owner_bytes_hex: note.owner_bytes_hex,
     descriptor: {
@@ -1086,6 +1092,7 @@ const toEntry = (
       little,
       text,
     ),
+    fdo: decodeFdoNote(typeName, range, note.descriptor, fdo),
   };
 };
 
