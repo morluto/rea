@@ -341,17 +341,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
       const scan = await scanUefiImage(
         snapshot.bytes,
-        request.operation === "inspect_uefi_firmware"
-          ? {
-              maxDepth: request.input.max_depth,
-              maxVolumes: request.input.max_volumes,
-              maxFiles: request.input.max_files,
-            }
-          : {
-              maxDepth: request.input.max_depth,
-              maxVolumes: UEFI_FIRMWARE_LIMITS.defaultMaxVolumes,
-              maxFiles: UEFI_FIRMWARE_LIMITS.defaultMaxFiles,
-            },
+        {
+          maxDepth: request.input.max_depth,
+          maxVolumes: request.input.max_volumes,
+          maxFiles: request.input.max_files,
+        },
         ({ payload, format, maxOutputBytes }) =>
           this.#decodeStream(
             request.operation,
