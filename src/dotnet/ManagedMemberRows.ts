@@ -38,6 +38,7 @@ import {
   metadataRowCursor,
   decodeMetadataCodedIndex,
   readMetadataBlob,
+  metadataBlobOffset,
   readMetadataString,
 } from "../domain/managed/managedMetadataHeaps.js";
 import {
@@ -112,12 +113,7 @@ export const parseFields = (
     readManagedValue(() => {
       const { token, rowOffset, flags, nameIndex, signatureIndex } =
         readFieldDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       const owned = owner ?? 0;
       core.set(token, {
         token,
@@ -126,12 +122,7 @@ export const parseFields = (
         kind: "field",
       });
       if (!isSelected(selected, declared)) return;
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -189,13 +180,11 @@ export const parseExportedTypes = (
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        layout.strings.size,
       );
       const namespace = readMetadataString(
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        layout.strings.size,
       );
       const implementationOffset = cursor.offset;
       const implementationRaw = cursor.readIndex(
@@ -267,18 +256,8 @@ export const parseMemberRefs = (
     readManagedValue(() => {
       const { token, rowOffset, parentRaw, parent, nameIndex, signatureIndex } =
         readMemberReferenceRowFacts(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       if (parent.kind !== "valid")
         issues.push({
           code: "invalid-row",
@@ -428,12 +407,7 @@ export const parseMethods = ({
         signatureIndex,
         implementation,
       } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       const member = {
         token,
         name,
@@ -443,12 +417,7 @@ export const parseMethods = ({
       core.set(token, member);
       if (!inPage) return;
       if (!isSelected(selected, declared)) return;
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -550,12 +519,7 @@ export const readReferencedMemberCores = (
         table === 4
           ? readFieldDefinitionRow(bytes, layout, row)
           : readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       core.set(token, {
         token,
         name,
@@ -703,10 +667,7 @@ const budgetedSignature = (
   },
 ): ReturnType<typeof metadataSignature> => {
   const budget = managedDecodeBudget(layout);
-  budget.admitTransient(
-    bytes.length * 256,
-    layout.blob?.offset ?? layout.rootOffset,
-  );
+  budget.admitTransient(bytes.length * 256, metadataBlobOffset(layout));
   try {
     return admitManagedProjection(
       metadataSignature(bytes, {
@@ -717,7 +678,7 @@ const budgetedSignature = (
           if (name !== null)
             budget.admitTransient(
               (name.length * 6 + 2) * copies,
-              layout.blob?.offset ?? layout.rootOffset,
+              metadataBlobOffset(layout),
             );
           return name;
         },

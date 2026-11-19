@@ -723,7 +723,11 @@ directly when their number facts need no further classification; explicitly
 identified JSON sources can have scalar roots. Unidentified primitive text keeps
 its existing conversion route, so OpenStep `123` remains a string. OpenStep,
 unsupported XML encodings such as UTF-32 and declared legacy encodings, and JSON
-numbers requiring XML type facts retain the `plutil` route. Invalid UTF-8 and
+numbers requiring XML type facts retain the `plutil` route. So does XML that
+REA's XML reader rejects as not well-formed, which CoreFoundation can still
+accept: a limitation names REA's reason, and a document `plutil` also rejects
+stays refused with its diagnostic. Plist structure errors in well-formed XML
+remain refusals without conversion. Invalid UTF-8 and
 encoding-declaration mismatches remain explicit failures. Direct-source
 provenance records `file` without claiming conversion; conversion limitations
 and invocations appear only when conversion actually ran.

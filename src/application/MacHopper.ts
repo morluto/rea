@@ -36,7 +36,7 @@ import {
   macHopperReleaseMinimumSystemVersion,
 } from "./HopperReleaseFeed.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
-import { decodeInfoPlistValue } from "./AppBundleExecutable.js";
+import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import {
   macosMajorVersion,
   macosVersionMeetsMinimum,

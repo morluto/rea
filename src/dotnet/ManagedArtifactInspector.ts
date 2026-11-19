@@ -17,6 +17,7 @@ import {
 } from "../domain/managed/managedPeReader.js";
 import {
   managedTableRowCounts,
+  unresolvedModuleMetadata,
   readManagedMetadataInventory,
   type ManagedMetadataInventory,
   readManagedResourceDirectory,
@@ -439,6 +440,7 @@ export const inspectManagedArtifactBytes = (
             version: metadata.version,
             stream_names: metadata.streamNames,
             table_row_counts: managedTableRowCounts(metadata),
+            ...unresolvedModuleMetadata(inventory),
           },
           module: inventory.module,
           assembly: inventory.assembly,

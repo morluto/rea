@@ -8,7 +8,6 @@ import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js"
 import {
   parseRecoveredJavaScript,
   JavaScriptLoaderSyntaxError,
-  parserPluginsForPath,
   javaScriptSourceLoaderCondition,
   type JavaScriptPackageType,
 } from "./javascript/javascriptSourceParser.js";
@@ -257,9 +256,6 @@ const parseWithBabel = (
   reasons: readonly Pick<ReferenceSourceParseFailure, "parser" | "reason">[];
   moduleOnlyErrors: readonly string[];
 } => {
-  // The shared parser owns filename precedence and observed package context.
-  const plugins = parserPluginsForPath(path);
-
   try {
     const { file: ast, moduleOnlyErrors } = parseRecoveredJavaScript(
       source,
@@ -268,7 +264,6 @@ const parseWithBabel = (
         allowImportExportEverywhere: false,
         allowReturnOutsideFunction: true,
         allowUndeclaredExports: true,
-        plugins,
       },
       packageType,
     );

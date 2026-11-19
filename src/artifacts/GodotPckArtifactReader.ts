@@ -4,7 +4,11 @@ import {
   DEFAULT_GODOT_READER_LIMITS,
   type GodotReaderLimits,
 } from "../domain/artifactReaderLimits.js";
-import { readGodotPckHeaderFacts } from "../domain/godotPckFormat.js";
+import {
+  godotPckDataStartsAfterHeader,
+  godotPckHeaderEnd,
+  readGodotPckHeaderFacts,
+} from "../domain/godotPckFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
@@ -127,6 +131,17 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
         throw metadataLimit(this.limits, retainedBytes);
       entries.push(metadata);
     }
+    const directoryEnd = cursor.offset;
+    for (const entry of entries) {
+      if (
+        entry.declaredSize > 0 &&
+        entry.byteOffset < directoryEnd &&
+        entry.byteOffset + entry.declaredSize > header.directory_start
+      )
+        throw formatFailure(
+          `member overlaps the directory: ${entry.sourcePath}`,
+        );
+    }
     await this.verifyCarrier(signal);
     return { entries, coverage: { status: "complete", limitations: [] } };
   }
@@ -166,6 +181,17 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
       header.pack_end,
       sourcePath,
     );
+    if (start < header.pack_start)
+      throw formatFailure(`member starts before the pack: ${sourcePath}`);
+    if (
+      size > 0n &&
+      !godotPckDataStartsAfterHeader(
+        header.pack_start,
+        header.format_version,
+        start,
+      )
+    )
+      throw formatFailure(`member overlaps the pack header: ${sourcePath}`);
     if (size > BigInt(header.pack_end - start))
       throw formatFailure(`member exceeds the pack: ${sourcePath}`);
     return {
@@ -241,7 +267,9 @@ const readGodotPckHeader = async (
   const directory =
     version >= 3
       ? toSafeOffset(fixedReader.word(32, 64), start, end, "directory")
-      : start + (version === 1 ? 84 : 96);
+      : godotPckHeaderEnd(start, version);
+  if (!godotPckDataStartsAfterHeader(start, version, directory))
+    throw formatFailure("directory overlaps the pack header");
   const count = new BinaryReader(
     await readArtifactFileBytes(handle, directory, 4, end, signal),
     true,
@@ -306,6 +334,9 @@ class PckCursor {
       readonly limits: GodotReaderLimits;
     },
   ) {}
+  get offset(): number {
+    return this.position;
+  }
   requireBytes(length: number): void {
     if (length > this.end - this.position)
       throw formatFailure("directory entry exceeds the pack");

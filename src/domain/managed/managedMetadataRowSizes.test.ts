@@ -132,7 +132,7 @@ describe.each(memberLists)("$name metadata layout", (members) => {
       const offset = metadataRowOffset(layout, members.target, 1);
       expect(offset).toBe(targetOffset);
       const name = bytes.readUInt16LE(offset + members.nameOffset);
-      expect(readMetadataString(bytes, layout, name, 32)).toBe("subject");
+      expect(readMetadataString(bytes, layout, name)).toBe("subject");
     },
   );
 });

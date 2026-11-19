@@ -6,6 +6,10 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  CPU_ARM64,
+  universalMacho,
+} from "../../../tests/fixtures/universalMacho.js";
 import { probeBunStandaloneGraph } from "./BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "./BunModuleGraphMembers.js";
 import {
@@ -289,6 +293,43 @@ it.each([
   },
 );
 
+it.each(["thin", "universal"] as const)(
+  "requires a Bun segment to fit its %s Mach-O image",
+  async (format) => {
+    const payload = bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("body") }],
+      }),
+    );
+    const wrap = (thin: Buffer) =>
+      format === "thin"
+        ? thin
+        : universalMacho([{ bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0 }])
+            .bytes;
+    const thin = machoBunSection(payload);
+    const control = await probe(wrap(thin));
+    expect(control.result).toMatchObject({
+      status: "present",
+      claim: { carrier: "mach-o-section" },
+    });
+    const malformed = Buffer.from(thin);
+    const segment = 32;
+    const size = BigInt(payload.length) + 1n;
+    malformed.writeBigUInt64LE(size, segment + 32);
+    malformed.writeBigUInt64LE(size, segment + 48);
+    // The universal fixture pads after the slice. The excess byte is outside
+    // the slice even when the outer file has bytes at that offset.
+    const { result } = await probe(wrap(malformed));
+    expect(result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("segment range is outside the file"),
+      },
+    });
+  },
+);
+
 it("probes a section graph without reading its payload data", async () => {
   const contents = Buffer.alloc(1024 * 1024, 0x61);
   const bytes = machoBunSection(
@@ -340,20 +381,44 @@ it.each([
   },
 );
 
+it("requires PE raw section padding to fit before reading a Bun graph", async () => {
+  const payload = bunPrefixedPayload(
+    bunModuleGraphPayload({ modules: [{ name: "main.js" }] }),
+  );
+  const valid = peBunSection(payload);
+  expect((await probe(valid)).result).toMatchObject({
+    status: "present",
+    claim: { carrier: "pe-section" },
+  });
+  // Only file-alignment padding is missing. The complete virtual section and
+  // the rest of the PE declarations are byte-identical to the valid control.
+  expect((await probe(valid.subarray(0, -1))).result).toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("past the end of the file"),
+    },
+  });
+});
+
 it("reads a shared long ELF section name once without materializing its string table", async () => {
   const shnum = 16_383;
   const stringOffset = 64;
   const strings = Buffer.alloc(1024 * 1024, 0x61);
+  strings[0] = 0;
+  strings[strings.length - 1] = 0;
   const tableOffset = stringOffset + strings.length;
   const bytes = Buffer.alloc(tableOffset + shnum * 64);
   elfPrefix().copy(bytes, 0);
   bytes.writeBigUInt64LE(BigInt(tableOffset), 40);
   bytes.writeUInt16LE(64, 58);
   bytes.writeUInt16LE(shnum, 60);
-  bytes.writeUInt16LE(0, 62);
+  bytes.writeUInt16LE(1, 62);
   strings.copy(bytes, stringOffset);
-  for (let index = 0; index < shnum; index += 1) {
+  for (let index = 1; index < shnum; index += 1) {
     const header = tableOffset + index * 64;
+    bytes.writeUInt32LE(1, header);
+    bytes.writeUInt32LE(index === 1 ? 3 : 1, header + 4);
     bytes.writeBigUInt64LE(BigInt(stringOffset), header + 24);
     bytes.writeBigUInt64LE(BigInt(strings.length), header + 32);
   }
@@ -478,4 +543,26 @@ it.each([
     status: "present",
     failure: { reason: "format" },
   });
+});
+
+it("preserves Bun metadata UTF-8 text and keeps undecodable bytes as hex", async () => {
+  const result = await locate(
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: [
+          { name: "\uFEFF資料𐐷.js" },
+          { name: Buffer.from([0xc3, 0x28]) },
+        ],
+        compileExecArgv: Buffer.from([0xff]),
+      }),
+    ),
+  );
+  if (result.status !== "present" || !result.graph)
+    throw new Error("missing graph");
+  const decoded = await decodeBunModuleGraph(result.graph);
+  expect(decoded.modules.map(({ nameText }) => nameText)).toEqual([
+    { text: "\uFEFF資料𐐷.js", hex: null },
+    { text: null, hex: "c328" },
+  ]);
+  expect(decoded.compileExecArgv).toEqual({ text: null, hex: "ff" });
 });

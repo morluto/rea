@@ -16,6 +16,7 @@ import {
 } from "../domain/managed/managedMetadataHeaps.js";
 import {
   managedFailure,
+  ManagedHeapAmbiguityFailure,
   ManagedReaderFailure,
 } from "../domain/managed/managedReaderFailure.js";
 import {
@@ -161,12 +162,7 @@ export const createManagedConstantReader = (
           "Constant row padding must be zero.",
           offset,
         );
-      const value = readMetadataBlob(
-        bytes,
-        layout,
-        first.blob_index,
-        layout.blob?.size ?? 0,
-      );
+      const value = readMetadataBlob(bytes, layout, first.blob_index);
       budget.admitTransient(value.length * 8 + 1024, offset);
       result.raw_hex = value.toString("hex");
       result.element_type = managedConstantType(first.type_code);
@@ -183,7 +179,8 @@ export const createManagedConstantReader = (
         cause.issue.code === "resource-limit"
       )
         throw cause;
-      issues.push(cause.issue);
+      if (!(cause instanceof ManagedHeapAmbiguityFailure))
+        issues.push(cause.issue);
       result.limitation = cause.issue.detail;
     } finally {
       budget.releaseTransient();

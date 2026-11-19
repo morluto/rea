@@ -105,17 +105,17 @@ export const run = async (
   // default `off` profile; `compact` composes its bounded presentation.
   const recordedOutputCatalog =
     config.value.mcpOutputSchemaProfile !== "compact";
-  // The recorded catalog holds the complete inventory and its full-catalog
-  // identity, so only an unscoped registration can be served from it. A
-  // scoped one composes the canonical scope itself instead of advertising
-  // tools whose identity the runtime cannot verify.
-  const scopedToolFamilies = environment.REA_MCP_TOOL_FAMILIES !== undefined;
+  // Progressive discovery needs scoped identity before the first analysis.
+  // Ordinary tool listings can defer that identity to the canonical runtime.
+  const scopedProgressiveCatalog =
+    config.value.mcpToolFamilies !== undefined &&
+    config.value.mcpToolCatalogProfile === "hot-cold";
   if (
     RECORDED_MCP_CATALOG_SHA256 !== undefined &&
     dependencies.transport !== "http" &&
     config.value.hopperTargetPath === undefined &&
     recordedOutputCatalog &&
-    !scopedToolFamilies &&
+    !scopedProgressiveCatalog &&
     dependencies.createServer === undefined &&
     dependencies.loadOptionalProviders === undefined
   ) {

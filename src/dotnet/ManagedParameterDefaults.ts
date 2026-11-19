@@ -254,12 +254,7 @@ export const createManagedParameterDefaultReader = (
             token: metadataToken(8, row),
             row_offset: param.offset,
             sequence: param.sequence,
-            name: readMetadataString(
-              bytes,
-              layout,
-              param.nameIndex,
-              layout.strings.size,
-            ),
+            name: readMetadataString(bytes, layout, param.nameIndex),
             flags: param.flags,
             constant: declared,
           };

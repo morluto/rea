@@ -11,7 +11,7 @@ import {
   type ManagedMetadataLayout,
 } from "./managedMetadataLayout.js";
 
-describe("managed metadata heaps", () => {
+describe("managed metadata heap entries", () => {
   it("admits a metadata root that omits its empty #Blob stream", () => {
     const bytes = Buffer.alloc(108);
     bytes.writeUInt32LE(0x424a_5342, 0);
@@ -67,11 +67,11 @@ describe("managed metadata heaps", () => {
 
     expect(
       Buffer.compare(
-        readMetadataBlob(Buffer.alloc(0), layout, 0, 0),
+        readMetadataBlob(Buffer.alloc(0), layout, 0),
         Buffer.alloc(0),
       ),
     ).toBe(0);
-    expect(() => readMetadataBlob(Buffer.alloc(0), layout, 1, 0)).toThrowError(
+    expect(() => readMetadataBlob(Buffer.alloc(0), layout, 1)).toThrowError(
       expect.objectContaining({
         issue: expect.objectContaining({
           code: "missing-stream",
@@ -90,9 +90,21 @@ describe("managed metadata heaps", () => {
       size: bytes.length,
       version: "",
       streamNames: ["#Blob"],
-      strings: { name: "#Strings", offset: 0, size: 0 },
-      guid: { name: "#GUID", offset: 0, size: 0 },
-      blob: { name: "#Blob", offset: 0, size: bytes.length },
+      strings: {
+        kind: "available",
+        stream: { name: "#Strings", offset: 0, size: 0 },
+        issue: null,
+      },
+      guid: {
+        kind: "available",
+        stream: { name: "#GUID", offset: 0, size: 0 },
+        issue: null,
+      },
+      blob: {
+        kind: "available",
+        stream: { name: "#Blob", offset: 0, size: bytes.length },
+        issue: null,
+      },
       userStrings: null,
       tables: new Map(),
       rowCounts: [],
@@ -104,9 +116,28 @@ describe("managed metadata heaps", () => {
       codedIndexSize: () => 2,
     };
 
-    expect(
-      readMetadataBlob(bytes, layout, 1, layout.blob?.size ?? 0),
-    ).toHaveLength(itemLength);
+    expect(readMetadataBlob(bytes, layout, 1)).toHaveLength(itemLength);
+  });
+
+  it("requires a compressed blob length prefix to fit inside #Blob", () => {
+    const bytes = Buffer.from([0, 0x80, 0, 0]);
+    const layout = {
+      blob: {
+        kind: "available",
+        stream: { name: "#Blob", offset: 0, size: 2 },
+        issue: null,
+      },
+    } as unknown as ManagedMetadataLayout;
+    expect(() => readMetadataBlob(bytes, layout, 1)).toThrow(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "invalid-blob",
+          scope: "metadata.#Blob",
+          detail: "Metadata blob length prefix leaves the #Blob byte range",
+          offset: 1,
+        }),
+      }),
+    );
   });
 
   it.each([[[0x80]], [[0xc0, 0x00, 0x00]]])(
@@ -115,7 +146,11 @@ describe("managed metadata heaps", () => {
       // #US ends at the end of the artifact, inside a multi-byte length prefix.
       const bytes = Buffer.from([0x00, ...prefix]);
       const layout = {
-        userStrings: { name: "#US", offset: 0, size: bytes.length },
+        userStrings: {
+          kind: "available",
+          stream: { name: "#US", offset: 0, size: bytes.length },
+          issue: null,
+        },
       } as unknown as ManagedMetadataLayout;
 
       expect(() =>
@@ -130,36 +165,42 @@ describe("managed metadata heaps", () => {
       );
     },
   );
+});
 
-  it("does not re-charge the decode budget on metadata string cache hits", () => {
-    const strLen = 10 * 1024 * 1024;
-    const strBytes = Buffer.alloc(strLen + 2, 0x61);
-    strBytes[0] = 0x00;
-    strBytes[strLen + 1] = 0x00;
-    const layout = {
-      rootOffset: 0,
-      size: strBytes.length,
-      version: "",
-      streamNames: ["#Strings"],
-      strings: { name: "#Strings", offset: 0, size: strBytes.length },
-      guid: { name: "#GUID", offset: 0, size: 0 },
-      blob: { name: "#Blob", offset: 0, size: 0 },
-      userStrings: null,
-      tables: new Map(),
-      rowCounts: [],
-      stringIndexSize: 2,
-      guidIndexSize: 2,
-      blobIndexSize: 2,
-      table: () => undefined,
-      tableIndexSize: () => 2,
-      codedIndexSize: () => 2,
-    } as unknown as ManagedMetadataLayout;
+it("does not re-charge the decode budget on metadata string cache hits", () => {
+  const strLen = 10 * 1024 * 1024;
+  const strBytes = Buffer.alloc(strLen + 2, 0x61);
+  strBytes[0] = 0x00;
+  strBytes[strLen + 1] = 0x00;
+  const layout = {
+    rootOffset: 0,
+    size: strBytes.length,
+    version: "",
+    streamNames: ["#Strings"],
+    strings: {
+      kind: "available",
+      stream: { name: "#Strings", offset: 0, size: strBytes.length },
+      issue: null,
+    },
+    guid: {
+      kind: "available",
+      stream: { name: "#GUID", offset: 0, size: 0 },
+      issue: null,
+    },
+    blob: null,
+    userStrings: null,
+    tables: new Map(),
+    rowCounts: [],
+    stringIndexSize: 2,
+    guidIndexSize: 2,
+    blobIndexSize: 2,
+    table: () => undefined,
+    tableIndexSize: () => 2,
+    codedIndexSize: () => 2,
+  } as unknown as ManagedMetadataLayout;
 
-    const first = readMetadataString(strBytes, layout, 1, layout.strings.size);
-    expect(first).toHaveLength(strLen);
+  const first = readMetadataString(strBytes, layout, 1);
+  expect(first).toHaveLength(strLen);
 
-    expect(() =>
-      readMetadataString(strBytes, layout, 1, layout.strings.size),
-    ).not.toThrow();
-  });
+  expect(() => readMetadataString(strBytes, layout, 1)).not.toThrow();
 });

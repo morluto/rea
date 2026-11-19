@@ -278,7 +278,7 @@ export const inspectManagedMembersBytes = (
       target,
       bytes.length,
       layout,
-      identity.module,
+      identity,
       issues,
     );
     const unnamedTypes = types.reduce(

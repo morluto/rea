@@ -122,7 +122,7 @@ export const requestedVersionKind = (
   if (format === "gradle-module") {
     if (GRADLE_RANGE.test(value)) return "range";
     if (value.endsWith("+") || value.startsWith("latest.")) return "dynamic";
-  } else if (/[[(]/u.test(value)) return "range";
+  } else if (value.startsWith("[") || value.startsWith("(")) return "range";
   return "literal";
 };
 
