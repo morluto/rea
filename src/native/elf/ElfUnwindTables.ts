@@ -5,7 +5,10 @@ import {
   keyedBy,
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
-import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../../resources/index.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
@@ -27,6 +30,7 @@ import { buildIntervalIndex } from "./ElfIntervalIndex.js";
 import {
   ELF_PT_GNU_EH_FRAME,
   readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
   type ElfProgramDeclaration,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
@@ -242,23 +246,56 @@ const placeSection = (
 
 export const ELF_UNWIND_FORMAT = "elf-unwind-ranges";
 export const ELF_UNWIND_RECORD_LIMIT = "max_ranges";
+const OPERATION = "inspect_elf_unwind_ranges";
 
 /** Read .eh_frame/.eh_frame_hdr function ranges. Truncation stays incomplete. */
 export const parseElfUnwindRanges = (
   bytes: Buffer,
-  artifact: {
-    readonly path: string;
-    readonly sha256: string;
-    readonly bytes: number;
-  },
+  artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
   signal?: AbortSignal,
 ): ElfUnwindRanges => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(
+  return elfUnwindRangesFromDirectory(
     bytes,
-    "inspect_elf_unwind_ranges",
+    artifact,
+    input,
+    readElfDirectoryFromBuffer(bytes, OPERATION),
+    signal,
   );
+};
+
+/** Read the same unwind facts while allowing compressed section names to yield. */
+export const parseElfUnwindRangesCooperative = async (
+  bytes: Buffer,
+  artifact: ElfUnwindRanges["artifact"],
+  input: InspectElfUnwindRangesInput,
+  signal?: AbortSignal,
+): Promise<ElfUnwindRanges> => {
+  if (signal === undefined) return parseElfUnwindRanges(bytes, artifact, input);
+  assertArtifactReadActive(signal);
+  const directory = await readElfDirectoryFromBufferCooperative(
+    bytes,
+    () => yieldArtifactRead(signal),
+    OPERATION,
+  );
+  return elfUnwindRangesFromDirectory(
+    bytes,
+    artifact,
+    input,
+    directory,
+    signal,
+  );
+};
+
+const elfUnwindRangesFromDirectory = (
+  bytes: Buffer,
+  artifact: ElfUnwindRanges["artifact"],
+  input: InspectElfUnwindRangesInput,
+  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  signal?: AbortSignal,
+): ElfUnwindRanges => {
+  assertArtifactReadActive(signal);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const little = directory.little;
   const bits = directory.bits;

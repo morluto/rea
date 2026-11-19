@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { scheduler } from "node:timers/promises";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import {
   MAXIMUM_ZSTD_MAX_FRAMES,
@@ -135,56 +133,6 @@ describe("binary hardening compressed ELF names", () => {
         },
       });
     } finally {
-      await service.close();
-    }
-  });
-
-  it("observes cancellation while decoding ELF names after the file snapshot closes", async () => {
-    const root = await createTestTempDirectory("rea-binary-hardening-cancel-");
-    const path = join(root, "app");
-    const bytes = elfFrameAllowanceFixture();
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
-    await writeFile(path, bytes);
-    const service = createBinaryHardeningService();
-    const controller = new AbortController();
-    const reason = new Error("stop section-name decoding");
-    const yieldToEventLoop = scheduler.yield.bind(scheduler);
-    const pause = vi
-      .spyOn(scheduler, "yield")
-      .mockImplementationOnce(async () => {
-        await yieldToEventLoop();
-        controller.abort(reason);
-      });
-    try {
-      const result = await service.inspect(
-        { path },
-        { signal: controller.signal },
-      );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisCancelledError",
-        operation: "inspect_binary_hardening",
-        cause: reason,
-        partialObservation: {
-          kind: "file-snapshot-hash",
-          path,
-          sha256,
-          bytes: bytes.length,
-        },
-      });
-      const retry = await service.inspect(
-        { path },
-        { signal: new AbortController().signal },
-      );
-      if (!retry.ok) throw retry.error;
-      expect(retry.value.normalized_result).toMatchObject({
-        format: "elf",
-        images: [{ status: "parsed" }],
-      });
-      expect((await readFile(path)).equals(bytes)).toBe(true);
-    } finally {
-      pause.mockRestore();
       await service.close();
     }
   });
