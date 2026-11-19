@@ -17,7 +17,10 @@ import {
   machoSectionBacking,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentCommand,
+  readMachoSegmentHeader,
+} from "../../domain/apple/machoSegmentHeader.js";
 import type { FileHandle } from "node:fs/promises";
 
 import {
@@ -494,7 +497,9 @@ const machOClaims = async (
 ): Promise<readonly SectionClaim[]> => {
   const { handle, fileSize, signal, limits } = source;
   if (imageOffset < 0 || imageOffset >= fileSize) return [];
-  const header = await tryRead(handle, imageOffset, 12, fileSize, signal);
+  const imageSize = Math.min(fileSize - imageOffset, imageLimit);
+  const imageEnd = imageOffset + imageSize;
+  const header = await tryRead(handle, imageOffset, 12, imageEnd, signal);
   if (header === null || header.length < 4) return [];
   const facts = readMachoHeaderPrefixFacts(header);
   if (facts.identity === null)
@@ -502,12 +507,12 @@ const machOClaims = async (
   const full = await tryRead(
     handle,
     imageOffset,
-    Math.min(32, imageLimit),
-    fileSize,
+    Math.min(32, imageSize),
+    imageEnd,
     signal,
   );
   if (full === null) return [];
-  const parsed = readMachoLoadCommandTableHeader(full, imageLimit);
+  const parsed = readMachoLoadCommandTableHeader(full, imageSize);
   if (!parsed.ok || parsed.value === null) return [];
   const table = parsed.value;
   const {
@@ -526,7 +531,7 @@ const machOClaims = async (
     handle,
     imageOffset + headerBytes,
     sizeofcmds,
-    Math.min(fileSize, imageOffset + imageLimit),
+    imageEnd,
     signal,
   );
   if (commands === null || commands.length !== sizeofcmds) return [];
@@ -547,7 +552,7 @@ const machOClaims = async (
         littleEndian,
         cmd === LC.SEGMENT_64,
         imageOffset,
-        Math.min(fileSize, imageOffset + imageLimit),
+        imageSize,
       ))
         claims.push(claim);
   }
@@ -567,7 +572,7 @@ const segmentClaims = (
   littleEndian: boolean,
   wide: boolean,
   imageOffset: number,
-  fileSize: number,
+  imageSize: number,
 ): readonly SectionClaim[] => {
   const parsedSegment = readMachoSegmentHeader(command, wide, littleEndian);
   if (!parsedSegment.ok) return [];
@@ -575,6 +580,12 @@ const segmentClaims = (
   const { headerSize, sectionCount } = segment;
   const sectionBytes = wide ? SECTION_64_BYTES : SECTION_32_BYTES;
   if (headerSize + sectionCount * sectionBytes > command.length) return [];
+  const admission = admitMachoSegmentCommand(
+    segment,
+    command.length,
+    wide ? 64 : 32,
+    imageSize,
+  );
   const claims: SectionClaim[] = [];
   for (let index = 0; index < sectionCount; index += 1) {
     const start = headerSize + index * sectionBytes;
@@ -599,14 +610,15 @@ const segmentClaims = (
       });
       continue;
     }
-    claims.push(
-      windowFor(
-        "mach-o-section",
-        imageOffset + section.offset,
-        Number(section.size),
-        fileSize,
-      ),
+    const window = windowFor(
+      "mach-o-section",
+      imageOffset + section.offset,
+      Number(section.size),
+      imageOffset + imageSize,
     );
+    // A named section with a missing tail already carries its own failure.
+    if (admission.ok || window.truncated) claims.push(window);
+    else claims.push({ failure: bunFormatFailure(admission.error.message) });
   }
   return claims;
 };

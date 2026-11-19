@@ -6,6 +6,10 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  CPU_ARM64,
+  universalMacho,
+} from "../../../tests/fixtures/universalMacho.js";
 import { probeBunStandaloneGraph } from "./BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "./BunModuleGraphMembers.js";
 import {
@@ -285,6 +289,43 @@ it.each([
     expect(await locate(bytes)).toMatchObject({
       status: "present",
       failure: { reason: "format", message: expect.stringContaining(reason) },
+    });
+  },
+);
+
+it.each(["thin", "universal"] as const)(
+  "requires a Bun segment to fit its %s Mach-O image",
+  async (format) => {
+    const payload = bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("body") }],
+      }),
+    );
+    const wrap = (thin: Buffer) =>
+      format === "thin"
+        ? thin
+        : universalMacho([{ bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0 }])
+            .bytes;
+    const thin = machoBunSection(payload);
+    const control = await probe(wrap(thin));
+    expect(control.result).toMatchObject({
+      status: "present",
+      claim: { carrier: "mach-o-section" },
+    });
+    const malformed = Buffer.from(thin);
+    const segment = 32;
+    const size = BigInt(payload.length) + 1n;
+    malformed.writeBigUInt64LE(size, segment + 32);
+    malformed.writeBigUInt64LE(size, segment + 48);
+    // The universal fixture pads after the slice. The excess byte is outside
+    // the slice even when the outer file has bytes at that offset.
+    const { result } = await probe(wrap(malformed));
+    expect(result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("segment range is outside the file"),
+      },
     });
   },
 );
