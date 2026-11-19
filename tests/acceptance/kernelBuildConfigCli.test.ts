@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -36,7 +39,30 @@ cliTest(
       matched_count: 1,
       entries: [{ name: "CONFIG_SECURITY_SELINUX", kind: "y", value: "y" }],
     });
-    expect(evidence.subject?.format).toBe("elf");
+    expect(fileIdentity(evidence.subject).format).toBe("elf");
+  },
+);
+
+cliTest(
+  "keeps the compiler group separate from an empty builder group",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-banner-cli-");
+    const path = join(root, "banner.bin");
+    const text = "Linux version 6.1.0 () (gcc 12.2.0) #1 SMP";
+    await writeFile(path, `${text}\0`);
+    const result = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result.banner).toMatchObject({
+      status: "present",
+      text,
+      version: "6.1.0",
+      builder: null,
+      compiler: "gcc 12.2.0",
+      location: { space: "file", offset: 0, bytes: text.length },
+    });
   },
 );
 
@@ -85,6 +111,44 @@ cliTest(
       payload: { codec: "xz", status: "unsupported" },
       next_probe: { operation: "external_decompression" },
       config: { status: "unsupported" },
+    });
+  },
+);
+
+cliTest(
+  "retains Kconfig-produced Unicode separators inside quoted values",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kconfig-unicode-cli-");
+    const path = join(root, "vmlinux");
+    // Linux Kconfig conf emits these Unicode characters literally, escaping
+    // only the quote and backslash; they do not terminate a .config line.
+    const value = 'oracle"quote\\slash\u2028line\u2029paragraph';
+    const text = `CONFIG_LOCALVERSION=${JSON.stringify(value)}\nCONFIG_OK=y\n`;
+    const config = Buffer.from(text, "utf8");
+    await writeFile(
+      path,
+      Buffer.concat([
+        kernelBuildConfigFixture().subarray(0, 64),
+        Buffer.from("IKCFG_ST"),
+        gzipSync(config),
+        Buffer.from("IKCFG_ED"),
+      ]),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result.config).toMatchObject({
+      status: "present",
+      reason: null,
+      sha256: createHash("sha256").update(config).digest("hex"),
+      option_count: 2,
+      matched_count: 2,
+      entries: [
+        { name: "CONFIG_LOCALVERSION", kind: "string", value },
+        { name: "CONFIG_OK", kind: "y", value: "y" },
+      ],
     });
   },
 );

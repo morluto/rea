@@ -1,5 +1,4 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,9 +7,9 @@ import { expect, it, vi } from "vitest";
 import * as hexRecordDecoding from "../domain/firmware/hexRecords.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   INTEL_HEX_I32_GAP,
@@ -19,6 +18,7 @@ import {
 } from "../domain/firmware/hexRecords.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const writeImage = async (name: string, text: string): Promise<string> => {
   const directory = await createTestTempDirectory("rea-hex-records-");
@@ -26,6 +26,29 @@ const writeImage = async (name: string, text: string): Promise<string> => {
   await writeFile(path, text);
   return path;
 };
+
+it.each(["close", "cancel"] as const)(
+  "does not complete a decoded-region inventory after %s while paused",
+  async (interruption) => {
+    const path = await writeImage(
+      "image.hex",
+      `${intelHexRecord(0, 0, [1])}\n:00000001FF\n`,
+    );
+    const reader = new HexRecordArtifactReader(path, "intel-hex");
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("reports unknown coverage and termination facts as limitations", async () => {
   const truncated = await scanCanonicalArtifactInventory(
@@ -66,7 +89,13 @@ it("fails closed on over-limit records", async () => {
     scanCanonicalArtifactInventory(
       await writeImage("runs.hex", `${runs.join("\n")}\n`),
     ),
-  ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+  ).rejects.toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+    message: expect.stringContaining(
+      "more than 65536 address-discontiguous record runs",
+    ),
+  });
 });
 
 it("leaves an invalid first record to plain file classification", async () => {

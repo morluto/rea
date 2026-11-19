@@ -44,7 +44,6 @@ import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
-export { shellQuote } from "./shellQuote.js";
 
 /** agentenv-framework release targeted by the exported class. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
@@ -463,12 +462,14 @@ const docText = (value: string): string => value.replace(/["\\]/gu, "'");
  * folder, where an open or save dialog would show build files. That
  * directory, arguments that are or start with a path under the captured home,
  * and `<option>=<path>` values that do, are respelled under the computer
- * user's `$HOME`.
+ * user's `$HOME`. An explicit env working directory inside that home must
+ * exist even when it has no seed files.
  */
 export const launchCommand = (
   argv: readonly string[],
   capturedHome: string,
   workingDirectory: string,
+  envWorkingDirectory?: string,
 ): readonly string[] => {
   const homeUrl = (value: string): string | undefined => {
     const parsed = capturedFileUrl(value);
@@ -515,8 +516,17 @@ export const launchCommand = (
   const respelled = argv.map(respell);
   const command = `exec ${argv.map((argument, index) => respelled[index] ?? shellQuote(argument)).join(" ")}`;
   const directory = underHome(workingDirectory) ?? shellQuote(workingDirectory);
-  // A missing working directory must not stop the boot.
-  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${command}`];
+  const requiredDirectory =
+    envWorkingDirectory !== undefined &&
+    isWithinAny(posix.normalize(envWorkingDirectory), [capturedHome])
+      ? underHome(envWorkingDirectory)
+      : undefined;
+  const prepare =
+    requiredDirectory === undefined
+      ? ""
+      : `mkdir -p -- ${requiredDirectory} && `;
+  // The desktop entry's initial directory is best-effort.
+  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${prepare}${command}`];
 };
 
 /** A Python string literal; JSON escapes are valid Python escapes. */
@@ -607,7 +617,7 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
   ].join("\n");
 
 /** How the class and README say where the seed came from: made for the task, or the user's own data, kept local. */
-export const seedWording = ({
+const seedWording = ({
   name,
   seedCheckpoint,
   syntheticSeed,
@@ -678,7 +688,7 @@ window and dialogs; the result is read from those files.
 }`;
 
 /** The start of the limitation of a launch that opens no document; its reason follows. */
-export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
+const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
 
 /** The limitation of a launch that opens no document; none when it opens one. */
 export const launchDocumentLimitation = (
@@ -689,7 +699,7 @@ export const launchDocumentLimitation = (
     : undefined;
 
 /** The README line on what the launch opens; none when the captured command names its own file. */
-export const launchDocumentNote = ({
+const launchDocumentNote = ({
   opens,
 }: Pick<DesktopAppExportPlan, "opens">): string =>
   opens.kind === "seed"

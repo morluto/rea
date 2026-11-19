@@ -6,14 +6,14 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { desktopOperationFailure } from "../application/desktop/DesktopCaptureRefusals.js";
 
 const fixture = async () => {
@@ -96,6 +96,41 @@ describe.skipIf(process.platform === "win32")(
         await realpath(join(physical, "app")),
       );
     });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "desktop entry Unicode values",
+  () => {
+    it.each(["\u2028", "\u2029"])(
+      "retains Unicode separator %j in desktop launch arguments",
+      async (separator) => {
+        const { home, bin, environment } = await fixture();
+        const desktopEntry = join(home, "unicode.desktop");
+        await writeFile(
+          desktopEntry,
+          `[Desktop Entry]\nType=Application\nName=Notes${separator}Editor\nExec=notes-app --title "A${separator}B" %F\n`,
+        );
+        const inspected = await inspectLinuxApplication({
+          desktopEntry,
+          executable: undefined,
+          arguments: ["today.md"],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+        expect(inspected).toMatchObject({
+          ok: true,
+          value: {
+            inventory: {
+              argv: ["notes-app", "--title", `A${separator}B`, "today.md"],
+              desktop_entry: { name: `Notes${separator}Editor` },
+              executable: { path: join(bin, "notes-app") },
+            },
+          },
+        });
+      },
+    );
   },
 );
 
@@ -612,7 +647,10 @@ const inventoryOf = async (
   {
     home,
     environment,
-  }: Pick<Awaited<ReturnType<typeof fixture>>, "home" | "environment">,
+  }: {
+    home: string;
+    environment: Readonly<Record<string, string | undefined>>;
+  },
 ) => {
   const inspected = await inspectLinuxApplication({
     desktopEntry,
@@ -627,30 +665,98 @@ const inventoryOf = async (
 };
 
 describe.skipIf(process.platform === "win32")(
+  "env chdir desktop launch",
+  () => {
+    it("finds the executable from the selected physical directory while preserving argv and launch Path", async () => {
+      const installed = await fixture();
+      const { home, environment } = installed;
+      const parent = join(home, "selected");
+      await mkdir(join(parent, "child"), { recursive: true });
+      await symlink(join(parent, "child"), join(home, "alias"));
+      await writeFile(join(parent, "notes-app"), "#!/bin/sh\nexit 0\n");
+      await chmod(join(parent, "notes-app"), 0o755);
+      await writeFile(
+        join(
+          environment.XDG_DATA_DIRS,
+          "applications/org.example.notes.desktop",
+        ),
+        `[Desktop Entry]\nType=Application\nName=Notes\nPath=${home}\nExec=/usr/bin/env -C alias/.. -- ./notes-app project.txt\n`,
+      );
+      const inventory = await inventoryOf("org.example.notes", installed);
+      expect(inventory).toMatchObject({
+        argv: [
+          "/usr/bin/env",
+          "-C",
+          "alias/..",
+          "--",
+          "./notes-app",
+          "project.txt",
+        ],
+        working_directory: home,
+        application_working_directory: await realpath(parent),
+        executable: {
+          resolved_path: await realpath(join(parent, "notes-app")),
+        },
+      });
+    });
+
+    it("rejects an absent chdir directory even with an absolute program", async () => {
+      const { home, bin, environment } = await fixture();
+      const desktopEntry = join(
+        environment.XDG_DATA_DIRS,
+        "applications/org.example.notes.desktop",
+      );
+      await writeFile(
+        desktopEntry,
+        `[Desktop Entry]\nType=Application\nName=Notes\nPath=${home}\nExec=env --chdir=missing ${bin}/notes-app\n`,
+      );
+      expect(
+        await inspectLinuxApplication({
+          desktopEntry,
+          executable: undefined,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_invalid" },
+      });
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
   "inspectLinuxApplication state and environment",
   () => {
-    it("finds the program on the PATH an env prefix sets, not the host's", async () => {
-      const installed = await fixture();
-      const { home, bin } = installed;
-      const opt = join(home, "opt/bin");
-      await mkdir(opt, { recursive: true });
-      for (const directory of [bin, opt]) {
-        await writeFile(join(directory, "notes"), "#!/bin/sh\nexit 0\n");
-        await chmod(join(directory, "notes"), 0o755);
-      }
-      await mkdir(join(home, ".local/share/applications"), { recursive: true });
-      await writeFile(
-        join(home, ".local/share/applications/org.example.env.desktop"),
-        `[Desktop Entry]\nType=Application\nName=Env\nExec=env PATH=${opt}/:/usr/bin XDG_CONFIG_HOME=${home}/settings notes\n`,
-      );
+    it.each(["", "-- "])(
+      "finds the program on the PATH an env %sprefix sets, not the host's",
+      async (delimiter) => {
+        const installed = await fixture();
+        const { home, bin } = installed;
+        const opt = join(home, "opt/bin");
+        await mkdir(opt, { recursive: true });
+        for (const directory of [bin, opt]) {
+          await writeFile(join(directory, "notes"), "#!/bin/sh\nexit 0\n");
+          await chmod(join(directory, "notes"), 0o755);
+        }
+        await mkdir(join(home, ".local/share/applications"), {
+          recursive: true,
+        });
+        await writeFile(
+          join(home, ".local/share/applications/org.example.env.desktop"),
+          `[Desktop Entry]\nType=Application\nName=Env\nExec=env ${delimiter}PATH=${opt}/:/usr/bin XDG_CONFIG_HOME=${home}/settings notes\n`,
+        );
 
-      const inventory = await inventoryOf("org.example.env", installed);
+        const inventory = await inventoryOf("org.example.env", installed);
 
-      expect(inventory.executable.path).toBe(join(opt, "notes"));
-      expect(inventory.state_directories.map((entry) => entry.path)).toContain(
-        join(home, "settings/notes"),
-      );
-    });
+        expect(inventory.executable.path).toBe(join(opt, "notes"));
+        expect(
+          inventory.state_directories.map((entry) => entry.path),
+        ).toContain(join(home, "settings/notes"));
+      },
+    );
 
     it("reads a relative PATH entry from the folder the entry starts in", async () => {
       const installed = await fixture();
@@ -785,6 +891,76 @@ describe.skipIf(process.platform === "win32")(
           },
         ]),
       );
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication relative XDG bases",
+  () => {
+    it("ignores a relative XDG base and keeps the home default", async () => {
+      const installed = await fixture();
+      const { home, environment } = installed;
+      const inventory = await inventoryOf("org.example.notes", {
+        ...installed,
+        environment: {
+          ...environment,
+          XDG_CONFIG_HOME: "relative-config",
+          XDG_DATA_HOME: "relative-data",
+          XDG_STATE_HOME: "relative-state",
+          XDG_CACHE_HOME: "relative-cache",
+        },
+      });
+
+      const paths = inventory.state_directories.map((entry) => entry.path);
+      expect(paths).toContain(join(home, ".config/notes"));
+      expect(paths).toContain(join(home, ".local/share/notes"));
+      expect(paths).toContain(join(home, ".local/state/notes"));
+      expect(paths).toContain(join(home, ".cache/notes"));
+      expect(paths.filter((path) => !isAbsolute(path))).toEqual([]);
+    });
+
+    it("reads a relative XDG base an Exec env prefix sets as unset", async () => {
+      const installed = await fixture();
+      const { home, bin } = installed;
+      await mkdir(join(home, ".config"), { recursive: true });
+      await mkdir(join(home, ".local/share/applications"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(
+          home,
+          ".local/share/applications/org.example.env-relative.desktop",
+        ),
+        `[Desktop Entry]\nType=Application\nName=Env\nExec=env XDG_CONFIG_HOME=relative-config notes-app\n`,
+      );
+
+      const inventory = await inventoryOf(
+        "org.example.env-relative",
+        installed,
+      );
+
+      expect(inventory.executable.path).toBe(join(bin, "notes-app"));
+      expect(inventory.state_directories.map((entry) => entry.path)).toContain(
+        join(home, ".config/notes-app"),
+      );
+    });
+
+    it("finds a desktop entry by id when XDG_DATA_HOME is relative", async () => {
+      const installed = await fixture();
+      const { home, environment } = installed;
+      await mkdir(join(home, ".local/share/applications"), { recursive: true });
+      await writeFile(
+        join(home, ".local/share/applications/org.example.home-notes.desktop"),
+        `[Desktop Entry]\nType=Application\nName=HomeNotes\nExec=notes-app\n`,
+      );
+
+      const inventory = await inventoryOf("org.example.home-notes", {
+        ...installed,
+        environment: { ...environment, XDG_DATA_HOME: "relative-data" },
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({ name: "HomeNotes" });
     });
   },
 );

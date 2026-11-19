@@ -41,10 +41,17 @@ const verifierFixture = async (provider: Provider) => {
     new URL(`../../../scripts/verify-${provider}.mjs`, import.meta.url),
     script,
   );
-  await copyFile(
-    new URL("../../../scripts/lib/verifier-cleanup.mjs", import.meta.url),
-    join(root, "scripts", "lib", "verifier-cleanup.mjs"),
-  );
+  // The verifier's real script-library imports, transitively.
+  for (const library of [
+    "verifier-cleanup.mjs",
+    "verifier-fixture.mjs",
+    "canonical-temporary-directory.mjs",
+    "verifier-source-loader.mjs",
+  ])
+    await copyFile(
+      new URL(`../../../scripts/lib/${library}`, import.meta.url),
+      join(root, "scripts", "lib", library),
+    );
   const closeBody = `
     await appendFile(process.env.REA_TEST_VERIFIER_CLOSE_LOG, "${provider}\\n");
     if (process.env.REA_TEST_VERIFIER_CLOSE_FAIL === "1")
@@ -149,7 +156,6 @@ processTest.for(cases)(
           REA_TEST_VERIFIER_CLOSE_FAIL: closeFails ? "1" : "0",
           REA_TEST_VERIFIER_CLOSE_LOG: fixture.closeLog,
         },
-        timeoutMs: 10_000,
       },
     );
 

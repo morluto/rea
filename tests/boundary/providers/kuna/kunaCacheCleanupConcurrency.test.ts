@@ -11,6 +11,7 @@ import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProce
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { writeFakeKuna, fakeKunaCalls } from "./fakeKuna.js";
 import { inspectKunaInstallationOwned } from "./kunaResourceScope.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 const test = it.skipIf(process.platform === "win32");
 
 test.each([false, true])(
@@ -72,12 +73,14 @@ test.each([false, true])(
           jobs: installed.value.configuration.jobs,
         });
         keys.push(key);
-        const pending = cache.build({
-          installation: installed.value,
-          targetPath,
-          targetSha256,
-          signal: controllers[index]!.signal,
-        });
+        const pending = cache.build(
+          withKunaProjectDeadline({
+            installation: installed.value,
+            targetPath,
+            targetSha256,
+            signal: controllers[index]!.signal,
+          }),
+        );
         builds.push(pending);
         await expect
           .poll(async () =>

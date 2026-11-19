@@ -11,7 +11,6 @@ import {
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
-import { seedWording } from "../../../src/domain/desktop/appExport.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { LINUX_ARGUMENT_VECTOR_BYTES } from "../../../src/desktop/BuildComputerController.js";
 import {
@@ -191,11 +190,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       .parameters,
   ).toMatchObject({ synthetic_seed: true });
   expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
-    seedWording({
-      name: exported.environment,
-      seedCheckpoint: "seed",
-      syntheticSeed: true,
-    }).notice,
+    `The seed was made for this task, not taken from a user's own data; read \`envs/${exported.environment}/seed/\` before publishing the bundle.`,
   );
   expectNoToken(computer, [started, seed, stopped, exported]);
 });

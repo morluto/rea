@@ -13,11 +13,10 @@ import {
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../elfProgramHeader.js";
-import {
-  elfStringTableText,
-  observeElfStringTableEntry,
-} from "../elfStringTable.js";
+import { observeElfStringTableEntry } from "../elfStringTable.js";
+import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { err, ok, type Result } from "../result.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 import { resolveMappedFileOffset } from "../virtualFileMapping.js";
 
 /** Read up to `length` bytes at `offset`; fewer at the end of the file. */
@@ -224,10 +223,8 @@ const dynamicStrings = async (
         : file.bytes - offset;
     const window = await readExactly(read, file.at + offset, length, file.size);
     if (window === undefined) return err("ELF dynamic string is truncated");
-    const value = elfStringTableText(
-      observeElfStringTableEntry(window, 0, policy.string_bytes),
-    );
-    if (value === null)
+    const observed = observeElfStringTableEntry(window, 0, policy.string_bytes);
+    if (observed.state !== "terminated")
       return err(
         length < file.bytes - offset
           ? desktopLibraryLimit(
@@ -237,7 +234,16 @@ const dynamicStrings = async (
             )
           : "ELF dynamic string is truncated",
       );
-    values.push(value);
+    // These strings become Node filesystem paths, not byte-preserving display
+    // labels. Only admit bytes that UTF-8 string paths can address exactly.
+    try {
+      values.push(decodeStrictUtf8(observed.bytes, "preserve"));
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return err(
+        "ELF dynamic lookup string is not valid UTF-8; its filesystem identity is unresolved",
+      );
+    }
   }
   return ok(values);
 };
@@ -304,7 +310,14 @@ const readDependencyTables = async (
   const headers = await programHeaders(read, header, size, bits, policy);
   if (!headers.ok) return headers;
   const none = { needed: [], runpath: undefined, rpath: [] };
-  const dynamic = headers.value.find((program) => program.type === PT_DYNAMIC);
+  // The ELF gABI allows one PT_DYNAMIC; a repeat leaves the table ambiguous.
+  const programs = keyedBy(headers.value, ({ type }) => type);
+  const dynamicProgram = uniqueKeyed(programs, PT_DYNAMIC);
+  if (!dynamicProgram.ok)
+    return err(
+      `ELF image declares ${String(dynamicProgram.error.ordinals.length)} PT_DYNAMIC program headers`,
+    );
+  const dynamic = dynamicProgram.value;
   if (dynamic === undefined) return ok(none);
   if (dynamic.fileSize > BigInt(policy.table_bytes))
     return err(desktopLibraryLimit(policy, "table_bytes", "ELF dynamic table"));
@@ -318,7 +331,8 @@ const readDependencyTables = async (
     return err("ELF dynamic string table is not mapped from the file");
   if (strsz > BigInt(size))
     return err("ELF dynamic string table is not mapped from the file");
-  const loads = headers.value.filter((program) => program.type === PT_LOAD);
+  // PT_LOAD repeats by design; every segment maps file bytes.
+  const loads = allKeyed(programs, PT_LOAD);
   const stringsAt = resolveMappedFileOffset(
     loads
       .filter((segment) => segment.fileSize > 0n)

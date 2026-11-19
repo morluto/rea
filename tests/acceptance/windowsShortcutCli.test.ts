@@ -1,10 +1,14 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
   powershellHiddenIconSpoofShortcut,
+  TRACKER_MAC,
   truncatedStringDataShortcut,
+  uuidV1Bytes,
+  windowsShortcutBytes,
   wrongClsidShortcut,
 } from "../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -18,6 +22,114 @@ const shortcutContract = (() => {
     throw new Error("Missing inspect_windows_shortcut contract");
   return contract;
 })();
+
+cliTest.for([
+  { target: "C:\\Tools\\\x83A.exe", icon: "C:\\Tools\\\x83a.exe" },
+  { target: "C:\\Tools\\\x82\x60.exe", icon: "C:\\Tools\\\x82\x81.exe" },
+])(
+  "preserves opaque ANSI path facts through compiled CLI and stdio MCP: $target",
+  async ({ target, icon }, { cli }) => {
+    const root = await createTestTempDirectory("rea-shortcut-ansi-cli-");
+    const path = join(root, "shortcut.lnk");
+    const bytes = windowsShortcutBytes({
+      unicode: false,
+      idList: null,
+      relativePath: "",
+      linkInfo: { localBasePath: target },
+      extraData: [],
+      iconLocation: icon,
+    });
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-windows-shortcut", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_windows_shortcut", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    for (const value of [result.json, response.structuredContent]) {
+      const evidence = shortcutContract.outputSchema.parse(value);
+      const report = evidence.normalized_result;
+      expect(report.artifact.sha256).toBe(
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      expect(report.link_info?.local_base_path).toBe(target);
+      expect(report.string_data.icon_location?.value).toBe(icon);
+      expect(report.coverage.status).toBe("complete");
+      expect(report.observations).toEqual(
+        expect.arrayContaining([
+          {
+            kind: "icon_location_differs_from_target",
+            evidence_kind: "derived",
+            value: null,
+          },
+          {
+            kind: "target_extension",
+            evidence_kind: "derived",
+            extension: ".exe",
+          },
+        ]),
+      );
+    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest(
+  "preserves pre-epoch shortcut timestamps through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-shortcut-time-cli-");
+    const path = join(root, "time.lnk");
+    const uuid = uuidV1Bytes(122192927999999999n, 1, TRACKER_MAC);
+    await writeFile(
+      path,
+      windowsShortcutBytes({
+        creationTime: 116444735999999999n,
+        accessTime: 0n,
+        writeTime: 116444736000000001n,
+        extraData: [
+          { kind: "tracker", droid: [uuid, uuid], birthDroid: [uuid, uuid] },
+        ],
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-windows-shortcut", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    const response = await call("inspect_windows_shortcut", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    for (const value of [result.json, response.structuredContent]) {
+      const evidence = shortcutContract.outputSchema.parse(value);
+      const report = evidence.normalized_result;
+      expect(evidence.subject?.local_path).toBe(path);
+      expect(report.header).toMatchObject({
+        creation_time: {
+          raw: "116444735999999999",
+          iso8601: "1969-12-31T23:59:59.999Z",
+        },
+        access_time: { raw: "0", iso8601: null },
+        write_time: {
+          raw: "116444736000000001",
+          iso8601: "1970-01-01T00:00:00.000Z",
+        },
+      });
+      const tracker = report.extra_data.blocks[0]?.decoded;
+      if (tracker?.kind !== "tracker")
+        throw new Error("Expected TrackerDataBlock");
+      for (const time of [
+        ...tracker.droid_uuid_v1,
+        ...tracker.birth_droid_uuid_v1,
+      ])
+        expect(time).toMatchObject({
+          timestamp_100ns: "122192927999999999",
+          timestamp_iso8601: "1969-12-31T23:59:59.999Z",
+        });
+      expect(report.coverage.status).toBe("complete");
+    }
+  },
+);
 
 cliTest(
   "reports Shell Link facts through CLI and stdio MCP",

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -9,9 +10,17 @@ import {
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  evidenceSubject,
+  evidenceSubjectDisplay,
+  evidenceSubjectTarget,
   rebindEvidenceSubjectTargetPath,
   type Evidence,
+  type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
+import {
+  sameTargetIdentity,
+  unknownTarget,
+} from "../../domain/targetIdentity.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   analysisQueryId,
@@ -37,7 +46,7 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
@@ -87,7 +96,13 @@ const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
 );
 
 /** Maximum duplicated result bindings retained across direct and workflow queries. */
-export const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
+const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
+
+/** A file target without its recorded display name, which follows the replayed path. */
+const withoutDisplayName = ({
+  name: _name,
+  ...target
+}: EvidenceSubjectTarget): EvidenceSubjectTarget => target;
 
 const replayDocumentSelected = (
   operation: AnalysisOperation,
@@ -144,13 +159,14 @@ export const isSourceEvidenceRetainable = (
     descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.effects.changesPermissions === false;
 
-/** Explicit independent decompiles must run even if a snapshot has a matching entry. */
-export const requestsFreshIndependentDecompile = (
+/** Explicit standalone decompiles must run even if a snapshot has a matching entry. */
+export const requestsStandaloneDecompile = (
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
 ): boolean =>
   operation === "procedure_pseudo_code" &&
-  parameters.analysis === "independent_fresh";
+  (parameters.analysis === "independent_fresh" ||
+    parameters.analysis === "call_destination");
 
 /** Whether an observation can additionally be replayed as a snapshot. */
 export const isSnapshotCacheable = (
@@ -159,7 +175,7 @@ export const isSnapshotCacheable = (
   parameters: Readonly<Record<string, JsonValue>>,
   context?: ExecutionOptions["snapshotContext"],
 ): descriptor is CapabilityDescriptor =>
-  !requestsFreshIndependentDecompile(operation, parameters) &&
+  !requestsStandaloneDecompile(operation, parameters) &&
   isSourceEvidenceRetainable(operation, descriptor, parameters, {
     snapshotContext: context,
   }) &&
@@ -170,10 +186,10 @@ export const isSnapshotCacheable = (
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
-): boolean => process.platform === "win32" && providerId === "ghidra";
+): boolean => HOST_PLATFORM.platform === "win32" && providerId === "ghidra";
 
 /** Limitation that marks every observation replayed from a snapshot. */
-export const SNAPSHOT_REPLAY_LIMITATION =
+const SNAPSHOT_REPLAY_LIMITATION =
   "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
 
 /** Bounded in-memory cache for one immutable binary identity. */
@@ -225,7 +241,7 @@ export class AnalysisSnapshotCache {
     snapshot = immutableAnalysisSnapshot(snapshot);
     if (
       (this.#target !== undefined &&
-        JSON.stringify(this.#target) !== JSON.stringify(snapshot.target)) ||
+        !sameTargetIdentity(this.#target.identity, snapshot.target.identity)) ||
       (this.#binding !== undefined &&
         !snapshotMatchesProfile(
           this.#binding,
@@ -335,9 +351,10 @@ export class AnalysisSnapshotCache {
     }
     const header = { target: this.#target, binding: this.#binding };
     for (const { previous, current } of replacements) {
+      const display = evidenceSubjectDisplay(current);
       if (
-        current.subject === null ||
-        previous.subject?.local_path === current.subject.local_path
+        display === undefined ||
+        evidenceSubjectDisplay(previous)?.local_path === display.local_path
       )
         continue;
       const queryId = analysisQueryId(
@@ -347,35 +364,31 @@ export class AnalysisSnapshotCache {
         previous.parameters,
       );
       const entry = this.#entries.get(queryId);
+      const entryIdentity = entry?.execution.subject.identity;
       if (
         entry !== undefined &&
-        entry.execution.subject !== null &&
+        entryIdentity?.kind === "file" &&
         evidenceMatchesEntry(previous, entry, header)
       )
         this.#entries.set(queryId, {
           ...entry,
           execution: {
             ...entry.execution,
-            subject: {
-              ...entry.execution.subject,
-              path: current.subject.local_path,
-            },
+            subject: { identity: entryIdentity, ...display },
           },
         });
       const workflow = this.#workflowEntries.get(queryId);
+      const workflowIdentity = workflow?.execution.subject.identity;
       if (
         workflow !== undefined &&
-        workflow.execution.subject !== null &&
+        workflowIdentity?.kind === "file" &&
         evidenceMatchesWorkflowEntry(previous, workflow, header)
       )
         this.#workflowEntries.set(queryId, {
           ...workflow,
           execution: {
             ...workflow.execution,
-            subject: {
-              ...workflow.execution.subject,
-              path: current.subject.local_path,
-            },
+            subject: { identity: workflowIdentity, ...display },
           },
         });
     }
@@ -390,18 +403,21 @@ export class AnalysisSnapshotCache {
     if (target === undefined || profile === undefined)
       return err(new NoBinaryOpenError());
     try {
-      const snapshotTargetIdentity = snapshotTarget(target);
+      const persistedTarget = snapshotTarget(target);
+      const namesTarget = (subject: Evidence["subject"]): boolean =>
+        subject.identity.kind === "file" &&
+        subject.identity.sha256 === target.sha256;
       const binding = snapshotBinding(profile);
       // In-memory replay can preserve unbound and child-artifact observations.
       // A persisted target snapshot can authenticate only rows whose Evidence
       // has that target subject; the record owner applies the same scope to its bundle.
       const entries = [...this.#entries.values()]
-        .filter((entry) => entry.execution.subject?.sha256 === target.sha256)
+        .filter((entry) => namesTarget(entry.execution.subject))
         .sort((left, right) =>
           compareUnicodeCodePoints(left.query_id, right.query_id),
         );
       const workflows = [...this.#workflowEntries.values()]
-        .filter((entry) => entry.execution.subject?.sha256 === target.sha256)
+        .filter((entry) => namesTarget(entry.execution.subject))
         .sort((left, right) =>
           compareUnicodeCodePoints(left.query_id, right.query_id),
         );
@@ -409,7 +425,7 @@ export class AnalysisSnapshotCache {
       // payloads here only adds another full materialization.
       return ok(
         parseAnalysisSnapshot({
-          target: snapshotTargetIdentity,
+          target: persistedTarget,
           binding,
           entries,
           workflow_entries: workflows,
@@ -496,7 +512,7 @@ export class AnalysisSnapshotCache {
       readonly limitations: readonly string[];
       readonly relationshipCoverage?: AnalysisExecution["relationshipCoverage"];
       readonly locations: AnalysisExecution["locations"];
-      readonly subject: NonNullable<AnalysisExecution["subject"]> | null;
+      readonly subject: Evidence["subject"];
     };
   }): void {
     this.select(input.target, input.profile);
@@ -545,19 +561,14 @@ export class AnalysisSnapshotCache {
       this.#replayBindings.set(queryId, restored);
       binding = restored;
     }
-    const cachedSubject = cached.execution.subject;
+    // Replay names the file at the current path; its display name follows
+    // that path, as the live observation's would.
+    const cachedTarget = evidenceSubjectTarget(cached.execution.subject);
     const subject =
-      cachedSubject == null
+      cachedTarget === undefined
         ? null
         : rebindEvidenceSubjectTargetPath(
-            {
-              path: cachedSubject.path,
-              sha256: cachedSubject.sha256,
-              format: cachedSubject.format,
-              ...(cachedSubject.architecture === null
-                ? {}
-                : { architecture: cachedSubject.architecture }),
-            },
+            withoutDisplayName(cachedTarget),
             target,
           );
     const execution: AnalysisExecution = structuredClone({
@@ -637,17 +648,11 @@ export class AnalysisSnapshotCache {
       parameters,
       execution: {
         ...execution,
-        subject:
+        subject: evidenceSubject(
           execution.subject === undefined
-            ? {
-                path: target.path,
-                sha256: target.sha256,
-                format: target.format,
-                ...(target.architecture === undefined
-                  ? {}
-                  : { architecture: target.architecture }),
-              }
-            : execution.subject,
+            ? target
+            : (execution.subject ?? unknownTarget("not-observed")),
+        ),
       },
     });
     this.#entries.set(entry.query_id, entry);

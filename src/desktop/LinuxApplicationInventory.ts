@@ -1,7 +1,4 @@
-import {
-  desktopLibraryPolicy,
-  type DesktopLibraryPolicyInput,
-} from "../domain/desktop/libraryPolicy.js";
+import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
@@ -19,8 +16,10 @@ import {
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -30,6 +29,7 @@ import {
 } from "../filesystem/readStableFileBytes.js";
 import { stateDirectories, stateNames } from "./ApplicationStateDirectories.js";
 import { APT_LOCATIONS } from "./AptRepositoryInventory.js";
+import { xdgBase } from "./XdgBase.js";
 import { inspectPackageFile } from "./DebianPackageFile.js";
 import {
   debianPackage,
@@ -39,47 +39,13 @@ import {
 import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
 import { runHostQuery } from "./HostQuery.js";
 import { resolveProgram } from "./ProgramLookup.js";
+import type {
+  LinuxApplicationFacts,
+  LinuxApplicationRefusal,
+  LinuxApplicationRequest,
+} from "../ports/DesktopApplicationSession.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
-
-/** Which application to launch, as the caller named it. */
-export interface LinuxApplicationRequest {
-  readonly libraryPolicy?: DesktopLibraryPolicyInput;
-  readonly desktopEntry: string | undefined;
-  readonly executable: string | undefined;
-  readonly arguments: readonly string[];
-  readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly home: string;
-  /** Where a relative executable is found and an executable launch runs. */
-  readonly callerDirectory: string;
-  /** The absolute path of the `.deb` file the application was installed from, whose facts are recorded. */
-  readonly packageFile?: string | undefined;
-}
-
-/** Why the request does not name a launchable application. */
-export type LinuxApplicationRefusal =
-  | {
-      readonly reason: "desktop_entry_not_found";
-      readonly searched: readonly string[];
-    }
-  | {
-      readonly reason: "desktop_entry_search_incomplete";
-      readonly searched: readonly string[];
-    }
-  | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
-  | { readonly reason: "executable_not_found"; readonly program: string }
-  | {
-      readonly reason: "executable_on_relative_path";
-      readonly program: string;
-    };
-
-/** The inventory plus limitations found while building it. */
-export interface LinuxApplicationFacts {
-  readonly inventory: DesktopApplicationInventory;
-  readonly limitations: readonly string[];
-  /** Verified apt signing keys' bytes by sha256, for the capture to retain. */
-  readonly signingKeys: ReadonlyMap<string, Buffer>;
-}
 
 /** The host commands and apt folders the inventory reads; replaceable in tests. */
 export type LinuxInventoryHost = DebianPackageHost;
@@ -92,11 +58,14 @@ const LINUX_INVENTORY_HOST: LinuxInventoryHost = {
 type Package = DesktopApplicationInventory["package"];
 
 /** Directories searched for desktop entries, most specific first. */
-export const desktopEntryDirectories = (
+const desktopEntryDirectories = (
   environment: LinuxApplicationRequest["environment"],
   home: string,
 ): readonly string[] => {
-  const dataHome = environment.XDG_DATA_HOME || join(home, ".local/share");
+  const dataHome = xdgBase(
+    environment.XDG_DATA_HOME,
+    join(home, ".local/share"),
+  );
   const dataDirectories = (
     environment.XDG_DATA_DIRS || "/usr/local/share:/usr/share"
   )
@@ -413,6 +382,31 @@ const launchCommand = async (
   });
 };
 
+const envApplicationDirectory = async (
+  path: string | undefined,
+  workingDirectory: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<string | undefined, LinuxApplicationRefusal>> => {
+  if (path === undefined) return ok(undefined);
+  const invalidDirectory = {
+    reason: "desktop_entry_invalid" as const,
+    detail: "env chdir does not name a directory",
+  };
+  if (path === "") return err(invalidDirectory);
+  const selected = absoluteCallerPath(path, { cwd: workingDirectory });
+  try {
+    assertArtifactReadActive(signal);
+    const physical = await realpath(selected);
+    assertArtifactReadActive(signal);
+    const directory = await stat(physical);
+    assertArtifactReadActive(signal);
+    return directory.isDirectory() ? ok(physical) : err(invalidDirectory);
+  } catch (cause: unknown) {
+    if (!isRefusedRead(cause) || signal?.aborted === true) throw cause;
+    return err(invalidDirectory);
+  }
+};
+
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -423,13 +417,20 @@ export const inspectLinuxApplication = async (
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);
+  const directory = await envApplicationDirectory(
+    wrapper.chdir?.path,
+    workingDirectory,
+    signal,
+  );
+  if (!directory.ok) return directory;
+  const applicationDirectory = directory.value;
   // An `env` prefix's assignments are what the program sees: its PATH finds
   // the program and its XDG folders hold the program's state.
   const environment = { ...request.environment, ...wrapper.environment };
   const found = await resolveProgram(
     wrapper.program,
     environment,
-    workingDirectory,
+    applicationDirectory ?? workingDirectory,
   );
   if (found === undefined)
     return err({ reason: "executable_not_found", program: wrapper.program });
@@ -488,6 +489,9 @@ export const inspectLinuxApplication = async (
       desktop_entry: entry,
       argv: [...argv],
       working_directory: workingDirectory,
+      ...(applicationDirectory === undefined
+        ? {}
+        : { application_working_directory: applicationDirectory }),
       executable: {
         path,
         resolved_path: resolved,

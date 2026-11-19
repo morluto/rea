@@ -1,15 +1,19 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { dexDescriptorSchema } from "./dexTypes.js";
 
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
 const index = z.number().int().nonnegative();
-const status = z.enum(["complete", "partial", "unknown"]);
+const status = coverageStatusSchema;
 
-/** The exact source record that established a link-time pointer value. */
+/** The source record, or packed group/member, establishing a link-time pointer value. */
 export const androidJniRelocationSourceSchema = z.strictObject({
   encoding: z.enum(["rel", "rela", "relr"]),
   record_file_offset: index,
   kind: index.nullable(),
+  packing: z
+    .strictObject({ format: z.literal("aps2"), group_entry_index: index })
+    .exactOptional(),
 });
 
 /** A file-backed JNINativeMethod word, before any runtime load bias. */

@@ -3,7 +3,7 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { createHash } from "node:crypto";
 import type { Dir } from "node:fs";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ok as javaProbeOk } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import {
@@ -28,6 +28,13 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { ghidraProcessorUnsupportedReason } from "../../../src/ghidra/GhidraPspProfile.js";
 import { inspectGhidraPspExtension } from "../../../src/ghidra/GhidraPspExtension.js";
+import {
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_VERSION,
+} from "../../../src/ghidra/GhidraReleasePolicy.js";
+
+const INSTALL_VERSION = SUPPORTED_GHIDRA_VERSION;
+const INSTALL_JAVA_MAJOR = SUPPORTED_GHIDRA_JAVA_MAJOR;
 import {
   GhidraHeadlessLauncher,
   ghidraHeadlessArguments,
@@ -95,15 +102,16 @@ const target = {
 const host: GhidraInstallationHost = {
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.3\napplication.java.min=21\n",
+  readText: () =>
+    `application.version=${INSTALL_VERSION}\napplication.java.min=${String(INSTALL_JAVA_MAJOR)}\n`,
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
       osArch: "amd64",
       osName: "Linux",
-      version: "21.0.12",
-      major: 21,
-      home: "/jdk-21",
+      version: `${String(INSTALL_JAVA_MAJOR)}.0.1`,
+      major: INSTALL_JAVA_MAJOR,
+      home: "/jdk-25",
       bits: 64,
       runtime: "jdk",
     }),
@@ -113,7 +121,7 @@ async function installation() {
   const root = join(directory, "Ghidra", "Extensions", "ghidra-allegrex");
   const contents = {
     "Module.manifest": "",
-    "extension.properties": "name=ghidra-allegrex\nversion=12.1.3\n",
+    "extension.properties": `name=ghidra-allegrex\nversion=${INSTALL_VERSION}\n`,
     "data/languages/allegrex.ldefs": "synthetic language definition",
     "data/languages/allegrex.sla": "synthetic compiled processor",
     "data/languages/allegrex.pspec": "synthetic processor specification",
@@ -180,7 +188,7 @@ describe.skipIf(process.platform === "win32")(
         language_id: "Allegrex:LE:32:default",
         compiler_spec_id: "default",
         loader: "PspElfLoader",
-        mips_support_lane: "psp-elf32-exec-eabi32-allegrex-v2",
+        mips_support_lane: "psp-elf32-exec-eabi32-allegrex",
         mips_elf: {
           elf_class: 32,
           byte_order: "little",
@@ -203,7 +211,7 @@ describe.skipIf(process.platform === "win32")(
         psp_extension: {
           id: "ghidra-allegrex",
           root,
-          ghidra_version: "12.1.3",
+          ghidra_version: INSTALL_VERSION,
           sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
         },
       });
@@ -223,7 +231,7 @@ describe.skipIf(process.platform === "win32")(
       const { directory, root } = await installation();
       const extension = await inspectGhidraPspExtension(
         root,
-        "12.1.3",
+        INSTALL_VERSION,
         new ArtifactResourceScope(),
       );
       await writeFile(join(root, "lib/extension.jar"), "changed loader");
@@ -231,7 +239,7 @@ describe.skipIf(process.platform === "win32")(
       const launcher = new GhidraHeadlessLauncher({
         environment: {},
         analyzeHeadlessPath: join(directory, "support/analyzeHeadless"),
-        configurationDirectoryName: "ghidra_12.1.3_PUBLIC",
+        configurationDirectoryName: `ghidra_${INSTALL_VERSION}_PUBLIC`,
         javaHome: "/jdk-21",
         bridgeScriptPath: "/packaged/ReaGhidraBridge.java",
         pspExtension: extension,
@@ -246,7 +254,7 @@ describe.skipIf(process.platform === "win32")(
           runId: "00000000-0000-4000-8000-000000000001",
           targetPath: target.path,
           targetSha256: target.sha256,
-          providerVersion: "12.1.3",
+          providerVersion: INSTALL_VERSION,
           profileDigest: "b".repeat(64),
         },
         { resourceScope: new ArtifactResourceScope() },
@@ -296,14 +304,14 @@ describe.skipIf(process.platform === "win32")(
         await expect(
           inspectGhidraPspExtension(
             root,
-            "12.1.3",
+            INSTALL_VERSION,
             new ArtifactResourceScope(),
           ),
         ).rejects.toMatchObject({
           diagnostics: {
             code,
             ...(parserCode === undefined
-              ? { ghidra_version: "12.1.3" }
+              ? { ghidra_version: INSTALL_VERSION }
               : { parser_code: parserCode }),
           },
         });
@@ -317,7 +325,11 @@ describe.skipIf(process.platform === "win32")(
         join(root, "Module.manifest.uninstalled"),
       );
       await expect(
-        inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
+        inspectGhidraPspExtension(
+          root,
+          INSTALL_VERSION,
+          new ArtifactResourceScope(),
+        ),
       ).rejects.toMatchObject({
         diagnostics: {
           code: "component_missing",
@@ -332,7 +344,11 @@ describe.skipIf(process.platform === "win32")(
       await rename(path, join(directory, "external.jar"));
       await symlink(join(directory, "external.jar"), path);
       await expect(
-        inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
+        inspectGhidraPspExtension(
+          root,
+          INSTALL_VERSION,
+          new ArtifactResourceScope(),
+        ),
       ).rejects.toMatchObject({
         diagnostics: { code: "entry_kind", relative: "lib/extension.jar" },
       });
@@ -342,7 +358,11 @@ describe.skipIf(process.platform === "win32")(
       const { root } = await installation();
       await truncate(join(root, "lib/extension.jar"), 64 * 1024 * 1024 + 1);
       await expect(
-        inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
+        inspectGhidraPspExtension(
+          root,
+          INSTALL_VERSION,
+          new ArtifactResourceScope(),
+        ),
       ).rejects.toMatchObject({
         diagnostics: {
           code: "bytes_exceed_limit",
@@ -372,7 +392,7 @@ describe.skipIf(process.platform === "win32")(
         await expect(
           inspectGhidraPspExtension(
             root,
-            "12.1.3",
+            INSTALL_VERSION,
             new ArtifactResourceScope(),
           ),
         ).rejects.toMatchObject({
@@ -681,16 +701,15 @@ describe.skipIf(process.platform === "win32")(
     it.each([
       {
         form: "escaped key and value with colon separator",
-        properties: "n\\u0061me : ghidra-allegrex\nver\\u0073ion=12.1.3\n",
+        properties: `n\\u0061me : ghidra-allegrex\nver\\u0073ion=${INSTALL_VERSION}\n`,
       },
       {
         form: "continued key and value lines",
-        properties: "name=ghidra-\\\n allegrex\nversion=12.1.\\\n 3\n",
+        properties: `name=ghidra-\\\n allegrex\nversion=${INSTALL_VERSION.slice(0, -1)}\\\n ${INSTALL_VERSION.slice(-1)}\n`,
       },
       {
         form: "duplicate keys use the last value",
-        properties:
-          "name=wrong\nname=ghidra-allegrex\nversion=12.1.4\nversion=12.1.3\n",
+        properties: `name=wrong\nname=ghidra-allegrex\nversion=12.1.4\nversion=${INSTALL_VERSION}\n`,
       },
     ])(
       "accepts Java Properties $form and hashes raw bytes",
@@ -698,7 +717,7 @@ describe.skipIf(process.platform === "win32")(
         const { root } = await installation();
         const canonical = await inspectGhidraPspExtension(
           root,
-          "12.1.3",
+          INSTALL_VERSION,
           new ArtifactResourceScope(),
         );
         const latin1Properties = Buffer.from(
@@ -708,7 +727,7 @@ describe.skipIf(process.platform === "win32")(
         await writeFile(join(root, "extension.properties"), latin1Properties);
         const extension = await inspectGhidraPspExtension(
           root,
-          "12.1.3",
+          INSTALL_VERSION,
           new ArtifactResourceScope(),
         );
         expect(extension.id).toBe("ghidra-allegrex");
@@ -840,7 +859,7 @@ describe.skipIf(process.platform === "win32")(
       const { directory, root } = await installation();
       const extension = await inspectGhidraPspExtension(
         root,
-        "12.1.3",
+        INSTALL_VERSION,
         new ArtifactResourceScope(),
       );
       const controller = new AbortController();
@@ -866,7 +885,7 @@ describe.skipIf(process.platform === "win32")(
       const launcher = new GhidraHeadlessLauncher({
         environment: {},
         analyzeHeadlessPath: join(directory, "support/analyzeHeadless"),
-        configurationDirectoryName: "ghidra_12.1.3_PUBLIC",
+        configurationDirectoryName: `ghidra_${INSTALL_VERSION}_PUBLIC`,
         bridgeScriptPath: "/packaged/ReaGhidraBridge.java",
         pspExtension: extension,
         spawnProcess: spawn,
@@ -879,7 +898,7 @@ describe.skipIf(process.platform === "win32")(
         targetSha256: createHash("sha256")
           .update("synthetic target")
           .digest("hex"),
-        providerVersion: "12.1.3",
+        providerVersion: INSTALL_VERSION,
         profileDigest: "b".repeat(64),
       });
       try {
@@ -931,7 +950,7 @@ describe.skipIf(process.platform === "win32")(
       }
       const extension = await inspectGhidraPspExtension(
         root,
-        "12.1.3",
+        INSTALL_VERSION,
         new ArtifactResourceScope(),
       );
       expect(extension.sha256).toBe(hash.digest("hex"));

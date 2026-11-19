@@ -16,7 +16,6 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   HOPPER_CALLER_SCAN_BUDGET_SETTING,
-  hopperCallerScanLimit,
   hopperCallerScanRecovery,
 } from "./hopperCallerScanBudget.js";
 
@@ -79,15 +78,19 @@ it("explains the time budget and that fixed byte allowances have no override", (
   const parsed = parseConfig({ [HOPPER_CALLER_SCAN_BUDGET_SETTING]: "250" });
   if (!parsed.ok) throw parsed.error;
   const budget = parsed.value.hopperCallerScanBudget;
-  expect(hopperCallerScanLimit(budget)).toMatchObject({
-    setting: "hopper.caller_scan_budget_ms",
-    effective_value: 250,
-    source: "setting",
-    minimum: MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
-    maximum: MAX_NODE_TIMER_DELAY_MS,
-    update_mode: "runtime",
-    pending_restart: false,
-  });
+  const deadline = hopperCallerScanRecovery(
+    facts({ stop: { code: "work_budget", budget_ms: 250 } }),
+    budget,
+  );
+  expect(deadline).toContain(
+    "hopper.caller_scan_budget_ms is 250 ms (source setting",
+  );
+  expect(deadline).toContain(
+    `floor ${String(MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS)} ms`,
+  );
+  expect(deadline).toContain(`maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms`);
+  expect(deadline).toContain("update_analysis_settings");
+  expect(deadline).toContain(HOPPER_CALLER_SCAN_BUDGET_SETTING);
   expect(DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS).toBe(2000);
   const page = hopperCallerScanRecovery(
     facts({

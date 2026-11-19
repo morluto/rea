@@ -6,36 +6,39 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  semanticArgumentStaysInSource,
+  semanticDirectInvocationArgument,
+} from "./javascriptSemanticDirectInvocations.js";
+import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
+  ambientEffectCovers,
+  ambientPathMayObserveAt,
+  semanticEffectMayFollow,
+  semanticEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
+import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   isUnshadowedGlobal,
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
-  semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
-import {
-  semanticIterationSources,
-  type SemanticIterationSource,
-} from "./javascriptSemanticIterationSources.js";
-import {
-  joinSemanticPropertyPaths,
-  semanticPropertyPathKeyMatches,
-} from "./javascriptSemanticPropertyPaths.js";
+import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
+import { joinSemanticPropertyPaths } from "./javascriptSemanticPropertyPaths.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   GLOBAL_OBJECT_NAMES,
   globalObjectName,
   globalReferenceNamespace,
-  isUnmodifiedGlobalReference,
-  isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticGlobalReference.js";
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
 import {
@@ -44,10 +47,61 @@ import {
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 
-export {
-  isUnmodifiedGlobalReference,
-  isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticGlobalReference.js";
+/**
+ * Own static methods of `Object` and `Reflect` in the language. A native one
+ * ignores its receiver; any other member, including one `Object` inherits
+ * from `Function.prototype`, may be user code that receives the constructor.
+ */
+const NATIVE_STATIC_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  [
+    [
+      "Object",
+      new Set([
+        "assign",
+        "create",
+        "defineProperties",
+        "defineProperty",
+        "entries",
+        "freeze",
+        "fromEntries",
+        "getOwnPropertyDescriptor",
+        "getOwnPropertyDescriptors",
+        "getOwnPropertyNames",
+        "getOwnPropertySymbols",
+        "getPrototypeOf",
+        "groupBy",
+        "hasOwn",
+        "is",
+        "isExtensible",
+        "isFrozen",
+        "isSealed",
+        "keys",
+        "preventExtensions",
+        "seal",
+        "setPrototypeOf",
+        "values",
+      ]),
+    ],
+    [
+      "Reflect",
+      new Set([
+        "apply",
+        "construct",
+        "defineProperty",
+        "deleteProperty",
+        "get",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "has",
+        "isExtensible",
+        "ownKeys",
+        "preventExtensions",
+        "set",
+        "setPrototypeOf",
+      ]),
+    ],
+  ],
+);
 
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (
@@ -61,15 +115,6 @@ const canonicalAmbientPath = (
 };
 
 type AmbientPath = readonly (string | null)[];
-
-const ambientEffectCovers = (
-  effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
-  target: readonly string[],
-): boolean =>
-  effect.path.length <= target.length &&
-  effect.path.every((key, index) =>
-    semanticPropertyPathKeyMatches(key, target[index]!),
-  );
 
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -200,14 +245,41 @@ export const createAmbientPathResolver = (
       suffix: AmbientProjection;
       readsAtSelf?: true;
     };
-    const pending: Pending[] = [{ node, suffix: projection }];
+    // A binding read queues its selected initializers for one projection,
+    // taken from the end as if queued one by one. Reads selecting the same
+    // initializers and projection share the remaining items: an item already
+    // taken was expanded with the same projection, so taking it again could
+    // only revisit its expanded root. Requeueing every initializer at each
+    // read reached through an alias cycle grows quadratically per query.
+    interface QueuedInitializers {
+      readonly items: readonly Pending[];
+      remaining: number;
+    }
+    const pending: (Pending | QueuedInitializers)[] = [
+      { node, suffix: projection },
+    ];
+    const queuedInitializers = new Map<
+      JavaScriptSemanticBindingState,
+      Map<string | undefined, QueuedInitializers>
+    >();
+    const take = (): Pending | undefined => {
+      for (;;) {
+        const next = pending.pop();
+        if (next === undefined || !("items" in next)) return next;
+        if (next.remaining === 0) continue;
+        next.remaining -= 1;
+        if (next.remaining > 0) pending.push(next);
+        return next.items[next.remaining];
+      }
+    };
     // A receiver query reports the objects a write to `node` mutates, as
     // projections that still end at the written key. Once a step consumes that
     // key, the item denotes the value read from the written slot. Replacing
     // the slot does not mutate that value or the containers it was read from.
+    const admitted = (item: Pending): boolean =>
+      receiver === undefined || item.suffix?.length !== 0;
     const queue = (item: Pending): void => {
-      if (receiver !== undefined && item.suffix?.length === 0) return;
-      pending.push(item);
+      if (admitted(item)) pending.push(item);
     };
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
@@ -237,8 +309,8 @@ export const createAmbientPathResolver = (
         canonical = canonicalAmbientPath(["global", ...canonical.slice(2)]);
       }
     };
-    while (pending.length > 0) {
-      const current = pending.pop();
+    for (;;) {
+      const current = take();
       if (current === undefined) break;
       const queuedBefore = pending.length;
       const pathsBefore = result.size;
@@ -368,9 +440,6 @@ export const createAmbientPathResolver = (
           }
           const binding = resolveSemanticBindingState(state, root, root.name);
           if (binding === undefined) continue;
-          const stable = possibleWrites
-            ? undefined
-            : semanticStableInitializer(binding, state);
           const readAt = current.readsAtSelf ? root : capture;
           const atRead =
             possibleWrites && readAt !== undefined
@@ -379,35 +448,63 @@ export const createAmbientPathResolver = (
           const selected = atRead?.binding ?? binding;
           if (possibleWrites && atRead?.hasDefiniteInitializer === false)
             unknownReasons.add("unresolved-value");
-          const initializers = possibleWrites
-            ? [...selected.initializers, ...selected.referenceInitializers]
-            : stable === undefined
-              ? []
-              : [stable];
-          for (const initializer of initializers) {
-            if (semanticReferenceSourcesInactive(initializer, state)) continue;
-            // Pattern assignments share the source selection owner with member
-            // effects: copying a container preserves its children, not itself.
-            const path = semanticCopiedReferencePath(
-              initializer,
-              suffix ?? [null],
-              escapedContents ? "escape" : "identity",
-            );
-            if (path === null) continue;
-            queue({
-              node: initializer.node,
-              readsAtSelf: true,
-              suffix:
-                suffix === undefined ||
-                semanticReferenceIterationUnknown(initializer, state)
-                  ? undefined
-                  : path.map((key) =>
-                      key === null || typeof key === "object"
-                        ? null
-                        : String(key),
-                    ),
-            });
+          // A directly invoked function's parameter starts as its argument,
+          // which therefore did not escape at the call. It depends on this
+          // read, so it is queued here rather than with the binding's
+          // initializers.
+          const argument = possibleWrites
+            ? semanticDirectInvocationArgument(root, binding, state)
+            : undefined;
+          if (argument !== undefined)
+            queue({ node: argument, readsAtSelf: true, suffix });
+          const bySuffix =
+            queuedInitializers.get(selected) ??
+            new Map<string | undefined, QueuedInitializers>();
+          queuedInitializers.set(selected, bySuffix);
+          const suffixKey = JSON.stringify(suffix);
+          let queued = bySuffix.get(suffixKey);
+          if (queued === undefined) {
+            const stable = possibleWrites
+              ? undefined
+              : semanticStableInitializer(binding, state);
+            const initializers = possibleWrites
+              ? [...selected.initializers, ...selected.referenceInitializers]
+              : stable === undefined
+                ? []
+                : [stable];
+            const items: Pending[] = [];
+            for (const initializer of initializers) {
+              if (semanticReferenceSourcesInactive(initializer, state))
+                continue;
+              // Pattern assignments share the source selection owner with member
+              // effects: copying a container preserves its children, not itself.
+              const path = semanticCopiedReferencePath(
+                initializer,
+                suffix ?? [null],
+                escapedContents ? "escape" : "identity",
+              );
+              if (path === null) continue;
+              const item: Pending = {
+                node: initializer.node,
+                readsAtSelf: true,
+                suffix:
+                  suffix === undefined ||
+                  semanticReferenceIterationUnknown(initializer, state)
+                    ? undefined
+                    : path.map((key) =>
+                        key === null || typeof key === "object"
+                          ? null
+                          : String(key),
+                      ),
+              };
+              if (admitted(item)) items.push(item);
+            }
+            queued = { items, remaining: items.length };
+            bySuffix.set(suffixKey, queued);
           }
+          // Taken items still count as queued for this read: requeued, they
+          // would have been the same no-op revisits.
+          if (queued.items.length > 0) pending.push(queued);
           continue;
         }
         if (
@@ -621,6 +718,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     browserReceiver: boolean;
     projection?: AmbientProjection;
   }[] = [];
+  // Object/Reflect static calls, settled once every ambient write is known.
+  const staticReceivers: {
+    node: t.Node;
+    target: t.Node;
+    method: readonly string[];
+  }[] = [];
   const stores = new WeakMap<
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
@@ -690,10 +793,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
       };
-      for (const argument of t.isTaggedTemplateExpression(node)
+      for (const [index, argument] of (t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
-        : node.arguments)
-        if (t.isNode(argument))
+        : node.arguments
+      ).entries())
+        if (
+          t.isNode(argument) &&
+          !semanticArgumentStaysInSource(node, index, state)
+        )
           retainEscape(
             t.isSpreadElement(argument) ? argument.argument : argument,
           );
@@ -708,16 +815,23 @@ export function* indexJavaScriptAmbientWritesSteps(
           : undefined;
       if (
         !t.isNewExpression(node) &&
-        (t.isMemberExpression(callee) ||
-          t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
       ) {
-        if (browserMethod !== undefined)
-          browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        const owner = invocation?.path[1];
+        const method =
+          invocation?.kind === "known" &&
+          invocation.path.length === 3 &&
+          owner !== undefined &&
+          NATIVE_STATIC_METHODS.get(owner)?.has(invocation.path[2] ?? "")
+            ? invocation.path.slice(1)
+            : undefined;
+        if (method !== undefined)
+          staticReceivers.push({ node, target: callee.object, method });
+        else {
+          if (browserMethod !== undefined)
+            browserReceiverMethods.add(browserMethod);
+          retainEscape(callee.object, browserMethod !== undefined);
+        }
       }
     },
   );
@@ -777,6 +891,8 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     yield;
   }
+  for (const node of state.escapingThrows)
+    escapes.push({ node, target: node.argument, browserReceiver: false });
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
     const receiver = ambientWrites(source.target.object, source.mutation);
@@ -841,8 +957,8 @@ export function* indexJavaScriptAmbientWritesSteps(
       );
       return (
         matches.length === 0 ||
-        matches.some(
-          (entry) => semanticEffectTiming(node, entry.node, state) !== "after",
+        matches.some((entry) =>
+          semanticEffectMayPrecede(state, node, entry.node),
         )
       );
     };
@@ -861,6 +977,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       continue;
     retainEscapeEffect(effect);
   }
+  // A native static method ignores its receiver. A source write or escape
+  // that may replace the method before this call makes it user code, which
+  // receives the constructor. (Its prototype chain is not consulted: the
+  // method is an own property.)
+  for (const { node, target, method } of staticReceivers)
+    if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
+      retainEscapeEffect({ node, target, browserReceiver: false });
+    else state.retainedGlobalCallReceivers.add(target);
   function retainEscapeEffect({
     node,
     target,
@@ -963,22 +1087,15 @@ const createGlobalPathRead = (
       };
       byNamespace.set(namespace, effects);
     }
-    // The call that escapes a receiver contains the callee being identified.
-    // That escape cannot have replaced the callee before the call selects it.
-    const escapePrecedesRead = effects.escapes.some((effect) => {
-      const escape = effect.node;
+    const escapePrecedesRead = effects.escapes.some(({ node }) => {
+      // Selecting this callee precedes exposing its own receiver. Other reads,
+      // including arguments, need activation-aware ordering across repetitions.
       if (
-        escape !== undefined &&
-        escape !== site &&
-        typeof escape.start === "number" &&
-        typeof escape.end === "number" &&
-        typeof site.start === "number" &&
-        typeof site.end === "number" &&
-        site.start >= escape.start &&
-        site.end <= escape.end
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        node.callee === site
       )
         return false;
-      return semanticEffectTiming(site, escape, state) !== "after";
+      return semanticEffectMayPrecede(state, site, node);
     });
     if (
       (escapesCovered && effects.escapes.length === 0) ||
@@ -986,8 +1103,8 @@ const createGlobalPathRead = (
       (writesCovered && effects.writes.length === 0)
     )
       return { status: "unknown" };
-    const active = effects.writes.filter(
-      (effect) => semanticEffectTiming(site, effect.node, state) !== "after",
+    const active = effects.writes.filter((effect) =>
+      semanticEffectMayPrecede(state, site, effect.node),
     );
     if (active.length === 0) return { status: "unmodified" };
     if (
@@ -1040,7 +1157,7 @@ const globalPathReplacement = (
     effects.some(
       (effect) =>
         effect.node !== confirmed &&
-        semanticEffectTiming(confirmed, effect.node, state) !== "before" &&
+        semanticEffectMayFollow(state, confirmed, effect.node) &&
         (effect.node === undefined ||
           !semanticDefiniteEffectPrecedesReference(
             effect.node,

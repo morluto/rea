@@ -5,8 +5,7 @@ import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { BunStandaloneArtifactReader } from "../../../src/artifacts/BunStandaloneArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import * as layout from "../../../src/artifacts/bun/BunModuleGraphLayout.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { decodeBunModuleGraph } from "../../../src/artifacts/bun/BunModuleGraphMembers.js";
 import {
   locateBunGraphFixture,

@@ -1,11 +1,55 @@
 import { expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { launchCommand } from "../../../src/domain/desktop/appExport.js";
+import { planLaunch } from "../../../src/application/desktop/DesktopExportLaunch.js";
+import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
+
+it.skipIf(process.platform === "win32")(
+  "launches in an empty env-selected directory under the replay home",
+  () => {
+    const home = mkdtempSync(join(tmpdir(), "rea-working-home-"));
+    try {
+      const selected = "Projects/Empty workspace";
+      const capture = {
+        host: { home: "/home/ada" },
+        application: {
+          argv: [
+            "/usr/bin/env",
+            "--chdir",
+            `/home/ada/${selected}`,
+            "/bin/pwd",
+          ],
+          working_directory: "/home/ada/ambient",
+          application_working_directory: `/home/ada/${selected}`,
+          state_directories: [],
+        },
+        state: { state_directories: [] },
+      } as unknown as DesktopApplicationCapture;
+      const {
+        command: [program, ...args],
+      } = planLaunch(capture, false, new Map(), new Map());
+      const result = spawnSync(program!, args, {
+        encoding: "utf8",
+        env: { ...process.env, HOME: home },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trimEnd()).toBe(join(realpathSync(home), selected));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "does not import seeded Python modules while encoding a file URL",

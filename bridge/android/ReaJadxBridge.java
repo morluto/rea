@@ -46,6 +46,10 @@ import org.xml.sax.InputSource;
 
 /** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
 class ReaJadxBridge {
+  // REA reads this identity from this source (JadxRelease.ts), so it is typed
+  // once. Change BRIDGE_VERSION with any protocol change REA must not mix.
+  static final String BRIDGE_NAME = "rea-jadx-bridge";
+  static final String BRIDGE_VERSION = "11";
   private static final Gson JSON = new Gson();
   private final SessionHolder holder;
   private JadxSession indexedSession;
@@ -203,6 +207,9 @@ class ReaJadxBridge {
   // One bounded DEX at a time, beside the already admitted analysis JVM. The
   // response allowance accounts for worst-case JSON escaping before retention.
   private static final int NATIVE_DEX_BYTES = 64 * 1024 * 1024;
+  private static final int NATIVE_MANIFEST_BYTES = 8 * 1024 * 1024;
+  private static final int NATIVE_SPLIT_TYPES = 64;
+  private static final int NATIVE_SPLIT_TYPE_CHARS = 256;
   private static final long NATIVE_TOTAL_DEX_BYTES = 256L * 1024 * 1024;
   // This JSON is escaped again inside an 8 MiB MCP frame.
   private static final long NATIVE_JSON_BYTES = 4L * 1024 * 1024;
@@ -248,6 +255,8 @@ class ReaJadxBridge {
     int examinedMethods;
     boolean partial;
     boolean diagnosticLimit;
+    Map<String, Object> manifestSplits =
+        Map.of("status", "unknown", "reason", "Root AndroidManifest.xml was not examined");
 
     void unknown(String reason) {
       partial = true;
@@ -276,8 +285,55 @@ class ReaJadxBridge {
           "coverage", Map.of("status", partial ? "partial" : "complete",
               "dex_entries", dexEntries, "examined_dex_entries", examinedDexEntries,
               "examined_classes", examinedClasses, "examined_methods", examinedMethods),
-          "unknowns", List.copyOf(unknowns));
+          "unknowns", List.copyOf(unknowns), "manifest_splits", manifestSplits);
     }
+  }
+
+  /**
+   * Whether the root manifest requires split APKs, which can carry native
+   * libraries outside this APK. Decoded without a loaded session: the binary
+   * XML parser resolves framework attribute names through their resource IDs.
+   */
+  static Map<String, Object> manifestSplitRequirements(ZipFile archive, int manifests) {
+    if (manifests != 1)
+      return Map.of("status", "unknown", "reason", manifests == 0
+          ? "Root AndroidManifest.xml is absent"
+          : "Root AndroidManifest.xml entry name is ambiguous");
+    try {
+      byte[] bytes = readNativeMember(archive, archive.getEntry("AndroidManifest.xml"),
+          "AndroidManifest.xml", NATIVE_MANIFEST_BYTES, "8 MiB");
+      return manifestSplitFacts(new BinaryXMLParser(new RootNode(new JadxArgs()))
+          .parse(new java.io.ByteArrayInputStream(bytes)).getCodeStr());
+    } catch (IOException | RuntimeException failure) {
+      if (failure instanceof java.util.concurrent.CancellationException) throw (RuntimeException) failure;
+      String reason = "Root AndroidManifest.xml split requirements could not be read: "
+          + failure.getClass().getSimpleName()
+          + (failure.getMessage() == null ? "" : " (" + failure.getMessage() + ")");
+      return Map.of("status", "unknown", "reason",
+          reason.length() > 512 ? reason.substring(0, 512) : reason);
+    }
+  }
+
+  /** Split requirements declared by decoded manifest text, within a fixed report allowance. */
+  static Map<String, Object> manifestSplitFacts(String xml) {
+    Element root = manifestRoot(xml);
+    String android = "http://schemas.android.com/apk/res/android";
+    List<String> types = new ArrayList<>();
+    for (String type : root.getAttributeNS(android, "requiredSplitTypes").split(",")) {
+      if (type.isBlank()) continue;
+      if (types.size() == NATIVE_SPLIT_TYPES || type.strip().length() > NATIVE_SPLIT_TYPE_CHARS)
+        throw new IllegalArgumentException("requiredSplitTypes exceeds the " + NATIVE_SPLIT_TYPES
+            + "-entry, " + NATIVE_SPLIT_TYPE_CHARS + "-character report allowance");
+      types.add(type.strip());
+    }
+    boolean required = false;
+    for (Node child = root.getFirstChild(); child != null; child = child.getNextSibling()) {
+      if (child instanceof Element element && element.getNamespaceURI() == null
+          && element.getTagName().equals("application"))
+        required |= element.getAttributeNS(android, "isSplitRequired").equals("true");
+    }
+    return Map.of("status", "observed", "required_split_types", List.copyOf(types),
+        "split_required", required);
   }
 
   /** Match Android's standard root multidex carriers, without a basename guess. */
@@ -286,9 +342,15 @@ class ReaJadxBridge {
   }
 
   private static byte[] readNativeDex(ZipFile archive, ZipEntry entry) throws IOException {
+    return readNativeMember(archive, entry, "DEX", NATIVE_DEX_BYTES, "64 MiB");
+  }
+
+  /** Read one stored or deflated root member exactly, checked against its CRC32. */
+  private static byte[] readNativeMember(ZipFile archive, ZipEntry entry, String label,
+      int maximum, String allowance) throws IOException {
     long size = entry.getSize();
-    if (size < 0 || size > NATIVE_DEX_BYTES)
-      throw new IllegalArgumentException("DEX exceeds the 64 MiB single-member read allowance");
+    if (size < 0 || size > maximum)
+      throw new IllegalArgumentException(label + " exceeds the " + allowance + " single-member read allowance");
     byte[] bytes = new byte[(int) size];
     CRC32 crc = new CRC32();
     try (InputStream input = archive.getInputStream(entry)) {
@@ -296,15 +358,15 @@ class ReaJadxBridge {
       while (offset < bytes.length) {
         checkNativeInterrupted();
         int read = input.read(bytes, offset, Math.min(65536, bytes.length - offset));
-        if (read < 0) throw new IOException("DEX is shorter than its ZIP declaration");
+        if (read < 0) throw new IOException(label + " is shorter than its ZIP declaration");
         if (read == 0) continue;
         crc.update(bytes, offset, read);
         offset += read;
       }
-      if (input.read() != -1) throw new IOException("DEX exceeds its ZIP declaration");
+      if (input.read() != -1) throw new IOException(label + " exceeds its ZIP declaration");
     }
     if (entry.getCrc() < 0 || entry.getCrc() != crc.getValue())
-      throw new IOException("DEX does not match its ZIP CRC32 declaration");
+      throw new IOException(label + " does not match its ZIP CRC32 declaration");
     return bytes;
   }
 
@@ -321,7 +383,14 @@ class ReaJadxBridge {
           inventory.dexEntries++;
           names.merge(entry.getName(), 1, Integer::sum);
         }
+        if (!entry.isDirectory() && entry.getName().equals("AndroidManifest.xml"))
+          names.merge(entry.getName(), 1, Integer::sum);
       }
+      // Before any early return, so every result states whether splits hold code.
+      inventory.manifestSplits = manifestSplitRequirements(archive,
+          names.getOrDefault("AndroidManifest.xml", 0));
+      // Split facts share the retained JSON allowance; escaping is at most 6x.
+      inventory.retainedBytes += 64L + 6L * inventory.manifestSplits.toString().length();
       long totalBytes = 0;
       int entryIndex = -1;
       directory = archive.entries();
@@ -436,8 +505,8 @@ class ReaJadxBridge {
     }
   }
 
-  /** One parsed XML owner supplies namespace-aware values alongside the exact decoded text. */
-  static Map<String, Object> manifestSummary(String xml) {
+  /** One namespace-aware XML owner for the decoded manifest text. */
+  static Element manifestRoot(String xml) {
     Element root;
     try {
       // Match REA's existing JDK XML setup: document types are unsupported.
@@ -455,6 +524,12 @@ class ReaJadxBridge {
     }
     if (!root.getTagName().equals("manifest") || root.getNamespaceURI() != null)
       throw new IllegalArgumentException("AndroidManifest.xml root must be an unnamespaced <manifest>");
+    return root;
+  }
+
+  /** One parsed XML owner supplies namespace-aware values alongside the exact decoded text. */
+  static Map<String, Object> manifestSummary(String xml) {
+    Element root = manifestRoot(xml);
     String android = "http://schemas.android.com/apk/res/android";
     String minSdk = "";
     String targetSdk = "";
@@ -464,7 +539,9 @@ class ReaJadxBridge {
       if (element.getTagName().equals("uses-sdk")) {
         minSdk = element.getAttributeNS(android, "minSdkVersion");
         targetSdk = element.getAttributeNS(android, "targetSdkVersion");
-      } else if (element.getTagName().equals("uses-permission")) {
+      } else if (element.getTagName().equals("uses-permission")
+          || element.getTagName().equals("uses-permission-sdk-23")
+          || element.getTagName().equals("uses-permission-sdk-m")) {
         String permission = element.getAttributeNS(android, "name");
         if (!permission.isEmpty()) permissions.add(permission);
       }
@@ -636,10 +713,19 @@ class ReaJadxBridge {
         TextUtilKt.truncateToBytes(block, current.getMaxSourceBytes()), "smali", true, markers);
   }
 
+  private static final class MethodDisassemblyUnavailable extends IllegalArgumentException {
+    MethodDisassemblyUnavailable(String message) { super(message); }
+  }
+
   private static String selectMethodSmali(JadxSession.MethodSmali smali, String shortId) {
-    if (!smali.getFound())
-      throw new IllegalArgumentException("JADX could not disassemble " + shortId
-          + (smali.getNote() == null ? "" : ": " + smali.getNote()));
+    if (!smali.getFound()) {
+      String reason = "JADX could not disassemble " + shortId
+          + (smali.getNote() == null ? "" : ": " + smali.getNote());
+      // JADX folds caller interruption into the same result as failed generation
+      // and missing blocks, but leaves the interrupt flag set.
+      if (Thread.currentThread().isInterrupted()) throw new IllegalArgumentException(reason);
+      throw new MethodDisassemblyUnavailable(reason);
+    }
     // Upstream returns every same-name overload, and can return an unterminated
     // trailing block. Match the full original identity before applying output limits.
     List<String> matches = smali.getBlocks().stream().filter(block -> {
@@ -647,10 +733,10 @@ class ReaJadxBridge {
       return header.startsWith(".method ") && header.endsWith(" " + shortId);
     }).toList();
     if (matches.size() != 1)
-      throw new IllegalArgumentException("Disassembly could not establish one selected method: " + shortId);
+      throw new MethodDisassemblyUnavailable("Disassembly could not establish one selected method: " + shortId);
     String block = matches.get(0);
     if (!block.stripTrailing().endsWith("\n.end method"))
-      throw new IllegalArgumentException("Selected method disassembly is incomplete: " + shortId);
+      throw new MethodDisassemblyUnavailable("Selected method disassembly is incomplete: " + shortId);
     return block;
   }
 
@@ -926,14 +1012,22 @@ class ReaJadxBridge {
       List<MethodSnapshot> overloads = methods(cls, args);
       int index = integer(args, "overload_index", 0);
       if (index >= overloads.size()) throw new InputFailure("overload_index", "overload_index out of range: " + index);
-      JavaMethod method = method(cls, overloads.get(index));
-      JadxSession.SmartCode code = methodBody(current, cls, overloads.get(index), method);
-      return json(Map.of("class_name", cls.summary().get("full_name"),
-          "method_name", overloads.get(index).name(), "full_name", method.getFullName(),
-          "dex_descriptor", overloads.get(index).summary().get("dex_descriptor"),
-          "overload_index", index, "overload_count", overloads.size(),
-          "mode", code.getKind(), "fell_back", code.getFellBack(),
-          "markers", code.getMarkers(), "body", code.getText()));
+      MethodSnapshot selected = overloads.get(index);
+      JavaMethod method = method(cls, selected);
+      Map<String, Object> result = new LinkedHashMap<>(Map.of(
+          "class_name", cls.summary().get("full_name"),
+          "method_name", selected.name(), "full_name", method.getFullName(),
+          "dex_descriptor", selected.summary().get("dex_descriptor"),
+          "overload_index", index, "overload_count", overloads.size()));
+      try {
+        JadxSession.SmartCode code = methodBody(current, cls, selected, method);
+        result.putAll(Map.of("mode", code.getKind(), "fell_back", code.getFellBack(),
+            "markers", code.getMarkers(), "body", code.getText()));
+      } catch (MethodDisassemblyUnavailable failure) {
+        result.put("mode", "unavailable");
+        result.put("body_unavailable_reason", failure.getMessage());
+      }
+      return json(result);
     }
     List<JavaNode> uses;
     String target = (String) cls.summary().get("full_name");
@@ -1007,7 +1101,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "10", null, null, null),
+    Server server = new Server(new Implementation(BRIDGE_NAME, BRIDGE_VERSION, null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);

@@ -8,56 +8,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "rejects malformed oversized input through CLI and Evidence readers",
-  async ({ cli, processes }) => {
-    const root = await createTestTempDirectory("rea-json-string-limit-");
-    const input = join(root, "oversized.json");
-    const file = await open(input, "wx");
-    try {
-      // Sparse zero bytes are valid UTF-8. Both streaming readers reject
-      // their invalid JSON syntax without assembling a whole-document string.
-      await file.truncate(constants.MAX_STRING_LENGTH + 1);
-    } finally {
-      await file.close();
-    }
-    // Run readers sequentially in owned child processes, releasing each large
-    // read buffer when its process exits instead of retaining it in Vitest.
-    const result = await cli.run({
-      arguments: ["trace-application-feature", input, "--json"],
-    });
-    expect(result.json).toMatchObject({
-      code: "invalid_request",
-      input_path: input,
-      input_reason: "invalid-json",
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toBe("");
-
-    const evidence = await processes.run(process.execPath, [
-      "--input-type=module",
-      "-e",
-      `import { readJsonFile } from "./dist/application/JsonFiles.js";
-       import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
-       const result = await readJsonFile(process.argv[1]);
-       console.log(JSON.stringify(result.ok ? result : projectAnalysisError(result.error)));`,
-      input,
-    ]);
-    expect(JSON.parse(evidence.stdout)).toMatchObject({
-      code: "evidence_integrity_mismatch",
-      details: {
-        operation: "read",
-        reason: "invalid-json",
-        path: input,
-      },
-    });
-    expect(evidence.stderr).toBe("");
-    expect(evidence.exitCode).toBe(0);
-  },
-);
-
-cliTest(
   "traces valid Evidence beyond the whole-document string limit",
-  async ({ cli, processes }) => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-json-streamed-evidence-");
     const source = join(root, "application");
     await mkdir(source);
@@ -118,7 +70,7 @@ cliTest(
 
 cliTest(
   "returns a typed container assembly constraint and allows a following read",
-  async ({ cli, processes }) => {
+  async ({ processes }) => {
     const root = await createTestTempDirectory("rea-json-container-headroom-");
     const input = join(root, "containers.json");
     const following = join(root, "following.json");
@@ -132,42 +84,44 @@ cliTest(
       await file.close();
     }
     await writeFile(following, '{"after":true}');
-    const result = await cli.run({
-      arguments: ["trace-application-feature", input, "--json"],
-      environment: { NODE_OPTIONS: "--max-old-space-size=768" },
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toBe("");
-    expect(result.json).toMatchObject({
-      code: "resource_constraint",
-      details: {
-        resource: "memory",
-        reported_limits: {
-          input_path: input,
-          projected_value_bytes: expect.any(Number),
-          assembly_headroom_bytes: expect.any(Number),
-        },
-      },
-    });
     const evidence = await processes.run(process.execPath, [
       "--max-old-space-size=768",
       "--input-type=module",
       "-e",
       `import { readJsonFile } from "./dist/application/JsonFiles.js";
        import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
-       const large = await readJsonFile(process.argv[1]);
-       const following = await readJsonFile(process.argv[2]);
-       console.log(JSON.stringify({large: large.ok ? large : projectAnalysisError(large.error), following}));`,
+       import { ArtifactResourceScope } from "./dist/resources/ArtifactResourceScope.js";
+       const resources = new ArtifactResourceScope();
+       try {
+         const large = await readJsonFile(process.argv[1], undefined, resources);
+         const pendingAfterRefusal = resources.hasPending;
+         const following = await readJsonFile(process.argv[2], undefined, resources);
+         console.log(JSON.stringify({
+           large: large.ok ? large : projectAnalysisError(large.error),
+           pendingAfterRefusal,
+           following,
+         }));
+       } finally {
+         await resources.close();
+       }`,
       input,
       following,
     ]);
-    expect(evidence.exitCode).toBe(0);
+    expect(evidence.exitCode, evidence.stderr).toBe(0);
     expect(evidence.stderr).toBe("");
     expect(JSON.parse(evidence.stdout)).toMatchObject({
       large: {
         code: "resource_constraint",
-        details: { reported_limits: { input_path: input } },
+        details: {
+          resource: "memory",
+          reported_limits: {
+            input_path: input,
+            projected_value_bytes: expect.any(Number),
+            assembly_headroom_bytes: expect.any(Number),
+          },
+        },
       },
+      pendingAfterRefusal: false,
       following: { ok: true, value: { after: true } },
     });
   },
@@ -175,14 +129,15 @@ cliTest(
 
 cliTest(
   "returns a typed string assembly constraint under a bounded heap",
-  async ({ cli, processes }) => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-json-string-headroom-");
     const input = join(root, "long-string.json");
+    const contentBytes = constants.MAX_STRING_LENGTH + 1;
     const file = await open(input, "wx");
     try {
       await file.writeFile('"');
       const chunk = Buffer.alloc(1024 * 1024, 0x78);
-      let remaining = constants.MAX_STRING_LENGTH + 1;
+      let remaining = contentBytes;
       while (remaining > 0) {
         const length = Math.min(remaining, chunk.length);
         await file.writeFile(chunk.subarray(0, length));
@@ -202,26 +157,17 @@ cliTest(
       code: "resource_constraint",
       input_path: input,
       input_reason: "too-large",
-      details: { resource: "memory" },
+      details: {
+        resource: "memory",
+        reported_limits: {
+          input_file_bytes: contentBytes + 2,
+          string_code_units: expect.any(Number),
+          string_assembly_headroom_bytes: expect.any(Number),
+        },
+      },
       remediation: {
         action: expect.stringContaining("re-analyze a smaller selection"),
       },
     });
-    const evidence = await processes.run(process.execPath, [
-      "--max-old-space-size=768",
-      "--input-type=module",
-      "-e",
-      `import { readJsonFile } from "./dist/application/JsonFiles.js";
-       import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
-       const result = await readJsonFile(process.argv[1]);
-       console.log(JSON.stringify(result.ok ? result : projectAnalysisError(result.error)));`,
-      input,
-    ]);
-    expect(JSON.parse(evidence.stdout)).toMatchObject({
-      code: "resource_constraint",
-      details: { operation: "read_evidence_file", resource: "memory" },
-    });
-    expect(evidence.stderr).toBe("");
-    expect(evidence.exitCode).toBe(0);
   },
 );

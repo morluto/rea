@@ -15,14 +15,34 @@ export interface ZipMember {
   /** External attributes; a slash-ended name gets the MS-DOS directory bit. */
   readonly external?: number;
   readonly centralExtra?: Uint8Array;
+  /** Keep a local record without listing it in the central directory. */
+  readonly listed?: boolean;
+  /** A contradictory central size, without changing the local record. */
+  readonly centralCompressedSize?: number;
 }
 
 const UTF8_NAME = 0x800;
+
+/** A version-1 Info-ZIP Unicode Path claim bound to the stored filename bytes. */
+export const unicodePathExtra = (
+  name: string,
+  path: string | Uint8Array,
+): Buffer => {
+  const text = Buffer.from(path);
+  const field = Buffer.alloc(9 + text.length);
+  field.writeUInt16LE(0x7075);
+  field.writeUInt16LE(field.length - 4, 2);
+  field[4] = 1;
+  field.writeUInt32LE(crc32(Buffer.from(name)), 5);
+  text.copy(field, 9);
+  return field;
+};
 
 /** A zip archive of the members in order, framed from the PKWARE APPNOTE records. */
 export const zipArchive = (members: readonly ZipMember[]): Buffer => {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
+  let listed = 0;
   let offset = 0;
   for (const member of members) {
     const content = Buffer.from(member.data ?? "");
@@ -57,7 +77,10 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     central.writeUInt16LE(fields.method, 10);
     central.writeUInt16LE(0x5021, 14);
     central.writeUInt32LE(fields.crc, 16);
-    central.writeUInt32LE(fields.compressed, 20);
+    central.writeUInt32LE(
+      member.centralCompressedSize ?? fields.compressed,
+      20,
+    );
     central.writeUInt32LE(fields.size, 24);
     central.writeUInt16LE(name.length, 28);
     central.writeUInt16LE(member.centralExtra?.length ?? 0, 30);
@@ -67,17 +90,20 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     );
     central.writeUInt32LE(offset, 42);
     locals.push(local, name, stored);
-    centrals.push(central, name);
-    if (member.centralExtra !== undefined)
-      centrals.push(Buffer.from(member.centralExtra));
+    if (member.listed !== false) {
+      listed += 1;
+      centrals.push(central, name);
+      if (member.centralExtra !== undefined)
+        centrals.push(Buffer.from(member.centralExtra));
+    }
     offset += local.length + name.length + stored.length;
   }
   const directory = Buffer.concat(centrals);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
   // Past 65,535 members the 16-bit counts wrap, as writers without Zip64 leave them.
-  end.writeUInt16LE(members.length & 0xffff, 8);
-  end.writeUInt16LE(members.length & 0xffff, 10);
+  end.writeUInt16LE(listed & 0xffff, 8);
+  end.writeUInt16LE(listed & 0xffff, 10);
   end.writeUInt32LE(directory.length, 12);
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, directory, end]);

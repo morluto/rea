@@ -78,6 +78,10 @@ scenario whose declared variables are unset still validates; the missing-value
 failure belongs to capture. A schema-valid scenario does not prove that the
 executable or target is available on the host.
 
+For a locator with `kind: "role"`, set `name` to the element's exact full
+accessible name. Use the name shown in accessibility evidence, which can include
+text beyond the visible label. A partial name does not match.
+
 ## Minimal launch example
 
 Save this as `browser-scenario.json`, replacing the executable path with an
@@ -672,10 +676,9 @@ transaction only when it was observed; a null predecessor does not establish
 that no earlier hop existed. Request events require both transaction fields;
 an absent ID is malformed capture data. `redirected_from_transaction_state`
 records `root` when Playwright observed no predecessor and `unknown` when a
-predecessor exists but was outside the capture. A linked predecessor is carried
-by `redirected_from_transaction_id` with no state field. Older captures without
-the state field retain the conservative meaning that a null predecessor is
-unknown.
+predecessor exists but was outside the capture. It is required when
+`redirected_from_transaction_id` is null and refused when the predecessor is
+linked; a request event that breaks either rule is malformed capture data.
 
 `scenario.network_content` records the resolved content selection. Comparing
 captures with different selections reports network evidence as unknown with a

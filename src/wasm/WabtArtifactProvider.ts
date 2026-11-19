@@ -1,5 +1,9 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
-import { randomUUID, createHash } from "node:crypto";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { randomUUID } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -8,33 +12,34 @@ import type {
   WasmArtifactExecutionOptions,
   WasmArtifactExecution,
   WasmArtifactPort,
-} from "../application/wasm/WasmArtifactPort.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/wasm/WasmArtifactPort.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   completedStableArtifact,
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
-import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  AnalysisCleanupLeaseGroup,
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type {
   AnalysisError,
   AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -52,7 +57,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
@@ -65,13 +69,15 @@ import {
   wabtReleaseLine,
 } from "./WabtRelease.js";
 import {
-  wabtFailure,
+  wabtFailureDialect,
   wabtConfigurationRecoveryAction,
   type WabtVersionProbe,
 } from "./WabtFailures.js";
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type AcquiredGlue =
@@ -82,8 +88,6 @@ type AcquiredGlue =
       readonly references: [];
     };
 const OPERATION = "inspect_wasm_artifact";
-const digest = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
 const warningOutput = (text: string): readonly string[] | null => {
   if (text === "") return [];
   const lines = text.trimEnd().split("\n");
@@ -117,7 +121,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
     input: InspectWasmArtifactInput,
     options?: WasmArtifactExecutionOptions,
   ): Promise<Result<WasmArtifactExecution, AnalysisError>> {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     try {
       return await this.#resources.run(() =>
         this.#inspect(input, environment, options),
@@ -131,7 +138,12 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         cause.cleanup === undefined
       )
         return err(this.#closedError());
-      return err(wabtFailure(cause, "artifact", input.path));
+      return err(
+        classifyProviderFailure(
+          cause,
+          wabtFailureDialect("artifact", input.path),
+        ),
+      );
     }
   }
 
@@ -181,7 +193,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         ? undefined
         : createEvidence(
             artifact === undefined
-              ? undefined
+              ? unknownTarget("not-observed")
               : {
                   path: artifact.path,
                   format: "file",
@@ -235,14 +247,14 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         ? "request"
         : options?.commandTimeoutSource;
     try {
-      if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
-      const directory = environment.REA_WABT_BIN_DIRECTORY ?? "";
-      if (!isAbsolute(directory))
+      if (isAborted(options?.signal))
+        throw cancelledBy(OPERATION, options.signal);
+      const directory = environment.REA_WABT_BIN_DIRECTORY;
+      if (directory === undefined || !isAbsolute(directory))
         throw new WabtAdmissionError("directory_not_absolute", {
           setting: "REA_WABT_BIN_DIRECTORY",
+          // Keep the caller's rejected selection; unset stays distinct.
+          ...(directory === undefined ? {} : { configured: directory }),
         });
       const commands: {
         tool: "wasm-validate" | "wasm-objdump" | "wasm2wat";
@@ -260,7 +272,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         const selection = await selectArtifactCommandPath(
           appendCallerPath(
             directory,
-            `${tool}${process.platform === "win32" ? ".exe" : ""}`,
+            `${tool}${HOST_PLATFORM.platform === "win32" ? ".exe" : ""}`,
           ),
           options?.signal,
         );
@@ -341,7 +353,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = artifactCommandOutput(snapshot);
+        capturedOutput = capturedProviderOutput(snapshot);
         const invalidUtf8Streams = [
           ...(snapshot.stdout.invalidUtf8 ? ["stdout"] : []),
           ...(snapshot.stderr.invalidUtf8 ? ["stderr"] : []),
@@ -392,8 +404,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           version.exitCode === 0 && version.stderr.text === ""
             ? admitWabtVersion(version.stdout.text)
             : undefined;
-        if (admission === undefined || admission.status === "unsupported") {
-          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${wabtReleaseLine()} with empty stderr.`;
+        function rejectVersion(reason: string): never {
           throw new AnalysisCapabilityUnavailableError(
             WABT_PROVIDER_IDENTITY.id,
             OPERATION,
@@ -401,34 +412,20 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             {
               userMessage: reason,
               diagnostics: versionProbe,
-              capturedOutput: {
-                stdout: version.stdout.text,
-                stderr: version.stderr.text,
-                truncated: version.diagnosticTruncated === true,
-              },
+              capturedOutput: capturedProviderOutput(version),
               remediationAction: wabtConfigurationRecoveryAction(),
             },
           );
+        }
+        if (admission === undefined || admission.status === "unsupported") {
+          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${wabtReleaseLine()} with empty stderr.`;
+          rejectVersion(reason);
         }
         // All three tools come from one directory, so admit only banners that agree.
         if (observedRelease === undefined) observedRelease = admission.version;
         if (observedRelease !== admission.version) {
           const reason = `Configured WABT tools report different releases (${observedRelease} and ${admission.version}); select one complete ${wabtReleaseLine()} installation.`;
-          throw new AnalysisCapabilityUnavailableError(
-            WABT_PROVIDER_IDENTITY.id,
-            OPERATION,
-            reason,
-            {
-              userMessage: reason,
-              diagnostics: versionProbe,
-              capturedOutput: {
-                stdout: version.stdout.text,
-                stderr: version.stderr.text,
-                truncated: version.diagnosticTruncated === true,
-              },
-              remediationAction: wabtConfigurationRecoveryAction(),
-            },
-          );
+          rejectVersion(reason);
         }
         if (admission.status === "compatible")
           compatibleLimitation = admission.limitation;
@@ -494,10 +491,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         };
         try {
           // Keep source characters intact so locations match the hashed artifact.
-          const source = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(bytes.bytes);
+          const source = decodeStrictUtf8(bytes.bytes, "preserve");
           glue[glueIndex] = {
             artifact: glueArtifact,
             ...associateWasmGlue(
@@ -516,10 +510,16 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }
       }
       phase = "producer";
+      const signal = options?.signal;
       await writeFile(snapshotPath, selected.bytes, {
         flag: "wx",
         mode: 0o400,
-        ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        ...(signal === undefined ? {} : { signal }),
+      }).catch((cause: unknown) => {
+        // Node rejects a write this signal aborted with an envelope that
+        // carries the signal's own reason; any other failure stays itself.
+        if (isAbortOf(cause, signal)) throw cancelledBy(OPERATION, signal);
+        throw cause;
       });
       snapshotHash = selected.sha256;
       phase = "producer";
@@ -531,7 +531,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       )
         throw new WabtAdmissionError("incomplete_tool_profile");
       const validation = await execute(validate, validate.arguments, true);
-      if (validation.exitCode !== 0)
+      if (validation.exitCode !== 0) {
+        const validationOutput = capturedProviderOutput(validation);
         throw new AnalysisInputError(
           OPERATION,
           {
@@ -544,9 +545,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 result: {
                   ...acquiredFacts(),
                   validation: "rejected-by-selected-profile",
-                  exit_code: validation.exitCode ?? null,
-                  stdout: validation.stdout.text,
-                  stderr: validation.stderr.text,
+                  exit_code: validationOutput.exit_code ?? null,
+                  stdout: validationOutput.stdout,
+                  stderr: validationOutput.stderr,
                 },
                 confidence: "observed",
                 locations: [{ kind: "artifact-path", path: input.path }],
@@ -558,7 +559,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 ],
               },
             ),
-            capturedOutput: artifactCommandOutput(validation),
+            capturedOutput: validationOutput,
           },
           [
             {
@@ -569,6 +570,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             },
           ],
         );
+      }
       validationState = "valid";
       const customSectionWarnings: {
         tool: (typeof commands)[number]["tool"];
@@ -585,7 +587,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             OPERATION,
             "Unexpected WABT diagnostic output.",
             {
-              capturedOutput: artifactCommandOutput(output),
+              capturedOutput: capturedProviderOutput(output),
             },
           );
         if (warnings.length > 0)
@@ -613,7 +615,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       // WAT framing reads module names, not every inner name map. A producer
       // warning may concern a skipped body or another custom section; without
       // section attribution it cannot establish complete debug-name coverage.
-      capturedOutput = artifactCommandOutput(dump);
+      capturedOutput = capturedProviderOutput(dump);
       const { sections, headers, details, invalidNameEnds } = parseWabtOutput(
         dump.stdout.text,
         selected.bytes.length,
@@ -635,7 +637,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
               OPERATION,
               "Unexpected WABT diagnostic output.",
               {
-                capturedOutput: artifactCommandOutput(
+                capturedOutput: capturedProviderOutput(
                   warning.tool === "wasm-validate"
                     ? validation
                     : warning.tool === "wasm-objdump"
@@ -689,7 +691,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         details,
         wat: {
           text: wat.stdout.text,
-          sha256: digest(wat.stdout.text),
+          sha256: sha256Hex(wat.stdout.text),
           representation: "decoded-wat",
         },
         tool_profile: toolProfile,
@@ -711,20 +713,22 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = wabtFailure(
+      const failure = classifyProviderFailure(
         cause,
-        phase,
-        phase === "artifact" ? artifactInput.path : input.path,
-        {
-          commandTimeoutMs,
-          ...(commandTimeoutSource === undefined
-            ? {}
-            : { commandTimeoutSource }),
-          limits,
-          inputField: artifactInput.field,
-          observedOutput: capturedOutput,
-          ...(versionProbe === undefined ? {} : { versionProbe }),
-        },
+        wabtFailureDialect(
+          phase,
+          phase === "artifact" ? artifactInput.path : input.path,
+          {
+            commandTimeoutMs,
+            ...(commandTimeoutSource === undefined
+              ? {}
+              : { commandTimeoutSource }),
+            limits,
+            inputField: artifactInput.field,
+            observedOutput: capturedOutput,
+            ...(versionProbe === undefined ? {} : { versionProbe }),
+          },
+        ),
       );
       if (failure.partialObservation === undefined) {
         const partial = acquiredEvidence();
@@ -753,16 +757,15 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           "observed",
         );
       }
-      if (options?.signal?.aborted) {
+      if (isAborted(options?.signal)) {
         result = err(
           analysisErrorWithCancellation(
             result.ok ? undefined : result.error,
-            new AnalysisCancelledError(OPERATION, {
-              cause: options.signal.reason,
-              ...(partialObservation === undefined
-                ? {}
-                : { partialObservation }),
-            }),
+            cancelledBy(
+              OPERATION,
+              options.signal,
+              partialObservation === undefined ? {} : { partialObservation },
+            ),
           ),
         );
       }
@@ -775,7 +778,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           WABT_PROVIDER_IDENTITY.id,
           [runtime.path],
           {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             previous_error: result.ok
               ? null
               : projectAnalysisError(result.error),
@@ -792,11 +795,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         result = result.ok
           ? err(failure)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 result.error,
                 failure,
                 OPERATION,
-              ).bindCleanupDependencies([result.error, failure]),
+              ),
             );
       }
     }
@@ -812,9 +815,7 @@ const resourceCleanupFailure = (cause: unknown): ProviderCleanupError => {
     WABT_PROVIDER_IDENTITY.id,
     cleanup?.resources ?? ["artifact-resources"],
     {
-      reason:
-        cleanup?.reason ??
-        (cause instanceof Error ? cause.message : String(cause)),
+      reason: cleanup?.reason ?? errorMessage(cause),
     },
     { operation: OPERATION, cause },
   );

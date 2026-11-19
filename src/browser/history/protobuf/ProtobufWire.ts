@@ -1,4 +1,7 @@
+import { Budget } from "../../../domain/budget.js";
+import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { captureBudgets } from "../CaptureBudgets.js";
+import { readLeb128, ULEB64 } from "../../../domain/leb128.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import { setImmediate } from "node:timers/promises";
 import type { ProtobufField } from "../../../domain/protobufWire.js";
@@ -6,16 +9,18 @@ import { CaptureFormatError } from "../CaptureFormatError.js";
 
 /** One charge covers all selected records, including temporary interpretation strings. */
 export class ProtobufBudget {
-  #remaining = captureBudgets().outputBytes;
+  readonly #bytes = new Budget(captureBudgets().outputBytes);
   #work = 0;
   constructor(readonly signal?: AbortSignal) {}
   charge(bytes: number): void {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
-      throw new CaptureFormatError(
-        "limit",
-        `Protobuf decoding exceeds max_reply_bytes (${String(captureBudgets().outputBytes)} bytes); raise that per-call allowance and retry.`,
-      );
-    this.#remaining -= bytes;
+    this.#bytes.charge(
+      bytes,
+      () =>
+        new CaptureFormatError(
+          { name: "protobuf-decoding", maximum: this.#bytes.maximum },
+          `Protobuf decoding exceeds max_reply_bytes (${String(this.#bytes.maximum)} bytes); raise that per-call allowance and retry.`,
+        ),
+    );
   }
   async checkpoint(): Promise<void> {
     this.signal?.throwIfAborted();
@@ -32,17 +37,11 @@ export const readProtobufVarint = (
   start: number,
   end = bytes.length,
 ): { value: bigint; end: number } | undefined => {
-  let value = 0n;
-  for (let index = 0; index < 10 && start + index < end; index++) {
-    const byte = bytes[start + index]!;
-    if (index === 9 && byte > 1) return undefined;
-    value |= BigInt(byte & 127) << BigInt(index * 7);
-    if (byte < 128) return { value, end: start + index + 1 };
-  }
-  return undefined;
+  const read = readLeb128(bytes, start, end, ULEB64);
+  return "failure" in read ? undefined : { value: read.value, end: read.next };
 };
 
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const textOf = (bytes: Uint8Array): string | undefined => {
   try {
     return utf8.decode(bytes);

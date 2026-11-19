@@ -1,9 +1,11 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { processInspectionCleanupFailures } from "../../process/ProcessInspectionCleanup.js";
 import { samplingInspectionFailures } from "../../process/capture/ProcessSamplingObservation.js";
 import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
-import { arch, hostname, userInfo } from "node:os";
+import { hostname, userInfo } from "node:os";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   bindProcessInspectionCancellations,
   retainProcessInspectionCleanup,
@@ -23,16 +25,13 @@ import {
   type DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
   DesktopSessionCleanupError,
-  runDesktopSession,
-  runningApplicationWindows,
+  type DesktopCaptureProvider,
   type SessionRequest,
-} from "../../desktop/DesktopApplicationSession.js";
-import { inspectLinuxApplication } from "../../desktop/LinuxApplicationInventory.js";
+} from "../../ports/DesktopApplicationSession.js";
+import type { DesktopCaptureStore } from "../../ports/CaptureContentStore.js";
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
-import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import {
   discardFailedCapture,
   failedCaptureError,
@@ -83,6 +82,8 @@ export interface DesktopCaptureHost {
   readonly environment: NodeJS.ProcessEnv;
   /** Directory relative executables and paths are resolved from. */
   readonly callerDirectory: string;
+  /** The desktop provider's observers, session runner and content store. */
+  readonly desktop: DesktopCaptureProvider;
   readonly nextRequest: () => SessionRequest | undefined;
   /** Progress text, with the event a driver waits on when there is one. */
   readonly report: (
@@ -172,7 +173,7 @@ const captureEvidence = (
   request: DesktopCaptureRequest,
   capture: DesktopApplicationCapture,
 ): Evidence =>
-  createEvidence(undefined, DESKTOP_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-capture",
     operation: DESKTOP_OPERATION,
     parameters: {
@@ -190,9 +191,9 @@ const captureEvidence = (
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
-      id: `linux-${arch()}`,
+      id: `linux-${HOST_PLATFORM.architecture}`,
       platform: "linux",
-      architecture: arch(),
+      architecture: HOST_PLATFORM.architecture,
       isolation: "none",
     },
     limitations: capture.limitations,
@@ -205,7 +206,7 @@ const admit = async (
   signal: AbortSignal | undefined,
 ) => {
   const { display, xprop, home } = await checkDesktopCaptureHost(request, host);
-  const inspected = await inspectLinuxApplication(
+  const inspected = await host.desktop.inspectApplication(
     {
       ...request,
       environment: host.environment,
@@ -216,9 +217,9 @@ const admit = async (
   );
   if (!inspected.ok) throw applicationRefusal(inspected.error);
   const { inventory, limitations, signingKeys } = inspected.value;
-  const windows = new X11WindowObserver(xprop, host.environment);
+  const windows = host.desktop.observeWindows(xprop, host.environment);
   const windowMatching = applicationWindowMatching(inventory);
-  const running = await runningApplicationWindows(
+  const running = await host.desktop.runningApplicationWindows(
     windows,
     windowMatching.names,
     signal,
@@ -230,10 +231,7 @@ const admit = async (
       request.desktopEntry === undefined ? "executable" : "desktop_entry",
       running.windows,
     );
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
-    });
+  if (signal?.aborted === true) throw cancelledBy(DESKTOP_OPERATION, signal);
   const prepared = await prepareOutputDirectory(request.output);
   if ("refusal" in prepared)
     throw outputRefusal(request.output, prepared.refusal);
@@ -258,7 +256,7 @@ const recordCapture = async (
   context: {
     readonly admitted: Admitted;
     readonly scope: CaptureScope;
-    readonly store: DesktopContentStore;
+    readonly store: DesktopCaptureStore;
   },
   signal: AbortSignal | undefined,
 ) => {
@@ -270,7 +268,7 @@ const recordCapture = async (
     admitted.signingKeys,
     store,
   );
-  const recorder = new CheckpointRecorder(scope, store);
+  const recorder = new CheckpointRecorder(scope, store, host.desktop.walkHome);
   const acknowledge = async (titles: readonly string[] = []) => {
     const taken = recorder.checkpoints.at(-1);
     if (taken === undefined) return;
@@ -289,7 +287,7 @@ const recordCapture = async (
   await recorder.record("baseline", "baseline", 0, signal);
   await acknowledge();
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
-  const outcome = await runDesktopSession({
+  const outcome = await host.desktop.runSession({
     argv: inventory.argv,
     workingDirectory: inventory.working_directory,
     environment: host.environment,
@@ -316,7 +314,7 @@ const recordCapture = async (
   const capture: DesktopApplicationCapture = {
     host: {
       platform: "linux",
-      architecture: arch(),
+      architecture: HOST_PLATFORM.architecture,
       display: admitted.display,
       home,
       ...hostIdentity(),
@@ -358,12 +356,11 @@ const runCapture = async (
   const admitted = await admit(request, host, signal);
   const { inventory, output, home } = admitted;
   const scope = await captureScope(request, inventory, home, output);
-  const store = new DesktopContentStore(
+  const store = await host.desktop.openContentStore(
     output,
     request.maxFileBytes,
     request.maxContentBytes,
   );
-  await store.prepare();
   const captureFile = new CaptureFile(output);
   let recorded: Awaited<ReturnType<typeof recordCapture>> | undefined;
   let published: string;
@@ -423,8 +420,7 @@ const runCapture = async (
   if (cleanup !== undefined) throw cleanup;
   // A cancellation that arrives during publication must not read as success.
   if (signal?.aborted === true && session.end_reason !== "cancelled")
-    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
+    throw cancelledBy(DESKTOP_OPERATION, signal, {
       partialObservation: evidence,
     });
   return evidence;

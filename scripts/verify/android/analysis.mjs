@@ -16,6 +16,7 @@ import { verifyAndroidMetadata } from "./metadata.mjs";
 import { verifyAndroidClassSearch } from "./class-search.mjs";
 import { verifyAndroidFailureRecovery } from "./failure-recovery.mjs";
 import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { HOST_PLATFORM } from "../../../dist/platform/HostPlatform.js";
 import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsAndroidLifecycle } from "./windows-lifecycle.mjs";
 
@@ -41,6 +42,7 @@ assert.equal(
 const configuration = await resolveJadxConfigurationInputs(
   process.env,
   "inspect_android_package",
+  HOST_PLATFORM,
 );
 await validateVerifierJadxConfiguration(
   configuration,
@@ -124,7 +126,7 @@ for (const task of tasks) {
     },
   );
   const evidence = parseEvidence(JSON.parse(response.stdout));
-  assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+  assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
   assert.equal(evidence.operation, task.name);
   cliResults.set(task.name, evidence);
   console.log(`PASS CLI ${task.name}`);
@@ -159,8 +161,8 @@ try {
     assert.deepEqual(evidence.parameters, cliResults.get(task.name).parameters);
     assert.deepEqual(evidence.provider, cliResults.get(task.name).provider);
     assert.deepEqual(
-      evidence.subject.digest,
-      cliResults.get(task.name).subject.digest,
+      evidence.subject.identity,
+      cliResults.get(task.name).subject.identity,
     );
     assert.deepEqual(
       evidence.limitations,

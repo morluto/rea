@@ -44,27 +44,27 @@ processTest.skipIf(process.platform !== "win32")(
         if (['path', 'pathext', 'nodefaultcurrentdirectoryinexepath', 'rea_adb_path', 'rea_apktool_command'].includes(key.toLowerCase())) delete environment[key];
       environment.Path = ${JSON.stringify(trusted)};
       environment.PathExt = '.EXE;.CMD';
-      const adb = await resolveAdbBinary(environment);
+      const adb = await resolveAdbBinary(environment, 'win32');
       assert.equal(adb.binary.toLowerCase(), ${JSON.stringify(join(trusted, "adb.exe").toLowerCase())});
       const native = await execFileOutput(adb.binary, ['-e', 'process.stdout.write(process.execPath)'], { env: adb.environment, timeout: 5000 });
       assert.equal(native.stdout.toLowerCase(), adb.binary.toLowerCase());
-      const apktool = await resolveApktoolCommand(environment);
+      const apktool = await resolveApktoolCommand(environment, 'win32');
       assert.equal(apktool.command.toLowerCase(), ${JSON.stringify(join(trusted, "apktool.cmd").toLowerCase())});
       const apktoolCommands = new ApktoolCommandCleanup();
-      try { assert.equal((await inspectApktoolClient(apktool, apktoolCommands, { environment })).version, '2.12.1'); }
+      try { assert.equal((await inspectApktoolClient(apktool, apktoolCommands, { environment, platform: 'win32' })).version, '2.12.1'); }
       finally { await apktoolCommands.close(); }
       const runner = new UpdateCommandRunner();
       try {
         assert.deepEqual(await runner.runProbe(['npm', 'prefix', '--global'], environment), { ok: true, value: 'selected' });
         assert.deepEqual(await runner.runInstall(['npm', 'install', '--global', 'fixture@0.0.0'], environment, 'structured'), { ok: true, value: '' });
         const missing = { ...environment, Path: '' };
-        await assert.rejects(resolveAdbBinary(missing), { code: 'binary_missing' });
-        await assert.rejects(resolveApktoolCommand(missing), { code: 'command_missing' });
+        await assert.rejects(resolveAdbBinary(missing, 'win32'), { code: 'binary_missing' });
+        await assert.rejects(resolveApktoolCommand(missing, 'win32'), { code: 'command_missing' });
         assert.equal((await runner.runProbe(['npm', 'prefix'], missing)).ok, false);
         // A caller who explicitly includes '.' still selects that directory.
         const explicit = { ...environment, Path: '.' };
-        assert.equal((await resolveAdbBinary(explicit)).binary.toLowerCase(), ${JSON.stringify(join(working, "adb.exe").toLowerCase())});
-        assert.equal((await resolveApktoolCommand(explicit)).command.toLowerCase(), ${JSON.stringify(join(working, "apktool.cmd").toLowerCase())});
+        assert.equal((await resolveAdbBinary(explicit, 'win32')).binary.toLowerCase(), ${JSON.stringify(join(working, "adb.exe").toLowerCase())});
+        assert.equal((await resolveApktoolCommand(explicit, 'win32')).command.toLowerCase(), ${JSON.stringify(join(working, "apktool.cmd").toLowerCase())});
         assert.deepEqual(await runner.runProbe(['npm', 'prefix'], explicit), { ok: true, value: 'cwd' });
       } finally { await runner.close(); }
       process.stdout.write('verified');
@@ -74,7 +74,6 @@ processTest.skipIf(process.platform !== "win32")(
       ["--input-type=module", "--eval", program],
       {
         cwd: working,
-        timeoutMs: 30_000,
         windowsHide: true,
       },
     );
@@ -133,7 +132,6 @@ processTest.skipIf(process.platform !== "win32")(
       ["--input-type=module", "--eval", program],
       {
         cwd: root,
-        timeoutMs: 40_000,
         windowsHide: true,
       },
     );
