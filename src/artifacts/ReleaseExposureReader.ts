@@ -119,7 +119,10 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
-import { stripQueryAndFragment } from "../domain/artifactPathSyntax.js";
+import {
+  htmlUrlText,
+  stripQueryAndFragment,
+} from "../domain/artifactPathSyntax.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import {
   inspectSourceMap,
@@ -2071,10 +2074,16 @@ const noteScriptReference = (
   baseHref: string | null,
   complete: boolean,
 ): void => {
+  const reference = htmlUrlText(scriptPath);
+  // Two separators enter the file host state independently of the base.
+  // Short forms such as file:script.js can still inherit the base directory.
+  const hasFileAuthority = /^file:[/\\]{2}/iu.test(reference);
+  const applicableBase = hasFileAuthority ? null : baseHref;
   if (
     !complete &&
-    (stripQueryAndFragment(scriptPath).includes("\ufffd") ||
-      (baseHref !== null && stripQueryAndFragment(baseHref).includes("\ufffd")))
+    (stripQueryAndFragment(reference).includes("\ufffd") ||
+      (applicableBase !== null &&
+        stripQueryAndFragment(applicableBase).includes("\ufffd")))
   ) {
     state.skippedMaps += 1;
     return;
@@ -2082,8 +2091,8 @@ const noteScriptReference = (
   try {
     const page = pathToFileURL(anchoredLocation(state, member.location));
     const url = new URL(
-      scriptPath,
-      baseHref === null ? page : new URL(baseHref, page),
+      reference,
+      applicableBase === null ? page : new URL(applicableBase, page),
     );
     if (url.protocol === "http:" || url.protocol === "https:") return;
     noteScriptTarget(state, fileURLToPath(url));
@@ -2146,11 +2155,6 @@ const examineInlineMaps = (
       state.skippedMaps += 1;
       continue;
     }
-    // Only the text before the literal fragment affects the data URL body.
-    if (!complete && url.replace(/#.*$/su, "").includes("\ufffd")) {
-      state.skippedMaps += 1;
-      continue;
-    }
     try {
       // Parse the full URL before removing the fragment so opaque path spaces
       // before it are preserved. The serialized body still includes the query.
@@ -2161,6 +2165,15 @@ const examineInlineMaps = (
       if (comma < 0) {
         state.skippedMaps += 1;
         continue;
+      }
+      if (!complete) {
+        // Check the original body before URL serialization escapes replacement
+        // characters. MIME parameters and the fragment supply no map bytes.
+        const raw = url.split("#", 1)[0] ?? "";
+        if (raw.slice(raw.indexOf(",") + 1).includes("\ufffd")) {
+          state.skippedMaps += 1;
+          continue;
+        }
       }
       const metadata = serialized.slice(0, comma);
       const payload = decodeURIComponent(serialized.slice(comma + 1));

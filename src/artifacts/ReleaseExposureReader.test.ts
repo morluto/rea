@@ -2560,6 +2560,30 @@ describe("ReleaseExposureReader lossy source-map URL suffixes", () => {
     expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
   });
 
+  it.each(["base64", "percent"] as const)(
+    "retains an inline %s map with an undecodable MIME parameter",
+    async (encoding) => {
+      const root = await createTestTempDirectory("rea-release-inline-mime-");
+      const path = join(root, "app.js");
+      const map = embeddedSourceMap();
+      const body =
+        encoding === "base64"
+          ? `;base64,${map.toString("base64")}`
+          : `,${encodeURIComponent(map.toString("utf8"))}`;
+      await writeFile(
+        path,
+        Buffer.concat([
+          Buffer.from("//# sourceMappingURL=data:application/json;name="),
+          badByte,
+          Buffer.from(`${body}\n`),
+        ]),
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+
   it.each([
     { form: "relative", delimiter: "?" },
     { form: "file:", delimiter: "#" },
@@ -2616,6 +2640,20 @@ describe("ReleaseExposureReader lossy HTML script URLs", () => {
       target: "nested\ufffd/z.payload",
       status: "unknown",
     },
+    {
+      field: "base path with an explicit file authority",
+      before: '<base href="nested',
+      after: '/"><script src="FILE_URL"></script>',
+      target: "z.payload",
+      status: "exposed",
+    },
+    {
+      field: "base path with a file-scheme relative reference",
+      before: '<base href="nested',
+      after: '/"><script src="file:z.payload"></script>',
+      target: "nested\ufffd/z.payload",
+      status: "unknown",
+    },
   ] as const)(
     "reports $status when an HTML $field contains undecodable bytes",
     async ({ before, after, target, status }) => {
@@ -2631,7 +2669,7 @@ describe("ReleaseExposureReader lossy HTML script URLs", () => {
         Buffer.concat([
           Buffer.from(before),
           Buffer.from([0xff]),
-          Buffer.from(after),
+          Buffer.from(after.replace("FILE_URL", pathToFileURL(script).href)),
         ]),
       );
       const scanned = await inspect(root);
