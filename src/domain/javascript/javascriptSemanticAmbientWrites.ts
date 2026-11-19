@@ -50,6 +50,7 @@ import {
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
 import { semanticArrayIteratorPrototypePath } from "./javascriptSemanticArrayLayout.js";
 import {
+  semanticArrayIterationPrototypeEffectPath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
@@ -153,20 +154,6 @@ const isReadOnlyPrototypeInspection = (
   invocation?.arguments?.every((argument) => t.isExpression(argument)) === true;
 
 type AmbientPath = readonly (string | null)[];
-
-const arrayPrototypeEffectPath = (
-  path: AmbientPath,
-  kind: "write" | "escape",
-): AmbientPath | undefined => {
-  if (path[0] === semanticArrayIteratorPrototypePath[0]) return path;
-  if (path[0] !== "global" || (path[1] !== "Array" && path[1] !== "Object"))
-    return undefined;
-  return path[2] === "prototype" ||
-    path[2] === null ||
-    (kind === "escape" && path.length === 2)
-    ? ["global", path[1], "prototype", ...path.slice(3)]
-    : undefined;
-};
 
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -1217,7 +1204,7 @@ export function* indexJavaScriptAmbientWritesSteps(
         node,
       );
     for (const identity of resolved.spreadEffectPaths ?? []) {
-      const prototype = arrayPrototypeEffectPath(
+      const prototype = semanticArrayIterationPrototypeEffectPath(
         [...identity, ...suffix],
         "write",
       );
@@ -1363,7 +1350,10 @@ export function* indexJavaScriptAmbientWritesSteps(
         : [
             ...resolved.paths,
             ...resolved.spreadEffectPaths.flatMap((identity) => {
-              const path = arrayPrototypeEffectPath(identity, "escape");
+              const path = semanticArrayIterationPrototypeEffectPath(
+                identity,
+                "escape",
+              );
               return path === undefined ? [] : [path];
             }),
           ];

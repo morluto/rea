@@ -1380,13 +1380,28 @@ it.each([
     "candidate",
   ],
   [
+    "global Iterator prototype stored in a spread",
+    `const protos=[...[Iterator.prototype]];protos[0].return=${closeHandler};`,
+    "candidate",
+  ],
+  [
+    "escaped Iterator prototype stored in a spread",
+    "const protos=[...[Iterator.prototype]];configure(protos[0]);",
+    "candidate",
+  ],
+  [
+    "reflected Iterator prototype stored in a spread",
+    `const protos=[...[Object.getPrototypeOf(Object.getPrototypeOf([].values()))]];Reflect.set(protos[0],"return",${closeHandler});`,
+    "candidate",
+  ],
+  [
     "inherited Object prototype",
     "Object.prototype.return = " + closeHandler + ";",
     "candidate",
   ],
   [
     "unrelated Array prototype",
-    "Array.prototype.return = " + closeHandler + ";",
+    `const protos=[...[Array.prototype]];protos[0].return=${closeHandler};`,
     "resolved",
   ],
 ] as const)(
@@ -1423,7 +1438,7 @@ it.each([
   [
     "hook after read",
     "",
-    `Object.getPrototypeOf([].values()).return = ${closeHandler};`,
+    `const protos=[...[Iterator.prototype]];protos[0].return=${closeHandler};`,
     "resolved",
   ],
 ] as const)(
