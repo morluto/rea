@@ -1967,11 +1967,11 @@ contents. Release Please updates their selectors alongside the plugin manifests.
 No plugin-only publication or generated skill files committed to Git are needed
 for Claude Code and Codex. The Cursor Marketplace plugin is the exception in
 [Cursor Marketplace](#cursor-marketplace): its skill copy is committed because
-that install is a Git checkout. Codex's marketplace entry includes the
-description and website so they are available before installation. Codex hides
-images for an uninstalled npm source; after installation, the plugin uses the
-shared REA plugin icon for its logo and composer icon. The logo is included in
-the same npm artifact as the runtime.
+that install is a Git checkout. Codex's description and website come from
+`.codex-plugin/plugin.json`; the marketplace entry keeps only the standard
+fields. Codex hides images for an uninstalled npm source; after installation,
+the plugin uses the shared REA plugin icon for its logo and composer icon. The
+logo is included in the same npm artifact as the runtime.
 The qualified release archive contains a runtime-only manifest and
 `npm-shrinkwrap.json` plus bundled runtime dependencies, including PTY packages
 for each supported OS and CPU; development dependencies and development-only overrides
