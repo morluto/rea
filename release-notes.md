@@ -221,6 +221,7 @@
 * **cli:** advertise the decimal token grammar on integer arguments ([884b683](https://github.com/morluto/rea/commit/884b683a94be222538aad84eb7993f62fda9aca7)), closes [#9344](https://github.com/morluto/rea/issues/9344)
 * **cli:** bound advertised decimal-token schemas by the domain range ([#9808](https://github.com/morluto/rea/issues/9808)) ([80f533d](https://github.com/morluto/rea/commit/80f533da8a977516ed77625ee8cf2bcb417cd2eb)), closes [#9348](https://github.com/morluto/rea/issues/9348)
 * **cli:** count the full-output envelope for TOON/YAML token counts ([a02202a](https://github.com/morluto/rea/commit/a02202aba2aea8a7289500ca3eb45acfa8778a0b)), closes [#7271](https://github.com/morluto/rea/issues/7271) [#7278](https://github.com/morluto/rea/issues/7278)
+* **cli:** deliver complete TOON beyond the string limit ([#12074](https://github.com/morluto/rea/issues/12074)) ([f10d557](https://github.com/morluto/rea/commit/f10d557f0612efc68bfbd29eed41448da481e7e0))
 * **cli:** describe a contract option whose description sits inside .optional() ([#11661](https://github.com/morluto/rea/issues/11661)) ([832984c](https://github.com/morluto/rea/commit/832984c2ccc77a627b0c2f6bce2093e55ba1bc6a))
 * **cli:** exit one-shot commands by draining the event loop ([054fbc4](https://github.com/morluto/rea/commit/054fbc4c2612f99781278a4ded4a372dca458567))
 * **cli:** preserve ADB extra schema in the product catalog ([#12060](https://github.com/morluto/rea/issues/12060)) ([da7982e](https://github.com/morluto/rea/commit/da7982e1052e2c48247fab118c3d152974ecb3d0))
