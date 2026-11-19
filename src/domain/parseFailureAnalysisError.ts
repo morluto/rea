@@ -6,7 +6,7 @@ import {
   type ResourceConstraintRecovery,
 } from "./analysisErrorCore.js";
 import type { AnalysisErrorOptions } from "./analysisErrorBase.js";
-import { ParseFailureError } from "./parseFailure.js";
+import { ParseFailureError, reportedParseLimit } from "./parseFailure.js";
 
 /** A parse limit of `format`; any other cause, or another format's limit, is not one. */
 export const isParseLimit = (
@@ -16,9 +16,6 @@ export const isParseLimit = (
   cause instanceof ParseFailureError &&
   cause.failure.kind === "limit" &&
   cause.failure.format === format;
-
-const reportedRequired = (required: number | bigint): number | string =>
-  typeof required === "bigint" ? String(required) : required;
 
 /**
  * The public refusal for a parse that stopped at a named limit. The reason is
@@ -46,13 +43,7 @@ export const parseLimitConstraint = (
     resource,
     path === undefined ? detail : `Selected artifact ${path}: ${detail}`,
     legacyMaximumKey === undefined
-      ? {
-          boundary: limit.name,
-          maximum: limit.maximum,
-          ...(limit.required === undefined
-            ? {}
-            : { required: reportedRequired(limit.required) }),
-        }
+      ? reportedParseLimit(limit)
       : { [legacyMaximumKey]: limit.maximum },
     { ...errorOptions, cause },
   );

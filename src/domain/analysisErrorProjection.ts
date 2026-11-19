@@ -59,6 +59,7 @@ import {
   RETRYABLE_CODES,
 } from "./analysisErrorClassification.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { reportedParseLimit } from "./parseFailure.js";
 
 /**
  * Inputs the recovery names, by contract field and operation name. Each
@@ -731,6 +732,9 @@ const artifactStateErrorDetails = (
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
+      ...(error.parserLimit === undefined
+        ? {}
+        : { reported_limits: reportedParseLimit(error.parserLimit) }),
       ...(error.admission === undefined
         ? {}
         : {
