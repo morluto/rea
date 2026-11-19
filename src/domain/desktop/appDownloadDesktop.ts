@@ -62,16 +62,17 @@ def program_span(raw):
         directory = None
         while index < len(tokens):
             option = tokens[index][0]
-            if option in ("-i", "--ignore-environment"):
+            if option == "--ignore-environment" or re.fullmatch(r"-i+", option):
                 index += 1
                 continue
-            if option in ("-C", "--chdir"):
+            short_directory = re.fullmatch(r"-i*C(.*)", option, re.DOTALL)
+            if option == "--chdir" or (short_directory and not short_directory[1]):
                 index += 1
                 directory = tokens[index][0] if index < len(tokens) else ""
             elif option.startswith("--chdir="):
                 directory = option[len("--chdir="):]
-            elif option.startswith("-C"):
-                directory = option[2:]
+            elif short_directory:
+                directory = short_directory[1]
             else:
                 break
             index += 1

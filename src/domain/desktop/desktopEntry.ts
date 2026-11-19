@@ -265,6 +265,8 @@ export const expandDesktopExec = (
 export type DesktopCommandWrapper = {
   /** The program `env` runs, or the first argument when there is no `env`. */
   readonly program: string;
+  /** The program's position in the expanded command, after any env operands. */
+  readonly index: number;
   /** Variables an `env` prefix sets; its `PATH` is the one that finds the program. */
   readonly environment: Readonly<Record<string, string>>;
   /** Present when the env wrapper discards all inherited variables. */
@@ -274,14 +276,14 @@ export type DesktopCommandWrapper = {
     readonly path: string;
     readonly start: number;
     readonly end: number;
+    /** This option also requests a clean environment, as in `-iC`. */
+    readonly includesClearEnvironment?: true;
   };
   /** First argument of the application, after the program or flatpak's app id. */
   readonly argumentIndex: number;
 } & (
   | {
       readonly kind: "direct";
-      /** The program's position in the command. */
-      readonly index: number;
     }
   | { readonly kind: "flatpak"; readonly application_id: string | null }
 );
@@ -363,23 +365,29 @@ const desktopEnvironment = (argv: readonly string[]) => {
   const environment: Record<string, string> = Object.create(null);
   while (index < argv.length) {
     const option = argv[index]!;
-    if (option === "-i" || option === "--ignore-environment") {
+    if (/^-i+$/u.test(option) || option === "--ignore-environment") {
       clearEnvironment = true;
       index += 1;
       continue;
     }
-    const separate = option === "-C" || option === "--chdir";
+    const shortDirectory = /^-(i*)C(.*)$/su.exec(option);
+    const separate = shortDirectory?.[2] === "" || option === "--chdir";
     const path = separate
       ? (argv[index + 1] ?? "")
       : option.startsWith("--chdir=")
         ? option.slice("--chdir=".length)
-        : option.startsWith("-C")
-          ? option.slice(2)
-          : undefined;
+        : shortDirectory?.[2];
     if (path === undefined) break;
     const start = index;
     index += separate ? 2 : 1;
-    chdir = { path, start, end: index };
+    const combined = Boolean(shortDirectory?.[1]);
+    if (combined) clearEnvironment = true;
+    chdir = {
+      path,
+      start,
+      end: index,
+      ...(combined ? { includesClearEnvironment: true as const } : {}),
+    };
   }
   // Only the option terminator before the first operand belongs to env;
   // a later `--` can name the command or belong to the application.
@@ -419,6 +427,7 @@ export const unwrapDesktopCommand = (
     return {
       kind: "flatpak",
       program,
+      index,
       environment,
       ...flatpakApplication(argv, index + 2),
       ...wrapperOptions,

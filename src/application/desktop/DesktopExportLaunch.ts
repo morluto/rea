@@ -143,6 +143,7 @@ export const planLaunch = (
     chdir !== undefined
       ? [
           ...application.argv.slice(0, chdir.start),
+          ...(chdir.includesClearEnvironment ? ["-i"] : []),
           "-C",
           workingDirectory,
           ...application.argv.slice(chdir.end),

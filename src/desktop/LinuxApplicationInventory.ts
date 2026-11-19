@@ -247,6 +247,23 @@ const readHeader = async (
   }
 };
 
+const launchEnvironment = (
+  wrapper: ReturnType<typeof unwrapDesktopCommand>,
+  inherited: LinuxApplicationRequest["environment"],
+) => {
+  if (!wrapper.clearEnvironment) {
+    const environment = { ...inherited, ...wrapper.environment };
+    return { environment, lookupEnvironment: environment };
+  }
+  const environment = wrapper.environment;
+  // GNU env's execvp searches the Linux system path when PATH is absent.
+  const lookupEnvironment =
+    environment.PATH === undefined
+      ? { ...environment, PATH: "/bin:/usr/bin" }
+      : environment;
+  return { environment, lookupEnvironment };
+};
+
 /** The launched program as found on PATH and after resolving links. */
 interface ProgramLocation {
   readonly program: string;
@@ -407,23 +424,6 @@ const envApplicationDirectory = async (
   }
 };
 
-const launchEnvironment = (
-  wrapper: ReturnType<typeof unwrapDesktopCommand>,
-  inherited: LinuxApplicationRequest["environment"],
-) => {
-  if (!wrapper.clearEnvironment) {
-    const environment = { ...inherited, ...wrapper.environment };
-    return { environment, lookupEnvironment: environment };
-  }
-  const environment = wrapper.environment;
-  // GNU env's execvp searches the Linux system path when PATH is absent.
-  const lookupEnvironment =
-    environment.PATH === undefined
-      ? { ...environment, PATH: "/bin:/usr/bin" }
-      : environment;
-  return { environment, lookupEnvironment };
-};
-
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -524,6 +524,7 @@ export const inspectLinuxApplication = async (
         sandboxDirectories,
       ),
     },
+    ...(wrapper.index === 0 ? {} : { envProgramIndex: wrapper.index }),
     limitations,
     signingKeys,
   });

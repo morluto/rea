@@ -144,7 +144,7 @@ describe("download install scripts", () => {
     "",
     "-- ",
     "-C /opt --chdir=/tmp -- ",
-    "-i -C /tmp -- ",
+    "-iC/tmp -- ",
     "--ignore-environment ",
     "-- - ",
     "--chdir= -C /tmp -- ",

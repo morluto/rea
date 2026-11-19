@@ -251,6 +251,7 @@ describe("unwrapDesktopCommand", () => {
     ).toEqual({
       kind: "flatpak",
       program: "/usr/bin/flatpak",
+      index: 0,
       argumentIndex: 5,
       environment: {},
       application_id: "net.cozic.joplin_desktop",
