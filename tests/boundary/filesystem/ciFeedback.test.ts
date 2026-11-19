@@ -341,6 +341,20 @@ it("records the actual static task graph with explicit source identity and no am
     expect(() => parseStaticTaskContext(invalid)).toThrow();
 });
 
+it("removes old static task context when recording the new graph fails", async () => {
+  const directory = await createTestTempDirectory("rea-ci-stale-context-");
+  const context = join(directory, "static-task-context.json");
+  const failingNpm = join(directory, "npm.cjs");
+  await writeFile(context, JSON.stringify({ sourceSha: "a".repeat(40) }));
+  await writeFile(failingNpm, "process.exitCode = 2;");
+  await expect(
+    recordStaticTaskContext({ outputDirectory: directory, npmCli: failingNpm }),
+  ).rejects.toMatchObject({ code: 2 });
+  await expect(readFile(context, "utf8")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
 it("collects basic CI telemetry before optional dependency installation can fail", async () => {
   const { jobs } = z
     .object({
