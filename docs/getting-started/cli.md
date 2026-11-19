@@ -945,6 +945,11 @@ not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
 described at the end of this section, to compare their contents.
 
+If a selected file looks like an analysis snapshot, comparison reports the
+wrong artifact kind. To compare its Evidence, restore the snapshot with its
+matching target, provider and analysis profile, then export a standalone
+Evidence bundle from that session.
+
 `--record_pairs` accepts an inline JSON array or the path to a local JSON
 file containing that array, matching MCP `compare_bundles.record_pairs`. For a
 file, use `rea compare left.json right.json --record_pairs pairs.json --json`.

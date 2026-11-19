@@ -16,6 +16,11 @@ import {
   parseXmlDocument,
 } from "../xmlDocument.js";
 import { expatXmlName } from "./expatXmlNames.js";
+import {
+  desktopLineBreak,
+  isKeyfile,
+  keyfileLines,
+} from "./desktopTextSyntax.js";
 import { decodeStateUtf16 } from "./stateTextEncoding.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 
@@ -46,49 +51,6 @@ export const XML_POLICY = {
   lineEndings: "normalize",
   nameSupported: expatXmlName,
 } as const;
-
-type KeyfileLine =
-  | { readonly kind: "skip" }
-  | { readonly kind: "group"; readonly name: string }
-  | { readonly kind: "entry"; readonly key: string; readonly value: string }
-  | { readonly kind: "other" };
-
-/** One key file line: blank or comment, `[group]`, `key=value`, or anything else. */
-const keyfileLine = (raw: string): KeyfileLine => {
-  const line = raw.trim();
-  if (line.length === 0 || line.startsWith("#") || line.startsWith(";"))
-    return { kind: "skip" };
-  const name = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
-  if (name !== undefined) return { kind: "group", name };
-  const equals = raw.indexOf("=");
-  if (equals < 0) return { kind: "other" };
-  const key = raw.slice(0, equals).trim();
-  return key.length === 0
-    ? { kind: "other" }
-    : {
-        kind: "entry",
-        key,
-        // Only ASCII space and tab immediately after '=' are padding.
-        value: raw.slice(equals + 1).replace(/^[ \t]+/u, ""),
-      };
-};
-
-/**
- * A key file has at least one group and nothing a key file view would drop.
- * Lines are read one at a time, stopping at the first that is neither.
- */
-const isKeyfile = (text: string): boolean => {
-  let group = false;
-  for (let start = 0; start <= text.length;) {
-    const end = text.indexOf("\n", start);
-    const kind = keyfileLine(text.slice(start, end < 0 ? undefined : end)).kind;
-    if (kind === "other") return false;
-    if (kind === "group") group = true;
-    if (end < 0) break;
-    start = end + 1;
-  }
-  return group;
-};
 
 /** Decode UTF-8 and BOM-marked UTF-16, or return undefined for binary content. */
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
@@ -415,7 +377,7 @@ export const textView = (
   text: string,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const lines = text.split(/\r?\n/u);
+  const lines = text.split(desktopLineBreak);
   if (lines.at(-1) === "") lines.pop();
   return {
     lines: lines.slice(0, policy.text_lines),
@@ -437,8 +399,7 @@ export const keyfileView = (
 ): Record<string, Record<string, string>> => {
   const groups = plainRecord<Record<string, string>>();
   let group = "";
-  for (const raw of text.split(/\r?\n/u)) {
-    const line = keyfileLine(raw);
+  for (const line of keyfileLines(text)) {
     if (line.kind === "group") {
       group = line.name;
       groups[group] ??= plainRecord();

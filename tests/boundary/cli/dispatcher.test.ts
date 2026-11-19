@@ -9,10 +9,20 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
+const fixtureResultOutput = {
+  createCliResultOutput:
+    "export const createCliResultOutput = () => undefined;",
+  cliOutputCancellationStatus:
+    "export const cliOutputCancellationStatus = () => undefined;",
+} satisfies Record<
+  keyof typeof import("../../../src/cli/cliResultOutput.js"),
+  string
+>;
+
 const installCliRuntime = async (
   workspace: TestWorkspace,
   cliSource: string,
-  resultOutput = "export const createCliResultOutput = () => undefined;\n",
+  resultOutput = fixtureResultOutput.createCliResultOutput,
 ): Promise<void> => {
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
@@ -34,7 +44,10 @@ const installCliRuntime = async (
       JSON.stringify({ type: "module", version: "1.0.0" }),
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
-    workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    workspace.write(
+      "dist/cli-runtime/cliResultOutput.js",
+      `${fixtureResultOutput.cliOutputCancellationStatus}\n${resultOutput}\n`,
+    ),
     // Without a recording, every command loads the replaced complete CLI.
     workspace.write(
       "dist/recordedCliCommandRegistrations.js",
