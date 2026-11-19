@@ -185,13 +185,30 @@ const heldLockServers = new Set();
 const lockIdentityKey = (lockPath) =>
   createHash("sha256").update(lockPath).digest("hex").slice(0, 32);
 
+/** Linux sockaddr_un.sun_path usable bytes (108 including the NUL). */
+const POSIX_SOCKET_PATH_LIMIT = 107;
+
+const leaseDirectoryName = () =>
+  uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`;
+
 /**
- * Short per-uid lease directory under the process temp root. Lock directories
- * under long TMPDIR paths exceed Linux's ~107-byte pathname limit when the
- * socket lives beside the lock.
+ * Owner-private lease directory whose complete socket pathname fits sun_path.
+ * Prefer the process temp root; when that root is already long (nested TMPDIR
+ * hygiene layouts), fall back to `/tmp` so hashing the filename alone cannot
+ * still exceed the Unix-socket pathname limit.
  */
-const leaseSocketRootPath = () =>
-  join(tmpdir(), uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`);
+const leaseSocketRootPath = () => {
+  const name = leaseDirectoryName();
+  const sampleName = `${"0".repeat(32)}.sock`;
+  for (const root of [join(tmpdir(), name), join("/tmp", name)]) {
+    if (
+      Buffer.byteLength(join(root, sampleName), "utf8") <=
+      POSIX_SOCKET_PATH_LIMIT
+    )
+      return root;
+  }
+  return join("/tmp", name);
+};
 
 const ensureLeaseSocketRoot = () => {
   const root = leaseSocketRootPath();
@@ -207,7 +224,7 @@ const leaseSocketPath = (lockPath) => {
     // long TEMP prefixes for different pins cannot share a truncated name.
     return `\\\\.\\pipe\\rea-plugin-mcp-lock-${key}`;
   }
-  // Hashed name under a short temp directory stays within Linux sun_path.
+  // Hashed name under a length-checked owner-private directory.
   return join(leaseSocketRootPath(), `${key}.sock`);
 };
 
@@ -306,11 +323,13 @@ const tryAcquireInstallLock = async (lockPath) => {
   } catch (cause) {
     if (cause instanceof Error && cause.message.includes("executable cache"))
       throw cause;
-    // No owner lease yet: a claimant may be mid-bind. Only an old directory
-    // is abandoned; otherwise keep waiting.
-    if (!isOlderThanGrace(lockPath)) return { acquired: false };
+    // Missing or refused lease is not proof of abandonment; grace decides.
   }
   if (ownerAlive) return { acquired: false };
+  // Fresh lock without a listening lease: the claimant may still be mid-bind
+  // after mkdirSync and before the lease starts listening. Ownership of the
+  // lock directory is not readiness of the lease; treat that window as pending.
+  if (!isOlderThanGrace(lockPath)) return { acquired: false };
 
   // Serialize stale cleanup through the replacement mkdir: otherwise two
   // recoverers can unlink the lock that one of them has just acquired.
@@ -610,8 +629,16 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
         if (!isIncompleteCache(cause)) throw cause;
       }
       const lock = await tryAcquireInstallLock(lockPath);
-      if (lock.acquired)
+      if (lock.acquired) {
+        // SIGTERM during the awaited acquisition is recorded on this observer;
+        // recheck before handing the lock to the installer, which starts a new
+        // observer that cannot see an already-consumed signal.
+        if (cancel.cancelled !== undefined) {
+          releaseInstallLock(lockPath, lock.server);
+          return { cancelled: true, signal: cancel.cancelled.signal };
+        }
         return { cancelled: false, acquired: true, server: lock.server };
+      }
       // Keep the timer referenced so a waiter cannot exit with an unsettled
       // top-level await while another installer still holds the lock.
       await new Promise((resolve) => {

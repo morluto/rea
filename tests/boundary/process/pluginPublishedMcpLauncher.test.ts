@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
 
 const launcher = fileURLToPath(
   new URL(
@@ -158,18 +159,9 @@ const waitForFile = async (path: string) => {
 
 const waitForProcessExit = async (pid: number, label: string) => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      process.kill(pid, 0);
-    } catch (cause) {
-      if (
-        cause !== null &&
-        typeof cause === "object" &&
-        "code" in cause &&
-        cause.code === "ESRCH"
-      )
-        return;
-      throw cause;
-    }
+    // Signal 0 still succeeds for zombies; use the shared observer so Linux
+    // containers without a reaping init do not treat a stopped fixture as live.
+    if (await processHasStopped(pid)) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`${label} ${String(pid)} remained running`);
@@ -1173,8 +1165,8 @@ ${holdOpen}
     );
     expect(npmPid).toBeGreaterThan(0);
     expect(lifecyclePid).toBeGreaterThan(0);
-    // Lease sockets live under a short hashed path so long TMPDIR lock
-    // directories still fit Linux's ~107-byte sun_path limit. The same
+    // Lease sockets use a length-checked owner-private root so long TMPDIR
+    // lock directories still fit Linux's ~107-byte sun_path limit. The same
     // digest keys Windows pipe names so long TEMP prefixes cannot collide.
     const lockKey = createHash("sha256")
       .update(lockPath)
@@ -1189,13 +1181,19 @@ ${holdOpen}
     expect(Buffer.from(lockPath).toString("base64url").slice(0, 80)).toBe(
       Buffer.from(siblingLockPath).toString("base64url").slice(0, 80),
     );
-    const leaseSocket = join(
+    const leaseDirectoryName =
+      uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`;
+    const preferredLeaseSocket = join(
       temp.temporaryRoot,
-      uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`,
+      leaseDirectoryName,
       `${lockKey}.sock`,
     );
+    const leaseSocket =
+      Buffer.byteLength(preferredLeaseSocket, "utf8") <= 107
+        ? preferredLeaseSocket
+        : join("/tmp", leaseDirectoryName, `${lockKey}.sock`);
     expect(join(lockPath, "lease.sock").length).toBeGreaterThan(107);
-    expect(leaseSocket.length).toBeLessThanOrEqual(107);
+    expect(Buffer.byteLength(leaseSocket, "utf8")).toBeLessThanOrEqual(107);
     await access(leaseSocket);
     child.kill("SIGTERM");
     const result = await closed;
