@@ -26,17 +26,9 @@ if (group === "selected") {
     throw new Error(`No selected test group ${shard ?? ""} in this plan`);
   if (rest.some((argument) => /^--shard(?:=|$)/u.test(argument)))
     throw new Error("Selected test groups are already sharded");
-  if (
-    rest.some((argument) =>
-      /^(?:-t(?:=|$)|--(?:testNamePattern|test-name-pattern)(?:=|$))/u.test(
-        argument,
-      ),
-    )
-  )
-    throw new Error("Selected test groups cannot filter cases by name");
   runner = [
     resolve("scripts/run-exact-tests.mjs"),
-    "run",
+    "ci-selected",
     `--shard=${shard}`,
     ...rest,
     ...plan.files,

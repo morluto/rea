@@ -5,7 +5,12 @@ import { createVitest, parseCLI } from "vitest/node";
 
 // CLI file filters are substring matches. Select discovered specifications by
 // identity instead, retaining each project's include/exclude and runner settings.
-const { filter, options } = parseCLI(["vitest", ...process.argv.slice(2)]);
+const args = process.argv.slice(2);
+const ciSelected = args[0] === "ci-selected";
+if (ciSelected) args[0] = "run";
+const { filter, options } = parseCLI(["vitest", ...args]);
+if (ciSelected && options.testNamePattern !== undefined)
+  throw new Error("Selected test groups cannot filter cases by name");
 const vitest = await createVitest({ ...options, watch: false });
 const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
 let shutdownSignal;

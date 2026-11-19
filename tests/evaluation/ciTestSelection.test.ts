@@ -465,7 +465,9 @@ it("runs only a shard the plan defines", async () => {
 
 it.each([
   ["-t", "one case"],
+  ["-tX", "unused value"],
   ["--testNamePattern=one case"],
+  ["--testNamePattern.only=one case"],
   ["--test-name-pattern", "one case"],
 ])("rejects a test-name filter in a selected shard: %j", async (...filter) => {
   const group = fileURLToPath(
