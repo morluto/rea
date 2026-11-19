@@ -995,3 +995,125 @@ it.each([
     ).toEqual(propertyPath);
   },
 );
+
+it.each([
+  [
+    "inline object",
+    'const box=[{mode:"initial"}];const [{mode:selected}]=box;box[0].mode="later";',
+    ["0", "mode"],
+    "resolved",
+  ],
+  [
+    "assigned object",
+    'const box=[{mode:"initial"}];let selected;[{mode:selected}]=box;box[0].mode="later";',
+    ["0", "mode"],
+    "resolved",
+  ],
+  [
+    "nested object",
+    'const box=[{nest:{mode:"initial"}}];const alias=box;const [{nest:{mode:selected}}]=alias;box[0].nest.mode="later";',
+    ["0", "nest", "mode"],
+    "resolved",
+  ],
+  [
+    "projected object",
+    'const box={items:[{mode:"initial"}]};const alias=box;const [{mode:selected}]=alias.items;box.items[0].mode="later";',
+    ["items", "0", "mode"],
+    "resolved",
+  ],
+  [
+    "an earlier inline object",
+    'const box=[{}, "initial"];const [{},selected]=box;box[1]="later";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "an earlier null object pattern input",
+    'const box=[null, "initial"];const [{},selected]=box;box[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "referenced object",
+    'const item={mode:"initial"};const box=[item];const [{mode:selected}]=box;item.mode="later";',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "earlier slot write",
+    'const box=[{mode:"initial"}];box[0].mode="other";const [{mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "custom iterator",
+    'const box=[{mode:"initial"}];box[Symbol.iterator]=function*(){yield {mode:"other"};};const [{mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "custom next",
+    'const box=[{mode:"initial"}];Object.getPrototypeOf([].values()).next=function(){return {value:{mode:"other"},done:false}};const [{mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "earlier object getter",
+    'const box=[{mode:"initial",get key(){box[0].mode="other";return 0;}}];const [{key:before,mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "earlier nested default",
+    'const box=[{mode:"initial"}];const [{key:before=(box[0].mode="other"),mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "earlier computed key",
+    'const box=[{key:0,mode:"initial"}];const [{[void(box[0].mode="other")]:before,mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "earlier member assignment target",
+    'const box=[{key:0,mode:"initial"}];const target={set key(_){box[0].mode="other";}};let selected;[{key:target.key,mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "earlier computed assignment target",
+    'const box=[{key:0,mode:"initial"}];const target={};let selected;[{key:target[(box[0].mode="other","key")],mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "nested array",
+    'const box=[{sub:["initial"]}];const [{sub:[selected]}]=box;box[0].sub[0]="later";',
+    ["0", "sub", "0"],
+    "candidate",
+  ],
+  [
+    "outer close after the selection",
+    'const box=[{mode:"initial"}];Object.getPrototypeOf([].values()).return=function(){box[0].mode="closed";return {};};const [{mode:selected}]=box;',
+    ["0", "mode"],
+    "candidate",
+  ],
+] as const)(
+  "composes the outer iterator with read-time own-data paths for %s",
+  (_name, source, path, resolution) => {
+    const graph = graphForJavaScript(source);
+    const binding = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    const relation = graph.relations.find(
+      ({ relation, target_node_id }) =>
+        relation === "destructures" && target_node_id === binding?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find(({ node_id }) => node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);

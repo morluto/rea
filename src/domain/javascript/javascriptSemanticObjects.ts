@@ -126,8 +126,8 @@ const collectMember = (
       provenOwnSlot:
         !write &&
         identity.path !== null &&
-        context.readPresence(identity.bindingId, node)?.(identity.path) ===
-          true,
+        context.readPresence(identity.bindingId, node)?.(identity.path) !==
+          undefined,
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
@@ -171,12 +171,13 @@ const collectDestructuring = (
     const { path } = next;
     const propertyPath =
       source.path === null ? null : [...source.path, ...path];
+    const selected =
+      next.lookup === "own" && propertyPath !== null
+        ? ownSlot?.(propertyPath)
+        : undefined;
     if (
       next.lookup === "unproven" ||
-      (next.lookup === "own" &&
-        ownSlot !== undefined &&
-        propertyPath !== null &&
-        !ownSlot(propertyPath))
+      (next.lookup === "own" && selected === undefined)
     )
       ownSlot = undefined;
     // Elision still advances the iterator and can read a property. It
@@ -188,7 +189,8 @@ const collectDestructuring = (
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
-      if (rootArray) ownSlot = undefined;
+      // A nested pattern needs a proved object even if it has no children.
+      if (rootArray && !t.isObjectExpression(selected)) ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
         if (!t.isObjectProperty(property)) {
           pending.push(null);

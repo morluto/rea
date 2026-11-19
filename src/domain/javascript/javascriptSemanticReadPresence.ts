@@ -82,9 +82,10 @@ export const createSemanticReadPresenceQuery = (
     return origin ?? undefined;
   };
 
-  const ownDataAtPath = (value: t.Node, path: readonly string[]) => {
+  const ownDataAtPath = (value: t.Node, path: readonly string[], from = 0) => {
     let receiver = value;
-    for (const key of path) {
+    for (let index = from; index < path.length; index += 1) {
+      const key = path[index]!;
       if (!t.isObjectExpression(receiver)) return undefined;
       let read = readers.get(receiver);
       if (read === undefined) {
@@ -136,8 +137,8 @@ export const createSemanticReadPresenceQuery = (
     if (iterationPath !== undefined) {
       // The RHS must select an own data value before numeric array slots can
       // explain the binding. Temporal checks still use the full origin path.
-      if (!t.isArrayExpression(ownDataAtPath(value, iterationPath)))
-        return undefined;
+      const literal = ownDataAtPath(value, iterationPath);
+      if (!t.isArrayExpression(literal)) return undefined;
       const array = evaluateSemanticExpression(
         capture,
         state,
@@ -149,28 +150,43 @@ export const createSemanticReadPresenceQuery = (
         array.unknownItems
       )
         return undefined;
-      return (path: readonly string[]): boolean => {
-        if (path.length !== iterationPath.length + 1) return false;
+      return (path: readonly string[]): t.Node | undefined => {
         const key = path[iterationPath.length];
-        if (key === undefined) return false;
+        if (key === undefined) return undefined;
         const index = semanticArrayIndex(key);
-        const slot = index === null ? undefined : array.items[index];
-        return (
-          slot?.name === key &&
-          slot.presence === "present" &&
-          !capturedBindingPathMayHaveChanged(
+        if (index === null) return undefined;
+        const slot = array.items[index];
+        const element = literal.elements[index];
+        if (
+          slot?.name !== key ||
+          slot.presence !== "present" ||
+          element == null
+        )
+          return undefined;
+        const selected = ownDataAtPath(
+          unwrapJavaScriptExpression(element).node,
+          path,
+          iterationPath.length + 1,
+        );
+        return selected === undefined ||
+          capturedBindingPathMayHaveChanged(
             origin.binding,
             path,
             capture,
             state,
           )
-        );
+          ? undefined
+          : selected;
       };
     }
     if (!t.isObjectExpression(value)) return undefined;
-    return (path: readonly string[]): boolean =>
-      path.length > 0 &&
-      ownDataAtPath(value, path) !== undefined &&
-      !capturedBindingPathMayHaveChanged(origin.binding, path, capture, state);
+    return (path: readonly string[]): t.Node | undefined => {
+      if (path.length === 0) return undefined;
+      const selected = ownDataAtPath(value, path);
+      return selected === undefined ||
+        capturedBindingPathMayHaveChanged(origin.binding, path, capture, state)
+        ? undefined
+        : selected;
+    };
   };
 };
