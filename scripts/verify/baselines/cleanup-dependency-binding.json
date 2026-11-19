@@ -1,6 +1,4 @@
 {
-  "src/application/DirectAnalysisCleanup.ts": 1,
-  "src/application/EvidenceBundleCommands.ts": 1,
   "src/application/JsonFiles.ts": 1,
   "src/application/SetupCleanupOwner.ts": 2,
   "src/application/binary/AnalysisProviderRegistry.ts": 2,
@@ -11,7 +9,6 @@
   "src/application/releaseExposure/ReleaseExposureService.ts": 1,
   "src/browser/CdpBrowserProvider.ts": 1,
   "src/browser/CdpElectronProvider.ts": 1,
-  "src/browser/CdpTargetSessionOwner.ts": 2,
   "src/browser/PlaywrightBrowserScenarioProvider.ts": 2,
   "src/browser/WebSourceMapFetcher.ts": 2,
   "src/cli/desktopCaptureCommands.ts": 1,
@@ -25,7 +22,6 @@
   "src/gdb/GdbSessionManager.ts": 2,
   "src/hopper/BridgeLauncher.ts": 3,
   "src/hopper/HopperAnalysisProfile.ts": 1,
-  "src/hopper/HopperClient.ts": 1,
   "src/hopper/HopperImageCopy.ts": 1,
   "src/ida/IdaSessionClient.ts": 1,
   "src/inspector/V8InspectorProvider.ts": 1,

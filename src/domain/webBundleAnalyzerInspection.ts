@@ -239,7 +239,10 @@ const inspectCall = (
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  if ((name === "require" || name.endsWith(".require")) && first !== undefined)
+  if (
+    first !== undefined &&
+    isUnmodifiedGlobalReference(node.callee, bindings, "require")
+  )
     addEdge({
       script,
       specifier: first,

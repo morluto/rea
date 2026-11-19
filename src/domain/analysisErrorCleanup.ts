@@ -102,3 +102,15 @@ export const analysisErrorWithCloseRejections = (
   first.cleanupIncomplete
     ? analysisErrorWithCloseRejection(first, second, operation)
     : analysisErrorWithCleanupFailure(first, second, operation);
+
+/**
+ * Follow an existing live owner's cleanup completion from a wrapper error while
+ * keeping its released resource history empty once that owner finishes. If the
+ * owner is not live (`!owner.cleanupIncomplete`), any pending cleanup on the
+ * wrapper stays unknown.
+ */
+export const withInheritedCleanupOwnership = <Failure extends AnalysisError>(
+  failure: Failure,
+  owner: AnalysisError,
+): Failure =>
+  owner.cleanupIncomplete ? failure.bindCleanupDependencies([owner]) : failure;

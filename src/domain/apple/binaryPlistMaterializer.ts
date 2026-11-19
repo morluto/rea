@@ -179,6 +179,7 @@ const storedPlistPayload = (
   | { readonly type: number; readonly payload: Buffer }
   | "unreadable"
   | null => {
+  if (offset < 8 || offset >= objectEnd) return "unreadable";
   const marker = bytes[offset];
   if (marker === undefined) return "unreadable";
   const type = marker >> 4;
@@ -275,11 +276,14 @@ export const decodeBinaryPlistText = (
   const texts: string[] = [];
   let decoded = 0;
   let complete = true;
+  // Strict preflight admitted the offset-table position. The table begins
+  // immediately after the object area and is separate from the trailer.
+  const objectEnd = Number(layout.value.offsetTable);
   for (const offset of new Set(layout.value.objectOffsets())) {
     const stored = storedPlistPayload(
       bytes,
       Number(offset),
-      layout.value.trailerOffset,
+      objectEnd,
       layout.value.referenceWidth,
     );
     if (stored === null) continue;
