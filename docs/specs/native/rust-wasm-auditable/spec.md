@@ -49,10 +49,11 @@ implementation already had; no earlier plan is reconstructed.
    custom-section name or name length that extends past its section, and a
    name that is not UTF-8 are malformed. Integers are decoded by the shared
    LEB128 reader.
-8. The section walk stops after 65,536 sections with a `cpu` resource
-   constraint. The format sets no section count and the walk is synchronous.
-   The allowance is fixed; `producer_limits` does not raise it. Retained state
-   is at most two `.dep-v0` ranges and one data-section range.
+8. The synchronous walk admits up to 65,536 section payloads. It checks the
+   length and file extent of the next section before returning a `cpu` resource
+   constraint. Malformed or truncated framing retains its format diagnosis.
+   This allowance is fixed, so `producer_limits` does not raise it. Retained
+   state is at most two `.dep-v0` ranges and one data-section range.
 9. The Evidence subject format is `file`, as for `inspect_wasm_artifact`, with
    no architecture. Retained summaries, package and edge pages and the
    CycloneDX view accept a WebAssembly parent.

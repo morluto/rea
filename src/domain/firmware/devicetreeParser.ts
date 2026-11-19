@@ -35,7 +35,7 @@ export const parseDevicetree = (
   bytes: Buffer,
   artifact: Devicetree["artifact"],
   input: InspectDevicetreeInput,
-): Devicetree => {
+): { report: Devicetree; structureLimitations: readonly string[] } => {
   if (bytes.length > input.max_file_bytes)
     throw devicetreeLimitFailure("max_file_bytes", input.max_file_bytes);
   const {
@@ -98,6 +98,16 @@ export const parseDevicetree = (
     if (cursor > structEnd - n)
       malformed("Truncated FDT structure token or property");
   };
+  let nonzeroPaddingBytes = 0;
+  let firstNonzeroPadding: number | undefined;
+  const observePadding = (start: number, end: number) => {
+    // Callers admit the aligned extent before observing its padding.
+    for (let offset = start; offset < end; offset++) {
+      if (bytes[offset] === 0) continue;
+      nonzeroPaddingBytes += 1;
+      firstNonzeroPadding ??= offset;
+    }
+  };
   while (cursor < structEnd) {
     need(4);
     const offset = cursor,
@@ -109,8 +119,10 @@ export const parseDevicetree = (
       if (nodes.length >= input.max_nodes)
         throw devicetreeLimitFailure("max_nodes", input.max_nodes);
       const name = text(cursor, structEnd);
-      cursor = align(name.next);
-      need(0);
+      const next = align(name.next);
+      need(next - cursor);
+      observePadding(name.next, next);
+      cursor = next;
       const parent = stack.at(-1);
       if (
         name.value.includes("/") ||
@@ -144,7 +156,11 @@ export const parseDevicetree = (
       const length = u32(cursor),
         nameoff = u32(cursor + 4);
       cursor += 8;
-      need(length);
+      const end = cursor + length;
+      const next = align(end);
+      // Every open node needs an END_NODE token, followed by FDT_END.
+      need(next - cursor + (stack.length + 1) * 4);
+      observePadding(end, next);
       if (++properties > input.max_properties)
         throw devicetreeLimitFailure("max_properties", input.max_properties);
       if (nameoff >= header.size_dt_strings)
@@ -212,8 +228,7 @@ export const parseDevicetree = (
       };
       owner.node.properties.push(property);
       propertyMap?.set(name, property);
-      cursor = align(cursor + length);
-      need(0);
+      cursor = next;
     } else if (token === 9) {
       if (stack.length || nodes.length === 0) malformed("Premature FDT_END");
       if (header.size_dt_struct !== null && cursor !== structEnd)
@@ -231,7 +246,15 @@ export const parseDevicetree = (
     return s?.length === 1 ? (s[0] ?? null) : null;
   };
   const handles = new Map<number, string | null>();
+  // An editor can leave nonzero padding without changing the parsed fields.
+  const structureLimitations =
+    firstNonzeroPadding === undefined
+      ? []
+      : [
+          `FDT structure padding contains ${String(nonzeroPaddingBytes)} nonzero ${nonzeroPaddingBytes === 1 ? "byte" : "bytes"}. The first is at file offset ${String(firstNonzeroPadding)}.`,
+        ];
   const limitations = [
+    ...structureLimitations,
     "Raw property previews are limited to 256 bytes; offsets and lengths identify complete values in the hashed artifact.",
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
@@ -336,7 +359,7 @@ export const parseDevicetree = (
         });
       }
     }
-  return {
+  const report: Devicetree = {
     artifact,
     header,
     reservations,
@@ -360,4 +383,5 @@ export const parseDevicetree = (
     },
     limitations,
   };
+  return { report, structureLimitations };
 };

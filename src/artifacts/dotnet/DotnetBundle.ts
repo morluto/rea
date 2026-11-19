@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
   DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
   type DotnetBundleReaderLimits,
@@ -60,7 +61,10 @@ export const findDotnetBundleHeader = async (
       index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE, index + 1)
     ) {
       if (index < 8) continue;
-      const offset = bytes.readBigUInt64LE(index - 8);
+      const offset = new BinaryReader(bytes, true, "dotnet-bundle").word(
+        index - 8,
+        64,
+      );
       // HostWriter.IsBundle uses the first apphost marker. Later markers may
       // belong to embedded native apphosts, whose coordinates are not this host's.
       if (offset === 0n) return undefined;
@@ -94,9 +98,9 @@ export const readDotnetBundle = async (
   if (count < 0) fail(".NET bundle entry count is negative");
   // Include the bundle ID length prefix and, starting at v2, the two
   // configuration ranges and flags. Each row has a type and a path prefix.
-  const minimumHeaderTail = majorVersion >= 2 ? 41 : 1;
   const minimumEntry = majorVersion === 6 ? 26 : 18;
-  if (minimumHeaderTail + count * minimumEntry > cursor.remainingBytes)
+  const afterBundleId = (majorVersion >= 2 ? 40 : 0) + count * minimumEntry;
+  if (1 + afterBundleId > cursor.remainingBytes)
     fail(".NET bundle entry count cannot fit in the manifest");
   if (count > limits.entry_count)
     throw artifactReaderLimitFailure(
@@ -105,21 +109,21 @@ export const readDotnetBundle = async (
       "count",
       count,
     );
-  await cursor.string(); // Bundle ID is not an authentication or content digest.
+  await cursor.string(afterBundleId);
+  const manifestStart = BigInt(headerOffset);
   const configuration: { offset: number; size: number; type: number }[] = [];
   if (majorVersion >= 2) {
-    configuration.push({
-      offset: await cursor.nonnegativeI64(),
-      size: await cursor.nonnegativeI64(),
-      type: 3,
-    });
-    configuration.push({
-      offset: await cursor.nonnegativeI64(),
-      size: await cursor.nonnegativeI64(),
-      type: 4,
-    });
+    for (const type of [3, 4]) {
+      const offset = await cursor.nonnegativeI64();
+      const size = await cursor.nonnegativeI64();
+      if (!fitsBeforeManifest(offset, size, manifestStart))
+        fail(
+          ".NET bundle configuration location disagrees with its file table",
+        );
+      configuration.push({ offset: Number(offset), size: Number(size), type });
+    }
     const flags = await cursor.u64();
-    if (flags > 1)
+    if (flags > 1n)
       throw new ArtifactReaderFailure(
         "unavailable",
         `Unsupported .NET bundle flags: ${flags}`,
@@ -140,17 +144,21 @@ export const readDotnetBundle = async (
   let expandedBytes = 0n;
   for (let index = 0; index < count; index++) {
     abortIfNeeded(signal);
-    const offset = await cursor.nonnegativeI64();
-    const fileSize = await cursor.nonnegativeI64();
-    const compressedSize =
-      majorVersion === 6 ? await cursor.nonnegativeI64() : 0;
-    const storedSize = compressedSize || fileSize;
-    if (offset > headerOffset || storedSize > headerOffset - offset)
+    const declaredOffset = await cursor.nonnegativeI64();
+    const declaredSize = await cursor.nonnegativeI64();
+    const declaredCompressedSize =
+      majorVersion === 6 ? await cursor.nonnegativeI64() : 0n;
+    const declaredStoredSize = declaredCompressedSize || declaredSize;
+    if (!fitsBeforeManifest(declaredOffset, declaredStoredSize, manifestStart))
       fail(
-        `.NET bundle entry crosses the manifest or file boundary (entry ${index + 1}, offset ${offset}, stored size ${storedSize})`,
+        `.NET bundle entry crosses the manifest or file boundary (entry ${index + 1}, offset ${declaredOffset}, stored size ${declaredStoredSize})`,
       );
-    const fileType = (await cursor.take(1))[0]!;
-    const path = await cursor.string();
+    const fileType = await cursor.u8();
+    const path = await cursor.string((count - index - 1) * minimumEntry);
+    const offset = Number(declaredOffset);
+    const storedSize = Number(declaredStoredSize);
+    const compressedSize = Number(declaredCompressedSize);
+    const fileSize = exactManifestInteger(declaredSize);
     const normalized = normalizeArtifactPath(path);
     paths.add(normalized, "file");
     if (fileSize > limits.member_bytes || compressedSize > limits.member_bytes)
@@ -205,7 +213,7 @@ export const readDotnetBundle = async (
 /** Cached positional reads bound allocation and correctly handle short reads. */
 class BundleCursor {
   #position: number;
-  #cache = Buffer.alloc(0);
+  #cache = new BinaryReader(Buffer.alloc(0), true, "dotnet-bundle");
   #cacheOffset = 0;
 
   constructor(
@@ -228,7 +236,7 @@ class BundleCursor {
     return remaining;
   }
 
-  async take(length: number): Promise<Buffer> {
+  async #advance(length: number): Promise<number> {
     abortIfNeeded(this.signal);
     const remaining = this.#requireRemaining(length);
     const consumed = this.#position - this.start;
@@ -240,9 +248,9 @@ class BundleCursor {
         consumed + length,
       );
     const cached = this.#position - this.#cacheOffset;
-    if (cached < 0 || cached + length > this.#cache.length) {
-      this.#cacheOffset = this.#position;
-      this.#cache = Buffer.alloc(
+    if (cached < 0 || cached + length > this.#cache.bytes.length) {
+      const cacheOffset = this.#position;
+      const bytes = Buffer.alloc(
         Math.min(
           Math.max(length, 64 * 1024),
           remaining,
@@ -250,60 +258,62 @@ class BundleCursor {
         ),
       );
       let read = 0;
-      while (read < this.#cache.length) {
+      while (read < bytes.length) {
         abortIfNeeded(this.signal);
         const reply = await this.handle.read(
-          this.#cache,
+          bytes,
           read,
-          this.#cache.length - read,
-          this.#cacheOffset + read,
+          bytes.length - read,
+          cacheOffset + read,
         );
         abortIfNeeded(this.signal);
         if (reply.bytesRead === 0) fail("Truncated .NET bundle manifest");
         read += reply.bytesRead;
       }
+      this.#cache = new BinaryReader(bytes, true, "dotnet-bundle");
+      this.#cacheOffset = cacheOffset;
     }
     const at = this.#position - this.#cacheOffset;
     this.#position += length;
-    return this.#cache.subarray(at, at + length);
+    return at;
+  }
+
+  async u8(): Promise<number> {
+    const at = await this.#advance(1);
+    return this.#cache.u8(at);
   }
 
   async u32(): Promise<number> {
-    return (await this.take(4)).readUInt32LE();
+    const at = await this.#advance(4);
+    return this.#cache.u32(at);
   }
+
   async i32(): Promise<number> {
-    return (await this.take(4)).readInt32LE();
+    const at = await this.#advance(4);
+    return this.#cache.i32(at);
   }
-  async nonnegativeI64(): Promise<number> {
-    const value = (await this.take(8)).readBigInt64LE();
+
+  async nonnegativeI64(): Promise<bigint> {
+    const at = await this.#advance(8);
+    const value = this.#cache.i64(at);
     if (value < 0n) fail(".NET bundle offset or size is negative");
-    return this.exactInteger(value);
+    return value;
   }
-  private exactInteger(value: bigint): number {
-    if (value > BigInt(Number.MAX_SAFE_INTEGER))
-      throw artifactFixedLimitFailure(
-        {
-          name: "The .NET bundle exact integer range",
-          kind: "parser",
-          limit: Number.MAX_SAFE_INTEGER,
-          unit: "integer units",
-        },
-        `A .NET bundle offset or size of ${String(value)} is above the exact integer range of ${String(Number.MAX_SAFE_INTEGER)}.`,
-      );
-    return Number(value);
+
+  async u64(): Promise<bigint> {
+    const at = await this.#advance(8);
+    return this.#cache.word(at, 64);
   }
-  async u64(): Promise<number> {
-    return this.exactInteger((await this.take(8)).readBigUInt64LE());
-  }
-  async string(): Promise<string> {
+
+  async string(minimumTailBytes: number): Promise<string> {
     let length = 0;
     for (let shift = 0; shift <= 28; shift += 7) {
-      const byte = (await this.take(1))[0]!;
+      const byte = await this.u8();
       // BinaryReader.ReadString uses a nonnegative signed Int32 length.
       if (shift === 28 && byte > 7) fail("Invalid .NET bundle string length");
       length += (byte & 127) * 2 ** shift;
       if ((byte & 128) !== 0) continue;
-      this.#requireRemaining(length);
+      this.#requireRemaining(length + minimumTailBytes);
       if (length > this.limits.string_bytes)
         throw artifactReaderLimitFailure(
           "artifact_limits.dotnet_bundle.string_bytes",
@@ -313,7 +323,8 @@ class BundleCursor {
         );
       // Source failures are not encoding failures. Acquire bytes outside the
       // decoder boundary so I/O and cancellation retain their original cause.
-      const bytes = await this.take(length);
+      const at = await this.#advance(length);
+      const bytes = this.#cache.range(at, length, "manifest string");
       try {
         return strictUtf8Decoder("preserve").decode(bytes);
       } catch (cause) {
@@ -327,6 +338,26 @@ class BundleCursor {
     return fail("Invalid .NET bundle string length");
   }
 }
+
+const fitsBeforeManifest = (
+  offset: bigint,
+  size: bigint,
+  manifestStart: bigint,
+): boolean => offset <= manifestStart && size <= manifestStart - offset;
+
+const exactManifestInteger = (value: bigint): number => {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER))
+    throw artifactFixedLimitFailure(
+      {
+        name: "The .NET bundle exact integer range",
+        kind: "parser",
+        limit: Number.MAX_SAFE_INTEGER,
+        unit: "integer units",
+      },
+      `A .NET bundle offset or size of ${String(value)} is above the exact integer range of ${String(Number.MAX_SAFE_INTEGER)}.`,
+    );
+  return Number(value);
+};
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);

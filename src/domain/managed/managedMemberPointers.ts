@@ -80,10 +80,12 @@ const memberListIndex = (
   const positions = new Uint32Array(definitionCount + 1);
   try {
     const width = layout.tableIndexSize(table);
+    // The pointer table's index width is a property of the layout, not of the row, so one
+    // reader covers the whole scan and each row keeps the width the table declares.
+    const reader = new BinaryReader(bytes, true, "managed-metadata-pointers");
     for (let row = 1; row <= pointers.rowCount; row += 1) {
       const offset: number = pointers.offset + (row - 1) * pointers.rowSize;
-      const definition =
-        width === 2 ? bytes.readUInt16LE(offset) : bytes.readUInt32LE(offset);
+      const definition = width === 2 ? reader.u16(offset) : reader.u32(offset);
       if (definition === 0 || definition > definitionCount)
         throw managedFailure(
           "invalid-row",

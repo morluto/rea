@@ -310,6 +310,10 @@ export const inspectManagedMembersBytes = (
         nesting_read: parsedTypes.nesting.complete,
         selection,
         method_rows: methodRows,
+        unresolved_definitions: {
+          rows: parsedTypes.unresolvedDefinitions,
+          method_names_examined: false,
+        },
         limitations: [...typeIdentityLimitations, ...selectionLimitations],
       },
       uniqueManagedParseIssues(issues),
@@ -513,6 +517,12 @@ export const inspectManagedMembersBytes = (
           user_strings: userStrings,
           selection,
           method_rows: methodRows,
+          unresolved_definitions: {
+            rows: parsedTypes.unresolvedDefinitions.concat(
+              methods.unresolvedDefinitions,
+            ),
+            method_names_examined: true,
+          },
           coverage: {
             state:
               issues.length === 0 && !incompleteMembers

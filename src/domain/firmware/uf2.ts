@@ -229,6 +229,10 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
     const index = this.#blockCount;
     this.#blockCount += 1;
     const flags = readUint32(block, 8);
+    const fileContainer = (flags & UF2_FLAG_FILE_CONTAINER) !== 0;
+    // File-container blocks use the address field as a file offset. Pure
+    // nonflash blocks do not establish an address range.
+    const nonflash = !fileContainer && (flags & UF2_FLAG_NOT_MAIN_FLASH) !== 0;
     const address = readUint32(block, 12);
     const size = readUint32(block, 16);
     const fault =
@@ -242,7 +246,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
             : (flags & UF2_FLAG_MD5) !== 0 &&
                 size > UF2_DATA_BYTES - UF2_MD5_BYTES
               ? "payload overlaps the reserved MD5 checksum metadata"
-              : address + size > ADDRESS_SPACE
+              : !nonflash && address + size > ADDRESS_SPACE
                 ? `payload at ${hex32(address)} with ${String(size)} bytes wraps past 0xffffffff`
                 : undefined;
     if (fault !== undefined) {
@@ -261,11 +265,11 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       address,
     );
     // The file-container flag overrides not-main-flash: such blocks hold files.
-    if ((flags & UF2_FLAG_FILE_CONTAINER) !== 0) {
+    if (fileContainer) {
       this.#fileContainer += 1;
       return ok(undefined);
     }
-    if ((flags & UF2_FLAG_NOT_MAIN_FLASH) !== 0) {
+    if (nonflash) {
       this.#notMainFlash += 1;
       this.#notMainFlashBytes += size;
       return ok(undefined);

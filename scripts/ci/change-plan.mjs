@@ -77,6 +77,7 @@ const STATIC_CODE_ONLY_INPUTS = [
 const DOCS_AND_CODE_INPUTS = [
   "scripts/check-doc-facts.mjs",
   "scripts/generate-error-schema.mjs",
+  "scripts/generate-third-party-inventory.mjs",
   "scripts/lib/product-catalog.*",
   "scripts/lib/catalog-core.*",
   "scripts/lib/catalog-cli.*",
@@ -223,8 +224,9 @@ export function planChanges(request, repository) {
     ))
       if (matchesAny(file, earlyAll ? paths : earlyInputs))
         selected[owner] = true;
-    // The documentation check scans living prose outside docs/ too.
-    if (isLivingProsePath(file)) selected.docs = true;
+    // The documentation check validates living prose and the lockfile inventory.
+    if (isLivingProsePath(file) || file === "package-lock.json")
+      selected.docs = true;
     if (file === ".git-blame-ignore-revs") return;
     if (
       file.startsWith("licenses/") ||
@@ -302,10 +304,12 @@ export function planChanges(request, repository) {
       .filter(([, { paths }]) => matchesAny(file, paths))
       .map(([owner]) => owner);
     for (const owner of owners) selected[owner] = true;
+    // Workflow callers can become invalid when local action inputs or outputs change.
+    selected.workflows ||= /^\.github\/actions\/.+\/action\.ya?ml$/u.test(file);
     if (
       file.startsWith(".github/workflows/") ||
       file.startsWith(".github/codeql/") ||
-      file === ".github/actionlint.yaml"
+      /^\.github\/actionlint\.ya?ml$/u.test(file)
     ) {
       selected.workflows = true;
       if (GUARDED_WORKFLOWS.has(file) || file.startsWith(".github/codeql/"))

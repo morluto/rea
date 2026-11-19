@@ -278,6 +278,8 @@ and language. Other resource payload formats remain opaque.
 16384, the largest stock Windows resource image measured with headroom
 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
 Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
+Parser refusals report the exhausted limit and enforced maximum in
+`details.reported_limits`.
 Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
@@ -467,6 +469,8 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+PE export tables and strings use file-backed headers and declared section
+content. A name's terminating NUL must also fit within those mapped bytes.
 PE export names are bounded null-terminated byte strings and may continue
 across adjacent file-backed section mappings when the virtual bytes are
 unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.

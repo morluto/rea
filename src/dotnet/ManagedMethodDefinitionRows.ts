@@ -6,6 +6,7 @@ import {
 import {
   metadataRowCursor,
   metadataToken,
+  readRequiredMetadataName,
 } from "../domain/managed/managedMetadataHeaps.js";
 
 /** Meaning of the MethodDef implementation bits, independent of RVA or ImplMap evidence. */
@@ -31,6 +32,7 @@ export const readMethodDefinitionRow = (
   readonly implFlags: number;
   readonly flags: number;
   readonly nameIndex: number;
+  readonly nameOffset: number;
   readonly signatureIndex: number;
   readonly implementation: ManagedMethodImplementationFlags;
 } => {
@@ -45,6 +47,7 @@ export const readMethodDefinitionRow = (
     rva,
     implFlags,
     flags,
+    nameOffset: cursor.offset,
     nameIndex: cursor.readIndex(layout.stringIndexSize),
     signatureIndex: cursor.readIndex(layout.blobIndexSize),
     implementation: {
@@ -80,3 +83,19 @@ export const readMethodParamList = (
     offset,
   };
 };
+
+export const readMethodDefinitionName = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  definition: Pick<
+    ReturnType<typeof readMethodDefinitionRow>,
+    "token" | "nameIndex" | "nameOffset"
+  >,
+): string =>
+  readRequiredMetadataName(
+    bytes,
+    layout,
+    "MethodDef",
+    definition.token,
+    definition,
+  );

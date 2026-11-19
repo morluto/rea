@@ -6,7 +6,7 @@ import {
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
 
-const target: BinaryTarget = {
+const target = {
   path: "/fixture/public.exe",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -21,7 +21,7 @@ const target: BinaryTarget = {
     guid: "01234567-89ab-cdef-0123-456789abcdef",
     age: 10,
   },
-};
+} satisfies BinaryTarget;
 const absentAttributes = {
   file: null,
   guid: null,
@@ -30,6 +30,34 @@ const absentAttributes = {
   version: null,
   loaded: null,
 };
+
+it("preserves undecodable PE locator bytes apart from Ghidra's reported file", () => {
+  const caveats = ghidraPePdbLimitations(
+    {
+      ...target,
+      codeView: {
+        pdbPath: null,
+        pdbFileName: null,
+        pdbPathBytesHex: "e92e706462",
+        guid: target.codeView?.guid ?? null,
+        age: 10,
+      },
+    },
+    {
+      ...absentAttributes,
+      file: "é.pdb",
+      guid: target.codeView?.guid ?? null,
+      age: "a",
+      loaded: true,
+    },
+  );
+  expect(caveats).toHaveLength(2);
+  expect(caveats[0]).toContain("é.pdb");
+  expect(caveats[1]).toContain(
+    "path encoding unknown; original path bytes 0xe92e706462",
+  );
+  expect(caveats[1]).toContain("equivalence is not established");
+});
 
 it.each(["file", "guid", "age"] as const)(
   "retains declared identity when only reported %s is omitted",

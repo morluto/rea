@@ -1,7 +1,13 @@
-import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
+import {
+  readFieldDefinitionName,
+  readFieldDefinitionRow,
+} from "./ManagedFieldDefinitionRows.js";
 import type { ManagedConstantReader } from "./ManagedConstants.js";
 import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
-import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
+import {
+  readMethodDefinitionName,
+  readMethodDefinitionRow,
+} from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
@@ -49,6 +55,10 @@ import { methodBody } from "./ManagedMethodBodyReader.js";
 import { createManagedParameterDefaultReader } from "./ManagedParameterDefaults.js";
 import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
 import type { TypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
+import {
+  readDefinitionField,
+  type UnresolvedDefinition,
+} from "../domain/managed/managedUnresolvedDefinitions.js";
 
 /**
  * Declaring-type tokens whose members are decoded in full; null selects every
@@ -111,9 +121,9 @@ export const parseFields = (
     )
       continue;
     readManagedValue(() => {
-      const { token, rowOffset, flags, nameIndex, signatureIndex } =
-        readFieldDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+      const definition = readFieldDefinitionRow(bytes, layout, row);
+      const { token, rowOffset, flags, signatureIndex } = definition;
+      const name = readFieldDefinitionName(bytes, layout, definition);
       const owned = owner ?? 0;
       core.set(token, {
         token,
@@ -350,8 +360,10 @@ export const parseMethods = ({
    * scanned: rows that produced no method, or bodies whose decoding stopped.
    */
   readonly unscannedMethods: number;
+  readonly unresolvedDefinitions: UnresolvedDefinition[];
 } => {
   const methods: DecodedMethod[] = [];
+  const unresolvedDefinitions: UnresolvedDefinition[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
   let unscannedMethods = 0;
@@ -375,6 +387,7 @@ export const parseMethods = ({
         : readManagedValue(() => ownerRow(row), issues);
     const declared = owner === undefined ? undefined : ranges[owner - 1];
     const inPage = row > methodOffset && row - methodOffset <= methodLimit;
+    const selectedForEvidence = inPage && isSelected(selected, declared);
     const mayBeSelected =
       inPage &&
       (selected === null ||
@@ -397,17 +410,40 @@ export const parseMethods = ({
     }
     const produced = methods.length;
     readManagedValue(() => {
+      const definition = readMethodDefinitionRow(bytes, layout, row);
       const {
         token,
         rowOffset,
         rva,
         implFlags,
         flags,
-        nameIndex,
         signatureIndex,
         implementation,
-      } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+      } = definition;
+      const name = readDefinitionField(
+        () => readMethodDefinitionName(bytes, layout, definition),
+        issues,
+        "Name",
+        definition.nameOffset,
+        definition.nameIndex,
+      );
+      if (typeof name !== "string") {
+        if (selectedForEvidence)
+          unresolvedDefinitions.push(
+            admitManagedProjection(
+              {
+                kind: "MethodDef",
+                token,
+                row_offset: rowOffset,
+                declaring_type_token: declared?.token ?? null,
+                rva,
+                failed_fields: [name],
+              },
+              managedDecodeBudget(layout),
+            ),
+          );
+        return;
+      }
       const member = {
         token,
         name,
@@ -415,8 +451,7 @@ export const parseMethods = ({
         kind: "method",
       } as const;
       core.set(token, member);
-      if (!inPage) return;
-      if (!isSelected(selected, declared)) return;
+      if (!selectedForEvidence) return;
       const sig = readMetadataBlob(bytes, layout, signatureIndex);
       const decoded = budgetedSignature(
         sig,
@@ -472,7 +507,7 @@ export const parseMethods = ({
     }, issues);
     if (mayBeSelected && methods.length === produced) unscannedMethods += 1;
   }
-  return { methods, core, issues, unscannedMethods };
+  return { methods, core, issues, unscannedMethods, unresolvedDefinitions };
 };
 
 /**
@@ -515,11 +550,18 @@ export const readReferencedMemberCores = (
     if (row < 1 || row > (layout.table(table)?.rowCount ?? 0)) continue;
     readManagedValue(() => {
       const declared = ranges[ownerOf(table, row) - 1];
-      const { nameIndex } =
+      const name =
         table === 4
-          ? readFieldDefinitionRow(bytes, layout, row)
-          : readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+          ? readFieldDefinitionName(
+              bytes,
+              layout,
+              readFieldDefinitionRow(bytes, layout, row),
+            )
+          : readMethodDefinitionName(
+              bytes,
+              layout,
+              readMethodDefinitionRow(bytes, layout, row),
+            );
       core.set(token, {
         token,
         name,

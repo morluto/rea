@@ -655,7 +655,10 @@ const parseMetadata = (
   }
   if (metadata.id !== "com.android.tools.r8.residualsignature") return;
   const target = state.last;
-  if (target === undefined) return;
+  if (target === undefined) {
+    malformed(state, number, "metadata");
+    return;
+  }
   const schema = "outermost" in target ? dexDescriptorSchema : dexTypeSchema;
   const signature = schema.safeParse(metadata.signature);
   if (!signature.success) {
@@ -752,13 +755,19 @@ export const parseProguardMapping = (
   if (state.indexBytes > state.limits.indexBytes) capacity(state, "index");
   if (state.headerBytes > state.limits.projectionBytes)
     capacity(state, "projection");
+  // R8’s BufferedReader-based mapping reader treats CR, LF, and CRLF as
+  // one line ending each. Find boundaries incrementally to keep memory bounded.
+  const lineEnd = /\r\n?|\n/gu;
   let start = 0;
   while (start <= text.length && state.failure === undefined) {
-    const newline = text.indexOf("\n", start);
-    const end = newline < 0 ? text.length : newline;
-    parseLine(state, text.slice(start, end), state.line);
-    if (newline < 0) break;
-    start = newline + 1;
+    const newline = lineEnd.exec(text);
+    parseLine(
+      state,
+      text.slice(start, newline?.index ?? text.length),
+      state.line,
+    );
+    if (newline === null) break;
+    start = lineEnd.lastIndex;
     state.line++;
   }
   if (state.failure !== undefined) return err(state.failure);

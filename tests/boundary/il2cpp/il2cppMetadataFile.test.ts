@@ -132,18 +132,28 @@ describe("IL2CPP global-metadata version 39", () => {
     },
   );
 
-  it("recovers the TypeIndex width from type records without interfaceOffsets", () => {
-    const fixture = createIl2cppMetadataFixture({
-      typeIndexWidth: 2,
-      interfaceOffsets: false,
-    });
-    const decoded = readIl2cppMetadata(fixture.bytes);
-    expect(decoded.index_widths.type).toBe(2);
-    expect(decoded.index_widths.type_width_source).toBe(
-      "type-definition-record",
-    );
-    expect(decoded.methods).toEqual(FIXTURE_METHODS);
-  });
+  it.each([
+    [0, 1],
+    [300, 2],
+  ] as const)(
+    "recovers the TypeIndex width from type records with %i generic containers and no interface offsets",
+    (genericContainers, genericContainerWidth) => {
+      const fixture = createIl2cppMetadataFixture({
+        typeIndexWidth: 2,
+        interfaceOffsets: false,
+        wide: { fillerTypes: 0, genericContainers, parameters: 0 },
+      });
+      const decoded = readIl2cppMetadata(fixture.bytes);
+      expect(decoded.index_widths.generic_container).toBe(
+        genericContainerWidth,
+      );
+      expect(decoded.index_widths.type).toBe(2);
+      expect(decoded.index_widths.type_width_source).toBe(
+        "type-definition-record",
+      );
+      expect(decoded.methods).toEqual(FIXTURE_METHODS);
+    },
+  );
 
   it("accepts empty sections that share an offset with occupied sections and padding gaps", () => {
     const bytes = mutated((fixture, target) => {
@@ -323,17 +333,25 @@ describe("IL2CPP generic-container linking facts", () => {
 
 describe("IL2CPP generic-container extents", () => {
   it("checks generic-container count against its fixed 16-byte records before resolving widths", () => {
-    // A positive count with no record bytes.
-    for (const count of [1, 300])
-      rejects(
-        mutated((fixture, bytes) =>
+    for (const [interfaceOffsets, count] of [
+      [true, 1],
+      [true, 300],
+      [false, 300],
+    ] as const) {
+      const bytes = mutated(
+        (fixture, bytes) =>
           bytes.writeInt32LE(
             count,
             fixture.header("genericContainers", "count"),
           ),
-        ),
-        "record-size-mismatch",
+        createIl2cppMetadataFixture({ interfaceOffsets }),
       );
+      for (const reader of [readIl2cppMetadata, readIl2cppMetadataForLinking]) {
+        const rejected = failure(bytes, reader);
+        expect(rejected.reason).toBe("record-size-mismatch");
+        expect(rejected.message).toContain("genericContainers");
+      }
+    }
     const oneRecord = createIl2cppMetadataFixture({
       wide: { fillerTypes: 0, genericContainers: 1, parameters: 0 },
     });
@@ -376,6 +394,43 @@ describe("IL2CPP generic-container extents", () => {
     expect(wide.index_widths.generic_container).toBe(2);
   });
 });
+
+it("checks backing parameter records before widening method parameter indices", () => {
+  const count = 300;
+  const unbacked = mutated((fixture, bytes) =>
+    bytes.writeInt32LE(count, fixture.header("parameters", "count")),
+  );
+  for (const reader of [readIl2cppMetadata, readIl2cppMetadataForLinking]) {
+    const rejected = failure(unbacked, reader);
+    expect(rejected.reason).toBe("record-size-mismatch");
+    expect(rejected.message).toContain("section parameters");
+  }
+
+  const backed = createIl2cppMetadataFixture({
+    wide: { fillerTypes: 0, genericContainers: 0, parameters: count },
+  });
+  const decoded = readIl2cppMetadata(backed.bytes);
+  expect(decoded.index_widths.parameter).toBe(2);
+  expect(decoded.parameters).toHaveLength(count);
+  expect(decoded.methods).toHaveLength(FIXTURE_METHODS.length);
+});
+
+it.each(["interfaceOffsets", "typeDefinitions"] as const)(
+  "rejects %s as width evidence when its declared records have no bytes",
+  (name) => {
+    const bytes = mutated(
+      (fixture, bytes) => bytes.writeInt32LE(0, fixture.header(name, "size")),
+      createIl2cppMetadataFixture({
+        interfaceOffsets: name === "interfaceOffsets",
+      }),
+    );
+    for (const reader of [readIl2cppMetadata, readIl2cppMetadataForLinking]) {
+      const rejected = failure(bytes, reader);
+      expect(rejected.reason).toBe("record-size-mismatch");
+      expect(rejected.message).toContain(name);
+    }
+  },
+);
 
 describe("rejected IL2CPP metadata references", () => {
   it("rejects image, type, method and nested-type indices outside their tables", () => {

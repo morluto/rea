@@ -59,6 +59,9 @@ are `payload_bytes`, `module_count`, `representation_bytes`, `metadata_read_byte
 absence. ELF section names are examined at their actual offsets, including names
 beyond a large section-name prefix. Select `artifact_limits.expanded_bytes` to
 change the aggregate referenced-plaintext work allowance.
+The reader validates the graph extent and suffix before applying `payload_bytes`.
+A declared extent outside its carrier or a suffix count that disagrees with the
+located payload is a format error.
 
 For a reported metadata-read refusal, keep the same carrier and retry with
 `--artifact-limits '{"bun":{"metadata_read_bytes":536870912}}'` or the equivalent

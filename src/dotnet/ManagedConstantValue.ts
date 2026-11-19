@@ -1,22 +1,28 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { ManagedConstant } from "../domain/managed/managedConstant.js";
 import { managedFailure } from "../domain/managed/managedReaderFailure.js";
 
 type Scalar = ManagedConstant["value"];
-type ScalarReader = (bytes: Buffer, scope: string, offset: number) => Scalar;
+type ScalarReader = (
+  reader: BinaryReader,
+  scope: string,
+  offset: number,
+) => Scalar;
 
-const booleanValue: ScalarReader = (bytes, scope, offset) => {
-  if (bytes[0] !== 0 && bytes[0] !== 1)
+const booleanValue: ScalarReader = (reader, scope, offset) => {
+  const value = reader.u8(0);
+  if (value !== 0 && value !== 1)
     throw managedFailure(
       "invalid-blob",
       scope,
       "Boolean Constant must encode zero or one.",
       offset,
     );
-  return bytes[0] === 1;
+  return value === 1;
 };
 
-const nullReference: ScalarReader = (bytes, scope, offset) => {
-  if (bytes.readUInt32LE() !== 0)
+const nullReference: ScalarReader = (reader, scope, offset) => {
+  if (reader.u32(0) !== 0)
     throw managedFailure(
       "invalid-blob",
       scope,
@@ -42,19 +48,23 @@ const CONSTANT_TYPES: Readonly<Record<number, ConstantEncoding>> = {
   0x03: {
     name: "char",
     bytes: 2,
-    read: (b) => String.fromCharCode(b.readUInt16LE()),
+    read: (b) => String.fromCharCode(b.u16(0)),
   },
-  0x04: { name: "i1", bytes: 1, read: (b) => b.readInt8() },
-  0x05: { name: "u1", bytes: 1, read: (b) => b.readUInt8() },
-  0x06: { name: "i2", bytes: 2, read: (b) => b.readInt16LE() },
-  0x07: { name: "u2", bytes: 2, read: (b) => b.readUInt16LE() },
-  0x08: { name: "i4", bytes: 4, read: (b) => b.readInt32LE() },
-  0x09: { name: "u4", bytes: 4, read: (b) => b.readUInt32LE() },
-  0x0a: { name: "i8", bytes: 8, read: (b) => b.readBigInt64LE().toString() },
-  0x0b: { name: "u8", bytes: 8, read: (b) => b.readBigUInt64LE().toString() },
-  0x0c: { name: "r4", bytes: 4, read: (b) => jsonFloat(b.readFloatLE()) },
-  0x0d: { name: "r8", bytes: 8, read: (b) => jsonFloat(b.readDoubleLE()) },
-  0x0e: { name: "string", bytes: null, read: (b) => b.toString("utf16le") },
+  0x04: { name: "i1", bytes: 1, read: (b) => b.i8(0) },
+  0x05: { name: "u1", bytes: 1, read: (b) => b.u8(0) },
+  0x06: { name: "i2", bytes: 2, read: (b) => b.i16(0) },
+  0x07: { name: "u2", bytes: 2, read: (b) => b.u16(0) },
+  0x08: { name: "i4", bytes: 4, read: (b) => b.i32(0) },
+  0x09: { name: "u4", bytes: 4, read: (b) => b.u32(0) },
+  0x0a: { name: "i8", bytes: 8, read: (b) => b.i64(0).toString() },
+  0x0b: { name: "u8", bytes: 8, read: (b) => b.word(0, 64).toString() },
+  0x0c: { name: "r4", bytes: 4, read: (b) => jsonFloat(b.f32(0)) },
+  0x0d: { name: "r8", bytes: 8, read: (b) => jsonFloat(b.f64(0)) },
+  0x0e: {
+    name: "string",
+    bytes: null,
+    read: (b) => b.bytes.toString("utf16le"),
+  },
   0x12: { name: "class", bytes: 4, read: nullReference },
 };
 
@@ -88,5 +98,9 @@ export const decodeManagedConstantValue = (
       `Constant ${encoding.name} has an invalid encoded byte length.`,
       offset,
     );
-  return encoding.read(bytes, scope, offset);
+  return encoding.read(
+    new BinaryReader(bytes, true, "cli-metadata"),
+    scope,
+    offset,
+  );
 };
