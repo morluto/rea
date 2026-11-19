@@ -12,3 +12,5 @@
 - [x] Document the tool in the native initializers guide and CLI reference.
 - [x] Resolve extended ELF symbol sections through a shared owner, preserving
       special markers and partial facts, with CLI/MCP and real assembler controls.
+- [x] Resolve RV32/RV64 pointer relocations through the shared owner, with
+      public CLI/MCP controls and independent Clang/LLD producer checks.

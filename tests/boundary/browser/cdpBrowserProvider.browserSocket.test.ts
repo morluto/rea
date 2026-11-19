@@ -893,7 +893,8 @@ it("keeps an admitted shared browser socket alive for concurrent peers when a ca
 
 describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
   it("coalesces concurrent cold-start calls onto one browser WebSocket handshake", async () => {
-    const browser = await startFakeCdpBrowser({ handshakeDelayMs: 40 });
+    const handshake = phaseGate<string>();
+    const browser = await startFakeCdpBrowser({ handshakeGate: handshake });
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
     let batch:
@@ -926,6 +927,8 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
           }),
         ),
       ]);
+      await handshake.reached(batch, "coalesced browser handshake");
+      handshake.release();
       const [listed, inspected, screenshot] = await batch;
       if (!listed.ok) throw listed.error;
       if (!inspected.ok) throw inspected.error;
@@ -947,6 +950,7 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
         .sort();
       expect(detachedSessionIds).toEqual(["session-1", "session-2"]);
     } finally {
+      handshake.release();
       await batch?.catch(() => undefined);
       await provider.close();
     }
@@ -954,7 +958,11 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
   });
 
   it("keeps an in-flight cold-start handshake alive for a longer-deadline peer when one waiter times out", async () => {
-    const browser = await startFakeCdpBrowser({ handshakeDelayMs: 120 });
+    const handshake = phaseGate<string>();
+    const browser = await startFakeCdpBrowser({ handshakeGate: handshake });
+    const shortDeadlineMs = 25_000;
+    const longDeadlineMs = 45_000;
+    const scheduled = vi.spyOn(globalThis, "setTimeout");
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
     let shortCall: ReturnType<CdpBrowserProvider["listTargets"]> | undefined;
@@ -963,7 +971,7 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       shortCall = provider.listTargets(
         listBrowserTargetsInputSchema.parse({
           cdp_endpoint: browser.browserWebSocketUrl,
-          discovery_timeout_ms: 35,
+          discovery_timeout_ms: shortDeadlineMs,
         }),
       );
       longCall = provider.inspectPage(
@@ -971,10 +979,16 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
           cdp_endpoint: browser.browserWebSocketUrl,
           target_id: "allowed-page",
           observation_ms: 0,
-          discovery_timeout_ms: 5_000,
+          discovery_timeout_ms: longDeadlineMs,
         }),
       );
 
+      await handshake.reached(shortCall, "cold-start browser handshake");
+      const shortTimers = scheduled.mock.calls.filter(
+        ([, delay]) => delay === shortDeadlineMs,
+      );
+      expect(shortTimers).toHaveLength(1);
+      shortTimers[0]?.[0]();
       const shortOutcome = await shortCall;
       expect(shortOutcome).toMatchObject({
         ok: false,
@@ -987,9 +1001,11 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       if (shortOutcome.ok)
         throw new Error("Expected short cold-start waiter to time out");
       expect(shortOutcome.error.userMessage).toContain(
-        "35 ms discovery_timeout_ms",
+        `${shortDeadlineMs} ms discovery_timeout_ms`,
       );
 
+      expect(browser.openedConnectionCount()).toBe(0);
+      handshake.release();
       const longOutcome = await longCall;
       if (!longOutcome.ok) throw longOutcome.error;
       expect(longOutcome.value.target.origin).toBe(browser.allowedOrigin);
@@ -1004,7 +1020,9 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       if (!followUp.ok) throw followUp.error;
       expect(browser.openedConnectionCount()).toBe(1);
     } finally {
+      handshake.release();
       await Promise.allSettled([shortCall, longCall]);
+      scheduled.mockRestore();
       await provider.close();
     }
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));

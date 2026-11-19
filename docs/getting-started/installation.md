@@ -1327,8 +1327,10 @@ detected user-level clients and Amp; if none of the other supported clients are
 detected, it selects their full registration catalog and Amp.
 
 REA preserves existing environment overrides, client policy, peer servers and
-unrelated settings. A changed existing file gets a private backup; an identical
-repeat keeps the file and creates no new backup. The result reports exact
+unrelated settings. Registration checks the effective client environment
+before writing and reports the field to repair if it is invalid. A changed
+existing file gets a private backup. Repeating the same registration keeps
+the file and creates no new backup. The result reports exact
 `command` and `args`, each selected client's effective scope, and configured,
 unchanged, failed or not-started outcomes. A partial failure returns a nonzero
 status while retaining successful client outcomes and recovery paths.
@@ -1667,9 +1669,10 @@ time proportional to Program size; saving runs once after first analysis and
 again only when the Program changes.
 
 This initial mode supports stock native ELF, PE and Mach-O imports on POSIX.
-Windows, special pinned-loader profiles, caller-selected `.gpr` projects,
-language/analyzer overrides, analysis seeds and extra analysis extensions are
-not admitted with this setting; unset it to use their existing workflows.
+Windows, special pinned-loader profiles, committed ELF image bases (the MIPS32
+shared-image lane), caller-selected `.gpr` projects, language/analyzer
+overrides, analysis seeds and extra analysis extensions are not admitted with
+this setting; unset it to use their existing workflows.
 The checkpoint directory must be private to the current user.
 
 REA analysis snapshots remain separate immutable query results. Initial analysis

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { compareKunaAddresses } from "./KunaAddress.js";
+import { compareKunaAddresses, normalizeKunaAddress } from "./KunaAddress.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { parseKunaJson } from "./KunaJson.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
@@ -267,7 +267,15 @@ const xrefsDocument = z.object({
   data_refs: z.array(xrefPointer).optional(),
 });
 
+interface KunaArm64DirectCall {
+  readonly from_address: string;
+  readonly caller_address: string;
+  readonly to_address: string;
+  readonly instruction: string;
+}
+
 export interface KunaIncomingReferences {
+  readonly arm64DirectCalls: readonly KunaArm64DirectCall[];
   readonly addresses: readonly string[];
   readonly sha256: string;
   readonly bytes: number;
@@ -338,6 +346,7 @@ export const parseKunaIncomingReferences = (
     }
     const addresses = new Set<string>();
     let excludedAliasRows = 0;
+    const arm64DirectCalls: KunaArm64DirectCall[] = [];
     for (const pointer of document.data_refs ?? []) {
       if (pointer.to_address === target) addresses.add(pointer.from_address);
       else excludedAliasRows += 1;
@@ -356,11 +365,33 @@ export const parseKunaIncomingReferences = (
           throw new KunaDocumentError("xref_function_hex");
       if (!aliases.has(row.to_address))
         throw new KunaDocumentError("xref_target");
-      if (row.to_address === target) addresses.add(row.from_address);
-      else excludedAliasRows += 1;
+      if (row.to_address !== target) {
+        excludedAliasRows += 1;
+        continue;
+      }
+      addresses.add(row.from_address);
+      // An exact incoming call row alone does not distinguish indirect forms.
+      // Accept only Kuna's arm64 BL with a literal matching the parsed target.
+      if (
+        row.kind !== "call" ||
+        row.from_function === null ||
+        row.instruction.length > "bl 0x0000000000000000".length
+      )
+        continue;
+      const operand = /^bl[ \t]+(0x[0-9a-f]{1,16})$/iu.exec(
+        row.instruction,
+      )?.[1];
+      if (normalizeKunaAddress(operand) === target)
+        arm64DirectCalls.push({
+          from_address: row.from_address,
+          caller_address: row.from_function.address,
+          to_address: target,
+          instruction: row.instruction,
+        });
     }
     return ok({
       addresses: [...addresses].sort(compareKunaAddresses),
+      arm64DirectCalls,
       rows: document.xrefs.length + (document.data_refs?.length ?? 0),
       excludedAliasRows,
       targetAliases: document.target.aliases.map(({ name, address }) => ({
