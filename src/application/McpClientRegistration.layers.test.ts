@@ -15,6 +15,10 @@ import {
   mcpClientRegistrationProfile,
   type McpRegistrationClient,
 } from "./McpRegistrationCatalog.js";
+import {
+  prepareRegistration,
+  verifyEffectiveRegistration,
+} from "./McpRegistrationConfiguration.js";
 
 let resources: ArtifactResourceScope;
 beforeEach(() => {
@@ -319,5 +323,69 @@ it("publishes through the last repeated target layer without copying intervening
   expect(await readFile(`${target}.rea.backup`, "utf8")).toBe(originalTarget);
   await expect(readFile(`${middle}.rea.backup`, "utf8")).rejects.toMatchObject({
     code: "ENOENT",
+  });
+});
+
+it("rejects an invalid Kilo inline environment before backing up or replacing the target", async () => {
+  const root = await createTestTempDirectory("rea-registration-inline-env-");
+  const target = join(root, "kilo.json");
+  const original = await write(target, {
+    mcp: { rea: { type: "local", command: ["old"] } },
+  });
+  const client = {
+    ...clientFor(target, [target]),
+    inlineConfiguration: {
+      origin: "KILO_CONFIG_CONTENT",
+      parsed: parseClientConfiguration(
+        '{"mcp":{"rea":{"environment":{"EXAMPLE_SETTING":17}}}}',
+        "kilo",
+      ),
+    } as const,
+  };
+  const result = await registerMcpClientOnHost(
+    client,
+    launcher,
+    undefined,
+    resources,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ConfigurationError",
+      message: expect.stringContaining("environment.EXAMPLE_SETTING"),
+      diagnostics: {
+        settings_path: target,
+        inline_origin: "KILO_CONFIG_CONTENT",
+      },
+    },
+  });
+  expect(await readFile(target, "utf8")).toBe(original);
+  await expect(lstat(`${target}.rea.backup`)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("rechecks a higher file's environment during registration readback", async () => {
+  const root = await createTestTempDirectory("rea-registration-readback-env-");
+  const target = join(root, "target", "opencode.json");
+  const higher = join(root, "higher", "opencode.json");
+  await write(target, {});
+  await write(higher, {
+    mcp: { rea: { environment: { EXAMPLE_SETTING: "ok" } } },
+  });
+  const prepared = await prepareRegistration(
+    target,
+    clientFor(target, [target, higher], "opencode"),
+    launcher,
+    HOST_PLATFORM.platform,
+  );
+  await write(higher, {
+    mcp: { rea: { environment: { EXAMPLE_SETTING: 17 } } },
+  });
+  await expect(
+    verifyEffectiveRegistration(prepared, prepared.contents),
+  ).rejects.toMatchObject({
+    message: expect.stringContaining("environment.EXAMPLE_SETTING"),
+    diagnostics: { settings_path: higher },
   });
 });

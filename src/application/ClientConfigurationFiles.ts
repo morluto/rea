@@ -121,6 +121,35 @@ export const readConfigurationFile = async (
   }
 };
 
+/** Apply the reader's environment rules to a file fragment or the merged view. */
+export const admitClientConfigurationEnvironment = (
+  document: ClientConfigurationDocument | undefined,
+  client: Pick<
+    SetupClient,
+    "name" | "registrationProfile" | "configPath" | "readOnlyLowerLayers"
+  >,
+  platform: NodeJS.Platform,
+  fragmentPath: string | undefined,
+  writeOverrides?: Readonly<Record<string, string>>,
+): Result<void, ClientConfigurationFileError> => {
+  const path = fragmentPath ?? client.configPath;
+  // A read-only lower layer's environment can be replaced as a whole map
+  // by a later layer (Goose), so only the effective view is validated.
+  if (path !== client.configPath && client.readOnlyLowerLayers === true)
+    return ok(undefined);
+  const overrides = path === client.configPath ? writeOverrides : undefined;
+  const environment = clientRegistrationEnvironment(
+    document,
+    client,
+    platform,
+    overrides,
+    fragmentPath === undefined ? "effective" : "fragment",
+  );
+  return environment.ok
+    ? ok(undefined)
+    : err(invalidEnvironment(path, environment.error, overrides, platform));
+};
+
 /** Read each layer; setup may validate its writable layer with proposed overrides. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
@@ -147,31 +176,16 @@ export const readClientConfigurationFiles = async (
       resources,
     );
     if (!document.ok) return document;
-    // A read-only lower layer's environment can be replaced as a whole map
-    // by a later layer (Goose), so only the effective view is validated.
-    const validatesLayer =
-      client.readOnlyLowerLayers !== true || path === client.configPath;
-    if (document.value !== undefined && !validatesLayer)
-      documents.push({ ...document.value, sourcePath: path });
-    else if (document.value !== undefined) {
-      const environment = clientRegistrationEnvironment(
-        document.value,
-        client,
-        platform,
-        path === client.configPath ? writeOverrides : undefined,
-        "fragment",
-      );
-      if (!environment.ok)
-        return err(
-          invalidEnvironment(
-            path,
-            environment.error,
-            path === client.configPath ? writeOverrides : undefined,
-            platform,
-          ),
-        );
-      documents.push({ ...document.value, sourcePath: path });
-    }
+    if (document.value === undefined) continue;
+    const admitted = admitClientConfigurationEnvironment(
+      document.value,
+      client,
+      platform,
+      path,
+      writeOverrides,
+    );
+    if (!admitted.ok) return admitted;
+    documents.push({ ...document.value, sourcePath: path });
   }
   // The inline layer is read-only and may replace a lower environment map,
   // so like a read-only lower layer only the effective view is validated.
@@ -180,22 +194,14 @@ export const readClientConfigurationFiles = async (
       ...client.inlineConfiguration.parsed,
       inlineOrigin: client.inlineConfiguration.origin,
     });
-  const environment = clientRegistrationEnvironment(
+  const admitted = admitClientConfigurationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
     client,
     platform,
+    undefined,
     writeOverrides,
-    "effective",
   );
-  if (!environment.ok)
-    return err(
-      invalidEnvironment(
-        client.configPath,
-        environment.error,
-        writeOverrides,
-        platform,
-      ),
-    );
+  if (!admitted.ok) return admitted;
   return ok(documents);
 };
 

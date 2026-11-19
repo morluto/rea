@@ -13,9 +13,11 @@ import {
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import {
+  admitClientConfigurationEnvironment,
   clientConfigurationForWrite,
   mergeClientConfigurationDocuments,
   readConfigurationFile,
+  type ClientConfigurationSource,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
@@ -112,10 +114,12 @@ export const prepareRegistration = async (
   const candidate = parseClientConfiguration(serialized.value, client.format);
   // Native loaders may visit one file at multiple precedence positions. A
   // physical update changes every occurrence without deduplicating its order.
-  const candidateLayers = layers.map((document, index) =>
-    paths[index] === client.configPath ? candidate : document,
+  const candidateLayers = layers.map((document) =>
+    document.sourcePath === client.configPath
+      ? { ...candidate, sourcePath: client.configPath }
+      : document,
   );
-  assertEffectiveLauncher(client, candidateLayers, launcher, platform);
+  assertEffectiveRegistration(client, candidateLayers, launcher, platform);
   return {
     path,
     client,
@@ -133,8 +137,8 @@ export const prepareRegistration = async (
 const readRegistrationLayers = async (
   client: McpRegistrationClient,
   target: ClientConfigurationDocument,
-): Promise<ClientConfigurationDocument[]> => {
-  const layers: ClientConfigurationDocument[] = [];
+): Promise<ClientConfigurationSource[]> => {
+  const layers: ClientConfigurationSource[] = [];
   const paths = client.configPaths ?? [client.configPath];
   if (!paths.includes(client.configPath))
     throw new ConfigurationError(
@@ -142,7 +146,7 @@ const readRegistrationLayers = async (
     );
   for (const path of paths) {
     if (path === client.configPath) {
-      layers.push(target);
+      layers.push({ ...target, sourcePath: path });
       continue;
     }
     const read = await readConfigurationFile(path, client.format);
@@ -151,28 +155,69 @@ const readRegistrationLayers = async (
         read.error.cleanupFailure ?? new ConfigurationError(read.error.detail)
       );
     // Retain an empty layer for missing files so target positions do not shift.
-    if (read.value !== undefined) layers.push(read.value);
+    if (read.value !== undefined)
+      layers.push({ ...read.value, sourcePath: path });
     else {
       const empty = serializeClientConfiguration({}, client.format);
       if (!empty.ok)
         throw new ConfigurationError(
           "An empty native configuration could not be serialized.",
         );
-      layers.push(parseClientConfiguration(empty.value, client.format));
+      layers.push({
+        ...parseClientConfiguration(empty.value, client.format),
+        sourcePath: path,
+      });
     }
   }
   if (client.inlineConfiguration !== undefined)
-    layers.push(client.inlineConfiguration.parsed);
+    layers.push({
+      ...client.inlineConfiguration.parsed,
+      inlineOrigin: client.inlineConfiguration.origin,
+    });
   return layers;
 };
 
-const assertEffectiveLauncher = (
+const assertEffectiveRegistration = (
   client: McpRegistrationClient,
-  layers: readonly ClientConfigurationDocument[],
+  layers: readonly ClientConfigurationSource[],
   launcher: ClientRegistrationCommand,
   platform: NodeJS.Platform,
 ): void => {
   const effective = mergeClientConfigurationDocuments(layers, platform);
+  const environmentClient = {
+    ...client.setupClient,
+    name: client.setupClient?.name ?? client.id,
+    registrationProfile: client.registrationProfile,
+    configPath: client.configPath,
+  };
+  for (const layer of layers) {
+    if (layer.sourcePath === undefined) continue;
+    const fragment = admitClientConfigurationEnvironment(
+      layer,
+      environmentClient,
+      platform,
+      layer.sourcePath,
+    );
+    if (!fragment.ok)
+      throw new ConfigurationError(fragment.error.detail, {
+        diagnostics: { settings_path: fragment.error.path },
+      });
+  }
+  const environment = admitClientConfigurationEnvironment(
+    effective,
+    environmentClient,
+    platform,
+    undefined,
+  );
+  if (!environment.ok)
+    throw new ConfigurationError(environment.error.detail, {
+      diagnostics: {
+        settings_path: environment.error.path,
+        ...(client.inlineConfiguration === undefined
+          ? {}
+          : { inline_origin: client.inlineConfiguration.origin }),
+      },
+    });
   const admitted = admitClientStdioConnection(
     effective === undefined
       ? undefined
@@ -209,7 +254,7 @@ export const verifyEffectiveRegistration = async (
   targetText: string,
 ): Promise<void> => {
   const { client, launcher, platform } = prepared;
-  assertEffectiveLauncher(
+  assertEffectiveRegistration(
     client,
     await readRegistrationLayers(
       client,
