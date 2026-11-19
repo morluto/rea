@@ -82,10 +82,26 @@ export const createSemanticReadPresenceQuery = (
     return origin ?? undefined;
   };
 
+  const ownDataAtPath = (value: t.Node, path: readonly string[]) => {
+    let receiver = value;
+    for (const key of path) {
+      if (!t.isObjectExpression(receiver)) return undefined;
+      let read = readers.get(receiver);
+      if (read === undefined) {
+        read = staticObjectPropertyReader(receiver);
+        readers.set(receiver, read);
+      }
+      const property = read(key);
+      if (property.status !== "explicit") return undefined;
+      receiver = unwrapJavaScriptExpression(property.value).node;
+    }
+    return receiver;
+  };
+
   return (
     bindingId: string | null,
     capture: t.Node,
-    source: "property" | "array-iteration" = "property",
+    iterationPath?: readonly string[],
   ) => {
     const binding =
       bindingId === null ? undefined : state.bindingsById.get(bindingId);
@@ -117,8 +133,11 @@ export const createSemanticReadPresenceQuery = (
     )
       return undefined;
     const { value } = origin;
-    if (source === "array-iteration") {
-      if (!t.isArrayExpression(value)) return undefined;
+    if (iterationPath !== undefined) {
+      // The RHS must select an own data value before numeric array slots can
+      // explain the binding. Temporal checks still use the full origin path.
+      if (!t.isArrayExpression(ownDataAtPath(value, iterationPath)))
+        return undefined;
       const array = evaluateSemanticExpression(
         capture,
         state,
@@ -131,8 +150,9 @@ export const createSemanticReadPresenceQuery = (
       )
         return undefined;
       return (path: readonly string[]): boolean => {
-        const [key] = path;
-        if (key === undefined || path.length !== 1) return false;
+        if (path.length !== iterationPath.length + 1) return false;
+        const key = path[iterationPath.length];
+        if (key === undefined) return false;
         const index = semanticArrayIndex(key);
         const slot = index === null ? undefined : array.items[index];
         return (
@@ -148,26 +168,9 @@ export const createSemanticReadPresenceQuery = (
       };
     }
     if (!t.isObjectExpression(value)) return undefined;
-    return (path: readonly string[]): boolean => {
-      if (path.length === 0) return false;
-      let receiver: t.Node = value;
-      for (const key of path) {
-        if (!t.isObjectExpression(receiver)) return false;
-        let read = readers.get(receiver);
-        if (read === undefined) {
-          read = staticObjectPropertyReader(receiver);
-          readers.set(receiver, read);
-        }
-        const property = read(key);
-        if (property.status !== "explicit") return false;
-        receiver = unwrapJavaScriptExpression(property.value).node;
-      }
-      return !capturedBindingPathMayHaveChanged(
-        origin.binding,
-        path,
-        capture,
-        state,
-      );
-    };
+    return (path: readonly string[]): boolean =>
+      path.length > 0 &&
+      ownDataAtPath(value, path) !== undefined &&
+      !capturedBindingPathMayHaveChanged(origin.binding, path, capture, state);
   };
 };
