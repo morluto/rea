@@ -984,21 +984,49 @@ describe("scalar identifier list ownership and ambiguity", () => {
     ]);
   });
 
-  it.each([{ duplicates: [] }, { duplicates: [42, 42, 42] }])(
-    "reports an inversion when only the reversed pairing can keep both IDs with additional values $duplicates",
-    ({ duplicates }) => {
+  it("does not report order when a duplicate made survivor identity ambiguous", () => {
+    const result = compareAnswers(
+      answer({ books: { ids: [101, 102, 101] } }),
+      answer({ books: { ids: [3, 1, 9] } }),
+      collectionMap(),
+      entity,
+    );
+    expect(result.differences).toEqual([
+      expect.objectContaining({ category: "value", live: "101", env: "9" }),
+    ]);
+    expect(result.normalised.ids).toBe(2);
+  });
+});
+
+describe("forced identifier list order", () => {
+  const entity = { at: "/data", scope: "/api/authors" };
+  const answer = (value: JsonValue) => ({
+    status: 200,
+    body: { kind: "json" as const, value },
+  });
+
+  it.each([
+    { duplicates: [], extraLive: [], categories: ["order"] },
+    {
+      duplicates: [42, 42, 42],
+      extraLive: [99],
+      categories: ["length", "order"],
+    },
+  ])(
+    "reports forced inversions even with these additional live values $extraLive",
+    ({ duplicates, extraLive, categories }) => {
       const map = new IdMap();
       map.learn(1, 2);
       map.learn(2, 3);
       const result = compareAnswers(
-        answer({ books: { ids: [1, 2, ...duplicates] } }),
+        answer({ books: { ids: [1, 2, ...duplicates, ...extraLive] } }),
         answer({ books: { ids: [3, 2, ...duplicates] } }),
         map,
         entity,
       );
-      expect(result.differences).toEqual([
-        { category: "order", pointer: "/books/ids" },
-      ]);
+      expect(result.differences.map(({ category }) => category)).toEqual(
+        categories,
+      );
       expect(result.normalised.ids).toBe(2);
     },
   );
@@ -1024,19 +1052,32 @@ describe("scalar identifier list ownership and ambiguity", () => {
       expect(result.normalised.ids).toBe(normalized);
     },
   );
+});
 
-  it("does not report order when a duplicate made survivor identity ambiguous", () => {
-    const result = compareAnswers(
-      answer({ books: { ids: [101, 102, 101] } }),
-      answer({ books: { ids: [3, 1, 9] } }),
-      collectionMap(),
-      entity,
-    );
-    expect(result.differences).toEqual([
-      expect.objectContaining({ category: "value", live: "101", env: "9" }),
-    ]);
-    expect(result.normalised.ids).toBe(2);
-  });
+describe("complete duplicate identifier list order", () => {
+  it.each([
+    {
+      ids: [2, "3", "3"],
+      differences: [{ category: "order", pointer: "/ids" }],
+    },
+    { ids: ["3", "3", 2], differences: [] },
+  ])(
+    "uses positional equivalence for the complete list $ids",
+    ({ ids, differences }) => {
+      const map = new IdMap();
+      map.learn(101, 3, "/api/books");
+      map.learn(102, 2, "/api/books");
+      const answer = (ids: JsonValue[]) => ({
+        status: 200,
+        body: { kind: "json" as const, value: { ids } },
+      });
+      const result = compareAnswers(answer([101, 101, 102]), answer(ids), map, {
+        scope: "/api/books",
+      });
+      expect(result.differences).toEqual(differences);
+      expect(result.normalised.ids).toBe(3);
+    },
+  );
 });
 
 describe("ids two collections reuse", () => {

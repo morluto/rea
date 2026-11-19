@@ -73,6 +73,7 @@ export const compareIdentifierList = (
 
   let survivors = new Map<number, number>();
   let assigned = new Set<number>();
+  const replacements = new Map<number, number>();
   const envIdentities = env.map(environmentIdentity);
   // Preserve complete lists that already agree in position, including
   // literal references whose collection was not established.
@@ -85,7 +86,7 @@ export const compareIdentifierList = (
     )
   ) {
     for (const index of live.keys()) survivors.set(index, index);
-    return { survivors, replacements: new Map(), hasMapping, reordered: false };
+    return { survivors, replacements, hasMapping, reordered: false };
   }
 
   const available = new Map<string, { indices: number[]; next: number }>();
@@ -146,11 +147,16 @@ export const compareIdentifierList = (
     }
   }
 
+  // On equal-length lists, matching every item in order requires each item
+  // to match at its original index. The positional check above already
+  // ruled that out, so a complete pairing establishes a reorder.
+  if (live.length === env.length && survivors.size === live.length)
+    return { survivors, replacements, hasMapping, reordered: true };
+
   const occurrences = new Map<string, number>();
   for (const identity of identities)
     for (const key of keysOf(identity))
       occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
-  const replacements = new Map<number, number>();
   let replacement = 0;
   let last = -1;
   let furthest = -1;
