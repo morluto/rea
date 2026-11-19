@@ -195,17 +195,39 @@ export function nextFfsFileLocal(
   return volumeBase + alignUp(end - volumeBase, 8);
 }
 
-/** True when the header window is uniform in the volume erase byte. */
-export function isErasedFfsHeader(
+type FfsHeaderRead =
+  | { readonly kind: "end" | "limited" }
+  | {
+      readonly kind: "unparsed";
+      readonly offset: number;
+      readonly length: number;
+    }
+  | { readonly kind: "file"; readonly header: FfsFileHeader };
+
+/** Distinguish an erased tail from bytes the FFS walk cannot interpret. */
+export function readFfsHeader(
   region: ScanRegion,
-  localBase: number,
+  local: number,
   erasePolarity: boolean,
-): boolean {
-  const erase = erasePolarity ? 0xff : 0x00;
-  return isWindowUniform(
-    region.buffer,
-    localBase,
-    Math.min(localBase + 24, region.end),
-    erase,
-  );
+  reserve: () => boolean = () => true,
+): FfsHeaderRead {
+  if (local >= region.end) return { kind: "end" };
+  const erase = erasePolarity ? 0xff : 0;
+  const prefixEnd = Math.min(local + FFS_HEADER_LAYOUT.length, region.end);
+  if (isWindowUniform(region.buffer, local, prefixEnd, erase)) {
+    if (
+      prefixEnd === region.end ||
+      isWindowUniform(region.buffer, prefixEnd, region.end, erase)
+    )
+      return { kind: "end" };
+  } else {
+    if (!reserve()) return { kind: "limited" };
+    const header = parseFfsFileHeader(region, local, erasePolarity);
+    if (header !== null) return { kind: "file", header };
+  }
+  return {
+    kind: "unparsed",
+    offset: absoluteOffset(region, local),
+    length: region.end - local,
+  };
 }

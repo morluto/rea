@@ -74,13 +74,17 @@ The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
 EFI standard compression and other unsupported guided handlers produce
 extraction gaps. Set MCP `include_compressed` to false or pass
 `--no-include-compressed` to omit undecoded carriers. PSP locations remain
-unverified declarations. NVAR results describe byte ranges, names, and hashes
-without interpreting the contents of variables.
+unverified declarations. NVAR results report names, data ranges and hashes,
+raw 24-bit record-relative links (with `0xffffff` for terminal links), and
+8-bit attributes. A named record holds either a GUID-table index or an inline
+GUID. Data-only records have neither. Links remain observations and variable
+contents are retained as byte ranges.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume
 candidates and their block maps. Inventory reports unknown coverage when
-a volume exceeds the readable range or a scan limit is reached.
+a volume exceeds the readable range, the file walk meets an unparsed suffix,
+or a scan limit is reached.
 The nesting depth defaults to 3 for firmware and 2 for NVAR. Decoding is limited to 64 MiB per stream and 128 MiB across one operation.
 An admitted operation has a 60-second deadline covering input, parsing,
 decoding, and staging. Owned cleanup can continue past the deadline. Extraction

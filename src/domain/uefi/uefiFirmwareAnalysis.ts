@@ -379,9 +379,18 @@ export const uefiIntegrityRecordSchema = z.strictObject({
 /** One AMI NVRAM variable entry; data bytes are referenced, never interpreted. */
 export const uefiNvramVariableRecordSchema = z.strictObject({
   offset: bytes,
-  name: z.string(),
-  attributes: bytes,
-  state: bytes,
+  name: z.string().nullable(),
+  attributes: z.number().int().min(0).max(0xff),
+  next: z
+    .number()
+    .int()
+    .min(0)
+    .max(0xffffff)
+    .describe(
+      "Raw record-relative link displacement. 0xffffff marks the end of the link chain.",
+    ),
+  guid_index: z.number().int().min(0).max(0xff).nullable(),
+  guid: guidSchema.nullable(),
   depth: z.number().int().min(0),
   parent_offset: bytes.nullable(),
   data_offset: bytes,

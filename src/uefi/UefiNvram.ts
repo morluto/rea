@@ -1,4 +1,5 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
+import { formatGuidLittleEndian, GUID_LENGTH } from "./UefiGuid.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 /**
  * AMI NVRAM variable-store cartography for UEFI flash images.
@@ -9,14 +10,9 @@ import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
  * structure as observations; it never interprets the variable data and never
  * executes anything.
  *
- * Observed entry layout (little-endian):
- *
- *   "NVAR"           4-byte magic
- *   u16 total_size   total entry size, header + name + data
- *   u32 attributes   observed 0x82FFFFFF / 0x83FFFFFF
- *   u8  state        vendor state byte
- *   char name[]      printable ASCII, NUL-terminated
- *   u8  data[]       total_size - header - name - 1 bytes
+ * The fixed prefix contains magic, size, a 24-bit Next displacement and an
+ * 8-bit attribute field. Body framing follows the attributes. See the
+ * AMI NVAR format definition in UEFITool (common/ksy/ami_nvar.ksy).
  *
  * The factory-default store is itself one such entry (name "StdDefaults") whose
  * data holds a nested NVAR chain of the individual setup variables. The scan
@@ -27,14 +23,15 @@ import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 
 /** "NVAR" stored as a little-endian uint32. */
 const NVAR_MAGIC = 0x5241564e;
-/** Fixed prefix bytes of an AMI NVRAM entry (magic + size + attributes + state). */
-const NVAR_HEADER_BYTES = 11;
-/** Shortest plausible entry: header plus a one-character name and its NUL. */
-const NVAR_MIN_ENTRY_BYTES = NVAR_HEADER_BYTES + 2;
-/** Attribute high bytes observed on vendor NVRAM entries. */
-const NVAR_ATTRIBUTE_HIGH_BYTES: ReadonlySet<number> = new Set([0x82, 0x83]);
-/** The 24-bit tail shared by every observed AMI variable attribute value. */
-const NVAR_ATTRIBUTE_TAIL = 0xffffff;
+const NVAR_HEADER_BYTES = 10;
+const NVAR_MIN_ENTRY_BYTES = NVAR_HEADER_BYTES + 1;
+const NVAR_ATTRIBUTES = {
+  valid: 0x80,
+  extendedHeader: 0x10,
+  dataOnly: 0x08,
+  localGuid: 0x04,
+  asciiName: 0x02,
+} as const;
 /** ASCII search needle for locating candidate chains. */
 const NVAR_BYTES = Buffer.from("NVAR", "ascii");
 
@@ -44,9 +41,11 @@ const isPrintableAscii = (byte: number): boolean =>
 /** One parsed entry, before nesting metadata is attached. */
 interface ParsedNvramEntry {
   readonly offset: number;
-  readonly name: string;
+  readonly name: string | null;
+  readonly next: number;
   readonly attributes: number;
-  readonly state: number;
+  readonly guidIndex: number | null;
+  readonly guid: string | null;
   readonly dataOffset: number;
   readonly dataLength: number;
   /** Byte just past this entry; the next sibling entry starts here. */
@@ -80,12 +79,34 @@ export interface AmiNvramScan {
   readonly limitations: readonly string[];
 }
 
-/**
- * Parse one AMI NVRAM variable entry at `offset`, or return null when the bytes
- * do not satisfy the vendor signature. The name must be printable ASCII
- * terminated inside the declared size, and the attribute tail must match, which
- * keeps random "NVAR" byte runs out of the result.
- */
+/** Locate a nonempty, terminated name within the framed record body. */
+const readNvarName = (
+  reader: BinaryReader,
+  start: number,
+  end: number,
+  ascii: boolean,
+): { name: string; dataOffset: number } | null => {
+  const width = ascii ? 1 : 2;
+  for (let cursor = start; cursor + width <= end; cursor += width) {
+    const unit = ascii ? reader.u8(cursor) : reader.u16(cursor);
+    if (unit === 0) {
+      if (cursor === start) return null;
+      return {
+        name: reader.bytes.toString(ascii ? "ascii" : "utf16le", start, cursor),
+        dataOffset: cursor + width,
+      };
+    }
+    if (
+      ascii
+        ? !isPrintableAscii(unit)
+        : unit < 0x20 || (unit >= 0xd800 && unit <= 0xdfff)
+    )
+      return null;
+  }
+  return null;
+};
+
+/** Parse one active record without following its declared link or resolving its GUID table. */
 export const probeNvramEntry = (
   image: Buffer,
   offset: number,
@@ -95,34 +116,50 @@ export const probeNvramEntry = (
   const reader = new BinaryReader(image, true, "AMI NVAR");
   if (reader.u32(offset) !== NVAR_MAGIC) return null;
   const totalSize = reader.u16(offset + 4);
-  if (totalSize < NVAR_MIN_ENTRY_BYTES || offset + totalSize > endOffset)
-    return null;
-  const attributes = reader.u32(offset + 6);
-  if (
-    !NVAR_ATTRIBUTE_HIGH_BYTES.has(attributes >>> 24) ||
-    (attributes & NVAR_ATTRIBUTE_TAIL) !== NVAR_ATTRIBUTE_TAIL
-  )
-    return null;
-  const state = reader.u8(offset + 10);
-  const nameStart = offset + NVAR_HEADER_BYTES;
-  const nameTerminator = image
-    .subarray(nameStart, offset + totalSize)
-    .indexOf(0);
-  const nameEnd = nameTerminator < 0 ? -1 : nameStart + nameTerminator;
-  if (nameEnd < 0 || nameEnd >= offset + totalSize) return null;
-  for (let i = nameStart; i < nameEnd; i += 1) {
-    if (!isPrintableAscii(reader.u8(i))) return null;
+  const entryEnd = offset + totalSize;
+  if (totalSize < NVAR_MIN_ENTRY_BYTES || entryEnd > endOffset) return null;
+
+  const attributes = reader.u8(offset + 9);
+  if ((attributes & NVAR_ATTRIBUTES.valid) === 0) return null;
+  const next = reader.u16(offset + 6) | (reader.u8(offset + 8) << 16);
+  const bodyStart = offset + NVAR_HEADER_BYTES;
+  let dataEnd = entryEnd;
+  if ((attributes & NVAR_ATTRIBUTES.extendedHeader) !== 0) {
+    if (entryEnd - bodyStart < 3) return null;
+    const extensionSize = reader.u16(entryEnd - 2);
+    if (extensionSize < 3 || extensionSize > entryEnd - bodyStart) return null;
+    dataEnd -= extensionSize;
   }
-  if (nameEnd === nameStart) return null;
-  const dataOffset = nameEnd + 1;
+
+  let dataOffset = bodyStart;
+  let name: string | null = null;
+  let guidIndex: number | null = null;
+  let guid: string | null = null;
+  if ((attributes & NVAR_ATTRIBUTES.dataOnly) === 0) {
+    const inlineGuid = (attributes & NVAR_ATTRIBUTES.localGuid) !== 0;
+    const nameStart = bodyStart + (inlineGuid ? GUID_LENGTH : 1);
+    const parsedName = readNvarName(
+      reader,
+      nameStart,
+      dataEnd,
+      (attributes & NVAR_ATTRIBUTES.asciiName) !== 0,
+    );
+    if (parsedName === null) return null;
+    ({ name, dataOffset } = parsedName);
+    if (inlineGuid) guid = formatGuidLittleEndian(image, bodyStart);
+    else guidIndex = reader.u8(bodyStart);
+  }
+
   return {
     offset,
-    name: image.toString("ascii", nameStart, nameEnd),
+    name,
+    next,
     attributes,
-    state,
+    guidIndex,
+    guid,
     dataOffset,
-    dataLength: offset + totalSize - dataOffset,
-    endOffset: offset + totalSize,
+    dataLength: dataEnd - dataOffset,
+    endOffset: entryEnd,
   };
 };
 
@@ -153,13 +190,17 @@ const collectChain = (
     lastEnd = entry.endOffset;
     if (
       entry.dataLength >= NVAR_MIN_ENTRY_BYTES &&
-      probeNvramEntry(image, entry.dataOffset, entry.endOffset) !== null
+      probeNvramEntry(
+        image,
+        entry.dataOffset,
+        entry.dataOffset + entry.dataLength,
+      ) !== null
     ) {
       if (depth < maxDepth) {
         const nested = collectChain(
           image,
           entry.dataOffset,
-          entry.endOffset,
+          entry.dataOffset + entry.dataLength,
           depth + 1,
           entry.offset,
           maxDepth,

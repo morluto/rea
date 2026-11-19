@@ -18,8 +18,7 @@ import {
 import {
   firstFfsFileLocal,
   nextFfsFileLocal,
-  isErasedFfsHeader,
-  parseFfsFileHeader,
+  readFfsHeader,
   verifyFfsFileChecksum,
   type FfsFileHeader,
 } from "./FfsFile.js";
@@ -446,29 +445,30 @@ export const scanUefiImage = async (
       return;
     }
     let cursor = fileArea.start;
-    while (cursor + 24 <= fileArea.end) {
+    const reserveFile = (): boolean => {
+      if (filesDiscovered < limits.maxFiles) return reserve();
+      budgetExhausted = true;
+      noteLimitations([
+        `FFS file budget ${limits.maxFiles} reached inside ${volume.logical_path}.`,
+      ]);
+      return false;
+    };
+    while (cursor < fileArea.end) {
       checkpoint();
-      if (isErasedFfsHeader(fileArea, cursor, header.erasePolarity)) break;
-      if (filesDiscovered >= limits.maxFiles) {
-        budgetExhausted = true;
-        noteLimitations([
-          `FFS file budget ${limits.maxFiles} reached inside ${volume.logical_path}.`,
-        ]);
-        break;
-      }
-      if (!reserve()) break;
-      const fileHeader = parseFfsFileHeader(
+      const read = readFfsHeader(
         fileArea,
         cursor,
         header.erasePolarity,
+        reserveFile,
       );
-      if (fileHeader == null) {
+      if (read.kind === "unparsed") {
         truncationObserved = true;
         noteLimitations([
-          `FFS header unparseable in ${volume.logical_path} at ${hex(absoluteOffset(parentRegion, cursor))}; file walk ends.`,
+          `Unparsed FFS suffix in ${volume.logical_path} at ${hex(read.offset)}: ${read.length} bytes.`,
         ]);
-        break;
       }
+      if (read.kind !== "file") break;
+      const fileHeader = read.header;
       filesDiscovered += 1;
       for (const implausibility of fileHeader.implausibilities) {
         noteLimitations([

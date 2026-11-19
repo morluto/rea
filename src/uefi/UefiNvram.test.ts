@@ -4,26 +4,27 @@ import { probeNvramEntry, scanAmiNvramStores } from "./UefiNvram.js";
 
 const NVAR_MAGIC = Buffer.from("NVAR", "ascii");
 
-const encodeEntry = (name: string, data: Buffer, state: number): Buffer => {
+const encodeEntry = (name: string, data: Buffer, guidIndex: number): Buffer => {
   const nameBytes = Buffer.from(name, "ascii");
   const total = 11 + nameBytes.length + 1 + data.length;
   const entry = Buffer.alloc(total, 0);
   NVAR_MAGIC.copy(entry, 0);
   entry.writeUInt16LE(total, 4);
-  entry.writeUInt32LE(0x83ffffff, 6);
-  entry.writeUInt8(state, 10);
+  entry.writeUIntLE(0xffffff, 6, 3);
+  entry.writeUInt8(0x83, 9);
+  entry.writeUInt8(guidIndex, 10);
   nameBytes.copy(entry, 11);
   data.copy(entry, 11 + nameBytes.length + 1);
   return entry;
 };
 
-it("parses one AMI NVRAM entry with name, attributes, state and data range", () => {
+it("parses one AMI NVRAM entry with name, attributes, GUID index and data range", () => {
   const entry = encodeEntry("Setup", Buffer.from([0xde, 0xad]), 3);
   const parsed = probeNvramEntry(entry, 0);
   expect(parsed).not.toBeNull();
   expect(parsed?.name).toBe("Setup");
-  expect(parsed?.attributes).toBe(0x83ffffff);
-  expect(parsed?.state).toBe(3);
+  expect(parsed?.attributes).toBe(0x83);
+  expect(parsed?.guidIndex).toBe(3);
   expect(parsed?.dataOffset).toBe(11 + 5 + 1);
   expect(parsed?.dataLength).toBe(2);
   expect(parsed?.endOffset).toBe(entry.length);
@@ -69,7 +70,7 @@ it("walks a flat sibling chain without treating it as a container", () => {
   expect(found.trailingPadding).toBe(8);
 });
 
-it("rejects NVAR byte runs that do not match the vendor attribute signature", () => {
+it("rejects NVAR byte runs that do not match the record framing", () => {
   const image = Buffer.concat([NVAR_MAGIC, Buffer.alloc(20, 0x00)]);
   expect(probeNvramEntry(image, 0)).toBeNull();
   const scan = scanAmiNvramStores(image, 16, 2);
@@ -117,4 +118,43 @@ it("returns partial NVAR coverage when a single store exhausts the record limit"
   expect(result.coverage).toBe("partial");
   expect(result.limitations[0]).toContain("Structural record limit");
   expect(result.stores[0]?.variables.length).toBe(100_000);
+});
+
+it("preserves a named record's link to a data-only entry without inventing a GUID index", () => {
+  const named = encodeEntry("Setup", Buffer.from([0x42]), 3);
+  named.writeUIntLE(named.length, 6, 3);
+  const dataOnly = Buffer.from([
+    0x4e, 0x56, 0x41, 0x52, 12, 0, 0xff, 0xff, 0xff, 0x88, 0xaa, 0xbb,
+  ]);
+  const result = scanAmiNvramStores(Buffer.concat([named, dataOnly]), 16, 2);
+  expect(result.coverage).toBe("complete");
+  expect(result.stores[0]?.variables).toMatchObject([
+    { name: "Setup", next: named.length, attributes: 0x83, guidIndex: 3 },
+    {
+      name: null,
+      next: 0xffffff,
+      attributes: 0x88,
+      guidIndex: null,
+      dataLength: 2,
+    },
+  ]);
+});
+
+it("separates an inline GUID and UCS-2 name from data and the extended footer", () => {
+  const name = Buffer.from("Δ\0", "utf16le");
+  const entry = Buffer.concat([
+    Buffer.from([0x4e, 0x56, 0x41, 0x52, 0, 0, 0xff, 0xff, 0xff, 0x94]),
+    Buffer.from("78563412bc9af0de1122334455667788", "hex"),
+    name,
+    Buffer.from([0x42, 0, 3, 0]),
+  ]);
+  entry.writeUInt16LE(entry.length, 4);
+  const parsed = probeNvramEntry(entry, 0);
+  expect(parsed).toMatchObject({
+    name: "Δ",
+    guid: "12345678-9abc-def0-1122-334455667788",
+    guidIndex: null,
+    dataOffset: 30,
+    dataLength: 1,
+  });
 });

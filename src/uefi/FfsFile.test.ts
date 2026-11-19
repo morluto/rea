@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 import { buildFfsFile } from "../../tests/fixtures/uefiImage.js";
 import { imageRegion } from "./UefiBytes.js";
 import {
-  isErasedFfsHeader,
+  readFfsHeader,
   parseFfsFileHeader,
   verifyFfsFileChecksum,
 } from "./FfsFile.js";
@@ -105,8 +105,10 @@ it.each([
 
 it("recognizes erased header windows per polarity", () => {
   const eraseRegion = imageRegion(Buffer.alloc(64, 0xff), 0, 64);
-  expect(isErasedFfsHeader(eraseRegion, 0, true)).toBe(true);
-  expect(isErasedFfsHeader(eraseRegion, 0, false)).toBe(false);
+  expect(readFfsHeader(eraseRegion, 0, true)).toEqual({ kind: "end" });
+  expect(readFfsHeader(eraseRegion, 0, false)).toMatchObject({
+    kind: "unparsed",
+  });
   const zeroRegion = imageRegion(Buffer.alloc(64, 0x00), 0, 64);
-  expect(isErasedFfsHeader(zeroRegion, 0, false)).toBe(true);
+  expect(readFfsHeader(zeroRegion, 0, false)).toEqual({ kind: "end" });
 });

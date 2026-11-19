@@ -71,7 +71,7 @@ export const UEFI_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_uefi_nvram", evidenceEffects),
     kind: "firmware-provider",
     description:
-      "Map AMI NVRAM variable stores (factory-default 'StdDefaults' and peer stores) inside a local flash image with the pure-TypeScript rea-uefi parser: scan the raw image for NVAR entry chains, validate the strong attribute/name signature, and recurse into the nested chain that a container such as StdDefaults carries so the individual setup variables surface as depth/`parent_offset` rows. Reports each variable's attributes, state, data range and SHA-256 plus trailing padding. Nothing is executed and no external tool or decompression lane is required. Variables are name-only in this proprietary layout; namespace GUIDs live in the IFR varstore, not here.",
+      "Map valid AMI NVAR entries inside a local flash image, including nested factory defaults such as StdDefaults. Reports raw link displacements, attributes, inline GUIDs or GUID-table indices, data ranges and SHA-256 digests. Data-only records have no name or GUID reference. Links describe the image bytes. The parser walks physical records and reports the nesting depth and parent offset. No external tools or target execution are required.",
     inputSchema: uefiInputSchemas.inspect_uefi_nvram,
     outputSchema: evidenceResultOf(uefiResultSchemas.inspect_uefi_nvram),
     examples: [

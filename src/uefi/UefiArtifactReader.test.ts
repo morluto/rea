@@ -180,3 +180,36 @@ it("retains a complete volume when a later declared volume extends past EOF", as
     await reader.close();
   }
 });
+
+it("reports an unreadable extended FFS header after a valid file", async () => {
+  const file = buildFfsFile({
+    guid: DRIVER_GUID,
+    typeCode: 0x07,
+    payload: Buffer.alloc(3976),
+  });
+  // The aligned file ends at 0xfe8. This following LARGE_FILE header has
+  // a complete compact prefix and no room for its eight-byte ExtendedSize.
+  const tail = Buffer.alloc(24, 0);
+  tail[19] = 0x01;
+  const image = buildFv({ files: [file, tail] }).buffer;
+  const reader = await openReader(image.subarray(0, 0x1000));
+  const onOmission = vi.fn();
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, { onOmission, onCoverage });
+    expect(entries.map(({ path }) => path)).toEqual([
+      "firmware-volume-0x0",
+      `firmware-volume-0x0/ffs-file-${DRIVER_GUID}.bin`,
+    ]);
+    expect(onOmission).toHaveBeenCalledWith({
+      path: "firmware-volume-0x0/ffs-suffix-0xfe8",
+      kind: "unsupported",
+    });
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: [expect.stringMatching(/0xfe8.*24/u)],
+    });
+  } finally {
+    await reader.close();
+  }
+});

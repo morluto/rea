@@ -13,9 +13,8 @@ import {
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import {
   firstFfsFileLocal,
-  isErasedFfsHeader,
   nextFfsFileLocal,
-  parseFfsFileHeader,
+  readFfsHeader,
 } from "./FfsFile.js";
 import {
   scanFirmwareVolumes,
@@ -145,7 +144,13 @@ export class UefiArtifactReader implements ArtifactReader {
         );
         continue;
       }
-      for await (const file of this.#volumeFiles(header, image, name, signal)) {
+      for await (const file of this.#volumeFiles(
+        header,
+        image,
+        name,
+        omit,
+        signal,
+      )) {
         if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles) {
           fileBudgetExhausted = true;
           break;
@@ -170,6 +175,7 @@ export class UefiArtifactReader implements ArtifactReader {
     header: FirmwareVolumeHeader,
     image: Buffer,
     volumeName: string,
+    omit: (path: string, limitation: string) => void,
     signal?: AbortSignal,
   ): AsyncGenerator<ArtifactEntry> {
     const region = imageRegion(
@@ -178,22 +184,17 @@ export class UefiArtifactReader implements ArtifactReader {
       Math.min(header.absoluteBase + header.declaredLength, image.length),
     );
     let local = firstFfsFileLocal(header);
-    while (local + 24 <= region.end) {
-      if (signal?.aborted === true)
-        throw new ArtifactReaderFailure(
-          "cancelled",
-          "UEFI entry scan cancelled",
-          {
-            cause: signal.reason,
-          },
+    while (local < region.end) {
+      assertArtifactReadActive(signal);
+      const read = readFfsHeader(region, local, header.erasePolarity);
+      if (read.kind === "unparsed") {
+        omit(
+          `${volumeName}/ffs-suffix-${hex(read.offset)}`,
+          `Unparsed FFS suffix at ${hex(read.offset)}: ${read.length} bytes.`,
         );
-      if (isErasedFfsHeader(region, local, header.erasePolarity)) break;
-      const fileHeader = parseFfsFileHeader(
-        region,
-        local,
-        header.erasePolarity,
-      );
-      if (fileHeader === null) break;
+      }
+      if (read.kind !== "file") break;
+      const fileHeader = read.header;
       const name =
         fileHeader.nameGuid === null
           ? `${volumeName}/ffs-file-${hex(fileHeader.absoluteBase)}.bin`

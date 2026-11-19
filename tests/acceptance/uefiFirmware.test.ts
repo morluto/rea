@@ -404,3 +404,44 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   expect(selectedOpaque.files).toEqual([]);
   expect(selectedOpaque.extraction_gaps).toEqual([whole.extraction_gaps[0]]);
 });
+
+it("publishes distinct AMI NVAR link, attributes, GUID index and data digest", async () => {
+  const root = await createTestTempDirectory("rea-nvar-record-");
+  const path = join(root, "variables.fd");
+  // Two contiguous NVAR records: Setup links forward to a nameless data entry.
+  await writeFile(
+    path,
+    Buffer.from(
+      "4e56415212001200008303536574757000424e5641520c00ffffff88aabb",
+      "hex",
+    ),
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("inspect_uefi_nvram", { path });
+  const result = uefiResultSchemas.inspect_uefi_nvram.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(result.coverage).toBe("complete");
+  expect(result.stores[0]?.variables).toMatchObject([
+    {
+      name: "Setup",
+      offset: 0,
+      next: 18,
+      attributes: 0x83,
+      guid_index: 3,
+      data_offset: 17,
+      data_length: 1,
+      data_sha256: sha256(Buffer.from([0x42])),
+    },
+    {
+      name: null,
+      offset: 18,
+      next: 0xffffff,
+      attributes: 0x88,
+      guid_index: null,
+      data_offset: 28,
+      data_length: 2,
+      data_sha256: sha256(Buffer.from([0xaa, 0xbb])),
+    },
+  ]);
+});
