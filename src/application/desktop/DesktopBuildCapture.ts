@@ -28,7 +28,10 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import { controller } from "../../desktop/BuildComputerController.js";
+import {
+  controller,
+  parseBuildComputerJson,
+} from "../../desktop/BuildComputerController.js";
 import type {
   BuildControllerAnswer,
   ControlledComputer,
@@ -39,13 +42,7 @@ import {
   notAnswered,
   type CaptureStep,
 } from "./DesktopBuildCaptureFailure.js";
-import {
-  adapterError,
-  parseBuildComputerJson,
-  refused,
-  runRea,
-  WORK,
-} from "./DesktopBuildCommands.js";
+import { adapterError, refused, runRea, WORK } from "./DesktopBuildCommands.js";
 import {
   exportBuild,
   type BuildExportRequest,
@@ -183,7 +180,7 @@ const checkExportRuntime = async (
       );
     let rawSchema: unknown;
     try {
-      rawSchema = parseBuildComputerJson(content);
+      rawSchema = parseBuildComputerJson(content, "REA export schema");
     } catch {
       return err(
         adapterError(
