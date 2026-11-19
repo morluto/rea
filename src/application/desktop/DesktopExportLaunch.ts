@@ -120,13 +120,19 @@ export const planLaunch = (
     "homePath" | "launchPath"
   > & {
     readonly files: ReadonlyMap<string, StatePath>;
+    readonly restoredFiles: Iterable<string>;
   },
 ): Pick<DesktopAppExportPlan, "command" | "opens"> => {
   const { application, host } = capture;
   const { files, homePath: homeOf } = replay;
   const isDocument = (home: string) => files.get(home)?.role === "document";
+  const retained = new Map<string, string>();
+  for (const home of replay.restoredFiles) {
+    const file = files.get(home);
+    if (file !== undefined) retained.set(file.path, home);
+  }
   const mapTraversal = (path: string) => {
-    const mapped = replay.launchPath(path);
+    const mapped = replay.launchPath(path, retained);
     if (mapped === null)
       throw new AnalysisInputError("export_desktop_application", {
         userMessage: `Captured paths under ${JSON.stringify(path)} do not agree on a replay location.`,

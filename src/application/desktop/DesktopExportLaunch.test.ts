@@ -11,7 +11,11 @@ const launchWithReplay = (
   seeds: Parameters<typeof planLaunch>[2],
   files: ReadonlyMap<string, StatePath>,
 ) =>
-  planLaunch(capture, electron, seeds, { ...capturedHomePlan(capture), files });
+  planLaunch(capture, electron, seeds, {
+    ...capturedHomePlan(capture),
+    files,
+    restoredFiles: seeds.keys(),
+  });
 
 const HOME = "/home/ada";
 type StatePath = DesktopApplicationState["paths"][number];

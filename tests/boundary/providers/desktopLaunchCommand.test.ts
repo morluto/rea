@@ -49,6 +49,7 @@ it.skipIf(process.platform === "win32").each([
       } = planLaunch(capture, false, new Map(), {
         ...capturedHomePlan(capture),
         files: new Map(),
+        restoredFiles: [],
       });
       const result = spawnSync(program!, args, {
         encoding: "utf8",

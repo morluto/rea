@@ -156,8 +156,10 @@ The class declares:
   export refuses a capture that saw no application window. When a launch path
   traversed a parent directory through a symlink, export uses the recorded
   physical state paths to place the seed and respell the launch together.
-  If those paths cannot share a replay location, capture again with an
-  explicit home or XDG directory without parent traversal.
+  A file argument follows the file's seed location. A launch directory must
+  preserve the relative paths to its retained files. If those files cannot
+  share a replay location, capture again with an explicit home or XDG
+  directory without parent traversal.
 - The seed's document, opened at launch, so the app shows it rather than its
   start screen: when the seed holds exactly one file the state view gives the
   `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,

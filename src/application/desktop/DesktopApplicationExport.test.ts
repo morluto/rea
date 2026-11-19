@@ -440,6 +440,64 @@ it("refuses a traversing launch root with conflicting seed locations", async () 
   expect(await exists(directory)).toBe(false);
 });
 
+it.each(["file", "directory", "ancestor"] as const)(
+  "reconciles a traversing %s launch path with a separately selected seed",
+  async (kind) => {
+    const local = capture();
+    const base = `${HOME}/profiles/current/..`;
+    const logical = `${base}/notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const settings = `${physical}/settings.ini`;
+    const selected = `${HOME}/Documents/settings.ini`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv:
+          kind === "file"
+            ? ["notes", `${logical}/settings.ini`]
+            : [
+                "env",
+                `XDG_CONFIG_HOME=${kind === "directory" ? logical : base}`,
+                "notes",
+              ],
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [{ path: selected, physical: settings, kind: "file" }],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(settings, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (kind !== "file") {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: ["Documents/settings.ini"],
+    });
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain("Documents/settings.ini");
+  },
+);
+
 it("seeds the app's state at its own path and retains a selected alias", async () => {
   const local = capture();
   const physical = `${HOME}/.config/notes`;

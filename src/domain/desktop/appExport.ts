@@ -337,9 +337,29 @@ export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
     // An unresolved walk retains its parent traversal in the recorded path.
     // It contributes no evidence about a replay destination.
     return parts.includes("..") && portableRelative(physical) !== null
-      ? [{ logical: parts.join("/"), target }]
+      ? [{ logical: parts.join("/"), physical, portable: target !== null }]
       : [];
   });
+  // A directory keeps the relative names the application will look up below
+  // it. The retained layout can include more-specific selections than this
+  // state root, so verify those names against the same map that seeds them.
+  const replayTree = (
+    physical: string,
+    retained: ReadonlyMap<string, string>,
+  ): string | null => {
+    const mapped = homePath(physical);
+    if (mapped === null) return null;
+    for (const [file, seed] of retained) {
+      if (!isWithinAny(file, [physical])) continue;
+      const suffix = portableRelative(file.slice(physical.length));
+      if (
+        suffix === null ||
+        selectedSpelling([mapped, suffix].filter(Boolean).join("/")) !== seed
+      )
+        return null;
+    }
+    return mapped;
+  };
   const agree = (
     paths: ReadonlySet<string | null>,
   ): string | null | undefined =>
@@ -353,7 +373,10 @@ export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
    * portable destination. Undefined means no recorded match, null means the
    * recorded mappings have no common portable destination.
    */
-  const launchPath = (absolute: string): string | null | undefined => {
+  const launchPath = (
+    absolute: string,
+    retained: ReadonlyMap<string, string>,
+  ): string | null | undefined => {
     if (traversed.length === 0) return undefined;
     const parts = replaySegments(absolute);
     if (!parts.includes("..")) return undefined;
@@ -361,19 +384,19 @@ export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
     const direct = new Set<string | null>();
     const parents = new Set<string | null>();
     let specificity = 0;
-    for (const { logical, target } of traversed) {
+    for (const { logical, physical, portable } of traversed) {
       if (isWithinAny(source, [logical])) {
         const suffix = portableRelative(source.slice(logical.length));
         if (suffix === null || logical.length < specificity) continue;
         if (logical.length > specificity) direct.clear();
         specificity = logical.length;
-        direct.add(
-          target === null ? null : [target, suffix].filter(Boolean).join("/"),
-        );
+        const file = suffix === "" ? physical : `${physical}/${suffix}`;
+        direct.add(portable ? replayTree(file, retained) : null);
       } else if (isWithinAny(logical, [source])) {
         // For a launch root above the observed state files, retain their
         // relative names. Every paired path must imply the same replay base.
         const suffix = logical.slice(source.length + 1);
+        const target = portable ? replayTree(physical, retained) : null;
         parents.add(
           suffix === target
             ? ""
