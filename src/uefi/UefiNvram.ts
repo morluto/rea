@@ -120,42 +120,51 @@ export const probeNvramEntry = (
 };
 
 /**
- * Walk one sibling chain at `depth`, appending each entry and recursing into
- * entries whose data begins with another valid NVAR entry. Returns the end of
- * the last sibling, which is also the end of the whole (possibly nested) store.
+ * Walk one sibling chain at `depth`, bounded by `endOffset` (the enclosing
+ * container's data end), appending each entry and recursing into entries whose
+ * data begins with another valid NVAR entry. Returns the end of the last
+ * sibling and whether a valid nested chain was cut by the depth budget.
  */
 const collectChain = (
   image: Buffer,
   startOffset: number,
+  endOffset: number,
   depth: number,
   parentOffset: number | null,
   maxDepth: number,
   out: AmiNvramVariable[],
-): number => {
+): { lastEnd: number; depthLimited: boolean } => {
   let cursor = startOffset;
   let lastEnd = startOffset;
-  while (true) {
+  let depthLimited = false;
+  while (cursor + NVAR_MIN_ENTRY_BYTES <= endOffset) {
     const entry = probeNvramEntry(image, cursor);
-    if (entry === null) break;
+    if (entry === null || entry.endOffset > endOffset) break;
     out.push({ ...entry, depth, parentOffset });
     lastEnd = entry.endOffset;
     if (
-      depth < maxDepth &&
       entry.dataLength >= NVAR_MIN_ENTRY_BYTES &&
       probeNvramEntry(image, entry.dataOffset) !== null
     ) {
-      collectChain(
-        image,
-        entry.dataOffset,
-        depth + 1,
-        entry.offset,
-        maxDepth,
-        out,
-      );
+      if (depth < maxDepth) {
+        const nested = collectChain(
+          image,
+          entry.dataOffset,
+          entry.endOffset,
+          depth + 1,
+          entry.offset,
+          maxDepth,
+          out,
+        );
+        depthLimited = depthLimited || nested.depthLimited;
+      } else {
+        // A valid nested chain exists below the depth budget.
+        depthLimited = true;
+      }
     }
     cursor = entry.endOffset;
   }
-  return lastEnd;
+  return { lastEnd, depthLimited };
 };
 
 /** Scan a raw image for chained AMI NVRAM variable stores. */
@@ -166,6 +175,7 @@ export const scanAmiNvramStores = (
 ): AmiNvramScan => {
   const stores: AmiNvramStore[] = [];
   const limitations: string[] = [];
+  let depthLimited = false;
   let searchFrom = 0;
   while (searchFrom + NVAR_MIN_ENTRY_BYTES <= image.length) {
     const firstOffset = image.indexOf(NVAR_BYTES, searchFrom);
@@ -176,14 +186,17 @@ export const scanAmiNvramStores = (
       continue;
     }
     const variables: AmiNvramVariable[] = [];
-    const lastEnd = collectChain(
+    const walk = collectChain(
       image,
       firstOffset,
+      image.length,
       0,
       null,
       maxDepth,
       variables,
     );
+    depthLimited = depthLimited || walk.depthLimited;
+    const lastEnd = walk.lastEnd;
     let padding = 0;
     while (
       lastEnd + padding < image.length &&
@@ -208,5 +221,13 @@ export const scanAmiNvramStores = (
     limitations.push(
       "No AMI NVRAM variable stores (NVAR chains) were found in the image.",
     );
-  return { stores, coverage: "complete", limitations };
+  if (depthLimited)
+    limitations.push(
+      `Nested NVAR chains exist below max_depth ${maxDepth}; coverage is partial.`,
+    );
+  return {
+    stores,
+    coverage: depthLimited ? "partial" : "complete",
+    limitations,
+  };
 };

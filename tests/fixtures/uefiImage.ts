@@ -66,9 +66,9 @@ export function buildFfsFile(spec: FfsFileSpec): Buffer {
   }
   header[16] = (0x100 - sum) & 0xff;
   if (spec.fileChecksum === "correct") {
-    header[17] = payloadSum(spec.payload);
+    header[17] = (0x100 - payloadSum(spec.payload)) & 0xff;
   } else if (spec.fileChecksum === "wrong") {
-    header[17] = (payloadSum(spec.payload) + 1) & 0xff;
+    header[17] = (0x100 - payloadSum(spec.payload) + 1) & 0xff;
   }
   if (spec.breakHeaderChecksum === true) {
     header[16] = ((header[16] ?? 0) + 1) & 0xff;

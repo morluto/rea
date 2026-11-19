@@ -76,3 +76,34 @@ it("rejects NVAR byte runs that do not match the vendor attribute signature", ()
   expect(scan.stores).toHaveLength(0);
   expect(scan.limitations.join(" ")).toContain("No AMI NVRAM");
 });
+
+it("keeps a container's child walk inside the container boundary", () => {
+  const child = encodeEntry("Child", Buffer.alloc(0), 0);
+  const outer = encodeEntry("Outer", child, 0);
+  const sibling = encodeEntry("Sibling", Buffer.alloc(0), 0);
+  const scan = scanAmiNvramStores(Buffer.concat([outer, sibling]), 16, 2);
+  expect(scan.stores).toHaveLength(1);
+  const found = scan.stores[0];
+  if (found === undefined) throw new Error("expected exactly one store");
+  // Child belongs to Outer; Sibling is a top-level peer, not a second child.
+  expect(found.variables.map((v) => [v.name, v.depth])).toEqual([
+    ["Outer", 0],
+    ["Child", 1],
+    ["Sibling", 0],
+  ]);
+});
+
+it("reports partial coverage when a nested chain exceeds max_depth", () => {
+  const leaf = encodeEntry("Leaf", Buffer.alloc(0), 0);
+  const mid = encodeEntry("Mid", leaf, 0);
+  const top = encodeEntry("Top", mid, 0);
+  const scan = scanAmiNvramStores(top, 16, 1);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations.join(" ")).toContain("max_depth 1");
+  const found = scan.stores[0];
+  if (found === undefined) throw new Error("expected exactly one store");
+  expect(found.variables.map((v) => [v.name, v.depth])).toEqual([
+    ["Top", 0],
+    ["Mid", 1],
+  ]);
+});

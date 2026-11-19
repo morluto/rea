@@ -100,65 +100,105 @@ export function walkSections(
       stopped = true;
       break;
     }
+
+    // Compression sections (type 0x01) carry a 9-byte header with a compression
+    // type; classify it instead of treating the compressed payload as raw.
+    if (typeCode === 0x01) {
+      const effectiveHeaderLength = Math.min(
+        SECTION_LAYOUT.compressionHeaderLength,
+        declaredLength,
+      );
+      const compressionType =
+        cursor + SECTION_LAYOUT.compressionTypeOffset < localEnd
+          ? (region.buffer[cursor + SECTION_LAYOUT.compressionTypeOffset] ?? 0)
+          : 0;
+      const kind = compressionType === 0x01 ? "efi-standard" : "none";
+      const sectionTruncated = cursor + declaredLength > localEnd || truncated;
+      sections.push({
+        absoluteBase: absoluteOffset(region, cursor),
+        localBase: cursor,
+        headerLength: effectiveHeaderLength,
+        declaredLength,
+        observedLength: Math.min(declaredLength, localEnd - cursor),
+        truncated: sectionTruncated,
+        typeCode,
+        typeName,
+        compression:
+          kind === "none"
+            ? { kind: "none" }
+            : {
+                kind,
+                guid: null,
+                dataOffset: effectiveHeaderLength,
+                attributes: null,
+              },
+        payload: {
+          start: cursor + effectiveHeaderLength,
+          end: Math.min(cursor + declaredLength, localEnd),
+        },
+      });
+      if (sectionTruncated) {
+        stopped = true;
+        break;
+      }
+      cursor = alignUp(cursor + declaredLength, 4);
+      continue;
+    }
+
+    // GUID-defined sections (type 0x02): field offsets follow the parsed common
+    // header size (4-byte compact or 8-byte extended), and the payload offset
+    // must stay inside the declared section length.
+    if (typeCode === 0x02) {
+      const guidedBase = cursor + headerLength;
+      const guidedFieldsEnd = guidedBase + 20;
+      if (guidedFieldsEnd <= localEnd && declaredLength >= headerLength + 20) {
+        const dataOffset = region.buffer.readUInt16LE(guidedBase + 16);
+        const attributes = region.buffer.readUInt16LE(guidedBase + 18);
+        if (dataOffset >= headerLength + 20 && dataOffset <= declaredLength) {
+          const guid = formatGuidLittleEndian(
+            region.buffer.subarray(guidedBase, guidedBase + 16),
+            0,
+          );
+          sections.push({
+            absoluteBase: absoluteOffset(region, cursor),
+            localBase: cursor,
+            headerLength: dataOffset,
+            declaredLength,
+            observedLength: Math.min(declaredLength, localEnd - cursor),
+            truncated: cursor + declaredLength > localEnd,
+            typeCode,
+            typeName,
+            compression: {
+              kind:
+                guid == null
+                  ? "unknown-guid"
+                  : (COMPRESSION_GUID_BY_DISPLAY[guid] ?? "unknown-guid"),
+              guid,
+              dataOffset,
+              attributes,
+            },
+            payload: {
+              start: cursor + dataOffset,
+              end: Math.min(cursor + declaredLength, localEnd),
+            },
+          });
+          cursor = alignUp(cursor + declaredLength, 4);
+          continue;
+        }
+      }
+    }
+
     const dataStart =
       payloadStart(typeCode, headerLength) <= declaredLength
         ? payloadStart(typeCode, headerLength)
         : headerLength;
-    let effectiveHeaderLength = headerLength;
-    if (typeCode === 0x02) {
-      const guided =
-        cursor + SECTION_LAYOUT.guidedHeaderLength <= localEnd &&
-        declaredLength >= SECTION_LAYOUT.guidedHeaderLength;
-      if (guided) {
-        const dataOffset = region.buffer.readUInt16LE(
-          cursor + SECTION_LAYOUT.guidDataOffsetOffset,
-        );
-        const attributes = region.buffer.readUInt16LE(
-          cursor + SECTION_LAYOUT.guidAttributesOffset,
-        );
-        effectiveHeaderLength = dataOffset;
-        const guid = formatGuidLittleEndian(
-          region.buffer.subarray(
-            cursor + SECTION_LAYOUT.guidedSectionDefinitionGuidOffset,
-            cursor + SECTION_LAYOUT.guidedSectionDefinitionGuidOffset + 16,
-          ),
-          0,
-        );
-        sections.push({
-          absoluteBase: absoluteOffset(region, cursor),
-          localBase: cursor,
-          headerLength: effectiveHeaderLength,
-          declaredLength,
-          observedLength: Math.min(declaredLength, localEnd - cursor),
-          truncated: cursor + declaredLength > localEnd,
-          typeCode,
-          typeName,
-          compression: {
-            kind:
-              guid == null
-                ? "unknown-guid"
-                : (COMPRESSION_GUID_BY_DISPLAY[guid] ?? "unknown-guid"),
-            guid,
-            dataOffset,
-            attributes,
-          },
-          payload: {
-            start: cursor + dataOffset,
-            end: Math.min(cursor + declaredLength, localEnd),
-          },
-        });
-        cursor = alignUp(cursor + declaredLength, 4);
-        continue;
-      }
-    }
-
     if (cursor + declaredLength > localEnd) {
       truncated = true;
     }
     sections.push({
       absoluteBase: absoluteOffset(region, cursor),
       localBase: cursor,
-      headerLength: effectiveHeaderLength,
+      headerLength,
       declaredLength,
       observedLength: Math.min(declaredLength, localEnd - cursor),
       truncated,

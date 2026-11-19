@@ -150,7 +150,7 @@ function verifyFfsHeaderChecksum(
   return total === 0;
 }
 
-/** File-data checksum applies to the payload only, (sum mod 256). */
+/** File-data checksum: the stored byte is the payload sum's two's complement. */
 export function verifyFfsFileChecksum(
   buffer: Buffer,
   localPayloadStart: number,
@@ -161,7 +161,8 @@ export function verifyFfsFileChecksum(
   for (let offset = 0; offset < payloadLength; offset += 1) {
     total = (total + (buffer[localPayloadStart + offset] ?? 0)) & 0xff;
   }
-  return total === expected;
+  // The file checksum makes payload-sum + stored-checksum zero (mod 256).
+  return ((total + expected) & 0xff) === 0;
 }
 
 /** Alignment exponent to byte alignment; capped at exponent 7. */
