@@ -13,7 +13,6 @@
   "src/domain/elfRelocation.ts": 6,
   "src/domain/inesContainer.ts": 5,
   "src/domain/managed/managedCliHeaderPrefix.ts": 5,
-  "src/domain/managed/managedMemberPointers.ts": 2,
   "src/domain/managed/managedMetadataHeaps.ts": 4,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/managed/managedMetadataLayout.ts": 7,
