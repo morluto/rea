@@ -526,13 +526,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       path.startsWith(`${selection.logical_path}/`);
     const gaps: UefiExtractResult["extraction_gaps"] = [];
     const derivations: UefiExtractResult["derivations"] = [];
-    const plan: {
-      readonly entry: UefiPublicationEntry;
-      readonly facts: Omit<
-        ExtractedFile,
-        "path" | "size" | "sha256" | "relative_path"
-      >;
-    }[] = [];
+    const plan: UefiPublicationEntry[] = [];
     const emittedStreams = new Set<string>();
     let stagedBytes = 0;
 
@@ -543,7 +537,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       range: ExtractionRange | null,
       detail: string,
     ): void => {
-      gaps.push({ kind, logical_path, source_stream, range, detail });
+      gaps.push({
+        kind,
+        logical_path,
+        source_stream,
+        range: range !== null && range.length > 0 ? range : null,
+        detail,
+      });
     };
 
     const stage = (
@@ -574,7 +574,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const relativePath = `${logicalPath.replaceAll(":", "-").replaceAll("[", "-").replaceAll("]", "")}.${suffix}.bin`;
       stagedBytes += payload.bytes.length;
       plan.push({
-        entry: { relativePath, bytes: payload.bytes },
+        relativePath,
+        bytes: payload.bytes,
         facts: {
           original_file_range:
             payload.sourceStream === null ? payload.range : null,
@@ -720,36 +721,34 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const publication = await publishUefiFiles({
       outputDirectory: input.output_directory,
       operation: request.operation,
-      entries: plan.map(({ entry }) => entry),
+      entries: plan,
       resources: this.#resources,
       signal,
       checkpoint,
+      buildResult: (outputRoot, files) =>
+        uefiResultSchemas.extract_uefi_firmware.parse({
+          parser: { name: "rea-uefi", version: UEFI_PROVIDER_IDENTITY.version },
+          selection: {
+            offset: selection.offset,
+            length: selection.length,
+            source_stream: selection.source_stream,
+            target_kind: input.target.kind,
+          },
+          output_directory: outputRoot,
+          coverage:
+            gaps.some(({ kind }) => kind !== "pad-file") ||
+            scan.budgetExhausted ||
+            scan.truncationObserved
+              ? "partial"
+              : "complete",
+          files,
+          derivations,
+          extraction_gaps: gaps,
+          diagnostics: `${scan.volumes.length} volumes mapped; ${derivations.length} stream derivation(s), ${gaps.length} gap(s); wrote ${files.length} file(s).`,
+          published_bytes: files.reduce((total, file) => total + file.size, 0),
+        }),
     });
-    const result: UefiExtractResult =
-      uefiResultSchemas.extract_uefi_firmware.parse({
-        parser: { name: "rea-uefi", version: UEFI_PROVIDER_IDENTITY.version },
-        selection: {
-          offset: selection.offset,
-          length: selection.length,
-          source_stream: selection.source_stream,
-          target_kind: input.target.kind,
-        },
-        output_directory: publication.outputRoot,
-        coverage:
-          gaps.some(({ kind }) => kind !== "pad-file") ||
-          scan.budgetExhausted ||
-          scan.truncationObserved
-            ? "partial"
-            : "complete",
-        files: publication.files.map((file, index) => ({
-          ...file,
-          ...plan[index]?.facts,
-        })),
-        derivations,
-        extraction_gaps: gaps,
-        diagnostics: `${scan.volumes.length} volumes mapped; ${derivations.length} stream derivation(s), ${gaps.length} gap(s); published ${plan.length} file(s), ${stagedBytes} bytes.`,
-        published_bytes: stagedBytes,
-      });
+    const { result } = publication;
     if (publication.failure !== undefined) {
       throw publication.failure.retainPartialObservation({
         kind: "uefi",
@@ -797,6 +796,37 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
     }
     const root = await PrivateRuntimeRoot.create({ prefix: "rea-uefi-lzma-" });
+    const files = new ArtifactResourceScope();
+    let worker: OwnedCommandFailure | undefined;
+    const rootLease = AnalysisCleanupLease.forCloseOwner(
+      {
+        async close() {
+          if (worker?.cleanupOwner !== undefined) {
+            const stopped = await worker.cleanupOwner.stop();
+            if (stopped.status === "incomplete")
+              throw new Error(stopped.reason);
+            worker = undefined;
+          }
+          await files.close();
+          await root.close();
+        },
+        get cleanupResources() {
+          return [
+            ...new Set([
+              ...(worker?.resources ?? []),
+              ...files.cleanupResources,
+              root.path,
+            ]),
+          ];
+        },
+      },
+      root.path,
+    );
+    const workspace = {
+      kind: "lease",
+      resource: root.path,
+      lease: rootLease,
+    } as const;
     const decode = async (): Promise<UefiDecodeResult> => {
       const payloadPath = join(root.path, "payload.bin");
       const outputPath = join(root.path, "output.bin");
@@ -840,7 +870,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         UEFI_FIRMWARE_LIMITS.diagnosticBytes,
         signal,
         undefined,
-        this.#resources,
+        files,
       );
       const reply = lzmaReplySchema.parse(
         JSON.parse(replyFile.bytes.toString("utf8")),
@@ -854,7 +884,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         maxOutputBytes,
         signal,
         undefined,
-        this.#resources,
+        files,
       );
       if (
         decoded.sha256 !== reply.output.sha256 ||
@@ -910,38 +940,36 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         cause instanceof OwnedCommandFailure &&
         cause.cleanupOwner !== undefined
       ) {
-        const owner = cause.cleanupOwner;
-        const lease = new AnalysisCleanupLease(async () => {
-          const stopped = await owner.stop();
-          if (stopped.status === "incomplete") throw new Error(stopped.reason);
-          await root.close();
-        }, cause.resources);
-        this.#resources.retain({ kind: "lease", resource: root.path, lease });
-        new AnalysisCleanupLeaseGroup(primary, [lease]);
+        worker = cause;
+        this.#resources.retain(workspace);
+        new AnalysisCleanupLeaseGroup(primary, [rootLease]);
         throw primary;
       }
     }
-    const released = await this.#resources.release({
-      kind: "private-runtime-root",
-      resource: root.path,
-      root,
-    });
-    if (released.kind === "failed") {
-      const cleanup = new ProviderCleanupError(
+    const cleanup = (cause: unknown): AnalysisError => {
+      const failure = new ProviderCleanupError(
         UEFI_PROVIDER_IDENTITY.id,
-        [root.path],
-        { reason: String(released.cause) },
-        { cause: released.cause, operation },
+        rootLease.cleanupResources ?? [root.path],
+        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { cause, operation },
       );
-      const failure =
-        primary === undefined
-          ? cleanup
-          : analysisErrorWithCleanupFailure(primary, cleanup, operation);
-      new AnalysisCleanupLeaseGroup(cleanup, [released.lease]);
-      if (primary !== undefined)
-        failure.bindCleanupDependencies([primary, cleanup]);
-      throw failure;
+      new AnalysisCleanupLeaseGroup(failure, [rootLease]);
+      return primary === undefined
+        ? failure
+        : analysisErrorWithCleanupFailure(
+            primary,
+            failure,
+            operation,
+          ).bindCleanupDependencies([primary, failure]);
+    };
+    if (files.hasPending) {
+      this.#resources.retain(workspace);
+      throw cleanup(
+        "Worker output descriptors must close before the temporary root can be removed.",
+      );
     }
+    const released = await this.#resources.release(workspace);
+    if (released.kind === "failed") throw cleanup(released.cause);
     if (primary !== undefined) throw primary;
     signal.throwIfAborted();
     if (outcome === undefined) throw new Error("UEFI decoder did not settle.");

@@ -8,28 +8,28 @@ import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
+import type {
+  UefiExtractResult,
+  UefiOperation,
+} from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { uefiFailure } from "./UefiFailures.js";
 
 const UEFI_PROVIDER_ID = "rea-uefi";
 
-/** One extraction payload staged in memory; hashed before publication. */
+type UefiPublishedFile = UefiExtractResult["files"][number];
+
+/** One staged payload with provenance from the scanner that supplied it. */
 export interface UefiPublicationEntry {
   readonly relativePath: string;
   readonly bytes: Buffer;
+  readonly facts: Omit<
+    UefiPublishedFile,
+    "path" | "size" | "sha256" | "relative_path"
+  >;
 }
 
-/** Published-file projection matching the uefi extract result schema. */
-export interface UefiPublishedFile {
-  readonly relative_path: string;
-  readonly path: string;
-  readonly size: number;
-  readonly sha256: string;
-}
-
-export interface UefiPublicationOutcome {
-  readonly outputRoot: string;
-  readonly files: readonly UefiPublishedFile[];
+interface UefiPublicationOutcome {
+  readonly result: UefiExtractResult;
   readonly failure?: AnalysisError;
 }
 
@@ -45,8 +45,14 @@ export const publishUefiFiles = async (context: {
   readonly signal: AbortSignal;
   readonly checkpoint: () => void;
   readonly resources: ArtifactResourceScope;
+  /** Validate the result with actual write receipts before committing the tree. */
+  readonly buildResult: (
+    outputRoot: string,
+    files: UefiPublishedFile[],
+  ) => UefiExtractResult;
 }): Promise<UefiPublicationOutcome> => {
   let tree: SafeOutputTree | undefined;
+  let result: UefiExtractResult | undefined;
   const files: UefiPublishedFile[] = [];
   try {
     context.checkpoint();
@@ -61,15 +67,17 @@ export const publishUefiFiles = async (context: {
         context.signal,
       );
       files.push({
+        ...entry.facts,
         relative_path: written.relativePath,
         path: join(tree.outputRoot, written.relativePath),
         size: written.bytesWritten,
         sha256: written.sha256,
       });
     }
+    result = context.buildResult(tree.outputRoot, files);
     context.checkpoint();
     await tree.commit(context.signal);
-    return { outputRoot: tree.outputRoot, files };
+    return { result };
   } catch (cause: unknown) {
     if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
     const primary = uefiFailure(
@@ -86,7 +94,7 @@ export const publishUefiFiles = async (context: {
     });
     if (released.kind === "released") {
       primary.resolveCleanup();
-      if (tree.published) return { outputRoot: tree.outputRoot, files };
+      if (tree.published && result !== undefined) return { result };
       throw primary;
     }
     const cleanup = new ProviderCleanupError(
@@ -104,7 +112,7 @@ export const publishUefiFiles = async (context: {
       cleanup,
       context.operation,
     ).bindCleanupDependencies([primary, cleanup]);
-    if (tree.published) return { outputRoot: tree.outputRoot, files, failure };
+    if (tree.published && result !== undefined) return { result, failure };
     throw failure;
   }
 };

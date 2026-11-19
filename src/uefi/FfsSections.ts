@@ -62,12 +62,16 @@ export function walkSections(
     const declaredLength = extended
       ? region.buffer.readUInt32LE(cursor + SECTION_LAYOUT.extendedSizeOffset)
       : compactSize;
-    const observedLength = Math.min(declaredLength, localEnd - cursor);
+    // Even an undersized declaration has a common header we already observed.
+    const observedLength = Math.max(
+      commonLength,
+      Math.min(declaredLength, localEnd - cursor),
+    );
     const truncated = observedLength < declaredLength;
     let headerLength: number = commonLength;
     let compression: SectionDraft["compression"] = { kind: "none" };
     let encapsulatesSections = typeCode === 0x03;
-    let malformed = observedLength < commonLength;
+    let malformed = declaredLength < commonLength;
     const fields = cursor + commonLength;
 
     if (typeCode === 0x01) {

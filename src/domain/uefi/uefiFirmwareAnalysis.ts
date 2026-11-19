@@ -441,7 +441,8 @@ export const uefiResultSchemas = {
   extract_uefi_firmware: z.strictObject({
     parser: parserSchema,
     selection: z.strictObject({
-      ...range.shape,
+      offset: bytes,
+      length: bytes,
       source_stream: sourceStream,
       target_kind: z.enum(["whole-image", "volume", "ffs-file", "section"]),
     }),

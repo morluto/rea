@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,8 @@ import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -597,6 +599,150 @@ it("publishes repeated raw GUIDs under distinct portable paths and exposes unusa
     { kind: "size-truncated", detail: expect.stringContaining("4095") },
   ]);
 });
+
+it("publishes valid siblings with truthful coverage for a zero declaration and an empty carrier", async () => {
+  const valid = buildSection(0x10, MODULE_A);
+  const emptyCarrier = buildCompressionSection(Buffer.alloc(0), 1, 4);
+  const zeroSize = Buffer.from([0, 0, 0, 0x10]);
+  const driver = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: Buffer.concat([valid, emptyCarrier, zeroSize]),
+  });
+  const directory = await createTestTempDirectory("rea-uefi-provider-");
+  const imagePath = join(directory, "image.fi");
+  await writeFile(imagePath, buildFv({ files: [driver] }).buffer);
+  const provider = new UefiAnalysisProvider();
+  const result = expectOk(
+    await provider.execute(extractRequest(imagePath, join(directory, "out"))),
+  ).value.result as UefiExtractResult;
+  expect(result.coverage).toBe("partial");
+  expect(result.files).toHaveLength(1);
+  expect(await readFile(result.files[0]?.path ?? "")).toEqual(MODULE_A);
+  expect(result.extraction_gaps).toMatchObject([
+    { kind: "unsupported-compression", range: null },
+    {
+      kind: "unparsed-region",
+      range: {
+        offset: 72 + 24 + valid.length + emptyCarrier.length,
+        length: zeroSize.length,
+      },
+      detail: expect.stringContaining("declared 0 bytes, observed 4"),
+    },
+  ]);
+});
+
+it("rolls back staged files if the receipts cannot form a valid extraction result", async () => {
+  const { imagePath, directory } = await writeTestImage({ withGuided: false });
+  const provider = new UefiAnalysisProvider();
+  const output = join(directory, "out");
+  const write = SafeOutputTree.prototype.write;
+  const writing = vi
+    .spyOn(SafeOutputTree.prototype, "write")
+    .mockImplementationOnce(async function (this: SafeOutputTree, ...args) {
+      const receipt = await write.apply(this, args);
+      return { ...receipt, sha256: "invalid-receipt-digest" };
+    });
+  try {
+    const result = await provider.execute(extractRequest(imagePath, output));
+    expect(result.ok).toBe(false);
+    expect(existsSync(output)).toBe(false);
+  } finally {
+    writing.mockRestore();
+    await provider.close();
+  }
+});
+
+it.skipIf(!lzmaWorkerAvailable)(
+  "retains the worker root across a failed descriptor retry and releases its child before root removal",
+  async () => {
+    const driver = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(
+        Buffer.from(lzmaPurescript.compressFile(Buffer.from("worker output"))),
+      ),
+    });
+    const directory = await createTestTempDirectory("rea-uefi-provider-");
+    const imagePath = join(directory, "image.fi");
+    await writeFile(imagePath, buildFv({ files: [driver] }).buffer);
+    const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
+    const create = PrivateRuntimeRoot.create;
+    const closeHandle = OwnedFileHandle.prototype.close;
+    const closeRoot = PrivateRuntimeRoot.prototype.close;
+    let root: PrivateRuntimeRoot | undefined;
+    let outputHandle: OwnedFileHandle | undefined;
+    let denyDescriptor = true;
+    let denyRoot = true;
+    const creating = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        const created = await create(options);
+        if (options?.prefix === "rea-uefi-lzma-") root = created;
+        return created;
+      });
+    const closingHandle = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        const outputPath =
+          root === undefined ? undefined : join(root.path, "output.bin");
+        if (outputPath !== undefined && this.handle.fd >= 0) {
+          const output = await stat(outputPath).catch(() => undefined);
+          const fd = await this.handle.stat();
+          if (
+            output !== undefined &&
+            fd.dev === output.dev &&
+            fd.ino === output.ino
+          ) {
+            outputHandle = this;
+            if (denyDescriptor) throw new Error("worker output close denied");
+          }
+        }
+        return closeHandle.call(this);
+      });
+    const closingRoot = vi
+      .spyOn(PrivateRuntimeRoot.prototype, "close")
+      .mockImplementation(async function (this: PrivateRuntimeRoot) {
+        if (this === root && denyRoot)
+          throw new Error("worker root removal denied");
+        return closeRoot.call(this);
+      });
+
+    try {
+      const result = await provider.execute(inspectRequest(imagePath));
+      if (result.ok || root === undefined || outputHandle === undefined) {
+        throw new Error("worker output descriptor failure was not exercised");
+      }
+      expect(result.error.cleanupResources).toEqual(
+        expect.arrayContaining([root.path, join(root.path, "output.bin")]),
+      );
+      await expect(provider.close()).rejects.toThrow(
+        /cleanup remains incomplete/i,
+      );
+      expect(closingRoot.mock.contexts).not.toContain(root);
+      expect(existsSync(root.path)).toBe(true);
+
+      denyDescriptor = false;
+      await expect(provider.close()).rejects.toThrow(
+        /cleanup remains incomplete/i,
+      );
+      expect(outputHandle.handle.fd).toBe(-1);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      expect(existsSync(root.path)).toBe(true);
+
+      denyRoot = false;
+      await expect(provider.close()).resolves.toBeUndefined();
+      expect(existsSync(root.path)).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      creating.mockRestore();
+      closingHandle.mockRestore();
+      closingRoot.mockRestore();
+      await provider.close();
+    }
+  },
+  45_000,
+);
 
 it("rolls back a tree acquired during failed publication setup without publishing", async () => {
   const { imagePath, directory } = await writeTestImage();
