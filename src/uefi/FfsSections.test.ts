@@ -150,6 +150,27 @@ it("reports an undersized extended header and preserves its bounded sibling", ()
   ]);
 });
 
+it("accepts an extended section whose size equals the reserved compact marker", () => {
+  const size = 0xff_ff_ff;
+  const section = Buffer.alloc(size);
+  section.writeUIntLE(size, 0, 3);
+  section[3] = 0x19;
+  section.writeUInt32LE(size, 4);
+  expect(walkSections(imageRegion(section, 0, section.length))).toMatchObject({
+    sections: [
+      {
+        declaredLength: size,
+        observedLength: size,
+        headerLength: 8,
+        truncated: false,
+        malformed: false,
+        payload: { start: 8, end: size },
+      },
+    ],
+    remainder: null,
+  });
+});
+
 it("retains a truncated extended frame but marks its placement in a compact FFS file invalid", () => {
   const section = Buffer.from("ffffff1900000001", "hex");
   const region = imageRegion(section, 0, section.length);

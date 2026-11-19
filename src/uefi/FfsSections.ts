@@ -255,7 +255,8 @@ export function walkSections(
     if (typeCode === 0)
       framingIssue = "Section type 0x00 is a section retrieval wildcard.";
     if (commonLength === SECTION_LAYOUT.extendedLength) {
-      if (declaredLength <= SECTION_LAYOUT.largeSectionMarker)
+      // The marker is reserved in the compact header and cannot encode a length.
+      if (declaredLength < SECTION_LAYOUT.largeSectionMarker)
         framingIssue = "Extended section size fits in the compact PI header.";
       else if (!largeFile)
         framingIssue = "Extended section header requires a large FFS file.";
