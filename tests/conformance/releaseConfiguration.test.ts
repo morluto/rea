@@ -292,41 +292,45 @@ describe("Cursor Marketplace release pin", () => {
   });
 });
 
-describe("plugin release pins", () => {
-  it("advances every plugin pin through Release Please JSON extra-files", async () => {
+type ReleaseExtraFile = {
+  type: string;
+  path: string;
+  jsonpath?: string;
+};
+
+const advanceReleaseExtraFiles = async (nextVersion: string) => {
+  const version = Version.parse(nextVersion);
+  const config = (await readJson("release-please-config.json")) as {
+    versioning: string;
+    packages: { ".": { "extra-files": ReleaseExtraFile[] } };
+  };
+  expect(config.versioning).toBe("always-bump-minor");
+  const updated = new Map<string, string>();
+  for (const extraFile of config.packages["."]["extra-files"]) {
+    const updater =
+      extraFile.type === "generic"
+        ? new Generic({ version })
+        : extraFile.type === "json" && extraFile.jsonpath !== undefined
+          ? new GenericJson(extraFile.jsonpath, version)
+          : undefined;
+    if (updater === undefined) continue;
+    const content =
+      updated.get(extraFile.path) ?? (await readFile(extraFile.path, "utf8"));
+    updated.set(extraFile.path, updater.updateContent(content));
+  }
+  return updated;
+};
+
+const updatedJsonFrom = (updated: Map<string, string>, path: string) =>
+  JSON.parse(updated.get(path) ?? "null") as unknown;
+
+describe("release extra-file advancement", () => {
+  it("advances installation examples and generated package metadata", async () => {
     const packageJson = (await readJson("package.json")) as {
       version: string;
     };
     const nextVersion = nextReleaseVersion(packageJson.version);
-    const version = Version.parse(nextVersion);
-    const config = (await readJson("release-please-config.json")) as {
-      versioning: string;
-      packages: {
-        ".": {
-          "extra-files": Array<{
-            type: string;
-            path: string;
-            jsonpath?: string;
-          }>;
-        };
-      };
-    };
-    expect(config.versioning).toBe("always-bump-minor");
-    const updated = new Map<string, string>();
-
-    for (const extraFile of config.packages["."]["extra-files"]) {
-      const updater =
-        extraFile.type === "generic"
-          ? new Generic({ version })
-          : extraFile.type === "json" && extraFile.jsonpath !== undefined
-            ? new GenericJson(extraFile.jsonpath, version)
-            : undefined;
-      if (updater === undefined) continue;
-      const content =
-        updated.get(extraFile.path) ?? (await readFile(extraFile.path, "utf8"));
-      updated.set(extraFile.path, updater.updateContent(content));
-    }
-
+    const updated = await advanceReleaseExtraFiles(nextVersion);
     const installation = "docs/getting-started/installation.md";
     const installationBefore = await readFile(installation, "utf8");
     const installationAfter = updated.get(installation) ?? "";
@@ -352,22 +356,24 @@ describe("plugin release pins", () => {
           new Set([`rea-agents@${pin}`]),
         );
     }
-
     expect(updated.get("src/generatedPackageMetadata.ts")).toContain(
       `version: "${nextVersion}"`,
     );
-    const updatedJson = new Map<string, unknown>(
-      [...updated]
-        .filter(([path]) => path.endsWith(".json"))
-        .map(
-          ([path, content]) => [path, JSON.parse(content) as unknown] as const,
-        ),
-    );
-    expect(updatedJson.get("server.json")).toMatchObject({
+    expect(updatedJsonFrom(updated, "server.json")).toMatchObject({
       version: nextVersion,
       packages: [{ identifier: "rea-agents", version: nextVersion }],
     });
-    expect(updatedJson.get(".claude-plugin/plugin.json")).toMatchObject({
+  });
+
+  it("advances every plugin pin through Release Please JSON extra-files", async () => {
+    const packageJson = (await readJson("package.json")) as {
+      version: string;
+    };
+    const nextVersion = nextReleaseVersion(packageJson.version);
+    const updated = await advanceReleaseExtraFiles(nextVersion);
+    expect(
+      updatedJsonFrom(updated, ".claude-plugin/plugin.json"),
+    ).toMatchObject({
       version: nextVersion,
       mcpServers: {
         rea: {
@@ -378,10 +384,12 @@ describe("plugin release pins", () => {
         },
       },
     });
-    expect(updatedJson.get(".codex-plugin/plugin.json")).toMatchObject({
-      version: nextVersion,
-    });
-    expect(updatedJson.get(pluginServerConfig)).toMatchObject({
+    expect(updatedJsonFrom(updated, ".codex-plugin/plugin.json")).toMatchObject(
+      {
+        version: nextVersion,
+      },
+    );
+    expect(updatedJsonFrom(updated, pluginServerConfig)).toMatchObject({
       mcpServers: {
         rea: {
           command: "node",
@@ -390,11 +398,11 @@ describe("plugin release pins", () => {
         },
       },
     });
-    expect(updatedJson.get(cursorPluginManifest)).toMatchObject({
+    expect(updatedJsonFrom(updated, cursorPluginManifest)).toMatchObject({
       version: nextVersion,
       skills: ".cursor-plugin/skills",
     });
-    expect(updatedJson.get(cursorPluginServer)).toMatchObject({
+    expect(updatedJsonFrom(updated, cursorPluginServer)).toMatchObject({
       mcpServers: {
         rea: {
           command: "npx",
@@ -402,7 +410,9 @@ describe("plugin release pins", () => {
         },
       },
     });
-    expect(updatedJson.get(".claude-plugin/marketplace.json")).toMatchObject({
+    expect(
+      updatedJsonFrom(updated, ".claude-plugin/marketplace.json"),
+    ).toMatchObject({
       plugins: [
         {
           source: "./",
@@ -424,7 +434,9 @@ describe("plugin release pins", () => {
       `rea-agents@${packageJson.version}`,
     );
   });
+});
 
+describe("plugin release pins", () => {
   it("pins the plugin server launch from the shared MCP declaration", async () => {
     const packageJson = (await readJson("package.json")) as {
       version: string;

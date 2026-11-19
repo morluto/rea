@@ -55,6 +55,15 @@ const pluginMarketplaces = [
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
 ] as const;
+const versionOnlyCursorSkill =
+  ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
+const cursorSkillWithPins = (version: string, body = "skill body") =>
+  `<!-- x-release-please-start-version -->
+\`npx -y rea-agents@${version} analyze\`
+<!-- x-release-please-end -->
+Prefer \`npx -y rea-agents@${version}\` <!-- x-release-please-version --> when needed.
+${body}
+`;
 const claudeMarketplace = (
   version: string,
   {
@@ -140,6 +149,34 @@ const pluginManifestFor = (
       }
     : pluginManifest(version, options);
 
+const writeBaselinePluginPins = async (directory: string, version: string) => {
+  for (const path of pluginManifests) {
+    await mkdir(join(directory, dirname(path)), { recursive: true });
+    await writeFile(
+      join(directory, path),
+      JSON.stringify(pluginManifestFor(path, version)),
+    );
+  }
+  await writeFile(
+    join(directory, pluginServerConfig),
+    JSON.stringify(pluginServer(version)),
+  );
+  for (const path of pluginMarketplaces) {
+    await mkdir(join(directory, dirname(path)), { recursive: true });
+    await writeFile(
+      join(directory, path),
+      JSON.stringify(pluginMarketplaceFor(path, version)),
+    );
+  }
+  await mkdir(join(directory, dirname(versionOnlyCursorSkill)), {
+    recursive: true,
+  });
+  await writeFile(
+    join(directory, versionOnlyCursorSkill),
+    cursorSkillWithPins(version),
+  );
+};
+
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-release-notes-seed-");
   seedWorkspaceRoot = workspace.root;
@@ -155,24 +192,7 @@ beforeAll(async () => {
     join(directory, ".release-please-manifest.json"),
     JSON.stringify({ ".": "6.3.0" }),
   );
-  for (const path of pluginManifests) {
-    await mkdir(join(directory, dirname(path)), { recursive: true });
-    await writeFile(
-      join(directory, path),
-      JSON.stringify(pluginManifestFor(path, "6.3.0")),
-    );
-  }
-  await writeFile(
-    join(directory, pluginServerConfig),
-    JSON.stringify(pluginServer("6.3.0")),
-  );
-  for (const path of pluginMarketplaces) {
-    await mkdir(join(directory, dirname(path)), { recursive: true });
-    await writeFile(
-      join(directory, path),
-      JSON.stringify(pluginMarketplaceFor(path, "6.3.0")),
-    );
-  }
+  await writeBaselinePluginPins(directory, "6.3.0");
   await git(directory, ["add", "."]);
   await git(directory, ["commit", "-m", "chore: baseline"]);
   const base = await git(directory, ["rev-parse", "HEAD"]);
@@ -815,3 +835,31 @@ it.each(pluginMarketplaces)(
     });
   },
 );
+
+it("accepts a Cursor skill change limited to Release Please version pins", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.directory, versionOnlyCursorSkill),
+    cursorSkillWithPins("6.4.0"),
+  );
+  await git(f.directory, ["add", "CHANGELOG.md", versionOnlyCursorSkill]);
+  await git(f.directory, ["commit", "-m", "chore: release skill pin"]);
+  await f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]);
+});
+
+it("treats non-pin Cursor skill edits as a product change", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.directory, versionOnlyCursorSkill),
+    cursorSkillWithPins("6.3.0", "changed skill guidance"),
+  );
+  await git(f.directory, ["add", "CHANGELOG.md", versionOnlyCursorSkill]);
+  await git(f.directory, ["commit", "-m", "chore: release skill body"]);
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining(
+      `Product changed after notes target; regenerate inventory: ${versionOnlyCursorSkill}`,
+    ),
+  });
+});
