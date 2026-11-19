@@ -10,7 +10,11 @@ import { parseMzHeaderEvidence } from "../dosMz.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
 import { malformedInput, ParseFailureError } from "../parseFailure.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import {
+  observePeHeaderExtent,
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   readPeOptionalHeaderStructure,
   type PeOptionalHeaderFailure,
@@ -136,10 +140,19 @@ export const readPeHeaders = (bytes: Buffer, fileSize = bytes.length) => {
     directoryOffset,
     dataDirectories,
   } = parsed.value;
-  const table = optionalHeaderOffset + optionalSize;
-  requirePeRange(bytes, table, sectionCount * 40);
-  if (headerSize < table + sectionCount * 40 || headerSize > fileSize)
-    peFailure("Invalid PE SizeOfHeaders.");
+  const {
+    sectionTableOffset: table,
+    sectionTableBytes,
+    sizeOfHeadersState,
+  } = observePeHeaderExtent({
+    optionalHeaderOffset,
+    optionalHeaderSize: optionalSize,
+    sectionCount,
+    sizeOfHeaders: headerSize,
+    fileSize,
+  });
+  requirePeRange(bytes, table, sectionTableBytes);
+  if (sizeOfHeadersState !== "valid") peFailure("Invalid PE SizeOfHeaders.");
   return {
     machine,
     format,
@@ -169,8 +182,10 @@ export const readPeResourceLayout = (
   } = readPeHeaders(bytes, fileSize);
   const sections: Section[] = [];
   for (let index = 0; index < sectionCount; index++) {
-    const at = table + index * 40;
-    const parsed = readPeSectionHeader(bytes.subarray(at, at + 40));
+    const at = table + index * PE_SECTION_HEADER_BYTES;
+    const parsed = readPeSectionHeader(
+      bytes.subarray(at, at + PE_SECTION_HEADER_BYTES),
+    );
     if (!parsed.ok) return peFailure(parsed.error.message);
     const row = parsed.value;
     const section = {

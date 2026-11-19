@@ -1,8 +1,36 @@
 import { err, ok } from "./result.js";
 
+export const PE_SECTION_HEADER_BYTES = 40;
+
+/** Observe the declared combined header extent separately from the available prefix. */
+export const observePeHeaderExtent = ({
+  optionalHeaderOffset,
+  optionalHeaderSize,
+  sectionCount,
+  sizeOfHeaders,
+  fileSize,
+}: {
+  readonly optionalHeaderOffset: number;
+  readonly optionalHeaderSize: number;
+  readonly sectionCount: number;
+  readonly sizeOfHeaders: number;
+  readonly fileSize: number;
+}) => {
+  // These offsets and counts come from the fixed-width PE and COFF readers.
+  const sectionTableOffset = optionalHeaderOffset + optionalHeaderSize;
+  const sectionTableBytes = sectionCount * PE_SECTION_HEADER_BYTES;
+  const sizeOfHeadersState =
+    sizeOfHeaders < sectionTableOffset + sectionTableBytes
+      ? "before-section-table-end"
+      : sizeOfHeaders > fileSize
+        ? "past-file-end"
+        : "valid";
+  return { sectionTableOffset, sectionTableBytes, sizeOfHeadersState };
+};
+
 /** Fixed COFF section facts; callers own file/range and mapping admission. */
 export const readPeSectionHeader = (bytes: Buffer) => {
-  if (bytes.length < 40)
+  if (bytes.length < PE_SECTION_HEADER_BYTES)
     return err({
       kind: "malformed" as const,
       message: "PE section header is truncated",
