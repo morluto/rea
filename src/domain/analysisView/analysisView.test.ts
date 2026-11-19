@@ -1805,3 +1805,47 @@ it("selects a unique content-deduplicated module by any retained path", () => {
     });
   }
 });
+
+it("ranks only the longest byte entropy runs with stable offset ties", () => {
+  const runs = Array.from({ length: 1024 }, (_, index) => ({
+    offset: Math.floor((1023 - index) / 2) * 256,
+    length: ((index % 19) + 1) * 256,
+    classification: index % 2 === 0 ? "high" : "low",
+  }));
+  runs.push({ offset: 0, length: 8192, classification: "high" });
+  runs.push({ offset: 0, length: 8192, classification: "low" });
+  const result = projectAnalysisView(
+    {
+      predicateType: "rea.byte-entropy",
+      evidenceId: `ev_${"1".repeat(64)}`,
+      operation: "inspect_byte_entropy",
+      limitations: [],
+      normalizedResult: {
+        artifact: {
+          path: "/tmp/fixture",
+          bytes: 262144,
+          sha256: "2".repeat(64),
+        },
+        block_size: 256,
+        window: { offset: 0, length: 262144 },
+        file_entropy: 4,
+        thresholds: { high: 7.5, low: 0.5 },
+        blocks: [],
+        runs,
+        limitations: [],
+      },
+    },
+    { kind: "summary" },
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      summary: {
+        run_count: runs.length,
+        top_runs: runs
+          .toSorted((a, b) => b.length - a.length || a.offset - b.offset)
+          .slice(0, 10),
+      },
+    },
+  });
+});
