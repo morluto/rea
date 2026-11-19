@@ -171,6 +171,68 @@ cliTest(
 );
 
 cliTest(
+  "identifies an analysis snapshot on either side of a bundle comparison",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-compare-snapshot-kind-");
+    const bundlePath = join(root, "bundle.json");
+    const snapshotPath = join(root, "snapshot.json");
+    const malformedPath = join(root, "malformed.json");
+    const snapshot = {
+      target: {},
+      binding: {},
+      evidence_bundle: {},
+      entries: [],
+      workflow_entries: [],
+    };
+    await Promise.all([
+      writeFile(bundlePath, serializeEvidenceBundle(createEvidenceBundle([]))),
+      writeFile(snapshotPath, JSON.stringify(snapshot)),
+      writeFile(malformedPath, JSON.stringify({ ...snapshot, records: [] })),
+    ]);
+
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    const wrongKind = {
+      code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("standalone Evidence bundle"),
+      },
+      details: {
+        operation: "read",
+        reason: "wrong-kind",
+        detected_kind: "analysis-snapshot",
+        path: snapshotPath,
+        related_operations: ["export_evidence_bundle"],
+      },
+    };
+    const compareCli = (left: string, right: string) =>
+      cli.run({ arguments: ["compare", left, right, "--json"] });
+    const compareMcp = (left: string, right: string) =>
+      call("compare_bundles", {
+        left_bundle_path: left,
+        right_bundle_path: right,
+      });
+    for (const [left, right] of [
+      [snapshotPath, bundlePath],
+      [bundlePath, snapshotPath],
+    ] as const) {
+      const compared = await compareCli(left, right);
+      expect(compared.exitCode).toBe(1);
+      expect(compared.json).toMatchObject(wrongKind);
+      expect(
+        parseMcpToolError(await compareMcp(left, right)).error,
+      ).toMatchObject(wrongKind);
+    }
+
+    const malformed = await compareCli(bundlePath, malformedPath);
+    expect(malformed.exitCode).toBe(1);
+    expect(malformed.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+    });
+  },
+);
+
+cliTest(
   "rejects relative bundle paths over stdio MCP while CLI resolves them from its cwd",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundle-path-boundary-");

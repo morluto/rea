@@ -9,19 +9,20 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
-/**
- * Result-output stub for the replaced runtime chunk. The one-shot owner reads
- * the cancellation classifier from this chunk beside the factory, so the stub
- * must keep that export to reach the dispatch behavior under test.
- */
-const STUBBED_RESULT_OUTPUT =
-  "export const createCliResultOutput = () => undefined;\n" +
-  "export const cliOutputCancellationStatus = () => undefined;\n";
+const fixtureResultOutput = {
+  createCliResultOutput:
+    "export const createCliResultOutput = () => undefined;",
+  cliOutputCancellationStatus:
+    "export const cliOutputCancellationStatus = () => undefined;",
+} satisfies Record<
+  keyof typeof import("../../../src/cli/cliResultOutput.js"),
+  string
+>;
 
 const installCliRuntime = async (
   workspace: TestWorkspace,
   cliSource: string,
-  resultOutput = STUBBED_RESULT_OUTPUT,
+  resultOutput = fixtureResultOutput.createCliResultOutput,
 ): Promise<void> => {
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
@@ -43,7 +44,10 @@ const installCliRuntime = async (
       JSON.stringify({ type: "module", version: "1.0.0" }),
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
-    workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    workspace.write(
+      "dist/cli-runtime/cliResultOutput.js",
+      `${fixtureResultOutput.cliOutputCancellationStatus}\n${resultOutput}\n`,
+    ),
     // Without a recording, every command loads the replaced complete CLI.
     workspace.write(
       "dist/recordedCliCommandRegistrations.js",
@@ -280,7 +284,7 @@ describe("executable dispatcher", () => {
       await installCliRuntime(
         workspace,
         'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout("first document\\n"); throw new RangeError("Invalid string length"); } });\n',
-        'export const cliOutputCancellationStatus = () => undefined; export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => {}, recoverFormattingFailure: () => { process.stdout.write("unexpected second document"); return true; } });\n',
+        'export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => {}, recoverFormattingFailure: () => { process.stdout.write("unexpected second document"); return true; } });\n',
       );
       const result = await processes.run(
         process.execPath,
@@ -522,7 +526,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
       await installCliRuntime(
         workspace,
         'export const closeCliResources = () => { globalThis.cleaned = true; return Promise.reject(new Error("worker still owned")); }; export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n',
-        'export const cliOutputCancellationStatus = () => undefined; export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); } });\n',
+        'export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); } });\n',
       );
       const result = await processes.run(
         process.execPath,
@@ -541,7 +545,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
       await installCliRuntime(
         workspace,
         "export const closeCliResources = () => Promise.resolve(); export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n",
-        'export const cliOutputCancellationStatus = () => undefined; export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { throw new Error("output completion failed"); } });\n',
+        'export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { throw new Error("output completion failed"); } });\n',
       );
       const result = await processes.run(
         process.execPath,
