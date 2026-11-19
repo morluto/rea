@@ -1,3 +1,8 @@
+import {
+  BinaryReader,
+  BinaryFormatFailure,
+} from "../../domain/binaryContainer.js";
+import { readInitializerWord } from "./initializerWord.js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { deflateSync } from "node:zlib";
 import { riscvInitializers } from "./RiscvInitializers.fixture.js";
@@ -96,7 +101,6 @@ import {
 } from "../../domain/native/nativeInitializers.js";
 import { buildAddressRangeIndex } from "./addressRangeIndex.js";
 import { InitializerNotes } from "./initializerNotes.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 
 const artifact = (bytes: Buffer) => ({
@@ -2330,4 +2334,18 @@ it("keeps a linked section-fallback slot unresolved when its load mapping disagr
     value_va: null,
     slot_file_offset: 0x260,
   });
+});
+
+it("reads initializer addends at the edge of the mapped word", () => {
+  const bytes = Buffer.from([
+    0, 0x81, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+  ]);
+  const big = new BinaryReader(bytes, false, "elf");
+  const little = new BinaryReader(bytes, true, "macho");
+  expect(readInitializerWord(big, 1, 64)).toBe(0x8123456789abcdefn);
+  expect(readInitializerWord(little, 1, 64)).toBe(0xefcdab8967452381n);
+  expect(readInitializerWord(big, 5, 32)).toBe(0x89abcdefn);
+  expect(readInitializerWord(little, 5, 32)).toBe(0xefcdab89n);
+  expect(readInitializerWord(big, 2, 64)).toBeNull();
+  expect(readInitializerWord(little, null, 32)).toBeNull();
 });
