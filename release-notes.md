@@ -308,6 +308,7 @@
 * **desktop:** preserve cancellation after ELF lookup refusals ([#11804](https://github.com/morluto/rea/issues/11804)) ([486470e](https://github.com/morluto/rea/commit/486470ec9b47df266d261b6647e187d549d680e1))
 * **desktop:** preserve commas in apt source fields ([#11926](https://github.com/morluto/rea/issues/11926)) ([7d357b8](https://github.com/morluto/rea/commit/7d357b8325414f281a487398ba48fd0c285599e0))
 * **desktop:** preserve distinct JSON record selector identities ([#12072](https://github.com/morluto/rea/issues/12072)) ([c0ad2c1](https://github.com/morluto/rea/commit/c0ad2c1a222afad78611a1106864bb44b36ecced))
+* **desktop:** preserve doctor model read cancellation ([#12314](https://github.com/morluto/rea/issues/12314)) ([d50320c](https://github.com/morluto/rea/commit/d50320cc61f34b2feb01bfb63417b21708194d70))
 * **desktop:** preserve ELF filesystem lookup bytes ([#12108](https://github.com/morluto/rea/issues/12108)) ([0c83de1](https://github.com/morluto/rea/commit/0c83de16426e93e70ad6f7674539c742dfcd5f62))
 * **desktop:** preserve env option boundaries in launch commands ([#12033](https://github.com/morluto/rea/issues/12033)) ([5fd6c0d](https://github.com/morluto/rea/commit/5fd6c0db710087cb37d26b8592ce11164625f260))
 * **desktop:** preserve literal directories in ELF origin expansion ([#10215](https://github.com/morluto/rea/issues/10215)) ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
