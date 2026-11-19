@@ -25,8 +25,9 @@ capture nor the bundle holds the package.
   entries of each relationship field as the file declares them. Otherwise
   `package_file_reason` says why: dpkg reports no installed version of the
   application, the path is not a regular file, `dpkg-deb` is missing or cannot
-  read it, it lacks one of the three fields, it holds another package, version
-  or architecture, or it could not be read. A descriptor whose close fails
+  read it, the reported fields contain invalid UTF-8 or lack one of the three
+  identity fields, it holds another package, version or architecture, or it
+  could not be read. A descriptor whose close fails
   fails the capture with its owner. The file is never copied into the capture
   folder.
 - Library packages are walked as for a vendor repository's package also for a

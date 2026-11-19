@@ -76,11 +76,13 @@ export const queryUtf8Text = async (
   args: readonly string[],
   signal: AbortSignal | undefined,
 ): Promise<
-  { kind: "read"; text: string } | { kind: "undecodable" | "unavailable" }
+  | { kind: "read"; text: string }
+  | { kind: "missing" | "undecodable" | "unavailable" }
 > => {
   const outcome = await runQuery(command, args, signal, {
     preserveStdoutBytes: true,
   });
+  if (outcome === "missing") return { kind: "missing" };
   if (typeof outcome !== "object" || outcome.exitCode !== 0)
     return { kind: "unavailable" };
   if (outcome.stdoutBuffer !== undefined && !isStrictUtf8(outcome.stdoutBuffer))
