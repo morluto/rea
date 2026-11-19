@@ -361,6 +361,7 @@ const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
       "code" in cause &&
       (cause.code === "Z_DATA_ERROR" ||
         cause.code === "Z_BUF_ERROR" ||
+        cause.code === "Z_NEED_DICT" ||
         cause.code === "ERR_BUFFER_TOO_LARGE")
     )
       throw new TypeError("Invalid PNG image data", { cause });
@@ -371,28 +372,7 @@ const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
 const parseHeader = (data: Buffer) => {
   const parsed = readPngIhdrFacts(data);
   if (!parsed.ok) throw new TypeError(parsed.error);
-  const {
-    width,
-    height,
-    bitDepth,
-    colorType,
-    compressionMethod,
-    filterMethod,
-    interlaceMethod,
-  } = parsed.value;
-  const validDepth =
-    (colorType === 0 && [1, 2, 4, 8, 16].includes(bitDepth)) ||
-    (colorType === 2 && [8, 16].includes(bitDepth)) ||
-    (colorType === 3 && [1, 2, 4, 8].includes(bitDepth)) ||
-    (colorType === 4 && [8, 16].includes(bitDepth)) ||
-    (colorType === 6 && [8, 16].includes(bitDepth));
-  if (
-    !validDepth ||
-    compressionMethod !== 0 ||
-    filterMethod !== 0 ||
-    (interlaceMethod !== 0 && interlaceMethod !== 1)
-  )
-    throw new TypeError("Invalid PNG header");
+  const { width, height, bitDepth, colorType, interlaceMethod } = parsed.value;
   return {
     width,
     height,

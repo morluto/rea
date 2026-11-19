@@ -441,6 +441,12 @@ never forces a mapping. Unicode-equivalent spellings are candidate evidence
 only because distinct filesystem paths can preserve those spellings as separate
 files; multiple canonical-equivalent candidates remain unknown.
 
+Source-map declarations and embedded source digests remain available when the
+declared reference cannot produce a matching path. For example, a relative
+reference that leaves the inventoried artifact or a pathname that decodes to a
+NUL byte has an unresolved path. The raw declaration still identifies the
+source-map observation.
+
 Each historical source file is classified as `unchanged`, `modified`,
 `removed`, `split`, `merged`, `duplicated`, or `unknown`. Multiple equally
 scored path mappings form a static split inference. Multiple current file

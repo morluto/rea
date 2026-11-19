@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { isUtf8 } from "node:buffer";
 import { setImmediate } from "node:timers/promises";
@@ -57,15 +58,17 @@ export class GgufHeader {
   readonly #budget = new ModelReportBudget();
   constructor(readonly reader: ModelHeaderReader) {}
 
+  // take() returns exactly `width` bytes, so field reads at 0 stay in range.
+  async #field(width: number): Promise<BinaryReader> {
+    return new BinaryReader(
+      await this.reader.take(width),
+      this.#little,
+      "gguf",
+    );
+  }
+
   async #unsigned(width: 4 | 8): Promise<bigint> {
-    const b = await this.reader.take(width);
-    const value =
-      width === 4
-        ? BigInt(this.#little ? b.readUInt32LE() : b.readUInt32BE())
-        : this.#little
-          ? b.readBigUInt64LE()
-          : b.readBigUInt64BE();
-    return value;
+    return (await this.#field(width)).word(0, width === 4 ? 32 : 64);
   }
 
   async #text(retain: boolean, maximum?: number): Promise<string> {
@@ -183,47 +186,45 @@ export class GgufHeader {
         complete,
       };
     }
-    const b = await this.reader.take(WIDTHS[type] ?? 0);
+    const b = await this.#field(WIDTHS[type] ?? 0);
     let value: JsonValue;
     switch (type) {
       case 0:
-        value = b.readUInt8();
+        value = b.u8(0);
         break;
       case 1:
-        value = b.readInt8();
+        value = b.i8(0);
         break;
       case 2:
-        value = this.#little ? b.readUInt16LE() : b.readUInt16BE();
+        value = b.u16(0);
         break;
       case 3:
-        value = this.#little ? b.readInt16LE() : b.readInt16BE();
+        value = b.i16(0);
         break;
       case 4:
-        value = this.#little ? b.readUInt32LE() : b.readUInt32BE();
+        value = b.u32(0);
         break;
       case 5:
-        value = this.#little ? b.readInt32LE() : b.readInt32BE();
+        value = b.i32(0);
         break;
       case 6:
-        value = this.#little ? b.readFloatLE() : b.readFloatBE();
+        value = b.f32(0);
         break;
-      case 7:
-        if (b[0] !== 0 && b[0] !== 1)
+      case 7: {
+        const byte = b.u8(0);
+        if (byte !== 0 && byte !== 1)
           rejectModel("GGUF boolean must be 0 or 1");
-        value = b[0] === 1;
+        value = byte === 1;
         break;
+      }
       case 10:
-        value = (
-          this.#little ? b.readBigUInt64LE() : b.readBigUInt64BE()
-        ).toString();
+        value = b.word(0, 64).toString();
         break;
       case 11:
-        value = (
-          this.#little ? b.readBigInt64LE() : b.readBigInt64BE()
-        ).toString();
+        value = b.i64(0).toString();
         break;
       case 12:
-        value = this.#little ? b.readDoubleLE() : b.readDoubleBE();
+        value = b.f64(0);
         break;
       default:
         return rejectModel("Unsupported GGUF scalar");
@@ -253,8 +254,8 @@ export class GgufHeader {
     limitations: string[];
   }> {
     const versionBytes = await this.reader.take(4);
-    const littleVersion = versionBytes.readUInt32LE();
-    const bigVersion = versionBytes.readUInt32BE();
+    const littleVersion = new BinaryReader(versionBytes, true, "gguf").u32(0);
+    const bigVersion = new BinaryReader(versionBytes, false, "gguf").u32(0);
     let version: number;
     if (littleVersion === 2 || littleVersion === 3) {
       this.#little = true;
@@ -355,8 +356,7 @@ export class GgufHeader {
       const shape: string[] = [];
       let parameters = 1n;
       for (let d = 0; d < dimensions; d++) {
-        const b = await this.reader.take(8);
-        const value = this.#little ? b.readBigUInt64LE() : b.readBigUInt64BE();
+        const value = await this.#unsigned(8);
         shape.push(value.toString());
         parameters *= value;
       }

@@ -9,6 +9,7 @@ import {
   type createCatalogIdentity,
 } from "../contracts/catalog/catalogIdentity.js";
 import { toolFamilyId } from "../contracts/toolFamilies.js";
+import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
@@ -55,9 +56,9 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
    * cannot direct agents to calls that always fail.
    */
   override advertisesTool(name: string): boolean {
-    const families = this.advertisedToolFamilies;
-    if (families === undefined) return true;
-    const family = toolFamilyId(name);
-    return family !== undefined && families.has(family);
+    return isToolFamilyAdvertised(
+      this.advertisedToolFamilies,
+      toolFamilyId(name),
+    );
   }
 }

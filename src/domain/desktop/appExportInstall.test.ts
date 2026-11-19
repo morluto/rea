@@ -490,6 +490,9 @@ describe("repositories whose URI held credentials", () => {
     const older = repository({
       uri: "https://rea-user:hunter2@apt.example.com/typora",
     });
+    const escaped = repository({
+      uri: "https://rea-user%3Ahunter2%40apt.example.com/typora",
+    });
     const open = repository({ uri: "https://b.example.com/typora" });
     // An older capture whose policy source matched no sources entry kept it whole.
     const unmatched = repository({
@@ -499,6 +502,11 @@ describe("repositories whose URI held credentials", () => {
     const refused = exportInstall(typora([marked]), "typora", "arm64");
     const skipped = exportInstall(typora([marked, open]), "typora", "arm64");
     const recapture = exportInstall(typora([older, open]), "typora", "arm64");
+    const recaptureEscaped = exportInstall(
+      typora([escaped, open]),
+      "typora",
+      "arm64",
+    );
     const sourceOnly = exportInstall(
       typora([unmatched, open]),
       "typora",
@@ -508,6 +516,7 @@ describe("repositories whose URI held credentials", () => {
     for (const reason of [
       repositoryRefusal(marked),
       repositoryRefusal(older),
+      repositoryRefusal(escaped),
     ]) {
       expect(reason).toContain("user name or password");
       expect(reason).not.toMatch(/apt\.example\.com|rea-user|hunter2/u);
@@ -532,13 +541,20 @@ describe("repositories whose URI held credentials", () => {
         remediation: "Capture the application again.",
       }),
     });
+    expect(recaptureEscaped).toEqual(recapture);
     expect(sourceOnly.ok && sourceOnly.value.skipped).toEqual([
       expect.stringMatching(
         /^https:\/\/apt\.example\.com\/typora \.\/ Packages: /u,
       ),
     ]);
     expect(
-      JSON.stringify([refused, skipped, recapture, sourceOnly]),
+      JSON.stringify([
+        refused,
+        skipped,
+        recapture,
+        recaptureEscaped,
+        sourceOnly,
+      ]),
     ).not.toMatch(/rea-user|hunter2/u);
   });
 });
@@ -572,6 +588,30 @@ describe("electronLaunchArguments", () => {
 });
 
 describe("adjustInstalledDesktopText", () => {
+  it("keeps the original separators around the effective Exec", () => {
+    const text =
+      "[Desktop Entry]\r\nName=App\nExec=old-app\r\nExec=current-app\n";
+    expect(adjustInstalledDesktopText(text, true)).toEqual({
+      ok: true,
+      value:
+        "[Desktop Entry]\r\nName=App\nExec=old-app\r\nExec=current-app --no-sandbox\n",
+    });
+  });
+
+  it.each(["", "[Desktop Action New]\nExec=action-app\n[Desktop Entry]\n"])(
+    "rewrites the effective command rather than an overridden Exec (%j)",
+    (between) => {
+      const text = `[Desktop Entry]\nType=Application\nName=App\nExec=old-app %F\n${between}Exec=current-app %U\n`;
+      const rewritten = adjustInstalledDesktopText(text, true);
+      expect(rewritten).toEqual({
+        ok: true,
+        value: text.replace(
+          "Exec=current-app %U",
+          "Exec=current-app --no-sandbox %U",
+        ),
+      });
+    },
+  );
   const entry = (exec: string) =>
     `[Desktop Entry]\nType=Application\nName=Typora\nExec=${exec}\n[Desktop Action New]\nExec=typora --new-window\n`;
 

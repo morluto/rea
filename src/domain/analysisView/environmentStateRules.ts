@@ -7,9 +7,8 @@ import {
 import type { OffsetDateTimeInstant } from "../offsetDateTime.js";
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { ListQuery } from "./environmentStateListQuery.js";
-import { canonicalJson } from "../comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues as same, type JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 import {
   respellClock,
@@ -350,15 +349,7 @@ export const setOwnMember = (
   });
 };
 
-/** Equal JSON values; object member order carries no meaning. */
-export const same = (
-  left: JsonValue | undefined,
-  right: JsonValue | undefined,
-): boolean =>
-  left === undefined || right === undefined
-    ? left === right
-    : canonicalJson(left, "Environment state") ===
-      canonicalJson(right, "Environment state");
+export { same };
 
 /** A path segment percent-decoded, or as written when it does not decode. */
 export const decodedSegment = (segment: string): string => {
@@ -556,24 +547,6 @@ export const stateValueRetentionBytes = (value: JsonValue): number => {
       ENTRY_BYTES,
     );
   return ENTRY_BYTES;
-};
-
-/** Whether a JSON value nests more than `limit` levels below its root. */
-export const deeperThan = (value: JsonValue, limit: number): boolean => {
-  const pending: { readonly value: JsonValue; readonly depth: number }[] = [
-    { value, depth: 0 },
-  ];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (next.depth > limit) return true;
-    const children = Array.isArray(next.value)
-      ? next.value
-      : isObject(next.value)
-        ? Object.values(next.value)
-        : [];
-    for (const child of children)
-      pending.push({ value: child, depth: next.depth + 1 });
-  }
-  return false;
 };
 
 export const pointerTo = (name: string): string =>

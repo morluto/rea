@@ -15,7 +15,34 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
-it("shares runtime module declarations with source analysis while retaining inline type side effects", () => {
+it("uses JavaScript grammar for scripts identified by the capture", () => {
+  const source = [
+    "const pick=n===0?H=>({start:H.startY}):H=>({start:H.startX});",
+    'import("./after.js");',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(result.completeness).toMatchObject({
+    parsed_scripts: 1,
+    parse_failures: 0,
+  });
+  expect(result.observations.chunks.edges).toMatchObject([
+    {
+      kind: "dynamic_import",
+      specifier: "./after.js",
+    },
+  ]);
+});
+
+it("keeps JavaScript comparisons from becoming generic endpoint calls", () => {
+  const result = analyzeWebBundleFixture(
+    inspection('const value = fetch<limit>("/comparison"); fetch("/actual");'),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/actual",
+  ]);
+});
+
+it("recovers runtime imports and inline type side effects when capture language is unknown", () => {
   const source = `
     import type {T} from "./erased-import";
     export type {T} from "./erased-export";
@@ -27,7 +54,7 @@ it("shares runtime module declarations with source analysis while retaining inli
     export const local = 1;
   `;
   const expected = ["./inline-import", "./inline-export", "", "./runtime"];
-  const result = analyzeWebBundleFixture(inspection(source));
+  const result = analyzeWebBundleFixture(inspection(source, null));
   expect(result.completeness.parse_failures).toBe(0);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
@@ -1269,7 +1296,7 @@ describe("deep captured web bundle syntax", () => {
   });
 });
 
-const inspection = (source: string) =>
+const inspection = (source: string, language: string | null = "JavaScript") =>
   createWebPageInspection([
     {
       source,
@@ -1277,6 +1304,7 @@ const inspection = (source: string) =>
       url: `${origin}/assets/app.js`,
       origin,
       cdpHash: "hash",
+      language,
     },
   ]);
 
@@ -1735,6 +1763,38 @@ it("retains each literal importScripts argument in source order", () => {
   ).toEqual(["first.js", "second.js"]);
 });
 
+it("requires an ambient worker importScripts call for worker chunk edges", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      importScripts("direct.js");
+      self.importScripts("self.js");
+      globalThis["importScripts"]("global.js");
+      const vendor = { importScripts() {} };
+      vendor.importScripts("vendor.js");
+      function load(importScripts) { importScripts("local.js"); }
+      function loadFrom(self) { self.importScripts("shadowed.js"); }
+      window.importScripts("window.js");
+      new importScripts("constructor.js");
+    `),
+  );
+  expect(
+    result.observations.chunks.edges
+      .filter(({ kind }) => kind === "worker_import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(["direct.js", "self.js", "global.js"]);
+});
+
+it("omits worker chunk edges when a captured script replaces importScripts", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      self.importScripts = function record() {};
+      importScripts("local.js");
+      globalThis.importScripts("global.js");
+    `),
+  );
+  expect(result.observations.chunks.edges).toEqual([]);
+});
+
 describe("web metadata key semantics", () => {
   it("keeps computed metadata keys and overwrite order conservative", () => {
     const result = analyzeWebBundleFixture(
@@ -1952,7 +2012,7 @@ it("does not infer call names from dynamic computed identifiers", () => {
   expect(result.observations.webmcp_declarations).toEqual([]);
 });
 
-it("retains direct and literal computed call names", () => {
+it("retains literal calls and requires ambient identity for require edges", () => {
   const result = analyzeWebBundleFixture(
     inspection(`
         window.fetch("/direct");
@@ -1960,6 +2020,11 @@ it("retains direct and literal computed call names", () => {
     window[receiver].fetch("/nested-receiver");
         window.require("./direct.js");
         window["require"]("./literal.js");
+        require("./bare.js");
+        const vendor = { require() {} };
+        vendor.require("./vendor.js");
+        function local(require) { require("./local.js"); }
+        function withWindow(window) { window["require"]("./shadowed.js"); }
         document.modelContext["registerTool"]({ name: "literal-tool" });
       `),
   );
@@ -1970,7 +2035,7 @@ it("retains direct and literal computed call names", () => {
   ]);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
-  ).toEqual(["./direct.js", "./literal.js"]);
+  ).toEqual(["./direct.js", "./literal.js", "./bare.js"]);
   expect(result.observations.webmcp_declarations).toEqual([
     expect.objectContaining({ name: "literal-tool" }),
   ]);

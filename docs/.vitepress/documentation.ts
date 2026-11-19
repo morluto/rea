@@ -369,6 +369,11 @@ export const documentationSections = [
     text: "Development and verification",
     items: [
       {
+        text: "Documentation ownership and authoring",
+        source: "development/documentation.md",
+        route: "/development/documentation",
+      },
+      {
         text: "Settings and recovery",
         source: "design/limits-and-recovery.md",
         route: "/design/limits-and-recovery",
@@ -644,6 +649,11 @@ export const documentationSections = [
         text: "Kuna provider",
         source: "kuna-provider.md",
         route: "/kuna-provider",
+      },
+      {
+        text: "Maven POM and Gradle module metadata",
+        source: "maven-gradle-metadata.md",
+        route: "/maven-gradle-metadata",
       },
       {
         text: "Model file declarations",

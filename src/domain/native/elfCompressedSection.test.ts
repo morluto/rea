@@ -13,6 +13,7 @@ const chdr = (
   little: boolean,
   type: number,
   size: number,
+  alignment = 1n,
 ): Buffer => {
   const header = Buffer.alloc(bits === 64 ? 24 : 12);
   if (little) header.writeUInt32LE(type, 0);
@@ -20,17 +21,17 @@ const chdr = (
   if (bits === 64) {
     if (little) {
       header.writeBigUInt64LE(BigInt(size), 8);
-      header.writeBigUInt64LE(1n, 16);
+      header.writeBigUInt64LE(alignment, 16);
     } else {
       header.writeBigUInt64BE(BigInt(size), 8);
-      header.writeBigUInt64BE(1n, 16);
+      header.writeBigUInt64BE(alignment, 16);
     }
   } else if (little) {
     header.writeUInt32LE(size, 4);
-    header.writeUInt32LE(1, 8);
+    header.writeUInt32LE(Number(alignment), 8);
   } else {
     header.writeUInt32BE(size, 4);
-    header.writeUInt32BE(1, 8);
+    header.writeUInt32BE(Number(alignment), 8);
   }
   return header;
 };
@@ -187,4 +188,61 @@ describe("ELF compressed section payloads", () => {
       inflatedBytes: 0,
     });
   });
+});
+
+describe("ELF compressed section declaration admission", () => {
+  it.each([
+    [32, false, 0x8000_0000n],
+    [64, true, 0x8000_0000_0000_0000n],
+  ] as const)(
+    "admits zero and the largest power-of-two alignment in an ELF%s header",
+    (bits, little, alignment) => {
+      for (const value of [0n, alignment]) {
+        const bytes = Buffer.concat([
+          chdr(bits, little, 1, plain.length, value),
+          deflateSync(plain),
+        ]);
+        expect(
+          decodeElfSectionNameTable(bytes, 0x800n, bits, little, 1024),
+        ).toMatchObject({ state: "available", bytes: plain });
+      }
+    },
+  );
+
+  it.each([
+    [32, false, 3n],
+    [64, true, 0x8000_0000_0000_0001n],
+  ] as const)(
+    "rejects a non-power-of-two alignment in an ELF%s header before inflation",
+    (bits, little, alignment) => {
+      const bytes = Buffer.concat([
+        chdr(bits, little, 1, plain.length, alignment),
+        deflateSync(plain),
+      ]);
+      expect(
+        decodeElfSectionNameTable(bytes, 0x800n, bits, little, 1024),
+      ).toMatchObject({
+        state: "malformed",
+        message:
+          "ELF compressed section-name table has an invalid decoded alignment",
+        inflatedBytes: 0,
+      });
+    },
+  );
+
+  it.each([Buffer.from([0]), deflateSync("another stream")])(
+    "rejects bytes beyond the single zlib stream in a section-name table",
+    (suffix) => {
+      const payload = Buffer.concat([deflateSync(plain), suffix]);
+      const bytes = Buffer.concat([chdr(64, true, 1, plain.length), payload]);
+      expect(
+        decodeElfSectionNameTable(bytes, 0x800n, 64, true, 1024),
+      ).toMatchObject({
+        state: "malformed",
+        message:
+          "ELF compressed section-name table has bytes after its zlib stream",
+        inflatedBytes: payload.length,
+      });
+    },
+  );
 });

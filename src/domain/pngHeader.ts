@@ -13,12 +13,13 @@ export interface PngIhdrFacts {
   readonly height: number;
   readonly bitDepth: number;
   readonly colorType: number;
-  readonly compressionMethod: number;
-  readonly filterMethod: number;
   readonly interlaceMethod: number;
 }
 
-/** Decode IHDR declarations and admit dimensions; encoding support belongs to consumers. */
+/**
+ * Admit the declared IHDR fields (PNG specification, §11.2.1).
+ * Image data and codec support are checked by consumers that decode it.
+ */
 export const readPngIhdrFacts = (
   data: Buffer,
 ): Result<PngIhdrFacts, string> => {
@@ -32,15 +33,23 @@ export const readPngIhdrFacts = (
     height > 0x7fff_ffff
   )
     return err("Invalid PNG header");
-  return ok({
-    width,
-    height,
-    bitDepth: data[8]!,
-    colorType: data[9]!,
-    compressionMethod: data[10]!,
-    filterMethod: data[11]!,
-    interlaceMethod: data[12]!,
-  });
+  const bitDepth = data[8]!;
+  const colorType = data[9]!;
+  const interlaceMethod = data[12]!;
+  const validDepth =
+    (colorType === 0 && [1, 2, 4, 8, 16].includes(bitDepth)) ||
+    (colorType === 2 && [8, 16].includes(bitDepth)) ||
+    (colorType === 3 && [1, 2, 4, 8].includes(bitDepth)) ||
+    (colorType === 4 && [8, 16].includes(bitDepth)) ||
+    (colorType === 6 && [8, 16].includes(bitDepth));
+  if (
+    !validDepth ||
+    data[10] !== 0 ||
+    data[11] !== 0 ||
+    (interlaceMethod !== 0 && interlaceMethod !== 1)
+  )
+    return err("Invalid PNG header");
+  return ok({ width, height, bitDepth, colorType, interlaceMethod });
 };
 
 /** Read screenshot dimensions from a byte-faithful PNG header, not a full image decode. */

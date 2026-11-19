@@ -3,7 +3,11 @@ import {
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
-import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import {
+  isToolFamilyAdvertised,
+  registerToolFamilies,
+} from "../contracts/toolFamilyIds.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
@@ -102,9 +106,8 @@ const createMcpServer = (
     {
       capabilities: {},
       maxToolInputElements: configured.value,
-      instructions: serverInstructions(
-        session !== undefined,
-        advertisedToolFamilies,
+      instructions: serverInstructions(session !== undefined, (tool) =>
+        isToolFamilyAdvertised(advertisedToolFamilies, toolFamilyId(tool)),
       ),
     },
     session === undefined
@@ -203,6 +206,7 @@ export const createServer = (
     releaseExposure,
     nugetNupkg,
     pythonPyc,
+    mavenGradleMetadata,
     dwarfUnits,
     elfDependencies,
     webNetworkCapture,
@@ -447,6 +451,7 @@ export const createServer = (
           sqliteDatabase,
           packetCapture,
           signalRecording,
+          mavenGradleMetadata,
         },
         contractTools,
       );

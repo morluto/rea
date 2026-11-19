@@ -297,6 +297,29 @@ it.each(["capacity", "file-size", "memory"] as const)(
   },
 );
 
+it("reports a parser limit even when artifact cleanup also fails", () => {
+  const failure = new ArtifactReaderFailure("limit", "Plist decode limit", {
+    parserLimit: { name: "plist-decode-bytes", maximum: 512 },
+  });
+  const wrapped = ArtifactReaderFailure.withCleanup(failure, {
+    reason: "close failed",
+    resources: ["handle"],
+  });
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure("inspect_keyed_archive", wrapped),
+    ),
+  ).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      reason: "limit",
+      reported_limits: { boundary: "plist-decode-bytes", maximum: 512 },
+      cleanup: "incomplete",
+      resources: ["handle"],
+    },
+  });
+});
+
 it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public projection", () => {
   const failure = artifactFixedLimitFailure(
     {

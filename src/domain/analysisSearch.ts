@@ -55,12 +55,15 @@ export const matchProcedureNames = <Row extends { readonly value: string }>(
   aliases: readonly string[],
   matches: (value: string) => boolean,
 ): (Row & { readonly matched_aliases?: string[] }) | undefined => {
-  const matched =
-    aliases.length === 0
-      ? []
-      : [...new Set(aliases)].filter(
-          (alias) => alias !== row.value && matches(alias),
-        );
-  if (matched.length > 0) return { ...row, matched_aliases: matched };
+  if (aliases.length === 1) {
+    const alias = aliases[0]!;
+    if (alias !== row.value && matches(alias))
+      return { ...row, matched_aliases: [alias] };
+  } else if (aliases.length > 1) {
+    const matched = [...new Set(aliases)].filter(
+      (alias) => alias !== row.value && matches(alias),
+    );
+    if (matched.length > 0) return { ...row, matched_aliases: matched };
+  }
   return matches(row.value) ? row : undefined;
 };

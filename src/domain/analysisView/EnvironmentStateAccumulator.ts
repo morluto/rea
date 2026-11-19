@@ -1,7 +1,11 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseExactJson } from "../exactJsonNumber.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
+import {
+  jsonValueExceedsDepth,
+  MAX_JSON_DEPTH,
+  type JsonValue,
+} from "../jsonValue.js";
 import {
   addOffsetDateTimeMilliseconds,
   compareOffsetDateTimeInstants,
@@ -18,7 +22,6 @@ import { readRecordedRequestBody } from "./recordedExchangeBody.js";
 import { EnvironmentStateExtraction } from "./EnvironmentStateExtraction.js";
 import type { TemplateRule } from "./environmentManifestRules.js";
 import {
-  deeperThan,
   isStateWrite,
   STATE_BODY_LIMIT_BYTES,
   type ParsedBody,
@@ -30,7 +33,6 @@ import {
   base64PrefixChars,
   readRecordedResponseBody,
   readRecordedResponseDeclaration,
-  recordedResponseStatus,
   recordedResponseBodyIsEmpty,
   type RecordedResponseBody,
 } from "./recordedResponseBody.js";
@@ -67,7 +69,7 @@ export const stateBodyJson = (
     return undefined;
   const value = parseExactJson(body.bodyText);
   return value === undefined ||
-    deeperThan(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
+    jsonValueExceedsDepth(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
     ? undefined
     : value;
 };
@@ -242,9 +244,8 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   ): Result<() => void, AnalysisError> {
     const parsed = unlocatedWriteSchema.safeParse(record.reported);
     if (!parsed.success) return ok(() => undefined);
-    const status = recordedResponseStatus(
-      readRecordedResponseDeclaration(record.reported),
-    );
+    const status =
+      readRecordedResponseDeclaration(record.reported)?.status ?? null;
     const facts: StateRecordFacts = {
       ordinal: record.ordinal,
       method: parsed.data.request.method,

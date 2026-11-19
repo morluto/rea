@@ -77,6 +77,7 @@ export const UNIT_LAYERS = Object.freeze(
       "il2cpp",
       "inspector",
       "javascript",
+      "java",
       "jeb",
       "kuna",
       "model",
@@ -278,6 +279,8 @@ export const ENTRY_FILES = Object.freeze(
         "DesktopBuildDoctorFacts.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
+        // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
+        "HostFileRead.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
@@ -317,6 +320,10 @@ export const ENTRY_FILES = Object.freeze(
         "Il2cppMetadataProvider.ts",
       ],
       inspector: ["V8InspectorProvider.ts", "providerIdentity.ts"],
+      java: [
+        "MavenGradleMetadataProvider.ts",
+        "MavenGradleMetadataProviderIdentity.ts",
+      ],
       javascript: [
         "analysis/JavaScriptAnalysisTransfer.ts",
         "analysis/JavaScriptAnalysisWorkerServer.ts",

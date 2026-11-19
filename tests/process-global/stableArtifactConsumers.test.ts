@@ -1,3 +1,7 @@
+import { MavenGradleMetadataProvider } from "../../src/java/MavenGradleMetadataProvider.js";
+import { MavenGradleMetadataService } from "../../src/application/java/MavenGradleMetadataService.js";
+import { inspectMavenGradleMetadataInputSchema } from "../../src/domain/java/mavenGradleMetadata.js";
+import { mavenPomFixture } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
 import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
@@ -209,17 +213,27 @@ it("preserves opaque NuGet decoder failures and the completed file identity", as
   }
 });
 
-it.each(["close failure", "close cancellation"])(
-  "retains only the completed NuGet file snapshot through %s and cleanup retry",
-  async (outcome) => {
+it.each(
+  ["close failure", "close cancellation"].flatMap((outcome) =>
+    ["NuGet", "Maven/Gradle"].map((kind) => ({ outcome, kind })),
+  ),
+)(
+  "retains only the completed $kind file snapshot through $outcome and cleanup retry",
+  async ({ outcome, kind }) => {
     const path = await selectedImage();
-    const bytes = await nugetNupkgFixture();
+    const bytes =
+      kind === "NuGet"
+        ? await nugetNupkgFixture()
+        : Buffer.from(mavenPomFixture);
     await writeFile(path, bytes);
     const controller = new AbortController();
-    const reason = { source: "NuGet file finalization" };
+    const reason = { source: `${kind} file finalization` };
     if (outcome === "close cancellation")
       fault.onClose = () => controller.abort(reason);
-    const service = new NugetNupkgService(new NugetNupkgProvider());
+    const service =
+      kind === "NuGet"
+        ? new NugetNupkgService(new NugetNupkgProvider())
+        : new MavenGradleMetadataService(new MavenGradleMetadataProvider());
     try {
       const result = await service.inspect(
         { path },
@@ -1123,6 +1137,7 @@ const stableArtifactProviders = [
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
   ["NuGet nupkg", () => new NugetNupkgProvider()],
+  ["Maven/Gradle metadata", () => new MavenGradleMetadataProvider()],
 ] as const;
 
 const fileFailureProviders = [
@@ -1136,6 +1151,11 @@ const inspectFileFailure = (
   signal?: AbortSignal,
 ) => {
   const options = signal === undefined ? undefined : { signal };
+  if (provider instanceof MavenGradleMetadataProvider)
+    return provider.inspect(
+      inspectMavenGradleMetadataInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof NugetNupkgProvider)
     return provider.inspect(
       inspectNugetNupkgInputSchema.parse({ path }),
@@ -1272,7 +1292,8 @@ it.each(
           provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
           provider instanceof PeResourcesProvider ||
-          provider instanceof NugetNupkgProvider
+          provider instanceof NugetNupkgProvider ||
+          provider instanceof MavenGradleMetadataProvider
             ? "ArtifactOperationError"
             : "ProviderAdapterError"),
       );

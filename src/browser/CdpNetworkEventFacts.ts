@@ -1,4 +1,5 @@
 import {
+  browserResponseStatusSchema,
   observeBrowserUrl,
   type BrowserUrlObservation,
   type SanitizedBrowserUrl,
@@ -59,13 +60,13 @@ const readCdpResponseFacts = (
   };
 };
 
-/** Omission is unknown; a supplied non-number is a protocol failure. */
+/** Omission is unknown. A malformed supplied status is a protocol failure. */
 const readResponseStatus = (value: unknown): CdpResponseFacts["status"] => {
   if (value === undefined) return ok(null);
-  const status = numberValue(value);
-  return status === undefined
-    ? err({ _tag: "InvalidCdpResponseStatus" })
-    : ok(status);
+  const status = browserResponseStatusSchema.safeParse(value);
+  return status.success
+    ? ok(status.data)
+    : err({ _tag: "InvalidCdpResponseStatus" });
 };
 
 type ScopedCdpResponse =

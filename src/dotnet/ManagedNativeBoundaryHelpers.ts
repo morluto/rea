@@ -63,7 +63,6 @@ const flagsHex = (value: number): string =>
 export const parseModuleRefs = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
   issues: ManagedParseIssue[],
 ): readonly ModuleRef[] => {
   const refs: ModuleRef[] = [];
@@ -78,7 +77,6 @@ export const parseModuleRefs = (
           bytes,
           layout,
           cursor.readIndex(layout.stringIndexSize),
-          heapExtent,
         ),
       });
     }, issues);
@@ -89,7 +87,6 @@ export const parseModuleRefs = (
 export const parseFields = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
   issues: ManagedParseIssue[],
 ): ReadonlyMap<string, MemberCore> => {
   const fields = new Map<string, MemberCore>();
@@ -101,7 +98,7 @@ export const parseFields = (
         layout,
         row,
       );
-      const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
+      const name = readMetadataString(bytes, layout, nameIndex);
       fields.set(token, {
         token,
         rowOffset,
@@ -119,7 +116,6 @@ export const parseFields = (
 export const parseMethods = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
   issues: ManagedParseIssue[],
 ): ReadonlyMap<string, MemberCore> => {
   const methods = new Map<string, MemberCore>();
@@ -135,7 +131,7 @@ export const parseMethods = (
         nameIndex,
         implementation,
       } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
+      const name = readMetadataString(bytes, layout, nameIndex);
       methods.set(token, {
         token,
         rowOffset,
@@ -154,7 +150,6 @@ export const parseMethods = (
 interface ParseImplMapsContext {
   readonly bytes: Buffer;
   readonly layout: ManagedMetadataLayout;
-  readonly heapExtent: number;
   readonly modules: readonly ModuleRef[];
   readonly members: ReadonlyMap<string, MemberCore>;
   readonly issues: ManagedParseIssue[];
@@ -163,7 +158,6 @@ interface ParseImplMapsContext {
 export const parseImplMaps = ({
   bytes,
   layout,
-  heapExtent,
   modules,
   members,
   issues,
@@ -174,7 +168,7 @@ export const parseImplMaps = ({
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
       const cursor = metadataRowCursor(bytes, layout, 28, row);
-      const mappingFlags = cursor.readUInt16();
+      const mappingFlags = cursor.u16();
       const memberForwardedOffset = cursor.offset;
       const memberForwardedRaw = cursor.readIndex(
         layout.codedIndexSize("MemberForwarded"),
@@ -201,7 +195,6 @@ export const parseImplMaps = ({
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        heapExtent,
       );
       const importScopeOffset = cursor.offset;
       const importScopeRow = cursor.readIndex(layout.tableIndexSize(26));
@@ -431,7 +424,7 @@ export const buildNativeBoundaryInspection = ({
           target,
           bytes.length,
           layout,
-          inventory.module,
+          inventory,
           issues,
         ),
         cli_native: cliNative(pe.cli),

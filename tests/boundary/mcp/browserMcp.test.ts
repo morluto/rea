@@ -1041,7 +1041,7 @@ const artifactOf = (value: unknown): unknown => {
   return normalized.artifact;
 };
 
-it.each([24, 32, "crc"])(
+it.each([24, 32, "crc", "invalid interlace"])(
   "rejects corrupt captured PNG through MCP: %s",
   async (kind) => {
     const bytes = Buffer.from(
@@ -1049,6 +1049,10 @@ it.each([24, 32, "crc"])(
       "base64",
     );
     if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+    if (kind === "invalid interlace") {
+      bytes[28] = 2;
+      bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+    }
     const data = (
       typeof kind === "number" ? bytes.subarray(0, kind) : bytes
     ).toString("base64");
