@@ -42,6 +42,8 @@ import {
 import {
   bindingHasMemberWrites,
   bindingProjectedContentsMayChangeAt,
+  semanticAmbientArrayIterationUnknown,
+  semanticArrayPrototypeIterationMayChange,
 } from "./javascriptSemanticEffectLog.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
@@ -125,23 +127,6 @@ interface MutationSelectionContext {
 }
 
 type ValueEffect = "write" | "escape";
-
-/** Only replacing or possibly selecting an iterator-bearing prototype slot changes iteration. */
-const arrayPrototypeIterationMayChange = (path: PropertyPath): boolean => {
-  // Array.prototype and Object.prototype are on native arrays' prototype
-  // chain. Their default constructor.prototype pairs return to the same owner.
-  let offset = 0;
-  while (path[offset] === "constructor" && path[offset + 1] === "prototype")
-    offset += 2;
-  const key = path[offset];
-  return (
-    key === undefined ||
-    key === null ||
-    typeof key === "object" ||
-    semanticArrayIndex(key) !== null ||
-    key === "__proto__"
-  );
-};
 
 /** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
 
@@ -782,7 +767,7 @@ export function* collectSemanticMemberMutationsSteps(
       recordRequiredEffect("node:process", path.slice(2), "write", node);
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
-  state.arrayIterationUnknown = false;
+  state.arrayIterationUnknown = semanticAmbientArrayIterationUnknown(state);
   // Definition collection finishes before this phase, so a scope's bindings no
   // longer change and one node resolves to one binding. Repeated visits of the
   // same node otherwise repeat the same scope walk.
@@ -1135,14 +1120,16 @@ export function* collectSemanticMemberMutationsSteps(
           if (
             (["Array", "Object"].includes(expression.name) &&
               (current.path[0] === "prototype" || current.path[0] === null) &&
-              arrayPrototypeIterationMayChange(current.path.slice(1))) ||
+              semanticArrayPrototypeIterationMayChange(
+                current.path.slice(1),
+              )) ||
             (["globalThis", "global", "window", "self"].includes(
               expression.name,
             ) &&
               (["Array", "Object"].includes(String(current.path[0])) ||
                 current.path[0] === null) &&
               (current.path[1] === "prototype" || current.path[1] === null) &&
-              arrayPrototypeIterationMayChange(current.path.slice(2)))
+              semanticArrayPrototypeIterationMayChange(current.path.slice(2)))
           )
             state.arrayIterationUnknown = true;
           if (lookup?.kind !== "uncertain-binding") continue;
@@ -1669,10 +1656,10 @@ export function* collectSemanticMemberMutationsSteps(
       t.isArrayExpression(expression) &&
       ((path[0] === "__proto__" &&
         (effect === "escape" || path.length > 1) &&
-        arrayPrototypeIterationMayChange(path.slice(1))) ||
+        semanticArrayPrototypeIterationMayChange(path.slice(1))) ||
         (path[0] === "constructor" &&
           path[1] === "prototype" &&
-          arrayPrototypeIterationMayChange(path.slice(2))))
+          semanticArrayPrototypeIterationMayChange(path.slice(2))))
     )
       state.arrayIterationUnknown = true;
     const references = referencedValues(

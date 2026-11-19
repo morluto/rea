@@ -1835,6 +1835,30 @@ it.each([
     "candidate",
   ],
   [
+    "Object.getPrototypeOf aliases the shared array prototype",
+    'const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier call writes through Reflect.getPrototypeOf",
+    'change();function change(){const proto=Reflect.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};}const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an unrelated property on the shared array prototype",
+    'const proto=Reflect.getPrototypeOf([]);proto.note=1;const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "a lexical Object replacement returns a fresh receiver",
+    'const Object={getPrototypeOf:()=>({})};const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
     "shared next changed before acquisition",
     'const pairs=[["first"]];Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});const [[selected]]=pairs;pairs[0][0]="later";',
     ["0", "0"],

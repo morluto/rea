@@ -39,6 +39,7 @@ const expectedDependencies = [
   ["arrayObject", ["0", "mode"]],
   ["nestedElement", ["items", "0"]],
   ["innerElement", ["0", "0"]],
+  ["aliasedPrototypeElement", ["0", "0"], "candidate"],
   ["selected", ["0"], "candidate"],
   ["beforeClose", ["label"]],
   ["consumed", ["items", "0", "mode"]],
@@ -109,6 +110,19 @@ cliTest(
   `,
     );
     await writeFile(join(root, "iterator-close.js"), iteratorCloseSource);
+    await writeFile(
+      join(root, "array-prototype-alias.js"),
+      `
+      change();
+      function change() {
+        const proto = Reflect.getPrototypeOf([]);
+        proto[Symbol.iterator] = function* () {};
+      }
+      const pairs = [["first"]];
+      const [[aliasedPrototypeElement]] = pairs;
+      pairs[0][0] = "later";
+      `,
+    );
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
@@ -155,6 +169,7 @@ cliTest(
       "arrayObject",
       "nestedElement",
       "innerElement",
+      "aliasedPrototypeElement",
       "selected",
       "beforeClose",
       "consumed",
@@ -187,7 +202,11 @@ cliTest(
           ]),
         },
       };
-      if (name === "selected" || name === "afterClose")
+      if (
+        name === "selected" ||
+        name === "afterClose" ||
+        name === "aliasedPrototypeElement"
+      )
         expect(trace.json).not.toMatchObject(relation);
       else expect(trace.json).toMatchObject(relation);
     }
