@@ -11,6 +11,7 @@ import {
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
+import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { constants as bufferConstants } from "node:buffer";
 import {
   parsePeResources,
@@ -470,6 +471,8 @@ const locateElfNotes = async (
     if (found.length > 0 && opaque !== undefined) throw formatFailure(opaque);
     return found;
   }
+  // A malformed section declaration cannot supply a fallback note location.
+  if (!validateElfSectionTableFields(raw.value).ok) return [];
   const sections = await readElfTables(carrier, {
     offset: shoff,
     count: shnum,

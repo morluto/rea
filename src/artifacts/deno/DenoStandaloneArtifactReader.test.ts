@@ -7,7 +7,11 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
-import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
+import {
+  elfNote,
+  elfNoteFixture,
+  withElf64DirectSectionCount,
+} from "../../native/elf/ElfNotes.fixture.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
@@ -943,6 +947,29 @@ it("fails closed when a SUI note sits beside extended section numbering", async 
     status: "present",
     failure: { reason: "format" },
   });
+});
+
+it("records a reserved direct section count beside an independently confirmed program note", async () => {
+  const bytes = withElf64DirectSectionCount(denoElf(), 0xff00);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("reserved direct section count"),
+    },
+  });
+});
+
+it("does not confirm a Deno carrier from a section note in a malformed table", async () => {
+  const bytes = withElf64DirectSectionCount(
+    gnuElf("section", suiNote()),
+    0xff00,
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
 });
 
 it("reaches a SUI section note past an unreadable program table", async () => {

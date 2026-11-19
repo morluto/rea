@@ -15,7 +15,7 @@ import {
   DT_SYMTAB,
   walkElfDynamicTable,
 } from "../../domain/elfDynamicEntry.js";
-import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
+import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
   admitElfLoadSegment,
@@ -670,8 +670,8 @@ export const readElfDependenciesSteps = function* (
     fail(`ELF type ${String(type)} is not a loadable ET_EXEC or ET_DYN image.`);
   const raw = readElfRawTableDeclarations(bytes, header);
   if (!raw.ok) return fail(raw.error.message);
-  const presence = validateElfSectionTablePresence(raw.value);
-  if (!presence.ok) return fail(presence.error);
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return fail(sectionTable.error);
   const { programs, sections } = raw.value;
   if (
     programs.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
@@ -685,7 +685,7 @@ export const readElfDependenciesSteps = function* (
   const shentsize = sections.width;
   const shnum = sections.count;
   const shstrndx = sections.namesIndex;
-  if (phnum === 0xffff || shnum === 0xffff || shstrndx === 0xffff)
+  if (phnum === 0xffff || shstrndx === 0xffff)
     throw new BinaryFormatFailure(
       "unsupported",
       "ELF extended numbering is unsupported.",
