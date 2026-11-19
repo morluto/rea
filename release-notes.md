@@ -551,6 +551,7 @@
 * **pcap:** refuse a DNS message with more than one OPT record ([46e9871](https://github.com/morluto/rea/commit/46e9871e59e34702a607823b9c7820640c3ecf82)), closes [#10211](https://github.com/morluto/rea/issues/10211)
 * **pcap:** report a refused tool launch as an unavailable tool ([#10553](https://github.com/morluto/rea/issues/10553)) ([44fedc8](https://github.com/morluto/rea/commit/44fedc8fdd6193ef2cfbeb127b9a5cdf65b443df))
 * **pcap:** resolve tshark and capinfos on the Windows PATH ([#11734](https://github.com/morluto/rea/issues/11734)) ([8a10fa9](https://github.com/morluto/rea/commit/8a10fa9c006a4b1032e713a4b862773039713049))
+* **pcap:** retain admitted DNS truncation facts ([#12373](https://github.com/morluto/rea/issues/12373)) ([7eac002](https://github.com/morluto/rea/commit/7eac002d5e99bf5d9eb552f00e569b0862e7881d))
 * **pe:** admit Authenticode nesting depth of signed Windows binaries ([#12082](https://github.com/morluto/rea/issues/12082)) ([0b95fa7](https://github.com/morluto/rea/commit/0b95fa7d6977efd733efc2adc824d0cb9e7121d9))
 * **pe:** enforce DER extension critical encoding ([#10212](https://github.com/morluto/rea/issues/10212)) ([937d10d](https://github.com/morluto/rea/commit/937d10df1c709c8b2f5af8d9406ef735d0b3a2dc))
 * **pe:** frame certificate entries before count admission ([15150b0](https://github.com/morluto/rea/commit/15150b017a1012ecc3bbd9e992f5086457a527c6))
