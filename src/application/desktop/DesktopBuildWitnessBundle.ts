@@ -32,6 +32,7 @@ import {
   guestFileAnswerWorkingBytes,
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
+import { readComputerScreenshotBytes } from "../../desktop/ComputerScreenshot.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import type { HostFileReader } from "../../ports/HostFileReader.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
@@ -136,10 +137,9 @@ export const judgeScreenTask = async (
       { format: "jpeg", quality: 70 },
       signal,
     );
-    const image = shot.content.find((block) => block.type === "image")?.data;
-    if (shot.isError || typeof image !== "string")
-      throw new Error("the computer took no screenshot");
-    const screen = Buffer.from(image, "base64");
+    const screen = readComputerScreenshotBytes(shot);
+    if (screen === undefined)
+      throw new Error("the computer did not return valid screenshot bytes");
     const verifier = join(
       bundle.path,
       "artifacts",

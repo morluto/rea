@@ -20,7 +20,8 @@ it("preserves earlier judge outcomes when a later check fails cleanup", async ()
     },
     {
       path: "/bundle",
-      judge: async (_verifier, check) => {
+      judge: async (_verifier, check, screen) => {
+        expect(screen).toEqual(Buffer.from("image"));
         if (check.id === "second") throw failure;
         return { id: check.id, passed: true, description: "first completed" };
       },
@@ -48,3 +49,37 @@ it("preserves earlier judge outcomes when a later check fails cleanup", async ()
     },
   });
 });
+
+it.each(["aW1hZ2U=!", "aW1hZ2V=", ""])(
+  "refuses malformed screenshot data %j before invoking a screen judge",
+  async (data) => {
+    let judged = false;
+    const result = await judgeScreenTask(
+      {
+        callTool: async () => ({
+          isError: false,
+          content: [{ type: "image", data }],
+          structured: null,
+        }),
+      },
+      {
+        path: "/bundle",
+        judge: async (_verifier, check) => {
+          judged = true;
+          return { id: check.id, passed: true, description: "accepted" };
+        },
+      },
+      {
+        name: "test",
+        prompt: "test",
+        checks: [{ kind: "screen_judge", id: "screen", question: "Changed?" }],
+      },
+      new AbortController().signal,
+    );
+    expect(judged).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { userMessage: expect.stringContaining("valid screenshot") },
+    });
+  },
+);
