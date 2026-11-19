@@ -105,13 +105,12 @@ application root with neither, such as an empty inventory, has no platform.
 
 ## macOS bundle anatomy
 
-`bundles` lists each application root and every nested bundle under it. A
-nested bundle is a directory with a recognized bundle extension, or a dotted
-directory with bundle anatomy (`Contents/`, `Versions/`, or a root
-`Info.plist`), such as an Automator `.action`. The code-signing machinery
-treats a dotted directory as a bundle; an undotted directory is never one. Each
-bundle reports its `parent_path`, `layout`, `info_plist_path`,
-`executable_candidates`, and `signing_paths`.
+`bundles` lists each application root and nested directories with recognized
+bundle extensions. When you set `include_bundle_placement: true`, it also
+includes dotted directories with bundle anatomy (`Contents/`, `Versions/`, or
+a root `Info.plist`), such as an Automator `.action`. Each bundle reports its
+`parent_path`, `layout`, `info_plist_path`, `executable_candidates`, and
+`signing_paths`.
 
 | Layout                | Meaning         | Content directory                             |
 | --------------------- | --------------- | --------------------------------------------- |
