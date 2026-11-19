@@ -26,7 +26,7 @@ import {
 } from "../../domain/native/elfPointerRelocations.js";
 import {
   readElfImage,
-  readElfImageCooperative,
+  readElfImageFromDirectory,
 } from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,

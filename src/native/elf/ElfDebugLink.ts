@@ -4,6 +4,7 @@ import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   ArtifactReaderFailure,
+  assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
@@ -39,6 +40,10 @@ import {
   readElfImageCooperative,
 } from "../../domain/native/elfImage.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
+
+import { err, ok, type Result } from "../../domain/result.js";
+
+type PreparedCandidateImage = Result<ReturnType<typeof readElfImage>, unknown>;
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = ElfDebugLink;
@@ -608,7 +613,7 @@ const readCandidateIdentity = (
   totalBytes: number,
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
-  preparedImage?: ReturnType<typeof readElfImage>,
+  preparedImage?: PreparedCandidateImage,
 ): {
   readonly format: NonNullable<Report["candidate"]>["format"];
   readonly byte_order: NonNullable<Report["candidate"]>["byte_order"];
@@ -686,8 +691,10 @@ const readCandidateIdentity = (
   let imageBudgetExceeded = false;
   let frameAllowance: ZstandardFrameAllowanceError | undefined;
   try {
+    if (preparedImage !== undefined && !preparedImage.ok)
+      throw preparedImage.error;
     image =
-      preparedImage ??
+      preparedImage?.value ??
       readElfImage(content, ELF_DEBUG_LINK_OPERATION, input.max_file_bytes);
   } catch (cause) {
     frameAllowance = zstandardFrameAllowanceCause(cause);
@@ -865,7 +872,7 @@ export const verifyElfDebugCandidate = (
   report: Report,
   candidate: ElfDebugCandidateFile,
   input: InspectElfDebugLinkInput,
-  preparedImage?: ReturnType<typeof readElfImage>,
+  preparedImage?: PreparedCandidateImage,
 ): Report => {
   const identityArtifact = {
     path: candidate.path,
@@ -941,18 +948,29 @@ export const verifyElfDebugCandidateCooperative = async (
   candidate: ElfDebugCandidateFile,
   input: InspectElfDebugLinkInput,
   signal?: AbortSignal,
-): Promise<Report> =>
-  verifyElfDebugCandidate(
-    report,
-    candidate,
-    input,
-    await readElfImageCooperative(
-      candidate.prefix,
-      ELF_DEBUG_LINK_OPERATION,
-      debugLinkPause(signal),
-      input.max_file_bytes,
-    ),
-  );
+): Promise<Report> => {
+  assertArtifactReadActive(signal);
+  if (
+    candidate.prefix.length !== candidate.bytes ||
+    !hasElfMagic(candidate.prefix)
+  )
+    return verifyElfDebugCandidate(report, candidate, input);
+  let preparedImage: PreparedCandidateImage;
+  try {
+    preparedImage = ok(
+      await readElfImageCooperative(
+        candidate.prefix,
+        ELF_DEBUG_LINK_OPERATION,
+        debugLinkPause(signal),
+        input.max_file_bytes,
+      ),
+    );
+  } catch (cause) {
+    assertArtifactReadActive(signal);
+    preparedImage = err(cause);
+  }
+  return verifyElfDebugCandidate(report, candidate, input, preparedImage);
+};
 
 /** Keep the decoded image linkage when the selected candidate cannot be read. */
 export const unreadableElfDebugCandidate = (report: Report): Report => ({

@@ -44,7 +44,9 @@ import {
   continueGnuDebuglinkCrc32,
   parseElfDebugLinkCooperative,
   unreadableElfDebugCandidate,
+  verifyElfDebugCandidate,
   verifyElfDebugCandidateCooperative,
+  type ElfDebugCandidateFile,
 } from "./ElfDebugLink.js";
 import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
@@ -73,6 +75,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
   async inspect(input: InspectElfDebugLinkInput, options?: ExecutionOptions) {
     let field: SelectedField = "path";
     let candidatePhase: CandidatePhase | undefined;
+    let candidate: StableArtifactStream | undefined;
     let crc32 = 0;
     let snapshot: StableArtifactSnapshot | undefined;
     try {
@@ -98,7 +101,6 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
         if (input.candidate_path === undefined) return ok(image);
         field = "candidate_path";
         candidatePhase = { report: image, path: input.candidate_path };
-        let candidate;
         try {
           // Stream the whole candidate for the debuglink CRC32 and SHA-256.
           // Only a file within max_file_bytes is retained for ELF decoding;
@@ -139,12 +141,12 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           candidatePhase === undefined
             ? { imageSnapshot: snapshot }
             : {
-                retained: await candidatePhaseObservation(
+                retained: candidatePhaseObservation(
                   candidatePhase,
                   cause,
                   crc32,
                   input,
-                  options?.signal,
+                  candidate,
                 ),
               },
         ),
@@ -155,6 +157,18 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
 
 type CandidatePhase = { readonly report: ElfDebugLink; readonly path: string };
 
+const candidateFile = (
+  phase: CandidatePhase,
+  candidate: StableArtifactStream,
+  crc32: number,
+): ElfDebugCandidateFile => ({
+  path: phase.path,
+  sha256: candidate.sha256,
+  bytes: candidate.size,
+  crc32,
+  prefix: candidate.prefix,
+});
+
 const verifiedCandidate = (
   phase: CandidatePhase,
   candidate: StableArtifactStream,
@@ -164,39 +178,60 @@ const verifiedCandidate = (
 ): Promise<ElfDebugLink> =>
   verifyElfDebugCandidateCooperative(
     phase.report,
-    {
-      path: phase.path,
-      sha256: candidate.sha256,
-      bytes: candidate.size,
-      crc32,
-      prefix: candidate.prefix,
-    },
+    candidateFile(phase, candidate, crc32),
     input,
     signal,
   );
 
-/**
- * The decoded image survives a failed candidate phase. A candidate stream that
- * completed before cancellation or a failed close keeps its full comparison;
- * otherwise only the image linkage is retained, without any comparison.
- */
-const candidatePhaseObservation = async (
+const unverifiedCandidateObservation = (
+  report: ElfDebugLink,
+  candidate: ElfDebugCandidateFile,
+): ElfDebugLink => ({
+  ...report,
+  candidate: {
+    path: candidate.path,
+    sha256: candidate.sha256,
+    bytes: candidate.bytes,
+    format: null,
+    byte_order: null,
+    debug_info: "unknown",
+    symtab: "unknown",
+  },
+  limitations: [
+    ...report.limitations,
+    "The candidate read completed. Its ELF comparison did not complete.",
+  ],
+});
+
+/** Retain the completed stream without restarting an interrupted comparison. */
+const candidatePhaseObservation = (
   phase: CandidatePhase,
   cause: unknown,
   crc32: number,
   input: InspectElfDebugLinkInput,
-  signal?: AbortSignal,
-): Promise<AnalysisPartialObservation> => {
+  candidate: StableArtifactStream | undefined,
+): AnalysisPartialObservation => {
+  if (candidate !== undefined)
+    return unverifiedCandidateObservation(
+      phase.report,
+      candidateFile(phase, candidate, crc32),
+    );
   const completed = completedStableArtifactStream(cause);
-  return completed === undefined
-    ? {
-        ...phase.report,
-        limitations: [
-          ...phase.report.limitations,
-          ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-        ],
-      }
-    : verifiedCandidate(phase, completed, crc32, input, signal);
+  if (completed === undefined)
+    return {
+      ...phase.report,
+      limitations: [
+        ...phase.report.limitations,
+        ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+      ],
+    };
+  const file = candidateFile(phase, completed, crc32);
+  // A stream whose close failed can still supply a complete comparison.
+  try {
+    return verifyElfDebugCandidate(phase.report, file, input);
+  } catch {
+    return unverifiedCandidateObservation(phase.report, file);
+  }
 };
 
 /** Enough retained bytes for an ELF32 or ELF64 fixed header. */
