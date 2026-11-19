@@ -427,8 +427,9 @@ export const readMachoCommandNames = async (
         dylib = readMachoDylibFields(
           await exact(
             at + MACHO_DYLIB_FIELDS_OFFSET,
-            machoDylibFieldsSize(offset),
+            machoDylibFieldsSize(frame.command, offset),
           ),
+          frame.command,
           offset,
           table.littleEndian,
         );

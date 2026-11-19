@@ -925,6 +925,24 @@ describe("Mach-O load command reader: decodes thin-image load commands", () => {
     });
   });
 
+  it("keeps marker-shaped timestamps on legacy lazy dylib commands", async () => {
+    const facts = await read(
+      machoImage({
+        commands: [
+          dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/libLazy.dylib", 0x09),
+        ],
+      }),
+    );
+    if (facts.status !== "parsed") throw new Error(facts.status);
+    expect(facts.slices[0]?.dependencies[0]).toMatchObject({
+      command: "LC_LAZY_LOAD_DYLIB",
+      encoding: "dylib_command",
+      install_name: "@rpath/libLazy.dylib",
+      weak: false,
+      delayed_init: false,
+    });
+  });
+
   it("decodes dylib_use_command flags", async () => {
     const facts = await read(
       machoImage({
