@@ -10,16 +10,14 @@ import {
 /** Raw section observation before nesting resolution. */
 export interface SectionDraft {
   readonly absoluteBase: number;
-  readonly localBase: number;
   readonly headerLength: number;
   readonly declaredLength: number;
   /** Bytes actually covered inside the region (clamped on truncation). */
   readonly observedLength: number;
   readonly truncated: boolean;
-  readonly malformed?: boolean;
-  readonly encapsulatesSections?: boolean;
+  readonly malformed: boolean;
+  readonly encapsulatesSections: boolean;
   readonly typeCode: number;
-  readonly typeName: string;
   readonly compression:
     | { readonly kind: "none" }
     | {
@@ -36,16 +34,41 @@ export interface SectionDraft {
         readonly dataOffset: number;
         readonly attributes: number | null;
       };
-  /** Payload window in this region's buffer, or null for outer frames. */
+  /** Payload window in this region's buffer, or null when malformed. */
   readonly payload: { readonly start: number; readonly end: number } | null;
+}
+
+function readCommonHeader(reader: BinaryReader, start: number, end: number) {
+  if (start + SECTION_LAYOUT.commonLength > end) return null;
+  const compactSize = reader.u16(start) | (reader.u8(start + 2) << 16);
+  const extended = compactSize === SECTION_LAYOUT.largeSectionMarker;
+  const commonLength = extended
+    ? SECTION_LAYOUT.extendedLength
+    : SECTION_LAYOUT.commonLength;
+  if (start + commonLength > end) return null;
+  return {
+    commonLength,
+    declaredLength: extended
+      ? reader.u32(start + SECTION_LAYOUT.extendedSizeOffset)
+      : compactSize,
+    typeCode: reader.u8(start + SECTION_LAYOUT.typeOffset),
+  };
+}
+
+/** A bounded first frame establishes a section chain regardless of payload validity. */
+export function startsWithSectionFrame(region: ScanRegion): boolean {
+  const reader = new BinaryReader(region.buffer, true, "FFS sections");
+  const header = readCommonHeader(reader, region.start, region.end);
+  return (
+    header !== null &&
+    header.declaredLength >= header.commonLength &&
+    header.declaredLength <= region.end - region.start
+  );
 }
 
 /** Read one PI section chain, with each child aligned relative to its stream. */
 export function walkSections(
   region: ScanRegion,
-  localStart: number,
-  localEnd: number,
-  typeNameFor: (typeCode: number) => string,
   reserve: () => boolean = () => true,
 ): {
   sections: SectionDraft[];
@@ -53,20 +76,14 @@ export function walkSections(
 } {
   const reader = new BinaryReader(region.buffer, true, "FFS sections");
   const sections: SectionDraft[] = [];
+  const { start: localStart, end: localEnd } = region;
   let cursor = localStart;
   while (cursor + SECTION_LAYOUT.commonLength <= localEnd) {
     if (!reserve())
       return { sections, remainder: { kind: "limited", start: cursor } };
-    const compactSize = reader.u16(cursor) | (reader.u8(cursor + 2) << 16);
-    const typeCode = reader.u8(cursor + SECTION_LAYOUT.typeOffset);
-    const extended = compactSize === SECTION_LAYOUT.largeSectionMarker;
-    const commonLength = extended
-      ? SECTION_LAYOUT.extendedLength
-      : SECTION_LAYOUT.commonLength;
-    if (cursor + commonLength > localEnd) break;
-    const declaredLength = extended
-      ? reader.u32(cursor + SECTION_LAYOUT.extendedSizeOffset)
-      : compactSize;
+    const header = readCommonHeader(reader, cursor, localEnd);
+    if (header === null) break;
+    const { commonLength, declaredLength, typeCode } = header;
     // Even an undersized declaration has a common header we already observed.
     const observedLength = Math.max(
       commonLength,
@@ -127,15 +144,13 @@ export function walkSections(
 
     sections.push({
       absoluteBase: absoluteOffset(region, cursor),
-      localBase: cursor,
       headerLength,
       declaredLength,
       observedLength,
       truncated,
-      ...(malformed ? { malformed: true } : {}),
-      ...(encapsulatesSections ? { encapsulatesSections: true } : {}),
+      malformed,
+      encapsulatesSections,
       typeCode,
-      typeName: typeNameFor(typeCode),
       compression,
       payload: malformed
         ? null
@@ -151,30 +166,6 @@ export function walkSections(
   return {
     sections,
     remainder: cursor < localEnd ? { kind: "unparsed", start: cursor } : null,
-  };
-}
-
-/** Payload window of one section as a sub-region; null when empty. */
-export function sectionPayloadRegion(
-  region: ScanRegion,
-  section: SectionDraft,
-): ScanRegion | null {
-  if (section.payload == null) {
-    return null;
-  }
-  const start = Math.min(section.payload.start, region.end);
-  const end = Math.min(section.payload.end, region.end);
-  if (start >= end) {
-    return null;
-  }
-  return {
-    buffer: region.buffer,
-    start,
-    end,
-    origin: absoluteOffset(region, start),
-    ...(region.sourceStream === undefined
-      ? {}
-      : { sourceStream: region.sourceStream }),
   };
 }
 

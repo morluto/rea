@@ -27,7 +27,7 @@ import {
 import {
   AMD_ZLIB_HEADER_LENGTH,
   peelAmiZlibPayload,
-  sectionPayloadRegion,
+  startsWithSectionFrame,
   walkSections,
 } from "./FfsSections.js";
 import {
@@ -601,9 +601,7 @@ export const scanUefiImage = async (
           fileHeader.typeCode >= 0x02 && fileHeader.typeCode <= 0x0f;
         if (sectioned) {
           uiString = await walkSectionChain(
-            fileArea,
-            bodyStart,
-            observedEnd,
+            subRegion(fileArea, bodyStart, observedEnd),
             logicalPath,
             depth,
             volume.offset,
@@ -692,20 +690,12 @@ export const scanUefiImage = async (
 
   const walkSectionChain = async (
     region: ScanRegion,
-    start: number,
-    end: number,
     parentLogicalPath: string,
     depth: number,
     volumeOffset: number,
     records: SectionBuilder[],
   ): Promise<string | null> => {
-    const walked = walkSections(
-      region,
-      start,
-      end,
-      sectionTypeNameFor,
-      reserve,
-    );
+    const walked = walkSections(region, reserve);
     if (walked.remainder !== null) {
       const limited = walked.remainder.kind === "limited";
       noteOmission(
@@ -713,7 +703,7 @@ export const scanUefiImage = async (
         region,
         parentLogicalPath,
         absoluteOffset(region, walked.remainder.start),
-        absoluteOffset(region, end),
+        absoluteOffset(region, region.end),
         limited
           ? `Structural record limit reached during section walk under ${parentLogicalPath}.`
           : `Section chain under ${parentLogicalPath} ends with incomplete framing.`,
@@ -727,7 +717,6 @@ export const scanUefiImage = async (
         draft.payload === null
           ? null
           : payloadOf(region, draft.payload.start, draft.payload.end);
-      if (payload !== null) payloads.set(logicalPath, payload);
       const compression = draft.compression;
       const record: SectionBuilder = {
         logical_path: logicalPath,
@@ -738,9 +727,10 @@ export const scanUefiImage = async (
         length: draft.observedLength,
         declared_length: draft.declaredLength,
         truncated: draft.truncated,
-        malformed: draft.malformed ?? false,
+        malformed: draft.malformed,
         type_code: draft.typeCode,
-        type_name: draft.typeName as SectionBuilder["type_name"],
+        type_name: (SECTION_TYPE_NAME_BY_CODE[draft.typeCode] ??
+          "unknown") as SectionBuilder["type_name"],
         sha256: sha256Hex(payload?.bytes ?? Buffer.alloc(0)),
         compression:
           compression.kind === "none"
@@ -755,14 +745,24 @@ export const scanUefiImage = async (
       };
       records.push(record);
       if (draft.truncated || draft.malformed) {
-        incompleteFraming = true;
-        noteLimitations([
-          `Section ${logicalPath} has ${draft.malformed ? "malformed framing" : "a truncated payload"} (declared ${draft.declaredLength}, observed ${draft.observedLength} bytes).`,
-        ]);
+        noteOmission(
+          draft.truncated ? "size-truncated" : "unparsed-region",
+          region,
+          logicalPath,
+          draft.absoluteBase,
+          draft.absoluteBase + draft.observedLength,
+          `Section ${logicalPath} framing is ${draft.malformed ? "malformed" : "truncated"}; declared ${draft.declaredLength} bytes, observed ${draft.observedLength}.`,
+        );
         continue;
       }
-      const payloadRegion = sectionPayloadRegion(region, draft);
-      if (payload === null || payloadRegion === null) continue;
+      if (draft.payload === null || payload === null) continue;
+      payloads.set(logicalPath, payload);
+      if (draft.payload.start === draft.payload.end) continue;
+      const payloadRegion = subRegion(
+        region,
+        draft.payload.start,
+        draft.payload.end,
+      );
       if (draft.typeCode === 0x15) {
         uiString ??= decodeUiString(payload.bytes);
       } else if (draft.typeCode === 0x17) {
@@ -786,8 +786,6 @@ export const scanUefiImage = async (
         } else {
           const childUi = await walkSectionChain(
             payloadRegion,
-            payloadRegion.start,
-            payloadRegion.end,
             logicalPath,
             depth + 1,
             volumeOffset,
@@ -849,8 +847,6 @@ export const scanUefiImage = async (
         } else {
           const childUi = await walkSectionChain(
             decodedRegion,
-            0,
-            decoded.bytes.length,
             logicalPath,
             depth + 1,
             volumeOffset,
@@ -985,20 +981,6 @@ const subRegion = (
   end,
   origin: absoluteOffset(region, start),
 });
-
-const sectionTypeNameFor = (code: number): string =>
-  SECTION_TYPE_NAME_BY_CODE[code] ?? "unknown";
-
-/** A complete leading frame takes precedence over volume magic in its body. */
-const startsWithSectionFrame = (region: ScanRegion): boolean => {
-  const probe = new Budget(1);
-  const {
-    sections: [first],
-  } = walkSections(region, region.start, region.end, sectionTypeNameFor, () =>
-    probe.tryCharge(1),
-  );
-  return first !== undefined && !first.truncated && !first.malformed;
-};
 
 const decodeUiString = (payload: Buffer): string | null => {
   const payloadReader = new BinaryReader(payload, true, "UEFI UI section");

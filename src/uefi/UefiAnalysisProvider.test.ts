@@ -1169,6 +1169,85 @@ it("uses common-header framing for an unknown decoded section and keeps its PE32
   }
 });
 
+it.each([
+  {
+    name: "GUID-defined",
+    declaredLength: 24,
+    buildMalformedSection: () => {
+      const section = buildGuidedSection({
+        definitionGuid: GUID_GUIDED,
+        body: Buffer.alloc(0),
+      });
+      section.writeUInt16LE(20, 20);
+      return section;
+    },
+  },
+  {
+    name: "compression",
+    declaredLength: 9,
+    buildMalformedSection: () => buildCompressionSection(Buffer.alloc(0), 0, 1),
+  },
+])(
+  "retains decoded siblings after a malformed $name section",
+  async ({ buildMalformedSection, declaredLength }) => {
+    const malformed = buildMalformedSection();
+    const file = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: amdZlibSection(
+        Buffer.concat([malformed, buildSection(0x10, MODULE_A)]),
+      ),
+    });
+    const directory = await createTestTempDirectory(
+      "rea-uefi-malformed-frame-",
+    );
+    const path = join(directory, "image.fd");
+    await writeFile(path, buildFv({ files: [file] }).buffer);
+
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      const sections = inspected.firmware_volumes[0]?.ffs_files[0]?.sections;
+      const source = sections?.[0]?.logical_path;
+      if (source === undefined) throw new Error("decoded source was lost");
+      expect(inspected.coverage).toBe("partial");
+      expect(sections?.slice(1)).toMatchObject([
+        { offset: 0, malformed: true, source_stream: source },
+        { offset: malformed.length, type_name: "pe32", source_stream: source },
+      ]);
+
+      const whole = expectOk(
+        await provider.execute(extractRequest(path, join(directory, "whole"))),
+      ).value.result as UefiExtractResult;
+      expect(whole.extraction_gaps).toMatchObject([
+        {
+          kind: "unparsed-region",
+          source_stream: source,
+          range: { offset: 0, length: declaredLength },
+        },
+      ]);
+
+      const selected = expectOk(
+        await provider.execute(
+          extractRequest(path, join(directory, "pe"), {
+            target: {
+              kind: "section",
+              offset: malformed.length,
+              source_stream: source,
+            },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(selected.coverage).toBe("complete");
+      expect(selected.extraction_gaps).toEqual([]);
+      expect(selected.files).toMatchObject([{ sha256: sha256(MODULE_A) }]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
 const verifyOutputLimitCoverage = async (
   section: Buffer,
   workerPath?: string,

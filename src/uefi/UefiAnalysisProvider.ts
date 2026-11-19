@@ -655,18 +655,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         for (const section of file.sections) {
           if (!includes(section.logical_path)) continue;
           checkpoint();
+          if (section.truncated || section.malformed) continue;
           const path = section.logical_path;
           recordDerivation(section.source_stream);
           const payload = scan.payloads.get(path);
-          if (section.truncated || section.malformed) {
-            gap(
-              section.truncated ? "size-truncated" : "unparsed-region",
-              path,
-              section.source_stream,
-              { offset: section.offset, length: section.length },
-              `Section framing is ${section.malformed ? "malformed" : "truncated"}; declared ${section.declared_length} bytes, observed ${section.length}.`,
-            );
-          } else if (scan.decodedStreams.has(path)) {
+          if (scan.decodedStreams.has(path)) {
             recordDerivation(path);
           } else if (section.compression.kind !== "none") {
             const failure = scan.decodeGaps.get(path);

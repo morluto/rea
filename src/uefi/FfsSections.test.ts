@@ -13,27 +13,16 @@ import {
   walkSections,
 } from "./FfsSections.js";
 
-const REGION_NAMES: Readonly<Record<number, string>> = {
-  0x01: "compression",
-  0x02: "guid-defined",
-  0x10: "pe32",
-  0x15: "user-interface",
-  0x17: "firmware-volume-image",
-};
-
-const typeNameFor = (code: number): string => REGION_NAMES[code] ?? "unknown";
-
 it("walks a two-section chain with clean payload windows", () => {
   const ui = buildSection(0x15, Buffer.from("Module"));
   const pe = buildSection(0x10, Buffer.from([0x4d, 0x5a, 0x90]));
   const chain = Buffer.concat([ui, pe]);
   const region = imageRegion(chain, 0, chain.length);
-  const walked = walkSections(region, 0, chain.length, typeNameFor);
+  const walked = walkSections(region);
   expect(walked.remainder).toBeNull();
   expect(walked.sections).toHaveLength(2);
   const [uiDraft, peDraft] = walked.sections;
   expect(uiDraft?.typeCode).toBe(0x15);
-  expect(uiDraft?.typeName).toBe("user-interface");
   expect(uiDraft?.headerLength).toBe(4);
   expect(uiDraft?.payload).toEqual({ start: 4, end: 4 + 6 });
   // The PE section starts after the first section's 4-byte chain alignment.
@@ -47,7 +36,7 @@ it("classifies a guided LZMA section through its definition GUID", () => {
   ]);
   const section = buildLzmaGuidedSection(compressed);
   const region = imageRegion(section, 0, section.length);
-  const walked = walkSections(region, 0, section.length, typeNameFor);
+  const walked = walkSections(region);
   const draft = walked.sections[0];
   expect(draft?.compression).toMatchObject({
     kind: "lzma-custom",
@@ -67,7 +56,7 @@ it("classifies the AMI-zlib guided section and peels its AMD header", () => {
     body: Buffer.concat([amdHeader, stream]),
   });
   const region = imageRegion(section, 0, section.length);
-  const walked = walkSections(region, 0, section.length, typeNameFor);
+  const walked = walkSections(region);
   expect(walked.sections).toHaveLength(1);
   const draft = walked.sections[0];
   expect(draft?.compression).toMatchObject({
@@ -92,8 +81,7 @@ it("marks unknown definition GUIDs instead of guessing", () => {
     body: raw,
   });
   const region = imageRegion(section, 0, section.length);
-  const draft = walkSections(region, 0, section.length, typeNameFor)
-    .sections[0];
+  const draft = walkSections(region).sections[0];
   if (draft?.compression.kind !== "unknown-guid") {
     throw new Error(
       `expected unknown-guid, got ${draft?.compression.kind ?? "none"}`,
@@ -113,7 +101,7 @@ it("records a truncated final section instead of inventing one", () => {
   ]);
   const chain = Buffer.concat([ui, truncated]);
   const region = imageRegion(chain, 0, chain.length);
-  const walked = walkSections(region, 0, chain.length, typeNameFor);
+  const walked = walkSections(region);
   expect(walked.sections).toHaveLength(2);
   const last = walked.sections[1];
   expect(last?.typeCode).toBe(0x10);
@@ -122,7 +110,7 @@ it("records a truncated final section instead of inventing one", () => {
 
 it("returns no sections when the area is shorter than one header", () => {
   const region = imageRegion(Buffer.from([2, 0, 0]), 0, 3);
-  expect(walkSections(region, 0, 3, typeNameFor).sections).toHaveLength(0);
+  expect(walkSections(region).sections).toHaveLength(0);
 });
 
 it("uses the extended common header for both guided and standard compression fields", () => {
@@ -135,12 +123,8 @@ it("uses the extended common header for both guided and standard compression fie
     [guided, { kind: "lzma-custom", dataOffset: 28, attributes: 1 }],
     [standard, { kind: "efi-standard", dataOffset: 13, attributes: null }],
   ] as const) {
-    const record = walkSections(
-      imageRegion(section, 0, section.length),
-      0,
-      section.length,
-      typeNameFor,
-    ).sections[0];
+    const record = walkSections(imageRegion(section, 0, section.length))
+      .sections[0];
     expect(record?.compression).toMatchObject(expected);
     expect(record?.payload).toEqual({
       start: expected.dataOffset,
@@ -155,12 +139,8 @@ it.each([20, 30])(
     const section = buildLzmaGuidedSection(Buffer.from([0x11, 0x22]));
     section.writeUIntLE(40, 0, 3);
     section.writeUInt16LE(offset, 20);
-    const record = walkSections(
-      imageRegion(section, 0, section.length),
-      0,
-      section.length,
-      typeNameFor,
-    ).sections[0];
+    const record = walkSections(imageRegion(section, 0, section.length))
+      .sections[0];
     expect(record).toMatchObject({ malformed: true, payload: null });
   },
 );
