@@ -53,23 +53,16 @@ export const semanticKnownArrayIteration = (
   !ambientPathMayObserveAt(state, read, arrayIteratorNextPath, "contents") &&
   value.items.every((item) => semanticArrayIndex(item.name) !== null);
 
-/**
- * Return the array that admits native iteration at this read. A plain array's
- * numeric properties are the values consumed by its native iterator.
- */
-export const semanticNativeArrayIterationValueAt = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-) => {
-  const value = evaluateSemanticExpression(node, state, node);
-  return semanticKnownArrayIteration(value, state, node) ? value : undefined;
-};
-
 /** Invocation spreads use the same native-iteration proof at their source read. */
 export const semanticKnownArrayIterationAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => semanticNativeArrayIterationValueAt(node, state) !== undefined;
+): boolean =>
+  semanticKnownArrayIteration(
+    evaluateSemanticExpression(node, state, node),
+    state,
+    node,
+  );
 
 /** Numeric destructuring projections do not select slots of custom iterators. */
 export const semanticReferenceIterationUnknown = (
