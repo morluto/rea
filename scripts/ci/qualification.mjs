@@ -120,9 +120,16 @@ function admit() {
     // Artifact metadata narrows the search before run lookups. Never scan an
     // unbounded history or treat a missing receipt as a successful qualification.
     for (const artifact of candidates.slice(0, 3)) {
-      const run = normalizeWorkflowRun(
-        api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
-      );
+      let run;
+      try {
+        run = normalizeWorkflowRun(
+          api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
+        );
+      } catch {
+        // A run can disappear between listing its artifact and reading it.
+        // Only the next independently verified candidate can avoid a full run.
+        continue;
+      }
       // An old run can upload a new artifact when only its gate is rerun.
       // Bound the original run age as well so retries cannot renew stale proof.
       const runAge = Date.now() - Date.parse(run.created_at);

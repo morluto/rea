@@ -55,7 +55,7 @@ function run(overrides: Record<string, unknown> = {}) {
 }
 
 async function admissionFixture(
-  candidate: Record<string, unknown> = artifact(),
+  candidate: Record<string, unknown> | Array<Record<string, unknown>> = artifact(),
   candidateRun: Record<string, unknown> = run(),
   options: { apiError?: boolean; malformed?: boolean; force?: boolean } = {},
 ) {
@@ -67,7 +67,10 @@ async function admissionFixture(
     fixturePath,
     options.malformed
       ? "not-json"
-      : JSON.stringify({ artifacts: [candidate], run: candidateRun }),
+      : JSON.stringify({
+          artifacts: Array.isArray(candidate) ? candidate : [candidate],
+          run: candidateRun,
+        }),
   );
   const gh = join(bin, "gh");
   await writeFile(
@@ -103,7 +106,7 @@ async function admissionFixture(
 }
 
 async function decide(
-  candidate?: Record<string, unknown>,
+  candidate?: Record<string, unknown> | Array<Record<string, unknown>>,
   candidateRun?: Record<string, unknown>,
   options?: { apiError?: boolean; malformed?: boolean; force?: boolean },
 ) {
@@ -135,6 +138,14 @@ it("reuses only a recent trusted full qualification for the exact default-branch
   ]);
   expect(outputText).toContain("run_full=false\n");
   expect(outputText).toContain("run_id=7\n");
+});
+
+it("still reuses a verified receipt when an earlier candidate has disappeared", async () => {
+  const unavailable = artifact({
+    workflow_run: { ...artifact().workflow_run, id: 8 },
+  });
+  const { decision } = await decide([unavailable, artifact()]);
+  expect(decision).toMatchObject({ run_full: false, run_id: 7 });
 });
 
 const rejectedCandidates: Array<
