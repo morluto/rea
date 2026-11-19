@@ -68,6 +68,7 @@ const PATH_SCOPES = {
     ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-signal-recording.mjs",
     ".github/workflows/real-signal-recording.yml",
+    ".github/actions/ubuntu-archive/action.yml",
   ],
   readiness: [
     "tests/conformance/readiness/**",
