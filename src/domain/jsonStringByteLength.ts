@@ -3,6 +3,14 @@ export const jsonStringByteLength = (
   value: string,
   budget = Number.POSITIVE_INFINITY,
 ): number => {
+  // Printable ASCII without JSON escapes needs one byte per character.
+  // Keep the bounded loop for short strings and possible budget overflow.
+  if (
+    value.length >= 128 &&
+    value.length + 2 <= budget &&
+    !/[^\x20-\x21\x23-\x5b\x5d-\x7e]/u.test(value)
+  )
+    return value.length + 2;
   let bytes = 2;
   for (let index = 0; index < value.length && bytes <= budget; index++) {
     const unit = value.charCodeAt(index);
