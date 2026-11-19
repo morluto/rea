@@ -17,6 +17,12 @@ import {
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
 } from "../../resources/index.js";
+import {
+  BinaryReader,
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import type { NativeInitializersPort } from "../../ports/binaryDiagnostics/NativeInitializersPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -32,11 +38,6 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
 import {
   ELF_POINTER_RELOCATION_FORMAT,
   ElfPointerRelocationFailure,
@@ -61,7 +62,10 @@ const isElf = (bytes: Buffer): boolean =>
   bytes[3] === 0x46;
 
 const isMacho = (bytes: Buffer): boolean =>
-  bytes.length >= 4 && MACHO_MAGICS.has(bytes.readUInt32BE(0));
+  bytes.length >= 4 &&
+  MACHO_MAGICS.has(
+    new BinaryReader(bytes, false, "native-init-format-sniff").u32(0),
+  );
 
 /** Portable ELF and Mach-O initializer reader over one stable regular file. */
 export class NativeInitializersProvider implements NativeInitializersPort {
