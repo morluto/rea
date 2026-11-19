@@ -25,16 +25,13 @@
   "src/jeb/JebMcpConnectionOwner.ts": 1,
   "src/jeb/JebProvider.ts": 1,
   "src/kuna/KunaProjectCache.ts": 1,
-  "src/kuna/KunaSessionClient.ts": 1,
-  "src/kuna/KunaTargetCommands.ts": 1,
   "src/native/LldbCallTracer.ts": 3,
   "src/native/NativeCommandAnalysisError.ts": 1,
   "src/native/NativeMacOSProvider.ts": 2,
   "src/pcap/PcapProvider.ts": 5,
   "src/pcap/PcapSnapshot.ts": 1,
   "src/process/ArtifactAnalysisResources.ts": 1,
-  "src/process/OwnedDebuggerSessionRegistry.ts": 1,
   "src/process/capture/ProcessCaptureError.ts": 3,
   "src/providers/AnalysisClientFailure.ts": 1,
-  "src/sqlite/SqliteDatabaseProvider.ts": 8
+  "src/sqlite/SqliteDatabaseProvider.ts": 6
 }

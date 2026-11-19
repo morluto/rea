@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BinaryReader } from "./binaryContainer.js";
 import type { ParseFailure } from "./parseFailure.js";
 import { err, ok, type Result } from "./result.js";
 
@@ -25,21 +26,21 @@ const unsupported = (detail: string, at: FailureSite = {}): ParseFailure => ({
   ...at,
 });
 
-/** The one reader of header bytes; callers index inside the admitted prefix. */
-const headerByte = (prefix: Buffer, index: number): number =>
-  prefix.readUInt8(index);
-
-/** Byte signatures select a container family, never an executable architecture. */
-export const nesContainerFormat = (
-  prefix: Buffer,
+const readNesContainerFormat = (
+  reader: BinaryReader,
 ): "ines" | "nes-2.0" | "unif" | undefined => {
+  const prefix = reader.bytes;
   if (prefix.subarray(0, 4).equals(Buffer.from("UNIF"))) return "unif";
   if (!prefix.subarray(0, 4).equals(Buffer.from([0x4e, 0x45, 0x53, 0x1a])))
     return undefined;
-  return prefix.length >= 8 && (headerByte(prefix, 7) & 0x0c) === 0x08
+  return prefix.length >= 8 && (reader.u8(7) & 0x0c) === 0x08
     ? "nes-2.0"
     : "ines";
 };
+
+/** Byte signatures select a container family, never an executable architecture. */
+export const nesContainerFormat = (prefix: Buffer) =>
+  readNesContainerFormat(new BinaryReader(prefix, true, "ines"));
 
 const headerHexSchema = z.string().regex(/^[a-f0-9]{32}$/u);
 const byteSchema = z.number().int().min(0).max(255);
@@ -166,12 +167,12 @@ const classicMirroring = (flags6: number): z.infer<typeof mirroringSchema> =>
  * establish the mapper's runtime windows. Preserve all other bytes verbatim.
  */
 const classicDeclaration = (
-  prefix: Buffer,
+  reader: BinaryReader,
 ): Result<HeaderDeclaration, ParseFailure> => {
-  const prgUnits = headerByte(prefix, 4);
-  const chrUnits = headerByte(prefix, 5);
-  const flags6 = headerByte(prefix, 6);
-  const flags7 = headerByte(prefix, 7);
+  const prgUnits = reader.u8(4);
+  const chrUnits = reader.u8(5);
+  const flags6 = reader.u8(6);
+  const flags7 = reader.u8(7);
   if ((flags7 & 0x0c) !== 0)
     return err(
       unsupported("unsupported iNES header variant", {
@@ -181,7 +182,7 @@ const classicDeclaration = (
     );
   // Dirty legacy headers make the upper mapper bits ambiguous. Do not repair
   // them or claim a mapper that the observed header cannot establish.
-  if (prefix.subarray(12, 16).some((byte) => byte !== 0))
+  if (reader.range(12, 4, "reserved header bytes").some((byte) => byte !== 0))
     return err(
       malformed(
         "ambiguous iNES mapper: reserved header bytes 12..15 are nonzero",
@@ -200,7 +201,7 @@ const classicDeclaration = (
     chr: { bytes: chrUnits * 8_192, unitBytes: 8_192 },
     header: {
       format: "ines",
-      header_hex: prefix.subarray(0, 16).toString("hex"),
+      header_hex: reader.range(0, 16, "header").toString("hex"),
       prg_rom_units_16k: prgUnits,
       chr_rom_units_8k: chrUnits,
       mapper: (flags6 >>> 4) | (flags7 & 0xf0),
@@ -228,9 +229,9 @@ const declaredRamBytes = (shift: number): number =>
  * bits are refused rather than interpreted.
  */
 const nes2Declaration = (
-  prefix: Buffer,
+  reader: BinaryReader,
 ): Result<HeaderDeclaration, ParseFailure> => {
-  const byte = (index: number) => headerByte(prefix, index);
+  const byte = (index: number) => reader.u8(index);
   const flags6 = byte(6);
   const flags7 = byte(7);
   const consoleType = twoBits(flags7);
@@ -261,7 +262,7 @@ const nes2Declaration = (
     chr,
     header: {
       format: "nes-2.0",
-      header_hex: prefix.subarray(0, 16).toString("hex"),
+      header_hex: reader.range(0, 16, "header").toString("hex"),
       ...(prg.unitBytes === undefined
         ? {}
         : { prg_rom_units_16k: prg.bytes / prg.unitBytes }),
@@ -306,7 +307,8 @@ export const parseInesLayout = (
   prefix: Buffer,
   fileSize: number,
 ): Result<InesLayout, ParseFailure> => {
-  const format = nesContainerFormat(prefix);
+  const reader = new BinaryReader(prefix, true, "ines");
+  const format = readNesContainerFormat(reader);
   if (format === undefined)
     return err(
       malformed("missing iNES byte signature", {
@@ -336,7 +338,7 @@ export const parseInesLayout = (
       }),
     );
   const declared =
-    format === "ines" ? classicDeclaration(prefix) : nes2Declaration(prefix);
+    format === "ines" ? classicDeclaration(reader) : nes2Declaration(reader);
   if (!declared.ok) return declared;
   const { header, prg, chr } = declared.value;
   const label = header.format === "ines" ? "iNES" : "NES 2.0";

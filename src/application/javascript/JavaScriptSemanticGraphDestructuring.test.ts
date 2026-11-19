@@ -1117,3 +1117,792 @@ it.each([
     ).toEqual(path);
   },
 );
+
+const closeHandler =
+  "function () { delete this.next().value.mode; return {}; }";
+it.each([
+  ["native close", "", "resolved"],
+  [
+    "direct Array Iterator prototype",
+    "Object.getPrototypeOf([].values()).return = " + closeHandler + ";",
+    "candidate",
+  ],
+  [
+    "captured Array Iterator prototype",
+    "const iterator=[].values(); const p=Object.getPrototypeOf(iterator); p.return = " +
+      closeHandler +
+      ";",
+    "candidate",
+  ],
+  [
+    "inherited Iterator prototype",
+    "Object.getPrototypeOf(Object.getPrototypeOf([].values())).return = " +
+      closeHandler +
+      ";",
+    "candidate",
+  ],
+  [
+    "global Iterator prototype",
+    "Iterator.prototype.return = " + closeHandler + ";",
+    "candidate",
+  ],
+  [
+    "inherited Object prototype",
+    "Object.prototype.return = " + closeHandler + ";",
+    "candidate",
+  ],
+  [
+    "unrelated Array prototype",
+    "Array.prototype.return = " + closeHandler + ";",
+    "resolved",
+  ],
+] as const)(
+  "tracks a nested array-pattern close through %s",
+  (_name, hook, resolution) => {
+    const graph = graphForJavaScript(`
+      const box={label:"ready",items:[0,{mode:"before"}]};
+      ${hook}
+      const {label:before,items:[first],items:{0:primitive,1:{mode:selected}}}=box;
+    `);
+    const edge = (name: string) => {
+      const binding = graph.nodes.find(
+        (n) => n.kind === "binding" && n.label === name,
+      );
+      return graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === binding?.node_id,
+      );
+    };
+    expect(edge("before")).toMatchObject({ resolution: "resolved" });
+    expect(edge("primitive")).toMatchObject({ resolution: "resolved" });
+    expect(edge("selected")).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  [
+    "hook before read",
+    `Object.getPrototypeOf([].values()).return = ${closeHandler};`,
+    "",
+    "candidate",
+  ],
+  [
+    "hook after read",
+    "",
+    `Object.getPrototypeOf([].values()).return = ${closeHandler};`,
+    "resolved",
+  ],
+] as const)(
+  "preserves outer iterator close timing for %s",
+  (_name, before, after, resolution) => {
+    const graph = graphForJavaScript(`
+    const box=[0,{mode:"before"}];
+    ${before}
+    const [first]=box;
+    const {1:{mode:selected}}=box;
+    ${after}
+  `);
+    for (const [name, expected] of [
+      ["first", "resolved"],
+      ["selected", resolution],
+    ]) {
+      const binding = graph.nodes.find(
+        (n) => n.kind === "binding" && n.label === name,
+      );
+      expect(
+        graph.relations.find(
+          (r) =>
+            r.relation === "destructures" &&
+            r.target_node_id === binding?.node_id,
+        ),
+      ).toMatchObject({ resolution: expected });
+    }
+  },
+);
+
+it.each([
+  ["empty pattern", "", "candidate"],
+  ["rest drains iterator", "...rest", "resolved"],
+] as const)("preserves close presence for %s", (_name, pattern, resolution) => {
+  const graph = graphForJavaScript(`
+    const box={items:[{mode:"before"}]};
+    Object.getPrototypeOf([].values()).return = ${closeHandler};
+    const {items:[${pattern}],items:{0:{mode:selected}}}=box;
+  `);
+  const selected = graph.nodes.find(
+    (n) => n.kind === "binding" && n.label === "selected",
+  );
+  expect(
+    graph.relations.find(
+      (r) =>
+        r.relation === "destructures" && r.target_node_id === selected?.node_id,
+    ),
+  ).toMatchObject({ resolution });
+});
+
+const closeNextObject =
+  "Object.getPrototypeOf([].values()).return=function(){const next=this.next().value;if(next)delete next.mode;return {}};";
+it.each([
+  [
+    "unconsumed suffix",
+    'const items=[{mode:"first"},{mode:"second"}];',
+    "const [used]=items;",
+    "resolved",
+    "candidate",
+  ],
+  [
+    "shared element identity",
+    'const value={mode:"shared"};const items=[value,value];',
+    "const [used]=items;",
+    "candidate",
+    "candidate",
+  ],
+  [
+    "all slots consumed",
+    'const items=[{mode:"first"},{mode:"second"}];',
+    "const [used,alsoUsed]=items;",
+    "resolved",
+    "resolved",
+  ],
+  [
+    "native exhaustion observed",
+    'const items=[{mode:"first"},{mode:"second"}];',
+    "const [used,alsoUsed,done]=items;",
+    "resolved",
+    "resolved",
+  ],
+  [
+    "earlier default",
+    'const items=[undefined,{mode:"second"}];',
+    'const [used=(items.push({mode:"added"}),0)]=items;',
+    "candidate",
+    "candidate",
+  ],
+] as const)(
+  "bounds native close exposure for %s",
+  (_name, setup, pattern, first, second) => {
+    const graph = graphForJavaScript(`
+    ${setup}
+    ${closeNextObject}
+    ${pattern}
+    const {0:{mode:first},1:{mode:second}}=items;
+  `);
+    for (const [name, resolution] of [
+      ["first", first],
+      ["second", second],
+    ]) {
+      const binding = graph.nodes.find(
+        (n) => n.kind === "binding" && n.label === name,
+      );
+      expect(
+        graph.relations.find(
+          (r) =>
+            r.relation === "destructures" &&
+            r.target_node_id === binding?.node_id,
+        ),
+      ).toMatchObject({ resolution });
+    }
+  },
+);
+
+it.each([
+  [
+    "earlier declarator",
+    "const {1:{mode:selected}}=items,[used]=items;",
+    "resolved",
+  ],
+  [
+    "later declarator",
+    "const [used]=items,{1:{mode:selected}}=items;",
+    "candidate",
+  ],
+  [
+    "earlier assignment",
+    "let selected,used; (({1:{mode:selected}}=items),[used]=items);",
+    "resolved",
+  ],
+  [
+    "later assignment",
+    "let selected,used; ([used]=items,({1:{mode:selected}}=items));",
+    "candidate",
+  ],
+] as const)(
+  "orders a native close relative to an %s",
+  (_name, pattern, resolution) => {
+    const graph = graphForJavaScript(`
+    const items=[0,{mode:"inherited"}]; ${closeNextObject}
+    ${pattern}
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === binding?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  [
+    "after close",
+    "items:[used], missing=(Object.getPrototypeOf([].values()).return=hook)",
+    "resolved",
+  ],
+  [
+    "before close",
+    "missing=(Object.getPrototypeOf([].values()).return=hook), items:[used]",
+    "candidate",
+  ],
+] as const)(
+  "keeps a hook assigned by a default %s in order",
+  (_name, prefix, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0,{mode:"initial"}]};
+    function hook(){const next=this.next().value;if(next)delete next.mode;return {};}
+    const {${prefix}, items:{1:{mode:selected}}}=box;
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === binding?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  ["before close", "none=(box.items[1]=box.next), items:[used]", "candidate"],
+  ["after close", "items:[used], none=(box.items[1]=box.next)", "resolved"],
+] as const)(
+  "follows an array-pattern close through a slot assigned %s",
+  (_name, prefix, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"second"}};
+    ${closeNextObject}
+    const {${prefix},next:{mode:selected}}=box;
+  `);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it("keeps consumed objects uncertain when an earlier default also stores them in the suffix", () => {
+  const graph = graphForJavaScript(`
+    const box={items:[{mode:"first"}]};
+    ${closeNextObject}
+    const {none=(box.items[1]=box.items[0]),items:[used],items:{0:{mode:selected}}}=box;
+  `);
+  const selected = graph.nodes.find(
+    (n) => n.kind === "binding" && n.label === "selected",
+  );
+  expect(
+    graph.relations.find(
+      (r) =>
+        r.relation === "destructures" && r.target_node_id === selected?.node_id,
+    ),
+  ).toMatchObject({ resolution: "candidate" });
+});
+
+it.each([
+  [
+    "throwing default",
+    "undefined,",
+    "const [first = null.value, ...rest] = items;",
+    "1",
+    "candidate",
+  ],
+  [
+    "plain lexical prefix",
+    "undefined,",
+    "const [first, ...rest] = items;",
+    "1",
+    "resolved",
+  ],
+  [
+    "known unused default",
+    "0,",
+    "const [first = null.value, ...rest] = items;",
+    "1",
+    "resolved",
+  ],
+  [
+    "nested target that throws",
+    "null,",
+    "const [{first}, ...rest] = items;",
+    "1",
+    "candidate",
+  ],
+  [
+    "immutable assignment target",
+    "0,",
+    "const first = 0; let rest; [first, ...rest] = items;",
+    "1",
+    "candidate",
+  ],
+  [
+    "computed rest target that throws before draining",
+    "",
+    "const target = {}; [...target[null.value]] = items;",
+    "0",
+    "candidate",
+  ],
+] as const)(
+  "models a native close before rest for %s",
+  (_name, prefix, pattern, key, resolution) => {
+    const graph = graphForJavaScript(`
+    const items=[${prefix}{mode:"before"}];
+    Object.getPrototypeOf([].values()).return = ${closeHandler};
+    try { ${pattern} } catch {}
+    const {${key}:{mode:selected}}=items;
+  `);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  [
+    "native replacement before acquisition",
+    closeNextObject,
+    "none=(box.items=[0,box.next]),items:[used]",
+    "candidate",
+  ],
+  [
+    "native replacement after acquisition",
+    closeNextObject,
+    "items:[used],none=(box.items=[0,box.next])",
+    "resolved",
+  ],
+  [
+    "native replacement with no close hook",
+    "",
+    "none=(box.items=[0,box.next]),items:[used]",
+    "resolved",
+  ],
+  [
+    "custom replacement before acquisition",
+    "",
+    "none=(box.items={child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}}),items:[used]",
+    "candidate",
+  ],
+  [
+    "custom replacement after acquisition",
+    "",
+    "items:[used],none=(box.items={child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}})",
+    "resolved",
+  ],
+  [
+    "replacement's iterator updated before acquisition",
+    "",
+    "none=(box.items=[0,box.next]), second=(box.items[Symbol.iterator]=function(){delete this[1].mode;return [0].values();}),items:[used]",
+    "candidate",
+  ],
+] as const)(
+  "captures the nested iterator receiver for %s",
+  (_name, hook, pattern, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"before"}};
+    ${hook}
+    const {${pattern},next:{mode:selected}}=box;
+  `);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  ["two native arms", "flag ? [0,box.next] : [0]", "resolved"],
+  [
+    "a possible custom arm",
+    "flag ? [0,box.next] : {child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}}",
+    "candidate",
+  ],
+  [
+    "an inactive custom arm",
+    "false ? {child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}} : [0,box.next]",
+    "resolved",
+  ],
+] as const)(
+  "retains conditional stored acquisition for %s",
+  (_name, store, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"before"}};
+    const {none=(box.items=${store}),items:[used],next:{mode:selected}}=box;
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.target_node_id === binding?.node_id &&
+          r.relation === "destructures",
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  ["native close", closeNextObject, "[0,box.next]", "", "resolved"],
+  [
+    "custom acquisition",
+    "",
+    "{child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}}",
+    "",
+    "resolved",
+  ],
+  [
+    "an ordinary prior write",
+    closeNextObject,
+    "[0,box.next]",
+    'write=(box.next.mode="alternate"),',
+    "candidate",
+  ],
+] as const)(
+  "orders sibling reads around stored %s",
+  (_name, hook, store, earlier, before) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"initial"}};
+    ${hook}
+    const {none=(box.items=${store}),${earlier}next:{mode:before},items:[used],next:{mode:after}}=box;
+  `);
+    for (const [name, resolution] of [
+      ["before", before],
+      ["after", "candidate"],
+    ]) {
+      const binding = graph.nodes.find(
+        (n) => n.kind === "binding" && n.label === name,
+      );
+      expect(
+        graph.relations.find(
+          (r) =>
+            r.target_node_id === binding?.node_id &&
+            r.relation === "destructures",
+        ),
+      ).toMatchObject({ resolution });
+    }
+  },
+);
+
+it.each([
+  ["ordinary property receiver", "box.parent", "candidate"],
+  ["parenthesized property receiver", '((box)["parent"])', "candidate"],
+  ["unknown receiver key", "box[key]", undefined],
+] as const)(
+  "recovers a stored nested iterator for %s",
+  (_name, source, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={parent:{items:[0],next:{mode:"before"}}};
+    const replacement={child:box.parent.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}};
+    const {none=(box.parent.items=replacement),items:[used],next:{mode:selected}}=${source};
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (r) =>
+        r.target_node_id === binding?.node_id && r.relation === "destructures",
+    );
+    expect(relation?.resolution).toBe(resolution);
+    if (relation === undefined)
+      expect(
+        graph.unknowns.some(({ relation_kinds }) =>
+          relation_kinds.includes("destructures"),
+        ),
+      ).toBe(true);
+    else
+      expect(
+        graph.nodes.find(({ node_id }) => node_id === relation.source_node_id)
+          ?.properties.property_path,
+      ).toEqual(["parent", "next", "mode"]);
+  },
+);
+
+it.each([
+  [
+    "direct nested array",
+    'const box={items:["one"]};const {items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "nested array through a const alias",
+    'const box={items:["one"]};const alias=box;const {items:[selected]}=alias;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "nested array assignment",
+    'const box={items:["one"]};let selected;({items:[selected]}=box);box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "nested object prefix",
+    'const box={prefix:{items:["one"]}};const {prefix:{items:[selected]}}=box;box.prefix.items[0]="later";',
+    ["prefix", "items", "0"],
+    "resolved",
+  ],
+  [
+    "projected object RHS",
+    'const box={prefix:{items:["one"]}};const {items:[selected]}=box.prefix;box.prefix.items[0]="later";',
+    ["prefix", "items", "0"],
+    "resolved",
+  ],
+  [
+    "earlier own read",
+    'const box={label:0,items:["one"]};const {label,items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "native nested elision",
+    'const box={items:[0,"one"]};const {items:[,selected]}=box;box.items[1]="later";',
+    ["items", "1"],
+    "resolved",
+  ],
+  [
+    "earlier write through alias",
+    'const box={items:["one"]};const alias=box;alias.items[0]="earlier";const {items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier default",
+    'const box={items:["one"]};const {missing=(box.items[0]="earlier"),items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier getter",
+    'const box={items:["one"],get label(){box.items[0]="earlier";return 0;}};const {label,items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "inherited array receiver",
+    'const box={__proto__:{items:["one"]}};const {items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "aliased array receiver",
+    'const items=["one"];const box={items};const {items:[selected]}=box;items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "custom own iterator",
+    'const box={items:["one"]};box.items[Symbol.iterator]=function*(){yield "other";};const {items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "shared next changed before capture",
+    'const box={items:["one"]};Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});const {items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "shared next changed after capture",
+    'const box={items:["one"]};const {items:[selected]}=box;Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "earlier iterator close reaching this array",
+    'const box={first:[0],items:["one"]};box.first[1]=box.items;Object.getPrototypeOf([].values()).return=function(){const value=this.next().value;if(value)delete value[0];return {};};const {first:[used],items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier member target in the iterator",
+    'const box={items:["one","two"]};const target={set value(_){box.items[1]="earlier";}};let selected;({items:[target.value,selected]}=box);',
+    ["items", "1"],
+    "candidate",
+  ],
+  [
+    "second nested iterator comes after first close",
+    'const box={first:[0],items:["one"]};const {first:[used],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+] as const)(
+  "owns a single native iterator below an object for %s",
+  (_name, code, path, resolution) => {
+    const graph = graphForJavaScript(code);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (r) =>
+        r.relation === "destructures" && r.target_node_id === selected?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find((n) => n.node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);
+
+it.each([
+  [
+    "inline array",
+    'const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "const alias",
+    'const pairs=[["first"]];const alias=pairs;const [[selected]]=alias;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "assignment",
+    'const pairs=[["first"]];let selected;[[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "projected array RHS",
+    'const values={pairs:[["first"]]};const [[selected]]=values.pairs;values.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "outer elision",
+    'const pairs=[0,["first"]];const [,[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "outer hole before the selected inner array",
+    'const pairs=[,["first"]];const [,[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "prior write through alias",
+    'const pairs=[["first"]];const alias=pairs;alias[0][0]="earlier";const [[selected]]=pairs;',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "prior ordinary default",
+    'const pairs=[undefined,["first"]];const [unused=(pairs[1][0]="earlier"),[selected]]=pairs;',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "inner custom iterator",
+    'const pairs=[["first"]];pairs[0][Symbol.iterator]=function*(){yield "other";};const [[selected]]=pairs;',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "Object.getPrototypeOf aliases the shared array prototype",
+    'const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier call writes through Reflect.getPrototypeOf",
+    'change();function change(){const proto=Reflect.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};}const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an unrelated property on the shared array prototype",
+    'const proto=Reflect.getPrototypeOf([]);proto.note=1;const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "a lexical Object replacement returns a fresh receiver",
+    'const Object={getPrototypeOf:()=>({})};const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "shared next changed before acquisition",
+    'const pairs=[["first"]];Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "shared next changed after acquisition",
+    'const pairs=[["first"]];const [[selected]]=pairs;Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "prior inner close can change this array",
+    'const pairs=[[0],["second"]];pairs[0][1]=pairs[1];Object.getPrototypeOf([].values()).return=function(){const value=this.next().value;if(value)delete value[0];return {};};const [[used],[selected]]=pairs;',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "proof stops at the inner close",
+    'const pairs=[[0],"next"];const [[used],selected]=pairs;pairs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "third iterator",
+    'const pairs=[[["first"]]];const [[[selected]]]=pairs;pairs[0][0][0]="later";',
+    ["0", "0", "0"],
+    "candidate",
+  ],
+] as const)(
+  "composes one native array inside another for %s",
+  (_name, code, path, resolution) => {
+    const graph = graphForJavaScript(code);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (r) =>
+        r.relation === "destructures" && r.target_node_id === selected?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find((n) => n.node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);

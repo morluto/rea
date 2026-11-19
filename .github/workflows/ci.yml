@@ -320,6 +320,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-source
+          overwrite: true
           path: .vitest/blob/*
           include-hidden-files: true
           if-no-files-found: error
@@ -480,6 +481,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-test-runtime
+          overwrite: true
           path: |
             dist/
             skills/
@@ -501,6 +503,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
+          overwrite: true
           path: .cache/ci-build-cache/
           include-hidden-files: true
           if-no-files-found: error
@@ -631,6 +634,7 @@ jobs:
         if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-results.json') != ''
         with:
           name: test-results
+          overwrite: true
           path: |
             test-results.xml
             test-results.json
@@ -655,6 +659,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-timings-${{ needs.changes.outputs.tier }}
+          overwrite: true
           path: .cache/ci-test-history/test-results.json
           include-hidden-files: true
           if-no-files-found: error

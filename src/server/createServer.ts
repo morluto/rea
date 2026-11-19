@@ -213,6 +213,7 @@ export const createServer = (
     javascriptRecovery,
     artifactResources,
     reverseEngineering,
+    uefiAnalysis,
     firmwareAnalysis,
     gdbSessions,
     rizinDebugSessions,
@@ -485,6 +486,7 @@ export const createServer = (
     },
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
+    uefi: () => registerServiceTools(server, { uefiAnalysis }, contractTools),
     android: () =>
       registerServiceTools(
         server,

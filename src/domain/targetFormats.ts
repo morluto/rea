@@ -37,6 +37,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "ntfs-mft": "archive",
   plist: "artifact",
   javascript: "artifact",
+  uefi: "artifact",
   "source-map": "artifact",
 } as const;
 
