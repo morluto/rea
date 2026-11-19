@@ -132,6 +132,17 @@ it.each([16, 17])(
   },
 );
 
+it("keeps FIT recognition within the v16 structure block before the strings block", () => {
+  const bytes = devicetreeFixture(
+    { name: "", children: [{ name: "images" }] },
+    16,
+  );
+  const strings = bytes.readUInt32BE(8) + 8;
+  bytes.writeUInt32BE(strings, 12);
+  bytes.writeUInt32BE(bytes.length - strings, 32);
+  expect(recognize(bytes)).toBeUndefined();
+});
+
 it.each([8, 12, 19])(
   "does not recognize FIT when the declared structure ends after %s bytes",
   (structureSize) => {

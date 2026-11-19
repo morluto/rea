@@ -1,5 +1,6 @@
 import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
-import { BinaryFormatFailure } from "../binaryContainer.js";
+import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
+import { readDevicetreeHeader } from "./devicetreeHeader.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 
 /** The ParseFailure format of flattened devicetree blobs. */
@@ -37,41 +38,16 @@ export const parseDevicetree = (
 ): Devicetree => {
   if (bytes.length > input.max_file_bytes)
     throw devicetreeLimitFailure("max_file_bytes", input.max_file_bytes);
-  if (bytes.length < 28) malformed("Truncated FDT header");
-  const u32 = (offset: number) => bytes.readUInt32BE(offset);
-  if (u32(0) !== 0xd00dfeed)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "Not a flattened devicetree blob",
-    );
-  const version = u32(20);
-  if (version !== 16 && version !== 17)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      `FDT version ${version} is unsupported; supported versions are 16 and 17`,
-    );
-  const headerBytes = version === 17 ? 40 : 36;
-  if (bytes.length < headerBytes) malformed("Truncated FDT header");
-  const header: Devicetree["header"] = {
-    magic: u32(0),
-    totalsize: u32(4),
-    off_dt_struct: u32(8),
-    off_dt_strings: u32(12),
-    off_mem_rsvmap: u32(16),
-    version,
-    last_comp_version: u32(24),
-    boot_cpuid_phys: u32(28),
-    size_dt_strings: u32(32),
-    size_dt_struct: version === 17 ? u32(36) : null,
-  };
+  const {
+    header,
+    headerBytes,
+    structureEnd: structEnd,
+  } = readDevicetreeHeader(bytes);
   const end = header.totalsize;
-  if (
-    end > bytes.length ||
-    end < headerBytes ||
-    header.last_comp_version > version ||
-    header.last_comp_version > 17
-  )
+  if (end > bytes.length)
     malformed("Invalid FDT header size or compatibility version");
+  const reader = new BinaryReader(bytes, false, DEVICETREE_FORMAT);
+  const u32 = (offset: number) => reader.u32(offset);
   let decodedBytes = 0;
   const admit = (size: number) => {
     decodedBytes += size;
@@ -94,17 +70,6 @@ export const parseDevicetree = (
   if (header.off_dt_struct % 4 || header.off_mem_rsvmap % 8)
     malformed("Misaligned FDT block");
   range(header.off_dt_strings, header.size_dt_strings);
-  // v16 lacks size_dt_struct. Bound the scan by the next declared block or totalsize.
-  const structEnd =
-    header.size_dt_struct === null
-      ? Math.min(
-          end,
-          ...[
-            ...(header.size_dt_strings > 0 ? [header.off_dt_strings] : []),
-            header.off_mem_rsvmap,
-          ].filter((n) => n > header.off_dt_struct),
-        )
-      : header.off_dt_struct + header.size_dt_struct;
   range(header.off_dt_struct, structEnd - header.off_dt_struct);
   const reservations: Devicetree["reservations"] = [];
   let cursor = header.off_mem_rsvmap;
@@ -120,8 +85,8 @@ export const parseDevicetree = (
   for (;;) {
     if (cursor > reservationEnd - 16)
       malformed("Unterminated or overlapping FDT reservation block");
-    const address = bytes.readBigUInt64BE(cursor),
-      size = bytes.readBigUInt64BE(cursor + 8);
+    const address = reader.word(cursor, 64),
+      size = reader.word(cursor + 8, 64);
     cursor += 16;
     if (address === 0n && size === 0n) break;
     if (reservations.length >= input.max_properties)
@@ -262,7 +227,7 @@ export const parseDevicetree = (
           "remote-endpoint",
           "msi-parent",
         ].includes(name) && length === 4
-          ? [raw.readUInt32BE(0)]
+          ? [u32(cursor)]
           : null;
       const property = {
         name,
