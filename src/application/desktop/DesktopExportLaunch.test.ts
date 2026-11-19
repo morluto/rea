@@ -38,7 +38,7 @@ describe("planLaunch captured paths", () => {
     const launch = planLaunch(capture, false, seeds, files);
     expect(launch.opens).toEqual({ kind: "captured" });
     expect(launch.command[2]).toContain('cd "$HOME"/');
-    expect(launch.command[2]).toMatch(/--chdir[^;]+\$HOME[^;]+selected/u);
+    expect(launch.command[2]).toMatch(/'-C'[^;]+\$HOME[^;]+selected/u);
     expect(launch.command[2]).not.toContain("../selected");
     expect(launch.command[2]).toContain("project.txt");
   });

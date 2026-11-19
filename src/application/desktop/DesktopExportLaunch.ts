@@ -135,13 +135,15 @@ export const planLaunch = (
     selectedSeed === null
       ? seedDirectory(capturedDirectory)
       : `${host.home}/${selectedSeed}`;
-  const { chdir } = unwrapDesktopCommand(application.argv);
+  const chdir =
+    application.application_working_directory === undefined
+      ? undefined
+      : unwrapDesktopCommand(application.argv).chdir;
   const argv =
-    chdir !== undefined &&
-    application.application_working_directory !== undefined
+    chdir !== undefined
       ? [
           ...application.argv.slice(0, chdir.start),
-          "--chdir",
+          "-C",
           workingDirectory,
           ...application.argv.slice(chdir.end),
         ]
@@ -164,6 +166,7 @@ export const planLaunch = (
       launch.argv,
       host.home,
       seedDirectory(application.working_directory),
+      chdir === undefined ? undefined : workingDirectory,
     ),
     opens: launch.opens,
   };
