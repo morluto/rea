@@ -142,8 +142,8 @@ The class declares:
   architecture for a vendor package, since its repository may serve no other.
   A vendor package captured on any other architecture is refused. A package
   installed from its `.deb` file supports only that file's architecture.
-- A launch at boot with the captured command, ready when a window of the
-  captured class appears and one of them is listed in the taskbar and is not
+- A launch at boot with the captured command, ready when a window with the
+  recorded class component of X11 `WM_CLASS` is listed in the taskbar and is not
   typed as a splash: a splash screen or a dialog of the class skips the
   taskbar or says it is a splash, and an app whose splash shows first would
   otherwise count as ready before its own window opens. Arguments that are the captured home or under it, and
