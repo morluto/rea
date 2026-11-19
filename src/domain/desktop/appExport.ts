@@ -40,7 +40,11 @@ import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { SQLITE_SIDECARS } from "./stateFormats.js";
 import { SEED_HOME } from "./hostIdentity.js";
-import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
+import {
+  capturedFileUrl,
+  type LaunchDocument,
+  type TraversingSeedPath,
+} from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
@@ -370,13 +374,15 @@ export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
         : null;
   /**
    * Replay a path with parent traversal only when the capture establishes a
-   * portable destination. Undefined means no recorded match, null means the
-   * recorded mappings have no common portable destination.
+   * portable destination. Inferred arguments must name observed state before
+   * its replay can fail. Undefined means no traversal match, while null means
+   * the matched paths cannot share a replay location.
    */
   const launchPath = (
     absolute: string,
     retained: ReadonlyMap<string, string>,
-  ): string | null | undefined => {
+    inferredPathObserved?: (physical: string) => boolean,
+  ): TraversingSeedPath | null | undefined => {
     if (traversed.length === 0) return undefined;
     const parts = replaySegments(absolute);
     if (!parts.includes("..")) return undefined;
@@ -391,6 +397,12 @@ export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
         if (logical.length > specificity) direct.clear();
         specificity = logical.length;
         const file = suffix === "" ? physical : `${physical}/${suffix}`;
+        if (
+          inferredPathObserved !== undefined &&
+          !inferredPathObserved(file) &&
+          !recorded.some((path) => isWithinAny(path, [file]))
+        )
+          continue;
         direct.add(portable ? replayTree(file, retained) : null);
       } else if (isWithinAny(logical, [source])) {
         // For a launch root above the observed state files, retain their
@@ -406,7 +418,9 @@ export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
         );
       }
     }
-    return direct.size > 0 ? agree(direct) : agree(parents);
+    if (specificity > 0 && direct.size === 0) return { kind: "unobserved" };
+    const path = agree(specificity > 0 ? direct : parents);
+    return typeof path === "string" ? { kind: "mapped", path } : path;
   };
   return { homePath, launchPath, stateAliases };
 };

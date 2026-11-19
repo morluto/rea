@@ -131,8 +131,15 @@ export const planLaunch = (
     const file = files.get(home);
     if (file !== undefined) retained.set(file.path, home);
   }
-  const mapTraversal = (path: string) => {
-    const mapped = replay.launchPath(path, retained);
+  const fileSources = [...files.values()].map((file) => file.path);
+  const observedFile = (path: string) =>
+    fileSources.some((physical) => isWithinAny(physical, [path]));
+  const mapTraversal = (path: string, as: "explicit" | "inferred") => {
+    const mapped = replay.launchPath(
+      path,
+      retained,
+      as === "inferred" ? observedFile : undefined,
+    );
     if (mapped === null)
       throw new AnalysisInputError("export_desktop_application", {
         userMessage: `Captured paths under ${JSON.stringify(path)} do not agree on a replay location.`,
@@ -145,9 +152,9 @@ export const planLaunch = (
   const capturedDirectory =
     application.application_working_directory ?? application.working_directory;
   const seedDirectory = (directory: string): string => {
-    const mapped = mapTraversal(directory);
-    if (mapped !== undefined)
-      return mapped === "" ? host.home : `${host.home}/${mapped}`;
+    const mapped = mapTraversal(directory, "explicit");
+    if (mapped?.kind === "mapped")
+      return mapped.path === "" ? host.home : `${host.home}/${mapped.path}`;
     if (!directory.startsWith(`${host.home}/`)) return directory;
     const relative = directory.slice(host.home.length + 1);
     const seed = homeOf(directory) ?? relative;

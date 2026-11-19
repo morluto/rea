@@ -380,6 +380,60 @@ subprocess.run(command, env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, check=
   },
 );
 
+it.each([
+  { option: "--theme=dark/variant", refused: false },
+  { option: "--settings=dark", refused: true },
+])(
+  "requires observed path evidence before refusing $option",
+  async ({ option, refused }) => {
+    const local = capture();
+    const logical = `${HOME}/profiles/current/../notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const external = "/mnt/shared/themes";
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv: ["notes", option, "settings.ini"],
+        working_directory: logical,
+        state_directories: [
+          { path: logical, exists_at_start: true },
+          { path: `${logical}/dark`, exists_at_start: true },
+        ],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical, external],
+        state_directories: [physical, external],
+        selected_paths: [],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (refused) {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain(option);
+    expect(launch).toContain("resolved/notes/settings.ini");
+  },
+);
+
 it("writes portable seed names for state paths with empty or self-directory components", async () => {
   const local = capture();
   const physical = `${HOME}/.config/notes`;
