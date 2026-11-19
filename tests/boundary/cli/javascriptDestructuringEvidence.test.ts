@@ -45,6 +45,9 @@ cliTest(
     const projectedAlias = projectedSource;
     const [projected] = projectedAlias.items;
     projectedSource.items[0] = "later";
+    const nestedArray = [{ mode: "read-time" }];
+    const [{ mode: arrayObject }] = nestedArray;
+    nestedArray[0].mode = "later";
     const box = { items: [] };
     const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
@@ -74,6 +77,7 @@ cliTest(
       ["arrayAssigned", ["0"]],
       ["elided", ["1"]],
       ["projected", ["items", "0"]],
+      ["arrayObject", ["0", "mode"]],
       ["selected", ["0"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
@@ -110,6 +114,7 @@ cliTest(
       "arrayAssigned",
       "elided",
       "projected",
+      "arrayObject",
       "selected",
     ]) {
       const binding = graph.nodes.find(
