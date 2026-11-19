@@ -562,7 +562,10 @@ as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
 entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
-bounded chunks no further than a byte past its declared size. A gzip file is
+bounded chunks no further than a byte past its declared size. The reader
+follows a Zip64 locator to the complete end-record span and skips its
+extension bytes before passing the bounded directory to `zipfile`.
+A gzip file is
 the view of the document inside it, with `"compression": "gzip"` beside its
 format, decompressed with Python's `zlib` within the same entry size and ratio
 limits, its members joined as REA joins them. A JSON file
