@@ -149,23 +149,53 @@ it("accepts padding after the assumed v108 header", async () => {
   });
 });
 
-it("retains source evidence when a v108 section conflicts with the unverified layout", async () => {
-  const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
-  const path = join(root, "global-metadata.dat");
-  const bytes = version108Header(Buffer.from("Name\0"));
-  bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
-  await writeFile(path, bytes);
-  const result = await inspectMetadata(path);
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-  expect(result.error.partialObservation).toMatchObject({
-    normalized_result: { artifact: { path, bytes: bytes.length } },
-  });
-  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
-    "version_108_partial_inventory",
-  );
-});
+it.each([
+  [
+    "extends past the file",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "starts inside the header",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(499, 8 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "overlaps another section",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(501, 8 + 3 * 12);
+      bytes.writeInt32LE(1, 12 + 3 * 12);
+    },
+    /assumed sections strings and events overlap at 501/,
+  ],
+])(
+  "retains source evidence when a v108 section %s",
+  async (_name, mutate, reason) => {
+    const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
+    const path = join(root, "global-metadata.dat");
+    const bytes = version108Header(Buffer.from("Name\0"));
+    mutate(bytes);
+    await expect(inspectIl2cppMetadataV108(bytes)).rejects.toMatchObject({
+      reason: "unsupported-version",
+      message: expect.stringMatching(reason),
+    });
+    await writeFile(path, bytes);
+    const result = await inspectMetadata(path);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: { artifact: { path, bytes: bytes.length } },
+    });
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  },
+);
 
 it("bounds v108 string samples and preserves undecodable bytes and leading BOMs", async () => {
   const repeated = await inspectIl2cppMetadataV108(
