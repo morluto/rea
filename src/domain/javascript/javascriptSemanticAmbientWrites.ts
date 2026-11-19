@@ -848,7 +848,10 @@ export const createAmbientPathResolver = (
               continueWith(property.value, suffix.slice(1));
           }
         } else if (t.isArrayExpression(root)) {
-          if (suffix === undefined) {
+          if (possibleWrites && suffix?.[0] === "__proto__") {
+            retain(["global", "Array", "prototype", ...suffix.slice(1)]);
+            resolvedIdentity = true;
+          } else if (suffix === undefined) {
             for (const element of root.elements)
               if (t.isSpreadElement(element)) continueWith(element.argument);
               else if (t.isExpression(element)) continueWith(element);
