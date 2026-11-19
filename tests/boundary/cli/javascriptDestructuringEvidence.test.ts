@@ -49,6 +49,7 @@ const expectedDependencies = [
   ["projected", ["items", "0"]],
   ["arrayObject", ["0", "mode"]],
   ["nestedElement", ["items", "0"]],
+  ["siblingObjectElement", ["sibling", "0"]],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
   ["spreadElement", ["1"]],
@@ -72,6 +73,7 @@ const tracedBindings = [
   "projected",
   "arrayObject",
   "nestedElement",
+  "siblingObjectElement",
   "innerElement",
   "siblingInnerElement",
   "spreadElement",
@@ -123,9 +125,10 @@ cliTest(
     const nestedArray = [{ mode: "read-time" }];
     const [{ mode: arrayObject }] = nestedArray;
     nestedArray[0].mode = "later";
-    const nestedSource = { items: ["nested"] };
-    const { items: [nestedElement] } = nestedSource;
+    const nestedSource = { items: ["nested"], sibling: ["sibling"] };
+    const { items: [nestedElement], sibling: [siblingObjectElement] } = nestedSource;
     nestedSource.items[0] = "later";
+    nestedSource.sibling[0] = "later";
     const nestedPairs = [["read-time"], ["sibling"]];
     const [[innerElement], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";

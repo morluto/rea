@@ -248,7 +248,6 @@ const collectDestructuring = (
         if (ownSlot !== undefined)
           pending.push(
             parentRead !== undefined &&
-              rootArray &&
               semanticArrayPatternCanResumeAfterClose(
                 pattern,
                 state.parentsByNode.get(root),

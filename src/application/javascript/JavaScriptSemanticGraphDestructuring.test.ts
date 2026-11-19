@@ -2038,13 +2038,49 @@ it.each([
     "candidate",
   ],
   [
-    "second nested iterator comes after first close",
+    "second nested iterator after a harmless close",
     'const box={first:[0],items:["one"]};const {first:[used],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "second nested iterator below a different own-data object path",
+    'const box={left:{first:[0]},right:{items:["one"]}};const {left:{first:[used]},right:{items:[selected]}}=box;box.right.items[0]="later";',
+    ["right", "items", "0"],
+    "resolved",
+  ],
+  [
+    "second nested iterator before a later return hook",
+    'const box={first:[0],items:["one"]};const {first:[used],items:[selected]}=box;Object.getPrototypeOf([].values()).return=()=>({});box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "second nested iterator after an inherited return hook",
+    'const box={first:[0],items:["one"]};Object.prototype.return=()=>({});const {first:[used],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "second nested iterator after an effectful first default",
+    'const box={first:[undefined],items:["one"]};const {first:[used=(box.items[0]="default")],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "second nested iterator after an intervening getter",
+    'const box={first:[0],get between(){this.items[0]="getter";},items:["one"]};const {first:[used],between,items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "second nested iterator after a prior assignment target",
+    'const box={first:[0],items:["one"]};let used,selected;({first:[used],items:[selected]}=box);box.items[0]="later";',
     ["items", "0"],
     "candidate",
   ],
 ] as const)(
-  "owns a single native iterator below an object for %s",
+  "owns native iterators below an object for %s",
   (_name, code, path, resolution) => {
     const graph = graphForJavaScript(code);
     const selected = graph.nodes.find(
