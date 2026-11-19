@@ -292,6 +292,42 @@ it.each([
 });
 
 it.each([
+  ["explicit undefined paths", "{ paths: undefined }", undefined],
+  ["void paths", "{ paths: void 0 }", undefined],
+  ["void options", "void 0", undefined],
+  [
+    "normalized current directory",
+    '{ paths: [__dirname + "/."] }',
+    "source-file",
+  ],
+  [
+    "normalized parent directory",
+    '{ paths: [__dirname + "/sub/.."] }',
+    "source-file",
+  ],
+  ["another directory", '{ paths: [__dirname + "/sub"] }', "package-scope"],
+  ["parent directory", '{ paths: [__dirname + "/.."] }', "package-scope"],
+  ["process-relative directory", '{ paths: ["."] }', "package-scope"],
+  ["empty paths", "{ paths: [] }", "package-scope"],
+  ["null paths", "{ paths: null }", "unknown"],
+  ["effectful void paths", "{ paths: void effect() }", "unknown"],
+] as const)(
+  "classifies %s without losing its lookup base",
+  (_name, options, expected) => {
+    const source = 'require.resolve("./dep.cjs", ' + options + ");";
+    const [reference] = analyzeCommonJsStaticFixture(source).references;
+    expect(reference?.resolution_search_paths).toBe(expected);
+  },
+);
+
+it("keeps a shadowed undefined paths value unknown", () => {
+  const source =
+    'function f(undefined) { require.resolve("./dep.cjs", { paths: undefined }); }';
+  const [reference] = analyzeCommonJsStaticFixture(source).references;
+  expect(reference?.resolution_search_paths).toBe("unknown");
+});
+
+it.each([
   ["empty paths", { paths: [] }],
   ["non-array paths", { paths: 42 }],
 ])("preserves builtin lookups with %s", (_name, options) => {

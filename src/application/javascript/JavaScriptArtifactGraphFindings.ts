@@ -30,6 +30,8 @@ import {
 import {
   artifactPathResolutionProperties,
   resolveArtifactPathByContext,
+  UNKNOWN_MODULE_LOADER_LIMITATION,
+  UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION,
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
 import {
@@ -215,13 +217,9 @@ const addReference = (
     limitations: [
       ...(resolved?.limitations ??
         (candidateLoader
-          ? [
-              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
-            ]
+          ? [UNKNOWN_MODULE_LOADER_LIMITATION]
           : input.value.resolution_search_paths === "unknown"
-            ? [
-                "The require.resolve search path is unknown for the supplied options.",
-              ]
+            ? [UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION]
             : [])),
     ],
   };

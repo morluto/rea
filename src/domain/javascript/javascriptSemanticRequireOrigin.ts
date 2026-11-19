@@ -710,10 +710,17 @@ export const requireResolveSearchBase = (
   if (operation !== "resolve" || arguments_.length < 2) return "loader";
   if (arguments_.length !== 2) return "unknown";
   const options = t.isExpression(arguments_[1]) ? arguments_[1] : undefined;
+  const definitelyUndefined = (node: t.Node): boolean => {
+    const value = unwrapJavaScriptExpression(node).node;
+    return (
+      isUnmodifiedGlobalReference(value, bindings, "undefined") ||
+      (t.isUnaryExpression(value, { operator: "void" }) &&
+        t.isNumericLiteral(value.argument))
+    );
+  };
   if (
     t.isNullLiteral(options) ||
-    (options !== undefined &&
-      isUnmodifiedGlobalReference(options, bindings, "undefined"))
+    (options !== undefined && definitelyUndefined(options))
   )
     return "loader";
   if (options === undefined || !t.isObjectExpression(options)) return "unknown";
@@ -724,16 +731,25 @@ export const requireResolveSearchBase = (
   if (semanticStaticPropertyKey(property.key, property.computed) !== "paths")
     return "unknown";
   const value = t.isExpression(property.value) ? property.value : undefined;
+  if (value !== undefined && definitelyUndefined(value)) return "loader";
   if (!t.isArrayExpression(value)) return "unknown";
   const sourceDirectory = (node: t.Node): boolean =>
     javaScriptRuntimeContext(bindings.program) === "commonjs" &&
     t.isIdentifier(node, { name: "__dirname" }) &&
     isUnmodifiedGlobalReference(node, bindings, "__dirname");
   const [directory] = value.elements;
+  const pathFact =
+    directory == null
+      ? undefined
+      : staticFileExpressionPath(
+          directory,
+          (node, fact) => fact === "source-directory" && sourceDirectory(node),
+        );
   if (
     value.elements.length === 1 &&
     directory != null &&
-    sourceDirectory(directory)
+    (sourceDirectory(directory) ||
+      (pathFact?.base === "source-directory" && pathFact.path === "."))
   )
     return "source-file";
   return value.elements.every(

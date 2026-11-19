@@ -38,6 +38,11 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
+export const UNKNOWN_MODULE_LOADER_LIMITATION =
+  "The module loader is unknown, so this dependency cannot be resolved against the source file.";
+export const UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION =
+  "The require.resolve search path is unknown for the supplied options.";
+
 type ArtifactPathResolutionContext =
   | "package-entrypoint"
   | "filesystem-expression"
@@ -2140,7 +2145,7 @@ const fileUrlPath = (value: string): string | null | undefined => {
 
 const unknownResolverSearchPath = (): CandidateResolution =>
   unresolvedCandidate("unavailable", [
-    "The require.resolve search path is unknown for the supplied options.",
+    UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION,
   ]);
 
 const unresolvedCandidate = (

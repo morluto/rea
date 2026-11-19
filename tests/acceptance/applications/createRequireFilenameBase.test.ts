@@ -9,6 +9,10 @@ import {
   runNodeJsonControl,
 } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import {
+  UNKNOWN_MODULE_LOADER_LIMITATION,
+  UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION,
+} from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "resolves proven createRequire filenames from their own directory through %s",
@@ -162,19 +166,94 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       properties: { resolved_path: null, resolution_status: "unavailable" },
       evidence: { confidence: "high" },
     });
-    expect(known?.evidence.limitations.join(" ")).toContain(
-      "require.resolve search path is unknown",
+    expect(known?.evidence.limitations).toContain(
+      UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION,
     );
     const unknown = edgeFrom("unknown.MJS");
     expect(unknown).toMatchObject({
       properties: { loader_authority: "candidate", resolved_path: null },
       evidence: { confidence: "low" },
     });
-    expect(unknown?.evidence.limitations.join(" ")).toContain(
-      "module loader is unknown",
+    expect(unknown?.evidence.limitations).toContain(
+      UNKNOWN_MODULE_LOADER_LIMITATION,
     );
-    expect(unknown?.evidence.limitations.join(" ")).not.toContain(
-      "require.resolve search path is unknown",
+    expect(unknown?.evidence.limitations).not.toContain(
+      UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION,
+    );
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves default and normalized source-directory resolve paths through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-resolver-default-paths-");
+    await writeFixtureFiles(root, {
+      "main.cjs": [
+        'require.resolve("./dep.cjs", { paths: undefined });',
+        'require.resolve("./dep.cjs", { paths: void 0 });',
+        'require.resolve("./dep.cjs", { paths: [__dirname + "/."] });',
+        'require.resolve("./dep.cjs", { paths: [__dirname + "/sub/.."] });',
+        'require.resolve("./dep.cjs", { paths: [] });',
+        'require.resolve("./dep.cjs", { paths: [__dirname + "/sub"] });',
+        'function shadow(undefined) { require.resolve("./dep.cjs", { paths: undefined }); }',
+      ].join("\n"),
+      "nested.mjs": [
+        'import { createRequire } from "node:module";',
+        'const nested = createRequire(new URL("./sub/anchor.cjs", import.meta.url));',
+        'nested.resolve("./dep.cjs", { paths: undefined });',
+        'nested.resolve("./dep.cjs", { paths: [] });',
+      ].join("\n"),
+      "dep.cjs": 'throw new Error("resolve must not load this file");',
+      "sub/anchor.cjs": "",
+      "sub/dep.cjs": 'throw new Error("resolve must not load this file");',
+    });
+    const resolve = createRequire(join(root, "main.cjs")).resolve;
+    expect(resolve("./dep.cjs", { paths: undefined })).toBe(
+      join(root, "dep.cjs"),
+    );
+    expect(resolve("./dep.cjs", { paths: [join(root, ".")] })).toBe(
+      join(root, "dep.cjs"),
+    );
+    expect(resolve("./dep.cjs", { paths: [join(root, "sub", "..")] })).toBe(
+      join(root, "dep.cjs"),
+    );
+    expect(() => resolve("./dep.cjs", { paths: [] })).toThrow();
+    const nested = createRequire(join(root, "sub/anchor.cjs")).resolve;
+    expect(nested("./dep.cjs", { paths: undefined })).toBe(
+      join(root, "sub/dep.cjs"),
+    );
+
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const lookups = graph.edges.flatMap(({ properties, evidence }) => {
+      if (
+        properties.operation !== "resolve" ||
+        properties.specifier !== "./dep.cjs" ||
+        !evidence.location.available
+      )
+        return [];
+      const location = evidence.location.value;
+      return location.kind === "source-range"
+        ? [
+            {
+              source: location.source,
+              line: location.start.line,
+              path: properties.resolved_path,
+            },
+          ]
+        : [];
+    });
+    expect(lookups).toHaveLength(9);
+    expect(lookups).toEqual(
+      expect.arrayContaining([
+        ...[1, 2, 3, 4].map((line) => ({
+          source: "main.cjs",
+          line,
+          path: "dep.cjs",
+        })),
+        ...[5, 6, 7].map((line) => ({ source: "main.cjs", line, path: null })),
+        { source: "nested.mjs", line: 3, path: "sub/dep.cjs" },
+        { source: "nested.mjs", line: 4, path: null },
+      ]),
     );
   },
 );
