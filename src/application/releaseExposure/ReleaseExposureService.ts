@@ -11,6 +11,7 @@ import type { RustBinaryService } from "../rust/RustBinaryService.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { providerCleanupErrorFromCloseRejections } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -30,7 +31,6 @@ import { recognizeEvidence } from "../../domain/evidenceValidation.js";
 import { evidenceSubjectFormatSchema } from "../../domain/evidenceSubject.js";
 import { goBinarySchema } from "../../domain/go/goBinary.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   scanCredentialMarkers,
   type CredentialMarkerHit,
@@ -557,18 +557,18 @@ const ownerCloseFailure = (
 ): unknown => {
   const [first] = failures;
   if (failures.length === 1 && first !== undefined) return first.cause;
-  const typed = failures.flatMap(({ cause }) =>
-    cause instanceof AnalysisError ? [cause] : [],
-  );
-  const resources = failures.flatMap(({ cause }) => {
-    if (cause instanceof AnalysisError) return cause.cleanupResources;
-    return cause instanceof ArtifactReaderFailure
-      ? (cause.cleanup?.resources ?? [])
-      : [];
-  });
-  const aggregate = new ProviderCleanupError(
+  return providerCleanupErrorFromCloseRejections(
     RELEASE_EXPOSURE_PROVIDER.id,
-    [...new Set(resources)],
+    failures.map(({ cause }) => ({
+      cause,
+      cleanupOwner:
+        cause instanceof AnalysisError && cause.carriesCleanup
+          ? cause
+          : undefined,
+      ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+        ? { unconfirmedResources: cause.cleanup.resources }
+        : {}),
+    })),
     {
       failures: failures.map(({ owner, cause }) => ({
         owner,
@@ -581,21 +581,10 @@ const ownerCloseFailure = (
       })),
     },
     {
-      cause: new AggregateError(
-        failures.map(({ cause }) => cause),
-        `Release exposure cleanup failed: ${failures.map(({ owner }) => owner).join(", ")}.`,
-      ),
+      message: `Release exposure cleanup failed: ${failures.map(({ owner }) => owner).join(", ")}.`,
       operation: RELEASE_EXPOSURE_OPERATION,
     },
   );
-  // An owner that already released still accounts for its rejection. An opaque
-  // rejection supplies no release authority and keeps the aggregate incomplete.
-  if (
-    typed.length === failures.length &&
-    typed.every((cause) => cause.carriesCleanup)
-  )
-    aggregate.bindCleanupDependencies(typed);
-  return aggregate;
 };
 
 /**
