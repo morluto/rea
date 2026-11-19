@@ -346,6 +346,12 @@ fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
 raises that failure instead of a bare `RangeError`. Providers project the
 failure with `parseFailureAnalysisError` rather than their own `instanceof`
 ladder; a `limit` stays with its producer, which knows the budget to name.
+
+For retained managed metadata rows, use `metadataRowCursor` in
+`src/domain/managed/managedMetadataHeaps.ts`. Its column reads use
+`BinaryReader` within the admitted row and preserve managed issue offsets and
+per-row budget accounting.
+
 Do not use `RangeError` as a failure channel: a stack overflow, a host string
 or buffer limit, and an unchecked read past the end of a buffer are all
 `RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
