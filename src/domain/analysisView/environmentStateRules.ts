@@ -7,7 +7,6 @@ import {
 import type { OffsetDateTimeInstant } from "../offsetDateTime.js";
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { ListQuery } from "./environmentStateListQuery.js";
-import { canonicalJson } from "../comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
@@ -350,15 +349,36 @@ export const setOwnMember = (
   });
 };
 
-/** Equal JSON values; object member order carries no meaning. */
+/** Equal admitted JSON values. Object member order carries no meaning. */
 export const same = (
   left: JsonValue | undefined,
   right: JsonValue | undefined,
-): boolean =>
-  left === undefined || right === undefined
-    ? left === right
-    : canonicalJson(left, "Environment state") ===
-      canonicalJson(right, "Environment state");
+): boolean => {
+  if (left === right) return true;
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  )
+    return false;
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++)
+      if (!same(left[index], right[index])) return false;
+    return true;
+  }
+  if (Array.isArray(right)) return false;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  for (const key of keys)
+    if (
+      !Object.prototype.propertyIsEnumerable.call(right, key) ||
+      !same(left[key], right[key])
+    )
+      return false;
+  return true;
+};
 
 /** A path segment percent-decoded, or as written when it does not decode. */
 export const decodedSegment = (segment: string): string => {
