@@ -51,13 +51,24 @@ const expectRootInputError = async (
     environment: ENVIRONMENT,
   });
   expect(rejected.exitCode).toBe(1);
+  // The contract's root syntax is checked at argv parsing; facts about the
+  // selected file are checked by the analysis. Both name the CLI option.
+  if (reason === "invalid_format") {
+    expect(rejected.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        { path: "root.0", message: expect.stringContaining(message) },
+      ],
+    });
+    return;
+  }
   expect(rejected.json).toMatchObject({
     error: "Analysis failed",
     code: "invalid_request",
     details: {
       issues: [
         {
-          path: ["roots", 0],
+          path: ["root", 0],
           reason,
           message: expect.stringContaining(message),
         },
@@ -927,6 +938,70 @@ cliTest(
           expected.filter((setting) => explanation.includes(setting)),
         );
       expect(environments).toEqual(expected.map((setting) => [setting]));
+    }
+  },
+);
+
+cliTest(
+  "preserves the architecture of a thin trace subject",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-dylib-thin-subject-");
+    await writeFiles(directory, {
+      tool: machoImage({ cpu: CPU.arm64 }),
+    });
+    const result = await cli.run({
+      arguments: ["trace-dylib-resolution", join(directory, "tool"), "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    expect(parseEvidence(result.json).subject?.identity).toMatchObject({
+      format: "mach-o",
+      architecture: "arm64",
+      selection: null,
+    });
+  },
+);
+
+cliTest(
+  "names a universal image without the opened slice as the trace subject",
+  async ({ cli }) => {
+    // Opening the file selects one host slice; a trace covers the slices its
+    // own parameters select, so its subject must not inherit that selection.
+    const directory = await createTestTempDirectory(
+      "rea-dylib-universal-subject-",
+    );
+    await writeFiles(directory, {
+      tool: fatImage([
+        { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+        { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+      ]),
+    });
+    for (const [narrowing, architectures] of [
+      [[], ["arm64", "x86_64"]],
+      [["--architecture", "x86_64"], ["x86_64"]],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "trace-dylib-resolution",
+          join(directory, "tool"),
+          ...narrowing,
+          "--json",
+        ],
+        environment: ENVIRONMENT,
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const evidence = parseEvidence(result.json);
+      expect(
+        dylibResolutionResultSchema
+          .parse(evidence.normalized_result)
+          .roots.map(({ architecture }) => architecture)
+          .sort(),
+      ).toEqual(architectures);
+      expect(evidence.subject?.identity).toMatchObject({
+        format: "mach-o-universal",
+        architecture: null,
+        selection: null,
+      });
     }
   },
 );

@@ -193,7 +193,7 @@ describe("CdpBrowserProvider: page cookie scope", () => {
 });
 
 describe("CdpBrowserProvider: complete storage fingerprints", () => {
-  it("fingerprints cache bodies above the former byte ceiling", async () => {
+  it("fingerprints cache bodies above 64 KiB", async () => {
     const body = "x".repeat(64 * 1_024 + 1);
     const browser = await startFakeCdpBrowser({ cachedResponseBody: body });
     trackBrowser(browser);
@@ -216,6 +216,22 @@ describe("CdpBrowserProvider: complete storage fingerprints", () => {
       ),
     ).toMatchObject({ complete: true, value_sha256: expect.any(String) });
     expect(JSON.stringify(result.value)).not.toContain(body);
+    // The storage capture always writes its fingerprint facts.
+    for (const omit of [
+      "content_fingerprints",
+      "fingerprint_algorithm",
+      "fingerprints_complete",
+    ])
+      expect(
+        webPageInspectionSchema.safeParse({
+          ...result.value,
+          storage: Object.fromEntries(
+            Object.entries(result.value.storage).filter(
+              ([key]) => key !== omit,
+            ),
+          ),
+        }).success,
+      ).toBe(false);
   });
 });
 

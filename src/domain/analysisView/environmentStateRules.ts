@@ -1,3 +1,4 @@
+import { isRecord } from "../../kernel/isRecord.js";
 import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
 import {
   iterateUrlQueryParameters,
@@ -319,7 +320,7 @@ export const segmentsOf = (path: string): string[] => {
 export const isParam = (segment: string): boolean =>
   segment.startsWith("{") && segment.endsWith("}");
 export const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  isRecord(value);
 export const scalarText = (value: JsonValue | undefined): string | undefined =>
   typeof value === "string"
     ? value
@@ -555,24 +556,6 @@ export const stateValueRetentionBytes = (value: JsonValue): number => {
       ENTRY_BYTES,
     );
   return ENTRY_BYTES;
-};
-
-/** Whether a JSON value nests more than `limit` levels below its root. */
-export const deeperThan = (value: JsonValue, limit: number): boolean => {
-  const pending: { readonly value: JsonValue; readonly depth: number }[] = [
-    { value, depth: 0 },
-  ];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (next.depth > limit) return true;
-    const children = Array.isArray(next.value)
-      ? next.value
-      : isObject(next.value)
-        ? Object.values(next.value)
-        : [];
-    for (const child of children)
-      pending.push({ value: child, depth: next.depth + 1 });
-  }
-  return false;
 };
 
 export const pointerTo = (name: string): string =>

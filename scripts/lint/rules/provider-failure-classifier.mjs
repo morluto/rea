@@ -4,16 +4,17 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 /**
- * Files that predate the rule, with their count of per-site classifier
- * functions. A count may only shrink: the rule reports a file above or below
- * its entry.
+ * `owners` hold the one shared raw-failure classifier. `counts` lists files
+ * that predate the rule with their count of per-site classifier functions; a
+ * count may only shrink: the rule reports a file above or below its entry.
  */
-const baseline = JSON.parse(
+const { owners, counts: baseline } = JSON.parse(
   readFileSync(
     new URL("./provider-failure-classifier-baseline.json", import.meta.url),
     "utf8",
   ),
 );
+const ownerFiles = new Set(owners);
 
 const isUnknownParameter = (parameter) => {
   const target =
@@ -53,7 +54,7 @@ export default {
     schema: [],
     messages: {
       classifier:
-        "Do not add a per-site `(cause: unknown) => AnalysisError` classifier. Read the supervisor's facts with providerOutcomeOf(cause) and classify them with classifyProviderOutcome(...), putting provider-specific refusals in its dialect.",
+        "Do not add a per-site `(cause: unknown) => AnalysisError` classifier. Classify the raw failure with classifyProviderFailure(cause, dialect), putting provider-specific refusals, command settings and file naming in that dialect.",
       stale:
         "provider-failure-classifier-baseline.json allows {{allowed}} per-site classifiers in this file but {{actual}} remain; lower the entry to {{actual}}.",
     },
@@ -63,6 +64,7 @@ export default {
       root,
       context.physicalFilename ?? context.filename,
     ).replaceAll("\\", "/");
+    if (ownerFiles.has(filename)) return {};
     const classifiers = [];
     const visit = (node) => {
       if (isClassifier(node)) classifiers.push(node);

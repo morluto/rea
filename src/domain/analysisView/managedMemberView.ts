@@ -342,7 +342,7 @@ export const projectManagedMemberView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(total, total),
+      coverage: completeWithinViewCoverage(total),
     });
   }
   const selected = collectionPage(report, view);
@@ -377,6 +377,11 @@ export const projectManagedMemberView = (
     selection: report.selection,
     method_rows: report.method_rows,
     source_metadata_status: report.metadata.status,
+    ...(report.metadata.unresolved_module_name === undefined
+      ? {}
+      : {
+          unresolved_module_name: report.metadata.unresolved_module_name,
+        }),
     source_coverage:
       view.collection === "user_strings" && report.user_strings !== null
         ? {

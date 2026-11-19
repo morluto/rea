@@ -32,7 +32,8 @@ if (process.send !== undefined)
 const shutdownResult = () => ({
   shutdown: true,
   analysis_stopped: true,
-  document_closed: shutdownMode !== "unconfirmed",
+  document_closed:
+    shutdownMode !== "unconfirmed" && shutdownMode !== "cleanup-required",
   ...(shutdownMode === "cleanup-required" ? { cleanup_required: true } : {}),
 });
 const emitDiagnosticOutput = () => {
@@ -236,6 +237,21 @@ const server = createServer((socket) => {
             Buffer.from([0xff]),
             Buffer.from('"}\n'),
           ]),
+        );
+      } else if (request.method === "unattributed_invalid_request") {
+        // The real bridge answers on reserved id 0 when it cannot read a
+        // request's id, for example a frame that is not JSON.
+        send({
+          id: 0,
+          error: {
+            code: -32000,
+            type: "invalid_request",
+            message: "Invalid bridge request JSON",
+          },
+        });
+      } else if (request.method === "unterminated_reply") {
+        socket.write(
+          `{"id":${request.id},"result":"${"x".repeat(request.params.bytes)}`,
         );
       } else if (request.method === "wrong_id") {
         send({ id: request.id + 100, result: {} });

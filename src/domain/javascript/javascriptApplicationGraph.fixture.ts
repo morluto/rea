@@ -6,7 +6,7 @@ import {
 } from "./javascriptApplicationGraph.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
-import { resolveJavaScriptSourceMapReferences } from "./javascriptSourceMapPaths.js";
+import { resolveJavaScriptSourceMapReference } from "./javascriptSourceMapPaths.js";
 
 export const APPLICATION_GRAPH_DIGESTS = {
   package: "1".repeat(64),
@@ -28,11 +28,11 @@ export const sourceMapReference = (
   sourceRoot: string | null,
   mapPath: string,
 ) => {
-  const reference = resolveJavaScriptSourceMapReferences(
-    [sourceName],
+  const reference = resolveJavaScriptSourceMapReference(
+    sourceName,
     sourceRoot,
     mapPath,
-  )[0];
+  );
   if (reference == null) throw new TypeError("Expected a source-map reference");
   return reference;
 };

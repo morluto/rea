@@ -1,8 +1,15 @@
-import { readManagedPeLayout } from "../../../../src/dotnet/ManagedPeReader.js";
+import {
+  fileIdentity,
+  fileSubjectTarget,
+  fileSubjectArchitecture,
+} from "../../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
+import { readManagedPeLayout } from "../../../../src/domain/managed/managedPeReader.js";
+import { machoRuntimeSymbolName } from "../../../../src/domain/native/machoSymbolName.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "../../../../src/dotnet/ManagedMetadataLayout.js";
+} from "../../../../src/domain/managed/managedMetadataLayout.js";
 import { describe, expect, it } from "vitest";
 import {
   buildManagedPeFixture,
@@ -42,19 +49,14 @@ const nativeEvidenceWithExports = (
 ) => {
   const input = exampleInput();
   const native = input.native_observations[0];
-  if (native === undefined || native.subject === null)
-    throw new Error("missing native example");
+  if (native === undefined) throw new Error("missing native example");
   const macho = inspectMachoSchema.parse(native.normalized_result);
   return createEvidence(
     subjectless
-      ? undefined
+      ? unknownTarget("not-observed")
       : {
-          path: path ?? native.subject.local_path,
-          sha256: native.subject.digest.sha256,
-          format: native.subject.format,
-          ...(native.subject.architecture === null
-            ? {}
-            : { architecture: native.subject.architecture }),
+          ...fileSubjectTarget(native.subject),
+          ...(path === undefined ? {} : { path }),
         },
     native.provider,
     {
@@ -66,6 +68,7 @@ const nativeEvidenceWithExports = (
           ...macho.exports,
           items: names.map((name, index) => ({
             name,
+            runtime_name: machoRuntimeSymbolName(name),
             address: `0x${(0x1000 + index).toString(16)}`,
             weak: false,
             reexport: false,
@@ -137,18 +140,22 @@ const inputWithImportScope = (scope: string | null) => {
   );
   return {
     ...input,
-    managed_boundaries: createEvidence(undefined, managed.provider, {
-      operation: managed.operation,
-      parameters: managed.parameters,
-      result: {
-        ...normalized,
-        pinvoke_imports: normalized.pinvoke_imports.map((item) => ({
-          ...item,
-          import_scope_name: scope,
-        })),
+    managed_boundaries: createEvidence(
+      unknownTarget("not-observed"),
+      managed.provider,
+      {
+        operation: managed.operation,
+        parameters: managed.parameters,
+        result: {
+          ...normalized,
+          pinvoke_imports: normalized.pinvoke_imports.map((item) => ({
+            ...item,
+            import_scope_name: scope,
+          })),
+        },
+        rawResult: null,
       },
-      rawResult: null,
-    }),
+    ),
   };
 };
 
@@ -414,16 +421,13 @@ it("treats a Mach-O ABI-prefixed export as an exact declared import", () => {
 it("reports module mismatch as a contradiction within supplied Evidence", () => {
   const input = exampleInput();
   const native = input.native_observations[0];
-  if (native === undefined || native.subject === null)
-    throw new Error("missing native example");
+  if (native === undefined) throw new Error("missing native example");
   const mismatched = createEvidence(
     {
       path: "/examples/other.dll",
-      sha256: native.subject.digest.sha256,
+      sha256: fileIdentity(native.subject).sha256,
       format: "pe",
-      ...(native.subject.architecture === null
-        ? {}
-        : { architecture: native.subject.architecture }),
+      ...fileSubjectArchitecture(native.subject),
     },
     native.provider,
     {
@@ -648,19 +652,23 @@ it("retains a decorated module match when another decorated candidate has unknow
   const normalized = managedNativeBoundaryInspectionSchema.parse(
     parent.normalized_result,
   );
-  const managed = createEvidence(undefined, parent.provider, {
-    operation: parent.operation,
-    parameters: parent.parameters,
-    result: {
-      ...normalized,
-      pinvoke_imports: normalized.pinvoke_imports.map((item) => ({
-        ...item,
-        char_set: "unicode",
-        no_mangle: false,
-      })),
+  const managed = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      result: {
+        ...normalized,
+        pinvoke_imports: normalized.pinvoke_imports.map((item) => ({
+          ...item,
+          char_set: "unicode",
+          no_mangle: false,
+        })),
+      },
+      rawResult: null,
     },
-    rawResult: null,
-  });
+  );
   const known = nativeFunctionEvidence(
     "/examples/nativehelper.dll",
     "pe",
@@ -668,7 +676,7 @@ it("retains a decorated module match when another decorated candidate has unknow
   );
   const subjectless = (name: string) => {
     const source = nativeFunctionEvidence("/examples/unknown.dll", "pe", name);
-    return createEvidence(undefined, source.provider, {
+    return createEvidence(unknownTarget("not-observed"), source.provider, {
       operation: source.operation,
       parameters: source.parameters,
       result: source.normalized_result,
@@ -910,14 +918,72 @@ it("retains every observed native candidate", () => {
   expect(result.pinvoke_imports[0]?.candidates).toHaveLength(2);
 });
 
+it("reports coverage unknown when the managed boundary inspection is unavailable", () => {
+  const withManagedCoverage = (
+    state: "partial" | "unavailable",
+    nativeObservations: ReturnType<typeof nativeEvidenceWithExports>[],
+  ) => {
+    const input = exampleInput();
+    const managed = input.managed_boundaries;
+    const normalized = managedNativeBoundaryInspectionSchema.parse(
+      managed.normalized_result,
+    );
+    return verifyManagedNativeVerificationSource(
+      readFixtureSource({
+        ...input,
+        managed_boundaries: createEvidence(
+          unknownTarget("not-observed"),
+          managed.provider,
+          {
+            operation: managed.operation,
+            parameters: managed.parameters,
+            result: {
+              ...normalized,
+              ...(state === "unavailable"
+                ? { module_refs: [], pinvoke_imports: [] }
+                : {}),
+              coverage: { ...normalized.coverage, state },
+            },
+            rawResult: null,
+          },
+        ),
+        native_observations: nativeObservations,
+      }),
+    );
+  };
+  const exhaustive = nativeEvidenceWithExports(["open_native"]);
+  const macho = inspectMachoSchema.parse(exhaustive.normalized_result);
+  const partialExports = createEvidence(
+    fileSubjectTarget(exhaustive.subject),
+    exhaustive.provider,
+    {
+      operation: exhaustive.operation,
+      parameters: exhaustive.parameters,
+      result: { ...macho, exports: { ...macho.exports, exhaustive: false } },
+      rawResult: null,
+    },
+  );
+
+  // Nothing was read on the managed side, so the result is unknown, and
+  // unknown wins beside the known gap of non-exhaustive native exports.
+  for (const native of [exhaustive, partialExports])
+    expect(withManagedCoverage("unavailable", [native]).coverage).toEqual({
+      status: "unknown",
+    });
+  // A partial inspection is a known gap.
+  expect(withManagedCoverage("partial", [exhaustive]).coverage).toEqual({
+    status: "partial",
+  });
+});
+
 describe("managed/native verification result algebra", () => {
   it("rejects states without their required native match", () => {
     const result = verifyManagedNativeVerificationSource(
       readFixtureSource(exampleInput()),
     );
     const verification = result.pinvoke_imports[0];
-    expect(verification).toBeDefined();
-    if (verification === undefined) return;
+    if (verification === undefined)
+      throw new Error("Expected a P/Invoke verification");
 
     expect(
       pinvokeVerificationSchema.safeParse({
@@ -954,17 +1020,19 @@ describe("managed/native verification result algebra", () => {
         pinvoke_imports: [unresolved],
       }).success,
     ).toBe(false);
-    // Removed legacy fields are rejected by the strict coverage contract.
-    expect(
-      managedNativeVerificationResultSchema.safeParse({
-        ...result,
-        coverage: {
-          status: "complete-within-inputs",
-          omitted_native_observations: 0,
-          omitted_candidates: 1,
-        },
-      }).success,
-    ).toBe(false);
+    const extraCoverage = managedNativeVerificationResultSchema.safeParse({
+      ...result,
+      coverage: { ...result.coverage, unsupported_detail: true },
+    });
+    if (extraCoverage.success)
+      throw new Error("Expected an unknown coverage field to be rejected");
+    expect(extraCoverage.error.issues).toEqual([
+      expect.objectContaining({
+        code: "unrecognized_keys",
+        keys: ["unsupported_detail"],
+        path: ["coverage"],
+      }),
+    ]);
   });
 });
 
@@ -993,19 +1061,23 @@ it("does not treat a raw Mach-O ABI name as an exact underscored C identifier", 
   const result = verifyManagedNativeVerificationSource(
     readFixtureSource({
       ...input,
-      managed_boundaries: createEvidence(undefined, managed.provider, {
-        operation: managed.operation,
-        parameters: managed.parameters,
-        result: {
-          ...normalized,
-          pinvoke_imports: imports.map((item) => ({
-            ...item,
-            import_name: "_open_native",
-            no_mangle: true,
-          })),
+      managed_boundaries: createEvidence(
+        unknownTarget("not-observed"),
+        managed.provider,
+        {
+          operation: managed.operation,
+          parameters: managed.parameters,
+          result: {
+            ...normalized,
+            pinvoke_imports: imports.map((item) => ({
+              ...item,
+              import_name: "_open_native",
+              no_mangle: true,
+            })),
+          },
+          rawResult: null,
         },
-        rawResult: null,
-      }),
+      ),
       native_observations: [nativeEvidenceWithExports(["_open_native"])],
     }),
   );

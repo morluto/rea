@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { Socket } from "node:net";
 import { connectLocalSocketOnce } from "../process/LocalSocketConnection.js";
 

@@ -28,6 +28,7 @@ import {
   scenarioQueryLength,
   uriComponentLength,
 } from "./BrowserScenarioSerialization.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type RequestAction = Extract<BrowserScenarioAction, { action: "request" }>;
 
@@ -235,11 +236,22 @@ const sendFromPage = (
         : request.deadlineEpochMs - Date.now();
     if (remaining !== undefined && remaining <= 0)
       return { error: "The request ran out of time before it was sent." };
+    // This callback runs in the page, which cannot reach REA's modules, so
+    // its abort reasons are page-native DOMExceptions defined here.
     const controller = new AbortController();
     const timer =
       remaining === undefined
         ? undefined
-        : setTimeout(() => controller.abort(), remaining);
+        : setTimeout(
+            () =>
+              controller.abort(
+                new DOMException(
+                  "The request ran out of time.",
+                  "TimeoutError",
+                ),
+              ),
+            remaining,
+          );
     try {
       const answer = await fetch(request.url, {
         method: request.method,
@@ -285,7 +297,9 @@ const sendFromPage = (
         }
       return { status: answer.status };
     } catch (cause: unknown) {
-      controller.abort();
+      controller.abort(
+        new DOMException("The request is no longer needed.", "AbortError"),
+      );
       return {
         error: cause instanceof Error ? cause.message : String(cause),
       };
@@ -469,7 +483,7 @@ export const performScenarioRequest = async (input: {
       if (primaryFailure !== undefined)
         throw new AggregateError(
           [primaryFailure.cause, cause],
-          `Scenario request failed: ${primaryFailure.cause instanceof Error ? primaryFailure.cause.message : String(primaryFailure.cause)}; route cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `Scenario request failed: ${errorMessage(primaryFailure.cause)}; route cleanup failed: ${errorMessage(cause)}`,
           { cause: primaryFailure.cause },
         );
       throw cause;
@@ -671,7 +685,7 @@ export const awaitSavedResponse = (
     } catch (cause: unknown) {
       if (cause instanceof ScenarioRequestError) throw cause;
       throw new ScenarioRequestError(
-        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${errorMessage(cause)}`,
         { cause },
       );
     }
@@ -817,9 +831,7 @@ const saveValues = (
     try {
       secrets.save(`${stepId}.${name}`, name, value, secret);
     } catch (cause) {
-      throw new ScenarioRequestError(
-        `Step ${stepId}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      throw new ScenarioRequestError(`Step ${stepId}: ${errorMessage(cause)}`);
     }
   }
 };

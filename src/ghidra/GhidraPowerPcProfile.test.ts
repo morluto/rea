@@ -64,9 +64,9 @@ describe("bounded Ghidra PowerPC admission", () => {
       architecture: "powerpc",
       language_id: "PowerPC:BE:32:default",
       compiler_spec_id: "default",
-      language_selection: "provider-pinned-v1",
+      language_selection: "provider-pinned",
       powerpc_elf: { elf_class: 32, byte_order: "big", type: 2, flags: 0 },
-      powerpc_support_lane: "elf32-be-exec-generic-v1",
+      powerpc_support_lane: "elf32-be-exec-generic",
     });
     expect(ghidraPinnedLanguage(target())).toEqual({
       languageId: "PowerPC:BE:32:default",
@@ -99,7 +99,7 @@ describe("bounded Ghidra PowerPC admission", () => {
     const parameters = resolved.value.profile?.parameters ?? {};
     expect(parameters).toMatchObject({
       language_id: "PowerPC:BE:32:e500",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual({
       languageId: "PowerPC:BE:32:e500",
@@ -131,6 +131,9 @@ describe("bounded Ghidra PowerPC admission", () => {
 
   it.each([
     [{ elfClass: 64 }, "ELF32"],
+    [{ elfClass: 64, byteOrder: "little", flags: 2 }, "PPC64"],
+    [{ elfClass: 64, byteOrder: "little", type: 3, flags: 2 }, "PPC64"],
+    [{ elfClass: 64, type: 3, flags: 1 }, "PPC64"],
     [{ byteOrder: "little" }, "big-endian"],
     [{ type: 1 }, "ET_EXEC"],
     [{ type: 3 }, "ET_EXEC"],
@@ -161,5 +164,8 @@ describe("bounded Ghidra PowerPC admission", () => {
     expect(hopperLoaderArgsForTarget(target()).ok).toBe(false);
     const ida = new IdaProvider(config, {});
     expect(ida.inspectTargetSupport(target()).status).toBe("unsupported");
+    const ppc64 = target({ elfClass: 64, byteOrder: "little", flags: 2 });
+    expect(hopper.inspectTargetSupport(ppc64).status).toBe("unsupported");
+    expect(ida.inspectTargetSupport(ppc64).status).toBe("unsupported");
   });
 });

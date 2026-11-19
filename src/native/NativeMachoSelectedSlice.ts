@@ -5,13 +5,10 @@ import {
   validateFatSlice,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
-import {
-  MachoBinaryFormatError,
-  MachoCommandNamesLimitError,
-  type MachoCommandNames,
-} from "./MachoCommandNames.js";
+import { decodeLimit, malformedInput } from "../domain/parseFailure.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { NativeMachoSource } from "./NativeMachoSource.js";
-import type { LipoArchitecture } from "./parsers/lipo.js";
+import type { LipoArchitecture } from "../domain/apple/lipo.js";
 
 export interface ResolvedMachoSlice {
   readonly offset: number;
@@ -30,23 +27,30 @@ export const resolveSelectedMachoSlice = async (
     selected.cpu_type_code === null &&
     (selected.file_offset === null || selected.size === null)
   )
-    throw new MachoBinaryFormatError(
+    throw malformedInput(
+      "macho",
       "Selected Mach-O slice CPU identity is unavailable",
     );
   const prefix = readFatHeaderPrefix(
     await source.readSlice(0, source.bytes, 0, Math.min(8, source.bytes)),
   );
   if (prefix.state !== "parsed")
-    throw new MachoBinaryFormatError(
+    throw malformedInput(
+      "macho",
       "Selected Mach-O universal header is unavailable",
     );
   const rows = prefix.count + (selected.hidden ? 1 : 0);
   if (rows > maximumRecords)
-    throw new MachoCommandNamesLimitError(maximumRecords, "records");
+    throw decodeLimit(
+      "macho",
+      "Mach-O FAT slice records exceed the selected-slice table budget",
+      { name: "macho_fat_slice_records", maximum: maximumRecords },
+    );
   const entrySize = prefix.wide ? 32 : 20;
   const tableEnd = 8 + rows * entrySize;
   if (!Number.isSafeInteger(tableEnd) || tableEnd > source.bytes)
-    throw new MachoBinaryFormatError(
+    throw malformedInput(
+      "macho",
       "Selected Mach-O universal table is truncated",
     );
   const matches: FatSliceDeclaration[] = [];
@@ -65,7 +69,7 @@ export const resolveSelectedMachoSlice = async (
       littleEndian: prefix.littleEndian,
     });
     if (parsed.status !== "parsed")
-      throw new MachoBinaryFormatError(parsed.reason);
+      throw malformedInput("macho", parsed.reason);
     for (const row of parsed.slices) {
       declarations.push(row);
       if (
@@ -86,7 +90,8 @@ export const resolveSelectedMachoSlice = async (
     }
   }
   if (matches.length !== 1)
-    throw new MachoBinaryFormatError(
+    throw malformedInput(
+      "macho",
       "Selected lipo slice does not identify exactly one FAT entry",
     );
   const declaration = matches[0]!;
@@ -98,7 +103,8 @@ export const resolveSelectedMachoSlice = async (
         declaration.offset < row.offset + row.size,
     )
   )
-    throw new MachoBinaryFormatError(
+    throw malformedInput(
+      "macho",
       "Selected Mach-O slice overlaps another FAT entry",
     );
   return {
@@ -121,5 +127,5 @@ export const assertSelectedMachoSlice = (
     selected.tableEnd,
     binary.header,
   );
-  if (failure !== null) throw new MachoBinaryFormatError(failure);
+  if (failure !== null) throw malformedInput("macho", failure);
 };

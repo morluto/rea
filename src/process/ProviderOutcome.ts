@@ -1,6 +1,7 @@
-import { classifyLaunchFailure, type LaunchRefusal } from "./launchFailure.js";
+import { launcherFailureOf, type LauncherFailure } from "./launchFailure.js";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
+import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
 
 /** Output the supervisor retained for one outcome. */
 export interface ProviderOutcomeOutput {
@@ -26,10 +27,10 @@ interface ProviderOutcomeFacts {
  * `classifyProviderOutcome`.
  */
 export type ProviderOutcome =
-  /** The operating system refused to start the selected executable. */
+  /** A launcher failed to start the executable; `failure` says why, by errno. */
   | (ProviderOutcomeFacts & {
-      readonly kind: "launch-refused";
-      readonly refusal: LaunchRefusal;
+      readonly kind: "launch-failed";
+      readonly failure: LauncherFailure;
     })
   /** The caller cancelled; `reason` is the caller's opaque abort reason. */
   | (ProviderOutcomeFacts & {
@@ -42,6 +43,16 @@ export type ProviderOutcome =
   | (ProviderOutcomeFacts & { readonly kind: "output-limit" })
   /** The process tree reached its enforced memory limit. */
   | (ProviderOutcomeFacts & { readonly kind: "memory-limit" })
+  /**
+   * The process ended after its runtime reported running out of memory. The
+   * report was observed while output streamed, beyond any retention budget.
+   */
+  | (ProviderOutcomeFacts & {
+      readonly kind: "runtime-exhausted";
+      readonly exhaustion: RuntimeExhaustion;
+      readonly exitCode: number | null;
+      readonly signal: NodeJS.Signals | null;
+    })
   /** The process ended on an inherited CPU-time or file-size limit signal. */
   | (ProviderOutcomeFacts & {
       readonly kind: "resource-signal";
@@ -91,8 +102,22 @@ const ownedCommandOutcome = (failure: OwnedCommandFailure): ProviderOutcome => {
   // overflow or an exit; the limit is the fact that explains each of them.
   if (failure.snapshot?.memoryLimitReached === true)
     return { ...facts, kind: "memory-limit" };
-  if (failure.reason !== "process") return { ...facts, kind: failure.reason };
   const snapshot = failure.snapshot;
+  // The runtime's own report explains an exit or the stack trace that
+  // overflowed the output budget; it does not explain the owner's deadline.
+  if (
+    snapshot?.runtimeExhaustion !== undefined &&
+    !failure.collectionFailure &&
+    (failure.reason === "process" || failure.reason === "output-limit")
+  )
+    return {
+      ...facts,
+      kind: "runtime-exhausted",
+      exhaustion: snapshot.runtimeExhaustion,
+      exitCode: snapshot.exitCode ?? null,
+      signal: snapshot.signal ?? null,
+    };
+  if (failure.reason !== "process") return { ...facts, kind: failure.reason };
   if (failure.collectionFailure || snapshot === null)
     return { ...facts, kind: "protocol" };
   if (snapshot.signal === "SIGXCPU" || snapshot.signal === "SIGXFSZ")
@@ -108,18 +133,19 @@ const ownedCommandOutcome = (failure: OwnedCommandFailure): ProviderOutcome => {
 
 /**
  * Read the outcome of an owned command from what `runOwnedCommand` threw.
- * Undefined when the value is neither a supervised command failure nor a
- * launch refusal.
+ * Undefined when the value is neither a supervised command failure nor an
+ * error a launcher raised.
  */
 export function providerOutcomeOf(cause: OwnedCommandFailure): ProviderOutcome;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined {
   if (cause instanceof OwnedCommandFailure) return ownedCommandOutcome(cause);
-  const refusal = classifyLaunchFailure(cause);
-  if (refusal === undefined || !(cause instanceof Error)) return undefined;
+  // Only a launcher's errno is a launch failure; one from reading a file is not.
+  const failure = launcherFailureOf(cause);
+  if (failure === undefined || !(cause instanceof Error)) return undefined;
   return {
-    kind: "launch-refused",
-    refusal,
+    kind: "launch-failed",
+    failure,
     cause,
     message: cause.message,
     output: undefined,

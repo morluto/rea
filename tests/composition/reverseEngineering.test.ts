@@ -1,3 +1,5 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -5,15 +7,22 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { ok } from "../../src/domain/result.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
-import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
+import {
+  fixtureCommandRepair,
+  ownedFailure,
+  ownedOutput,
+  providerSnapshot,
+} from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
+import { objdumpCommandLimitations } from "../../src/objdump/ObjdumpCommand.js";
 
 it.each(["objdump", "rizin"] as const)(
   "recovers a bounded %s capture after the caller raises output admission",
@@ -26,6 +35,7 @@ it.each(["objdump", "rizin"] as const)(
     const profile = {
       executable: process.execPath,
       arguments: ["-e", "process.stdout.write('complete-output')"],
+      repair: fixtureCommandRepair,
       identity: {
         id: "fixture-command",
         name: "Fixture command",
@@ -33,7 +43,7 @@ it.each(["objdump", "rizin"] as const)(
       },
     };
     const service = new ReverseEngineeringService({
-      commands: { objdump: () => profile, rizin: () => profile },
+      commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
     });
     const inspect = (max_output_bytes: number) =>
       provider === "objdump"
@@ -54,11 +64,23 @@ it.each(["objdump", "rizin"] as const)(
         output_budget_bytes: 8,
         output_budget_source: "request",
         output_truncated: true,
+        output_limit: {
+          control_kind: "parameter",
+          parameter: "max_output_bytes",
+          effective_value: 8,
+          unit: "bytes",
+          minimum: 1,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
         completion_status: "unknown",
       });
       expect(limited.value.parameters).toMatchObject({ max_output_bytes: 8 });
       expect(limited.value.limitations).toContainEqual(
         expect.stringContaining("max_output_bytes=8"),
+      );
+      expect(limited.value.limitations.join(" ")).not.toContain(
+        "--max-output-bytes",
       );
       const recovered = await inspect(32);
       if (!recovered.ok) throw recovered.error;
@@ -69,6 +91,9 @@ it.each(["objdump", "rizin"] as const)(
         output_truncated: false,
         completion_status: "complete",
       });
+      expect(recovered.value.normalized_result).not.toHaveProperty(
+        "output_limit",
+      );
       expect(recovered.value.parameters).toMatchObject({
         max_output_bytes: 32,
       });
@@ -94,9 +119,13 @@ describe("reverse engineering command services", () => {
         REA_OBJDUMP_COMMAND: "/tools/objdump",
         DEBUGINFOD_URLS: "https://debug.example.invalid",
       },
-      run: async (command, args, options) => {
-        calls.push({ command, args, env: options?.env });
-        return { stdout: "DWARF output\n", stderr: "diagnostic\n" };
+      runOwned: async (spawn) => {
+        calls.push({
+          command: spawn.command,
+          args: spawn.arguments,
+          env: spawn.env,
+        });
+        return ownedOutput("DWARF output\n", "diagnostic\n");
       },
     });
 
@@ -135,9 +164,9 @@ describe("reverse engineering command services", () => {
     );
     let invoked = false;
     const service = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         invoked = true;
-        return { stdout: "", stderr: "" };
+        return ownedOutput();
       },
     });
 
@@ -170,15 +199,8 @@ describe("reverse engineering command services", () => {
     const path = join(directory, "fixture.bin");
     await writeFile(path, "fixture");
     const service = new ReverseEngineeringService({
-      run: async () => {
-        const failure = Object.assign(new Error("not found"), {
-          stdout: "",
-          stderr: "",
-          code: "ENOENT",
-          signal: null,
-          killed: false,
-        });
-        throw failure;
+      runOwned: async (spawn) => {
+        throw spawnFailure("ENOENT", spawn.command);
       },
     });
 
@@ -203,14 +225,15 @@ describe("reverse engineering command services", () => {
     const path = join(directory, "fixture.bin");
     await writeFile(path, "fixture");
     const service = new ReverseEngineeringService({
-      run: async () => {
-        throw Object.assign(new Error("max buffer exceeded"), {
-          stdout: "captured partial output",
-          stderr: "",
-          code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-          signal: "SIGTERM",
-          killed: true,
-        });
+      runOwned: async () => {
+        throw ownedFailure(
+          "output-limit",
+          ownedOutput("captured partial output", "", {
+            exitCode: null,
+            signal: "SIGTERM",
+            diagnosticTruncated: true,
+          }),
+        );
       },
     });
 
@@ -262,9 +285,9 @@ it.each([
     const calls: (readonly string[])[] = [];
     const service = new ReverseEngineeringService({
       environment: { REA_OBJDUMP_COMMAND: "/tools/objdump" },
-      run: async (_command, args) => {
-        calls.push(args);
-        return { stdout: "captured stdout", stderr: "captured stderr" };
+      runOwned: async (spawn) => {
+        calls.push(spawn.arguments);
+        return ownedOutput("captured stdout", "captured stderr");
       },
     });
 
@@ -314,9 +337,9 @@ it("uses one selected environment snapshot for provider selection and execution"
   };
   const calls: { command: string; env: NodeJS.ProcessEnv | undefined }[] = [];
   const service = createReverseEngineeringService(selectedEnvironment, {
-    run: async (command, _args, options) => {
-      calls.push({ command, env: options?.env });
-      return { stdout: "headers", stderr: "" };
+    runOwned: async (spawn) => {
+      calls.push({ command: spawn.command, env: spawn.env });
+      return ownedOutput("headers");
     },
   });
   selectedEnvironment.REA_RIZIN_COMMAND = "/changed/rizin";
@@ -349,22 +372,18 @@ it("marks signal-terminated provider commands as unknown completion", async () =
   await writeFile(path, "fixture");
   let invocation = 0;
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       invocation += 1;
       if (invocation === 1)
-        throw Object.assign(new Error("provider killed by signal"), {
-          stdout: "partial output",
-          stderr: "",
-          code: null,
-          signal: "SIGKILL",
-          killed: true,
-        });
-      throw Object.assign(new Error("provider exited with status 2"), {
-        stdout: "ordinary partial output",
-        stderr: "ordinary diagnostic",
-        code: 2,
-        signal: null,
-        killed: false,
+        throw ownedFailure(
+          "process",
+          ownedOutput("partial output", "", {
+            exitCode: null,
+            signal: "SIGKILL",
+          }),
+        );
+      return ownedOutput("ordinary partial output", "ordinary diagnostic", {
+        exitCode: 2,
       });
     },
   });
@@ -424,23 +443,13 @@ describe("Rizin command service", () => {
     const calls: { command: string; args: readonly string[] }[] = [];
     const service = new ReverseEngineeringService({
       environment: { REA_RIZIN_COMMAND: "/tools/rizin" },
-      run: async (command, args) => {
-        calls.push({ command, args });
-        const failure = new Error("command exited with status 2") as Error & {
-          stdout: string;
-          stderr: string;
-          code: number;
-          signal: null;
-          killed: boolean;
-        };
-        Object.assign(failure, {
-          stdout: "\u001b[31mpartial data\u001b[0m\n",
-          stderr: "command error",
-          code: 2,
-          signal: null,
-          killed: false,
-        });
-        throw failure;
+      runOwned: async (spawn) => {
+        calls.push({ command: spawn.command, args: spawn.arguments });
+        return ownedOutput(
+          "\u001b[31mpartial data\u001b[0m\n",
+          "command error",
+          { exitCode: 2 },
+        );
       },
     });
 
@@ -454,7 +463,7 @@ describe("Rizin command service", () => {
       if (!result.ok) return;
       const lookupPath = result.value.subject?.local_path;
       expect(isAbsolute(lookupPath ?? "")).toBe(true);
-      expect(result.value.subject?.digest.sha256).toBe(
+      expect(fileIdentity(result.value.subject).sha256).toBe(
         createHash("sha256").update("fixture").digest("hex"),
       );
       expect(calls).toEqual([
@@ -505,9 +514,9 @@ describe("Rizin command service", () => {
       await writeFile(path, "fixture");
       let invoked = false;
       const service = new ReverseEngineeringService({
-        run: async () => {
+        runOwned: async () => {
           invoked = true;
-          return { stdout: "", stderr: "" };
+          return ownedOutput();
         },
       });
 
@@ -535,9 +544,9 @@ describe("Rizin command service", () => {
     const path = join(directory, "fixture.bin");
     await writeFile(path, "before");
     const service = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         await writeFile(path, "after");
-        return { stdout: "changed", stderr: "" };
+        return ownedOutput("changed");
       },
     });
 
@@ -548,7 +557,7 @@ describe("Rizin command service", () => {
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.value.subject?.digest.sha256).toBe(
+      expect(fileIdentity(result.value.subject).sha256).toBe(
         createHash("sha256").update("before").digest("hex"),
       );
       expect(result.value.raw_result).toMatchObject({
@@ -575,9 +584,9 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
   const calls: (readonly string[])[] = [];
   const service = new ReverseEngineeringService({
     environment: { REA_RIZIN_COMMAND: "/tools/rizin" },
-    run: async (_command, args) => {
-      calls.push(args);
-      return { stdout: "bx lr\n", stderr: "" };
+    runOwned: async (spawn) => {
+      calls.push(spawn.arguments);
+      return ownedOutput("bx lr\n");
     },
   });
   const input = {
@@ -620,14 +629,34 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
       expect.arrayContaining([...rizinCommandLimitations(input)]),
     );
     // Command validity stays unverified independently of decoder/map inputs.
-    expect(rizinCommandLimitations(input)).toHaveLength(3);
+    expect(rizinCommandLimitations(input)).toHaveLength(4);
     expect(
       rizinCommandLimitations({ path, command: "pi 1", asm_bits: 16 }),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       rizinCommandLimitations({ path, command: "pi 1", base_address: "0x0" }),
-    ).toHaveLength(2);
-    expect(rizinCommandLimitations({ path, command: "pi 1" })).toHaveLength(1);
+    ).toHaveLength(3);
+    expect(rizinCommandLimitations({ path, command: "pi 1" })).toHaveLength(2);
+    expect(
+      objdumpCommandLimitations({ operation: "architectures" }),
+    ).toHaveLength(1);
+    expect(objdumpCommandLimitations({ path, operation: "symbols" })).toEqual(
+      [],
+    );
+    expect(
+      objdumpCommandLimitations({
+        path,
+        operation: "disassemble",
+        symbol: "main",
+      }),
+    ).toHaveLength(1);
+    expect(
+      objdumpCommandLimitations({
+        path,
+        operation: "dwarf",
+        follow_debug_links: true,
+      }),
+    ).toHaveLength(1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -639,9 +668,9 @@ it("checks only the spelling and range of decoder and map inputs", async () => {
   await writeFile(path, "image");
   const calls: (readonly string[])[] = [];
   const service = new ReverseEngineeringService({
-    run: async (_command, args) => {
-      calls.push(args);
-      return { stdout: "", stderr: "" };
+    runOwned: async (spawn) => {
+      calls.push(spawn.arguments);
+      return ownedOutput();
     },
   });
 
@@ -720,15 +749,14 @@ it("retains partial Evidence when a provider command times out", async () => {
   const path = join(directory, "fixture.bin");
   await writeFile(path, "before");
   const service = new ReverseEngineeringService({
-    run: async () => {
-      const failure = Object.assign(new Error("timeout"), {
-        stdout: "captured before timeout",
-        stderr: "still running",
-        code: "ETIMEDOUT",
-        signal: "SIGTERM",
-        killed: true,
-      });
-      throw failure;
+    runOwned: async () => {
+      throw ownedFailure(
+        "timeout",
+        ownedOutput("captured before timeout", "still running", {
+          exitCode: null,
+          signal: "SIGTERM",
+        }),
+      );
     },
   });
 
@@ -758,6 +786,9 @@ it("retains partial Evidence when a provider command times out", async () => {
       );
       const projected = projectAnalysisError(result.error);
       expect(projected.message).toContain("command_timeout_ms");
+      // The deadline names the provider whose command it bounded.
+      expect(projected.message).toContain("rizin command");
+      expect(projected.message).not.toContain("objdump");
       expect(projected.message).toContain("120000 ms");
       expect(projected.remediation.action).toContain("120000");
     }
@@ -768,7 +799,7 @@ it("retains partial Evidence when a provider command times out", async () => {
 
 it("keeps a selected architecture deadline on Evidence", async () => {
   const service = new ReverseEngineeringService({
-    run: async () => ({ stdout: "elf64-x86-64\n", stderr: "" }),
+    runOwned: async () => ownedOutput("elf64-x86-64\n"),
   });
   const selected = await service.inspectWithObjdump({
     operation: "architectures",
@@ -801,11 +832,31 @@ it("shares one preflight deadline across stat and digest", async () => {
       typeof import("node:fs").createReadStream
     >;
   };
-  const started = performance.now();
-  await expect(
-    digestFile("/tmp/rea-preflight-deadline", undefined, stat, 200, open),
-  ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-  expect(performance.now() - started).toBeLessThan(280);
+  // The 150 ms stat and the stalled digest share one 200 ms deadline on a
+  // fake clock: the digest must time out at 200 ms, not 150 + 200 ms.
+  vi.useFakeTimers();
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  let outcome: unknown;
+  void digestFile(
+    "/tmp/rea-preflight-deadline",
+    undefined,
+    stat,
+    200,
+    open,
+  ).then(
+    () => {
+      outcome = "digested";
+    },
+    (cause: unknown) => {
+      outcome = cause;
+    },
+  );
+  await vi.advanceTimersByTimeAsync(199);
+  expect(outcome).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(outcome).toMatchObject({ code: "ETIMEDOUT" });
 });
 
 it("retains an explicit null reason when digest admission is already cancelled", async () => {
@@ -880,15 +931,12 @@ it("applies a caller-selected one-shot deadline on the next call", async () => {
   await writeFile(path, "before");
   const timeouts: number[] = [];
   const service = new ReverseEngineeringService({
-    run: async (_command, _args, options) => {
-      timeouts.push(options?.timeout ?? -1);
-      throw Object.assign(new Error("timeout"), {
-        stdout: "",
-        stderr: "",
-        code: "ETIMEDOUT",
-        signal: "SIGTERM",
-        killed: true,
-      });
+    runOwned: async (_spawn, limits) => {
+      timeouts.push(limits.timeoutMs ?? -1);
+      throw ownedFailure(
+        "timeout",
+        ownedOutput("", "", { exitCode: null, signal: "SIGTERM" }),
+      );
     },
   });
 
@@ -928,19 +976,17 @@ it("preserves raw byte counts when cancellation rejects invalid UTF-8 output", a
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const controller = new AbortController();
-  const failure = Object.assign(new Error("The operation was aborted"), {
-    stdout: "�",
-    stderr: "€",
-    stdoutBytes: 1,
-    stderrBytes: 3,
-    code: "ABORT_ERR",
-    signal: null,
-    killed: true,
-  });
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       controller.abort();
-      throw failure;
+      throw ownedFailure(
+        "cancelled",
+        ownedOutput("�", "€", {
+          stdout: { text: "�", bytes: 1, observedBytes: 1 },
+          exitCode: null,
+        }),
+        { cancellation: { reason: controller.signal.reason } },
+      );
     },
   });
 
@@ -970,16 +1016,22 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
   await writeFile(path, "fixture");
   const controller = new AbortController();
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       controller.abort();
-      return {
-        stdout: "�",
-        stderr: "�",
-        stdoutInvalidUtf8: true,
-        stderrInvalidUtf8: true,
-        stdoutBytes: 1,
-        stderrBytes: 1,
-      };
+      return ownedOutput("", "", {
+        stdout: {
+          text: "�",
+          bytes: 1,
+          observedBytes: 1,
+          invalidUtf8: true,
+        },
+        stderr: {
+          text: "�",
+          bytes: 1,
+          observedBytes: 1,
+          invalidUtf8: true,
+        },
+      });
     },
   });
 
@@ -1021,14 +1073,11 @@ it("marks signal-terminated provider output incomplete", async () => {
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const service = new ReverseEngineeringService({
-    run: async () => {
-      throw Object.assign(new Error("terminated"), {
-        stdout: "partial",
-        stderr: "",
-        code: null,
-        signal: "SIGSEGV",
-        killed: false,
-      });
+    runOwned: async () => {
+      throw ownedFailure(
+        "process",
+        ownedOutput("partial", "", { exitCode: null, signal: "SIGSEGV" }),
+      );
     },
   });
 

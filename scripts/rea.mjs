@@ -37,21 +37,7 @@ const builtinArgumentRuntime = "dist/cli-runtime/cliBuiltinArguments.js";
 const builtinArguments = (await compiledRuntimeExists([builtinArgumentRuntime]))
   ? await import("../dist/cli-runtime/cliBuiltinArguments.js")
   : undefined;
-const isShellCompletion =
-  builtinArguments?.cliCompletionShell?.(process.env) !== undefined;
-const doctorArguments = isShellCompletion
-  ? undefined
-  : builtinArguments?.productionMcpDoctorArguments(args);
-const isMcpEntry =
-  !isShellCompletion && (args[0] === "--mcp" || args[0] === "mcp");
-const isMcpMode = isMcpEntry && args.length === 1;
-const isMcpDoctorMode = doctorArguments !== undefined;
-// Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
-// while `mcp -h --http` reaches the HTTP entry's own help.
-const isMcpHttpMode =
-  isMcpEntry &&
-  (args[1]?.startsWith("-") ?? false) &&
-  args.slice(1).includes("--http");
+const entry = builtinArguments?.classifyCliEntrypoint(args, process.env);
 /** How long an exiting command may wait for its remaining handles to close. */
 const EXIT_DRAIN_GRACE_MS = 1_000;
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
@@ -60,9 +46,9 @@ const SIGPIPE_EXIT_STATUS = 141;
 let stdoutClosed = false;
 const runtimeFiles = [
   builtinArgumentRuntime,
-  ...(isMcpMode || isMcpHttpMode
+  ...(entry?.kind === "mcp-stdio" || entry?.kind === "mcp-http"
     ? ["dist/mcp/main.js"]
-    : isMcpDoctorMode
+    : entry?.kind === "mcp-doctor"
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
       : [
           "dist/cli-runtime/cli.js",
@@ -76,18 +62,17 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
   );
   process.exitCode = 1;
-} else if (isMcpMode) {
+} else if (entry?.kind === "mcp-stdio") {
   const { runEntrypoint } = await import("../dist/mcp/main.js");
   await runEntrypoint();
-} else if (isMcpHttpMode) {
+} else if (entry?.kind === "mcp-http") {
   const { runMcpHttpEntrypoint } = await import("../dist/mcp/main.js");
-  await runMcpHttpEntrypoint(args.slice(1));
-} else if (isMcpDoctorMode) {
+  await runMcpHttpEntrypoint(entry.command);
+} else if (entry?.kind === "mcp-doctor") {
   guardClosedStdout();
-  // Doctor runs outside Incur, so handle its global timing flag here. Keep a
-  // token consumed by --format as a value, even when it looks like a flag.
-  const { arguments: doctorCliArguments, enabled: timingRequested } =
-    builtinArguments.splitCliTimingArguments(doctorArguments);
+  // Doctor runs outside the command dispatcher, so the launcher measures its
+  // timing global, which the global argument reader has taken out.
+  const { arguments: doctorCliArguments, timings: timingRequested } = entry;
   const started = performance.now();
   try {
     const { runProductionMcpDoctorCli } =
@@ -156,7 +141,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
             if (status === 0) status = 1;
           }
           try {
-            await finishOutput(status);
+            await finishOutput();
           } catch (cause) {
             if (!stdoutClosed)
               process.stderr.write(`${cleanupFailureText(cause)}\n`);
@@ -175,7 +160,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       },
     });
   } catch (cause) {
-    if (cause?.code === "EPIPE") {
+    if (isClosedReaderFailure(cause)) {
       stdoutClosed = true;
       process.exitCode = SIGPIPE_EXIT_STATUS;
     }
@@ -201,7 +186,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   if (
     !exiting &&
     dispatchFailure !== undefined &&
-    !(stdoutClosed && dispatchFailure?.code === "EPIPE")
+    !(stdoutClosed && isClosedReaderFailure(dispatchFailure))
   )
     throw dispatchFailure;
 }
@@ -219,7 +204,7 @@ function cleanupFailureText(cleanup) {
 
 function guardClosedStdout() {
   process.stdout.on("error", (cause) => {
-    if (cause?.code === "EPIPE") {
+    if (isClosedReaderFailure(cause)) {
       stdoutClosed = true;
       process.exitCode = SIGPIPE_EXIT_STATUS;
       return;
@@ -227,6 +212,14 @@ function guardClosedStdout() {
     // Other failures stay unhandled unless a pending JSON write reports them.
     if (process.stdout.listenerCount("error") === 1) throw cause;
   });
+}
+
+/**
+ * A write failure that means the stdout reader has gone. A pipe reports EPIPE;
+ * macOS can report ENOTCONN when the reader closes a socket-pair stdout.
+ */
+function isClosedReaderFailure(cause) {
+  return cause?.code === "EPIPE" || cause?.code === "ENOTCONN";
 }
 
 function writeStdout(output) {

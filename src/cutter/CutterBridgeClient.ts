@@ -1,15 +1,16 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   withArtifactRegularFile,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { isUtf8 } from "node:buffer";
 import {
@@ -33,9 +34,14 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisLimit,
+  AnalysisSettingsReader,
+} from "../domain/analysisSettings.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
+  cutterDiscoveryLimitations,
   cutterSessionSchema,
   type CutterBridgeDiscovery,
   type CutterBridgeSession,
@@ -44,7 +50,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { cutterBridgeMac } from "./cutterBridgeMac.js";
 import {
   cutterBridgeSource,
-  packagedCutterPluginPath,
+  cutterBridgeSourceRecovery,
 } from "./CutterBridgeSource.js";
 import { CutterBridgeResponseFrames } from "./cutterAuthenticatedResponse.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
@@ -61,7 +67,6 @@ import {
 import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
-import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 
 const descriptorSchema = z.object({
   ...cutterSessionSchema.omit({ bridge_source: true }).shape,
@@ -86,6 +91,7 @@ const responseSchema = z.object({
   identity_status: z.literal("partial").optional(),
   error: z.string().optional(),
   message: z.string().optional(),
+  // lifecycle-state: the bridge's report of how far the command ran.
   execution_state: z
     .enum(["not_started", "running", "complete", "failed", "unknown"])
     .optional(),
@@ -94,6 +100,7 @@ const responseSchema = z.object({
     .array(
       z.object({
         request_id: z.string().uuid(),
+        // lifecycle-state: how far each completed command ran.
         execution_state: z.enum(["not_started", "complete", "failed"]),
       }),
     )
@@ -106,7 +113,7 @@ const responseSchema = z.object({
 });
 /** A session runs a plugin whose bytes differ from the packaged copy. */
 const modifiedPluginRefusal = (): AnalysisCapabilityUnavailableError => {
-  const remediation = `Copy ${packagedCutterPluginPath()} into Cutter's plugins/python directory, restart Cutter, and list sessions again. No command was sent.`;
+  const remediation = `${cutterBridgeSourceRecovery("modified")} No command was sent.`;
   return new AnalysisCapabilityUnavailableError(
     "cutter",
     "cutter_command",
@@ -258,6 +265,8 @@ export interface CutterBridgeExecution {
   readonly message: string | null;
   /** Whether output was omitted; null when the bridge did not declare it. */
   readonly outputTruncated: boolean | null;
+  /** The transport limit whose ceiling omitted the response, when one did. */
+  readonly outputLimit?: AnalysisLimit;
   readonly completionToken?: string;
 }
 
@@ -310,7 +319,7 @@ export class CutterBridgeClient {
     this.#read = options.read;
     const configured = environment.REA_CUTTER_BRIDGE_DIR;
     const localAppData = environment.LOCALAPPDATA;
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     this.#windowsPrivateReader =
       options.windowsPrivateReader ??
       (this.#platform === "win32"
@@ -376,10 +385,9 @@ export class CutterBridgeClient {
     }
   }
 
-  async listSessions(
-    options: CutterDiscoveryOptions = {},
-  ): Promise<CutterBridgeDiscovery> {
-    const { signal } = options;
+  async listSessions({
+    signal,
+  }: CutterDiscoveryOptions = {}): Promise<CutterBridgeDiscovery> {
     assertBridgeActive(signal, "list_cutter_sessions");
     this.#requestLimit();
     const mismatches: number[] = [];
@@ -390,6 +398,7 @@ export class CutterBridgeClient {
         bridge_directory: this.#directory,
         discovery_status: loaded.error,
         bridge_directory_security: loaded.security,
+        limitations: cutterDiscoveryLimitations(loaded.error),
       };
     const descriptors = await mapDiscovery(
       loaded.descriptors,
@@ -411,6 +420,7 @@ export class CutterBridgeClient {
           descriptor.bridge_source_sha256,
           "list_cutter_sessions",
         );
+        const bridgeSourceRecovery = cutterBridgeSourceRecovery(bridgeSource);
         try {
           const status = responseSchema.safeParse(
             await this.#request(
@@ -443,6 +453,9 @@ export class CutterBridgeClient {
               status.data.cutter_version ?? descriptor.cutter_version,
             identity_status: "partial" as const,
             bridge_source: bridgeSource,
+            ...(bridgeSourceRecovery === undefined
+              ? {}
+              : { bridge_source_recovery: bridgeSourceRecovery }),
           };
         } catch (cause) {
           if (cause instanceof AnalysisResourceConstraintError) throw cause;
@@ -476,12 +489,17 @@ export class CutterBridgeClient {
         "Cutter",
         "No status request was sent to the mismatched session.",
       );
+    const discoveryStatus =
+      sessions.length > 0 ? "sessions_found" : "no_live_bridge_found";
     return {
       sessions,
       bridge_directory: this.#directory,
-      discovery_status:
-        sessions.length > 0 ? "sessions_found" : "no_live_bridge_found",
+      discovery_status: discoveryStatus,
       bridge_directory_security: loaded.security,
+      limitations: cutterDiscoveryLimitations(discoveryStatus, {
+        unreadable: loaded.unreadable,
+        unanswered: descriptors.length - sessions.length,
+      }),
     };
   }
 
@@ -560,6 +578,9 @@ export class CutterBridgeClient {
           // sent and its discarded response is omitted output. Any other
           // missing reply leaves truncation unknown.
           outputTruncated: cause.limit === undefined ? null : true,
+          ...(cause.limit?.limit === undefined
+            ? {}
+            : { outputLimit: cause.limit.limit }),
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       }
@@ -814,6 +835,7 @@ export class CutterBridgeClient {
           bridge_directory: this.#directory,
         },
         {
+          requestSent: false,
           remediationAction: `Reduce the number of Cutter bridge descriptors in the bridge directory. This budget of ${String(MAX_DESCRIPTOR_CANDIDATES)} descriptors has no runtime override. Descriptor files above ${String(MAX_DESCRIPTOR_BYTES)} bytes are skipped, and at most ${String(DISCOVERY_CONCURRENCY)} descriptors are probed at once; those caps also have no runtime override.`,
         },
       );
@@ -851,18 +873,28 @@ export class CutterBridgeClient {
     }
   }
 
-  async #loadDescriptors(signal: AbortSignal | undefined): Promise<{
-    readonly descriptors: readonly z.infer<typeof descriptorSchema>[];
-    readonly security:
-      | "private_verified"
-      | "not_private"
-      | "unverified_platform_acl"
-      | "not_checked";
-    readonly error?:
-      | "bridge_directory_unavailable"
-      | "bridge_directory_insecure"
-      | "bridge_directory_capacity_exceeded";
-  }> {
+  async #loadDescriptors(signal: AbortSignal | undefined): Promise<
+    {
+      readonly descriptors: readonly z.infer<typeof descriptorSchema>[];
+      readonly security:
+        | "private_verified"
+        | "not_private"
+        | "unverified_platform_acl"
+        | "not_checked";
+    } & (
+      | {
+          readonly error?: undefined;
+          /** Filename-matching candidates that could not be read as a descriptor. */
+          readonly unreadable: number;
+        }
+      | {
+          readonly error:
+            | "bridge_directory_unavailable"
+            | "bridge_directory_insecure"
+            | "bridge_directory_capacity_exceeded";
+        }
+    )
+  > {
     assertArtifactReadActive(signal);
     let directoryInfo;
     try {
@@ -870,7 +902,7 @@ export class CutterBridgeClient {
     } catch (cause) {
       const code = (cause as NodeJS.ErrnoException).code;
       if (code === "ENOENT")
-        return { descriptors: [], security: "not_checked" };
+        return { descriptors: [], security: "not_checked", unreadable: 0 };
       return {
         descriptors: [],
         security: "not_checked",
@@ -1011,12 +1043,13 @@ export class CutterBridgeClient {
       () => assertArtifactReadActive(signal),
     );
     assertArtifactReadActive(signal);
+    const descriptors = loaded.filter(
+      (value): value is z.infer<typeof descriptorSchema> => value !== undefined,
+    );
     return {
-      descriptors: loaded.filter(
-        (value): value is z.infer<typeof descriptorSchema> =>
-          value !== undefined,
-      ),
+      descriptors,
       security,
+      unreadable: entries.length - descriptors.length,
     };
   }
 
@@ -1292,11 +1325,7 @@ const discoveryFailure = (
       primary instanceof AnalysisError
         ? primary
         : new ProviderAdapterError("cutter", operation, { cause: primary });
-    return analysisErrorWithCleanupFailure(
-      original,
-      cleanup,
-      operation,
-    ).bindCleanupDependencies([cleanup]);
+    return analysisErrorWithCleanupDependencies(original, cleanup, operation);
   }
   if (cause.reason === "cancelled")
     return cancelledBy(

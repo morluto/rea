@@ -8,17 +8,17 @@ import type {
   UImageEntryMetadata,
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -27,7 +27,6 @@ import {
   parseMultiImageTable,
   parseUImageHeaderFields,
   UIMAGE_HEADER_SIZE,
-  UIMAGE_MAGIC,
   UIMAGE_MULTI_TABLE_WINDOW,
   type UImageHeaderFields,
   type UImageParseError,
@@ -108,11 +107,11 @@ export class UImageArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "uImage entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "uImage entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
       const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
@@ -301,7 +300,7 @@ const toMetadata = (
   subImageCount: number,
 ): UImageMetadata => ({
   kind: "uimage",
-  magic: UIMAGE_MAGIC,
+  magic: facts.magic,
   timestamp: facts.timestamp,
   timestamp_iso: facts.timestampIso,
   payload_size: facts.payloadSize,

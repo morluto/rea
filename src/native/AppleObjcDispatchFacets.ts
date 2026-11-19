@@ -5,17 +5,19 @@ import {
   projectObjcClassMethods,
   type ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
-import type { Segment, Section } from "./AppleMachoSelection.js";
+import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
+import type { Segment, Section } from "../domain/apple/appleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
-import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import type { DecodeIssue } from "../domain/apple/appleDispatchDecodeFacts.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 import type {
   BinaryMetadataEvidence,
   DispatchRecordBudget,
   ResolvedMetadataLocation,
 } from "./AppleSwiftDispatchFacets.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Byte readers shared by Objective-C class/method/ivar decode facets. */
 export interface ObjcDispatchReaders {
@@ -24,6 +26,8 @@ export interface ObjcDispatchReaders {
   u64(address: bigint): bigint;
   i32(address: bigint): number;
   pointer(address: bigint): bigint;
+  /** The pointer's fixup outcome; `pointer` reads a bind as zero and an unknown as its raw word. */
+  resolvePointer(address: bigint): PointerResolution;
   /** The symbol a pointer at `address` is bound to, when it is a bind fixup. */
   bound(
     address: bigint,
@@ -71,7 +75,7 @@ const resolveSuperclass = (
   } catch (cause: unknown) {
     if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
     failures.push(
-      `Superclass pointer ${hex(superclass)} of ${className} could not be decoded: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Superclass pointer ${hex(superclass)} of ${className} could not be decoded: ${errorMessage(cause)}`,
     );
     return { name: null, address: hex(superclass) };
   }
@@ -252,9 +256,7 @@ export const decodeObjcDispatchFacets = (input: {
       } catch (cause: unknown) {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         const admitted = budget.admit();
-        failures.push(
-          `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`${hex(field)}: ${errorMessage(cause)}`);
         return err(admitted ? "unmapped" : "exhausted");
       }
     };
@@ -286,9 +288,7 @@ export const decodeObjcDispatchFacets = (input: {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         // record() admits the slot itself before decoding, so admitting
         // again here would count one protocol twice.
-        failures.push(
-          `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`${hex(field)}: ${errorMessage(cause)}`);
       }
     }
   }
@@ -427,9 +427,7 @@ export const decodeObjcDispatchFacets = (input: {
         readClass(read.pointer(address), true);
       } catch (cause) {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
-        failures.push(
-          `Metaclass of ${name}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`Metaclass of ${name}: ${errorMessage(cause)}`);
       }
     }
   };
@@ -464,9 +462,7 @@ export const decodeObjcDispatchFacets = (input: {
         // admitting again here would count one class twice: at the budget
         // boundary it would break before appending the failure reason, and
         // with larger limits malformed classes would starve valid ones.
-        failures.push(
-          `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`${hex(field)}: ${errorMessage(cause)}`);
       }
     }
   }

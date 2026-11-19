@@ -14,9 +14,11 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
-import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  translateArtifactFailure,
+  createAsarHeaderSignatureProbe,
+} from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
@@ -25,7 +27,7 @@ import {
   minimalElfImage,
   minimalMachoImage,
 } from "../../../tests/fixtures/nativeHeaders.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
 import {
   RP2040_FAMILY,
@@ -41,8 +43,12 @@ import {
   esp8266Image,
   espImage,
 } from "../../../tests/fixtures/espImage.js";
-import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import {
+  fullAndroidOtaPayload,
+  v1AndroidOtaPayload,
+} from "../../domain/firmware/androidOtaPayload.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -63,6 +69,21 @@ it("joins only observed PE signature bytes across stream chunks", () => {
     offset: 8190,
     bytes: Buffer.from([0x50, 0x45, 0, 0]),
   });
+  expect(
+    classifyArtifactContent("native.exe", complete, bytes.length).format,
+  ).toBe("pe");
+});
+
+it("retains a PE record whose optional header crosses the retained prefix", () => {
+  const bytes = pe(0x8664, 8_000);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes.subarray(0, 8_192));
+  const partial = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", partial, bytes.length).format,
+  ).toBe("unknown");
+  probe.write(bytes.subarray(8_192));
+  const complete = probe.finish(bytes.length);
   expect(
     classifyArtifactContent("native.exe", complete, bytes.length).format,
   ).toBe("pe");
@@ -572,6 +593,21 @@ it("classifies nested HEX and S-record content as containers by bytes", () => {
       Buffer.from(":0300300002337A1F\n"),
     ),
   ).toEqual({ kind: "resource", format: "file" });
+});
+
+it("classifies nested Android OTA payloads as containers by CrAU magic", () => {
+  expect(
+    classifyArtifactBytesAtPath("ota/payload.bin", fullAndroidOtaPayload()),
+  ).toEqual({
+    kind: "container",
+    format: "android-ota-payload",
+  });
+  expect(
+    classifyArtifactBytesAtPath("ota/payload.bin", v1AndroidOtaPayload()),
+  ).toEqual({
+    kind: "resource",
+    format: "file",
+  });
 });
 
 it("classifies nested ESP images as containers by bytes", () => {

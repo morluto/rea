@@ -5,13 +5,13 @@ const member = managedMemberInspectionSchema.shape;
 
 const rows = {
   types: member.types.element,
-  exported_types: member.exported_types.unwrap().unwrap().element,
+  exported_types: member.exported_types.unwrap().element,
   fields: member.fields.element,
   methods: member.methods.element,
   member_refs: member.member_refs.element,
   call_edges: member.call_edges.element,
   field_accesses: member.field_accesses.element,
-  user_strings: member.user_strings.unwrap().unwrap().shape.literals.element,
+  user_strings: member.user_strings.unwrap().shape.literals.element,
 };
 const pageRequest = {
   kind: z.literal("managed-members"),
@@ -106,18 +106,10 @@ const rowsOf = <C extends string, S extends z.ZodObject>(
     unresolved_filter_rows: z.int().nonnegative().exactOptional(),
   });
 
-/** Source defaults normalize full facts, never omitted projection columns. */
 export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
   rowsOf(
     "types",
-    rows.types
-      .extend({
-        name_sha256: rows.types.shape.name_sha256.removeDefault(),
-        enclosing_type_token:
-          rows.types.shape.enclosing_type_token.removeDefault(),
-      })
-      .partial()
-      .required({ token: true, row_offset: true }),
+    rows.types.partial().required({ token: true, row_offset: true }),
   ),
   rowsOf(
     "exported_types",
@@ -138,47 +130,26 @@ export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
   rowsOf(
     "member_refs",
     rows.member_refs
-      .extend({
-        parent_name: rows.member_refs.shape.parent_name.removeDefault(),
-      })
       .partial()
       .required({ token: true, row_offset: true, parent_token: true }),
   ),
   rowsOf(
     "call_edges",
-    rows.call_edges
-      .extend({
-        target_identity_sha256:
-          rows.call_edges.shape.target_identity_sha256.removeDefault(),
-        target_declaring_type:
-          rows.call_edges.shape.target_declaring_type.removeDefault(),
-      })
-      .partial()
-      .required({
-        caller_token: true,
-        il_offset: true,
-        target_token: true,
-        opcode: true,
-      })
-      .extend({ il_offset: rows.call_edges.shape.il_offset }),
+    rows.call_edges.partial().required({
+      caller_token: true,
+      il_offset: true,
+      target_token: true,
+      opcode: true,
+    }),
   ),
   rowsOf(
     "field_accesses",
-    rows.field_accesses
-      .extend({
-        target_identity_sha256:
-          rows.field_accesses.shape.target_identity_sha256.removeDefault(),
-        field_declaring_type:
-          rows.field_accesses.shape.field_declaring_type.removeDefault(),
-      })
-      .partial()
-      .required({
-        method_token: true,
-        il_offset: true,
-        field_token: true,
-        opcode: true,
-      })
-      .extend({ il_offset: rows.field_accesses.shape.il_offset }),
+    rows.field_accesses.partial().required({
+      method_token: true,
+      il_offset: true,
+      field_token: true,
+      opcode: true,
+    }),
   ),
   rowsOf(
     "user_strings",
@@ -197,13 +168,13 @@ export const managedMemberSummarySchema = z.strictObject({
   assembly: member.assembly,
   metadata: member.metadata,
   identity_scope: member.identity_scope,
-  selection: member.selection.unwrap(),
+  selection: member.selection,
   method_rows: member.method_rows,
   coverage: member.coverage,
   user_strings: z
     .strictObject({
-      state: member.user_strings.unwrap().unwrap().shape.state,
-      issues: member.user_strings.unwrap().unwrap().shape.issues,
+      state: member.user_strings.unwrap().shape.state,
+      issues: member.user_strings.unwrap().shape.issues,
     })
     .nullable(),
   limitations: member.limitations,
@@ -224,9 +195,10 @@ export const managedMembersViewContextSchema = z.strictObject({
   signature_resolution: member.signature_resolution,
   nesting_read: member.nesting_read,
   identity_scope: member.identity_scope,
-  selection: member.selection.unwrap(),
+  selection: member.selection,
   method_rows: member.method_rows,
   source_metadata_status: member.metadata.shape.status,
+  unresolved_module_name: member.metadata.shape.unresolved_module_name,
   source_coverage: member.coverage,
 });
 

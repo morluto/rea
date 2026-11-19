@@ -8,7 +8,7 @@ import {
   cells,
   devicetreeFixture,
   emptyStringsAtReservationBoundaryFixture,
-} from "../../src/firmware/devicetree/Devicetree.fixture.js";
+} from "../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -292,5 +292,13 @@ for (const [name, build, flags, code] of [
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({ code });
+    if (name === "exhausted")
+      expect(result.json).toMatchObject({
+        details: {
+          reported_limits: { boundary: "max_nodes", maximum: 1 },
+          reason: expect.stringContaining("raise that caller-selected limit"),
+        },
+        retryable: false,
+      });
   });
 }

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Buffer } from "node:buffer";
@@ -7,12 +6,17 @@ import { z } from "zod";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   guestFileAnswerBytes,
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
-  type AgentEnvComputer,
 } from "./AgentEnvComputer.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../ports/BuildComputerControl.js";
 
 const CONTROLLER = fileURLToPath(
   new URL("../../bridge/agentenv/capture.py", import.meta.url),
@@ -21,6 +25,20 @@ const CONTROLLER = fileURLToPath(
 const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
 /** Default time allowed for one REA command in the build computer. */
 export const BUILD_REA_TIMEOUT_S = 1800;
+
+/** Read a structured build-computer file without exposing parser excerpts. */
+export const parseBuildComputerJson = (
+  bytes: Uint8Array,
+  subject: string,
+): unknown => {
+  try {
+    return JSON.parse(decodeStrictUtf8(bytes, "preserve")) as unknown;
+  } catch {
+    // A parser excerpt can expose part of a value that exact redaction misses.
+    throw new Error(`The build computer's ${subject} is not valid UTF-8 JSON.`);
+  }
+};
+
 /**
  * Linux `MAX_ARG_STRLEN` on a 4 KiB page, excluding the NUL the kernel counts.
  * One argument past this fails with E2BIG before the process starts.
@@ -63,12 +81,6 @@ const controllerArgumentPieces = (text: string): readonly string[] => {
   }
   return pieces;
 };
-
-/** The computer routes REA's build controller uses, and the control token's redaction for what it reads. */
-export type ControlledComputer = Pick<
-  AgentEnvComputer,
-  "exec" | "homeFiles" | "redacted"
->;
 
 /**
  * Run one command of REA's build controller in the computer, as its user and
@@ -145,8 +157,8 @@ export const runBuildController = async (
   );
 };
 
-/** What REA's build controller answers a command with. The wire format stays here. */
-export const answerSchema = z.looseObject({
+/** What REA's build controller answers a command with. The wire format stays here; the port names its fields. */
+export const answerSchema: z.ZodType<BuildControllerAnswer> = z.looseObject({
   error: z.string().optional(),
   /** Why the controller refused a request before acting on it, such as a state path outside the home. */
   refused: z.string().optional(),
@@ -164,11 +176,12 @@ export const answerSchema = z.looseObject({
   output_bytes: z.int().nonnegative().optional(),
   stdout_bytes: z.int().nonnegative().optional(),
   stderr: z.string().optional(),
+  /** False when the supervisor published a result but the process group is not confirmed gone. */
+  settled: z.boolean().optional(),
   apt: z
     .looseObject({ lists: z.int().nonnegative(), error: z.string().optional() })
     .optional(),
 });
-export type Answer = z.infer<typeof answerSchema>;
 
 /** One controller command, its answer parsed. */
 export const controller = async (
@@ -176,7 +189,7 @@ export const controller = async (
   command: "start" | "mark" | "stop",
   argumentsJson: Readonly<Record<string, JsonValue>>,
   options: { readonly timeoutS: number; readonly signal: AbortSignal },
-): Promise<Answer> =>
+): Promise<BuildControllerAnswer> =>
   answerSchema.parse(
     await runBuildController(computer, command, argumentsJson, options),
   );
@@ -273,7 +286,7 @@ const listFolder = async (
     output,
   );
   if (content === undefined) throw new Error(`The computer has no ${output}.`);
-  return listingSchema.parse(JSON.parse(content.toString("utf8")));
+  return listingSchema.parse(parseBuildComputerJson(content, "file listing"));
 };
 
 /** One listed file and the answer budget a batch must fit. */
@@ -345,10 +358,7 @@ export const fetchHomeFolder = async (
     );
     for (const file of batch) {
       const content = files.get(file.path);
-      const sha256 =
-        content === undefined
-          ? undefined
-          : createHash("sha256").update(content).digest("hex");
+      const sha256 = content === undefined ? undefined : sha256Hex(content);
       if (
         !file.path.startsWith(`${folder}/`) ||
         content?.length !== file.size ||

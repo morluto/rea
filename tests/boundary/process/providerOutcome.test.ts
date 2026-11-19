@@ -1,4 +1,6 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { beforeAll, expect, it } from "vitest";
 import {
   AnalysisCancelledError,
@@ -93,14 +95,45 @@ it("reads a refused launch with the operating system's code", async () => {
     { timeoutMs: 10_000, diagnosticBytes: 1024 },
   );
   expect(outcome).toMatchObject({
-    kind: "launch-refused",
-    refusal: { kind: "missing", code: "ENOENT" },
+    kind: "launch-failed",
+    failure: { kind: "missing", code: "ENOENT" },
     output: undefined,
   });
 });
 
+it.skipIf(process.platform === "win32")(
+  "reads a real oversized argument list as an argument-list launch failure",
+  async () => {
+    // One 4 MiB argument exceeds the POSIX launch limit (ARG_MAX on macOS,
+    // MAX_ARG_STRLEN on Linux), so the operating system refuses the exec.
+    const outcome = await outcomeOf(
+      { ...node(""), arguments: ["-e", "", "x".repeat(4 * 1024 * 1024)] },
+      { timeoutMs: 10_000, diagnosticBytes: 1024 },
+    );
+    expect(outcome).toMatchObject({
+      kind: "launch-failed",
+      failure: {
+        kind: "argument-list",
+        code: "E2BIG",
+        executable: process.execPath,
+        syscall: `spawn ${process.execPath}`,
+      },
+      output: undefined,
+    });
+  },
+);
+
 it("is undefined for a failure that is not an owned command outcome", () => {
   expect(providerOutcomeOf(new Error("parse failure"))).toBeUndefined();
+});
+
+it("does not read a file errno as a launch failure", async () => {
+  const read = await readFile(`/nonexistent-${randomUUID()}/carrier`).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(read).toMatchObject({ code: "ENOENT" });
+  expect(providerOutcomeOf(read)).toBeUndefined();
 });
 
 it.skipIf(process.platform === "win32")(
@@ -123,6 +156,7 @@ const readCapture = (
 ) =>
   runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", script],
     inputPath: "/authored-capture.pcap",
@@ -168,6 +202,7 @@ it("classifies a caller cancellation through the shared owner", async () => {
   const reason = { request: "caller cancel" };
   const running = runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", "setInterval(() => {}, 1000)"],
     inputPath: "/authored-capture.pcap",
@@ -182,4 +217,60 @@ it("classifies a caller cancellation through the shared owner", async () => {
   const failure = await running;
   expect(failure).toBeInstanceOf(AnalysisCancelledError);
   expect((failure as AnalysisCancelledError).cause).toBe(reason);
+});
+
+it("observes a JVM out-of-memory report past the retained output budget", async () => {
+  const report =
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space';
+  const script = `process.stderr.write("x".repeat(4096) + "\\n" + ${JSON.stringify(report)} + "\\n"); process.exitCode = 1`;
+  const failure = await runOwnedCommand(node(script), {
+    timeoutMs: 10_000,
+    diagnosticBytes: 64,
+    runtime: "jvm",
+  }).catch((cause: unknown) => cause);
+  expect(providerOutcomeOf(failure)).toMatchObject({
+    kind: "runtime-exhausted",
+    exhaustion: { runtime: "jvm", area: "heap", stream: "stderr" },
+  });
+  // Without the runtime opt-in the same output is only an overflow.
+  const unscanned = await runOwnedCommand(node(script), {
+    timeoutMs: 10_000,
+    diagnosticBytes: 64,
+  }).catch((cause: unknown) => cause);
+  expect(providerOutcomeOf(unscanned)).toMatchObject({ kind: "output-limit" });
+});
+
+it("keeps the omission of a long out-of-memory line on its report", async () => {
+  const report = `${"x".repeat(2048)} java.lang.OutOfMemoryError: Java heap space`;
+  const script = `process.stderr.write(${JSON.stringify(report)} + "\\n"); process.exitCode = 1`;
+  const failure = await runOwnedCommand(node(script), {
+    timeoutMs: 10_000,
+    diagnosticBytes: 64,
+    runtime: "jvm",
+  }).catch((cause: unknown) => cause);
+  const outcome = providerOutcomeOf(failure);
+  expect(outcome).toMatchObject({
+    kind: "runtime-exhausted",
+    exhaustion: { area: "heap", truncated: true, invalidUtf8: false },
+  });
+  if (outcome?.kind !== "runtime-exhausted") throw failure;
+  expect(outcome.exhaustion.line.length).toBeLessThan(report.length);
+});
+
+it("observes a real V8 heap exhaustion report", async () => {
+  const failure = await runOwnedCommand(
+    {
+      ...node(""),
+      arguments: [
+        "--max-old-space-size=16",
+        "-e",
+        "const a = []; for (;;) a.push({ value: a.length });",
+      ],
+    },
+    { timeoutMs: 60_000, diagnosticBytes: 64 * 1024, runtime: "v8" },
+  ).catch((cause: unknown) => cause);
+  expect(providerOutcomeOf(failure)).toMatchObject({
+    kind: "runtime-exhausted",
+    exhaustion: { runtime: "v8", area: "heap" },
+  });
 });

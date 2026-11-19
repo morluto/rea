@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   cancel,
   confirm,
@@ -187,11 +188,13 @@ const selectSetupActions = async (
 const clientHint = (state: SetupClientState): string =>
   state.configured
     ? "REA already configured · selected from existing configuration"
-    : state.status === "invalid"
-      ? "Existing configuration needs repair before setup"
-      : state.detected
-        ? "Detected · choose to configure"
-        : "Not detected · configuration is still available";
+    : state.client.configPathError !== undefined
+      ? state.client.configPathError
+      : state.status === "invalid"
+        ? "Existing configuration needs repair before setup"
+        : state.detected
+          ? "Detected · choose to configure"
+          : "Not detected · configuration is still available";
 
 const selectClients = async (
   states: readonly SetupClientState[],
@@ -261,7 +264,7 @@ const renderKeyboardHelp = (accessible: boolean): void => {
 };
 
 const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string => {
-  const runner = invokingPackageRunner(environment);
+  const runner = invokingPackageRunner(environment, HOST_PLATFORM.platform);
   return runner === undefined ? "rea" : `${runner} rea-agents`;
 };
 

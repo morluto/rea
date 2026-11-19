@@ -50,8 +50,10 @@ that key, with those libraries, and starts it.
   key's path, SHA-256, format and primary fingerprint are recorded and its
   bytes retained in the capture's content store, within `--max-file-bytes`
   and the content budget. A key file holding one key is retained as it is;
-  from a file holding several, only the transferable key whose primary
-  fingerprint matches is retained, in binary. Without a verified key,
+  from a file holding several, only transferable key blocks whose primary
+  fingerprint matches are retained, in binary. All versions of that primary
+  key are kept, including versions carrying different signing subkeys; other
+  primary keys are excluded. Without a verified key,
   `signing_key` is null and `signing_key_reason` says why. Ubuntu Pro ESM
   repositories are not checked, with a reason naming the Ubuntu Pro
   credentials a computer lacks.

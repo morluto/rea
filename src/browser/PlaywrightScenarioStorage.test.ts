@@ -552,6 +552,8 @@ it("cancels a pending storage-key reply and still releases its CDP owner", async
   expect(cdp.detachCalls).toBe(1);
 });
 
+// The child reply never arrives, so a missing command deadline leaves settle
+// pending until the test's deadline; the message names the value applied.
 it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
@@ -559,7 +561,6 @@ it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
     ...scenario(),
     command_timeout_ms: 40,
   });
-  const started = performance.now();
   const owner = await createInitializedStorage(contextApi, page, input);
   expect(owner).toBeDefined();
   cdp.emit("Target.attachedToTarget", {
@@ -577,7 +578,6 @@ it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
       "Set command_timeout_ms in the capture-browser-scenario JSON above 40",
     ),
   });
-  expect(performance.now() - started).toBeLessThan(4_000);
   await owner?.close();
 });
 
@@ -641,3 +641,37 @@ it("retains the exact in-flight detach after the bounded wait expires", async ()
   await retry;
   expect(cdp.detachCalls).toBe(1);
 });
+
+it.each([
+  [
+    "Runtime.executionContextCreated",
+    { context: { id: 4, origin: "https://storage.example.test", name: 7 } },
+  ],
+  [
+    "Runtime.executionContextCreated",
+    {
+      context: {
+        id: 4,
+        origin: "https://storage.example.test",
+        name: "seed",
+        auxData: { frameId: 3 },
+      },
+    },
+  ],
+  ["Runtime.executionContextDestroyed", { executionContextId: "4" }],
+  ["Debugger.scriptParsed", { scriptId: "seed-script", url: "seed" }],
+  ["Debugger.paused", { callFrames: [{ callFrameId: "frame" }] }],
+  ["Target.detachedFromTarget", {}],
+] as const)(
+  "records a malformed %s payload as a protocol failure",
+  async (method, params) => {
+    const cdp = new FakeCdp();
+    const { page, contextApi } = fixture(cdp);
+    const owner = await createInitializedStorage(contextApi, page);
+    cdp.emit(method, params);
+    await expect(owner?.settle()).rejects.toMatchObject({
+      reason: "protocol_error",
+    });
+    await owner?.close();
+  },
+);

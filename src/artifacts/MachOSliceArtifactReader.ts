@@ -1,4 +1,16 @@
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+  streamChunkToBuffer,
+  readArtifactFileChunks,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 
@@ -6,34 +18,25 @@ import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "../native/CommandRunner.js";
-import {
-  parseLipoOutputResult,
-  LipoFieldRetentionError,
-  type LipoArchitecture,
-} from "../native/parsers/lipo.js";
+} from "../providers/NativeCommandRunner.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
   machoCpuSubtypeBase,
   machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
-import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
 import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
+  readMachoImage,
+  type ReadAt,
+} from "../domain/apple/machoLoadCommandReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
+import {
+  parseLipoOutputResult,
+  LipoFieldRetentionError,
+  type LipoArchitecture,
+} from "../domain/apple/lipo.js";
 
 /** Read-only universal Mach-O slice reader backed by native lipo metadata. */
 export class MachOSliceArtifactReader implements ArtifactReader {
@@ -157,6 +160,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O structural slice index is malformed: ${structural.reason}`,
+        { integrityCheck: "layout-consistency" },
       );
     // A valid universal binary can hold slices REA cannot index, such as
     // big-endian PowerPC. lipo's own ranges still inventory every slice.
@@ -176,7 +180,9 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const disagreements: string[] = [];
     const disagree = (message: string): void => {
       if (this.integrity === "fail")
-        throw new ArtifactReaderFailure("integrity", message);
+        throw new ArtifactReaderFailure("integrity", message, {
+          integrityCheck: "layout-consistency",
+        });
       disagreements.push(message);
     };
     const hiddenArchitectures = architectures.filter(({ hidden }) => hidden);
@@ -298,6 +304,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "lipo omitted a universal slice byte range",
+          { integrityCheck: "layout-consistency" },
         );
       yield this.#sliceEntry(architecture.name, offset, sliceSize, fileSize, [
         ...architecture.limitations,
@@ -342,6 +349,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O slice range is outside the artifact: ${name}`,
+        { integrityCheck: "layout-consistency" },
       );
     const entry: ArtifactEntry = {
       path: `slices/${name}`,
@@ -376,11 +384,11 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         }),
       );
     const produced = this.#entries.get(entry.adapterKey);
-    if (produced === undefined || !sameArtifactEntry(entry, produced))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "Mach-O slice entry metadata does not match this reader's inventory",
-      );
+    assertProducedEntry(
+      entry,
+      produced,
+      "Mach-O slice entry metadata does not match this reader's inventory",
+    );
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
     if (
@@ -394,6 +402,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         "Invalid Mach-O slice byte range",
+        { integrityCheck: "layout-consistency" },
       );
     const source = await this.#ensureSource();
     await this.#source.readSelectedPath();
@@ -409,6 +418,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O slice range is outside the artifact: ${entry.path}`,
+        { integrityCheck: "layout-consistency" },
       );
     const sourceStream = readArtifactFileChunks(source.handle, {
       start: offset,
@@ -423,11 +433,13 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         return new ArtifactReaderFailure(
           "integrity",
           `Mach-O slice read coverage is incomplete: ${entry.path}`,
+          { integrityCheck: "read-coverage" },
         );
       if (coverage.bytes !== BigInt(size))
         return new ArtifactReaderFailure(
           "integrity",
           `Mach-O slice size disagrees with lipo metadata: ${entry.path}`,
+          { integrityCheck: "declared-size" },
         );
       if (signal?.aborted)
         return new ArtifactReaderFailure(
@@ -456,7 +468,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
           throw new ArtifactReaderFailure(
             "integrity",
             `Could not read Mach-O slice range: ${entry.path}`,
-            { cause },
+            { cause, integrityCheck: "read-coverage" },
           );
         }
         validatingSource = true;
@@ -494,7 +506,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
             : new ArtifactReaderFailure(
                 "integrity",
                 `Could not read Mach-O slice range: ${entry.path}`,
-                { cause },
+                { cause, integrityCheck: "read-coverage" },
               )),
       );
     };

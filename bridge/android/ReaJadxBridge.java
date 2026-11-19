@@ -46,6 +46,10 @@ import org.xml.sax.InputSource;
 
 /** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
 class ReaJadxBridge {
+  // REA reads this identity from this source (JadxRelease.ts), so it is typed
+  // once. Change BRIDGE_VERSION with any protocol change REA must not mix.
+  static final String BRIDGE_NAME = "rea-jadx-bridge";
+  static final String BRIDGE_VERSION = "11";
   private static final Gson JSON = new Gson();
   private final SessionHolder holder;
   private JadxSession indexedSession;
@@ -709,10 +713,19 @@ class ReaJadxBridge {
         TextUtilKt.truncateToBytes(block, current.getMaxSourceBytes()), "smali", true, markers);
   }
 
+  private static final class MethodDisassemblyUnavailable extends IllegalArgumentException {
+    MethodDisassemblyUnavailable(String message) { super(message); }
+  }
+
   private static String selectMethodSmali(JadxSession.MethodSmali smali, String shortId) {
-    if (!smali.getFound())
-      throw new IllegalArgumentException("JADX could not disassemble " + shortId
-          + (smali.getNote() == null ? "" : ": " + smali.getNote()));
+    if (!smali.getFound()) {
+      String reason = "JADX could not disassemble " + shortId
+          + (smali.getNote() == null ? "" : ": " + smali.getNote());
+      // JADX folds caller interruption into the same result as failed generation
+      // and missing blocks, but leaves the interrupt flag set.
+      if (Thread.currentThread().isInterrupted()) throw new IllegalArgumentException(reason);
+      throw new MethodDisassemblyUnavailable(reason);
+    }
     // Upstream returns every same-name overload, and can return an unterminated
     // trailing block. Match the full original identity before applying output limits.
     List<String> matches = smali.getBlocks().stream().filter(block -> {
@@ -720,10 +733,10 @@ class ReaJadxBridge {
       return header.startsWith(".method ") && header.endsWith(" " + shortId);
     }).toList();
     if (matches.size() != 1)
-      throw new IllegalArgumentException("Disassembly could not establish one selected method: " + shortId);
+      throw new MethodDisassemblyUnavailable("Disassembly could not establish one selected method: " + shortId);
     String block = matches.get(0);
     if (!block.stripTrailing().endsWith("\n.end method"))
-      throw new IllegalArgumentException("Selected method disassembly is incomplete: " + shortId);
+      throw new MethodDisassemblyUnavailable("Selected method disassembly is incomplete: " + shortId);
     return block;
   }
 
@@ -999,14 +1012,22 @@ class ReaJadxBridge {
       List<MethodSnapshot> overloads = methods(cls, args);
       int index = integer(args, "overload_index", 0);
       if (index >= overloads.size()) throw new InputFailure("overload_index", "overload_index out of range: " + index);
-      JavaMethod method = method(cls, overloads.get(index));
-      JadxSession.SmartCode code = methodBody(current, cls, overloads.get(index), method);
-      return json(Map.of("class_name", cls.summary().get("full_name"),
-          "method_name", overloads.get(index).name(), "full_name", method.getFullName(),
-          "dex_descriptor", overloads.get(index).summary().get("dex_descriptor"),
-          "overload_index", index, "overload_count", overloads.size(),
-          "mode", code.getKind(), "fell_back", code.getFellBack(),
-          "markers", code.getMarkers(), "body", code.getText()));
+      MethodSnapshot selected = overloads.get(index);
+      JavaMethod method = method(cls, selected);
+      Map<String, Object> result = new LinkedHashMap<>(Map.of(
+          "class_name", cls.summary().get("full_name"),
+          "method_name", selected.name(), "full_name", method.getFullName(),
+          "dex_descriptor", selected.summary().get("dex_descriptor"),
+          "overload_index", index, "overload_count", overloads.size()));
+      try {
+        JadxSession.SmartCode code = methodBody(current, cls, selected, method);
+        result.putAll(Map.of("mode", code.getKind(), "fell_back", code.getFellBack(),
+            "markers", code.getMarkers(), "body", code.getText()));
+      } catch (MethodDisassemblyUnavailable failure) {
+        result.put("mode", "unavailable");
+        result.put("body_unavailable_reason", failure.getMessage());
+      }
+      return json(result);
     }
     List<JavaNode> uses;
     String target = (String) cls.summary().get("full_name");
@@ -1080,7 +1101,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "11", null, null, null),
+    Server server = new Server(new Implementation(BRIDGE_NAME, BRIDGE_VERSION, null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);

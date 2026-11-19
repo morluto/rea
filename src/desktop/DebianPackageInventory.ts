@@ -5,7 +5,7 @@ import { readdir } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/index.js";
 import {
   fromUbuntuNobleArchive,
   repositoryRefusal,
@@ -37,6 +37,7 @@ import {
   installableLibraries,
   installablePackages,
 } from "./LibraryPackageInventory.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The host commands and apt folders Debian package identification reads. */
 export type DebianPackageHost = AptRepositoryHost;
@@ -73,9 +74,7 @@ const bothFailed = (first: unknown, second: unknown): unknown => {
   const causes = [first, second];
   const both = new AggregateError(
     causes,
-    causes
-      .map((cause) => (cause instanceof Error ? cause.message : String(cause)))
-      .join("; "),
+    causes.map((cause) => errorMessage(cause)).join("; "),
   );
   const cleanups = causes.flatMap((cause) =>
     cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
@@ -159,7 +158,7 @@ const installFacts = async (
       ...(libraries?.library_packages ?? []),
       ...(program === undefined ? [] : [program]),
     ],
-    { origins, declared },
+    { origins, declared, statusFile: context.host.apt.status },
     runQuery,
     context.signal,
   );
@@ -304,7 +303,7 @@ export const debianPackage = async (
       "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
     );
   const sources =
-    policy === undefined ? [] : [...parseAptPolicySources(policy)];
+    policy === undefined ? [] : [...parseAptPolicySources(policy, apt.status)];
   // A local install's library packages are matched to the archive by origin too.
   const origins = await policyOrigins(context);
   const installed = {

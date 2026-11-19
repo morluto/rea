@@ -188,11 +188,14 @@ export const staticJavaScriptTruthiness = (
     t.isNumericLiteral(value.argument)
   )
     return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
+  // Each of these evaluates to a fresh object, and every object is truthy.
   if (
     t.isObjectExpression(value) ||
     t.isArrayExpression(value) ||
     t.isFunctionExpression(value) ||
-    t.isArrowFunctionExpression(value)
+    t.isArrowFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value)
   )
     return true;
   return undefined;
@@ -626,7 +629,11 @@ export const semanticFinalObjectStringProperty = (
   key: string,
 ): string | undefined => {
   const value = semanticFinalObjectProperty(node, key);
-  return t.isStringLiteral(value) ? value.value : undefined;
+  if (value === undefined) return undefined;
+  const literal = readExactJavaScriptLiteral(value);
+  return literal.found && typeof literal.value === "string"
+    ? literal.value
+    : undefined;
 };
 
 /** Read exact consumed object-pattern keys, leaving dynamic keys unknown. */

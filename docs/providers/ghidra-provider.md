@@ -17,7 +17,7 @@ database state into a fresh discovery. The default remains ephemeral.
 Use [installation](../getting-started/installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
 [Linux Ghidra launches](../getting-started/installation.md#linux-owned-process-prerequisite) also
-require a procps-compatible `ps` on REA's `PATH` for process ownership checks.
+require a procps-compatible system `ps` for process ownership checks.
 [Windows P0](windows-ghidra-p0.md) has its own admission and lifecycle boundary;
 [NativeAOT observations](ghidra-nativeaot.md) include a built-in read-only PE
 snapshot parser and a separate optional annotation extension. Check the
@@ -32,6 +32,11 @@ catalog remains a read failure; it does not prove that a configured language is
 undefined. Installation `application.properties` has a fixed 1 MiB read allowance
 with no runtime override. The failure retains that allowance and directs recovery
 at the selected installation metadata.
+
+Xtensa ELF files (`EM_XTENSA = 94`) use the header-selected Ghidra import
+language and report the canonical `xtensa` architecture in CLI/MCP results.
+Processor extensions and calling-convention compatibility remain specific to
+the selected Ghidra language; family recognition alone does not establish them.
 
 Retained process diagnostics can report termination by `SIGKILL`; the signal alone
 cannot establish an OOM kill. REA gives neutral recovery guidance and preserves the
@@ -230,8 +235,7 @@ status and limitations state.
 
 Relocation rows retain Ghidra's `symbol` value, including an empty string or
 null when returned by Ghidra. It is a provider observation, not proof of the
-runtime-resolved address. Older Evidence may not have recorded this field;
-a relocation page requesting it reports that uncertainty.
+runtime-resolved address. Every relocation row records the field.
 
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
@@ -314,6 +318,11 @@ same function can be retried after raising the limit. See the
 [settings design](../design/limits-and-recovery.md) for snapshots, precedence,
 and provider integration.
 
+Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
+of the packaged bridge scripts. A snapshot replays only under the same
+producer, so after an REA upgrade or a bridge script change an older snapshot is
+refused; open the target without it and save a fresh snapshot.
+
 When `inspect_native_instruction` selects a byte inside a listed instruction,
 `containing_instruction` reports its separate start, length and Ghidra Listing
 text, retaining any non-default address space. The requested address remains
@@ -363,19 +372,23 @@ genuine no-return imports keep their flags. Analysis profiles version this repai
 so snapshots produced before it are not reused. Windows P0 does not run it.
 
 Ghidra applies most loader relocations, but it cannot apply some, such as an
-ELF copy relocation into RELRO (for example musl's `stderr`). Those destinations
-keep their file bytes while the runtime loader writes another object's value.
-Before decompiling, a fresh non-Windows import marks each loaded, initialized,
-non-writable block that holds such an unapplied relocation destination volatile
-in the ephemeral database, so the decompiler cannot fold the on-disk value into
-a constant. Applied relocations such as GOT entries stay foldable, so external
-calls keep their names. Permissions and source `FileBytes` are unchanged; the
-whole block is affected because Ghidra sets volatility per block. A procedure
-that reads an unapplied destination adds a limitation naming the relocation.
-Windows P0 and existing projects (`REA_GHIDRA_PROJECT_PATH`) have no
-database-mutation authority: they add the same limitation, but their pseudocode
-may still show the file-backed value. ELF relocatable objects and core files are
-excluded. Analysis profiles version this behavior.
+ELF copy relocation into RELRO (for example musl's `stderr`) or a TLS slot that
+only the runtime loader fills. Those destinations keep their file bytes while
+the runtime loader writes another value. Before decompiling, a fresh
+non-Windows import marks each such destination in a loaded, initialized,
+non-writable block volatile in the ephemeral database, so the decompiler
+cannot fold the on-disk value into a constant. Volatility is set on the
+destination's own data item (an undefined item of the relocation's length is
+created where nothing is defined), so applied relocations in the same block,
+such as the GOT entries beside a TLS slot, stay foldable and external calls
+keep their names. Only when an instruction or a data item starting before the
+destination occupies it is the whole block marked volatile instead.
+Permissions and source `FileBytes` are unchanged. A procedure that reads an
+unapplied destination adds a limitation naming the relocation. Windows P0 and
+existing projects (`REA_GHIDRA_PROJECT_PATH`) have no database-mutation
+authority: they add the same limitation, but their pseudocode may still show
+the file-backed value. ELF relocatable objects and core files are excluded.
+Analysis profiles version this behavior.
 
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
 host-native targets (x86-64/AArch64 ELF on Linux or Mach-O on macOS), plus a native

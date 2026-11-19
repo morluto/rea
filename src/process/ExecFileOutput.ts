@@ -1,9 +1,12 @@
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { launchExhaustedResource } from "./launchFailure.js";
 import {
   execFile,
   spawn,
   type ExecFileOptionsWithBufferEncoding,
 } from "node:child_process";
+import { isAbortOf } from "./SignalAbort.js";
 
 type ExecFileOutputOptions = Omit<
   ExecFileOptionsWithBufferEncoding,
@@ -135,25 +138,16 @@ export const execFileOutputFailure = (
   };
 };
 
-/** Spawn errnos reporting exhausted host capacity rather than an unusable command. */
-export const HOST_SPAWN_CAPACITY_CODES: ReadonlySet<string> = new Set([
-  "EAGAIN",
-  "EMFILE",
-  "ENFILE",
-  "ENOMEM",
-]);
-
 /**
  * Whether the command never started because the host lacked process, memory
- * or file-descriptor capacity. The command itself may be usable; a retry after
- * capacity is freed can succeed.
+ * or file-descriptor capacity (classified by `launchExhaustedResource`). The
+ * command itself may be usable; a retry after capacity is freed can succeed.
  */
 export const spawnCapacityExhausted = (
   failure: ExecFileOutputFailure | undefined,
 ): boolean =>
   failure?.spawnFailed === true &&
-  typeof failure.code === "string" &&
-  HOST_SPAWN_CAPACITY_CODES.has(failure.code);
+  launchExhaustedResource(failure.code) !== undefined;
 
 /** Project admitted command failure facts without reinterpreting failure policy. */
 export const execFileFailureCapturedOutput = (
@@ -241,8 +235,10 @@ export const execFileBytes = (
           },
           (error, stdout, stderr) =>
             complete(
-              error?.name === "AbortError" && error.code === "ABORT_ERR"
-                ? new ExecFileOutputCancelledError(error.cause)
+              // A successful callback's null is not a rejection, even when
+              // the caller's abort reason is also null.
+              error !== null && isAbortOf(error, signal)
+                ? new ExecFileOutputCancelledError(signal.reason)
                 : error,
               stdout,
               stderr,
@@ -302,7 +298,7 @@ const startStoppableCommand = (
     killSignal: stopSignal,
     // POSIX detach starts a new session, so the command leads a process group
     // REA can stop as one family. Windows detach would only open a console.
-    detached: process.platform !== "win32",
+    detached: HOST_PLATFORM.platform !== "win32",
   });
   child.on("error", (error: Error) => {
     processError ??= error;
@@ -323,7 +319,7 @@ const startStoppableCommand = (
   const signalFamily = (signalName: NodeJS.Signals): void => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const pid = child.pid;
-    if (process.platform !== "win32" && pid !== undefined)
+    if (HOST_PLATFORM.platform !== "win32" && pid !== undefined)
       try {
         process.kill(-pid, signalName);
         signalled = true;
