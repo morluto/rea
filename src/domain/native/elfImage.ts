@@ -15,8 +15,12 @@ import { readElfDirectoryFromBuffer } from "./nativeSectionDirectory.js";
 /** Read ELF sections and file-backed program mappings without interpreting language metadata. */
 export const readElfImage = (
   bytes: Buffer,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): Extract<BinaryContainer, { format: "elf" }> =>
-  readElfImageFromDirectory(bytes, readElfDirectoryFromBuffer(bytes));
+  readElfImageFromDirectory(
+    bytes,
+    readElfDirectoryFromBuffer(bytes, maximumSourceAndDecodedNamesBytes),
+  );
 
 /** Reuse one admitted directory when a consumer also needs its load mappings. */
 export const readElfImageFromDirectory = (

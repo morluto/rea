@@ -106,8 +106,30 @@ export const findDuplicateJsonMember = (
     const code = text.charCodeAt(index);
     if (code === QUOTE) {
       const start = index;
-      for (index++; text.charCodeAt(index) !== QUOTE; index++)
+      // Walk short strings directly. For longer runs, jump to candidate
+      // closing quotes and use escape parity to distinguish literal quotes.
+      const shortEnd = start + 32;
+      for (
+        index++;
+        index < shortEnd && text.charCodeAt(index) !== QUOTE;
+        index++
+      )
         if (text.charCodeAt(index) === BACKSLASH) index++;
+      if (index >= shortEnd) {
+        let quote = text.indexOf('"', index);
+        while (quote >= 0) {
+          let escapeStart = quote;
+          while (
+            escapeStart > index &&
+            text.charCodeAt(escapeStart - 1) === BACKSLASH
+          )
+            escapeStart--;
+          if ((quote - escapeStart) % 2 === 0) break;
+          index = quote + 1;
+          quote = text.indexOf('"', index);
+        }
+        index = quote < 0 ? text.length : quote;
+      }
       if (!expectName) continue;
       expectName = false;
       const names = open.at(-1);

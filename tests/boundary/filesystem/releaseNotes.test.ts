@@ -334,6 +334,7 @@ it("inventories side branches and paginated credits, then checks and renders syn
     pullRequests: 1,
     unresolvedAuthors: [{ name: "Unknown", user: null }],
   });
+  expect(JSON.parse(report.stdout)).not.toHaveProperty("notes");
   const output = join(f.directory, "rendered.md");
   await f.invoke(["render", "--manifest", f.manifest, "--output", output]);
   expect(await readFile(output, "utf8")).toBe(f.notes.trim() + "\n");
@@ -770,3 +771,73 @@ it.each(pluginMarketplaces)(
     });
   },
 );
+
+it.each([
+  {
+    container: "root",
+    example: [
+      "~~~markdown",
+      "~~~not a closing fence",
+      "## [example]",
+      "- Example issue #999.",
+      "~~~~",
+    ],
+  },
+  {
+    container: "list",
+    example: [
+      "- ~~~markdown",
+      "  ## [example]",
+      "  - Example issue #999.",
+      "  ~~~",
+    ],
+  },
+  {
+    container: "quoted list",
+    example: [
+      "> - ~~~markdown",
+      ">   ## [example]",
+      ">   - Example issue #999.",
+      ">   ~~~",
+    ],
+  },
+])(
+  "keeps release credit examples inside a $container fence",
+  async ({ example }) => {
+    const f = await fixture();
+    const block = example.join("\n");
+    const notes = f.notes.replace(
+      "### Changes\n",
+      `### Changes\n\n${block}\n\n`,
+    );
+    const changelog = `${notes.trimEnd()}\n\n## [6.3.0]\n\n- Historical issue #999.\n`;
+    const body = join(f.directory, "release-body.md");
+    await writeFile(join(f.directory, "CHANGELOG.md"), changelog);
+    await writeFile(body, releaseBody(notes));
+    await f.invoke(["check", "--manifest", f.manifest, "--pr-body", body]);
+
+    await writeFile(
+      join(f.directory, "CHANGELOG.md"),
+      changelog.replace(block, `${block}\n\n- Real issue #999.`),
+    );
+    await expect(
+      f.invoke(["check", "--manifest", f.manifest]),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("Unknown release reference #999"),
+    });
+  },
+);
+
+it("requires editorial headings in release prose outside code fences", async () => {
+  const f = await fixture();
+  const notes = f.notes.replace(
+    "### Changes\n",
+    "~~~markdown\n### Changes\n~~~\n",
+  );
+  await writeFile(join(f.directory, "CHANGELOG.md"), notes);
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing Changes section"),
+  });
+});

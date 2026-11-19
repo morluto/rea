@@ -32,7 +32,9 @@ import {
   type MetadataCodedIndexCoordinate,
   type MetadataTokenFact,
   metadataToken,
+  readRequiredMetadataName,
   readMetadataString,
+  metadataBlobOffset,
 } from "./managedMetadataHeaps.js";
 import { memberListTable } from "./managedMemberPointers.js";
 import type {
@@ -185,15 +187,14 @@ const readTypeDefinition = (
   current: TypeMemberListEntry,
 ): TypeDefinition => {
   const { source } = current;
-  const { nameIndex, namespaceIndex } = source;
+  const token = metadataToken(2, row);
   // Keep both independent name failures, but decode each heap coordinate once.
   const namespace = readManagedValue(
-    () =>
-      readMetadataString(bytes, layout, namespaceIndex, layout.strings.size),
+    () => readMetadataString(bytes, layout, source.namespaceIndex),
     issues,
   );
   const name = readManagedValue(
-    () => readMetadataString(bytes, layout, nameIndex, layout.strings.size),
+    () => readRequiredMetadataName(bytes, layout, "TypeDef", token, source),
     issues,
   );
   return {
@@ -201,7 +202,7 @@ const readTypeDefinition = (
     row,
     name,
     namespace,
-    token: metadataToken(2, row),
+    token,
     fullName:
       namespace === undefined || name === undefined
         ? null
@@ -1098,10 +1099,7 @@ export const methodGenericArity = (
   blob: Buffer,
 ): number | null => {
   const budget = managedDecodeBudget(layout);
-  budget.admitTransient(
-    blob.length * 256,
-    layout.blob?.offset ?? layout.rootOffset,
-  );
+  budget.admitTransient(blob.length * 256, metadataBlobOffset(layout));
   try {
     return signatureGenericArity(decodeSignature(blob));
   } finally {

@@ -15,6 +15,40 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+/**
+ * Structural equality for admitted JSON. Object keys are unordered, array
+ * elements are ordered, and undefined is the sentinel for an absent root.
+ */
+export const equalJsonValues = (
+  left: JsonValue | undefined,
+  right: JsonValue | undefined,
+): boolean => {
+  if (left === right) return true;
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  )
+    return false;
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++)
+      if (!equalJsonValues(left[index], right[index])) return false;
+    return true;
+  }
+  if (Array.isArray(right)) return false;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  for (const key of keys)
+    if (
+      !Object.prototype.propertyIsEnumerable.call(right, key) ||
+      !equalJsonValues(left[key], right[key])
+    )
+      return false;
+  return true;
+};
+
 const immutableValidation = new WeakMap<object, string | undefined>();
 
 /** Validate JSON meaning and nesting without cloning a trusted immutable value. */

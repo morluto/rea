@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
@@ -27,6 +27,58 @@ it("rejects advertised PE32 data directories outside the optional header", async
     details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
   });
 });
+
+it.each([false, true])(
+  "reports whether an oversized Mach-O command table is file-backed (%s)",
+  async (stored) => {
+    const tableBytes = 16 * 1024 * 1024 + 8;
+    const bytes = Buffer.alloc(stored ? 40 : 32);
+    bytes.writeUInt32LE(0xfeedfacf, 0);
+    bytes.writeUInt32LE(0x01000007, 4);
+    bytes.writeUInt32LE(3, 8);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(tableBytes, 20);
+    if (stored) {
+      bytes.writeUInt32LE(0x1234, 32);
+      bytes.writeUInt32LE(tableBytes, 36);
+    }
+    const root = await createTestTempDirectory("rea-go-macho-table-");
+    const path = join(root, "image");
+    await writeFile(path, bytes);
+    if (stored) await truncate(path, 32 + tableBytes);
+    const provider = new GoBinaryProvider();
+    try {
+      const result = await provider.inspect({ path });
+      if (result.ok) throw new Error("Expected a command-table refusal");
+      const projected = projectAnalysisError(result.error);
+      if (stored)
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          details: {
+            reported_limits: {
+              boundary: "structure",
+              maximum: 16 * 1024 * 1024,
+            },
+          },
+        });
+      else
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_format",
+              },
+            ],
+          },
+        });
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("preserves the actual build-info byte guard as a resource failure", async () => {
   const fixture = createGoInlineAggregateFixture(1024 * 1024 + 2);

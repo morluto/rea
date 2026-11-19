@@ -9,7 +9,11 @@ import {
   metadataRowOffset,
   type ManagedMetadataLayout,
 } from "./managedMetadataLayout.js";
-import { managedFailure } from "./managedReaderFailure.js";
+import {
+  managedFailure,
+  ManagedHeapAmbiguityFailure,
+  ManagedReaderFailure,
+} from "./managedReaderFailure.js";
 
 /** Cursor for checked fixed-width metadata row decoding. */
 export class MetadataRowCursor {
@@ -101,8 +105,16 @@ export const readManagedCompressedUnsigned = (
 
 // Issue code and label for the heap item a compressed length prefixes.
 const PREFIXED_ITEMS = {
-  blob: { code: "invalid-blob", label: "Metadata blob" },
-  userString: { code: "invalid-string", label: "User string" },
+  blob: {
+    code: "invalid-blob",
+    label: "Metadata blob",
+    range: "the #Blob byte range",
+  },
+  userString: {
+    code: "invalid-string",
+    label: "User string",
+    range: "the artifact byte range",
+  },
 } as const;
 
 const compressedLength = (
@@ -116,14 +128,14 @@ const compressedLength = (
   /** Whether ECMA-335 II.23.2 assigns this width to the value. */
   readonly minimal: boolean;
 } => {
-  const { code, label } = PREFIXED_ITEMS[item];
+  const { code, label, range } = PREFIXED_ITEMS[item];
   const decoded = readManagedCompressedUnsigned(bytes, offset);
   if (!decoded.ok)
     throw managedFailure(
       code,
       scope,
       decoded.error.kind === "truncated"
-        ? `${label} length prefix leaves the artifact byte range`
+        ? `${label} length prefix leaves ${range}`
         : `${label} uses a reserved compressed-length prefix`,
       offset >= 0 ? offset : null,
     );
@@ -139,25 +151,23 @@ export const readMetadataString = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   index: number,
-  heapExtent: number,
 ): string => {
   if (index === 0) return "";
-  if (index < 0 || index >= layout.strings.size)
+  const declaration = layout.strings;
+  if (declaration.kind === "ambiguous")
+    throw new ManagedHeapAmbiguityFailure(declaration.issue);
+  const heap = declaration.stream;
+  if (index < 0 || index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
       "metadata.#Strings",
       "String heap index is outside #Strings",
-      layout.strings.offset + Math.max(index, 0),
+      heap.offset + Math.max(index, 0),
     );
-  const start = layout.strings.offset + index;
+  const start = heap.offset + index;
   const cached = managedDecodeBudget(layout).cachedString(index);
-  if (cached !== undefined && cached.encodedBytes <= heapExtent) {
-    return cached.value;
-  }
-  const maximum = Math.min(
-    layout.strings.offset + layout.strings.size,
-    start + heapExtent + 1,
-  );
+  if (cached !== undefined) return cached;
+  const maximum = heap.offset + heap.size;
   let end = start;
   while (end < maximum && bytes[end] !== 0) end += 1;
   if (end === maximum)
@@ -170,7 +180,7 @@ export const readMetadataString = (
   managedDecodeBudget(layout).reserveString(end - start, start);
   try {
     const value = decodeStrictUtf8(bytes.subarray(start, end), "preserve");
-    managedDecodeBudget(layout).cacheString(index, value, end - start);
+    managedDecodeBudget(layout).cacheString(index, value);
     return value;
   } catch (cause: unknown) {
     void cause;
@@ -183,12 +193,39 @@ export const readMetadataString = (
   }
 };
 
+/** Read a required row name; nil and a nonzero index of an empty string are invalid. */
+export const readRequiredMetadataName = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: "TypeDef" | "Field" | "MethodDef",
+  token: string,
+  {
+    nameIndex,
+    nameOffset,
+  }: { readonly nameIndex: number; readonly nameOffset: number },
+): string => {
+  const name = readMetadataString(bytes, layout, nameIndex);
+  if (name.length === 0)
+    throw managedFailure(
+      "invalid-row",
+      `metadata.${table}:${token}`,
+      `${table} Name index ${String(nameIndex)} must reference a nonempty string`,
+      nameOffset,
+    );
+  return name;
+};
+
+/** File coordinate used when reporting a budget for decoded blob facts. */
+export const metadataBlobOffset = (layout: ManagedMetadataLayout): number =>
+  layout.blob?.kind === "available"
+    ? layout.blob.stream.offset
+    : layout.rootOffset;
+
 /** Read one #Blob item while validating its encoded extent against the heap. */
 export const readMetadataBlob = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   index: number,
-  heapExtent: number,
 ): Buffer => {
   if (index === 0) return Buffer.alloc(0);
   if (index < 0)
@@ -198,14 +235,17 @@ export const readMetadataBlob = (
       "Blob heap index is negative",
       null,
     );
-  const heap = layout.blob;
-  if (heap === null)
+  const declaration = layout.blob;
+  if (declaration === null)
     throw managedFailure(
       "missing-stream",
       "metadata.#Blob",
       `Blob index ${String(index)} references an absent #Blob stream`,
       null,
     );
+  if (declaration.kind === "ambiguous")
+    throw new ManagedHeapAmbiguityFailure(declaration.issue);
+  const heap = declaration.stream;
   if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
@@ -214,16 +254,15 @@ export const readMetadataBlob = (
       heap.offset + Math.max(index, 0),
     );
   const start = heap.offset + index;
-  const decoded = compressedLength(bytes, start, "metadata.#Blob", "blob");
-  if (decoded.length > heapExtent)
-    throw managedFailure(
-      "invalid-blob",
-      "metadata.#Blob",
-      "Blob length exceeds the admitted heap extent",
-      start,
-    );
+  const heapEnd = heap.offset + heap.size;
+  const decoded = compressedLength(
+    bytes.subarray(0, heapEnd),
+    start,
+    "metadata.#Blob",
+    "blob",
+  );
   const content = start + decoded.prefix;
-  if (content > heap.offset + heap.size - decoded.length)
+  if (content > heapEnd - decoded.length)
     throw managedFailure(
       "invalid-blob",
       "metadata.#Blob",
@@ -250,14 +289,17 @@ export const readMetadataUserString = (
   readonly issues: readonly ManagedParseIssue[];
 } => {
   const { token, row: index } = reference;
-  const heap = layout.userStrings;
+  const declaration = layout.userStrings;
   const scope = `metadata.#US:${token}`;
-  if (heap === null)
+  if (declaration === null)
     throw managedFailure(
       "missing-stream",
       scope,
       "ldstr references #US, but the metadata has no #US stream",
     );
+  if (declaration.kind === "ambiguous")
+    throw new ManagedReaderFailure(declaration.issue);
+  const heap = declaration.stream;
   if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
@@ -351,22 +393,24 @@ export const readMetadataUserString = (
   };
 };
 
-/** Read one conventional GUID value from the one-based #GUID heap. */
+/** A zero index denotes absence; undefined denotes an ambiguous heap. */
 export const readMetadataGuid = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   index: number,
-): string | null => {
+): string | null | undefined => {
   if (index === 0) return null;
+  if (layout.guid.kind === "ambiguous") return undefined;
+  const { offset: heapOffset, size } = layout.guid.stream;
   const relative = (index - 1) * 16;
-  if (relative < 0 || relative > layout.guid.size - 16)
+  if (relative < 0 || relative > size - 16)
     throw managedFailure(
       "invalid-guid",
       "metadata.#GUID",
       "GUID heap index is outside #GUID",
-      layout.guid.offset + Math.max(relative, 0),
+      heapOffset + Math.max(relative, 0),
     );
-  const offset = layout.guid.offset + relative;
+  const offset = heapOffset + relative;
   const part1 = bytes.readUInt32LE(offset).toString(16).padStart(8, "0");
   const part2 = bytes
     .readUInt16LE(offset + 4)

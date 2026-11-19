@@ -98,13 +98,10 @@ export interface ApkSigningBlock {
   readonly pairs: readonly ApkSigningBlockPair[];
 }
 
-const view = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
 /** Read an unsigned 64-bit little-endian value as a Number, or null if unsafe/oob. */
-const u64 = (dv: DataView, at: number): number | null => {
-  if (at < 0 || at + 8 > dv.byteLength) return null;
-  const value = dv.getBigUint64(at, true);
+const u64 = (reader: BinaryReader, at: number): number | null => {
+  if (at < 0 || at + 8 > reader.bytes.length) return null;
+  const value = reader.word(at, 64);
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
 };
 
@@ -355,8 +352,12 @@ export const locateApkSigningBlock = (
 ): Result<ApkSigningBlock | null, ApkSigningBlockError> => {
   const cdOffset = tail.centralDirectoryOffset;
   if (!hasBlockMagic(bytes, cdOffset)) return ok(null);
-  const dv = view(bytes);
-  const trailingSize = u64(dv, cdOffset - 24);
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
+  const trailingSize = u64(reader, cdOffset - 24);
   // The footer alone (trailing size + magic) is 24 bytes; a smaller declared
   // size would alias the leading and trailing fields (apksig rejects it too).
   if (trailingSize === null || trailingSize < 24)
@@ -372,7 +373,7 @@ export const locateApkSigningBlock = (
       offset: cdOffset,
       detail: "block extends before file start",
     });
-  const leadingSize = u64(dv, blockStart);
+  const leadingSize = u64(reader, blockStart);
   if (leadingSize === null || leadingSize !== trailingSize)
     return err({
       kind: "malformed-block",
@@ -384,7 +385,7 @@ export const locateApkSigningBlock = (
   let cursor = blockStart + 8;
   const pairsEnd = cdOffset - 24; // stop before trailing size + magic
   while (cursor < pairsEnd) {
-    const length = u64(dv, cursor);
+    const length = u64(reader, cursor);
     const next =
       length === null
         ? undefined
@@ -401,7 +402,7 @@ export const locateApkSigningBlock = (
         resource: "signing-block-pairs",
         limit: APK_SIGNING_BLOCK_MAX_PAIRS,
       });
-    const id = dv.getUint32(cursor + 8, true);
+    const id = reader.u32(cursor + 8);
     const valueStart = cursor + 12;
     pairs.push({
       id,

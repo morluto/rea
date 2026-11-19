@@ -3,10 +3,9 @@ import {
   jsonPointerTokens,
   unescapeJsonPointerToken,
 } from "../jsonPointer.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import type { FileNote } from "./appTaskDraftFileNotes.js";
-import { sameJson } from "./appTaskChecks.js";
 import {
   MAX_GUARDS,
   MAX_GUARDS_PER_CHECK,
@@ -388,7 +387,7 @@ export const isLikeDefault = (
     record.field !== "/" &&
     record.likes.final.length > 0 &&
     record.likes.final.every(({ item }) =>
-      sameJson(resolvePointer(item, record.field), value),
+      equalJsonValues(resolvePointer(item, record.field), value),
     )
   );
 };
@@ -417,7 +416,7 @@ const recordGuard = (
   return before !== undefined &&
     after !== undefined &&
     typeof before !== "object" &&
-    sameJson(after, before) &&
+    equalJsonValues(after, before) &&
     !isStamp(before)
     ? valueEqualsCheck(file, pointer, before)
     : undefined;
@@ -527,7 +526,10 @@ export const decisive = (
 ): Suggestion[] =>
   suggestions.filter((check) =>
     check.kind === "value_equals"
-      ? !sameJson(resolvePointer(ends.baseline, check.pointer), check.value)
+      ? !equalJsonValues(
+          resolvePointer(ends.baseline, check.pointer),
+          check.value,
+        )
       : check.kind !== "value_absent" ||
         locatePointer(ends.final, check.pointer).kind === "none",
   );

@@ -44,6 +44,48 @@ it("preserves full references, flags, offsets and UTF-16 names after sparse padd
   ]);
 });
 
+it.each([2 * 64 * 1024, 2 * 64 * 1024 + 8, 2 * 64 * 1024 + 24])(
+  "keeps the exact record boundary after a %i-byte zero run on a resumed page",
+  (paddingBytes) => {
+    const startFileOffset = 72;
+    const recordOffset = startFileOffset + paddingBytes;
+    const bytes = Buffer.concat([
+      journalRecord(),
+      Buffer.alloc(paddingBytes),
+      journalRecord(),
+      Buffer.alloc(3),
+    ]);
+    expect([...readUsnJournal(bytes, startFileOffset)]).toMatchObject([
+      {
+        ok: false,
+        error: {
+          kind: "padding",
+          fileOffset: startFileOffset,
+          bytes: paddingBytes,
+        },
+      },
+      { ok: true, value: { fileOffset: recordOffset, name: "a😃b" } },
+      {
+        ok: false,
+        error: { kind: "truncated", fileOffset: recordOffset + 72 },
+      },
+    ]);
+  },
+);
+
+it("does not skip a malformed header with a zero length and nonzero version", () => {
+  const paddingBytes = 2 * 64 * 1024 + 24;
+  const bytes = Buffer.alloc(paddingBytes + 8);
+  bytes.writeUInt16LE(2, paddingBytes + 4);
+  expect([...readUsnJournal(bytes)]).toEqual([
+    {
+      ok: false,
+      error: { kind: "padding", fileOffset: 0, bytes: paddingBytes },
+    },
+    { ok: false, error: { kind: "malformed", fileOffset: paddingBytes } },
+  ]);
+});
+
 it("uses a validated record length to skip unsupported and malformed records", () => {
   const unsupported = journalRecord();
   unsupported.writeUInt16LE(9, 4);

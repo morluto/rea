@@ -19,9 +19,11 @@ import {
   parseAndroidOtaPayload,
   recognizeAndroidOtaPayload,
   reconstructAndroidOtaPartition,
+  withAndroidOtaPayloadSignature,
   androidOtaDistinctOperationDataBytes,
 } from "./androidOtaPayload.js";
 import {
+  androidOtaSignatureBlob,
   buildAndroidOtaPayload,
   deltaAndroidOtaPayload,
   fullAndroidOtaPayload,
@@ -29,8 +31,22 @@ import {
   v1AndroidOtaPayload,
 } from "./androidOtaPayload.fixture.js";
 
-const parse = (bytes: Uint8Array) =>
-  parseAndroidOtaPayload(bytes, bytes.length);
+const parse = (bytes: Uint8Array) => {
+  const header = parseAndroidOtaHeader(bytes, bytes.length);
+  if (!header.ok) return header;
+  const { manifestOffset, metadataPrefixEnd } = header.value;
+  const parsed = parseAndroidOtaPayload(
+    header.value,
+    bytes.subarray(manifestOffset, metadataPrefixEnd),
+    bytes.length,
+  );
+  if (!parsed.ok || parsed.value.payloadSignatureRange === null) return parsed;
+  const { offset, bytes: length } = parsed.value.payloadSignatureRange;
+  return withAndroidOtaPayloadSignature(
+    parsed.value,
+    bytes.subarray(offset, offset + length),
+  );
+};
 
 const header = (fields: {
   readonly version?: bigint;
@@ -394,6 +410,46 @@ it("names the extraction ceiling, not unsupported operations, for a large REPLAC
   });
 });
 
+it.each([
+  { signaturesOffset: 0, signaturesSize: null },
+  {
+    signaturesOffset: null,
+    signaturesSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1,
+  },
+])(
+  "reconstructs a partition when one payload signature coordinate is absent ($signaturesOffset, $signaturesSize)",
+  ({ signaturesOffset, signaturesSize }) => {
+    const data = Buffer.from("BOOT");
+    const bytes = buildAndroidOtaPayload({
+      signaturesOffset,
+      signaturesSize,
+      payloadSignature: new Uint8Array(),
+      partitions: [{ name: "boot", operations: [{ type: 0, data }] }],
+    });
+    const parsed = parse(bytes);
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        signaturesOffset,
+        signaturesSize,
+        payloadSignatureBlobSize: null,
+        payloadSignatureCount: null,
+        blobTruncated: false,
+      },
+    });
+    if (!parsed.ok) throw parsed.error;
+    const { blobOffset } = parsed.value.header;
+    expect(
+      reconstructAndroidOtaPartition(
+        parsed.value.partitions[0]!,
+        parsed.value.blockSize,
+        (offset, length) =>
+          bytes.subarray(blobOffset + offset, blobOffset + offset + length),
+      ),
+    ).toEqual({ ok: true, value: data });
+  },
+);
+
 it("refuses operation data that overruns the payload blob", () => {
   const bytes = buildAndroidOtaPayload({
     partitions: [
@@ -441,13 +497,11 @@ it("refuses a truncated protobuf field in the manifest", () => {
   });
 });
 
-it("refuses an oversize manifest and metadata signature as capacity limits", () => {
-  expect(
-    parseAndroidOtaHeader(
-      header({ manifestSize: BigInt(ANDROID_OTA_MAX_MANIFEST_BYTES + 1) }),
-      ANDROID_OTA_HEADER_V2_BYTES,
-    ),
-  ).toMatchObject({
+it("reports a manifest beyond EOF before applying the manifest allowance", () => {
+  const manifestSize = ANDROID_OTA_MAX_MANIFEST_BYTES + 1;
+  const bytes = header({ manifestSize: BigInt(manifestSize) });
+  const end = ANDROID_OTA_HEADER_V2_BYTES + manifestSize;
+  expect(parseAndroidOtaHeader(bytes, end)).toMatchObject({
     ok: false,
     error: {
       failure: {
@@ -456,37 +510,52 @@ it("refuses an oversize manifest and metadata signature as capacity limits", () 
       },
     },
   });
-  expect(
-    parseAndroidOtaHeader(
-      header({ metadataSignatureSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1 }),
-      ANDROID_OTA_HEADER_V2_BYTES,
-    ),
-  ).toMatchObject({
+  expect(parseAndroidOtaHeader(bytes, end - 1)).toMatchObject({
     ok: false,
-    error: {
-      failure: {
-        kind: "limit",
-        limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
-      },
-    },
+    error: { kind: "truncated" },
   });
 });
 
-it("refuses an oversize manifest signatures_size before any signature read", () => {
-  const bytes = buildAndroidOtaPayload({
-    partitions: [],
-    signaturesSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1,
-  });
-  expect(parse(bytes)).toMatchObject({
-    ok: false,
-    error: {
-      failure: {
-        kind: "limit",
-        limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+it.each(["metadata", "payload"] as const)(
+  "limits a backed %s signature and keeps the manifest if that signature is incomplete",
+  (kind) => {
+    const signature = androidOtaSignatureBlob(
+      Buffer.alloc(ANDROID_OTA_MAX_SIGNATURE_BYTES),
+    );
+    const empty = new Uint8Array();
+    const bytes = buildAndroidOtaPayload({
+      partitions: [],
+      ...(kind === "metadata"
+        ? {
+            metadataSignature: signature,
+            payloadSignature: empty,
+            signaturesOffset: null,
+            signaturesSize: null,
+          }
+        : { metadataSignature: empty, payloadSignature: signature }),
+    });
+    expect(parse(bytes)).toMatchObject({
+      ok: false,
+      error: {
+        failure: {
+          kind: "limit",
+          limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+        },
       },
-    },
-  });
-});
+    });
+    expect(parse(bytes.subarray(0, -1))).toMatchObject({
+      ok: true,
+      value: {
+        blobTruncated: true,
+        metadataSignatureBlobSize: kind === "metadata" ? signature.length : 0,
+        metadataSignatureCount: null,
+        payloadSignatureBlobSize: kind === "payload" ? signature.length : null,
+        payloadSignatureRange: null,
+        payloadSignatureCount: null,
+      },
+    });
+  },
+);
 
 it("refuses manifest extents past the total extent budget as a capacity limit", () => {
   const extents = new Uint8Array((ANDROID_OTA_MAX_EXTENTS_TOTAL + 1) * 2);

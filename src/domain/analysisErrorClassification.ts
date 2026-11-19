@@ -180,6 +180,10 @@ const BINARY_TARGET_CLASSIFICATIONS = {
     "target_unavailable",
     "unsupported_target",
   ),
+  bundle_info_plist_decode_budget_exceeded: classified(
+    "target_unavailable",
+    "unavailable",
+  ),
   bundle_info_plist_missing: classified("target_unavailable", "unavailable"),
   bundle_layout_ambiguous: classified("target_unavailable", "unavailable"),
   bundle_executable_undeclared: classified("target_unavailable", "unavailable"),

@@ -1,4 +1,5 @@
 import { readElfDynamicEntry } from "../elfDynamicEntry.js";
+import { elfSymbolSize } from "../elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -206,7 +207,7 @@ export function* readElfDynamicExportTables(
         "The dynamic segment does not declare DT_SYMTAB, so its export inventory is unavailable",
       issues: [],
     };
-  const width = directory.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(directory.bits);
   if (entries.get(DT_SYMENT) !== BigInt(width))
     malformed(
       "ELF DT_SYMENT is missing or does not match its class symbol width",

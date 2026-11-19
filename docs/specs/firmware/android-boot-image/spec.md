@@ -74,8 +74,10 @@ these files.
    is malformed.
 8. The header probe is at most 4096 bytes. The reader admits at most 4096
    vendor ramdisk table entries, an entry size of at most 4096 bytes, and a
-   vendor `header_size` of at most 1 MiB. Those checks run before the table
-   is read. Truncated declared structures return `truncated`; the page
+   vendor `header_size` of at most 1 MiB. The per-version single-page boot
+   header bound is a format constraint. The vendor header allowance applies
+   only after the declared header extent fits the file. These checks run before
+   the table is read. Truncated declared structures return `truncated`; the page
    padding after the last component may be absent. Unsupported
    revisions return `unsupported_target`; malformed layouts return
    `invalid_request`. Gaps inside a vendor ramdisk
