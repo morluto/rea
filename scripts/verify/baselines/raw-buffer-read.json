@@ -3,7 +3,7 @@
   "src/application/MipsElfMetadata.ts": 10,
   "src/application/MipsGnuAttributes.ts": 2,
   "src/artifacts/DesktopFileInspection.ts": 4,
-  "src/artifacts/apple/NibArchive.ts": 8,
+  "src/artifacts/apple/NibArchive.ts": 7,
   "src/artifacts/bun/BunModuleGraphLayout.ts": 10,
   "src/artifacts/dotnet/DotnetBundle.ts": 5,
   "src/artifacts/nodeSea/NodeSeaBlob.ts": 4,
