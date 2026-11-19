@@ -33,5 +33,5 @@
   "src/process/ArtifactAnalysisResources.ts": 1,
   "src/process/capture/ProcessCaptureError.ts": 3,
   "src/providers/AnalysisClientFailure.ts": 1,
-  "src/sqlite/SqliteDatabaseProvider.ts": 8
+  "src/sqlite/SqliteDatabaseProvider.ts": 6
 }
