@@ -39,13 +39,16 @@ import {
   GLOBAL_OBJECT_NAMES,
   globalObjectName,
   globalReferenceNamespace,
+  isIntrinsicGlobalReference,
 } from "./javascriptSemanticGlobalReference.js";
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
 import {
+  semanticArrayIteratorPrototypePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import { isIntrinsicTypedArrayConstruction } from "./javascriptSemanticTypedArrays.js";
 
 /**
  * Own static methods of `Object` and `Reflect` in the language. A native one
@@ -113,6 +116,8 @@ const canonicalAmbientPath = (
     firstProperty += 1;
   return ["global", ...path.slice(firstProperty)];
 };
+
+const arrayIteratorMethods = new Set(["entries", "keys", "values"]);
 
 type AmbientPath = readonly (string | null)[];
 
@@ -209,7 +214,12 @@ interface AmbientReferenceFacts {
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
   >;
-  readonly prototypeTarget: (node: t.Node) => t.Node | undefined;
+  readonly callResult: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) =>
+    | { readonly kind: "prototype"; readonly target: t.Node }
+    | { readonly kind: "array-iterator" }
+    | undefined;
   readonly freshObject: (node: t.Node) => boolean;
 }
 
@@ -543,15 +553,32 @@ export const createAmbientPathResolver = (
           );
           continue;
         }
-        const prototypeTarget = possibleWrites
-          ? facts?.prototypeTarget(root)
-          : undefined;
-        if (prototypeTarget !== undefined) {
+        const callResult =
+          possibleWrites &&
+          (t.isCallExpression(root) || t.isOptionalCallExpression(root))
+            ? facts?.callResult(root)
+            : undefined;
+        if (callResult?.kind === "prototype") {
           continueWith(
-            prototypeTarget,
+            callResult.target,
             suffix === undefined ? undefined : ["__proto__", ...suffix],
           );
           continue;
+        }
+        // A call that may return a native array iterator can reach the
+        // shared prototype through a prototype projection. Its ordinary
+        // return alternatives still pass through the same alias walk.
+        if (
+          callResult?.kind === "array-iterator" &&
+          (suffix === undefined ||
+            suffix[0] === null ||
+            suffix[0] === "__proto__")
+        ) {
+          retain([
+            ...semanticArrayIteratorPrototypePath,
+            ...(suffix?.slice(1) ?? []),
+          ]);
+          resolvedIdentity = true;
         }
         if (
           possibleWrites &&
@@ -758,20 +785,49 @@ export function* indexJavaScriptAmbientWritesSteps(
   const ambientWrites = createAmbientPathResolver(state, true, {
     stores,
     freshObject: interop.isFreshObject,
-    prototypeTarget: (node) => {
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-        return undefined;
+    callResult: (node) => {
       const invocation = interop.intrinsicInvocation(node);
       if (
-        invocation?.kind !== "known" ||
-        invocation.path.length !== 3 ||
-        !["Object", "Reflect"].includes(invocation.path[1] ?? "") ||
-        invocation.path[2] !== "getPrototypeOf"
+        invocation?.kind === "known" &&
+        invocation.path.length === 3 &&
+        ["Object", "Reflect"].includes(invocation.path[1] ?? "") &&
+        invocation.path[2] === "getPrototypeOf"
+      ) {
+        const target = invocation.arguments?.[0];
+        return t.isNode(target) && !t.isSpreadElement(target)
+          ? { kind: "prototype", target }
+          : undefined;
+      }
+      if (
+        invocation?.path.length === 4 &&
+        invocation.path[1] === "Array" &&
+        invocation.path[2] === "prototype" &&
+        arrayIteratorMethods.has(invocation.path[3]!)
+      )
+        return { kind: "array-iterator" };
+      const callee = unwrapJavaScriptExpression(node.callee).node;
+      if (
+        !(t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
       )
         return undefined;
-      const target = invocation.arguments?.[0];
-      return t.isNode(target) && !t.isSpreadElement(target)
-        ? target
+      const key = semanticStaticPropertyKey(callee.property, callee.computed);
+      if (
+        !(key !== null && arrayIteratorMethods.has(key)) &&
+        !(
+          callee.computed &&
+          globalReferenceNamespace(callee.property, state, [
+            "Symbol",
+            "iterator",
+          ]) !== undefined
+        )
+      )
+        return undefined;
+      const receiver = interop.localValueRoot(callee.object);
+      return t.isArrayExpression(receiver) ||
+        (t.isNewExpression(receiver) &&
+          (isIntrinsicGlobalReference(receiver.callee, state, "Array") ||
+            isIntrinsicTypedArrayConstruction(receiver, state)))
+        ? { kind: "array-iterator" }
         : undefined;
     },
   });

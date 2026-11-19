@@ -367,20 +367,10 @@ export const createSemanticModuleInterop = (
     }
   };
 
-  const isFreshObject = (node: t.Node): boolean => {
+  const localValueRoot = (node: t.Node): t.Node | undefined => {
     const visited = new Set<string>();
-    let current = node;
-    for (;;) {
-      current = unwrapJavaScriptExpression(current).node;
-      if (
-        t.isObjectExpression(current) ||
-        t.isArrayExpression(current) ||
-        t.isFunction(current) ||
-        (t.isClass(current) && !current.decorators?.length) ||
-        t.isRegExpLiteral(current)
-      )
-        return true;
-      if (!t.isIdentifier(current)) return false;
+    let current = unwrapJavaScriptExpression(node).node;
+    while (t.isIdentifier(current)) {
       const binding = resolveSemanticBindingState(state, current, current.name);
       const initializer = unprojectedInitializer(binding, state);
       if (
@@ -390,10 +380,22 @@ export const createSemanticModuleInterop = (
           (initializer.end ?? Infinity) >= (current.start ?? -1)) ||
         visited.has(binding.bindingId)
       )
-        return false;
+        return undefined;
       visited.add(binding.bindingId);
-      current = initializer;
+      current = unwrapJavaScriptExpression(initializer).node;
     }
+    return current;
+  };
+
+  const isFreshObject = (node: t.Node): boolean => {
+    const root = localValueRoot(node);
+    return (
+      t.isObjectExpression(root) ||
+      t.isArrayExpression(root) ||
+      t.isFunction(root) ||
+      (t.isClass(root) && !root.decorators?.length) ||
+      t.isRegExpLiteral(root)
+    );
   };
 
   const helperProof = (
@@ -736,6 +738,7 @@ export const createSemanticModuleInterop = (
     boundIntrinsic,
     staticString,
     isFreshObject,
+    localValueRoot,
     opaqueMutationPath,
     retainWrite: (node: t.Node, path: readonly (string | null)[]) => {
       const coverage = new SemanticPropertyPathCoverage();

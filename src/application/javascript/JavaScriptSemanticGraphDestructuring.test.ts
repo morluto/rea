@@ -175,3 +175,96 @@ it.each(["{}", "unknownSource"])(
     );
   },
 );
+
+it.each([
+  ["ordinary array", "", "resolved"],
+  ["prototype read alone", "Object.getPrototypeOf([].values());", "resolved"],
+  [
+    "one iterator's own next",
+    "const iterator = [].values(); iterator.next = replacement;",
+    "resolved",
+  ],
+  [
+    "unrelated custom iterator",
+    "const iterator = Object.create({ next: original }); Object.getPrototypeOf(iterator).next = replacement;",
+    "resolved",
+  ],
+  [
+    "direct prototype assignment",
+    "Object.getPrototypeOf([][Symbol.iterator]()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "aliased iterator and prototype",
+    "const array = []; const iterator = array.values(); const p = Reflect.getPrototypeOf(iterator); const alias = p; alias.next = replacement;",
+    "candidate",
+  ],
+  [
+    "explicit builtin factory",
+    "const iterator = Array.prototype.values.call([]); Object.getPrototypeOf(iterator).next = replacement;",
+    "candidate",
+  ],
+  [
+    "descriptor",
+    'const prototype = Object.getPrototypeOf([].keys()); Object.defineProperty(prototype, "next", { value: replacement });',
+    "candidate",
+  ],
+  [
+    "typed array iterator sharing the prototype",
+    "const bytes = new Uint8Array(); Object.getPrototypeOf(bytes.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "separate Map iterator prototype",
+    "Object.getPrototypeOf(new Map().values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "prototype escape",
+    "consume(Object.getPrototypeOf([].entries()));",
+    "candidate",
+  ],
+  [
+    "non-next property",
+    "Object.getPrototypeOf([].values()).other = replacement;",
+    "resolved",
+  ],
+] as const)(
+  "attributes array iterator effects for %s",
+  (_name, change, resolution) => {
+    const graph = graphForJavaScript(`
+    const config = ["original"];
+    const replacement = () => ({ value: "other", done: false });
+    ${change}
+    const [selected] = config;
+  `);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (relation) =>
+          relation.relation === "destructures" &&
+          relation.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it("leaves an earlier destructuring dependency intact before an iterator prototype write", () => {
+  const graph = graphForJavaScript(`
+    const config = ["original"];
+    const [selected] = config;
+    Object.getPrototypeOf([].values()).next = () => ({ value: "other", done: false });
+  `);
+  const selected = graph.nodes.find(
+    ({ kind, label }) => kind === "binding" && label === "selected",
+  );
+  expect(
+    graph.relations.find(
+      (relation) =>
+        relation.relation === "destructures" &&
+        relation.target_node_id === selected?.node_id,
+    ),
+  ).toMatchObject({ resolution: "resolved" });
+});
