@@ -925,6 +925,24 @@ describe("Mach-O load command reader: decodes thin-image load commands", () => {
     });
   });
 
+  it("keeps marker-shaped timestamps on legacy lazy dylib commands", async () => {
+    const facts = await read(
+      machoImage({
+        commands: [
+          dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/libLazy.dylib", 0x09),
+        ],
+      }),
+    );
+    if (facts.status !== "parsed") throw new Error(facts.status);
+    expect(facts.slices[0]?.dependencies[0]).toMatchObject({
+      command: "LC_LAZY_LOAD_DYLIB",
+      encoding: "dylib_command",
+      install_name: "@rpath/libLazy.dylib",
+      weak: false,
+      delayed_init: false,
+    });
+  });
+
   it("decodes dylib_use_command flags", async () => {
     const facts = await read(
       machoImage({
@@ -1952,13 +1970,15 @@ describe("Mach-O load command reader failures", () => {
       status: "malformed",
       reason: "Mach-O header is truncated",
     });
-    const oversized = machoImage({});
-    new DataView(oversized.buffer).setUint32(
-      20,
-      MAX_LOAD_COMMAND_BYTES + 8,
-      true,
-    );
-    expect(await read(oversized)).toMatchObject({ status: "unsupported" });
+    const commandBytes = MAX_LOAD_COMMAND_BYTES + 8;
+    const header = machoImage({});
+    const oversized = Buffer.alloc(header.byteLength + commandBytes);
+    oversized.set(header);
+    oversized.writeUInt32LE(commandBytes, 20);
+    expect(await read(oversized)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringMatching(/above the .* limit/iu),
+    });
     const beyond = machoImage({ commands: [rpathCommand("x")] });
     new DataView(beyond.buffer).setUint32(20, beyond.length, true);
     expect(await read(beyond)).toMatchObject({
@@ -2005,25 +2025,31 @@ describe("Mach-O load command reader defect precedence", () => {
     expect(await read(machoImage({ commands: [shortRpath, unsized] }))).toEqual(
       decodeFirst,
     );
-    // over a missing later command,
+    // An impossible declared count prevents any command from being decoded.
     const missing = machoImage({ commands: [shortRpath] });
     new DataView(missing.buffer).setUint32(16, 2, true);
-    expect(await read(missing)).toEqual(decodeFirst);
-    // and over unconsumed command bytes.
+    expect(await read(missing)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringMatching(/count 2 cannot fit/iu),
+    });
+    // An earlier decode defect wins over unconsumed command bytes.
     const unconsumed = machoImage({
       commands: [shortRpath, rpathCommand("x")],
     });
     new DataView(unconsumed.buffer).setUint32(16, 1, true);
     expect(await read(unconsumed)).toEqual(decodeFirst);
 
-    // The command-size limit is checked before the slice bounds.
+    // A table whose declared size leaves the slice is malformed.
     const oversized = machoImage({});
     new DataView(oversized.buffer).setUint32(
       20,
       MAX_LOAD_COMMAND_BYTES + 8,
       true,
     );
-    expect(await read(oversized)).toMatchObject({ status: "unsupported" });
+    expect(await read(oversized)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringMatching(/extend beyond.*slice/iu),
+    });
 
     // A malformed FAT slice wins over an earlier or later unsupported one.
     const bigEndian = new Uint8Array(32);

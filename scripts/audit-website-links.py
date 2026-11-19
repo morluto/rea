@@ -41,8 +41,9 @@ def github_target(url):
         ref = parts[3]
         # GitHub uses the longest matching branch name before the source path.
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
-            references = github_api(f"{repo}/git/matching-refs/heads/{quote(ref, safe='')}")
-            references += github_api(f"{repo}/git/matching-refs/tags/{quote(ref, safe='')}")
+            heads = github_api(f"{repo}/git/matching-refs/heads/{quote(ref, safe='')}")
+            tags = github_api(f"{repo}/git/matching-refs/tags/{quote(ref, safe='')}")
+            references = (*heads, *tags)
             suffix = "/".join(parts[3:])
             matches = [item["ref"].split("/", 2)[2] for item in references]
             matches = [name for name in matches if suffix == name or suffix.startswith(name + "/")]

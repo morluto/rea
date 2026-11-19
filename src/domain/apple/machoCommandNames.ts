@@ -1,3 +1,9 @@
+import {
+  MACHO_DYLIB_FIELDS_OFFSET,
+  MACHO_DYLIB_NAME_MIN,
+  machoDylibFieldsSize,
+  readMachoDylibFields,
+} from "./machoDylibCommand.js";
 import { LC, LC_REQ_DYLD } from "./machoLoadCommandCodes.js";
 import {
   MachoLoadCommandCursor,
@@ -9,8 +15,15 @@ import {
   MACHO_VERSION_MIN_PLATFORMS,
   type MachoVersionMinPlatform,
 } from "./machoPlatform.js";
-import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
-import { readMachoSectionHeader } from "./machoSectionHeader.js";
+import {
+  machoSegmentHeaderSize,
+  machoSegmentSectionTableFits,
+  readMachoSegmentHeader,
+} from "./machoSegmentHeader.js";
+import {
+  machoSectionHeaderSize,
+  readMachoSectionHeader,
+} from "./machoSectionHeader.js";
 import { createHash } from "node:crypto";
 import {
   decodeLimit,
@@ -123,14 +136,7 @@ export interface MachoCommandNames {
     }[];
     readonly commandString?: Uint8Array;
     readonly commandStringOffset?: number;
-    readonly dylib?: {
-      readonly nameOffset: number;
-      readonly currentVersion: number;
-      readonly compatibilityVersion: number;
-      readonly encoding:
-        | { readonly kind: "timestamp"; readonly timestamp: number }
-        | { readonly kind: "use"; readonly flags: number };
-    };
+    readonly dylib?: ReturnType<typeof readMachoDylibFields>;
     readonly legacyBuild?: {
       readonly platform: MachoVersionMinPlatform;
       readonly version: number;
@@ -304,7 +310,7 @@ export const readMachoCommandNames = async (
       | NonNullable<MachoCommandNames["commands"][number]["sections"]>[number][]
       | undefined;
     if (segmentWide !== null) {
-      const segmentHeaderSize = segmentWide ? 72 : 56;
+      const segmentHeaderSize = machoSegmentHeaderSize(segmentWide);
       if (frame.size < segmentHeaderSize)
         throw malformedInput("macho", "Mach-O segment is truncated");
       const segmentBytes = await exact(at, segmentHeaderSize);
@@ -314,22 +320,14 @@ export const readMachoCommandNames = async (
         table.littleEndian,
       );
       if (!segment.ok) throw malformedInput("macho", segment.error.message);
-      const width = segmentWide ? 80 : 68;
-      if (
-        segment.value.sectionCount >
-        Math.floor((frame.size - segmentHeaderSize) / width)
-      )
+      const width = machoSectionHeaderSize(segmentWide);
+      if (!machoSegmentSectionTableFits(segment.value, frame.size, segmentWide))
         throw malformedInput("macho", "Mach-O section table is truncated");
       if (segment.value.sectionCount > maximumRecords - records)
         throw loadCommandLimit(maximumRecords, "records");
       chargeProjection(segment.value.sectionCount, PROJECTED_SECTION_BYTES);
       records += segment.value.sectionCount;
       segmentName = retain(segment.value.nameBytes);
-      const segmentView = new DataView(
-        segmentBytes.buffer,
-        segmentBytes.byteOffset,
-        segmentBytes.byteLength,
-      );
       segmentFacts = {
         address: segment.value.address,
         memorySize: segment.value.memorySize,
@@ -337,7 +335,7 @@ export const readMachoCommandNames = async (
         fileSize: segment.value.fileSize,
         maxProtection: segment.value.maxProtection,
         protection: segment.value.protection,
-        flags: segmentView.getUint32(segmentWide ? 68 : 52, table.littleEndian),
+        flags: segment.value.flags,
       };
       sections = [];
       for (let i = 0; i < segment.value.sectionCount; i++) {
@@ -351,40 +349,20 @@ export const readMachoCommandNames = async (
           table.littleEndian,
         );
         if (!section.ok) throw malformedInput("macho", section.error.message);
-        const sectionView = new DataView(
-          sectionBytes.buffer,
-          sectionBytes.byteOffset,
-          sectionBytes.byteLength,
-        );
         sections.push({
           name: retain(section.value.nameBytes),
           segmentName: retain(section.value.segmentNameBytes),
           address: section.value.address,
           size: section.value.size,
           fileOffset: section.value.offset,
-          alignmentExponent: sectionView.getUint32(
-            segmentWide ? 52 : 44,
-            table.littleEndian,
-          ),
-          relocationOffset: sectionView.getUint32(
-            segmentWide ? 56 : 48,
-            table.littleEndian,
-          ),
-          relocationCount: sectionView.getUint32(
-            segmentWide ? 60 : 52,
-            table.littleEndian,
-          ),
-          reserved1: sectionView.getUint32(
-            segmentWide ? 68 : 60,
-            table.littleEndian,
-          ),
-          reserved2: sectionView.getUint32(
-            segmentWide ? 72 : 64,
-            table.littleEndian,
-          ),
-          ...(segmentWide
-            ? { reserved3: sectionView.getUint32(76, table.littleEndian) }
-            : {}),
+          alignmentExponent: section.value.alignmentExponent,
+          relocationOffset: section.value.relocationOffset,
+          relocationCount: section.value.relocationCount,
+          reserved1: section.value.reserved1,
+          reserved2: section.value.reserved2,
+          ...(section.value.reserved3 === undefined
+            ? {}
+            : { reserved3: section.value.reserved3 }),
           flags: section.value.flags,
         });
       }
@@ -407,7 +385,7 @@ export const readMachoCommandNames = async (
         data.byteLength,
       ).getUint32(0, table.littleEndian);
       const minimum = DYLIB_COMMANDS.has(frame.command)
-        ? 24
+        ? MACHO_DYLIB_NAME_MIN
         : frame.command === LC.LOADFVMLIB ||
             frame.command === LC.IDFVMLIB ||
             frame.command === LC.PREBOUND_DYLIB
@@ -426,42 +404,16 @@ export const readMachoCommandNames = async (
         "Mach-O command string",
       );
       commandStringOffset = offset;
-      if (DYLIB_COMMANDS.has(frame.command)) {
-        const fixed = await exact(at + 12, 12);
-        const view = new DataView(
-          fixed.buffer,
-          fixed.byteOffset,
-          fixed.byteLength,
+      if (DYLIB_COMMANDS.has(frame.command))
+        dylib = readMachoDylibFields(
+          await exact(
+            at + MACHO_DYLIB_FIELDS_OFFSET,
+            machoDylibFieldsSize(frame.command, offset),
+          ),
+          frame.command,
+          offset,
+          table.littleEndian,
         );
-        const marker = view.getUint32(0, table.littleEndian);
-        const useEncoding =
-          (frame.command === LC.LOAD_DYLIB ||
-            frame.command === LC.LOAD_WEAK_DYLIB) &&
-          offset === 28 &&
-          marker === 0x1a741800;
-        if (useEncoding && frame.size < 28)
-          throw malformedInput(
-            "macho",
-            "Mach-O dylib use command is truncated",
-          );
-        const flags = useEncoding ? await exact(at + 24, 4) : undefined;
-        dylib = {
-          nameOffset: offset,
-          currentVersion: view.getUint32(4, table.littleEndian),
-          compatibilityVersion: view.getUint32(8, table.littleEndian),
-          encoding:
-            flags === undefined
-              ? { kind: "timestamp", timestamp: marker }
-              : {
-                  kind: "use",
-                  flags: new DataView(
-                    flags.buffer,
-                    flags.byteOffset,
-                    flags.byteLength,
-                  ).getUint32(0, table.littleEndian),
-                },
-        };
-      }
     }
     let prebound: MachoCommandNames["commands"][number]["prebound"];
     if (frame.command === LC.PREBOUND_DYLIB) {

@@ -697,6 +697,13 @@ export const espFlashImageMetadataSchema = z.strictObject({
         .string()
         .regex(/^[0-9a-f]{32}$/u)
         .nullable(),
+      /**
+       * Partition entries after the MD5 record, outside its digest. New
+       * inventories emit 0 when the record is absent or every partition
+       * entry precedes it. Omission is Evidence saved before this field
+       * and leaves the count unknown.
+       */
+      entries_after_checksum: uint8.exactOptional(),
     }),
   }),
   /**

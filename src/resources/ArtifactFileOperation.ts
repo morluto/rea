@@ -333,13 +333,15 @@ export const withArtifactRegularFile = async <Value>(
 /** Keep admission, operation outcome, final close and failed-owner transfer together. */
 export const withArtifactFileHandle = async <Value>(
   path: string,
-  file: FileHandle,
+  file: FileHandle | OwnedFileHandle,
   resources: ArtifactResourceScope | undefined,
   signal: AbortSignal | undefined,
   operation: (file: FileHandle) => Promise<Value>,
 ): Promise<Value> => {
-  const owner = new OwnedFileHandle(file);
-  const cleanupLease = new AnalysisCleanupLease(() => owner.close(), [path]);
+  const owner: OwnedFileHandle & {
+    readonly cleanupResources?: readonly string[];
+  } = file instanceof OwnedFileHandle ? file : new OwnedFileHandle(file);
+  const cleanupLease = AnalysisCleanupLease.forCloseOwner(owner, path);
   try {
     return await withOwnedFileHandle(
       path,

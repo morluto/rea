@@ -63,6 +63,22 @@ const method = (
   return_type = "void",
 ) => ({ class: `${app}.LoginActivity`, name, return_type, parameter_types });
 
+it.each([
+  ["CR", ["\r"]],
+  ["CRLF", ["\r\n"]],
+  ["mixed", ["\r\n", "\r", "\n"]],
+] as const)(
+  "preserves mappings and diagnostics with %s line endings",
+  (_label, endings) => {
+    let line = 0;
+    const text = fixture.replaceAll(
+      "\n",
+      () => endings[line++ % endings.length]!,
+    );
+    expect(parse(text)).toEqual(mapping);
+  },
+);
+
 it("reports header facts, valid record counts and malformed line samples", () => {
   expect(mapping.reported).toEqual({
     compiler: "R8",

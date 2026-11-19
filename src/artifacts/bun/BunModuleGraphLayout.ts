@@ -1,6 +1,10 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { Budget } from "../../domain/budget.js";
-import { declaredFileRange } from "../../domain/binaryContainer.js";
+import {
+  BinaryReader,
+  declaredFileRange,
+} from "../../domain/binaryContainer.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   observePeCoffFrame,
@@ -13,7 +17,10 @@ import {
 } from "../../domain/peSectionHeader.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
 import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   readFatContainerHeader,
@@ -27,10 +34,12 @@ import {
 } from "../../domain/apple/machoLoadCommands.js";
 import {
   machoSectionBacking,
+  machoSectionHeaderSize,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
   admitMachoSegmentCommand,
+  machoSegmentSectionTableFits,
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import type { FileHandle } from "node:fs/promises";
@@ -58,8 +67,6 @@ export const BUN_RECORD_BYTES_1_3_3 = 36;
 export const BUN_RECORD_BYTES_1_3_9 = 52;
 
 const MAX_PE_SECTIONS = 96;
-const SECTION_64_BYTES = 80;
-const SECTION_32_BYTES = 68;
 
 export const BUN_LAYOUT_REVISIONS = ["bun-1.3.3", "bun-1.3.9"] as const;
 export type BunLayoutRevision = (typeof BUN_LAYOUT_REVISIONS)[number];
@@ -233,9 +240,9 @@ export const loadBunStandaloneGraph = async (
     BUN_GRAPH_SUFFIX_BYTES,
     signal,
   );
-  const failure = suffixFailure(suffix, claim.payloadLength, limits);
-  if (failure !== undefined) return { status: "present", failure };
-  const offsets = suffix.subarray(0, BUN_OFFSETS_BYTES);
+  const parsed = readBunSuffix(suffix, claim.payloadLength);
+  if (!parsed.ok) return { status: "present", failure: parsed.error };
+  const offsets = parsed.value;
   return {
     status: "present",
     graph: {
@@ -248,9 +255,9 @@ export const loadBunStandaloneGraph = async (
         limits.metadata_read_bytes,
       ),
       modules: readPointer(offsets, 8),
-      entryPointId: offsets.readUInt32LE(16),
+      entryPointId: offsets.u32(16),
       compileExecArgv: readPointer(offsets, 20),
-      flags: offsets.readUInt32LE(28),
+      flags: offsets.u32(28),
     },
   };
 };
@@ -379,18 +386,17 @@ const evaluateSection = async (
     );
   if (claim.available < BUN_LENGTH_PREFIX_BYTES)
     return presentFailure(bunFormatFailure("trailer is truncated"));
-  const prefix = await readExact(
-    handle,
-    claim.fileOffset,
-    BUN_LENGTH_PREFIX_BYTES,
-    signal,
+  const prefix = new BinaryReader(
+    await readExact(handle, claim.fileOffset, BUN_LENGTH_PREFIX_BYTES, signal),
+    true,
+    "bun-standalone",
   );
   let prefixBytes = BUN_LENGTH_PREFIX_BYTES;
-  let payloadLength = prefix.readBigUInt64LE(0);
+  let payloadLength = prefix.word(0, 64);
   // Legacy Mach-O writers used a u32 length. Validate its suffix before
   // interpreting payload bytes as the upper half of a current u64 prefix.
   if (claim.carrier === "mach-o-section") {
-    const legacyLength = prefix.readUInt32LE(0);
+    const legacyLength = prefix.u32(0);
     if (
       legacyLength >= BUN_GRAPH_SUFFIX_BYTES &&
       legacyLength + 4 <= claim.available
@@ -401,37 +407,37 @@ const evaluateSection = async (
         BUN_GRAPH_SUFFIX_BYTES,
         signal,
       );
-      if (
-        suffix.subarray(BUN_OFFSETS_BYTES).equals(BUN_TRAILER) &&
-        suffix.readBigUInt64LE(0) + BigInt(BUN_GRAPH_SUFFIX_BYTES) ===
-          BigInt(legacyLength)
-      ) {
+      if (readBunSuffix(suffix, legacyLength).ok) {
         prefixBytes = 4;
         payloadLength = BigInt(legacyLength);
       }
     }
   }
   if (payloadLength === 0n) return { status: "placeholder" };
-  if (payloadLength > BigInt(limits.payload_bytes))
-    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
-  if (payloadLength < BigInt(BUN_GRAPH_SUFFIX_BYTES))
+  if (
+    payloadLength < BigInt(BUN_GRAPH_SUFFIX_BYTES) ||
+    payloadLength > BigInt(claim.available - prefixBytes)
+  )
     return presentFailure(bunFormatFailure("trailer is truncated"));
   const length = Number(payloadLength);
-  if (claim.available < prefixBytes + length)
-    return presentFailure(bunFormatFailure("trailer is truncated"));
   const payloadOffset = claim.fileOffset + prefixBytes;
-  const suffix = await readExact(
-    handle,
-    payloadOffset + length - BUN_GRAPH_SUFFIX_BYTES,
-    BUN_GRAPH_SUFFIX_BYTES,
-    signal,
-  );
-  const failure = suffixFailure(suffix, length, limits);
-  if (failure !== undefined) return presentFailure(failure);
+  // The legacy width is selected only after its suffix has been validated.
+  if (prefixBytes === BUN_LENGTH_PREFIX_BYTES) {
+    const suffix = await readExact(
+      handle,
+      payloadOffset + length - BUN_GRAPH_SUFFIX_BYTES,
+      BUN_GRAPH_SUFFIX_BYTES,
+      signal,
+    );
+    const parsed = readBunSuffix(suffix, length);
+    if (!parsed.ok) return presentFailure(parsed.error);
+  }
   if (claim.loadCommandsFailure !== undefined)
     return presentFailure(
       bunFormatFailure(`Mach-O load commands: ${claim.loadCommandsFailure}`),
     );
+  if (payloadLength > BigInt(limits.payload_bytes))
+    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
   return {
     status: "present",
     claim: { carrier: claim.carrier, payloadOffset, payloadLength: length },
@@ -464,7 +470,10 @@ const evaluateAppendedTrailer = async (
     trailer = await readTrailer(graphEnd);
     if (!trailer?.equals(BUN_TRAILER)) return { status: "absent" };
     const length = await readExact(handle, graphEnd, 8, signal);
-    if (length.readBigUInt64LE() !== BigInt(fileSize))
+    if (
+      new BinaryReader(length, true, "bun-standalone").word(0, 64) !==
+      BigInt(fileSize)
+    )
       return presentFailure(
         bunFormatFailure("appended carrier length does not match file size"),
       );
@@ -475,8 +484,9 @@ const evaluateAppendedTrailer = async (
     BUN_OFFSETS_BYTES,
     signal,
   );
-  const payloadLength =
-    offsets.readBigUInt64LE(0) + BigInt(BUN_GRAPH_SUFFIX_BYTES);
+  const payloadLength = graphPayloadLength(
+    new BinaryReader(offsets, true, "bun-standalone"),
+  );
   const payloadStart = BigInt(graphEnd) - payloadLength;
   if (
     !outsideRejectedSlices(
@@ -485,10 +495,10 @@ const evaluateAppendedTrailer = async (
     )
   )
     return { status: "absent" };
-  if (payloadLength > BigInt(limits.payload_bytes))
-    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
   if (payloadStart < 0n)
     return presentFailure(bunFormatFailure("trailer is truncated"));
+  if (payloadLength > BigInt(limits.payload_bytes))
+    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
   return {
     status: "present",
     claim: {
@@ -499,30 +509,36 @@ const evaluateAppendedTrailer = async (
   };
 };
 
-/** Validate the Offsets and trailer that end a payload of `payloadLength` bytes. */
-const suffixFailure = (
+const graphPayloadLength = (offsets: BinaryReader): bigint =>
+  offsets.word(0, 64) + BigInt(BUN_GRAPH_SUFFIX_BYTES);
+
+/** Validate framing before exposing the Offsets record at the end of a graph. */
+const readBunSuffix = (
   suffix: Buffer,
   payloadLength: number,
-  limits: BunReaderLimits,
-): ArtifactReaderFailure | undefined => {
+): Result<BinaryReader, ArtifactReaderFailure> => {
   if (suffix.length < BUN_GRAPH_SUFFIX_BYTES)
-    return bunFormatFailure("trailer is truncated");
+    return err(bunFormatFailure("trailer is truncated"));
   if (!suffix.subarray(BUN_OFFSETS_BYTES).equals(BUN_TRAILER))
-    return bunFormatFailure("trailer does not match the Bun sentinel");
-  const byteCount = suffix.readBigUInt64LE(0);
-  if (byteCount > BigInt(limits.payload_bytes))
-    return bunPayloadBytesLimit(byteCount, limits);
-  if (byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES) !== BigInt(payloadLength))
-    return bunFormatFailure("byte_count does not match the located payload");
-  return undefined;
+    return err(bunFormatFailure("trailer does not match the Bun sentinel"));
+  const offsets = new BinaryReader(
+    suffix.subarray(0, BUN_OFFSETS_BYTES),
+    true,
+    "bun-standalone",
+  );
+  if (graphPayloadLength(offsets) !== BigInt(payloadLength))
+    return err(
+      bunFormatFailure("byte_count does not match the located payload"),
+    );
+  return ok(offsets);
 };
 
 export const readPointer = (
-  bytes: Buffer,
+  reader: BinaryReader,
   offset: number,
 ): BunStringPointer => ({
-  offset: bytes.readUInt32LE(offset),
-  length: bytes.readUInt32LE(offset + 4),
+  offset: reader.u32(offset),
+  length: reader.u32(offset + 4),
 });
 
 const machOClaims = async (
@@ -631,8 +647,8 @@ const segmentClaims = (
   if (!parsedSegment.ok) return [];
   const segment = parsedSegment.value;
   const { headerSize, sectionCount } = segment;
-  const sectionBytes = wide ? SECTION_64_BYTES : SECTION_32_BYTES;
-  if (headerSize + sectionCount * sectionBytes > command.length) return [];
+  const sectionBytes = machoSectionHeaderSize(wide);
+  if (!machoSegmentSectionTableFits(segment, command.length, wide)) return [];
   const admission = admitMachoSegmentCommand(
     segment,
     command.length,
@@ -795,7 +811,7 @@ const elfClaims = async (
   const declarations = readElfRawTableDeclarations(header, format.value);
   if (!declarations.ok) return [];
   const { offset, width, count, namesIndex } = declarations.value.sections;
-  const sectionWidth = elfClass === 64 ? 64 : 40;
+  const sectionWidth = elfSectionHeaderWidth(elfClass);
   // Unsupported extended numbering does not establish a Bun graph.
   if (
     (width !== 0 && width !== sectionWidth) ||

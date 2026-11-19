@@ -204,6 +204,8 @@ export interface AndroidOtaPayloadHeader {
   readonly manifestSize: number;
   readonly metadataSignatureSize: number;
   readonly manifestOffset: number;
+  /** End of the manifest plus a complete metadata signature, when present. */
+  readonly metadataPrefixEnd: number;
   readonly blobOffset: number;
 }
 
@@ -388,29 +390,30 @@ export const parseAndroidOtaHeader = (
   const metadataSignatureSize = u32be(bytes, 20);
   const size = asSafeUint(manifestSize, "manifest_size");
   if (!size.ok) return size;
+  const manifestEnd = ANDROID_OTA_HEADER_V2_BYTES + size.value;
+  const blobOffset = manifestEnd + metadataSignatureSize;
+  if (!Number.isSafeInteger(blobOffset))
+    return err(malformed("Android OTA payload header extents overflow"));
+  if (fileSize < manifestEnd)
+    return err(
+      truncated(
+        `Android OTA payload manifest is truncated: header declares ${String(size.value)} manifest bytes but the file ends at ${String(fileSize)}`,
+      ),
+    );
   if (size.value > ANDROID_OTA_MAX_MANIFEST_BYTES)
     return err(
       capacity("manifest size", ANDROID_OTA_MAX_MANIFEST_BYTES, "byte"),
     );
-  if (metadataSignatureSize > ANDROID_OTA_MAX_SIGNATURE_BYTES)
+  const metadataSignatureFits = blobOffset <= fileSize;
+  if (
+    metadataSignatureFits &&
+    metadataSignatureSize > ANDROID_OTA_MAX_SIGNATURE_BYTES
+  )
     return err(
       capacity(
         "metadata signature size",
         ANDROID_OTA_MAX_SIGNATURE_BYTES,
         "byte",
-      ),
-    );
-  const blobOffset =
-    ANDROID_OTA_HEADER_V2_BYTES + size.value + metadataSignatureSize;
-  if (
-    !Number.isSafeInteger(blobOffset) ||
-    blobOffset < ANDROID_OTA_HEADER_V2_BYTES
-  )
-    return err(malformed("Android OTA payload header extents overflow"));
-  if (fileSize < ANDROID_OTA_HEADER_V2_BYTES + size.value)
-    return err(
-      truncated(
-        `Android OTA payload manifest is truncated: header declares ${String(size.value)} manifest bytes but the file ends at ${String(fileSize)}`,
       ),
     );
   return ok({
@@ -419,6 +422,7 @@ export const parseAndroidOtaHeader = (
     manifestSize: size.value,
     metadataSignatureSize,
     manifestOffset: ANDROID_OTA_HEADER_V2_BYTES,
+    metadataPrefixEnd: metadataSignatureFits ? blobOffset : manifestEnd,
     blobOffset,
   });
 };
@@ -800,7 +804,7 @@ const decodeDynamicMetadata = (
   });
 };
 
-export const countAndroidOtaSignatures = (
+const countAndroidOtaSignatures = (
   bytes: Uint8Array,
 ): Result<number, AndroidOtaPayloadParseError> => {
   let count = 0;
@@ -954,43 +958,28 @@ const isExtractable = (operations: readonly OperationDraft[]): boolean =>
   operations.length > 0 &&
   operations.every((operation) => EXTRACTABLE_TYPES.has(operation.typeCode));
 
+/** Decode the manifest and any complete metadata signature after the admitted header. */
 export const parseAndroidOtaPayload = (
-  bytes: Uint8Array,
-  fileSize = bytes.length,
-  payloadSignatureBytes?: Uint8Array,
+  header: AndroidOtaPayloadHeader,
+  metadata: Uint8Array,
+  fileSize: number,
 ): Result<AndroidOtaPayload, AndroidOtaPayloadParseError> => {
-  const header = parseAndroidOtaHeader(bytes, fileSize);
-  if (!header.ok) return header;
-  const manifestEnd = header.value.manifestOffset + header.value.manifestSize;
-  if (bytes.length < manifestEnd)
+  if (metadata.length < header.manifestSize)
     return err(
       truncated(
-        `Android OTA payload manifest is truncated: header declares ${String(header.value.manifestSize)} bytes starting at ${String(header.value.manifestOffset)}`,
+        `Android OTA payload manifest is truncated: header declares ${String(header.manifestSize)} bytes starting at ${String(header.manifestOffset)}`,
       ),
     );
-  const manifest = decodeManifest(
-    bytes.subarray(header.value.manifestOffset, manifestEnd),
-  );
+  const manifest = decodeManifest(metadata.subarray(0, header.manifestSize));
   if (!manifest.ok) return manifest;
-  const metadataSlice = bytes.subarray(
-    manifestEnd,
-    Math.min(bytes.length, header.value.blobOffset),
-  );
   let metadataSignatureCount: number | null = null;
-  if (header.value.metadataSignatureSize > 0) {
-    if (header.value.metadataSignatureSize > ANDROID_OTA_MAX_SIGNATURE_BYTES)
-      return err(
-        capacity(
-          "metadata signature size",
-          ANDROID_OTA_MAX_SIGNATURE_BYTES,
-          "byte",
-        ),
-      );
-    if (metadataSlice.length === header.value.metadataSignatureSize) {
-      const counted = countAndroidOtaSignatures(metadataSlice);
-      if (!counted.ok) return counted;
-      metadataSignatureCount = counted.value;
-    }
+  const metadataBytes = header.metadataPrefixEnd - header.manifestOffset;
+  if (metadataBytes > header.manifestSize && metadata.length >= metadataBytes) {
+    const counted = countAndroidOtaSignatures(
+      metadata.subarray(header.manifestSize, metadataBytes),
+    );
+    if (!counted.ok) return counted;
+    metadataSignatureCount = counted.value;
   }
   // The manifest declares a payload signature only when both coordinates
   // are present. Keep each raw field available for inventory.
@@ -999,42 +988,27 @@ export const parseAndroidOtaPayload = (
     signaturesOffset === null || signaturesSize === null
       ? null
       : { blobOffset: signaturesOffset, size: signaturesSize };
-  let payloadSignatureCount: number | null = null;
   let payloadSignatureRange: AndroidOtaPayload["payloadSignatureRange"] = null;
-  let blobTruncated = fileSize < header.value.blobOffset;
+  let blobTruncated = fileSize < header.blobOffset;
   if (signatureDeclaration !== null) {
     const { blobOffset, size } = signatureDeclaration;
-    if (size > ANDROID_OTA_MAX_SIGNATURE_BYTES)
-      return err(
-        capacity(
-          "payload signature size",
-          ANDROID_OTA_MAX_SIGNATURE_BYTES,
-          "byte",
-        ),
-      );
-    const offset = header.value.blobOffset + blobOffset;
+    const offset = header.blobOffset + blobOffset;
     const end = offset + size;
     if (!Number.isSafeInteger(end) || end > fileSize) blobTruncated = true;
-    else if (size > 0) payloadSignatureRange = { offset, bytes: size };
-    const signature =
-      payloadSignatureBytes ??
-      (payloadSignatureRange !== null && end <= bytes.length
-        ? bytes.subarray(offset, end)
-        : undefined);
-    if (signature !== undefined) {
-      if (signature.length !== size)
+    else {
+      if (size > ANDROID_OTA_MAX_SIGNATURE_BYTES)
         return err(
-          malformed(
-            "payload signature blob length does not match signatures_size",
+          capacity(
+            "payload signature size",
+            ANDROID_OTA_MAX_SIGNATURE_BYTES,
+            "byte",
           ),
         );
-      const counted = countAndroidOtaSignatures(signature);
-      if (!counted.ok) return counted;
-      payloadSignatureCount = counted.value;
+      if (size > 0) payloadSignatureRange = { offset, bytes: size };
     }
   }
 
-  const blobAvailable = Math.max(0, fileSize - header.value.blobOffset);
+  const blobAvailable = Math.max(0, fileSize - header.blobOffset);
   for (const partition of manifest.value.partitions) {
     for (const operation of partition.operations) {
       if (operation.dataLength === 0) continue;
@@ -1148,7 +1122,7 @@ export const parseAndroidOtaPayload = (
     );
 
   return ok({
-    header: header.value,
+    header,
     fileSize,
     blockSize: manifest.value.blockSize,
     minorVersion: manifest.value.minorVersion,
@@ -1158,11 +1132,11 @@ export const parseAndroidOtaPayload = (
     securityPatchLevel: manifest.value.securityPatchLevel,
     signaturesOffset: manifest.value.signaturesOffset,
     signaturesSize: manifest.value.signaturesSize,
-    metadataSignatureBlobSize: header.value.metadataSignatureSize,
+    metadataSignatureBlobSize: header.metadataSignatureSize,
     metadataSignatureCount,
     payloadSignatureBlobSize: signatureDeclaration?.size ?? null,
     payloadSignatureRange,
-    payloadSignatureCount,
+    payloadSignatureCount: null,
     partitions,
     dynamicPartitionGroups: manifest.value.groups.map((group) => ({
       name: group.name!,
@@ -1182,6 +1156,21 @@ export const parseAndroidOtaPayload = (
     blobTruncated,
     limitations,
   });
+};
+
+/** Count an admitted payload signature using the manifest facts already decoded. */
+export const withAndroidOtaPayloadSignature = (
+  payload: AndroidOtaPayload,
+  signature: Uint8Array,
+): Result<AndroidOtaPayload, AndroidOtaPayloadParseError> => {
+  if (payload.payloadSignatureRange?.bytes !== signature.length)
+    return err(
+      malformed("payload signature blob length does not match signatures_size"),
+    );
+  const count = countAndroidOtaSignatures(signature);
+  return count.ok
+    ? ok({ ...payload, payloadSignatureCount: count.value })
+    : count;
 };
 
 const writeExtents = (

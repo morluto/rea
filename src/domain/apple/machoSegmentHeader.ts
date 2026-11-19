@@ -1,4 +1,10 @@
+import { BinaryReader } from "../binaryContainer.js";
+import { machoSectionHeaderSize } from "./machoSectionHeader.js";
 import { err, ok } from "../result.js";
+
+/** Fixed byte widths of Apple's segment_command and segment_command_64 records. */
+export const machoSegmentHeaderSize = (wide: boolean): 56 | 72 =>
+  wide ? 72 : 56;
 
 /** Decode a fixed LC_SEGMENT/LC_SEGMENT_64 record; callers own command and mapping admission. */
 export const readMachoSegmentHeader = (
@@ -6,27 +12,29 @@ export const readMachoSegmentHeader = (
   wide: boolean,
   littleEndian: boolean,
 ) => {
-  const headerSize = wide ? 72 : 56;
+  const headerSize = machoSegmentHeaderSize(wide);
   if (bytes.byteLength < headerSize)
     return err({
       kind: "malformed" as const,
       message: "Mach-O segment header is truncated",
     });
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const word = (offset: number): bigint =>
-    wide
-      ? view.getBigUint64(offset, littleEndian)
-      : BigInt(view.getUint32(offset, littleEndian));
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "macho",
+  );
+  const bits = wide ? 64 : 32;
   return ok({
     headerSize,
-    nameBytes: Buffer.from(bytes.subarray(8, 24)),
-    address: word(24),
-    memorySize: word(wide ? 32 : 28),
-    fileOffset: word(wide ? 40 : 32),
-    fileSize: word(wide ? 48 : 36),
-    maxProtection: view.getUint32(wide ? 56 : 40, littleEndian),
-    protection: view.getUint32(wide ? 60 : 44, littleEndian),
-    sectionCount: view.getUint32(wide ? 64 : 48, littleEndian),
+    nameBytes: Buffer.from(reader.range(8, 16, "Mach-O segment name")),
+    address: reader.word(24, bits),
+    memorySize: reader.word(wide ? 32 : 28, bits),
+    fileOffset: reader.word(wide ? 40 : 32, bits),
+    fileSize: reader.word(wide ? 48 : 36, bits),
+    maxProtection: reader.u32(wide ? 56 : 40),
+    protection: reader.u32(wide ? 60 : 44),
+    sectionCount: reader.u32(wide ? 64 : 48),
+    flags: reader.u32(wide ? 68 : 52),
   });
 };
 
@@ -50,6 +58,17 @@ export const admitMachoSegmentMapping = (
     : ok({ unmapped });
 };
 
+/** Check that the segment's fixed sections fit inside its declared cmdsize. */
+export const machoSegmentSectionTableFits = (
+  segment: { readonly headerSize: number; readonly sectionCount: number },
+  commandBytes: number,
+  wide: boolean,
+): boolean =>
+  segment.sectionCount <=
+  Math.floor(
+    (commandBytes - segment.headerSize) / machoSectionHeaderSize(wide),
+  );
+
 /** Admit one segment command against its cmdsize and the image that holds it. */
 export const admitMachoSegmentCommand = (
   segment: Parameters<typeof admitMachoSegmentMapping>[0] & {
@@ -63,11 +82,7 @@ export const admitMachoSegmentCommand = (
 ) => {
   const mapping = admitMachoSegmentMapping(segment, bits);
   if (!mapping.ok) return mapping;
-  const sectionBytes = bits === 64 ? 80 : 68;
-  if (
-    segment.sectionCount >
-    Math.floor((commandBytes - segment.headerSize) / sectionBytes)
-  )
+  if (!machoSegmentSectionTableFits(segment, commandBytes, bits === 64))
     return err({
       kind: "malformed" as const,
       message: "Mach-O section table exceeds its segment command",
