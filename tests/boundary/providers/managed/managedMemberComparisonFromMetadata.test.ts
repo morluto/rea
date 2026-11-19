@@ -31,12 +31,15 @@ describe("required managed definition names", () => {
     ["TypeDef", "empty", 2, 4, "Program", "0x02000001"],
     ["MethodDef", "nil", 6, 8, "Main", "0x06000001"],
     ["MethodDef", "empty", 6, 8, "Main", "0x06000001"],
+    ["Field", "nil", 4, 2, "counter", "0x04000001"],
+    ["Field", "empty", 4, 2, "counter", "0x04000001"],
   ] as const)(
     "keeps a %s %s name out of cross-build identity",
     (kind, encoding, table, column, name, token) => {
       const fixture = (mvidByte: number) => {
         const bytes = buildManagedPeFixture({
           mvid: Buffer.alloc(16, mvidByte),
+          ...(kind === "Field" ? { ilBody: Buffer.from([0x06, 0x2a]) } : {}),
         });
         const pe = readManagedPeLayout(bytes);
         if (pe.cli === null) throw new Error("Missing CLI metadata in fixture");
@@ -63,7 +66,7 @@ describe("required managed definition names", () => {
       } of [left, right]) {
         expect(result.metadata).toMatchObject({
           status: "partial",
-          table_row_counts: { TypeDef: 1, MethodDef: 1 },
+          table_row_counts: { TypeDef: 1, MethodDef: 1, Field: 1 },
         });
         expect(result.method_rows).toEqual({ offset: 0, count: 1, total: 1 });
         expect(result.coverage.issues).toContainEqual(
@@ -82,23 +85,35 @@ describe("required managed definition names", () => {
               declaring_type: null,
             }),
           ]);
-        } else {
+        } else if (kind === "MethodDef") {
           expect(result.types).toEqual([
             expect.objectContaining({ full_name: "Fixture.Program" }),
           ]);
           expect(result.methods).toEqual([]);
+        } else {
+          expect(result.fields).toEqual([]);
+          expect(result.methods).toEqual([
+            expect.objectContaining({ name: "Main" }),
+          ]);
         }
       }
       const comparison = compareManagedMembers(left.side, right.side);
       expect(comparison.coverage.status).toBe("partial");
       expect(comparison.methods.map(({ status }) => status)).toEqual(
-        kind === "TypeDef" ? ["unknown", "unknown"] : [],
+        kind === "TypeDef"
+          ? ["unknown", "unknown"]
+          : kind === "Field"
+            ? ["unchanged"]
+            : [],
       );
-      if (kind === "MethodDef") {
+      if (kind !== "TypeDef") {
         const named = inspect(buildManagedPeFixture(), "/fixture/named.dll");
-        expect(compareManagedMembers(named, right.side).methods).toEqual([
-          expect.objectContaining({ status: "unknown" }),
-        ]);
+        const comparisonWithKnown = compareManagedMembers(named, right.side);
+        expect(
+          kind === "Field"
+            ? comparisonWithKnown.fields
+            : comparisonWithKnown.methods,
+        ).toEqual([expect.objectContaining({ status: "unknown" })]);
       }
     },
   );
@@ -130,6 +145,12 @@ describe("required managed definition names", () => {
     expect(comparison.coverage.status).toBe("complete-within-inputs");
     expect(comparison.methods).toEqual([
       expect.objectContaining({ status: "unchanged" }),
+    ]);
+    expect(comparison.fields).toEqual([
+      expect.objectContaining({
+        status: "unchanged",
+        match: expect.objectContaining({ basis: "field-signature" }),
+      }),
     ]);
   });
 });
@@ -812,6 +833,49 @@ describe("managed reference instruction comparison", () => {
     expect(dimensions).not.toContain("field-shape");
     expect(dimensions).not.toContain("call-target");
   });
+});
+
+it("keeps a saved CIL field target unknown when the direct Field name was empty", () => {
+  const sides = [0x11, 0x22].map((mvid) =>
+    inspect(
+      buildManagedPeFixture({
+        mvid: Buffer.alloc(16, mvid),
+        ilBody: Buffer.from([0x1e, 0x7e, 1, 0, 0, 4, 0x26, 0x2a]),
+      }),
+      `/fixture/archived-field-access-${String(mvid)}.dll`,
+    ),
+  );
+  const [left, right] = sides;
+  if (left === undefined || right === undefined)
+    throw new Error("Missing paired fixtures");
+  expect(compareManagedMembers(left, right).methods[0]?.status).toBe(
+    "unchanged",
+  );
+  const historical = (side: typeof left) => ({
+    ...side,
+    result: managedMemberInspectionSchema.parse({
+      ...side.result,
+      fields: [],
+      field_accesses: side.result.field_accesses.map((edge) => ({
+        ...edge,
+        field_name: "",
+        target_identity_sha256:
+          "667a82cbf4558dd1a05383d31082a7e637cdb2f3ac572d2fbfd4b6fe472bf168",
+      })),
+    }),
+  });
+  const oldLeft = historical(left);
+  const oldRight = historical(right);
+  const compared = compareManagedMembers(oldLeft, oldRight);
+  expect(compared.coverage.status).toBe("partial");
+  expect(compared.methods).toEqual([
+    expect.objectContaining({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.objectContaining({ code: "field-target-unavailable" }),
+      ]),
+    }),
+  ]);
 });
 
 describe("managed field target comparison", () => {
@@ -3601,7 +3665,7 @@ const comparedTokens = (
 describe("historical managed definition names", () => {
   const archived = (
     mvidByte: number,
-    missing: "TypeDef" | "MethodDef" | null,
+    missing: "TypeDef" | "MethodDef" | "Field" | null,
   ) => {
     const side = inspect(
       buildManagedPeFixture({
@@ -3630,6 +3694,10 @@ describe("historical managed definition names", () => {
         ...(missing === "TypeDef" ? { declaring_type: "Fixture." } : {}),
         ...(missing === "MethodDef" ? { name: "" } : {}),
       })),
+      fields:
+        missing === "Field"
+          ? result.fields.map((row) => ({ ...row, name: "" }))
+          : result.fields,
     };
     return {
       ...side,
@@ -3637,7 +3705,7 @@ describe("historical managed definition names", () => {
     };
   };
 
-  it.each(["TypeDef", "MethodDef"] as const)(
+  it.each(["TypeDef", "MethodDef", "Field"] as const)(
     "keeps a recorded empty %s name from establishing cross-build identity",
     (missing) => {
       const left = archived(0x11, missing);
@@ -3650,12 +3718,14 @@ describe("historical managed definition names", () => {
         left_status: "complete",
         right_status: "complete",
       });
-      expect(
-        comparison.methods.map(({ status, match }) => [status, match.basis]),
-      ).toEqual([
-        ["unknown", "none"],
-        ["unknown", "none"],
-      ]);
+      const members =
+        missing === "Field" ? comparison.fields : comparison.methods;
+      expect(members.map(({ status, match }) => [status, match.basis])).toEqual(
+        [
+          ["unknown", "none"],
+          ["unknown", "none"],
+        ],
+      );
       expect(comparison.left).toMatchObject({
         metadata_status: "complete",
         methods_total: 1,

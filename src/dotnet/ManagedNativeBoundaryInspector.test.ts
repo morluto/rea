@@ -210,25 +210,36 @@ it.each([0, 2])(
   },
 );
 
-it("reports field imports as declarations without inventing method implementations", () => {
-  const bytes = buildManagedPeFixture({ pinvoke: { memberForwardedRaw: 2 } });
-  const result = inspectManagedNativeBoundariesBytes(
-    bytes,
-    managedPeFixtureTarget(bytes),
-  );
-  expect(result.pinvoke_imports).toMatchObject([
-    {
-      member_kind: "field",
-      member_token: "0x04000001",
-      member_name: "counter",
-    },
-  ]);
-  expect(
-    result.native_implementations.every((item) =>
-      item.token.startsWith("0x06"),
-    ),
-  ).toBe(true);
-});
+it.each([
+  { fieldName: "counter", memberName: "counter", status: "complete" },
+  { fieldName: "", memberName: null, status: "partial" },
+])(
+  "preserves a field import declaration with a $status FieldDef name observation",
+  ({ fieldName, memberName, status }) => {
+    const bytes = buildManagedPeFixture({
+      fieldName,
+      pinvoke: { memberForwardedRaw: 2 },
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.pinvoke_imports).toMatchObject([
+      {
+        member_kind: "field",
+        member_token: "0x04000001",
+        member_name: memberName,
+        import_name: "MessageBoxW",
+      },
+    ]);
+    expect(result.metadata.status).toBe(status);
+    expect(
+      result.native_implementations.every((item) =>
+        item.token.startsWith("0x06"),
+      ),
+    ).toBe(true);
+  },
+);
 
 describe("managed native boundary inspection", () => {
   it("reports absent or malformed member metadata", () => {

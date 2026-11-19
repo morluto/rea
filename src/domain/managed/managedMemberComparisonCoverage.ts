@@ -85,8 +85,8 @@ const unavailableTypeNames = (
   return unavailable;
 };
 
-/** One side's build-local TypeDef lookup and observed nominal selection. */
-const declaringTypeScope = (result: ManagedMemberInspection) => {
+/** One side's nominal name availability and observed declaring-type selection. */
+const comparisonSideScope = (result: ManagedMemberInspection) => {
   const unavailable = unavailableTypeNames(result.types);
   const names = new Map(
     result.types.map((type) => [
@@ -96,15 +96,27 @@ const declaringTypeScope = (result: ManagedMemberInspection) => {
   );
   // Historical Evidence may record invalid names with complete coverage.
   const hasEmptyTypeName = unavailable.size > 0;
-  const emptyMethodNames = new Set(
-    result.methods.filter(({ name }) => name === ""),
+  const emptyMemberNames = new Set<DeclaredMember>();
+  for (const definitions of [result.methods, result.fields])
+    for (const member of definitions)
+      if (member.name === "") emptyMemberNames.add(member);
+  const emptyFieldTokens = new Set(
+    result.fields
+      .filter((field) => emptyMemberNames.has(field))
+      .map(({ token }) => token),
   );
-  const hasEmptyDefinitionName = hasEmptyTypeName || emptyMethodNames.size > 0;
+  // A selected method can reference a Field row outside the retained inventory.
+  for (const access of result.field_accesses)
+    if (access.field_name === "" && access.field_token.startsWith("0x04"))
+      emptyFieldTokens.add(access.field_token);
+  const hasEmptyDefinitionName =
+    hasEmptyTypeName || emptyMemberNames.size > 0 || emptyFieldTokens.size > 0;
   const metadataComplete =
     result.metadata.status === "complete" && !hasEmptyDefinitionName;
   return {
     names,
-    emptyMethodNames,
+    emptyMemberNames,
+    emptyFieldTokens,
     hasEmptyDefinitionName,
     metadataComplete,
     selected:
@@ -119,15 +131,15 @@ const declaringTypeScope = (result: ManagedMemberInspection) => {
   };
 };
 
-type DeclaringTypeScope = ReturnType<typeof declaringTypeScope>;
+type ComparisonSideScope = ReturnType<typeof comparisonSideScope>;
 type DeclaredMember =
   | ManagedMemberInspection["methods"][number]
   | ManagedMemberInspection["fields"][number];
 
 /** Resolve tokens only in their own source, then test opposite nominal scope. */
 const observedBy = (
-  own: DeclaringTypeScope,
-  opposite: DeclaringTypeScope,
+  own: ComparisonSideScope,
+  opposite: ComparisonSideScope,
   member: DeclaredMember,
 ): boolean => {
   if (opposite.selected === null) return true;
@@ -137,8 +149,8 @@ const observedBy = (
 
 /** Compare the nominal types the owner retained, independently of request spelling. */
 const compareSelectedTypes = (
-  left: DeclaringTypeScope,
-  right: DeclaringTypeScope,
+  left: ComparisonSideScope,
+  right: ComparisonSideScope,
 ): SelectionAgreement => {
   const leftNames = left.selected;
   const rightNames = right.selected;
@@ -156,8 +168,8 @@ export const managedComparisonScope = (
   left: ManagedMemberInspection,
   right: ManagedMemberInspection,
 ) => {
-  const a = declaringTypeScope(left);
-  const b = declaringTypeScope(right);
+  const a = comparisonSideScope(left);
+  const b = comparisonSideScope(right);
   return {
     left: a,
     right: b,
@@ -298,7 +310,7 @@ export const comparisonLimitations = (
     limitations.push("At least one managed member observation is partial.");
   if (scope.left.hasEmptyDefinitionName || scope.right.hasEmptyDefinitionName)
     limitations.push(
-      "Recorded empty TypeDef or MethodDef names leave nominal identities unresolved. The comparison has partial name coverage even if a source reported complete metadata.",
+      "Recorded empty definition names leave nominal identities unresolved. The comparison has partial name coverage even if a source reported complete metadata.",
     );
   limitations.push(...capacityLimitations(left, right));
   if (scope.agreement === "different")

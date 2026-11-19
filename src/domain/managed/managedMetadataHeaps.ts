@@ -197,7 +197,7 @@ export const readMetadataString = (
 export const readRequiredMetadataName = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  table: "TypeDef" | "MethodDef",
+  table: "TypeDef" | "Field" | "MethodDef",
   token: string,
   {
     nameIndex,
