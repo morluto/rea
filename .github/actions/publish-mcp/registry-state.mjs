@@ -3,8 +3,61 @@ import { appendFile, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const RETRY_DELAYS_MS = [5_000, 15_000];
+const RETRYABLE_KINDS = new Set(["timeout", "network_error", "server_error"]);
+const defaultSleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+class RegistryReadError extends Error {
+  constructor(kind, message) {
+    super(message);
+    this.name = "RegistryReadError";
+    this.kind = kind;
+  }
+}
+
+/** Names why a registry read failed, so reruns can tell "degraded" from "route changed". */
+export function classifyReadFailure(error) {
+  if (error instanceof RegistryReadError) return error.kind;
+  if (error?.name === "TimeoutError") return "timeout";
+  if (error instanceof TypeError) return "network_error";
+  return "other";
+}
+
+async function readPage(url, request, { delaysMs, sleep }) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await request(url, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) {
+        // Release the connection before a retry; an unread error body can keep it busy.
+        await response.body?.cancel().catch(() => {});
+        const kind =
+          response.status >= 500
+            ? "server_error"
+            : response.status === 404
+              ? "not_found"
+              : "http_error";
+        throw new RegistryReadError(
+          kind,
+          `Registry lookup failed: HTTP ${response.status}`,
+        );
+      }
+      return await response.json();
+    } catch (error) {
+      const retryable = RETRYABLE_KINDS.has(classifyReadFailure(error));
+      if (!retryable || attempt >= delaysMs.length) throw error;
+      await sleep(delaysMs[attempt]);
+    }
+  }
+}
+
 /** Exact-version routes currently return false 404s; enumerate the filtered listing. */
-export async function registryPublicationState(server, request = fetch) {
+export async function registryPublicationState(
+  server,
+  request = fetch,
+  { retryDelaysMs = RETRY_DELAYS_MS, sleep = defaultSleep } = {},
+) {
   assert.equal(typeof server?.name, "string");
   assert.equal(typeof server?.version, "string");
   const cursors = new Set();
@@ -21,12 +74,10 @@ export async function registryPublicationState(server, request = fetch) {
       limit: "100",
     }).toString();
     if (cursor !== undefined) url.searchParams.set("cursor", cursor);
-    const response = await request(url, {
-      signal: AbortSignal.timeout(30_000),
+    const page = await readPage(url, request, {
+      delaysMs: retryDelaysMs,
+      sleep,
     });
-    if (!response.ok)
-      throw new Error(`Registry lookup failed: HTTP ${response.status}`);
-    const page = await response.json();
     assert(Array.isArray(page?.servers), "Registry response omitted servers");
     assert(
       page.metadata && typeof page.metadata === "object",
@@ -75,9 +126,25 @@ if (
   process.argv[1] !== undefined &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  const state = await registryPublicationState(
-    JSON.parse(await readFile("server.json", "utf8")),
-  );
+  let state;
+  try {
+    state = await registryPublicationState(
+      JSON.parse(await readFile("server.json", "utf8")),
+    );
+  } catch (error) {
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await appendFile(
+          process.env.GITHUB_STEP_SUMMARY,
+          `### MCP Registry read failed\n\nFailure kind: \`${classifyReadFailure(error)}\`\n\n${message}\n`,
+        );
+      } catch {
+        // The summary is best effort; keep the original registry error below.
+      }
+    }
+    throw error; // unknown stays unknown: the job still fails
+  }
   assert(process.env.GITHUB_OUTPUT, "GITHUB_OUTPUT is required");
   await appendFile(
     process.env.GITHUB_OUTPUT,
