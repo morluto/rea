@@ -368,7 +368,7 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
         {
           dimension: "endpoints" as const,
           reason:
-            "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+            "A browser request's endpoint could not be resolved from its URL argument.",
           affected_script_keys: [
             ...new Set(
               input.unresolvedEndpoints.map(

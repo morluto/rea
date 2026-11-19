@@ -3,6 +3,7 @@ import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSe
 import {
   isBrowserNetworkRequest,
   createXhrOpenRequestQuery,
+  literalFetchRequestConstructorUrl,
 } from "./javascript/javascriptNetworkRequests.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
 import {
@@ -288,7 +289,14 @@ const inspectCall = (
       ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
       : undefined;
   if (endpoint === undefined && knownRequest && !mapLookup)
-    addProvenRequestEndpoint(script, node, name, xhrRequest, accumulator);
+    addProvenRequestEndpoint(
+      script,
+      node,
+      name,
+      xhrRequest,
+      bindings,
+      accumulator,
+    );
   if (networkEndpoint?.kind === "candidate")
     addEndpointCandidate(
       script,
@@ -395,20 +403,22 @@ const addEndpointCandidate = (
 /**
  * A proven browser request whose URL the callee spelling did not classify:
  * the URL is XMLHttpRequest `open`'s second argument, otherwise the first.
- * A literal URL is an endpoint; any other present argument is kept as an
- * unknown endpoint at its call site rather than dropped.
+ * A recoverable URL literal is an endpoint. Other present arguments retain
+ * an unknown endpoint at their call site.
  */
 const addProvenRequestEndpoint = (
   script: IncludedScript,
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   name: string,
   xhrRequest: boolean,
+  bindings: JavaScriptSemanticAnalysisState,
   accumulator: AnalysisAccumulator,
 ): void => {
   const url = xhrRequest ? node.arguments[1] : node.arguments[0];
   if (url === undefined) return;
   const mechanism = `call:${name}`;
-  const literal = stringValue(url);
+  const literal =
+    stringValue(url) ?? literalFetchRequestConstructorUrl(node, url, bindings);
   if (literal !== undefined) {
     addFinding({
       collection: accumulator.endpoints,
