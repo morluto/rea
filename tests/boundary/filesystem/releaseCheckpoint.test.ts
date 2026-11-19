@@ -76,7 +76,7 @@ async function metadata(
     ".release-please-manifest.json": { ".": version },
     "server.json": {
       version,
-      packages: [{ identifier: "rea-agents", version }],
+      packages: [{ registryType: "npm", identifier: "rea-agents", version }],
     },
     "release-please-config.json": {
       ...(versioning === undefined ? {} : { versioning }),
@@ -891,7 +891,13 @@ it.each([
             : path === "server.json"
               ? {
                   version: "6.0.0",
-                  packages: [{ identifier: "rea-agents", version: "5.1.0" }],
+                  packages: [
+                    {
+                      registryType: "npm",
+                      identifier: "rea-agents",
+                      version: "5.1.0",
+                    },
+                  ],
                 }
               : { package: { version: "5.1.0" } },
         ),
@@ -903,6 +909,35 @@ it.each([
     stderr: expect.stringContaining(
       "declares 5.1.0; release branch requires 6.0.0",
     ),
+  });
+});
+
+it.each([
+  {
+    label: "non-npm",
+    packages: [
+      { registryType: "oci", identifier: "rea-agents", version: "6.0.0" },
+    ],
+  },
+  {
+    label: "ambiguous",
+    packages: [
+      { registryType: "npm", identifier: "rea-agents", version: "6.0.0" },
+      { registryType: "npm", identifier: "rea-agents", version: "5.1.0" },
+    ],
+  },
+])("refuses invalid MCP package entries: $label", async ({ packages }) => {
+  const f = await fixture();
+  await candidate(f, "6.0.0");
+  await writeFile(
+    join(f.directory, "server.json"),
+    JSON.stringify({ version: "6.0.0", packages }),
+  );
+  await git(f.directory, ["add", "server.json"]);
+  await git(f.directory, ["commit", "-m", "chore: inconsistent MCP package"]);
+  await expect(verify(f)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("server.json"),
   });
 });
 
