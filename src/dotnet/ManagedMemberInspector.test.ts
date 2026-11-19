@@ -403,7 +403,6 @@ it.each([
       bytes,
       layout,
       row.readIndex(layout.blobIndexSize),
-      layout.blob?.size ?? 0,
     );
     const blobOffset = blob.byteOffset - bytes.byteOffset;
     const result = inspectManagedMembersBytes(
@@ -456,7 +455,6 @@ const memberSignatureBlobOffset = (
     bytes,
     layout,
     row.readIndex(layout.blobIndexSize),
-    layout.blob?.size ?? 0,
   );
   return blob.byteOffset - bytes.byteOffset;
 };

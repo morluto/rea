@@ -29,7 +29,10 @@ import {
   readLocalSignatureFacts,
   isParsedTokenInstruction,
 } from "../domain/managed/managedMemberInspectorCore.js";
-import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
+import {
+  ManagedHeapAmbiguityFailure,
+  ManagedReaderFailure,
+} from "../domain/managed/managedReaderFailure.js";
 import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -253,7 +256,6 @@ export const methodBody = (
             bytes,
             context.metadataLayout,
             cursor.readIndex(context.metadataLayout.blobIndexSize),
-            context.metadataLayout.blob?.size ?? 0,
           );
           const signatureFacts = readLocalSignatureFacts(
             context.metadataLayout,
@@ -282,8 +284,12 @@ export const methodBody = (
             throw cause;
           if (!(cause instanceof ManagedReaderFailure)) throw cause;
           localSigIssue = cause.issue.detail;
-          localSigFailure = "malformed";
-          issues.push({ ...cause.issue, scope: signatureScope });
+          if (cause instanceof ManagedHeapAmbiguityFailure)
+            localSigFailure = "partial";
+          else {
+            localSigFailure = "malformed";
+            issues.push({ ...cause.issue, scope: signatureScope });
+          }
         }
       }
     }

@@ -10,6 +10,7 @@ import {
 } from "./managedMetadataLayout.js";
 import {
   managedFailure,
+  ManagedHeapAmbiguityFailure,
   ManagedReaderFailure,
 } from "./managedReaderFailure.js";
 
@@ -94,8 +95,16 @@ export const readManagedCompressedUnsigned = (
 
 // Issue code and label for the heap item a compressed length prefixes.
 const PREFIXED_ITEMS = {
-  blob: { code: "invalid-blob", label: "Metadata blob" },
-  userString: { code: "invalid-string", label: "User string" },
+  blob: {
+    code: "invalid-blob",
+    label: "Metadata blob",
+    range: "the #Blob byte range",
+  },
+  userString: {
+    code: "invalid-string",
+    label: "User string",
+    range: "the artifact byte range",
+  },
 } as const;
 
 const compressedLength = (
@@ -109,14 +118,14 @@ const compressedLength = (
   /** Whether ECMA-335 II.23.2 assigns this width to the value. */
   readonly minimal: boolean;
 } => {
-  const { code, label } = PREFIXED_ITEMS[item];
+  const { code, label, range } = PREFIXED_ITEMS[item];
   const decoded = readManagedCompressedUnsigned(bytes, offset);
   if (!decoded.ok)
     throw managedFailure(
       code,
       scope,
       decoded.error.kind === "truncated"
-        ? `${label} length prefix leaves the artifact byte range`
+        ? `${label} length prefix leaves ${range}`
         : `${label} uses a reserved compressed-length prefix`,
       offset >= 0 ? offset : null,
     );
@@ -176,12 +185,17 @@ export const readMetadataString = (
   }
 };
 
+/** File coordinate used when reporting a budget for decoded blob facts. */
+export const metadataBlobOffset = (layout: ManagedMetadataLayout): number =>
+  layout.blob?.kind === "available"
+    ? layout.blob.stream.offset
+    : layout.rootOffset;
+
 /** Read one #Blob item while validating its encoded extent against the heap. */
 export const readMetadataBlob = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   index: number,
-  heapExtent: number,
 ): Buffer => {
   if (index === 0) return Buffer.alloc(0);
   if (index < 0)
@@ -191,14 +205,17 @@ export const readMetadataBlob = (
       "Blob heap index is negative",
       null,
     );
-  const heap = layout.blob;
-  if (heap === null)
+  const declaration = layout.blob;
+  if (declaration === null)
     throw managedFailure(
       "missing-stream",
       "metadata.#Blob",
       `Blob index ${String(index)} references an absent #Blob stream`,
       null,
     );
+  if (declaration.kind === "ambiguous")
+    throw new ManagedHeapAmbiguityFailure(declaration.issue);
+  const heap = declaration.stream;
   if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
@@ -207,16 +224,15 @@ export const readMetadataBlob = (
       heap.offset + Math.max(index, 0),
     );
   const start = heap.offset + index;
-  const decoded = compressedLength(bytes, start, "metadata.#Blob", "blob");
-  if (decoded.length > heapExtent)
-    throw managedFailure(
-      "invalid-blob",
-      "metadata.#Blob",
-      "Blob length exceeds the admitted heap extent",
-      start,
-    );
+  const heapEnd = heap.offset + heap.size;
+  const decoded = compressedLength(
+    bytes.subarray(0, heapEnd),
+    start,
+    "metadata.#Blob",
+    "blob",
+  );
   const content = start + decoded.prefix;
-  if (content > heap.offset + heap.size - decoded.length)
+  if (content > heapEnd - decoded.length)
     throw managedFailure(
       "invalid-blob",
       "metadata.#Blob",

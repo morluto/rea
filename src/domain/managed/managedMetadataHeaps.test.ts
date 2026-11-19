@@ -67,11 +67,11 @@ describe("managed metadata heap entries", () => {
 
     expect(
       Buffer.compare(
-        readMetadataBlob(Buffer.alloc(0), layout, 0, 0),
+        readMetadataBlob(Buffer.alloc(0), layout, 0),
         Buffer.alloc(0),
       ),
     ).toBe(0);
-    expect(() => readMetadataBlob(Buffer.alloc(0), layout, 1, 0)).toThrowError(
+    expect(() => readMetadataBlob(Buffer.alloc(0), layout, 1)).toThrowError(
       expect.objectContaining({
         issue: expect.objectContaining({
           code: "missing-stream",
@@ -96,7 +96,11 @@ describe("managed metadata heap entries", () => {
         stream: { name: "#GUID", offset: 0, size: 0 },
         issue: null,
       },
-      blob: { name: "#Blob", offset: 0, size: bytes.length },
+      blob: {
+        kind: "available",
+        stream: { name: "#Blob", offset: 0, size: bytes.length },
+        issue: null,
+      },
       userStrings: null,
       tables: new Map(),
       rowCounts: [],
@@ -108,9 +112,28 @@ describe("managed metadata heap entries", () => {
       codedIndexSize: () => 2,
     };
 
-    expect(
-      readMetadataBlob(bytes, layout, 1, layout.blob?.size ?? 0),
-    ).toHaveLength(itemLength);
+    expect(readMetadataBlob(bytes, layout, 1)).toHaveLength(itemLength);
+  });
+
+  it("requires a compressed blob length prefix to fit inside #Blob", () => {
+    const bytes = Buffer.from([0, 0x80, 0, 0]);
+    const layout = {
+      blob: {
+        kind: "available",
+        stream: { name: "#Blob", offset: 0, size: 2 },
+        issue: null,
+      },
+    } as unknown as ManagedMetadataLayout;
+    expect(() => readMetadataBlob(bytes, layout, 1)).toThrow(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "invalid-blob",
+          scope: "metadata.#Blob",
+          detail: "Metadata blob length prefix leaves the #Blob byte range",
+          offset: 1,
+        }),
+      }),
+    );
   });
 
   it.each([[[0x80]], [[0xc0, 0x00, 0x00]]])(
@@ -156,7 +179,7 @@ it("does not re-charge the decode budget on metadata string cache hits", () => {
       stream: { name: "#GUID", offset: 0, size: 0 },
       issue: null,
     },
-    blob: { name: "#Blob", offset: 0, size: 0 },
+    blob: null,
     userStrings: null,
     tables: new Map(),
     rowCounts: [],
