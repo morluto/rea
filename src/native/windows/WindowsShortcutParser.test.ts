@@ -855,6 +855,77 @@ it.each([
 );
 
 it.each([
+  { field: 16, key: "local_base_path" },
+  { field: 24, key: "common_path_suffix" },
+] as const)(
+  "treats a $key inside the mandatory header as unreadable when HeaderSize is below 0x1C",
+  async ({ field, key }) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Apps\\safe.exe", commonPathSuffix: "" },
+      iconLocation: "C:\\Apps\\other.exe",
+      extraData: [],
+    });
+    const link = 76;
+    // HeaderSize 0x10 is below the mandatory 0x1C, and 0x14 still sits in that
+    // header. The bytes there would otherwise decode as the full path "C:\\x".
+    bytes.writeUInt32LE(0x10, link + 4);
+    bytes.writeUInt32LE(0x14, link + field);
+    bytes.write("C:\\x", link + 0x14, "latin1");
+    if (field !== 24) bytes.writeUInt32LE(0, link + 24);
+    const report = await parse(bytes);
+    expect(report.link_info?.header_size).toBe(0x10);
+    expect(report.link_info?.[key]).toBeNull();
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_structure",
+        offset: link + field,
+      }),
+    );
+    expect(
+      report.observations.find(
+        ({ kind }) => kind === "icon_location_differs_from_target",
+      ),
+    ).toMatchObject({ value: null });
+    expect(
+      report.observations.find(({ kind }) => kind === "target_extension"),
+    ).toMatchObject({ extension: null });
+  },
+);
+
+it("reads a LinkInfo path that starts at the mandatory header when HeaderSize is below 0x1C", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: { localBasePath: "C:\\Apps\\safe.exe", commonPathSuffix: "" },
+    iconLocation: "C:\\ok.exe",
+    extraData: [],
+  });
+  const link = 76;
+  bytes.writeUInt32LE(0x10, link + 4);
+  bytes.writeUInt32LE(0, link + 12);
+  bytes.writeUInt32LE(0x1c, link + 16);
+  bytes.writeUInt32LE(0, link + 24);
+  bytes.write("C:\\ok.exe\0", link + 0x1c, "latin1");
+  const report = await parse(bytes);
+  expect(report.link_info?.local_base_path).toBe("C:\\ok.exe");
+  expect(report.issues).not.toContainEqual(
+    expect.objectContaining({
+      code: "malformed_structure",
+      offset: link + 16,
+    }),
+  );
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: false });
+  expect(
+    report.observations.find(({ kind }) => kind === "target_extension"),
+  ).toMatchObject({ extension: ".exe" });
+});
+
+it.each([
   {
     name: "ANSI volume label",
     kind: "volume",
