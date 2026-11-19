@@ -254,6 +254,54 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { flags: 0x00001000, flagName: "HasDarwinID", blockName: "DarwinDataBlock" },
+  {
+    flags: 0x00020000,
+    flagName: "RunWithShimLayer",
+    blockName: "ShimDataBlock",
+  },
+])(
+  "uses the ExtraData terminal to establish whether $blockName is absent",
+  async ({ flags, flagName, blockName }) => {
+    const root = await createTestTempDirectory("rea-shortcut-extra-data-");
+    const service = createWindowsShortcutService();
+    const bytes = windowsShortcutBytes({
+      flags,
+      idList: null,
+      linkInfo: null,
+      extraData: [],
+    });
+    const terminalOffset = bytes.length - 4;
+    const inspect = async (name: string, fixture: Buffer) => {
+      const path = join(root, name);
+      await writeFile(path, fixture);
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      return result.value.normalized_result;
+    };
+
+    expect(
+      await inspect("incomplete.lnk", bytes.subarray(0, terminalOffset + 1)),
+    ).toMatchObject({
+      extra_data: { blocks: [], terminal_offset: null },
+      coverage: { status: "partial", failing_offset: terminalOffset },
+      issues: [{ code: "truncated", offset: terminalOffset }],
+    });
+    expect(await inspect("terminated.lnk", bytes)).toMatchObject({
+      extra_data: { blocks: [], terminal_offset: terminalOffset },
+      coverage: { status: "partial", failing_offset: terminalOffset },
+      issues: [
+        {
+          code: "missing_extra_data_block",
+          offset: terminalOffset,
+          message: `${flagName} is set and ${blockName} is absent`,
+        },
+      ],
+    });
+  },
+);
+
 describe("Windows shortcut parent directory links", () => {
   it.skipIf(process.platform === "win32")(
     "rejects a parent directory link before reading through it",
