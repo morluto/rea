@@ -545,6 +545,12 @@ const artifactMessage = ({
       detail ??
       "Artifact processing reached a resource limit. Select an artifact within the reported limits and retry."
     );
+  if (reason === "unsupported")
+    return "Artifact structure uses an unsupported format or revision. Use a decoder that supports the reported form.";
+  if (reason === "truncated")
+    return "A declared artifact structure is truncated. Select a complete copy and retry; do not pad or truncate required bytes.";
+  if (reason === "malformed")
+    return "Artifact bytes contain malformed format structure. Review the reported field and select a valid copy.";
   if (reason === "path")
     return (
       detail ??

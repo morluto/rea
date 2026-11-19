@@ -228,6 +228,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         sessionDefaultAddressSpace =
             currentProgram.getAddressFactory().getDefaultAddressSpace();
+        if (currentProgram.getExecutableFormat().equals("Old-style DOS Executable (COM)") &&
+            !currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+                .getBoolean("REA DOS COM prepared", false)) {
+            throw new IllegalStateException("REA DOS COM entry/context preparation failed");
+        }
         if (currentProgram.getExecutableFormat().equals("Raw Binary")) {
             boolean dosCom = currentProgram.getLanguageID().getIdAsString()
                 .equals("x86:LE:16:Real Mode");
@@ -2846,10 +2851,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         if (currentProgram.getLanguageID().getIdAsString().startsWith("x86:LE:32:")) {
-            if (signatureSource.equals("analysis")) {
+            DecompiledFunction inferred = decompilation.getDecompiledFunction();
+            if (signatureSource.equals("analysis") && inferred != null) {
                 result.add(
                     "prototype_conflicts",
-                    prototypeConflicts(function, prototype, instructions, signatureSource)
+                    prototypeConflicts(
+                        function, prototype, instructions, inferred.getSignature(), signatureSource)
                 );
             }
             limitations.add(
@@ -2872,10 +2879,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Function function,
         FunctionPrototype prototype,
         List<Instruction> instructions,
+        String signature,
         String signatureSource
     ) throws Exception {
         JsonArray conflicts = new JsonArray();
-        String signature = function.getPrototypeString(false, true);
         int count = prototype.getNumParams();
         if (count == 0) {
             FrameRead read = framedStackRead(function.getEntryPoint(), instructions, monitor);
@@ -2891,18 +2898,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
         }
         String convention = prototype.getModelName();
-        if (convention == null ||
-            !convention.toLowerCase(Locale.ROOT).contains("stdcall")) return conflicts;
+        if (!"__stdcall".equalsIgnoreCase(convention)) return conflicts;
         int inferredStackBytes = 0;
         for (int index = 0; index < count; index++) {
             HighSymbol parameter = prototype.getParam(index);
             if (parameter == null) return conflicts;
             VariableStorage storage = parameter.getStorage();
             if (storage == null || !storage.isStackStorage() || storage.isCompoundStorage() ||
-                storage.size() != 4) return conflicts;
+                storage.size() != 4 || storage.getStackOffset() != 4 + inferredStackBytes)
+                return conflicts;
             inferredStackBytes += 4;
         }
-        for (Instruction instruction : instructions) {
+        for (Instruction instruction : reachablePrototypeInstructions(
+            function.getEntryPoint(), instructions, monitor)) {
             monitor.checkCancelled();
             Instruction terminal = instruction;
             if (instruction.getMnemonicString().equalsIgnoreCase("JMP") &&
@@ -2943,14 +2951,51 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return cleanup <= 0xffff && cleanup != inferredStackBytes ? cleanup : null;
     }
 
+    private static Map<Address, Instruction> decodedByAddress(List<Instruction> instructions) {
+        Map<Address, Instruction> decoded = new HashMap<>();
+        for (Instruction instruction : instructions) decoded.put(instruction.getAddress(), instruction);
+        return decoded;
+    }
+
+    static List<Instruction> reachablePrototypeInstructions(
+        Address entry, List<Instruction> instructions, TaskMonitor monitor
+    ) throws Exception {
+        Map<Address, Instruction> decoded = decodedByAddress(instructions);
+        List<Instruction> reachable = new ArrayList<>();
+        Set<Address> visited = new HashSet<>();
+        ArrayDeque<Address> pending = new ArrayDeque<>();
+        pending.add(entry);
+        while (!pending.isEmpty()) {
+            monitor.checkCancelled();
+            Address address = pending.removeFirst();
+            if (!visited.add(address)) continue;
+            Instruction instruction = decoded.get(address);
+            if (instruction == null) continue;
+            reachable.add(instruction);
+            queuePrototypeSuccessors(instruction, decoded, pending);
+        }
+        return reachable;
+    }
+
+    private static void queuePrototypeSuccessors(
+        Instruction instruction, Map<Address, Instruction> decoded, ArrayDeque<Address> pending
+    ) {
+        Address fallThrough = instruction.getFallThrough();
+        if (fallThrough != null && decoded.containsKey(fallThrough)) pending.add(fallThrough);
+        // A call target's instructions belong to a different invocation.
+        if (instruction.getFlowType().isCall()) return;
+        for (Address destination : instruction.getFlows()) {
+            if (decoded.containsKey(destination)) pending.add(destination);
+        }
+    }
+
     /** Follow only decoded, reachable instruction edges while the entry EBP frame survives. */
     static FrameRead framedStackRead(
         Address entry,
         List<Instruction> instructions,
         TaskMonitor monitor
     ) throws Exception {
-        Map<Address, Instruction> decoded = new HashMap<>();
-        for (Instruction instruction : instructions) decoded.put(instruction.getAddress(), instruction);
+        Map<Address, Instruction> decoded = decodedByAddress(instructions);
         // An owned block below the entry can precede it in the scan, so the
         // prologue is located by address instead of list position.
         Instruction push = decoded.get(entry);
@@ -2975,11 +3020,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (offset != null) return new FrameRead(instruction, offset);
             // The read uses the old EBP value; a write invalidates only successors.
             if (writesFramePointer(instruction)) continue;
-            Address fallThrough = instruction.getFallThrough();
-            if (fallThrough != null && decoded.containsKey(fallThrough)) pending.add(fallThrough);
-            for (Address destination : instruction.getFlows()) {
-                if (decoded.containsKey(destination)) pending.add(destination);
-            }
+            queuePrototypeSuccessors(instruction, decoded, pending);
         }
         return null;
     }

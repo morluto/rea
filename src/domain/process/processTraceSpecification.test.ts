@@ -272,6 +272,41 @@ describe("malformed process trace declarations", () => {
 });
 
 describe("finite trace specification validation", () => {
+  it.each([false, true])(
+    "rejects different ignored fields within lifecycle (reverse declarations: %s)",
+    (reverseDeclarations) => {
+      const events = [
+        {
+          id: "exit",
+          source: "lifecycle",
+          exact: { event: "exit" },
+          ignore_fields: ["elapsed_ms"],
+        },
+        {
+          id: "settlement",
+          source: "lifecycle",
+          exact: { event: "settlement", elapsed_ms: 50 },
+        },
+      ];
+      const result = processTraceSpecificationSchema.safeParse({
+        events: reverseDeclarations ? events.toReversed() : events,
+        language: {
+          kind: "finite_traces",
+          variants: [{ id: "lifecycle", trace: ["exit", "settlement"] }],
+        },
+      });
+      if (result.success)
+        throw new Error("Expected one ignore policy per source");
+      expect(result.error.issues).toStrictEqual([
+        expect.objectContaining({
+          path: ["events", 1, "ignore_fields"],
+          message:
+            "events from one source must use the same ignored schedule fields",
+        }),
+      ]);
+    },
+  );
+
   it("rejects invalid ignores and unsatisfiable variants", () => {
     const base = specification();
     expect(

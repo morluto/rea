@@ -1,10 +1,10 @@
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseExpression } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+import type { JavaScriptStaticPathContext } from "./javascriptStaticAnalysisTypes.js";
 
 it.each([
   ['path.join(__dirname, "page.html")', "page.html", "source-directory"],
@@ -49,13 +49,6 @@ it.each(["loadFile", "loadURL"])(
     );
   },
 );
-import { parserPluginsForPath } from "./javascriptSourceParser.js";
-import {
-  calleeName,
-  staticPath,
-  staticPathResolutionContext,
-} from "./javascriptStaticAnalysisHelpers.js";
-import type { JavaScriptStaticPathContext } from "./javascriptStaticAnalysisTypes.js";
 
 const absoluteParts = [
   ["/app", "/shared/preload.js"],
@@ -136,6 +129,17 @@ const unknownExpressions = [
   'path.join(__dirname, new URL("./pre%2Fload.js", import.meta.url))',
   'path.resolve(__dirname, new URL("./", import.meta.url), "preload.js")',
   'path.resolve("/app", new URL("./", import.meta.url), "preload.js")',
+  'new URL("./remote-base.js", location.href)',
+  "path.join()",
+  'path.join("/app", runtimeFile)',
+  "path.join(...parts)",
+  'fileURLToPath("file:///app/%2Fpreload.js")',
+  'fileURLToPath("file:///app/%5Cpreload.js")',
+  'fileURLToPath("file:///app/%")',
+  'fileURLToPath("file:///C:/app/preload.js")',
+  'fileURLToPath("file://remote/share/preload.js")',
+  'fileURLToPath("file:///app/preload.js", options)',
+  "fileURLToPath(selectedUrl)",
 ];
 
 const pathValueExpressions = [
@@ -304,7 +308,6 @@ describe("inert JavaScript path resolution", () => {
   });
 
   it.each(unknownExpressions)("keeps unsupported %s unknown", (expression) => {
-    expect(staticPath(parsePathExpression(expression))).toBeUndefined();
     const { analysis, windowExpression, utilityExpression } =
       analyzePathConsumers(expression);
     expect(analysis.parse_status).toBe("partial");
@@ -365,14 +368,6 @@ describe("inert JavaScript path resolution", () => {
       }),
     ]);
   });
-
-  it.each([
-    "path.join()",
-    'path.join("/app", runtimeFile)',
-    "path.join(...parts)",
-  ])("preserves unresolved join syntax in %s", (expression) =>
-    expect(staticPath(parsePathExpression(expression))).toBeUndefined(),
-  );
 });
 
 it.each([
@@ -417,24 +412,6 @@ it("retains Worker URL references through their separate URL-aware producer", ()
   expect(analysis.role_paths).toEqual([]);
 });
 
-it.each([
-  'fileURLToPath("file:///app/%2Fpreload.js")',
-  'fileURLToPath("file:///app/%5Cpreload.js")',
-  'fileURLToPath("file:///app/%")',
-  'fileURLToPath("file:///C:/app/preload.js")',
-  'fileURLToPath("file://remote/share/preload.js")',
-  'fileURLToPath("file:///app/preload.js", options)',
-  "fileURLToPath(selectedUrl)",
-])("leaves platform-dependent or invalid %s unknown", (expression) =>
-  expect(staticPath(parsePathExpression(expression))).toBeUndefined(),
-);
-
-const parsePathExpression = (expression: string) =>
-  parseExpression(expression, {
-    sourceType: "module",
-    plugins: parserPluginsForPath("preload.ts"),
-  });
-
 const analyzePathConsumers = (expression: string) => {
   const property = `preload: ${expression}`;
   const genericPrefix =
@@ -443,9 +420,6 @@ const analyzePathConsumers = (expression: string) => {
   const windowExpression = `${windowPrefix}${property} } })`;
   const utilityExpression = `utilityProcess.fork(${expression})`;
   return {
-    property,
-    genericPrefix,
-    windowPrefix,
     windowExpression,
     utilityExpression,
     analysis: analyzeCommonJsStaticFixture(
@@ -459,36 +433,6 @@ const assertPathProjection = (
   path: string,
   context: JavaScriptStaticPathContext,
 ) => {
-  const node = parsePathExpression(expression);
-  // This syntax matrix supplies identity explicitly; full-source cases prove it.
-  const pathIntrinsics = (
-    callee: import("@babel/types").Node,
-    fact?:
-      | "resolve"
-      | "join"
-      | "file-url-to-path"
-      | "source-url"
-      | "source-directory",
-  ) => {
-    if (fact === "source-directory") {
-      const name = calleeName(
-        callee.type === "CallExpression" ? callee.callee : callee,
-      );
-      return (
-        name === "__dirname" || name === "dirname" || name.endsWith(".dirname")
-      );
-    }
-    if (fact === "source-url") return true;
-    const name = calleeName(callee);
-    if (fact === "file-url-to-path") return name.endsWith("fileURLToPath");
-    return (
-      (name === (fact ?? "resolve") ||
-        name.endsWith(`.${fact ?? "resolve"}`)) &&
-      !name.includes("win32")
-    );
-  };
-  expect(staticPath(node, pathIntrinsics)).toBe(path);
-  expect(staticPathResolutionContext(node, pathIntrinsics)).toBe(context);
   const { analysis, windowExpression, utilityExpression } =
     analyzePathConsumers(expression);
   expect(analysis.parse_status).toBe("complete");

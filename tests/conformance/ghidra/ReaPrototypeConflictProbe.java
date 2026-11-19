@@ -21,6 +21,10 @@ public class ReaPrototypeConflictProbe extends GhidraScript {
         requireLowerBlockRead();    // An owned block below entry precedes it in the scan.
         Instruction ret8 = decode(0x1400).get(0);
         Instruction ret0 = decode(0x1500).get(0);
+        List<Instruction> owned = List.of(ret8, ret0);
+        require(ReaGhidraBridge.reachablePrototypeInstructions(address(0x1500), owned, monitor)
+                .equals(List.of(ret0)),
+            "An unrelated owned return must not become prototype evidence");
         require(Long.valueOf(8).equals(ReaGhidraBridge.conflictingReturnCleanup(ret8, 0)),
             "A zero-parameter stdcall RET 8 is a mismatch");
         require(Long.valueOf(0).equals(ReaGhidraBridge.conflictingReturnCleanup(ret0, 16)),

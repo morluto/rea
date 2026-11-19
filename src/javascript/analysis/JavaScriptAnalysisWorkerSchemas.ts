@@ -477,6 +477,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ),
     vendors: strings,
     electron,
+    loaderCondition: z.string().min(1).exactOptional(),
     limitations: strings,
   })
   .transform((analysis) => ({

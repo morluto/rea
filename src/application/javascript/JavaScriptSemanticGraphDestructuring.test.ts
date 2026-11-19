@@ -1,8 +1,8 @@
 import { expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 
-it.each(
-  [
+it("links declared and assigned destructuring bindings to their exact source slots", () => {
+  const cases = [
     { pattern: "{ a: selected }", source: "{ a: 1 }", path: ["a"] },
     { pattern: "[selected]", source: "[1]", path: ["0"] },
     {
@@ -16,33 +16,41 @@ it.each(
       path: ["a", "b"],
     },
     { pattern: "[[selected] = []]", source: "[[1]]", path: ["0", "0"] },
-  ].flatMap((pattern) =>
-    [false, true].map((assignment) => ({ ...pattern, assignment })),
-  ),
-)(
-  "retains source-property flow for $pattern, assignment=$assignment",
-  ({ pattern, source, path, assignment }) => {
-    const graph = graphForJavaScript(`
-      const source = ${source};
-      ${assignment ? `let selected; (${pattern} = source);` : `const ${pattern} = source;`}
-    `);
-    const target = graph.nodes.find(
-      (node) => node.kind === "binding" && node.label === "selected",
-    );
-    expect(target).toBeDefined();
-    const relations = graph.relations.filter(
-      (relation) =>
-        relation.relation === "destructures" &&
-        relation.target_node_id === target?.node_id,
-    );
-    expect(relations).toHaveLength(1);
-    expect(relations[0]?.resolution).toBe("resolved");
-    const slot = graph.nodes.find(
-      (node) => node.node_id === relations[0]?.source_node_id,
-    );
-    expect(slot?.properties.property_path).toEqual(path);
-  },
-);
+  ];
+  const graph = graphForJavaScript(
+    cases
+      .map(({ pattern, source }, index) =>
+        [
+          `const source${index} = ${source};`,
+          `const ${pattern.replace("selected", `declared${index}`)} = source${index};`,
+          `let assigned${index};`,
+          `(${pattern.replace("selected", `assigned${index}`)} = source${index});`,
+        ].join("\n"),
+      )
+      .join("\n"),
+  );
+  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  expect(
+    graph.relations
+      .filter(({ relation }) => relation === "destructures")
+      .map(({ source_node_id, target_node_id, resolution }) => ({
+        target: nodes.get(target_node_id)?.label,
+        path: nodes.get(source_node_id)?.properties.property_path,
+        resolution,
+      }))
+      .sort((left, right) =>
+        String(left.target).localeCompare(String(right.target)),
+      ),
+  ).toEqual(
+    ["assigned", "declared"].flatMap((form) =>
+      cases.map(({ path }, index) => ({
+        target: `${form}${index}`,
+        path,
+        resolution: "resolved",
+      })),
+    ),
+  );
+});
 
 it.each(["{}", "unknownSource"])(
   "keeps nested default source flow conservative for %s",
