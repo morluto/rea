@@ -51,12 +51,17 @@ export type RecordedResponseDeclaration = ReturnType<
   typeof readRecordedResponseDeclaration
 >;
 
-/** HAR's zero status sentinel and nonnumeric declarations do not prove a response status. */
+/** Only three-digit HTTP status observations prove a response status. */
 export const recordedResponseStatus = (
   declaration: RecordedResponseDeclaration,
 ): number | null => {
   const status = declaration?.status;
-  return typeof status === "number" && status !== 0 ? status : null;
+  return typeof status === "number" &&
+    Number.isInteger(status) &&
+    status >= 100 &&
+    status <= 999
+    ? status
+    : null;
 };
 
 /** Strict, and keeping a leading byte-order mark, so callers see the recorded text unchanged. */

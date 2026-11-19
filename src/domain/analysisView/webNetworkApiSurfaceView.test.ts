@@ -372,22 +372,25 @@ it("rejects cyclic captures and accessor members without invoking them", () => {
   expect(accessed).toBe(false);
 });
 
-it("treats HAR missing-response sentinels as unknown", () => {
-  const capture = analysisViewCaptureFixture();
-  capture.records = capture.records.slice(0, 1);
-  capture.records[0]!.reported = {
-    request: { method: "GET", url: "https://api.example.test/a" },
-    response: { status: 0, content: { mimeType: " ; charset=utf-8" } },
-  };
-  const result = project(capture);
-  if (!result.ok || result.value.kind !== "api-surface")
-    throw new Error("Expected surface");
-  expect(result.value.groups[0]).toMatchObject({
-    statuses: [],
-    content_types: [],
-  });
-  expect(result.value.unknowns).not.toEqual([]);
-});
+it.each([0, -1, 99, 200.5, 1000])(
+  "treats invalid or missing HAR status %s as unknown",
+  (status) => {
+    const capture = analysisViewCaptureFixture();
+    capture.records = capture.records.slice(0, 1);
+    capture.records[0]!.reported = {
+      request: { method: "GET", url: "https://api.example.test/a" },
+      response: { status, content: { mimeType: " ; charset=utf-8" } },
+    };
+    const result = project(capture);
+    if (!result.ok || result.value.kind !== "api-surface")
+      throw new Error("Expected surface");
+    expect(result.value.groups[0]).toMatchObject({
+      statuses: [],
+      content_types: [],
+    });
+    expect(result.value.unknowns).not.toEqual([]);
+  },
+);
 
 it("refuses a path whose templated representation exceeds projection capacity", () => {
   const capture = analysisViewCaptureFixture();
