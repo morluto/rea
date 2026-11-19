@@ -318,14 +318,12 @@ export const compareManagedMembers = (
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
-    leftComplete: left.result.metadata.status === "complete",
-    rightComplete: right.result.metadata.status === "complete",
+    leftComplete: scope.left.metadataComplete,
+    rightComplete: scope.right.metadataComplete,
     leftMethodsComplete:
-      left.result.metadata.status === "complete" &&
-      hasCompleteMethodRows(left.result),
+      scope.left.metadataComplete && hasCompleteMethodRows(left.result),
     rightMethodsComplete:
-      right.result.metadata.status === "complete" &&
-      hasCompleteMethodRows(right.result),
+      scope.right.metadataComplete && hasCompleteMethodRows(right.result),
     scope,
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
@@ -340,17 +338,12 @@ export const compareManagedMembers = (
   const allItems = [...methodItems, ...fieldItems];
   const summary = buildComparisonSummary(allItems);
   const matching = buildComparisonMatching(methodItems, fieldItems);
-  const selectionAgreement = scope.agreement;
   const coverage = buildComparisonCoverage({
     left: left.result,
     right: right.result,
-    selectionAgreement,
+    scope,
   });
-  const limitations = comparisonLimitations(
-    left.result,
-    right.result,
-    selectionAgreement,
-  );
+  const limitations = comparisonLimitations(left.result, right.result, scope);
   const result = {
     comparison_id: `mmc_${digestCanonicalValue(
       {

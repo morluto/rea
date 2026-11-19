@@ -17,8 +17,8 @@ import unittest
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.parse import urljoin, urlsplit
+from urllib.request import build_opener, ProxyHandler, urlopen
 import xml.etree.ElementTree as ET
 
 import polib
@@ -101,6 +101,8 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
             ("topic/nested/guide%20%23%3F.md", "guide%20%23%3F.md", "topic%2Fnested"),
             ("topic/nested/v1/README.md", "README.md", "topic%2Fnested%2Fv1"),
             ("topic%2Fnested/README.md", "README.md", "topic%2Fnested"),
+            ("refs/heads/topic/nested/v1/README.md", "v1/README.md", "refs%2Fheads%2Ftopic%2Fnested"),
+            ("refs/tags/topic/nested/v1/README.md", "README.md", "refs%2Ftags%2Ftopic%2Fnested%2Fv1"),
         )
         for suffix, path, ref in cases:
             endpoint = f"repos/example/project/contents/{path}?ref={ref}"
@@ -133,7 +135,7 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
             for file in ("README.md", "guide.md", "examples/a.md"):
                 url = urlsplit(f"https://github.com/example/project/blob/topic/nested/{file}")
                 self.assertEqual(
-                    AUDIT.github_target(url),
+                    AUDIT.github_target(url).endpoint,
                     f"repos/example/project/contents/{file}?ref=topic%2Fnested",
                 )
         self.assertEqual(heads, [{"ref": "refs/heads/topic"}])
@@ -151,6 +153,104 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
                     report = AUDIT.audit_url((base + ref + "/README.md", ["fixture.html"]))
                     self.assertEqual(report["status"], "ok")
                     self.assertEqual(report["endpoint"], f"repos/example/project/contents/README.md?ref={ref}")
+
+    def test_raw_github_urls_distinguish_repository_files_from_other_routes(self):
+        ref = "a" * 40
+        responses = {
+            f"repos/example/project/contents/scripts?ref={ref}": [{"name": "tool.py", "type": "file"}],
+            f"repos/example/project/contents/vendor/library?ref={ref}": {
+                "type": "file", "submodule_git_url": "https://github.com/example/library.git",
+            },
+            "repos/example/project/git/matching-refs/heads/releases": [{"ref": "refs/heads/releases"}],
+            "repos/example/project/git/matching-refs/tags/releases": [],
+            "repos/example/project/contents/download/packages/tool.zip?ref=releases": {"type": "file"},
+            "repos/example/project/releases/tags/v1": {"assets": [{"name": "tool.zip"}]},
+        }
+        cases = (
+            (f"https://raw.githubusercontent.com/example/project/{ref}/scripts", "broken"),
+            (f"https://github.com/example/project/tree/{ref}/scripts", "ok"),
+            (f"https://raw.githubusercontent.com/example/project/{ref}/vendor/library", "broken"),
+            (f"https://github.com/example/project/tree/{ref}/vendor/library", "ok"),
+            ("https://raw.githubusercontent.com/example/project/releases/download/packages/tool.zip", "ok"),
+            ("https://github.com/example/project/releases/download/v1/tool.zip", "ok"),
+            ("https://github.com/example/project/releases/download/v1/missing.zip", "broken"),
+            ("https://raw.githubusercontent.com/example/project", "broken"),
+        )
+        with patch.object(AUDIT, "github_api", side_effect=responses.__getitem__):
+            for url, expected in cases:
+                with self.subTest(url=url):
+                    self.assertEqual(AUDIT.audit_url((url, ["fixture.html"]))["status"], expected)
+
+    def test_malformed_external_links_do_not_hide_other_audit_results(self):
+        invalid = (
+            "https://[::1/guide",
+            "https://github.com:bad/example/project",
+            "https:///no-host",
+            "http://bad host.invalid/guide",
+            "http://example.invalid/not escaped",
+        )
+        valid = "https://github.com/example/project"
+        html = "website/public/index.html"
+        markdown = "website/guide.md"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page = root / html
+            page.parent.mkdir(parents=True)
+            page.write_text("".join(f'<a href="{url}">Link</a>' for url in (*invalid, valid, "https://rea.tools/")))
+            (root / markdown).write_text(f"[Guide]({invalid[0]})")
+            opener = build_opener(ProxyHandler({}))
+            with (
+                patch.object(AUDIT, "github_api", return_value={"name": "project"}) as probe,
+                patch.object(AUDIT, "urlopen", opener.open),
+            ):
+                reports = {
+                    report["url"]: report
+                    for item in AUDIT.external_links(root).items()
+                    if (report := AUDIT.audit_url(item)) is not None
+                }
+
+        probe.assert_called_once_with("repos/example/project")
+        self.assertEqual(set(reports), {*invalid, valid})
+        self.assertEqual(reports[valid]["status"], "ok")
+        for index, url in enumerate(invalid):
+            with self.subTest(url=url):
+                self.assertEqual(reports[url]["status"], "broken")
+                self.assertEqual(reports[url]["sources"], sorted([html, markdown] if index == 0 else [html]))
+                self.assertIn("Invalid URL", reports[url]["reason"])
+
+    def test_markdown_destinations_reach_both_link_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "website").mkdir()
+            (root / "docs").mkdir()
+            (root / "docs/releases(v1).md").write_text("# Release notes\n")
+            source = root / "website/guide.md"
+            source.write_text(dedent('''\
+                [Release](../docs/releases(v1).md#release-notes)
+                [Upstream][ref]
+                [Malformed](https:/missing-authority)
+                [IPv6](https://[::1/guide)
+                <https://example.invalid/docs(1)>
+                <img src="HTTPS://example.invalid/figure(1).png">
+
+                `[Code example](https://example.invalid/ignore-inline)`
+
+                ```md
+                [Code example](../missing.md)
+                [Code example](https://example.invalid/ignore-fenced)
+                ```
+
+                [ref]: HTTPS://example.invalid/release(v1)
+            '''))
+            self.assertCountEqual(AUDIT.external_links(root), [
+                "HTTPS://example.invalid/release(v1)", "https:/missing-authority",
+                "https://[::1/guide", "https://example.invalid/docs(1)",
+                "HTTPS://example.invalid/figure(1).png",
+            ])
+            errors = VERIFY.check_repository_links(root)
+            self.assertEqual(len(errors), 2)
+            for malformed in ("https:/missing-authority", "https://[::1/guide"):
+                self.assertTrue(any(f"website/guide.md: invalid URL '{malformed}'" in error for error in errors))
 
     def test_missing_contents_and_unavailable_github_probes_remain_distinct(self):
         cases = (
@@ -220,6 +320,12 @@ class WebsiteSearchChecks(unittest.TestCase):
                 'rel="canonical" href="https://rea.tools/"',
                 'rel="canonical" href="https://morluto.github.io/rea/"',
                 "head canonical",
+            ),
+            (
+                "faq/index.html",
+                'hreflang="zh-CN" href="https://rea.tools/zh-CN/faq/"',
+                'hreflang="zh-CN" href="https://[::1/faq/"',
+                "invalid URL",
             ),
             (
                 "showcase/aegis/index.html",
@@ -536,6 +642,59 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
 
 class WebsiteTranslationChecks(unittest.TestCase):
     """Exercise source edits, translated evidence and language editions at their consumers."""
+
+    def test_translation_keeps_malformed_references_for_the_verifier(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copytree(ROOT / "website/templates", root / "website/templates")
+            locales = root / "website/locales"
+            locales.mkdir()
+            inventory = [item for item in languages(ROOT) if item["code"] in {"en", "zh-CN", "ar"}]
+            (locales / "languages.json").write_text(json.dumps(inventory))
+            page = WEBSITE.new_page(root, "guide", "Fixture", "Fixture guide.")
+            bad_links = ("https://[::1/guide", "https://[::1/figure", "https://[::1/script")
+            source = page.read_text().replace('    <meta name="robots" content="noindex" />\n', "")
+            source = source.replace("</main>", f'<a href="{bad_links[0]}">Broken</a><img src="{bad_links[1]}" alt=""></main>')
+            page.write_text(source.replace("</body>", f'<script src="{bad_links[2]}"></script></body>'))
+            WEBSITE.sync_pages(root)
+            extract_catalogs(root)
+            catalog_path = locales / "zh-CN/messages.po"
+            catalog = polib.pofile(catalog_path)
+            for entry in catalog:
+                entry.msgstr = entry.msgid
+            catalog.save(catalog_path)
+
+            output = root / "website/_site"
+            build_translations(root, output)
+            diagnostics = VERIFY.check_site(output)[3]
+            for published in ("guide/index.html", "zh-CN/guide/index.html", "ar/guide/index.html"):
+                for link in bad_links:
+                    with self.subTest(published=published, link=link):
+                        self.assertTrue(any(f"{published}: invalid URL '{link}'" in error for error in diagnostics))
+
+    def test_language_switcher_preserves_encoded_paths_under_both_site_prefixes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copytree(ROOT / "website/templates", root / "website/templates")
+            locales = root / "website/locales"
+            locales.mkdir()
+            shutil.copyfile(ROOT / "website/locales/languages.json", locales / "languages.json")
+            route = "guides/Notes #1?%23 café"
+            path = WEBSITE.new_page(root, route, "Fixture", "Fixture guide.")
+            path.write_text(path.read_text().replace('    <meta name="robots" content="noindex" />\n', ""))
+            WEBSITE.sync_pages(root)
+
+            nodes = Document(path.read_text()).nodes
+            canonical, = [node.attrs["href"] for node in nodes if node.attrs.get("rel") == "canonical"]
+            picker = next(node for node in nodes if node.attrs.get("data-language") == "zh-CN")
+            alternate = next(node for node in nodes if node.attrs.get("hreflang") == "zh-CN")
+            encoded = "guides/Notes%20%231%3F%2523%20caf%C3%A9/"
+            self.assertEqual(canonical, "https://rea.tools/" + encoded)
+            self.assertEqual(alternate.attrs["href"], "https://rea.tools/zh-CN/" + encoded)
+            for prefix in ("/", "/rea/"):
+                with self.subTest(prefix=prefix):
+                    base = "https://example.com" + prefix
+                    self.assertEqual(urljoin(base + encoded, picker.attrs["href"]), base + "zh-CN/" + encoded)
 
     def test_language_inventory_preserves_script_identity(self):
         with tempfile.TemporaryDirectory() as directory:

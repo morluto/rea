@@ -1,7 +1,4 @@
 {
-  "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
-  "src/domain/apkSignature/apkSigningBlock.ts": 2,
-  "src/domain/apkSignature/apkV1Signature.ts": 5,
   "src/domain/apple/appleMachoFixups.ts": 22,
   "src/domain/apple/appleMachoSelection.ts": 2,
   "src/domain/apple/jvmClassFile.ts": 2,
@@ -14,7 +11,6 @@
   "src/domain/binaryTarget.ts": 10,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/elfRelocation.ts": 6,
-  "src/domain/gamecubeDol.ts": 6,
   "src/domain/inesContainer.ts": 5,
   "src/domain/managed/managedCliHeaderPrefix.ts": 5,
   "src/domain/managed/managedMemberPointers.ts": 2,
