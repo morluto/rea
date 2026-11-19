@@ -2012,7 +2012,7 @@ it("does not infer call names from dynamic computed identifiers", () => {
   expect(result.observations.webmcp_declarations).toEqual([]);
 });
 
-it("retains direct and literal computed call names", () => {
+it("retains literal calls and requires ambient identity for require edges", () => {
   const result = analyzeWebBundleFixture(
     inspection(`
         window.fetch("/direct");
@@ -2020,6 +2020,11 @@ it("retains direct and literal computed call names", () => {
     window[receiver].fetch("/nested-receiver");
         window.require("./direct.js");
         window["require"]("./literal.js");
+        require("./bare.js");
+        const vendor = { require() {} };
+        vendor.require("./vendor.js");
+        function local(require) { require("./local.js"); }
+        function withWindow(window) { window["require"]("./shadowed.js"); }
         document.modelContext["registerTool"]({ name: "literal-tool" });
       `),
   );
@@ -2030,7 +2035,7 @@ it("retains direct and literal computed call names", () => {
   ]);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
-  ).toEqual(["./direct.js", "./literal.js"]);
+  ).toEqual(["./direct.js", "./literal.js", "./bare.js"]);
   expect(result.observations.webmcp_declarations).toEqual([
     expect.objectContaining({ name: "literal-tool" }),
   ]);
