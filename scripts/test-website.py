@@ -121,6 +121,24 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
                     self.assertEqual(report["status"], "ok")
                     self.assertEqual(report["endpoint"], endpoint)
 
+    def test_repeated_link_checks_do_not_mutate_cached_github_refs(self):
+        heads = [{"ref": "refs/heads/topic"}]
+        tags = [{"ref": "refs/tags/topic/nested"}]
+        ref_endpoint = "repos/example/project/git/matching-refs/"
+        responses = {
+            ref_endpoint + "heads/topic": heads,
+            ref_endpoint + "tags/topic": tags,
+        }
+        with patch.object(AUDIT, "github_api", side_effect=responses.__getitem__):
+            for file in ("README.md", "guide.md", "examples/a.md"):
+                url = urlsplit(f"https://github.com/example/project/blob/topic/nested/{file}")
+                self.assertEqual(
+                    AUDIT.github_target(url),
+                    f"repos/example/project/contents/{file}?ref=topic%2Fnested",
+                )
+        self.assertEqual(heads, [{"ref": "refs/heads/topic"}])
+        self.assertEqual(tags, [{"ref": "refs/tags/topic/nested"}])
+
     def test_plain_refs_and_pinned_commits_keep_their_contents_target(self):
         for ref in ("main", "a" * 40):
             responses = {
