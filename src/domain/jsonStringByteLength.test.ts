@@ -44,11 +44,14 @@ it("counts adjacent surrogates, escapes and multibyte text as native JSON encode
 });
 
 it("preserves exact length and budget overflow for long path-like strings", () => {
-  const path = "fixtures/segment-0123456789/".repeat(20);
-  for (const tail of ["", '"', "\\", "\n", "é𐐷", "\ud800"]) {
+  const path = "fixtures/segment-0123456789/".repeat(80);
+  for (const tail of ["", '"', "\\", "\n", "é𐐷", 'é"𐐷', "\ud800"]) {
     const value = path + tail;
     const expected = Buffer.byteLength(JSON.stringify(value));
     expect(jsonStringByteLength(value, expected)).toBe(expected);
+    expect(jsonStringByteLength(value, expected - 1)).toBeGreaterThan(
+      expected - 1,
+    );
     expect(jsonStringByteLength(value, 128)).toBeGreaterThan(128);
   }
 });
