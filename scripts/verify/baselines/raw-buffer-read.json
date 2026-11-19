@@ -5,7 +5,6 @@
   "src/artifacts/apple/NibArchive.ts": 7,
   "src/artifacts/bun/BunModuleGraphLayout.ts": 10,
   "src/artifacts/dotnet/DotnetBundle.ts": 5,
-  "src/artifacts/nodeSea/NodeSeaBlob.ts": 4,
   "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
   "src/domain/apkSignature/apkSigningBlock.ts": 2,
   "src/domain/apkSignature/apkV1Signature.ts": 5,
