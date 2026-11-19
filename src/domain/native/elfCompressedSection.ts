@@ -10,6 +10,7 @@ import {
   zstandardWorkLimitFacts,
   type ZstandardFrameSource,
 } from "../compression/zstandardFrameAllowance.js";
+import type { ConfigurationError } from "../configurationErrors.js";
 
 const SHF_COMPRESSED = 0x800n;
 const ELFCOMPRESS_ZLIB = 1;
@@ -34,6 +35,11 @@ export type ElfCompressedSectionResult =
       readonly reason?: ZstandardFrameFailure["reason"];
       readonly offset?: number;
       readonly code?: string;
+    }
+  | {
+      readonly state: "configuration";
+      readonly error: ConfigurationError;
+      readonly inflatedBytes: number;
     }
   | {
       readonly state: "work_limit";
@@ -171,6 +177,12 @@ const zstdSectionFailure = (
   subject: string,
   inflatedBytes: number,
 ): ElfCompressedSectionResult => {
+  if (result.reason === "invalid_allowance" && result.configuration)
+    return {
+      state: "configuration",
+      error: result.configuration,
+      inflatedBytes,
+    };
   if (result.reason === "work_limit")
     return {
       state: "work_limit",

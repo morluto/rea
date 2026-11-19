@@ -260,6 +260,7 @@ const admitDecoded = (
         : decoded.requiredBytes + BigInt(budget.used);
     throw new DwarfSectionAllowanceFailure(name, demanded, budget.allowance);
   }
+  if (decoded.state === "configuration") throw decoded.error;
   if (decoded.state === "work_limit")
     throw new ZstandardFrameAllowanceError(
       { maxFrames: decoded.value, source: decoded.source },

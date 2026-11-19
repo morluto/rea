@@ -2,6 +2,7 @@ import { constants as bufferConstants } from "node:buffer";
 import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { nodeCodecResult } from "../../kernel/nodeCodecResult.js";
 import { hostRangeErrorKind } from "../parseFailure.js";
+import type { ConfigurationError } from "../configurationErrors.js";
 import {
   currentZstandardFrameAllowance,
   type ZstandardFrameAllowance,
@@ -28,6 +29,7 @@ export const ZSTANDARD_FRAME_REASONS = [
   "work_limit",
   "malformed",
   "output_limit",
+  "invalid_allowance",
 ] as const;
 
 export type ZstandardFrameReason = (typeof ZSTANDARD_FRAME_REASONS)[number];
@@ -64,6 +66,8 @@ export interface ZstandardFrameFailure {
   readonly source?: ZstandardFrameSource;
   readonly minimum?: number;
   readonly maximum?: number;
+  /** Present when the launch seed for `zstd.max_frames` cannot be parsed. */
+  readonly configuration?: ConfigurationError;
 }
 
 export interface ZstandardFrameSuccess {
@@ -419,7 +423,18 @@ export const decodeZstandardFrames = (
   bytes: Uint8Array,
   options: ZstandardDecodeOptions = {},
 ): ZstandardFrameResult => {
-  const allowance = options.allowance ?? currentZstandardFrameAllowance();
+  const resolved =
+    options.allowance === undefined
+      ? currentZstandardFrameAllowance()
+      : { ok: true as const, value: options.allowance };
+  if (!resolved.ok)
+    return {
+      ok: false,
+      reason: "invalid_allowance",
+      offset: 0,
+      configuration: resolved.error,
+    };
+  const allowance = resolved.value;
   const mode = options.mode ?? "exact";
   const walked = walkFrames(bytes, allowance, mode);
   if ("reason" in walked) return walked;

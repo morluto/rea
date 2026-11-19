@@ -1,6 +1,11 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../domain/analysisResourceLimits.js";
 import { ElfNotesService } from "../../application/binaryDiagnostics/ElfNotesService.js";
 import {
   AnalysisInputError,
@@ -31,6 +36,42 @@ const inspect = async (
     await service.close();
   }
 };
+
+const zstdByteFrame = (byte: number): Buffer =>
+  Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+
+it("projects a Zstandard frame-cap on section names as an adjustable limit", async () => {
+  const root = await createTestTempDirectory("rea-elf-note-zstd-frames-");
+  const path = join(root, "notes.elf");
+  await writeFile(
+    path,
+    compressedElfNoteFixture(
+      64,
+      true,
+      2,
+      ".note.gnu.build-id",
+      Buffer.concat([zstdByteFrame(0x61), zstdByteFrame(0x62)]),
+    ),
+  );
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "zstd.max_frames": 1 } },
+    () => inspect(path),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 1,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
 
 describe("ELF note provider failures", () => {
   it("projects compressed note sections as unsupported rather than malformed input", async () => {

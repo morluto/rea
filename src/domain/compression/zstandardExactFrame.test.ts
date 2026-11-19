@@ -176,26 +176,92 @@ it("does not retain a decoder chunk behind a short frame", () => {
   expect(ownedZstandardBytes(exact)).toBe(exact);
 });
 
+describe("Zstandard frame header widths", () => {
+  const magic = (bytes: number[]) =>
+    Buffer.from([0x28, 0xb5, 0x2f, 0xfd, ...bytes]);
+  const decode = (bytes: Buffer) =>
+    decodeZstandardFrames(bytes, {
+      allowance: allowance(8, "default"),
+    });
+
+  it("accepts content-size, window, dictionary-id, and RLE frames", () => {
+    const fcs4 = magic([0xa0, 1, 0, 0, 0, 0x09, 0, 0, 0x41]);
+    const fcs8 = magic([0xe0, 1, 0, 0, 0, 0, 0, 0, 0, 0x09, 0, 0, 0x41]);
+    const fcs2 = Buffer.alloc(10 + 256);
+    fcs2.writeUInt32LE(0xfd2fb528, 0);
+    fcs2[4] = 0x60;
+    fcs2.writeUInt16LE(0, 5);
+    fcs2.writeUIntLE(1 | (256 << 3), 7, 3);
+    fcs2.fill(0x42, 10);
+    const windowed = magic([0x00, 0x50, 0x01, 0, 0]);
+    const dictionary1 = magic([0x21, 0x00, 0x00, 0x01, 0, 0]);
+    const dictionary2 = magic([0x22, 0, 0, 0x00, 0x01, 0, 0]);
+    const dictionary4 = magic([0x23, 0, 0, 0, 0, 0x00, 0x01, 0, 0]);
+    const rle = magic([0x20, 0x04, 0x23, 0, 0, 0x41]);
+    expect(decode(fcs4)).toMatchObject({ ok: true, frames: 1 });
+    expect(decode(fcs8)).toMatchObject({ ok: true, frames: 1 });
+    expect(decode(fcs2)).toMatchObject({ ok: true, frames: 1 });
+    const empty = decode(windowed);
+    const repeated = decode(rle);
+    const wide = decode(fcs2);
+    const sized = decode(fcs4);
+    expect(empty.ok && empty.bytes.length).toBe(0);
+    expect(decode(dictionary1).ok).toBe(true);
+    expect(decode(dictionary2).ok).toBe(true);
+    expect(decode(dictionary4).ok).toBe(true);
+    expect(sized.ok && sized.bytes[0]).toBe(0x41);
+    expect(
+      repeated.ok && Buffer.compare(repeated.bytes, Buffer.from("AAAA")) === 0,
+    ).toBe(true);
+    expect(wide.ok && wide.bytes.length).toBe(256);
+  });
+
+  it.each([
+    ["content size", () => magic([0xa0, 1, 0]), "truncated_frame_header"],
+    [
+      "eight-byte content size",
+      () => magic([0xe0, 1, 0, 0, 0]),
+      "truncated_frame_header",
+    ],
+    ["window descriptor", () => magic([0x00]), "truncated_frame_header"],
+    ["one-byte dictionary id", () => magic([0x21]), "truncated_frame_header"],
+    [
+      "two-byte dictionary id",
+      () => magic([0x22, 0]),
+      "truncated_frame_header",
+    ],
+    [
+      "four-byte dictionary id",
+      () => magic([0x23, 0, 0]),
+      "truncated_frame_header",
+    ],
+    ["RLE block", () => magic([0x20, 0x04, 0x23, 0, 0]), "truncated_block"],
+  ] as const)("rejects a truncated %s", (_label, frame, reason) => {
+    expect(decode(frame())).toMatchObject({ ok: false, reason });
+  });
+});
+
 describe("zstd.max_frames allowance", () => {
   it("resolves default, launch, and runtime sources", () => {
     expect(resolveZstandardFrameAllowance({})).toEqual({
-      maxFrames: DEFAULT_ZSTD_MAX_FRAMES,
-      source: "default",
+      ok: true,
+      value: { maxFrames: DEFAULT_ZSTD_MAX_FRAMES, source: "default" },
     });
     expect(
       resolveZstandardFrameAllowance({ [ZSTD_MAX_FRAMES_ENVIRONMENT]: "8" }),
-    ).toEqual({ maxFrames: 8, source: "setting" });
+    ).toEqual({ ok: true, value: { maxFrames: 8, source: "setting" } });
     expect(resolveZstandardFrameAllowance({}, 3)).toEqual({
-      maxFrames: 3,
-      source: "runtime",
+      ok: true,
+      value: { maxFrames: 3, source: "runtime" },
     });
-    expect(() =>
-      resolveZstandardFrameAllowance({ [ZSTD_MAX_FRAMES_ENVIRONMENT]: "0" }),
-    ).toThrow(ConfigurationError);
-    expect(() =>
-      resolveZstandardFrameAllowance({
-        [ZSTD_MAX_FRAMES_ENVIRONMENT]: String(MAXIMUM_ZSTD_MAX_FRAMES + 1),
-      }),
-    ).toThrow(ConfigurationError);
+    const invalid = resolveZstandardFrameAllowance({
+      [ZSTD_MAX_FRAMES_ENVIRONMENT]: "0",
+    });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) expect(invalid.error).toBeInstanceOf(ConfigurationError);
+    const above = resolveZstandardFrameAllowance({
+      [ZSTD_MAX_FRAMES_ENVIRONMENT]: String(MAXIMUM_ZSTD_MAX_FRAMES + 1),
+    });
+    expect(above.ok).toBe(false);
   });
 });

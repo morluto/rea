@@ -20,6 +20,11 @@ import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../../domain/compression/zstandardFrameAllowance.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
@@ -104,6 +109,9 @@ const elfNotesFailurePrimary = (
   input: InspectElfNotesInput,
 ) => {
   const { cause, origin } = facts;
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ZstandardFrameAllowanceError)
+    return projectZstandardFrameAllowance(OPERATION, cause);
   const sectionNameBudget = elfNoteSectionNameBudget(cause);
   if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
     return parseLimitConstraint(OPERATION, "memory", cause, {

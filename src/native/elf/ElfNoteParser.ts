@@ -880,6 +880,7 @@ export const parseElfNotes = (
       input.max_file_bytes - bytes.length,
     );
     if (decoded.state === "malformed") return fail(decoded.message);
+    if (decoded.state === "configuration") throw decoded.error;
     if (decoded.state === "work_limit")
       throw new ZstandardFrameAllowanceError(
         { maxFrames: decoded.value, source: decoded.source },

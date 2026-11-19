@@ -28,6 +28,11 @@ export const decodeGpuPayloadStream = async (
     });
     assertArtifactReadActive(signal);
     if (!decoded.ok) {
+      if (
+        decoded.reason === "invalid_allowance" &&
+        decoded.configuration !== undefined
+      )
+        throw decoded.configuration;
       if (decoded.reason === "work_limit")
         throw new ZstandardFrameAllowanceError(
           {

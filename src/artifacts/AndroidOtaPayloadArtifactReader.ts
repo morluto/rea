@@ -21,6 +21,8 @@ import {
 } from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
+import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   ANDROID_OTA_HEADER_V2_BYTES,
   androidOtaDistinctOperationDataBytes,
@@ -342,11 +344,12 @@ const reconstructFailure = (
       cause: failure,
       integrityCheck: "declared-digest",
     });
+  if (failure instanceof ConfigurationError) throw failure;
   if (failure._tag === "ZstandardFrameWorkRefusal")
-    return new ArtifactReaderFailure("limit", failure.message, {
-      cause: failure,
-      boundary: "capacity",
-    });
+    throw new ZstandardFrameAllowanceError(
+      { maxFrames: failure.value, source: failure.source },
+      failure.offset,
+    );
   return parseFailure(failure);
 };
 

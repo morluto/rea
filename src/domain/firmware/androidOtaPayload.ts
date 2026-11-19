@@ -6,6 +6,7 @@ import {
   zstandardWorkLimitFacts,
   type ZstandardFrameSource,
 } from "../compression/zstandardFrameAllowance.js";
+import { ConfigurationError } from "../configurationErrors.js";
 
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 
@@ -128,6 +129,7 @@ export type AndroidOtaPayloadParseError =
 
 export type AndroidOtaPayloadReconstructError =
   | AndroidOtaPayloadParseError
+  | ConfigurationError
   | {
       readonly _tag: "AndroidOtaPayloadUnsupportedOperation";
       readonly message: string;
@@ -1500,6 +1502,11 @@ export const reconstructAndroidOtaPartition = (
         );
         const decoded = decodeZstandardFrames(raw, { maxOutputLength });
         if (!decoded.ok) {
+          if (
+            decoded.reason === "invalid_allowance" &&
+            decoded.configuration !== undefined
+          )
+            return err(decoded.configuration);
           if (decoded.reason === "work_limit")
             return err(zstdWorkRefusal(decoded));
           if (decoded.reason === "output_limit")

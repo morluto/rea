@@ -243,6 +243,7 @@ export function* readElfSectionDirectory(
         Math.max(0, STRUCTURE_BYTES - rawNames.length),
       );
       if (decoded.state === "malformed") return reject(decoded.message);
+      if (decoded.state === "configuration") throw decoded.error;
       if (decoded.state === "work_limit")
         throw new ZstandardFrameAllowanceError(
           { maxFrames: decoded.value, source: decoded.source },

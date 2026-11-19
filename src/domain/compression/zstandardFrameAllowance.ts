@@ -4,9 +4,13 @@ import {
   MAXIMUM_ZSTD_MAX_FRAMES,
   MINIMUM_ZSTD_MAX_FRAMES,
 } from "../analysisResourceLimits.js";
+import { analysisSettingLimit } from "../analysisSettingDefinitions.js";
 import { currentAnalysisSettingOverride } from "../analysisOperationSnapshot.js";
 import { ConfigurationError } from "../configurationErrors.js";
+import { parseLimitConstraint } from "../parseFailureAnalysisError.js";
 import { ParseFailureError } from "../parseFailure.js";
+import type { Result } from "../result.js";
+import { err, ok } from "../result.js";
 
 /** Launch seed for the shared Zstandard frame allowance. */
 export const ZSTD_MAX_FRAMES_ENVIRONMENT = "REA_ZSTD_MAX_FRAMES";
@@ -66,19 +70,23 @@ export const resolveZstandardFrameAllowance = (
   override: number | undefined = currentAnalysisSettingOverride(
     ZSTD_MAX_FRAMES_SETTING,
   ),
-): ZstandardFrameAllowance => {
-  if (override !== undefined) return { maxFrames: override, source: "runtime" };
+): Result<ZstandardFrameAllowance, ConfigurationError> => {
+  if (override !== undefined)
+    return ok({ maxFrames: override, source: "runtime" });
   const raw = environment[ZSTD_MAX_FRAMES_ENVIRONMENT];
   if (raw === undefined)
-    return { maxFrames: DEFAULT_ZSTD_MAX_FRAMES, source: "default" };
+    return ok({ maxFrames: DEFAULT_ZSTD_MAX_FRAMES, source: "default" });
   const parsed = zstandardMaxFramesSchema.safeParse(raw);
-  if (!parsed.success) throw invalidSeed();
-  return { maxFrames: parsed.data, source: "setting" };
+  return parsed.success
+    ? ok({ maxFrames: parsed.data, source: "setting" })
+    : err(invalidSeed());
 };
 
 /** Allowance for the operation on this stack, or the process launch environment. */
-export const currentZstandardFrameAllowance = (): ZstandardFrameAllowance =>
-  resolveZstandardFrameAllowance(process.env);
+export const currentZstandardFrameAllowance = (): Result<
+  ZstandardFrameAllowance,
+  ConfigurationError
+> => resolveZstandardFrameAllowance(process.env);
 
 /** Facts a work refusal carries so callers do not restate the registry. */
 export const zstandardWorkLimitFacts = (
@@ -135,3 +143,24 @@ export class ZstandardFrameAllowanceError extends ParseFailureError<"limit"> {
     this.offset = offset;
   }
 }
+
+/**
+ * The public resource refusal for one frame-cap. Callers keep the setting,
+ * effective value, source, and range instead of rewriting the error as I/O
+ * or malformed content.
+ */
+export const projectZstandardFrameAllowance = (
+  operation: string,
+  error: ZstandardFrameAllowanceError,
+) =>
+  parseLimitConstraint(operation, "cpu", error, {
+    retryable: false,
+    limit: analysisSettingLimit(error.setting, error.value, error.source),
+    reportedLimitContext: {
+      setting: error.setting,
+      value: error.value,
+      source: error.source,
+      minimum: error.minimum,
+      maximum: error.maximum,
+    },
+  });

@@ -1,4 +1,6 @@
 import { deflateSync, zstdCompressSync } from "node:zlib";
+import { ConfigurationError } from "../configurationErrors.js";
+import { ZSTD_MAX_FRAMES_ENVIRONMENT } from "../compression/zstandardFrameAllowance.js";
 import { describe, expect, it } from "vitest";
 import { runWithAnalysisOperationSnapshot } from "../analysisOperationSnapshot.js";
 import {
@@ -220,6 +222,37 @@ it("accepts a Zstandard skippable suffix and rejects a trailing byte", () => {
     state: "malformed",
     reason: "trailing_bytes",
   });
+});
+
+it("keeps an invalid frame allowance out of the malformed path", () => {
+  const payload = zstdCompressSync(plain);
+  const bytes = Buffer.concat([chdr(64, true, 2, plain.length), payload]);
+  const decode = () =>
+    decodeElfCompressedSection(
+      bytes,
+      0x800n,
+      64,
+      true,
+      1024,
+      "ELF sample section",
+    );
+  const previous = process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+  process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = "0";
+  try {
+    expect(decode()).toMatchObject({
+      state: "configuration",
+      error: expect.any(ConfigurationError),
+    });
+    expect(
+      runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "zstd.max_frames": 8 } },
+        decode,
+      ),
+    ).toMatchObject({ state: "available" });
+  } finally {
+    if (previous === undefined) delete process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+    else process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = previous;
+  }
 });
 
 it("refuses a Zstandard section that exceeds zstd.max_frames", () => {
