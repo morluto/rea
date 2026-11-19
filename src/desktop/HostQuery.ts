@@ -24,7 +24,10 @@ export type QueryRunner = (
   command: string,
   arguments_: readonly string[],
   signal: AbortSignal | undefined,
-  options?: { readonly preserveStdoutBytes: true },
+  options?: {
+    readonly preserveStdoutBytes: true;
+    readonly locale?: "C.UTF-8";
+  },
 ) => Promise<QueryOutcome>;
 
 /** Run a query command with a bounded time and output. */
@@ -38,6 +41,10 @@ export const runHostQuery: QueryRunner = async (
     const { stdout } = await execFileBytes(command, arguments_, {
       timeout: COMMAND_TIMEOUT_MS,
       maxBuffer: COMMAND_MAX_BUFFER,
+      ...(options?.locale === undefined
+        ? {}
+        : { env: { ...process.env, LC_ALL: options.locale } }),
+      ...(options?.preserveStdoutBytes ? { preserveFailedStdout: true } : {}),
       ...(signal === undefined ? {} : { signal }),
     });
     return {
@@ -58,7 +65,13 @@ export const runHostQuery: QueryRunner = async (
     return typeof failure?.code === "number" &&
       !failure.killed &&
       !failure.outputTruncated
-      ? { stdout: failure.stdout, exitCode: failure.code }
+      ? {
+          stdout: failure.stdout,
+          ...(failure.stdoutBuffer === undefined
+            ? {}
+            : { stdoutBuffer: failure.stdoutBuffer }),
+          exitCode: failure.code,
+        }
       : "failed";
   }
 };
