@@ -14,13 +14,15 @@ import {
   assertArtifactReadActive,
   ArtifactFileSource,
 } from "../resources/index.js";
-import { ownArtifactStream } from "./OwnedArtifactStream.js";
+import {
+  ArtifactStreamLifecycle,
+  ownArtifactStream,
+  type ArtifactMemberLifecycle,
+} from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-
-const READER_CLOSED = Symbol("Positional artifact reader closed");
 
 /** An entry whose bytes are one range of the carrier. */
 export type PositionalArtifactEntry = ArtifactEntry & {
@@ -47,7 +49,7 @@ export abstract class PositionalArtifactReader<
 > implements ArtifactReader {
   abstract readonly format: ArtifactReader["format"];
   readonly #scope = new ArtifactResourceScope();
-  readonly #lifecycle = new AbortController();
+  readonly #lifecycle: ArtifactStreamLifecycle;
   readonly #label: string;
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
@@ -65,6 +67,7 @@ export abstract class PositionalArtifactReader<
     admitted?: StableRegularFileDescriptor,
   ) {
     this.#label = label;
+    this.#lifecycle = new ArtifactStreamLifecycle(label);
     this.#source = new ArtifactFileSource(path, label, admitted);
   }
 
@@ -139,23 +142,8 @@ export abstract class PositionalArtifactReader<
         );
       const { handle } = await this.#source.read(signal);
       this.assertOpen(signal);
-      // Shutdown uses the same retirement path as caller cancellation, after
-      // the result of an admitted descriptor read has been observed.
-      const streamSignal =
-        signal === undefined
-          ? this.#lifecycle.signal
-          : AbortSignal.any([signal, this.#lifecycle.signal]);
-      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
-        reason === READER_CLOSED
-          ? new ArtifactReaderFailure(
-              "unavailable",
-              `${this.#label} reader closed`,
-            )
-          : new ArtifactReaderFailure(
-              "cancelled",
-              `${this.#label} read cancelled`,
-              { cause: reason },
-            );
+      const lifecycle = this.#lifecycle.member(signal);
+      const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
@@ -165,7 +153,7 @@ export abstract class PositionalArtifactReader<
               signal: streamSignal,
               cancellationFailure,
             });
-      const output = this.#entryStream(stored, signal);
+      const output = this.#entryStream(stored, lifecycle);
       ownArtifactStream(source, output, {
         scope: this.#scope,
         signal: streamSignal,
@@ -177,7 +165,7 @@ export abstract class PositionalArtifactReader<
   }
 
   async close(): Promise<void> {
-    this.#lifecycle.abort(READER_CLOSED);
+    this.#lifecycle.close();
     await this.#scope.close();
     await this.#source.close();
     this.#prepared = undefined;
@@ -198,7 +186,7 @@ export abstract class PositionalArtifactReader<
   /** Refuse work once the caller cancels or close begins. */
   protected assertOpen(signal?: AbortSignal): void {
     assertArtifactReadActive(signal);
-    if (this.#lifecycle.signal.aborted)
+    if (this.#lifecycle.closed)
       throw new ArtifactReaderFailure(
         "unavailable",
         `${this.#label} reader is closed`,
@@ -221,7 +209,7 @@ export abstract class PositionalArtifactReader<
 
   #entryStream(
     entry: PositionalArtifactEntry,
-    signal?: AbortSignal,
+    lifecycle: ArtifactMemberLifecycle,
   ): Transform {
     const label = this.#label;
     let bytes = 0;
@@ -232,8 +220,7 @@ export abstract class PositionalArtifactReader<
           `${label} entry ended early: ${entry.path}`,
           { integrityCheck: "declared-size" },
         );
-      await this.#source.read(signal);
-      this.assertOpen(signal);
+      await lifecycle.verify((signal) => this.#source.read(signal));
     };
     return new Transform({
       transform(chunk: Buffer, _encoding, callback) {
