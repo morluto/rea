@@ -57,6 +57,11 @@ keep their folder identifiers. `ConsoleFEDataBlock` keeps the code page.
 `PropertyStoreDataBlock` and unrecognized signatures stay raw with SHA-256.
 Unknown signatures are listed and are not dropped.
 
+The report retains stored `LinkInfo` fields and environment target strings.
+Derived target observations skip paths from `LinkInfo` when `ForceNoLinkInfo`
+is set, and skip paths from `EnvironmentVariableDataBlock` when
+`DisableLinkPathTracking` is set.
+
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
 `ShowCommand` is minimized, and whether the icon location differs from the
