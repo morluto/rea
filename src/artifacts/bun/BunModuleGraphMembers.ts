@@ -3,6 +3,7 @@ import {
   type BunReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { setImmediate } from "node:timers/promises";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import {
@@ -150,10 +151,7 @@ export const decodeBunModuleGraph = async (
   if (retained > limits.representation_bytes)
     throw bunMetadataBytesLimit(retained, limits);
   for (let index = 0; index < count; index += 1) {
-    const record = records.subarray(
-      index * recordBytes,
-      (index + 1) * recordBytes,
-    );
+    const record = readRecord(records, index, recordBytes);
     retained += 512 + readPointer(record, 0).length * 6;
     if (recordBytes === BUN_RECORD_BYTES_1_3_9)
       retained += readPointer(record, 40).length * 6;
@@ -190,6 +188,17 @@ const recordSizes = (length: number): readonly number[] => {
   return sizes;
 };
 
+const readRecord = (
+  records: Buffer,
+  index: number,
+  width: number,
+): BinaryReader =>
+  new BinaryReader(
+    records.subarray(index * width, (index + 1) * width),
+    true,
+    "bun-standalone",
+  );
+
 const assessLayout = async (
   graph: LocatedBunGraph,
   records: Buffer,
@@ -200,10 +209,7 @@ const assessLayout = async (
   const count = records.length / recordBytes;
   if (count > limits.module_count) return bunModuleCountLimit(count, limits);
   for (let index = 0; index < count; index += 1) {
-    const record = records.subarray(
-      index * recordBytes,
-      (index + 1) * recordBytes,
-    );
+    const record = readRecord(records, index, recordBytes);
     if (index % 256 === 0) await setImmediate();
     const failure = await recordPointerFailure(data, record, recordBytes);
     if (failure !== null) return failure;
@@ -217,7 +223,7 @@ const assessLayout = async (
 
 const recordPointerFailure = async (
   data: BunGraphData,
-  record: Buffer,
+  record: BinaryReader,
   recordBytes: number,
   verifyTextNuls = true,
 ): Promise<ArtifactReaderFailure | null> => {
@@ -251,16 +257,17 @@ const recordPointerFailure = async (
 
 const decodeRecord = async (
   data: BunGraphData,
-  record: Buffer,
+  record: BinaryReader,
   index: number,
   revision: BunLayoutRevision,
 ): Promise<BunDecodedModule> => {
   const wide = revision === "bun-1.3.9";
   const metadataAt = wide ? 48 : 32;
-  const encoding = record[metadataAt] ?? 0;
-  const loader = record[metadataAt + 1] ?? 0;
-  const moduleFormat = record[metadataAt + 2] ?? 0;
-  const side = record[metadataAt + 3] ?? 0;
+  const bytes = record.bytes;
+  const encoding = bytes[metadataAt] ?? 0;
+  const loader = bytes[metadataAt + 1] ?? 0;
+  const moduleFormat = bytes[metadataAt + 2] ?? 0;
+  const side = bytes[metadataAt + 3] ?? 0;
   const name = await readNul(data, readPointer(record, 0), "name");
   const contents = readPointer(record, 8);
   const sourcemap = optionalRange(readPointer(record, 16));
