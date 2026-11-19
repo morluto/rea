@@ -108,7 +108,10 @@ Index zero still reads as an empty string when the Module row is unique.
 If there are competing string heaps and multiple Module rows, Module
 identity remains unknown even when a name index is zero. A known MVID can bound
 build-local token identity even when the Module name is unresolved. Unreadable
-names do not supply nominal member or type lookup keys.
+names do not supply nominal member or type lookup keys. A nil or empty
+TypeDef or MethodDef name leaves member inventory and cross-build comparison
+coverage partial when the unreadable name could affect a match. A nil
+TypeDef namespace is valid and leaves the type name unqualified.
 
 If the metadata root declares both compressed (`#~`) and uncompressed (`#-`)
 tables, REA reports both declarations and leaves the row layout unresolved.

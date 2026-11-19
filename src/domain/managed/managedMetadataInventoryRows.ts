@@ -27,6 +27,7 @@ import {
   metadataBlobOffset,
   readMetadataGuid,
   readMetadataString,
+  readRequiredMetadataName,
 } from "./managedMetadataHeaps.js";
 import {
   managedFailure,
@@ -313,7 +314,13 @@ export const managedMetadataTypeNames = (
       } else {
         const source = readTypeDefinitionRowFacts(bytes, layout, row);
         flags = source.flags;
-        name = readMetadataString(bytes, layout, source.nameIndex);
+        name = readRequiredMetadataName(
+          bytes,
+          layout,
+          "TypeDef",
+          metadataToken(2, row),
+          source,
+        );
         namespace = readMetadataString(bytes, layout, source.namespaceIndex);
       }
       parentRow = nesting.enclosing.get(row) ?? null;
