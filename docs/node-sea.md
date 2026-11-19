@@ -28,11 +28,18 @@ The container format is `node-sea`. REA locates Mach-O sections named
 locations come from the shared PE resource parser. ELF program-header
 `PT_NOTE` segments are authoritative, as at runtime; `SHT_NOTE` sections are
 read only when no program-header table is readable, because injectors can
-leave stale section entries. A PE without a `NODE_SEA_BLOB` resource name is
+leave stale section entries. A compressed section does not establish a raw
+blob offset. A short remainder after the last ELF note must be zero padding.
+A PE without a `NODE_SEA_BLOB` resource name is
 left to native classification. Universal Mach-O carriers
 with different slice blobs are rejected as ambiguous; identical blobs are
 inventoried once. Native carrier bytes keep their content hash and native
 classification while the root occurrence represents the SEA container.
+
+REA reports a named Mach-O SEA section as malformed when it declares zero-fill
+or falls outside its containing segment's file or virtual address range.
+The load command containing the section must be aligned and within the declared
+command table. A framing failure later in that table prevents blob recovery.
 
 Root `format_metadata` preserves raw flags, decoded flags, code path, blob
 location, exec arguments and fuse observations. Main and asset children retain
@@ -124,12 +131,12 @@ and host memory remain independent of larger selected budgets.
 
 PE carriers additionally use the shared 512 MiB input, 65,536 directory-entry
 and 8 MiB resource-metadata ceilings; the Node SEA selections do not raise those
-shared PE-parser boundaries. The PE name probe reads headers from the first
-64 KiB of the carrier; a PE whose
-headers extend beyond that is left to native classification. ELF note tables
-are read for at most one note per 12 carrier bytes in total, the most that
-disjoint tables can hold, so program headers that repeat the same notes do not
-rescan them once per header. Past that count the remaining tables are
+shared PE-parser boundaries. The PE name probe follows the DOS header's PE
+offset and reads the declared header records and resource directories by file
+position. The ELF scan
+allows one framing read per 12 carrier bytes. Both a note header and a short
+table tail consume a read from that allowance, so repeated declarations
+cannot drive unbounded rescans. Past that count the remaining tables are
 unreadable: an ELF without a confirmed blob keeps its native classification,
 and one with a blob fails closed. Snapshot and code-cache bytes remain opaque.
 

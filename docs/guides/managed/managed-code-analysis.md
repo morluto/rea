@@ -40,6 +40,11 @@ inspection is needed; see [selected member inspection](#selected-member-inspecti
 Compare separate builds with [member comparison](#member-comparison), preserving
 their paths, digests, and selection scope.
 
+If the PE's `SizeOfHeaders` fails to cover its section table or exceeds the
+file size, the artifact inspection retains PE identity and reports partial
+coverage with the offset of that field. Managed metadata and CIL remain
+unavailable because the section table cannot establish their file mappings.
+
 ### Field constant defaults
 
 `inspect_managed_members` reads field-owned values from the ECMA-335 `Constant`
