@@ -26,6 +26,11 @@ const differentPng =
 const widerPng =
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR42mNgYGD4B8IABf0B/aLhVnkAAAAASUVORK5CYII=";
 
+// This PNG's IDAT zlib stream requests a preset dictionary.
+const dictionaryPng =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEUlEQVR4uwwXAwhjYGBg+AcAAQMA/7BXXg0AAAAASUVORK5CYII=";
+const unverifiedDocument = "The captured document could not be verified.";
+
 const screenshot = (
   bytes: string,
   capturedAt: string,
@@ -70,7 +75,7 @@ const screenshot = (
           total: 0,
         },
       },
-      limitations: [],
+      limitations: limited ? [unverifiedDocument] : [],
     },
     confidence: "observed",
     authority: "external-service",
@@ -130,7 +135,10 @@ const comparison = (
     authority: "analyst-inference",
   });
 
-const specification = (evidence: Evidence) => ({
+const specification = (
+  evidence: Evidence,
+  sourceEvidence?: { before_evidence_id: string; after_evidence_id: string },
+) => ({
   name: "Visual reconstruction",
   claims: [
     {
@@ -139,6 +147,9 @@ const specification = (evidence: Evidence) => ({
       title: "Viewport pixels remain equivalent",
       comparison_evidence_id: evidence.evidence_id,
       dimension: "overall" as const,
+      ...(sourceEvidence === undefined
+        ? {}
+        : { source_evidence: sourceEvidence }),
     },
   ],
 });
@@ -202,7 +213,9 @@ describe("visual reconstruction evidence", () => {
         );
     },
   );
+});
 
+describe("visual reconstruction capture identity", () => {
   it("rejects an ambiguous artifact-to-capture match", () => {
     const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
     const duplicate = screenshot(beforePng, "2026-01-01T00:00:01.000Z");
@@ -217,6 +230,42 @@ describe("visual reconstruction evidence", () => {
     ).toThrow(/does not identify exactly one captured Evidence record/u);
   });
 
+  it("binds byte-identical captures to distinct Evidence on the requested sides", () => {
+    const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
+    const after = screenshot(beforePng, "2026-01-01T00:00:01.000Z");
+    const unrelated = screenshot(beforePng, "2026-01-01T00:00:02.000Z");
+    const saved = comparison(before, after, "identical");
+    const spec = specification(saved, {
+      before_evidence_id: before.evidence_id,
+      after_evidence_id: after.evidence_id,
+    });
+    const bundle = createEvidenceBundle([unrelated, after, saved, before]);
+
+    expect(verifyReconstruction(spec, bundle).claims.items).toMatchObject([
+      {
+        status: "pass",
+        left_evidence_ids: [before.evidence_id],
+        right_evidence_ids: [after.evidence_id],
+      },
+    ]);
+  });
+
+  it("rejects an explicit screenshot source whose bytes disagree with that side", () => {
+    const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
+    const after = screenshot(samePng, "2026-01-01T00:00:01.000Z");
+    const saved = comparison(before, after, "identical");
+    const spec = specification(saved, {
+      before_evidence_id: after.evidence_id,
+      after_evidence_id: before.evidence_id,
+    });
+
+    expect(() =>
+      verifyReconstruction(spec, createEvidenceBundle([before, after, saved])),
+    ).toThrow(/before capture Evidence does not match its artifact digest/u);
+  });
+});
+
+describe("visual reconstruction coverage and corroboration", () => {
   it("withholds a visual verdict when capture attribution is incomplete", () => {
     const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z", {
       limited: true,
@@ -231,13 +280,17 @@ describe("visual reconstruction evidence", () => {
       {
         status: "unknown",
         observed_status: "unchanged",
-        limitations: [
+        limitations: expect.arrayContaining([
           expect.stringMatching(
             /Screenshot coverage is incomplete.*attach_limited/u,
           ),
-        ],
+          expect.stringContaining(unverifiedDocument),
+        ]),
       },
     ]);
+    expect(result.recommended_probes).toContainEqual(
+      expect.objectContaining({ operation: "capture_web_screenshot" }),
+    );
   });
 
   it("requires the retained pixels to corroborate the reported comparison", () => {
@@ -261,21 +314,45 @@ describe("visual reconstruction evidence", () => {
       verify(comparison(before, after, "identical", 1), [before, after]).status,
     ).toBe("pass");
   });
-  it("keeps the claim unknown when retained PNG bytes cannot be decoded", () => {
-    const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
-    const after = screenshot("bm90LWEtcG5n", "2026-01-01T00:00:01.000Z");
-    const result = verify(comparison(before, after, "identical"), [
-      before,
-      after,
-    ]);
+  it.each([
+    ["invalid signature", "bm90LWEtcG5n", "Invalid PNG signature"],
+    ["preset dictionary", dictionaryPng, "Invalid PNG image data"],
+  ])(
+    "preserves other claims when retained PNG bytes cannot be decoded (%s)",
+    (_defect, bytes, reason) => {
+      const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
+      const after = screenshot(bytes, "2026-01-01T00:00:01.000Z");
+      const independent = screenshot(samePng, "2026-01-01T00:00:02.000Z");
+      const unreadable = comparison(before, after, "identical");
+      const readable = comparison(before, independent, "identical");
+      const spec = specification(unreadable);
+      const result = verifyReconstruction(
+        {
+          ...spec,
+          claims: [
+            ...spec.claims,
+            { ...specification(readable).claims[0], claim_id: "independent" },
+          ],
+        },
+        createEvidenceBundle([
+          before,
+          after,
+          independent,
+          unreadable,
+          readable,
+        ]),
+      );
 
-    expect(result.claims.items).toMatchObject([
-      {
-        status: "unknown",
-        limitations: [
-          "Retained screenshot comparison could not be replayed: Invalid PNG signature",
-        ],
-      },
-    ]);
-  });
+      expect(result.claims.items).toMatchObject([
+        { claim_id: "independent", status: "pass" },
+        {
+          claim_id: "viewport",
+          status: "unknown",
+          limitations: [
+            `Retained screenshot comparison could not be replayed: ${reason}`,
+          ],
+        },
+      ]);
+    },
+  );
 });

@@ -38,6 +38,15 @@ const visualClaimSchema = z.object({
   ...commonClaim,
   kind: z.literal("visual"),
   dimension: z.literal("overall"),
+  source_evidence: z
+    .strictObject({
+      before_evidence_id: evidenceIdSchema,
+      after_evidence_id: evidenceIdSchema,
+    })
+    .optional()
+    .describe(
+      "Select the retained screenshot capture for each side. Supply both IDs when a digest matches multiple captures, including byte-identical before and after captures.",
+    ),
 });
 
 const reconstructionClaimSchema = z.discriminatedUnion("kind", [

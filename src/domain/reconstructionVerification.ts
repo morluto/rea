@@ -169,7 +169,7 @@ const evaluateClaim = (
   validateComparisonIdentity(claim, comparison, claimIndex);
   const { sides, observation, visualBlockers } =
     claim.kind === "visual"
-      ? assessScreenshotComparison(comparison, screenshots)
+      ? assessScreenshotComparison(claim, comparison, screenshots)
       : {
           sides: comparisonSourceEvidenceSides(comparison),
           observation: comparisonObservation(claim, comparison),
@@ -305,6 +305,7 @@ const indexScreenshotCaptures = (records: Iterable<Evidence>) => {
 };
 
 const assessScreenshotComparison = (
+  claim: Extract<Claim, { kind: "visual" }>,
   comparison: Evidence,
   captures: ReadonlyMap<string, readonly ScreenshotCapture[]>,
 ): {
@@ -318,10 +319,20 @@ const assessScreenshotComparison = (
     { within: ["parameters"] },
   );
   if (!parsed.ok) throw parsed.error;
-  const sourceForArtifact = (sha256: string, side: "before" | "after") => {
+  const sourceForArtifact = (
+    sha256: string,
+    side: "before" | "after",
+    evidenceId: string | undefined,
+  ) => {
     const matches = captures.get(sha256);
+    if (evidenceId !== undefined) {
+      const selected = matches?.find((item) => item.evidenceId === evidenceId);
+      if (selected !== undefined) return selected;
+      const message = `Screenshot comparison ${side} capture Evidence does not match its artifact digest or is missing from the bundle (${evidenceId}).`;
+      throw new EvidenceIntegrityError(message, { userMessage: message });
+    }
     if (matches?.length !== 1) {
-      const message = `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record`;
+      const message = `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record. Supply both capture IDs in source_evidence when the digest is ambiguous.`;
       throw new EvidenceIntegrityError(message, { userMessage: message });
     }
     return matches[0]!;
@@ -329,8 +340,13 @@ const assessScreenshotComparison = (
   const before = sourceForArtifact(
     parsed.value.before_artifact_sha256,
     "before",
+    claim.source_evidence?.before_evidence_id,
   );
-  const after = sourceForArtifact(parsed.value.after_artifact_sha256, "after");
+  const after = sourceForArtifact(
+    parsed.value.after_artifact_sha256,
+    "after",
+    claim.source_evidence?.after_evidence_id,
+  );
   const saved = readComparisonResult(comparison, "compare_web_screenshots");
   if (!saved.ok) throw saved.error;
   const { limitations, ...recorded } = saved.value.result;
@@ -375,10 +391,17 @@ const assessScreenshotComparison = (
           : recorded.status === "different"
             ? "changed"
             : "unknown",
-      limitations:
-        recorded.status === "dimension_mismatch"
-          ? [...limitations, "Screenshot dimensions differ."]
-          : limitations,
+      limitations: [
+        ...limitations,
+        ...[before, after].flatMap(({ evidenceId, screenshot }) =>
+          screenshot.limitations.map(
+            (detail) => `Source ${evidenceId}: ${detail}`,
+          ),
+        ),
+        ...(recorded.status === "dimension_mismatch"
+          ? ["Screenshot dimensions differ."]
+          : []),
+      ],
     },
     visualBlockers,
   };
