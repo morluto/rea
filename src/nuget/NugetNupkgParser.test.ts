@@ -443,6 +443,73 @@ it("uses the root nuspec when an unrelated relationship ends in /manifest", asyn
   expect(report.identity?.id).toBe("Demo.Package");
 });
 
+const opcRelationshipNamespace =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+const nestedManifestRels = manifestRels("content/Other.nuspec");
+
+it.each([
+  {
+    label: "foreign root namespace",
+    rels: nestedManifestRels.replace(
+      opcRelationshipNamespace,
+      "urn:sample:foreign",
+    ),
+    selected: false,
+  },
+  {
+    label: "unqualified root and relationship",
+    rels: nestedManifestRels.replace(
+      ` xmlns="${opcRelationshipNamespace}"`,
+      "",
+    ),
+    selected: false,
+  },
+  {
+    label: "foreign child namespace",
+    rels: nestedManifestRels.replace(
+      "<Relationship Type=",
+      '<Relationship xmlns="urn:sample:foreign" Type=',
+    ),
+    selected: false,
+  },
+  {
+    label: "prefixed OPC elements",
+    rels: nestedManifestRels
+      .replace("xmlns=", "xmlns:opc=")
+      .replaceAll("<Relationships", "<opc:Relationships")
+      .replaceAll("</Relationships", "</opc:Relationships")
+      .replace("<Relationship Type=", "<opc:Relationship Type="),
+    selected: true,
+  },
+  {
+    label: "valid relationship beside a foreign child",
+    rels: nestedManifestRels.replace(
+      "</Relationships>",
+      '<Relationship xmlns="urn:sample:foreign" Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="Demo.Package.nuspec" Id="Foreign"/></Relationships>',
+    ),
+    selected: true,
+  },
+])(
+  "recognizes OPC manifest authority by expanded XML name ($label)",
+  async ({ rels, selected }) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      extraMembers: {
+        "_rels/.rels": rels,
+        "content/Other.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+    expect(report.nuspec).toMatchObject({
+      path: selected ? "content/Other.nuspec" : "Demo.Package.nuspec",
+      source: selected ? "opc-relationship" : "root-nuspec",
+    });
+    expect(report.identity?.id).toBe(
+      selected ? "Ungrouped.Package" : "Demo.Package",
+    );
+  },
+);
+
 it.for(["manifests/./Actual.nuspec", "/manifests/extra/../Actual.nuspec"])(
   "resolves dot segments in the manifest relationship Target %s",
   async (target) => {
@@ -722,4 +789,22 @@ it("keeps one member when every manifest target resolves to it", () => {
   const targets = Array.from({ length: 1_000 }, () => "ONLY.nuspec");
   expect(distinctTargetMatches(targets, match)).toEqual([member]);
   expect(match).toHaveBeenCalledTimes(1_000);
+});
+
+it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: `<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" xmlns:ext="urn:example">
+      <metadata>
+        <id>Demo.Package</id><version>1.0.0</version>
+        <dependencies>
+          <ext:group targetFramework="net8.0"><ext:dependency id="Extension" /></ext:group>
+          <dependency id="Declared" version="1.0" />
+        </dependencies>
+      </metadata>
+    </package>`,
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(result.dependency_groups).toMatchObject([
+    { target_framework: null, dependencies: [{ id: "Declared" }] },
+  ]);
 });

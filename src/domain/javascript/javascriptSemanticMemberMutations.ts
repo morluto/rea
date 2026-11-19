@@ -2077,7 +2077,11 @@ export function* collectSemanticMemberMutationsSteps(
       const slot = semanticSelectedReferenceSlot(reference, state);
       // Custom iteration can yield the iterable itself as well as any child.
       // Treat its root as escaped, including writes through yielded references.
-      const knownArray = semanticKnownArrayIteration(slot?.value, state);
+      const knownArray = semanticKnownArrayIteration(
+        slot?.value,
+        state,
+        reference.node,
+      );
       if (knownArray && reference.iterationOnly) continue;
       markValue(
         reference.node,
