@@ -16,7 +16,10 @@ import {
 } from "../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCapturedOutput,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
@@ -29,6 +32,11 @@ export const retainOwnedCommandCleanup = (
   resourceOwner: RetainedResourceScope,
   providerId: string,
   operation: string,
+  /**
+   * Output of a run that completed, for a caller whose command cleanup error
+   * is the primary report; a secondary cleanup leaves output to its primary.
+   */
+  completed?: { readonly capturedOutput: AnalysisCapturedOutput },
 ): readonly AnalysisError[] => {
   const commandFailure =
     cause instanceof OwnedCommandFailure ? cause : undefined;
@@ -90,7 +98,13 @@ export const retainOwnedCommandCleanup = (
                 process_cleanup: jsonValueSchema.parse(result),
               }),
         },
-        { cause, operation },
+        {
+          cause,
+          operation,
+          ...(completed === undefined
+            ? {}
+            : { capturedOutput: completed.capturedOutput }),
+        },
       );
     const cleanup = failureForStop(
       commandFailure.cleanupFailure ??
@@ -114,7 +128,7 @@ export const retainOwnedCommandCleanup = (
       {
         close: () => lease.release(),
         get cleanupResources() {
-          return cleanup.cleanupResources;
+          return lease.released ? [] : (lease.cleanupResources ?? []);
         },
       },
       commandFailure.resources[0] ?? "Provider prerequisite process",
@@ -189,14 +203,18 @@ export const processInspectionCancellationError = (
   return undefined;
 };
 
-/** Bind explicit inspection owners to an artifact scope while preserving the caller's primary. */
-export const retainProcessInspectionCleanup = (
+/**
+ * Transfer helper and command cleanup owners to an artifact scope, which
+ * retries them before its next operation and on close. Returns the unresolved
+ * cleanup failures, each bound to its retained owner.
+ */
+export const retainArtifactCommandCleanup = (
   cause: unknown,
-  primary: AnalysisError,
   resources: ArtifactResourceScope,
   operation: string,
-): AnalysisError => {
-  const failures = retainOwnedCommandCleanup(
+  completed?: Parameters<typeof retainOwnedCommandCleanup>[4],
+): readonly AnalysisError[] =>
+  retainOwnedCommandCleanup(
     cause,
     {
       retain: (owner, resource) =>
@@ -209,7 +227,17 @@ export const retainProcessInspectionCleanup = (
     },
     "process-ownership",
     operation,
+    completed,
   );
+
+/** Bind explicit inspection owners to an artifact scope while preserving the caller's primary. */
+export const retainProcessInspectionCleanup = (
+  cause: unknown,
+  primary: AnalysisError,
+  resources: ArtifactResourceScope,
+  operation: string,
+): AnalysisError => {
+  const failures = retainArtifactCommandCleanup(cause, resources, operation);
   for (const failure of failures)
     primary = analysisErrorWithCleanupDependencies(primary, failure, operation);
   return bindProcessInspectionCancellations(cause, primary, operation);

@@ -8,6 +8,8 @@ export interface SourceToken {
   closesBlock?: true;
   /** The `)` that closes a control head such as `if (…)`. */
   controlHead?: true;
+  /** A postfix `!` (TypeScript non-null assertion) after a completed operand. */
+  nonNullAssertion?: true;
   /** Template text that opens a `${` substitution. */
   readonly opensSubstitution?: true;
 }

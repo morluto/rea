@@ -1,4 +1,8 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -31,8 +35,12 @@ import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProvider
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { ElfPointerRelocationFailure } from "../../domain/native/elfPointerRelocations.js";
+import {
+  ELF_POINTER_RELOCATION_FORMAT,
+  ElfPointerRelocationFailure,
+} from "../../domain/native/elfPointerRelocations.js";
 import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
 import { readMachoInitializers } from "./MachoInitializers.js";
@@ -198,35 +206,28 @@ const failurePrimary = (
   if (identityFailure !== undefined) return identityFailure;
   if (
     cause instanceof ElfPointerRelocationFailure &&
-    cause.failure.kind === "limit"
+    isParseLimit(cause, ELF_POINTER_RELOCATION_FORMAT)
   )
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: "structure", maximum: cause.failure.limit.maximum },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The native initializer structural allowance",
-          "parser",
-        ),
-      },
-    );
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...fixedAllowanceOptions(
+        "The native initializer structural allowance",
+        "parser",
+        {
+          limit: cause.failure.limit.maximum,
+          ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+        },
+      ),
+    });
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The native initializer structural allowance",
-          "parser",
-        ),
-      },
-    );
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...fixedAllowanceOptions(
+        "The native initializer structural allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (

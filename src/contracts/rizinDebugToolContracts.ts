@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { DEBUGGER_SESSION_STOP_CODES } from "../domain/debuggerSessionErrors.js";
 
-import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, toolEffects } from "./toolEffects.js";
@@ -38,8 +38,8 @@ export const RIZIN_DEBUG_TOOL_CONTRACTS = [
     description:
       "Start a persistent Rizin debugger for one selected target/backend. Linux and a caller-selected TTY for inferior stdin/stdout/stderr are required; the target may use that terminal after detach. Startup suppresses user settings/scripts while retaining plugins. Detach requires verified output sinks, no target access to the debugger command stream, and dbg.exitkills=false. Capabilities depend on the installed backend. This shared-server operation retires binary analysis: close Ghidra explicitly first, then reopen the binary after effects settle.",
     inputSchema: z.strictObject({
-      path: localPathStringSchema,
-      inferior_tty: localPathStringSchema,
+      path: absoluteLocalPathStringSchema,
+      inferior_tty: absoluteLocalPathStringSchema,
       backend: z.string().min(1).optional(),
     }),
     outputSchema: z.strictObject({

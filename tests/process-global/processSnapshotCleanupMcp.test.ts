@@ -40,6 +40,7 @@ import { createServer } from "../../src/server/createServer.js";
 import { silentLogger } from "../../src/logger.js";
 import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { ok } from "../../src/domain/result.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const connectSession = async () => {
   const session = createTestBinarySession(
@@ -53,7 +54,10 @@ const connectSession = async () => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "process-snapshot-cleanup", version: "1" });
+  const client = new Client(
+    { name: "process-snapshot-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -71,7 +75,10 @@ it("retains and retries the exact snapshot file handle through public MCP captur
   injected.failClose = true;
   injected.opens = 0;
   const resources = await connectSession();
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const delivery = vi.spyOn(
+    ToolResultDelivery.prototype,
+    "toPartialErrorToolResult",
+  );
   const capture = () =>
     resources.client.callTool({
       name: "capture_process_scenario",
@@ -110,10 +117,10 @@ it("retains and retries the exact snapshot file handle through public MCP captur
       },
     });
     const firstDelivered = delivery.mock.calls.at(-1)?.[0];
-    expect(firstDelivered?.ok).toBe(false);
-    if (firstDelivered === undefined || firstDelivered.ok)
+    expect(firstDelivered?.cleanupIncomplete).toBe(true);
+    if (firstDelivered === undefined)
       throw new Error("Expected a delivered snapshot failure");
-    expect(firstDelivered.error.cleanupResources).toContain(injected.path);
+    expect(firstDelivered.cleanupResources).toContain(injected.path);
 
     const retryBlocked = parseMcpToolError(await capture());
     expect(retryBlocked.error.code).toBe("cleanup_incomplete");
@@ -137,8 +144,8 @@ it("retains and retries the exact snapshot file handle through public MCP captur
     await expect(injected.handle.stat()).rejects.toMatchObject({
       code: "EBADF",
     });
-    expect(firstDelivered.error.cleanupIncomplete).toBe(false);
-    expect(firstDelivered.error.cleanupResources).toEqual([]);
+    expect(firstDelivered.cleanupIncomplete).toBe(false);
+    expect(firstDelivered.cleanupResources).toEqual([]);
 
     const recovered = await capture();
     expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);

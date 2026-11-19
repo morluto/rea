@@ -9,21 +9,26 @@ const state = vi.hoisted(() => ({
   reason: undefined as unknown,
 }));
 
-vi.mock("../../src/process/ExecFileOutput.js", async (importOriginal) => {
+vi.mock("../../src/process/OwnedCommand.js", async (importOriginal) => {
   const actual =
-    await importOriginal<
-      typeof import("../../src/process/ExecFileOutput.js")
-    >();
+    await importOriginal<typeof import("../../src/process/OwnedCommand.js")>();
   return {
     ...actual,
-    execFileOutput: vi.fn(async () => {
+    runOwnedCommand: vi.fn(async () => {
       state.controller?.abort(state.reason);
-      throw new actual.ExecFileOutputCancelledError(state.reason);
+      throw new actual.OwnedCommandFailure(
+        "cancelled",
+        "Command cancelled.",
+        null,
+        null,
+        { cancellation: { reason: state.reason } },
+      );
     }),
   };
 });
 
-import { execFileOutput } from "../../src/process/ExecFileOutput.js";
+import { runOwnedCommand } from "../../src/process/OwnedCommand.js";
+import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { analyzeAppleAssetCatalogs } from "../../src/artifacts/apple/AppleAssetCatalogAnalysis.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -55,7 +60,7 @@ const analyze = (bundle: string, signal: AbortSignal) =>
   });
 
 it("retains the caller reason when assetutil observes cancellation", async () => {
-  vi.mocked(execFileOutput).mockClear();
+  vi.mocked(runOwnedCommand).mockClear();
   const bundle = await createBundle();
   const reason = { requested: "stop asset catalog" };
   const controller = new AbortController();
@@ -65,19 +70,18 @@ it("retains the caller reason when assetutil observes cancellation", async () =>
     const failure: unknown = await analyze(bundle, controller.signal).catch(
       (cause: unknown) => cause,
     );
-    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-    if (!(failure instanceof ArtifactReaderFailure))
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
       throw new Error("Expected asset catalog cancellation");
-    expect(execFileOutput).toHaveBeenCalledTimes(1);
-    expect(failure.reason).toBe("cancelled");
-    expect(failure.cancellation?.reason).toBe(reason);
+    expect(runOwnedCommand).toHaveBeenCalledTimes(1);
+    expect(failure.cause).toBe(reason);
   } finally {
     await rm(bundle, { recursive: true, force: true });
   }
 });
 
 it("retains the caller reason when the catalog digest is cancelled", async () => {
-  vi.mocked(execFileOutput).mockClear();
+  vi.mocked(runOwnedCommand).mockClear();
   const bundle = await createBundle();
   const reason = { requested: "stop during catalog digest" };
   const controller = new AbortController();
@@ -104,7 +108,7 @@ it("retains the caller reason when the catalog digest is cancelled", async () =>
     expect(readEntered).toBe(true);
     expect(controller.signal.aborted).toBe(true);
     expect(controller.signal.reason).toBe(reason);
-    expect(execFileOutput).not.toHaveBeenCalled();
+    expect(runOwnedCommand).not.toHaveBeenCalled();
     expect(open).toHaveBeenCalledTimes(1);
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
     if (!(failure instanceof ArtifactReaderFailure))

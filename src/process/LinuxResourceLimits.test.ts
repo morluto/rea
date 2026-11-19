@@ -5,7 +5,6 @@ import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
-import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../resources/readStableArtifact.js";
 import { ok } from "../domain/result.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
@@ -94,13 +93,48 @@ it("preserves stricter soft limits and lower hard ceilings, including zero", () 
     clampLinuxResourceLimits(configured, report("268435456 536870912")),
   ).toMatchObject({ address_space_bytes: 268435456 });
 });
-it("refuses missing, ambiguous or malformed kernel limits before launch", () => {
-  for (const value of [
-    "",
-    report("invalid unlimited"),
+it.each([
+  ["missing", "", "limit_unreadable", "address_space_bytes"],
+  [
+    "duplicate",
     report("unlimited unlimited") + "Max address space 1 2 bytes\n",
-  ])
-    expect(() => clampLinuxResourceLimits(configured, value)).toThrow();
+    "limit_unreadable",
+    "address_space_bytes",
+  ],
+  [
+    "non-decimal",
+    report("invalid unlimited"),
+    "limit_invalid",
+    "address_space_bytes",
+  ],
+  [
+    "wrong unit",
+    report("unlimited unlimited").replace(
+      "file size unlimited unlimited bytes",
+      "file size unlimited unlimited seconds",
+    ),
+    "limit_invalid",
+    "file_bytes",
+  ],
+  [
+    "inverted bounds",
+    report("unlimited unlimited", "unlimited unlimited", "3 2"),
+    "limit_invalid",
+    "cpu_seconds",
+  ],
+  [
+    "unlimited soft with finite hard bound",
+    report("unlimited 2147483648"),
+    "limit_invalid",
+    "address_space_bytes",
+  ],
+])("refuses a %s kernel limit before launch", (_case, value, code, limit) => {
+  expect(() => clampLinuxResourceLimits(configured, value)).toThrow(
+    expect.objectContaining({
+      code,
+      detail: expect.objectContaining({ limit }),
+    }),
+  );
 });
 it("pins the shared producer budget in one place", () => {
   expect(BOUNDED_PRODUCER_LIMITS).toEqual({

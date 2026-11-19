@@ -1,10 +1,15 @@
 import { observeMzWindowsHeader } from "../dosMz.js";
 import {
+  PE_SIZE_OF_HEADERS_OFFSET,
   readPeOptionalHeaderFixedFields,
   readPeOptionalHeaderDirectory,
   type PeOptionalHeaderFixedFields,
 } from "../peOptionalHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import {
+  observePeHeaderExtent,
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
 import { decodePeMachine } from "../peMachine.js";
@@ -381,19 +386,15 @@ const readOptionalHeader = (
 
 const readSections = (
   bytes: Buffer,
-  coff: CoffHeader,
-  optional: OptionalHeader,
+  sectionTableOffset: number,
+  sectionCount: number,
 ): readonly PeSection[] => {
-  const sectionOffset = add(
-    optional.optionalOffset,
-    coff.optionalSize,
-    "pe.sections",
-  );
-  requireRange(bytes, sectionOffset, coff.sectionCount * 40, "pe.sections");
   const sections: PeSection[] = [];
-  for (let index = 0; index < coff.sectionCount; index += 1) {
-    const offset = sectionOffset + index * 40;
-    const parsed = readPeSectionHeader(bytes.subarray(offset, offset + 40));
+  for (let index = 0; index < sectionCount; index += 1) {
+    const offset = sectionTableOffset + index * PE_SECTION_HEADER_BYTES;
+    const parsed = readPeSectionHeader(
+      bytes.subarray(offset, offset + PE_SECTION_HEADER_BYTES),
+    );
     if (!parsed.ok)
       throw managedFailure(
         "invalid-directory",
@@ -476,13 +477,43 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
     );
   const coff = readCoffHeader(bytes);
   const optional = readOptionalHeader(bytes, coff);
-  const sections = readSections(bytes, coff, optional);
+  const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
+    observePeHeaderExtent({
+      optionalHeaderOffset: optional.optionalOffset,
+      optionalHeaderSize: coff.optionalSize,
+      sectionCount: coff.sectionCount,
+      sizeOfHeaders: optional.fixed.sizeOfHeaders,
+      fileSize: bytes.length,
+    });
+  requireRange(bytes, sectionTableOffset, sectionTableBytes, "pe.sections");
+  const extentIssue: ManagedParseIssue | null =
+    sizeOfHeadersState === "valid"
+      ? null
+      : {
+          code: "invalid-directory",
+          scope: "pe.optional-header",
+          detail:
+            sizeOfHeadersState === "before-section-table-end"
+              ? "PE SizeOfHeaders ends before the section table ends"
+              : "PE SizeOfHeaders extends past the end of the file",
+          offset: optional.optionalOffset + PE_SIZE_OF_HEADERS_OFFSET,
+        };
+  // Retain the header and any CLI declaration we can observe, but admit no
+  // RVA mappings from a section table outside a valid header envelope.
+  const sections =
+    extentIssue === null
+      ? readSections(bytes, sectionTableOffset, coff.sectionCount)
+      : [];
   const cliDirectoryRead = readCliDirectory(bytes, coff, optional);
-  const cliDirectoryState = cliDirectoryRead.kind;
+  const cliDirectoryState =
+    extentIssue !== null && cliDirectoryRead.kind === "absent"
+      ? "unreadable"
+      : cliDirectoryRead.kind;
   let cli: ManagedCliHeader | null = null;
-  let cliIssue: ManagedParseIssue | null =
-    cliDirectoryRead.kind === "unreadable" ? cliDirectoryRead.issue : null;
-  if (cliDirectoryRead.kind === "present") {
+  let cliIssue =
+    extentIssue ??
+    (cliDirectoryRead.kind === "unreadable" ? cliDirectoryRead.issue : null);
+  if (cliIssue === null && cliDirectoryRead.kind === "present") {
     try {
       cli = readCliHeader(bytes, sections, cliDirectoryRead.directory);
     } catch (cause: unknown) {

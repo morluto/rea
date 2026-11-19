@@ -279,9 +279,9 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             operation,
             {
               diagnostics: {
-                exit_code: output.exitCode ?? null,
-                stdout: output.stdout.text,
-                stderr: output.stderr.text,
+                exit_code: capturedOutput.exit_code ?? null,
+                stdout: capturedOutput.stdout,
+                stderr: capturedOutput.stderr,
               },
             },
           );
@@ -551,6 +551,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               ...fixedAllowanceOptions(
                 "The packet-field discovery record allowance",
                 "capture",
+                { limit: cause.failure.limit.maximum, unit: "bytes" },
               ),
             })
           : undefined,

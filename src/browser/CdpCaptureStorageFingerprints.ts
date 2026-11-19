@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
@@ -13,6 +11,7 @@ import {
   recordsValue,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type StorageFingerprint =
   WebPageInspection["storage"]["content_fingerprints"][number];
@@ -444,8 +443,7 @@ const addFingerprint = (
 
 const STORAGE_ENTRY_PAGE_SIZE = 1_000;
 
-const digest = (value: unknown): string =>
-  createHash("sha256").update(encodedValue(value)).digest("hex");
+const digest = (value: unknown): string => sha256Hex(encodedValue(value));
 
 const encodedValue = (value: unknown): Uint8Array | string => {
   if (value instanceof Uint8Array) return value;

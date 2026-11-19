@@ -35,17 +35,16 @@ import {
   type ComputerStartTiming,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
-import {
-  AGENTENV_PROVIDER,
-  ComputerHelper,
-  type ComputerRelease,
-} from "../../desktop/AgentEnvComputerHelper.js";
+import { ComputerHelper } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../../domain/desktop/computerRelease.js";
 import {
   resolveBuildComputerEnvironment,
   type BuildComputerDefaults,
 } from "../../desktop/BuildComputerEnvironment.js";
 import { buildSecretsDirectory } from "../../desktop/BuildSecretFiles.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
 import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   BuildComputerActionLog,
@@ -232,6 +231,7 @@ const reset = async (
 interface SharedSettings {
   readonly settle: BuildSettle;
   readonly secrets: DesktopBuildSecrets;
+  readonly readHostFile: HostFileReader;
 }
 
 /** A live computer as REA holds it: its action log, its capture and witness, and the turns all its calls take. */
@@ -239,7 +239,7 @@ const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
   source: BuildSource,
-  { settle, secrets }: SharedSettings,
+  { settle, secrets, readHostFile }: SharedSettings,
   judge: ScreenJudgeProcess,
 ): HeldComputer => {
   const actions = new BuildComputerActionLog(secrets.redact);
@@ -262,6 +262,7 @@ const liveComputer = (
         ? { path: source.path, judge: judge.judge }
         : undefined,
     redact: secrets.redactJson,
+    readHostFile,
   });
   let closedComputer: Extract<ComputerRelease, { verified: true }> | undefined;
   const attempt = async (
@@ -419,6 +420,7 @@ export class DesktopBuildComputers {
 
   constructor(
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly readHostFile: HostFileReader,
     settle: BuildSettle = SETTLE_TIMING,
     private readonly defaults: BuildComputerDefaults = {},
     private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
@@ -426,7 +428,7 @@ export class DesktopBuildComputers {
     this.#secrets = new DesktopBuildSecrets(
       buildSecretsDirectory(environment, HOST_PLATFORM.platform),
     );
-    this.#shared = { settle, secrets: this.#secrets };
+    this.#shared = { settle, secrets: this.#secrets, readHostFile };
   }
 
   /** How often a computer's start, and a tool call waiting on one, reports progress. */
@@ -477,6 +479,7 @@ export class DesktopBuildComputers {
           defaults: this.defaults,
           retainCleanup: (owner) => this.#work.retain(owner),
           resources: this.#work.resources,
+          readHostFile: this.readHostFile,
         },
         stopping,
         progress,

@@ -1,3 +1,7 @@
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../process/RuntimeExhaustion.js";
 import { Budget } from "../domain/budget.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
@@ -16,11 +20,11 @@ import {
 import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { WorkerFrameSignal } from "../process/WorkerFrameSignal.js";
+import { Utf8NdjsonLineBuffer } from "../process/Utf8NdjsonLineBuffer.js";
 import { createHash, randomUUID } from "node:crypto";
 import { open, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { StringDecoder } from "node:string_decoder";
 import { getHeapStatistics } from "node:v8";
 import {
   ArtifactReaderFailure,
@@ -164,6 +168,8 @@ type WebBundleObservedFailure =
       readonly signal: NodeJS.Signals | null;
       readonly memoryLimitReached: boolean;
       readonly heapExhaustion: boolean;
+      /** The runtime's own report, kept once the supervisor observed it. */
+      readonly exhaustion?: RuntimeExhaustion;
     };
 
 type WebBundleActiveJob = {
@@ -183,8 +189,9 @@ export class WebBundleAnalysisWorker {
   readonly #runtime: OwnedWorkerRuntime;
   readonly #files = new ArtifactResourceScope();
   readonly #cleanup: AnalysisCleanupLease;
-  #decoder = new StringDecoder("utf8");
-  #pending = "";
+  readonly #lines = new Utf8NdjsonLineBuffer(
+    () => WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
+  );
   #frames: WebBundleWorkerMessage[] = [];
   #protocolFailure: unknown;
   #observedFailure: WebBundleObservedFailure | undefined;
@@ -200,7 +207,7 @@ export class WebBundleAnalysisWorker {
     try {
       // Refuse the chunk before appending it to any retained control text.
       if (
-        Buffer.byteLength(chunk) + Buffer.byteLength(this.#pending) >
+        Buffer.byteLength(chunk) + this.#lines.pendingBytes >
         WEB_BUNDLE_WORKER_LIMITS.protocolBytes
       )
         throw new RangeError(
@@ -209,24 +216,21 @@ export class WebBundleAnalysisWorker {
             "control-frame budget",
           ),
         );
-      this.#pending +=
-        typeof chunk === "string" ? chunk : this.#decoder.write(chunk);
-      for (;;) {
-        const end = this.#pending.indexOf("\n");
-        if (end < 0) break;
+      for (const line of this.#lines.pushRaw(
+        typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+      )) {
+        if (!line.ok) throw line.error;
         if (this.#frames.length >= 16)
           throw new RangeError("Web analyzer exceeded its control-frame queue");
-        this.#frames.push(
-          webBundleWorkerMessageSchema.parse(
-            JSON.parse(this.#pending.slice(0, end)),
-          ),
+        const frame = webBundleWorkerMessageSchema.parse(
+          JSON.parse(line.value),
         );
-        this.#observeFrame(this.#frames.at(-1)!);
-        this.#pending = this.#pending.slice(end + 1);
+        this.#frames.push(frame);
+        this.#observeFrame(frame);
       }
       this.#frameSignal.wake("frame");
     } catch (cause) {
-      this.#pending = "";
+      this.#lines.reset();
       this.#protocolFailure = cause;
       this.#latchFailure({ kind: "protocol", cause });
       this.#frameSignal.wake("failure");
@@ -259,13 +263,15 @@ export class WebBundleAnalysisWorker {
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
+        // V8's heap report is observed as output streams, so a retention
+        // budget or a stack trace that overflowed it cannot hide it.
+        runtime: "v8",
         onDiagnostic: (event) => {
           if (this.#activeDeadline?.interruption !== undefined) return;
           if (
             event.type === "exit" &&
             (event.code !== 0 || event.signal !== null)
           ) {
-            const stderr = event.snapshot.stderr.text;
             const memoryLimitReached =
               event.snapshot.memoryLimitReached === true;
             this.#latchFailure({
@@ -275,9 +281,10 @@ export class WebBundleAnalysisWorker {
               memoryLimitReached,
               heapExhaustion:
                 memoryLimitReached ||
-                /heap out of memory|heap limit|allocation failed/iu.test(
-                  stderr,
-                ),
+                event.snapshot.runtimeExhaustion !== undefined,
+              ...(event.snapshot.runtimeExhaustion === undefined
+                ? {}
+                : { exhaustion: event.snapshot.runtimeExhaustion }),
             });
           } else if (event.type === "output-close") {
             if (
@@ -290,19 +297,16 @@ export class WebBundleAnalysisWorker {
           } else if (event.type === "output") {
             const failure = this.#observedFailure;
             if (failure?.kind !== "exit") return;
-            const memoryLimitReached =
-              this.#runtime.supervisor?.snapshot().memoryLimitReached === true;
-            const heapMarker =
-              event.stream === "stderr" &&
-              /heap out of memory|heap limit|allocation failed/iu.test(
-                this.#runtime.supervisor?.snapshot().stderr.text ?? "",
-              );
-            if (!memoryLimitReached && !heapMarker) return;
+            const snapshot = this.#runtime.supervisor?.snapshot();
+            const memoryLimitReached = snapshot?.memoryLimitReached === true;
+            const reported = snapshot?.runtimeExhaustion;
+            if (!memoryLimitReached && reported === undefined) return;
             this.#observedFailure = {
               ...failure,
               heapExhaustion: true,
               memoryLimitReached:
                 failure.memoryLimitReached || memoryLimitReached,
+              ...(reported === undefined ? {} : { exhaustion: reported }),
             };
           }
         },
@@ -378,7 +382,7 @@ export class WebBundleAnalysisWorker {
           ownershipInspectionFailure = this.#inspectionFailure(cause, deadline);
         throw cause;
       }
-      if (this.#frames.length > 0 || this.#pending !== "")
+      if (this.#frames.length > 0 || this.#lines.pendingBytes !== 0)
         throw new AnalysisOutputError(
           OPERATION,
           "Web analyzer emitted unsolicited control data",
@@ -902,6 +906,15 @@ export class WebBundleAnalysisWorker {
             {
               capturedOutput,
               limit: webBundleHeapLimit(exhaustion),
+              ...(failure.exhaustion === undefined
+                ? {}
+                : {
+                    diagnostics: {
+                      runtime_exhaustion_report: runtimeExhaustionReport(
+                        failure.exhaustion,
+                      ),
+                    },
+                  }),
               remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
             },
           );
@@ -980,8 +993,7 @@ export class WebBundleAnalysisWorker {
   #reset(): void {
     this.#ready = false;
     this.#frames = [];
-    this.#pending = "";
-    this.#decoder = new StringDecoder("utf8");
+    this.#lines.reset();
     this.#protocolFailure = undefined;
     this.#observedFailure = undefined;
     this.#activeDeadline = undefined;

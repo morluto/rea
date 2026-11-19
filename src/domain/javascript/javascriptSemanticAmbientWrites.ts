@@ -24,6 +24,7 @@ import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   isUnshadowedGlobal,
@@ -223,6 +224,12 @@ export const createAmbientPathResolver = (
   facts?: AmbientReferenceFacts,
 ) => {
   const cached = new WeakMap<t.Node, AmbientResolution>();
+  // Member syntax is fixed for this AST across reference-store worklist
+  // rounds. Identity resolution still uses the current store facts.
+  const memberPaths = new WeakMap<
+    t.Node,
+    ReturnType<typeof electronMemberPath>
+  >();
   const returnedReferences = createSemanticReturnedReferences(state);
   return (
     node: t.Node,
@@ -244,14 +251,41 @@ export const createAmbientPathResolver = (
       suffix: AmbientProjection;
       readsAtSelf?: true;
     };
-    const pending: Pending[] = [{ node, suffix: projection }];
+    // A binding read queues its selected initializers for one projection,
+    // taken from the end as if queued one by one. Reads selecting the same
+    // initializers and projection share the remaining items: an item already
+    // taken was expanded with the same projection, so taking it again could
+    // only revisit its expanded root. Requeueing every initializer at each
+    // read reached through an alias cycle grows quadratically per query.
+    interface QueuedInitializers {
+      readonly items: readonly Pending[];
+      remaining: number;
+    }
+    const pending: (Pending | QueuedInitializers)[] = [
+      { node, suffix: projection },
+    ];
+    const queuedInitializers = new Map<
+      JavaScriptSemanticBindingState,
+      Map<string | undefined, QueuedInitializers>
+    >();
+    const take = (): Pending | undefined => {
+      for (;;) {
+        const next = pending.pop();
+        if (next === undefined || !("items" in next)) return next;
+        if (next.remaining === 0) continue;
+        next.remaining -= 1;
+        if (next.remaining > 0) pending.push(next);
+        return next.items[next.remaining];
+      }
+    };
     // A receiver query reports the objects a write to `node` mutates, as
     // projections that still end at the written key. Once a step consumes that
     // key, the item denotes the value read from the written slot. Replacing
     // the slot does not mutate that value or the containers it was read from.
+    const admitted = (item: Pending): boolean =>
+      receiver === undefined || item.suffix?.length !== 0;
     const queue = (item: Pending): void => {
-      if (receiver !== undefined && item.suffix?.length === 0) return;
-      pending.push(item);
+      if (admitted(item)) pending.push(item);
     };
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
@@ -281,17 +315,22 @@ export const createAmbientPathResolver = (
         canonical = canonicalAmbientPath(["global", ...canonical.slice(2)]);
       }
     };
-    while (pending.length > 0) {
-      const current = pending.pop();
+    for (;;) {
+      const current = take();
       if (current === undefined) break;
       const queuedBefore = pending.length;
       const pathsBefore = result.size;
       let resolvedIdentity = false;
       try {
-        const { root, members } = electronMemberPath(current.node);
+        let memberPath = memberPaths.get(current.node);
+        if (memberPath === undefined) {
+          memberPath = electronMemberPath(current.node);
+          memberPaths.set(current.node, memberPath);
+        }
+        const { root, members } = memberPath;
         let suffix: AmbientProjection =
-          current.suffix === undefined
-            ? undefined
+          current.suffix === undefined || members.length === 0
+            ? current.suffix
             : [...members, ...current.suffix];
         if (expanded.has(root)) {
           const previous = expanded.get(root);
@@ -412,9 +451,6 @@ export const createAmbientPathResolver = (
           }
           const binding = resolveSemanticBindingState(state, root, root.name);
           if (binding === undefined) continue;
-          const stable = possibleWrites
-            ? undefined
-            : semanticStableInitializer(binding, state);
           const readAt = current.readsAtSelf ? root : capture;
           const atRead =
             possibleWrites && readAt !== undefined
@@ -423,42 +459,63 @@ export const createAmbientPathResolver = (
           const selected = atRead?.binding ?? binding;
           if (possibleWrites && atRead?.hasDefiniteInitializer === false)
             unknownReasons.add("unresolved-value");
-          const initializers = possibleWrites
-            ? [...selected.initializers, ...selected.referenceInitializers]
-            : stable === undefined
-              ? []
-              : [stable];
           // A directly invoked function's parameter starts as its argument,
-          // which therefore did not escape at the call.
+          // which therefore did not escape at the call. It depends on this
+          // read, so it is queued here rather than with the binding's
+          // initializers.
           const argument = possibleWrites
             ? semanticDirectInvocationArgument(root, binding, state)
             : undefined;
           if (argument !== undefined)
             queue({ node: argument, readsAtSelf: true, suffix });
-          for (const initializer of initializers) {
-            if (semanticReferenceSourcesInactive(initializer, state)) continue;
-            // Pattern assignments share the source selection owner with member
-            // effects: copying a container preserves its children, not itself.
-            const path = semanticCopiedReferencePath(
-              initializer,
-              suffix ?? [null],
-              escapedContents ? "escape" : "identity",
-            );
-            if (path === null) continue;
-            queue({
-              node: initializer.node,
-              readsAtSelf: true,
-              suffix:
-                suffix === undefined ||
-                semanticReferenceIterationUnknown(initializer, state)
-                  ? undefined
-                  : path.map((key) =>
-                      key === null || typeof key === "object"
-                        ? null
-                        : String(key),
-                    ),
-            });
+          const bySuffix =
+            queuedInitializers.get(selected) ??
+            new Map<string | undefined, QueuedInitializers>();
+          queuedInitializers.set(selected, bySuffix);
+          const suffixKey = JSON.stringify(suffix);
+          let queued = bySuffix.get(suffixKey);
+          if (queued === undefined) {
+            const stable = possibleWrites
+              ? undefined
+              : semanticStableInitializer(binding, state);
+            const initializers = possibleWrites
+              ? [...selected.initializers, ...selected.referenceInitializers]
+              : stable === undefined
+                ? []
+                : [stable];
+            const items: Pending[] = [];
+            for (const initializer of initializers) {
+              if (semanticReferenceSourcesInactive(initializer, state))
+                continue;
+              // Pattern assignments share the source selection owner with member
+              // effects: copying a container preserves its children, not itself.
+              const path = semanticCopiedReferencePath(
+                initializer,
+                suffix ?? [null],
+                escapedContents ? "escape" : "identity",
+              );
+              if (path === null) continue;
+              const item: Pending = {
+                node: initializer.node,
+                readsAtSelf: true,
+                suffix:
+                  suffix === undefined ||
+                  semanticReferenceIterationUnknown(initializer, state)
+                    ? undefined
+                    : path.map((key) =>
+                        key === null || typeof key === "object"
+                          ? null
+                          : String(key),
+                      ),
+              };
+              if (admitted(item)) items.push(item);
+            }
+            queued = { items, remaining: items.length };
+            bySuffix.set(suffixKey, queued);
           }
+          // Taken items still count as queued for this read: requeued, they
+          // would have been the same no-op revisits.
+          if (queued.items.length > 0) pending.push(queued);
           continue;
         }
         if (

@@ -36,6 +36,9 @@ import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { classifyAndHashRootForInventory } from "./inventory/classify.js";
@@ -300,6 +303,30 @@ it("reads a 32-bit and a big-endian Mach-O section", async () => {
   }
 });
 
+it.each([
+  ["zero-fill", (bytes: Buffer) => bytes.writeUInt32LE(0x1, 32 + 72 + 64)],
+  ["file extent", (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 48)],
+  [
+    "virtual extent",
+    (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 72 + 32),
+  ],
+] as const)(
+  "refuses a named Mach-O SEA section with invalid %s backing",
+  async (reason, change) => {
+    const bytes = nodeSeaMachO();
+    change(bytes);
+    const handle = await open(await writeCarrier("macho-backing", bytes), "r");
+    try {
+      await expect(locateNodeSea(handle, bytes.length)).rejects.toMatchObject({
+        reason: "format",
+        message: expect.stringContaining(reason),
+      });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
 it("classifies a main script without a JavaScript suffix as javascript-bundle", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier(
@@ -414,6 +441,31 @@ it("leaves a Mach-O, ELF, or PE without a SEA slot in its native format", async 
   expect(pe.manifest.root_format).toBe("pe");
 });
 
+it("locates a SEA resource past a distant DOS stub", async () => {
+  const { bytes: image } = peResourceFixture(
+    true,
+    [
+      {
+        type: 10,
+        name: "NODE_SEA_BLOB",
+        language: 0,
+        payload: buildNodeSeaBlob(populated),
+      },
+    ],
+    65536,
+    4,
+    0x20080,
+  );
+  const path = await writeCarrier("distant-pe", image);
+  const reader = new NodeSeaArtifactReader(path);
+  try {
+    const entries = await seaEntries(reader);
+    expect(entries.map(({ path: member }) => member)).toContain("app/main.js");
+  } finally {
+    await reader.close();
+  }
+});
+
 it.each([false, true])(
   "scopes the large PE admission limit to SEA resources (PE32+: %s)",
   async (plus) => {
@@ -465,6 +517,48 @@ it("trusts the PT_NOTE blob over a stale SHT_NOTE entry", async () => {
   );
   expect(inventory.manifest.root_format).toBe("node-sea");
 });
+
+it.each([
+  ["section", "elf"],
+  ["both", "node-sea"],
+] as const)(
+  "does not locate raw SEA bytes in compressed note storage (%s)",
+  async (ownership, expected) => {
+    const bytes = nodeSeaElf({ ...populated, ownership });
+    // Flag the note section as compressed, leaving its raw descriptor bytes intact.
+    const sectionOffset = Number(bytes.readBigUInt64LE(0x28)) + 64;
+    bytes.writeBigUInt64LE(0x800n, sectionOffset + 8);
+    const inventory = await scanCanonicalArtifactInventory(
+      await writeCarrier("compressed-note-section", bytes),
+    );
+    expect(inventory.manifest.root_format).toBe(expected);
+  },
+);
+
+it.each([0, 1])(
+  "only accepts padding bytes after a SEA note (%i)",
+  async (tail) => {
+    const bytes = elfNoteFixture({
+      notes: Buffer.concat([
+        elfNote("NODE_SEA_BLOB", 0, buildNodeSeaBlob(populated)),
+        Buffer.from([tail]),
+      ]),
+      ownership: "section",
+      type: 2,
+    });
+    const inventory = scanCanonicalArtifactInventory(
+      await writeCarrier("note-table-tail", bytes),
+    );
+    if (tail === 0)
+      await expect(inventory).resolves.toMatchObject({
+        manifest: { root_format: "node-sea" },
+      });
+    else
+      await expect(inventory).rejects.toMatchObject({
+        message: expect.stringContaining("trailing non-zero bytes"),
+      });
+  },
+);
 
 it("leaves a non-SEA PE with a cyclic resource tree to native classification", async () => {
   const fixture = peResourceFixture(true);
@@ -965,6 +1059,52 @@ it.each([8, 1024 * 1024])(
   },
 );
 
+it("joins Node SEA descriptor closure and preserves its failure for retry", async () => {
+  const path = await writeCarrier("close-retry", nodeSeaElf());
+  const reader = new NodeSeaArtifactReader(path);
+  const reached = createDeferred<OwnedFileHandle>();
+  const release = createDeferred<void>();
+  const failure = new Error("controlled descriptor close failure");
+  let closing: Promise<unknown> | undefined;
+  try {
+    expect(await seaEntries(reader)).not.toHaveLength(0);
+    const close = vi.spyOn(OwnedFileHandle.prototype, "close");
+    try {
+      close.mockImplementationOnce(async function (this: OwnedFileHandle) {
+        reached.resolve(this);
+        await release.promise;
+        throw failure;
+      });
+      let settled = false;
+      closing = reader.close().then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (cause: unknown) => {
+          settled = true;
+          return cause;
+        },
+      );
+      await awaitAcknowledgement(reached.promise, closing, "descriptor close");
+      const owner = await reached.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      release.resolve();
+      expect(await closing).toBe(failure);
+      expect(owner.handle.fd).toBeGreaterThanOrEqual(0);
+      await reader.close();
+      expect(owner.handle.fd).toBe(-1);
+    } finally {
+      release.resolve();
+      await closing;
+      close.mockRestore();
+    }
+  } finally {
+    await reader.close();
+  }
+});
+
 it("honors cancellation before admitting a carrier", async () => {
   const path = await writeCarrier("cancel", nodeSeaElf());
   const reader = new NodeSeaArtifactReader(path);
@@ -1054,7 +1194,7 @@ it.each(["__TEXT", "NODE_SEA"])(
   },
 );
 
-it("retains SEA admission for a complete segment with a nonaligned command size", async () => {
+it("leaves a SEA section in a misaligned Mach-O command unrecognized", async () => {
   const original = nodeSeaMachO();
   const commandSize = original.readUInt32LE(20);
   const payloadAt = 32 + commandSize;
@@ -1072,11 +1212,7 @@ it("retains SEA admission for a complete segment with a nonaligned command size"
     "r",
   );
   try {
-    expect(await locateNodeSea(handle, bytes.length)).toEqual({
-      carrier: "mach-o",
-      blobOffset: payloadAt + 1,
-      blobLength: Number(original.readBigUInt64LE(32 + 72 + 40)),
-    });
+    expect(await locateNodeSea(handle, bytes.length)).toBeUndefined();
   } finally {
     await handle.close();
   }
@@ -1122,7 +1258,7 @@ it("confirms SEA naming before rejecting an unrelated cyclic PE resource branch"
   try {
     await expect(
       locateNodeSea(handle, fixture.bytes.length),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "malformed" });
   } finally {
     await handle.close();
   }

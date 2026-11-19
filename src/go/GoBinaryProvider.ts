@@ -1,5 +1,8 @@
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
@@ -38,7 +41,10 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
 import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
-import { BinaryResourceFailure } from "../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../domain/binaryContainer.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_go_binary";
@@ -92,21 +98,17 @@ const failureForPrimary = (
         : cause.boundary === "build-info"
           ? "max_build_info_bytes"
           : undefined;
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       cause.boundary === "search" ? "cpu" : "memory",
-      `Selected artifact ${path}: ${cause.message}`,
+      cause,
       {
-        boundary: cause.boundary,
-        maximum_bytes: cause.maximum_bytes,
-        ...(parameter === undefined ? {} : { parameter, unit: "bytes" }),
-      },
-      {
-        cause,
+        path,
         ...(parameter === undefined
           ? fixedAllowanceOptions(
               "The Go structural decoding allowance",
               "parser",
+              binaryResourceCeiling(cause),
             )
           : {
               retryable: false,

@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -23,7 +26,10 @@ import {
 } from "../../domain/native/elfUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import {
   ElfUnwindSymbolTextFailure,
   parseElfUnwindRanges,
@@ -111,18 +117,15 @@ const elfUnwindFailurePrimary = (
       },
     );
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       "memory",
-      cause.message,
-      { max_file_bytes: input.max_file_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The 16 MiB ELF structural decoding budget",
-          "parser",
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(
+        "The ELF structural decoding allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
     );
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
@@ -151,10 +154,12 @@ const elfUnwindFailurePrimary = (
           ...(cause.boundary === undefined
             ? {}
             : structural
-              ? fixedAllowanceOptions(
-                  "The ELF unwind structural decoding budget",
-                  "parser",
-                )
+              ? cause.fixedAllowance === undefined
+                ? {}
+                : {
+                    retryable: false as const,
+                    fixedAllowance: cause.fixedAllowance,
+                  }
               : {
                   retryable: false as const,
                   remediationAction: inputBudgetRemediation(

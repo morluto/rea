@@ -649,11 +649,57 @@ it("recovers complete module costs from real blob reports without executing test
     unhandledErrors: 0,
     files: [{ state: "failed" }],
   });
+  const failedRun = await executeTimingReport(root, {
+    SHARD_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  });
+  expect(failedRun.summary).toContain("Failed test modules reported: 1.");
+  expect(failedRun.summary).toContain('- "sample.test.js"');
+  expect(failedRun.stdout).toContain("Failed test modules reported: 1.");
+  expect(failedRun.stdout).toContain('- "sample.test.js"');
   // Even a caller accidentally marking the merge successful cannot publish this report.
   await executeTimingReport(root);
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("caps the failed file list and limits partial diagnostics to reported modules", async () => {
+  const root = await createTestTempDirectory("rea-ci-failed-sample-");
+  await writeFile(
+    join(root, "test-timings.json"),
+    JSON.stringify({
+      version: 1,
+      success: false,
+      unhandledErrors: 2,
+      files: [
+        ...Array.from({ length: 21 }, (_, index) => ({
+          name: `tests/z${String(20 - index).padStart(2, "0")}.test.ts`,
+          durationMs: 1,
+          state: "failed",
+        })),
+        { name: "tests/<tag>.test.ts", durationMs: 1, state: "failed" },
+        { name: "tests/passed.test.ts", durationMs: 1, state: "passed" },
+      ],
+    }),
+  );
+  const { summary, stdout } = await executeTimingReport(root, {
+    SHARD_RESULT: "skipped",
+    SOURCE_REQUIRED: "true",
+    SOURCE_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  });
+  expect(summary).toContain("Partial test diagnostics");
+  expect(summary).toContain(
+    '```text\nFailed test modules reported: 22.\n- "tests/<tag>.test.ts"',
+  );
+  expect(stdout).toContain("Failed test modules reported: 22.");
+  expect(stdout).toContain('- "tests/<tag>.test.ts"');
+  expect(stdout).toContain('- "tests/z18.test.ts"');
+  expect(stdout).not.toContain("z19.test.ts");
+  expect(stdout).not.toContain("passed.test.ts");
+  expect(stdout).toContain("2 more in the test report.");
+  expect(stdout).toContain("Unhandled Vitest errors reported: 2.");
 });
 
 it("verifies exactly the selected subset and never publishes it as timing history", async () => {

@@ -72,7 +72,8 @@ the image never carried notes in another container or overlay.
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
-32 note entries are examined by default across every table. Retained note
+128 note entries are examined by default across every table (256 maximum), which
+admits distribution glibc builds and their SystemTap probe notes. Retained note
 names, section names, GNU descriptor text, core dump string representations, and Android ident strings share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together

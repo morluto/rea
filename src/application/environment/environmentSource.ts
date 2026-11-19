@@ -184,14 +184,21 @@ const schemaInputError = (
 export const recordedExchange = (
   record: WebNetworkCaptureRecord,
   line: Extract<RecordedRequestLine, { readonly kind: "line" }>,
-): RecordedExchange => ({
-  ordinal: record.ordinal,
-  path: line.path,
-  query: line.query === undefined || line.query === "" ? null : line.query,
-  status: line.status,
-  contentType: line.rawMime === "" ? null : line.rawMime,
-  ...readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES),
-});
+): RecordedExchange => {
+  const body = readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES);
+  return {
+    ordinal: record.ordinal,
+    path: line.path,
+    query: line.query === undefined || line.query === "" ? null : line.query,
+    status: line.status,
+    contentType: line.rawMime === "" ? null : line.rawMime,
+    bodyText: body.bodyText,
+    ...(body.bodyEncoding === undefined
+      ? {}
+      : { bodyEncoding: body.bodyEncoding }),
+    ...(body.bodyCut === true ? { bodyCut: true } : {}),
+  };
+};
 
 /** Authenticate a view Evidence file and require one view kind; a refusal names the file role. */
 export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(

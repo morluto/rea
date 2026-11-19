@@ -6,7 +6,7 @@ import type {
   BatchDecompileItem,
   BatchProcedureIdentity,
 } from "../domain/native/batchDecompile.js";
-import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
+import type { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import {
   cleanupStoppedTraversal,
   readCallRelationships,
@@ -23,7 +23,6 @@ import type {
 import {
   enhancedInputSchemas,
   type CallRelationshipDirection,
-  type EnhancedToolName,
 } from "../contracts/enhancedInputs.js";
 import {
   AnalysisOutputError,
@@ -75,6 +74,7 @@ import {
   type EnhancedResult,
   type ValidatedEnhancedCall,
 } from "./EnhancedToolTypes.js";
+import type { DirectEnhancedToolName } from "./oneShotOperationInput.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
 import { resolveXrefsName } from "./XrefsAddressResolution.js";
@@ -124,30 +124,25 @@ const batchDecompileResult = (items: BatchDecompileItem[]) => {
 export class EnhancedTools {
   constructor(private readonly analysis: AnalysisOperationPort) {}
 
-  /** Parse an untrusted direct-call input once, then dispatch exhaustively. */
+  /** Parse direct workflow input and dispatch it with schema defaults. */
   execute(
-    name: EnhancedToolName,
+    name: DirectEnhancedToolName,
     input: unknown,
     signal?: AbortSignal,
   ): EnhancedResult {
-    if (name === "trace_feature" || name === "trace_call_path")
-      return this.#executeTracing(name, input, signal);
-    if (name === "trace_native_values") {
-      const parsed = enhancedInputSchemas.trace_native_values.safeParse(input);
-      return parsed.success
-        ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error, input);
-    }
-    if (name === "trace_native_ui_action") {
-      const parsed =
-        enhancedInputSchemas.trace_native_ui_action.safeParse(input);
-      return parsed.success
-        ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error, input);
-    }
-    if (name === "analyze_function" || name === "inspect_native_api")
-      return this.#executeFunctionAnalysis(name, input, signal);
     switch (name) {
+      case "binary_overview": {
+        const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
+        return parsed.success
+          ? this.executeValidated({ name, input: parsed.data }, signal)
+          : invalidEnhancedInput(name, parsed.error, input);
+      }
+      case "inspect_native_api": {
+        const parsed = enhancedInputSchemas.inspect_native_api.safeParse(input);
+        return parsed.success
+          ? this.executeValidated({ name, input: parsed.data }, signal)
+          : invalidEnhancedInput(name, parsed.error, input);
+      }
       case "inspect_native_dispatch_metadata": {
         const parsed =
           enhancedInputSchemas.inspect_native_dispatch_metadata.safeParse(
@@ -157,51 +152,28 @@ export class EnhancedTools {
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
-      case "get_objc_classes": {
-        const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
+      case "trace_feature": {
+        const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
-      case "get_objc_protocols": {
-        const parsed = enhancedInputSchemas.get_objc_protocols.safeParse(input);
+      case "trace_native_values": {
+        const parsed =
+          enhancedInputSchemas.trace_native_values.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
-      case "batch_decompile": {
-        const parsed = enhancedInputSchemas.batch_decompile.safeParse(input);
+      case "trace_native_ui_action": {
+        const parsed =
+          enhancedInputSchemas.trace_native_ui_action.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
       case "decompile_all": {
         const parsed = enhancedInputSchemas.decompile_all.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "get_call_graph": {
-        const parsed = enhancedInputSchemas.get_call_graph.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "analyze_swift_types": {
-        const parsed =
-          enhancedInputSchemas.analyze_swift_types.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "find_xrefs_to_name": {
-        const parsed = enhancedInputSchemas.find_xrefs_to_name.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "binary_overview": {
-        const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
@@ -260,32 +232,6 @@ export class EnhancedTools {
         return traceNativeUiAction(this.analysis, call.input, signal);
       }
     }
-  }
-
-  #executeTracing(
-    name: "trace_feature" | "trace_call_path",
-    input: unknown,
-    signal?: AbortSignal,
-  ): EnhancedResult {
-    if (name === "trace_call_path") {
-      const parsed = enhancedInputSchemas.trace_call_path.safeParse(input);
-      if (!parsed.success)
-        return invalidEnhancedInput(name, parsed.error, input);
-      return this.executeValidated({ name, input: parsed.data }, signal);
-    }
-    const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
-    return this.executeValidated({ name, input: parsed.data }, signal);
-  }
-
-  #executeFunctionAnalysis(
-    name: "analyze_function" | "inspect_native_api",
-    input: unknown,
-    signal?: AbortSignal,
-  ): EnhancedResult {
-    const parsed = nativeProcedureInputSchema.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
-    return this.executeValidated({ name, input: parsed.data }, signal);
   }
 
   async #analyzeFunction(

@@ -12,6 +12,7 @@ import type { BrowserObservationPort } from "../../../src/ports/BrowserObservati
 import type { BrowserTargetList } from "../../../src/domain/browserObservationSchemas.js";
 import type { JavaScriptRuntimeTargetList } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("retains late-cancelled Go artifact Evidence through MCP and keeps the server usable", async () => {
   const goInspection = phaseGate();
@@ -41,7 +42,10 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     { kind: "session", session },
     { logger: silentLogger, goBinary: service },
   );
-  const client = new Client({ name: "late-abort-artifact", version: "1" });
+  const client = new Client(
+    { name: "late-abort-artifact", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -103,7 +107,10 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
     { kind: "session", session },
     { logger: silentLogger, javascriptRuntimeObservation: provider },
   );
-  const client = new Client({ name: "late-abort-inspector", version: "1" });
+  const client = new Client(
+    { name: "late-abort-inspector", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -188,7 +195,10 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
     { kind: "session", session },
     { logger: silentLogger, browserObservation: browser },
   );
-  const client = new Client({ name: "late-abort-browser", version: "1" });
+  const client = new Client(
+    { name: "late-abort-browser", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
