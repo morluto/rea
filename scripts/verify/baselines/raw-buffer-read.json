@@ -10,7 +10,6 @@
   "src/domain/apple/propertyListDecodeBudget.ts": 2,
   "src/domain/binaryTarget.ts": 10,
   "src/domain/desktop/openPgpKeys.ts": 2,
-  "src/domain/managed/managedMetadataHeaps.ts": 4,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/native/elfPointerRelocations.ts": 6,
   "src/domain/native/nativeAotPe.ts": 26,
