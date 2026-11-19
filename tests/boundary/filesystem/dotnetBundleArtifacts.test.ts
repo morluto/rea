@@ -174,6 +174,56 @@ it.each([
   },
 );
 
+it.each([
+  { field: "string_bytes", maximum: 4, compressed: false },
+  { field: "path_parts", maximum: 1, compressed: true },
+  { field: "path_nodes", maximum: 1, compressed: false },
+] as const)(
+  "reports an impossible stored member extent before the $field allowance",
+  async ({ field, maximum, compressed }) => {
+    const root = await createTestTempDirectory("rea-dotnet-invalid-extent-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture(
+      [{ path: "dir/member", bytes: Buffer.from("x"), compressed }],
+      6,
+      "id",
+    );
+    const limits = { ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS, [field]: maximum };
+    const read = async () => {
+      await writeFile(path, fixture.bytes);
+      const handle = await open(path, "r");
+      try {
+        return await readDotnetBundle(
+          handle,
+          fixture.bytes.length,
+          fixture.headerOffset,
+          undefined,
+          limits,
+        );
+      } finally {
+        await handle.close();
+      }
+    };
+    await expect(read()).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: { parameter: `artifact_limits.dotnet_bundle.${field}` },
+    });
+
+    const member = fixture.fields.entries[0]!;
+    if (compressed)
+      fixture.bytes.writeBigInt64LE(
+        BigInt(fixture.headerOffset - fixture.offsets[0]! + 1),
+        member.compressedSize!,
+      );
+    else
+      fixture.bytes.writeBigInt64LE(
+        BigInt(fixture.headerOffset + 1),
+        member.offset,
+      );
+    await expect(read()).rejects.toMatchObject({ reason: "format" });
+  },
+);
+
 it("retains the exact integer representation ceiling independently of reader budgets", async () => {
   const root = await createTestTempDirectory("rea-dotnet-integer-allowance-");
   const path = join(root, "host.exe");
