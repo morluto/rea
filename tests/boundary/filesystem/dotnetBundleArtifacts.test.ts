@@ -162,6 +162,28 @@ it.each([
   },
 );
 
+it.each([2n, 2n ** 63n])(
+  "reports unsupported .NET bundle flags %s at their full width",
+  async (flags) => {
+    const root = await createTestTempDirectory("rea-dotnet-flags-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture();
+    fixture.bytes.writeBigUInt64LE(flags, fixture.fields.configuration!.flags);
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r");
+    try {
+      await expect(
+        readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+      ).rejects.toMatchObject({
+        reason: "unavailable",
+        message: `Unsupported .NET bundle flags: ${flags}`,
+      });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
 it.each(["close", "cancel"] as const)(
   "does not complete a .NET bundle inventory after %s at the last entry",
   async (interruption) => {

@@ -119,7 +119,7 @@ export const readDotnetBundle = async (
       configuration.push({ offset: Number(offset), size: Number(size), type });
     }
     const flags = await cursor.u64();
-    if (flags > 1)
+    if (flags > 1n)
       throw new ArtifactReaderFailure(
         "unavailable",
         `Unsupported .NET bundle flags: ${flags}`,
@@ -283,8 +283,8 @@ class BundleCursor {
     if (value < 0n) fail(".NET bundle offset or size is negative");
     return value;
   }
-  async u64(): Promise<number> {
-    return exactManifestInteger((await this.take(8)).readBigUInt64LE());
+  async u64(): Promise<bigint> {
+    return (await this.take(8)).readBigUInt64LE();
   }
   async string(minimumTailBytes: number): Promise<string> {
     let length = 0;
