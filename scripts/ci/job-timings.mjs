@@ -8,12 +8,13 @@ const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 16 * 1024 * 1024;
 const TIMEOUT_MS = 30_000;
 const OUTPUT_DIRECTORY = join(".cache", "ci-job-timings");
+// The jobs API returns display names, without the action reference. Tests
+// check these exceptions against the CI and Release workflow definitions.
 const STEP_COSTS = [
   { key: "npmCi", pattern: /\bnpm ci\b/iu },
   {
     key: "artifactUpload",
     pattern: /upload.*artifact/iu,
-    // Named upload-artifact steps in the CI workflow whose names omit "artifact".
     names: new Set([
       "Upload complete static diagnostics",
       "Upload complete deep static diagnostics",
@@ -25,7 +26,10 @@ const STEP_COSTS = [
   {
     key: "artifactDownload",
     pattern: /download.*artifact/iu,
-    names: new Set(["Download previous timing report"]),
+    names: new Set([
+      "Download previous timing report",
+      "Download the original qualified package",
+    ]),
   },
 ];
 
