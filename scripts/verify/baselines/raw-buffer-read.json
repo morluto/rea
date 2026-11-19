@@ -1,5 +1,4 @@
 {
-  "src/domain/apple/appleMachoFixups.ts": 22,
   "src/domain/apple/appleMachoSelection.ts": 2,
   "src/domain/apple/jvmClassFile.ts": 2,
   "src/domain/apple/machoCommandNames.ts": 24,
