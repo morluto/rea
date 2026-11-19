@@ -323,8 +323,9 @@ Use the [documentation directory](docs/README.md) and
 domain-based feature specifications and architectural decision records.
 
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
-for live editing, `npm run docs:build` to check the production build and
-links, and `npm run docs:preview` to preview that build at `/rea/`.
+for live editing or `npm run docs:preview` to preview an existing build at
+`/rea/`. Use [the documentation verification commands](docs/development/testing.md#developer-commands)
+to build and check the rendered routes and anchors.
 
 Site navigation lives in `docs/.vitepress/config.ts`. Keep links to guides
 relative so they work on GitHub and the website; link to repository files
