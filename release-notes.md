@@ -241,6 +241,7 @@
 * **captures:** retain preparation cleanup owners ([#10288](https://github.com/morluto/rea/issues/10288)) ([9c86465](https://github.com/morluto/rea/commit/9c86465d47e98306e1ee1f77e7fb25d1d737b1db))
 * **captures:** retain wide native numeric exclusions ([#10343](https://github.com/morluto/rea/issues/10343)) ([fd3e613](https://github.com/morluto/rea/commit/fd3e613d23795f693e9231102249390228cab35f))
 * **capture:** validate PNG headers at the shared boundary ([#12310](https://github.com/morluto/rea/issues/12310)) ([c5709b8](https://github.com/morluto/rea/commit/c5709b8697ba89aa11da918cab7a53814d4635d9))
+* **ci:** bind timing history to the verified workflow source ([#12555](https://github.com/morluto/rea/issues/12555)) ([a035813](https://github.com/morluto/rea/commit/a035813e55a20dcc65bf8a894c7fcda341c29c9e))
 * **ci:** classify static/doc script inputs in change-plan and trace URL fixtures ([8749ade](https://github.com/morluto/rea/commit/8749adefe5174b37ed6d7cb1cef2c7e17b17416f))
 * **ci:** continue after an unreadable timing history candidate ([#12245](https://github.com/morluto/rea/issues/12245)) ([f7534b1](https://github.com/morluto/rea/commit/f7534b10c069fb33c529a6a5cdc699aac8b2dff1))
 * **ci:** count named artifact transfers in job timings ([#12253](https://github.com/morluto/rea/issues/12253)) ([8045010](https://github.com/morluto/rea/commit/8045010f28b14979a514781aa5abbb9dca01e1ce))
