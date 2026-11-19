@@ -31,6 +31,17 @@ import type {
   ManagedMemberViewRow as Row,
 } from "./managedMemberViewSchemas.js";
 
+export const MANAGED_MEMBER_SCOPE_GUIDANCE = {
+  selectedNominalRows:
+    "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+  unresolvedTypeRows:
+    "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
+  unresolvedMethodRows:
+    "Unresolved MethodDef coordinates follow the recorded source method interval and any declaring-type selection.",
+  unexaminedMethodRows:
+    "MethodDef name coordinates are unavailable in this capacity recovery.",
+} as const;
+
 type Selection<C extends MemberCollection, T extends Row, K extends keyof T> = {
   readonly collection: C;
   readonly rows: readonly T[] | null | undefined;
@@ -350,16 +361,14 @@ export const projectManagedMemberView = (
       "Collection counts and pages cover producer-returned rows; member completeness remains the original coverage, not an absence claim about unreturned rows.",
       ...(report.selection === null
         ? []
-        : [
-            "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
-          ]),
+        : [MANAGED_MEMBER_SCOPE_GUIDANCE.selectedNominalRows]),
       ...(coordinates === undefined
         ? []
         : [
-            "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
+            MANAGED_MEMBER_SCOPE_GUIDANCE.unresolvedTypeRows,
             coordinates.method_names_examined
-              ? "Unresolved MethodDef coordinates follow the recorded source method interval and any declaring-type selection."
-              : "MethodDef name coordinates are unavailable in this capacity recovery.",
+              ? MANAGED_MEMBER_SCOPE_GUIDANCE.unresolvedMethodRows
+              : MANAGED_MEMBER_SCOPE_GUIDANCE.unexaminedMethodRows,
           ]),
       ...managedViewIdentityUnknowns(
         parent,
