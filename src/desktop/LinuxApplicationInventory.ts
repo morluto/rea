@@ -429,13 +429,14 @@ const directLaunchStateHome = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   packageKind: Package["kind"],
   hostHome: string,
-): string => {
+): string | undefined => {
   // Sandbox-managed directories continue to use the host home.
   if (wrapper.kind !== "direct" || packageKind === "snap") return hostHome;
   const launchHome = wrapper.environment.HOME;
-  return launchHome !== undefined && isAbsolute(launchHome)
-    ? launchHome
-    : hostHome;
+  if (launchHome !== undefined && isAbsolute(launchHome)) return launchHome;
+  if (wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("HOME"))
+    return undefined;
+  return hostHome;
 };
 
 /** Resolve what the request launches, where it came from and where it may keep state. */
@@ -523,6 +524,11 @@ export const inspectLinuxApplication = async (
     wrapper.kind === "flatpak" ? null : path,
     entry,
   );
+  const stateHome = directLaunchStateHome(wrapper, package_.kind, request.home);
+  if (stateHome === undefined)
+    limitations.push(
+      "The launch prefix provides no absolute HOME after removing the inherited value. The application's default home state paths are unknown. Select known locations with --state-path.",
+    );
   return ok({
     inventory: {
       desktop_entry: entry,
@@ -541,7 +547,7 @@ export const inspectLinuxApplication = async (
         names,
         {
           environment,
-          home: directLaunchStateHome(wrapper, package_.kind, request.home),
+          home: stateHome,
         },
         sandboxDirectories,
       ),
