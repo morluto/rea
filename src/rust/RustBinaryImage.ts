@@ -1,7 +1,4 @@
-import {
-  BinaryResourceFailure,
-  type ImageSection,
-} from "../domain/binaryContainer.js";
+import type { ImageSection } from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
@@ -19,7 +16,6 @@ import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSection,
   RUST_AUDITABLE_FORMAT,
-  RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
 import { hasWasmPreamble, readRustWasmSections } from "./RustWasmImage.js";
 
@@ -90,7 +86,7 @@ export const readRustBinaryImage = (
 };
 
 const nativeLayout = (bytes: Buffer): RustImageLayout => {
-  const container = readContainer(bytes);
+  const container = readBinaryContainer(bytes);
   const section_name = rustDependencySectionName(container.format);
   const dependency = dependencySection(section_name, container.sections);
   return {
@@ -148,27 +144,6 @@ const duplicateDependencySection = () =>
     RUST_AUDITABLE_FORMAT,
     "Image contains more than one dependency section",
   );
-
-const readContainer = (bytes: Buffer) => {
-  try {
-    return readBinaryContainer(bytes);
-  } catch (cause) {
-    // A container format failure is already a ParseFailureError; it keeps
-    // its own kind and facts instead of being restated as a Rust failure.
-    if (cause instanceof BinaryResourceFailure)
-      throw new RustAuditableResourceFailure(
-        {
-          resource: "memory",
-          reported_limits: { maximum_bytes: cause.maximum_bytes },
-        },
-        cause.message,
-        {
-          cause,
-        },
-      );
-    throw cause;
-  }
-};
 
 const dependencySection = (
   expected: RustAuditableMetadata["section_name"],

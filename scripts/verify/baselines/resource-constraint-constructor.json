@@ -132,7 +132,7 @@
   "src/process/ownedDebuggerSession.ts": 1,
   "src/process/privateWorkspaceFailure.ts": 1,
   "src/python/PythonPycProvider.ts": 1,
-  "src/rust/RustBinaryProvider.ts": 3,
+  "src/rust/RustBinaryProvider.ts": 2,
   "src/server/EvidenceMcpServerCore.ts": 2,
   "src/server/ProgressiveToolCatalog.ts": 1,
   "src/server/ToolResultDelivery.ts": 2,
