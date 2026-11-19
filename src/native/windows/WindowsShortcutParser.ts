@@ -26,6 +26,8 @@ const HEADER_BYTES = 76;
 const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
+const LINK_INFO_FIXED_HEADER_BYTES = 0x1c;
+const LINK_INFO_UNICODE_HEADER_BYTES = 0x24;
 const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
 // MS-SHLLINK §2.4 exempts COMMAND_LINE_ARGUMENTS from this format limit.
 const MAX_STRING_DATA_CHARACTERS = 260;
@@ -791,7 +793,7 @@ const parseLinkInfo = (
     return null;
   }
   const size = bytes.readUInt32LE(walk.offset);
-  if (size < 0x1c || !fits(bytes, walk.offset, size)) {
+  if (size < LINK_INFO_FIXED_HEADER_BYTES || !fits(bytes, walk.offset, size)) {
     note(
       walk,
       "block_size_overrun",
@@ -803,21 +805,26 @@ const parseLinkInfo = (
   }
   const view = bytes.subarray(walk.offset, walk.offset + size);
   const headerSize = view.readUInt32LE(4);
-  if (headerSize < 0x1c || headerSize > size)
+  const declaresUnicodeOffsets = headerSize >= LINK_INFO_UNICODE_HEADER_BYTES;
+  if (
+    headerSize > size ||
+    (headerSize !== LINK_INFO_FIXED_HEADER_BYTES && !declaresUnicodeOffsets)
+  )
     note(
       walk,
       "malformed_structure",
       walk.offset + 4,
-      `LinkInfoHeaderSize ${String(headerSize)} is outside 0x1C..LinkInfoSize`,
+      `LinkInfoHeaderSize ${String(headerSize)} must be 0x1C or at least 0x24 and fit within LinkInfoSize (${String(size)})`,
     );
   const flags = view.readUInt32LE(8);
   const volumeOffset = view.readUInt32LE(12);
   const localOffset = view.readUInt32LE(16);
   const networkOffset = view.readUInt32LE(20);
   const suffixOffset = view.readUInt32LE(24);
-  const unicode = headerSize >= 0x24 && view.length >= 0x24;
-  const localUnicodeOffset = unicode ? view.readUInt32LE(28) : 0;
-  const suffixUnicodeOffset = unicode ? view.readUInt32LE(32) : 0;
+  const hasUnicodeOffsets =
+    declaresUnicodeOffsets && size >= LINK_INFO_UNICODE_HEADER_BYTES;
+  const localUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(28) : 0;
+  const suffixUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(32) : 0;
   const info: NonNullable<WindowsShortcut["link_info"]> = {
     location: { offset: walk.offset, bytes: size },
     header_size: headerSize,
