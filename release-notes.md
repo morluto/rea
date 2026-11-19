@@ -106,6 +106,7 @@
 * **native:** inspect DWARF compile units offline ([637e4cb](https://github.com/morluto/rea/commit/637e4cb60c99b1b17026855297cb03e299c3ba89))
 * **native:** report which Mach-O slices a signature describes and their signing states ([#11620](https://github.com/morluto/rea/issues/11620)) ([34ec903](https://github.com/morluto/rea/commit/34ec90378605228ca935e739a8f01b4776c405b9))
 * **native:** resolve RISC-V ELF initializer pointers ([#12109](https://github.com/morluto/rea/issues/12109)) ([af20de3](https://github.com/morluto/rea/commit/af20de3509cc3a290e5bcd917aa31c214cd3060b))
+* **native:** surface inferred prototype instruction conflicts ([#8161](https://github.com/morluto/rea/issues/8161)) ([ae25050](https://github.com/morluto/rea/commit/ae25050dffbdb594ed48935cb9091abc62850041))
 * **pcap:** carry the value of each fixed packet-tool allowance ([#11643](https://github.com/morluto/rea/issues/11643)) ([1256121](https://github.com/morluto/rea/commit/125612175aa4f58fce8adc63dbc46e3bb45072c9))
 * **pcap:** read tshark JSON packets through one envelope owner with an adjustable expansion bound ([#10788](https://github.com/morluto/rea/issues/10788)) ([c06a0b9](https://github.com/morluto/rea/commit/c06a0b9ee8ae379e361a4d65100ab0ed15f91857))
 * **process:** name whether a process input file failed to read or to parse ([#11008](https://github.com/morluto/rea/issues/11008)) ([536c54c](https://github.com/morluto/rea/commit/536c54ca1fb362f3fee9d8df8bb14296ce53517c))
