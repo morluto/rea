@@ -654,6 +654,7 @@
 * **release:** retry incomplete Git blob reads ([#12122](https://github.com/morluto/rea/issues/12122)) ([a997c3e](https://github.com/morluto/rea/commit/a997c3ee4bd58946cba104a8f8bcbff0d88c54f8))
 * **release:** validate notes with the publication parser ([653c494](https://github.com/morluto/rea/commit/653c49419e65515d5567ebf13c0e6dd2ac794f7e))
 * restore PE release scanning and CommonJS test coverage ([#12083](https://github.com/morluto/rea/issues/12083)) ([31aaec6](https://github.com/morluto/rea/commit/31aaec6b4fb5a7a4197a2f3db8e9f606770cb204))
+* **riscv:** reject unknown mandatory ELF attributes ([#12476](https://github.com/morluto/rea/issues/12476)) ([18c8b95](https://github.com/morluto/rea/commit/18c8b957f8c3e077fafaf59c00027ce90c194b31))
 * **rizin:** abort in-flight debug session starts when the manager closes ([#11020](https://github.com/morluto/rea/issues/11020)) ([e9f9d8b](https://github.com/morluto/rea/commit/e9f9d8b88071c1ba944594b02c0675866e9979fc))
 * **rizin:** qualify process completion in command evidence ([#10377](https://github.com/morluto/rea/issues/10377)) ([3b00684](https://github.com/morluto/rea/commit/3b006841e28659d8145dc328a8a2b1ec7ffcdf3c))
 * **rizin:** refuse a start after shutdown began as an owner-closed cancellation ([#11041](https://github.com/morluto/rea/issues/11041)) ([bcb068c](https://github.com/morluto/rea/commit/bcb068cc04717bfc3077cd014287cc598d127329))
