@@ -1,8 +1,6 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
   applySemanticBindingReferenceEffects,
-  capturedBindingPathMayHaveChanged,
-  hasRecordedReferenceEffects,
   opaqueCodeMayRebindBinding,
 } from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
@@ -41,7 +39,6 @@ import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireO
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
-  staticObjectPropertyReader,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -262,51 +259,6 @@ export const evaluateSemanticExpression = (
         node,
         captureContextAt(capturePoint, context) ?? context,
       );
-};
-
-/** Prove a direct data slot at a read without evaluating the entire object at each read. */
-export const createSemanticReadPresenceQuery = (
-  state: JavaScriptSemanticAnalysisState,
-) => {
-  const readers = new WeakMap<
-    t.ObjectExpression,
-    ReturnType<typeof staticObjectPropertyReader>
-  >();
-  return (bindingId: string | null, capture: t.Node) => {
-    const binding =
-      bindingId === null ? undefined : state.bindingsById.get(bindingId);
-    const initializer = binding?.initializers[0];
-    if (
-      !state.memberMutationFactsComplete ||
-      binding === undefined ||
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      binding.referenceInitializers.length !== 0 ||
-      !hasRecordedReferenceEffects(binding, state) ||
-      state.conditionallySkippedExpressions.has(initializer.node) ||
-      !semanticBindingPrecedesCapture(binding, capture, state.parentsByNode) ||
-      opaqueCodeMayRebindBinding(binding, state, capture)
-    )
-      return undefined;
-    const value = unwrapJavaScriptExpression(initializer.node).node;
-    if (!t.isObjectExpression(value)) return undefined;
-    return (path: readonly string[]): boolean => {
-      if (path.length === 0) return false;
-      let receiver: t.Node = value;
-      for (const key of path) {
-        if (!t.isObjectExpression(receiver)) return false;
-        let read = readers.get(receiver);
-        if (read === undefined) {
-          read = staticObjectPropertyReader(receiver);
-          readers.set(receiver, read);
-        }
-        const property = read(key);
-        if (property.status !== "explicit") return false;
-        receiver = unwrapJavaScriptExpression(property.value).node;
-      }
-      return !capturedBindingPathMayHaveChanged(binding, path, capture, state);
-    };
-  };
 };
 
 /** Resolve an expression using the same alias and module provenance owner. */

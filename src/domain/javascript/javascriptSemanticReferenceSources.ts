@@ -33,24 +33,43 @@ interface ReferenceSource {
   readonly iterationSources?: readonly ReferenceSource[];
 }
 
+/** Shared intrinsic reached through a native array iterator's prototype. */
+export const semanticArrayIteratorPrototypePath = [
+  "array-iterator-prototype",
+] as const;
+const arrayIteratorNextPath = [
+  ...semanticArrayIteratorPrototypePath,
+  "next",
+] as const;
+
 /** Native array iteration preserves numeric slots only while its iterator is intact. */
 export const semanticKnownArrayIteration = (
   value: JavaScriptSemanticValue | undefined,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
+  read: t.Node,
+): value is Extract<JavaScriptSemanticValue, { status: "array" }> =>
   !state.arrayIterationUnknown &&
   value?.status === "array" &&
+  !ambientPathMayObserveAt(state, read, arrayIteratorNextPath, "contents") &&
   value.items.every((item) => semanticArrayIndex(item.name) !== null);
+
+/**
+ * Return the array that admits native iteration at this read. A plain array's
+ * numeric properties are the values consumed by its native iterator.
+ */
+export const semanticNativeArrayIterationValueAt = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const value = evaluateSemanticExpression(node, state, node);
+  return semanticKnownArrayIteration(value, state, node) ? value : undefined;
+};
 
 /** Invocation spreads use the same native-iteration proof at their source read. */
 export const semanticKnownArrayIterationAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  semanticKnownArrayIteration(
-    evaluateSemanticExpression(node, state, node),
-    state,
-  );
+): boolean => semanticNativeArrayIterationValueAt(node, state) !== undefined;
 
 /** Numeric destructuring projections do not select slots of custom iterators. */
 export const semanticReferenceIterationUnknown = (
@@ -75,8 +94,7 @@ const selectedReferenceIterationKnown = (
         // inventory can prove every possible nested iterable without treating
         // a computed object property or custom iterator as an own-index read.
         if (
-          !semanticKnownArrayIteration(value, state) ||
-          value.status !== "array" ||
+          !semanticKnownArrayIteration(value, state, source.node) ||
           value.unknownItems
         )
           return false;
@@ -92,7 +110,9 @@ const selectedReferenceIterationKnown = (
     }
     values = [...selected];
   }
-  return values.every((value) => semanticKnownArrayIteration(value, state));
+  return values.every((value) =>
+    semanticKnownArrayIteration(value, state, source.node),
+  );
 };
 
 /** Exclude references whose source slot or destructuring fallback is absent. */

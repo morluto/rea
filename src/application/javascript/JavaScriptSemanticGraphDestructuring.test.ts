@@ -175,3 +175,356 @@ it.each(["{}", "unknownSource"])(
     );
   },
 );
+
+it.each([
+  ["ordinary array", "", "resolved"],
+  ["prototype read alone", "Object.getPrototypeOf([].values());", "resolved"],
+  [
+    "one iterator's own next",
+    "const iterator = [].values(); iterator.next = replacement;",
+    "resolved",
+  ],
+  [
+    "unrelated custom iterator",
+    "const iterator = Object.create({ next: original }); Object.getPrototypeOf(iterator).next = replacement;",
+    "resolved",
+  ],
+  [
+    "direct prototype assignment",
+    "Object.getPrototypeOf([][Symbol.iterator]()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "aliased iterator and prototype",
+    "const array = []; const iterator = array.values(); const p = Reflect.getPrototypeOf(iterator); const alias = p; alias.next = replacement;",
+    "candidate",
+  ],
+  [
+    "explicit builtin factory",
+    "const iterator = Array.prototype.values.call([]); Object.getPrototypeOf(iterator).next = replacement;",
+    "candidate",
+  ],
+  [
+    "descriptor",
+    'const prototype = Object.getPrototypeOf([].keys()); Object.defineProperty(prototype, "next", { value: replacement });',
+    "candidate",
+  ],
+  [
+    "typed array iterator sharing the prototype",
+    "const bytes = new Uint8Array(); Object.getPrototypeOf(bytes.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "separate Map iterator prototype",
+    "Object.getPrototypeOf(new Map().values()).next = replacement;",
+    "resolved",
+  ],
+  ["whole iterator escape", "consume([].values());", "candidate"],
+  [
+    "iterator nested in an escaping container",
+    "const box = { iterator: [].entries() }; consume(box);",
+    "candidate",
+  ],
+  [
+    "array receiver in a stored property",
+    "const box = { items: [] }; Object.getPrototypeOf(box.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "typed array receiver through aliased properties",
+    "const box = { items: new Uint8Array() }; const alias = box; Object.getPrototypeOf(alias.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "array receiver through a member assignment",
+    "const box = {}; box.items = []; Object.getPrototypeOf(box.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "member assignment after the iterator was obtained",
+    "const box = { items: new Map() }; const iterator = box.items.values(); box.items = []; Object.getPrototypeOf(iterator).next = replacement;",
+    "resolved",
+  ],
+  [
+    "replaced prototype inspector receives the iterator",
+    "Reflect.getPrototypeOf = opaque; Reflect.getPrototypeOf([].values());",
+    "candidate",
+  ],
+  [
+    "object property with unrelated iterator",
+    "const box = { items: new Map() }; Object.getPrototypeOf(box.items.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "read-only alias to getPrototypeOf",
+    "const inspect = Reflect.getPrototypeOf; const iterator = [].values(); inspect(iterator);",
+    "resolved",
+  ],
+  [
+    "packed direct prototype read",
+    "Reflect.getPrototypeOf(...[[].values()]);",
+    "resolved",
+  ],
+  [
+    "method apply prototype read",
+    "Reflect.getPrototypeOf.apply(null, [[].values()]);",
+    "resolved",
+  ],
+  [
+    "Reflect.apply prototype read",
+    "Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);",
+    "resolved",
+  ],
+  [
+    "packed prototype read with another ignored iterator argument",
+    "Reflect.apply(Reflect.getPrototypeOf, null, [[].values(), [].values()]);",
+    "resolved",
+  ],
+  [
+    "ignored iterator passed directly to native inspection",
+    "Reflect.getPrototypeOf({}, [].values());",
+    "resolved",
+  ],
+  [
+    "ignored iterator passed through method apply",
+    "Reflect.getPrototypeOf.apply(null, [{}, [].values()]);",
+    "resolved",
+  ],
+  [
+    "opaque aliased apply pack",
+    "const args = [{}, [].values()]; Reflect.apply(Reflect.getPrototypeOf, null, args);",
+    "candidate",
+  ],
+  [
+    "opaque inspector receives extra iterator",
+    "Reflect.getPrototypeOf = opaque; Reflect.getPrototypeOf({}, [].values());",
+    "candidate",
+  ],
+  [
+    "opaque Reflect.apply receives packed extra iterator",
+    "Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [{}, [].values()]);",
+    "candidate",
+  ],
+  [
+    "ignored argument evaluation can still expose the iterator",
+    "Reflect.getPrototypeOf({}, consume([].values()));",
+    "candidate",
+  ],
+  [
+    "ignored packaged argument evaluation can change the prototype",
+    "Reflect.apply(Reflect.getPrototypeOf, null, [{}, (Object.getPrototypeOf([].values()).next = replacement)]);",
+    "candidate",
+  ],
+  [
+    "native inspection of the shared prototype",
+    "const p = Object.getPrototypeOf([].values()); Object.getPrototypeOf(p);",
+    "resolved",
+  ],
+  [
+    "nested direct native inspection of the shared prototype",
+    "Object.getPrototypeOf(Object.getPrototypeOf([].values()));",
+    "resolved",
+  ],
+  [
+    "actual shared-prototype exposure",
+    "const p = Object.getPrototypeOf([].values()); consume(p);",
+    "candidate",
+  ],
+  [
+    "overwritten inspector receives the shared prototype",
+    "const p = Object.getPrototypeOf([].values()); Object.getPrototypeOf = opaque; Object.getPrototypeOf(p);",
+    "candidate",
+  ],
+  [
+    "read-only bound inspector",
+    "const inspect = Reflect.getPrototypeOf.bind(null); inspect({}, [].values());",
+    "resolved",
+  ],
+  [
+    "opaque replacement of bind before creating the inspector",
+    "Function.prototype.bind = opaque; const inspect = Reflect.getPrototypeOf.bind(null); inspect({}, [].values());",
+    "candidate",
+  ],
+  [
+    "opaque packed argument exposure precedes an earlier deferred inspection",
+    "const iterator = [].values(); function inspect() { Object.getPrototypeOf({}, iterator); } Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [{}], Object); inspect();",
+    "candidate",
+  ],
+  [
+    "two helper exposures can invalidate a deferred inspection",
+    "const iterator = [].values(); function inspect() { Reflect.getPrototypeOf({}, iterator); } function expose() { Object.getPrototypeOf({}, Reflect); } Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [{}], Object); expose(); inspect();",
+    "candidate",
+  ],
+  [
+    "opaque replacement of Reflect.apply",
+    "Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);",
+    "candidate",
+  ],
+  [
+    "opaque replacement of Function.prototype.apply",
+    "Function.prototype.apply = opaque; Reflect.getPrototypeOf.apply(null, [[].values()]);",
+    "candidate",
+  ],
+  [
+    "native inspector captured before replacement",
+    "const inspect = Reflect.getPrototypeOf; Reflect.getPrototypeOf = opaque; inspect([].values());",
+    "resolved",
+  ],
+  [
+    "inspector captured after replacement",
+    "Reflect.getPrototypeOf = opaque; const inspect = Reflect.getPrototypeOf; inspect([].values());",
+    "candidate",
+  ],
+  [
+    "property captured before an array store",
+    "const box = { items: new Map() }; const captured = box.items; box.items = []; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "destructured property captured before an array store",
+    "const box = { items: new Map() }; const { items: captured } = box; box.items = []; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "property captured after an array store",
+    "const box = { items: new Map() }; box.items = []; const captured = box.items; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "captured parent still observes a later child store",
+    "const box = { parent: { items: new Map() } }; const captured = box.parent; box.parent.items = []; Object.getPrototypeOf(captured.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "separately captured parent and child before a later store",
+    "const box = { parent: { items: new Map() } }; const parent = box.parent; const captured = parent.items; box.parent.items = []; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "Reflect.apply is distinct from Function.prototype.apply",
+    "Function.prototype.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);",
+    "resolved",
+  ],
+  [
+    "projected argument captured before an array store",
+    "const box = { items: new Map() }; ((captured) => { Object.getPrototypeOf(captured.values()).next = replacement; })(box.items); box.items = [];",
+    "resolved",
+  ],
+  [
+    "prototype escape",
+    "consume(Object.getPrototypeOf([].entries()));",
+    "candidate",
+  ],
+  [
+    "non-next property",
+    "Object.getPrototypeOf([].values()).other = replacement;",
+    "resolved",
+  ],
+] as const)(
+  "attributes array iterator effects for %s",
+  (_name, change, resolution) => {
+    const graph = graphForJavaScript(`
+    const config = ["original"];
+    const replacement = () => ({ value: "other", done: false });
+    ${change}
+    const [selected] = config;
+  `);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (relation) =>
+          relation.relation === "destructures" &&
+          relation.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it("leaves an earlier destructuring dependency intact before an iterator prototype write", () => {
+  const graph = graphForJavaScript(`
+    const config = ["original"];
+    const [selected] = config;
+    Object.getPrototypeOf([].values()).next = () => ({ value: "other", done: false });
+  `);
+  const selected = graph.nodes.find(
+    ({ kind, label }) => kind === "binding" && label === "selected",
+  );
+  expect(
+    graph.relations.find(
+      (relation) =>
+        relation.relation === "destructures" &&
+        relation.target_node_id === selected?.node_id,
+    ),
+  ).toMatchObject({ resolution: "resolved" });
+});
+
+it.each([
+  ["declaration", "const [selected] = config;", "resolved"],
+  ["assignment", "let selected; [selected] = config;", "resolved"],
+  ["unrelated write", "config[1] = 2; const [selected] = config;", "resolved"],
+  ["later default", "const [selected, missing = 0] = config;", "resolved"],
+  [
+    "earlier delete",
+    "delete config[0]; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "earlier truncation",
+    "config.length = 0; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "own custom iterator",
+    "config[Symbol.iterator] = function* () { yield 2; }; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "prototype iterator",
+    "Array.prototype[Symbol.iterator] = function* () { yield 2; }; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "earlier shared next replacement",
+    'Object.getPrototypeOf([].values()).next = () => ({ value: "other", done: false }); const [selected] = config;',
+    "candidate",
+  ],
+  [
+    "later shared next replacement",
+    'const [selected] = config; Object.getPrototypeOf([].values()).next = () => ({ value: "other", done: false });',
+    "resolved",
+  ],
+  [
+    "custom prototype",
+    "Object.setPrototypeOf(config, { *[Symbol.iterator]() { yield 2; } }); const [selected] = config;",
+    "candidate",
+  ],
+  ["earlier default", "const [value = 0, selected] = config;", "candidate"],
+  [
+    "earlier setter",
+    "let selected; const target = { set value(_) { config[1] = 2; } }; [target.value, selected] = config;",
+    "candidate",
+  ],
+  ["nested binding", "let selected; [[selected]] = config;", "candidate"],
+] as const)(
+  "preserves array iteration dependencies for %s",
+  (_name, read, resolution) => {
+    const graph = graphForJavaScript(`
+    const config = [[1], 1];
+    ${read}
+    config[0] = 2;
+    config[1] = 2;
+  `);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
