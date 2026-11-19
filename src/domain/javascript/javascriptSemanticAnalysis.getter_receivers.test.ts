@@ -207,7 +207,7 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
       "ordinary method read",
       "const box = { x: 1, self() { return this; } }; const method = box.self; return box.x;",
     ],
-  ])("preserves a known literal for %s", (_shape, body) => {
+  ] as const)("preserves a known literal for %s", (_shape, body) => {
     expect(resultValue(body)).toMatchObject({ status: "literal", value: 1 });
   });
   it.each([
