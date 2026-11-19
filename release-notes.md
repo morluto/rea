@@ -479,6 +479,7 @@
 * **process:** retain wide descendant inventories ([#10386](https://github.com/morluto/rea/issues/10386)) ([4566e48](https://github.com/morluto/rea/commit/4566e483ab5c15857ee0486be2121c277883cc81))
 * **process:** run ps from fixed system locations, not REA's PATH ([#10755](https://github.com/morluto/rea/issues/10755)) ([17a5f14](https://github.com/morluto/rea/commit/17a5f14f98814870912e9f9c8357007c10e254af))
 * **process:** settle an observed exit in progress before reporting a process present ([#10620](https://github.com/morluto/rea/issues/10620)) ([f270a5c](https://github.com/morluto/rea/commit/f270a5cac12020864b24e75f77375c09d3a2d09d))
+* **process:** share Linux limits and bind samples to process identity ([#12160](https://github.com/morluto/rea/issues/12160)) ([089fce8](https://github.com/morluto/rea/commit/089fce8614a742f452626f15f07551783a0f974d))
 * **process:** stop execFileOutput's process group, not only its root ([#10733](https://github.com/morluto/rea/issues/10733)) ([d3db225](https://github.com/morluto/rea/commit/d3db2254bb91cc1eb3b88bfaf63a213ea9732163))
 * **process:** tolerate missing observer roots ([37ca2bc](https://github.com/morluto/rea/commit/37ca2bcc0ca33554a1c39762336baa11d9ba8994)), closes [#7281](https://github.com/morluto/rea/issues/7281) [#7287](https://github.com/morluto/rea/issues/7287)
 * **protobuf:** preserve descriptor string identity ([#11834](https://github.com/morluto/rea/issues/11834)) ([0db5f93](https://github.com/morluto/rea/commit/0db5f93df695a89169d2c51f82bf730e81ed9d3a))
