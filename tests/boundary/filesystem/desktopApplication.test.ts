@@ -1404,9 +1404,9 @@ it.each([
       metadataOffset,
       image.length - metadataOffset,
     );
-    if (layout.blob === null)
+    if (layout.blob?.kind !== "available")
       throw new Error("Fixture requires a #Blob stream");
-    const blobSize = layout.blob.size;
+    const blobSize = layout.blob.stream.size;
     const reference = layout.table(35)!;
     // ECMA-335 AssemblyRef: 8 version bytes, 4 flag bytes, then PublicKeyOrToken.
     // Keep its name valid while making that unrelated blob index invalid.

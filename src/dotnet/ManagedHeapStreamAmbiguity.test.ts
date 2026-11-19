@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
@@ -17,7 +18,7 @@ type Variant = "forward" | "reverse" | "alias" | "outside-root";
 
 const duplicateHeap = (
   bytes: Buffer,
-  name: "#GUID" | "#US",
+  name: "#GUID" | "#US" | "#Blob",
   alternateHeap: Buffer,
   variant: Variant,
 ) => {
@@ -250,4 +251,147 @@ it("rejects a duplicate #US declaration outside the metadata root", () => {
     offset: metadataEnd,
   });
   expect(members.user_strings).toBeNull();
+});
+
+const duplicateBlobFixture = (
+  variant: Variant,
+  options: Parameters<typeof buildManagedPeFixture>[0] = {},
+  nonzeroPublicKey = false,
+) => {
+  const bytes = buildManagedPeFixture({
+    fieldRowCount: 1,
+    references: ["UnityEngine.CoreModule"],
+    pinvoke: { importName: "get_value", moduleName: "fixture.dll" },
+    ...options,
+  });
+  if (nonzeroPublicKey) {
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+    const { rva, size } = pe.cli.metadata;
+    const offset = pe.rvaToOffset(rva, size, "fixture metadata");
+    const layout = readManagedMetadataLayout(bytes, offset, size);
+    const assembly = layout.table(32);
+    if (assembly === undefined)
+      throw new Error("Fixture omitted Assembly metadata");
+    // Assembly.PublicKey follows the hash algorithm, version, and flags.
+    bytes.writeUInt16LE(1, assembly.offset + 16);
+  }
+  return duplicateHeap(bytes, "#Blob", Buffer.from([0, 3, 0, 0, 1]), variant);
+};
+
+it.each(["forward", "reverse", "alias"] as const)(
+  "preserves independent metadata with %s #Blob declarations",
+  (variant) => {
+    const { bytes, duplicateHeader } = duplicateBlobFixture(variant);
+    const target = managedPeFixtureTarget(bytes);
+    const artifact = inspectManagedArtifactBytes(bytes, target);
+    const members = inspectManagedMembersBytes(bytes, target);
+    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
+    for (const report of [artifact, members, boundaries]) {
+      expect(report).toMatchObject({
+        metadata: {
+          status: "partial",
+          table_row_counts: { Module: 1, Assembly: 1, MethodDef: 1, Field: 1 },
+        },
+        module: { name: "Fixture.dll", mvid: expect.any(String) },
+        coverage: { state: "partial" },
+      });
+      expect(
+        report.coverage.issues.filter(
+          ({ scope }) => scope === "metadata.#Blob",
+        ),
+      ).toEqual([
+        {
+          code: "invalid-stream",
+          scope: "metadata.#Blob",
+          offset: duplicateHeader,
+          detail: expect.stringContaining(
+            variant === "alias" ? "same byte range" : "distinct byte ranges",
+          ),
+        },
+      ]);
+    }
+    expect(artifact.classification.evidence).toContainEqual(
+      expect.objectContaining({ code: "unity-reference-observed" }),
+    );
+    expect(artifact.assembly).toMatchObject({
+      name: "Fixture.Managed",
+      public_key: { kind: "none", byte_length: 0, sha256: null, token: null },
+    });
+    expect(members.types).toContainEqual(
+      expect.objectContaining({ full_name: "Fixture.Program" }),
+    );
+    expect(boundaries.pinvoke_imports).toContainEqual(
+      expect.objectContaining({ import_name: "get_value" }),
+    );
+    if (variant === "alias") {
+      expect(artifact.references).toContainEqual(
+        expect.objectContaining({ name: "UnityEngine.CoreModule" }),
+      );
+      expect(members.methods[0]?.signature.parse_status).toBe("decoded");
+      expect(members.fields[0]?.signature.parse_status).toBe("decoded");
+    } else {
+      expect(artifact.references).toEqual([]);
+      expect(artifact.attributes).toEqual([]);
+      expect(members.fields).toEqual([]);
+      expect(members.methods).toEqual([]);
+      expect(members.member_refs).toEqual([]);
+      expect(members.method_rows).toEqual({ offset: 0, count: 1, total: 1 });
+    }
+  },
+);
+
+it("withholds a nonzero Assembly public key without claiming the key is absent", () => {
+  const { bytes } = duplicateBlobFixture("forward", {}, true);
+  const report = inspectManagedArtifactBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(report.module?.mvid).toBeTruthy();
+  expect(report.assembly).toBeNull();
+  expect(report.metadata.status).toBe("partial");
+  expect(report.metadata.table_row_counts.Assembly).toBe(1);
+});
+
+it("preserves a decoded body while its nonzero locals blob is unresolved", () => {
+  const original = buildManagedPeFixture({
+    methodSignature: Buffer.alloc(0),
+    // Fat header with a one-byte ret body and a StandAloneSig row-1 token.
+    ilBody: Buffer.from([0x03, 0x30, 8, 0, 1, 0, 0, 0, 1, 0, 0, 0x11, 0x2a]),
+    standaloneSignatures: [Buffer.from([0x07, 0x01, 0x08])],
+  });
+  const { bytes } = duplicateHeap(
+    original,
+    "#Blob",
+    Buffer.from([0, 1, 0]),
+    "forward",
+  );
+  const report = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(report.methods[0]).toMatchObject({
+    signature: { raw_length: 0 },
+    body: {
+      status: "partial",
+      local_var_sig_token: "0x11000001",
+      local_var_signature: null,
+      anchors: [{ opcode: "ret" }],
+    },
+  });
+});
+
+it("validates the extent of a later #Blob declaration before observing metadata", () => {
+  const { bytes, metadataEnd } = duplicateBlobFixture("outside-root");
+  const report = inspectManagedArtifactBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(report.metadata.status).toBe("malformed");
+  expect(report.coverage.issues).toContainEqual({
+    code: "invalid-metadata-root",
+    scope: "metadata.#Blob",
+    detail: "metadata.#Blob leaves the metadata byte range",
+    offset: metadataEnd,
+  });
 });

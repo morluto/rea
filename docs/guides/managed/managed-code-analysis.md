@@ -90,7 +90,13 @@ coverage/issues and limitations. No assembly is loaded or executed.
 ECMA-335 permits empty metadata streams to be omitted. An absent `#Blob`
 stream therefore does not prevent module or assembly identity from being read
 when all blob indexes are zero; a nonzero reference to that missing heap is
-reported as a missing-stream issue.
+reported as a missing-stream issue. Repeated `#Blob` declarations for the same
+file range keep the blob facts and disclose the duplicate. Distinct ranges
+leave nonzero blob indices unresolved. The result keeps module identity, row
+counts, and other independent observations. A row whose current result requires
+a decoded blob is omitted with partial coverage. A separate blob-backed fact
+such as a method's local-variable signature remains unknown when other facts
+about that method are available. An out-of-root stream declaration is malformed.
 
 If the metadata root declares both compressed (`#~`) and uncompressed (`#-`)
 tables, REA reports both declarations and leaves the row layout unresolved.

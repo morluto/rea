@@ -81,7 +81,7 @@ type MetadataHeap =
     }
   | { readonly kind: "ambiguous"; readonly issue: ManagedParseIssue };
 
-type TrackedHeapName = "#GUID" | "#US";
+type TrackedHeapName = "#GUID" | "#US" | "#Blob";
 
 export interface MetadataTableLayout {
   readonly index: number;
@@ -99,7 +99,7 @@ export interface ManagedMetadataLayout {
   readonly strings: MetadataStream;
   readonly guid: MetadataHeap;
   /** Empty blob heaps may omit the stream; index zero remains the empty blob. */
-  readonly blob: MetadataStream | null;
+  readonly blob: MetadataHeap | null;
   /** Optional: assemblies without `ldstr` literals may omit #US. */
   readonly userStrings: MetadataHeap | null;
   readonly tables: ReadonlyMap<number, MetadataTableLayout>;
@@ -274,6 +274,7 @@ const readMetadataStreams = (
   const heapDeclarations: ParsedStreams["heapDeclarations"] = {
     "#GUID": [],
     "#US": [],
+    "#Blob": [],
   };
   for (let index = 0; index < streamCount; index += 1) {
     requireRange(bytes, rootOffset, cursor, 8, "metadata.stream-header");
@@ -282,7 +283,9 @@ const readMetadataStreams = (
     const streamSize = bytes.readUInt32LE(cursor + 4);
     const named = readStreamName(bytes, rootOffset, cursor + 8);
     const trackedHeap =
-      named.name === "#GUID" || named.name === "#US" ? named.name : null;
+      named.name === "#GUID" || named.name === "#US" || named.name === "#Blob"
+        ? named.name
+        : null;
     if (trackedHeap === null && streamNames.has(named.name))
       throw managedFailure(
         "invalid-stream",
@@ -341,10 +344,11 @@ const resolveHeap = (
     ({ offset, size }) => offset === first.offset && size === first.size,
   );
   const coordinates = declarations.map(describeStreamCoordinates).join(", ");
-  const conflict =
-    name === "#GUID"
-      ? "Nonzero GUID indices are unresolved."
-      : "User-string literals are unresolved.";
+  const conflict = {
+    "#GUID": "Nonzero GUID indices are unresolved.",
+    "#US": "User-string literals are unresolved.",
+    "#Blob": "Nonzero blob indices are unresolved.",
+  }[name];
   const issue: ManagedParseIssue = {
     code: "invalid-stream",
     scope: `metadata.${name}`,
@@ -589,7 +593,7 @@ export const readManagedMetadataLayout = (
     streamNames: [...streamNames].sort(),
     strings,
     guid,
-    blob: streams.get("#Blob") ?? null,
+    blob: resolveHeap("#Blob", heapDeclarations["#Blob"]),
     userStrings: resolveHeap("#US", heapDeclarations["#US"]),
     tables,
     rowCounts,
