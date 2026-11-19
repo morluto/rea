@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import type {
   BinaryArchitecture,
   RawOnlyArchitecture,
@@ -60,21 +61,18 @@ export const readElfHeaderFacts = (
       `truncated ELF header: an ELF${elfClass} header needs ${minimumSize} bytes; the file has ${totalBytes}`,
     );
   const littleEndian = dataByte === 1;
-  const readU16 = (offset: number): number =>
-    littleEndian ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
-  const readU32 = (offset: number): number =>
-    littleEndian ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
-  const machine = readU16(18);
-  const headerSize = readU16(elfClass === 32 ? 40 : 52);
+  const reader = new BinaryReader(bytes, littleEndian, "elf");
+  const machine = reader.u16(18);
+  const headerSize = reader.u16(elfClass === 32 ? 40 : 52);
   return ok({
     elfClass,
     byteOrder: littleEndian ? "little" : "big",
     headerSize,
     machine,
-    type: readU16(16),
-    flags: readU32(elfClass === 32 ? 36 : 48),
+    type: reader.u16(16),
+    flags: reader.u32(elfClass === 32 ? 36 : 48),
     osAbi: bytes[7]!,
-    version: readU32(20),
+    version: reader.u32(20),
     abiVersion: bytes[8]!,
   });
 };
