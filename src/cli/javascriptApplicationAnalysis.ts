@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { ContractCommandContext } from "./contractCommand.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
@@ -95,13 +95,8 @@ export class CliJavaScriptAnalysisHost {
 /** Process CLI host used when a caller does not pass its own host. */
 const processJavaScriptAnalysis = new CliJavaScriptAnalysisHost();
 
-/** Stop the process-owned JavaScript worker. */
-export const closeCliJavaScriptResources = (
-  host: CliJavaScriptAnalysisHost = processJavaScriptAnalysis,
-): Promise<void> => host.close();
-
 ownCliProcessResource("javascript-analysis", () =>
-  closeCliJavaScriptResources(),
+  processJavaScriptAnalysis.close(),
 );
 
 /** Execute the shared CLI boundary for static JavaScript analysis. */

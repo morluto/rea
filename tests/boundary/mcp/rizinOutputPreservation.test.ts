@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { rizinDebugMcpServer } from "../../fixtures/rizinDebugMcp.js";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { expect, it } from "vitest";
 
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -10,6 +10,7 @@ import {
   createRizinTestManager,
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const test = it.skipIf(process.platform === "win32");
 
@@ -45,7 +46,10 @@ const observe = async (
     },
   );
   const server = rizinDebugMcpServer("rizin-output-test", manager);
-  const client = new Client({ name: "rizin-output-test", version: "1" });
+  const client = new Client(
+    { name: "rizin-output-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -54,7 +58,7 @@ const observe = async (
     const startReply = await client.callTool({
       name: "start_rizin_debug_session",
       arguments: {
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       },
     });

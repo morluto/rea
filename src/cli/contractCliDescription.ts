@@ -9,7 +9,7 @@ import type { CallerInputPaths } from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { schemaAnnotations } from "../domain/schemaAnnotations.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -25,6 +25,7 @@ import {
   selectCliAnalysisSelector,
   type CliSelectorKind,
 } from "./analysisSelector.js";
+import { optionFlagName } from "./optionFields.js";
 
 /**
  * Framework-neutral CLI description of a tool contract. This module owns
@@ -382,6 +383,8 @@ export interface ContractCliSessionTarget {
   /** The positional key, taken before every other positional. */
   readonly key: string;
   readonly schema: z.ZodType;
+  /** The contract that opens the target, when the command takes its fields. */
+  readonly opening: string | undefined;
   /** Options that supply fields of the opening contract. */
   readonly options: readonly ContractCliOpeningOption[];
   /**
@@ -699,7 +702,9 @@ export interface ContractCliDescription {
    * Contract fields the CLI spells differently, so input issues reported
    * after argv parsing can name the CLI key, and the flag of each contract
    * field (or `field.member`) the command takes as an option, so a failure
-   * that names a per-call control can name the flag that sets it.
+   * that names a per-call control can name the flag that sets it. Each field
+   * of a field group maps to the group's option, and a positional selector
+   * to its named option.
    */
   readonly inputBinding: {
     readonly operation: string;
@@ -709,9 +714,9 @@ export interface ContractCliDescription {
   /** The command adds `--detail` and `--evidence_output`. */
   readonly evidenceDelivery: boolean;
   /**
-   * Decode run-time JSON, then map parsed values to the contract input and
-   * the selected delivery. An input or delivery that is not admitted is
-   * refused before any target is opened.
+   * Map values decoded by `admitDeliveryOptions` and the JSON input reader
+   * to the contract input and selected delivery. An input or delivery that
+   * is not admitted is refused before any target is opened.
    */
   readonly admit: (
     values: Readonly<Record<string, unknown>>,
@@ -719,11 +724,12 @@ export interface ContractCliDescription {
   /**
    * Refuse inline JSON options and a delivery the options cannot select,
    * before any JSON input is read, so an invalid invocation never waits on a
-   * file or stdin. `admit` still checks the admitted view with the input.
+   * file or stdin. Return the decoded options for the input reader and `admit`;
+   * `admit` still checks the admitted view with the input.
    */
   readonly admitDeliveryOptions: (
     values: Readonly<Record<string, unknown>>,
-  ) => Result<void, AnalysisInputError>;
+  ) => Result<Record<string, unknown>, AnalysisInputError>;
 }
 
 /** One contract from a contract group, keeping its exact schema types. */
@@ -753,26 +759,31 @@ const camelCase = (field: string): string =>
 const admitsOmission = (field: z.ZodType): boolean =>
   z.object({ value: field }).safeParse({}).success;
 
+const isWrapper = (value: z.ZodType) =>
+  value instanceof z.ZodOptional ||
+  value instanceof z.ZodExactOptional ||
+  value instanceof z.ZodDefault ||
+  value instanceof z.ZodPrefault ||
+  value instanceof z.ZodNullable ||
+  value instanceof z.ZodReadonly;
+
 const core = (value: z.ZodType): z.ZodType => {
   let current = value;
-  while (
-    current instanceof z.ZodOptional ||
-    current instanceof z.ZodExactOptional ||
-    current instanceof z.ZodDefault ||
-    current instanceof z.ZodPrefault ||
-    current instanceof z.ZodNullable ||
-    current instanceof z.ZodReadonly
-  )
-    current = current.unwrap() as z.ZodType;
+  while (isWrapper(current)) current = current.unwrap() as z.ZodType;
   return current;
 };
 
 /**
- * Accept only field forms argv can carry, so a new contract field cannot
- * reach the CLI with an unreviewed spelling.
+ * The description of a field, read through wrappers such as `.optional()`:
+ * zod does not carry a wrapped schema's description to its wrapper, and the
+ * advertised JSON Schema shows the wrapped description.
  */
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
+const describedThroughWrappers = (value: z.ZodType): string | undefined => {
+  let current = value;
+  while (current.description === undefined && isWrapper(current))
+    current = current.unwrap() as z.ZodType;
+  return current.description;
+};
 
 /**
  * JSON text for a structured contract field. Argv carries text; the decoded
@@ -1101,22 +1112,14 @@ const branchOnlyField = (
 /**
  * An option that must stay omitted when the caller omits it, because the
  * input branch or route the caller selects applies its own default on
- * admission. Help and `--schema` still state the default, in the
- * description and as JSON Schema `default`.
+ * admission. Help and `--schema` still state the default through the
+ * schema metadata.
  */
 export const withoutDefault = (schema: z.ZodType): z.ZodType => {
   if (!(schema instanceof z.ZodDefault)) return schema;
   const value: unknown = schema.parse(undefined);
   const omittable = (schema.removeDefault() as z.ZodType).optional();
-  const shown = typeof value === "string" ? value : JSON.stringify(value);
-  return omittable.meta({
-    ...schema.meta(),
-    description:
-      schema.description === undefined
-        ? `Default: ${shown}`
-        : `${schema.description} (default: ${shown})`,
-    default: value,
-  });
+  return omittable.meta({ ...schema.meta(), default: value });
 };
 
 /**
@@ -1401,7 +1404,8 @@ const describeTargetOpening = (
           throw new Error(`${opener}.${field} does not admit ${value}`);
       schema = z.enum(projected.values).optional();
     }
-    const description = projected.description ?? declared.description;
+    const description =
+      projected.description ?? describedThroughWrappers(declared);
     if (description !== undefined) schema = schema.describe(description);
     return {
       field,
@@ -1475,6 +1479,7 @@ const describeSessionTarget = (
   return {
     key: SESSION_TARGET_KEY,
     schema: localPathStringSchema.describe(target.description),
+    opening: target.open?.contract.name,
     options,
     admitOpening: (operation, values) =>
       admit(operation, values, values[SESSION_TARGET_KEY] as string),
@@ -1517,7 +1522,7 @@ const describeEvidenceTargets = (
     targets: described,
     options,
     sourceFlags: Object.fromEntries(
-      options.map(({ field, key }) => [field, `--${kebabCase(key)}`]),
+      options.map(({ field, key }) => [field, `--${optionFlagName(key)}`]),
     ),
     admitSource: (operation, values) => {
       let admitted: Result<
@@ -1895,30 +1900,24 @@ export const describeContractCommand = <
             : text;
       if (viewSelection && viewDelivery !== undefined)
         schema = schema.describe(viewOptionHelp(viewDelivery));
-      else if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
       // The flag spells null, so the option itself takes only a value.
       if (!declared.safeParse(null).success)
         throw new Error(`${contract.name}.${field} does not admit null`);
       assertArgvField(contract.name, field, declared);
       schema = argvDecimal(core(declared).optional());
-      if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else if (delivery)
       schema =
         viewDelivery?.viewSelectsSummary === true
           ? analysisEvidenceDeliveryOptions.detail.unwrap().optional()
           : analysisEvidenceDeliveryOptions.detail;
-    else if (jsonText) schema = jsonTextField(declared, kebabCase(key));
+    else if (jsonText) schema = jsonTextField(declared, optionFlagName(key));
     else if (callerPath) {
       const admitted =
         core(declared) instanceof z.ZodArray
           ? z.array(localPathStringSchema)
           : localPathStringSchema;
       schema = admitsOmission(declared) ? admitted.optional() : admitted;
-      if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else {
       assertArgvField(contract.name, field, declared);
       schema = argvDecimal(argvOptional(declared));
@@ -1935,9 +1934,15 @@ export const describeContractCommand = <
       schema = schema.default(projected.default as never);
       if (described !== undefined) schema = schema.describe(described);
     }
-    if (projected?.description !== undefined)
-      schema = schema.describe(projected.description);
-    const description = schema.description;
+    const described =
+      projected?.description ??
+      schema.description ??
+      describedThroughWrappers(declared);
+    if (described !== undefined && described !== schema.description)
+      schema = schema.describe(described);
+    if (!delivery && projected?.default === undefined)
+      schema = withoutDefault(schema);
+    const description = schema.description ?? described;
     const value = core(declared);
     const selector = selectorOptions[field];
     let selectorOption: ContractCliSelectorOption | undefined;
@@ -2060,7 +2065,8 @@ export const describeContractCommand = <
           // An omitted member stays omitted; the contract applies its default.
           schema = argvDecimal(omittable(withoutDefault(memberDeclared)));
         }
-        const description = projected.description ?? memberDeclared.description;
+        const description =
+          projected.description ?? describedThroughWrappers(memberDeclared);
         if (description !== undefined) schema = schema.describe(description);
         const value = core(memberDeclared);
         return [
@@ -2340,7 +2346,19 @@ export const describeContractCommand = <
             };
             return [{ path: [flag], message, issue }];
           });
-          const result = contractChecks.safeParse(toContractInput(options));
+          // Checks observe execution defaults, while the command retains the
+          // caller's raw selections. Resolve only omitted fields: supplied
+          // options have already passed argv admission, and JSON text is not
+          // decoded until the command runs.
+          const checkInput = toContractInput(options);
+          if (checks.length > 0)
+            for (const [field, declared] of Object.entries(shape)) {
+              if (Object.hasOwn(checkInput, field)) continue;
+              const omitted = declared.safeParse(undefined);
+              if (omitted.success && omitted.data !== undefined)
+                checkInput[field] = omitted.data;
+            }
+          const result = contractChecks.safeParse(checkInput);
           return result.success
             ? conflicts
             : [
@@ -2424,15 +2442,33 @@ export const describeContractCommand = <
         ].flatMap(({ field, key }) => (key === field ? [] : [[field, key]])),
       ),
       flags: Object.fromEntries(
-        parameters.flatMap(({ field, key, member, positional, delivery }) =>
-          positional || delivery
-            ? []
-            : [
-                [
-                  member === undefined ? field : [field, ...member].join("."),
-                  `--${kebabCase(key)}`,
-                ],
-              ],
+        parameters.flatMap(
+          ({
+            field,
+            key,
+            member,
+            positional,
+            delivery,
+            group,
+            selectorOption,
+          }) => {
+            if (delivery) return [];
+            // A positional selector is also set by its named option.
+            if (positional)
+              return selectorOption === undefined
+                ? []
+                : [[field, `--${optionFlagName(selectorOption.key)}`] as const];
+            const flag = `--${optionFlagName(key)}`;
+            // A field group's option supplies each of its contract fields.
+            if (group !== undefined)
+              return group.map((grouped) => [grouped, flag] as const);
+            return [
+              [
+                member === undefined ? field : [field, ...member].join("."),
+                flag,
+              ] as const,
+            ];
+          },
         ),
       ),
     },
@@ -2471,7 +2507,7 @@ export const describeContractCommand = <
     admitDeliveryOptions: (values) => {
       const decoded = decodeInlineJson(contract.name, parameters, values);
       if (!decoded.ok) return decoded;
-      if (!evidenceDelivery) return ok(undefined);
+      if (!evidenceDelivery) return decoded;
       const view =
         viewDelivery === undefined
           ? undefined
@@ -2502,7 +2538,7 @@ export const describeContractCommand = <
         evidenceOutput: decoded.value.evidence_output as string | undefined,
         view,
       });
-      return refused === undefined ? ok(undefined) : err(refused);
+      return refused === undefined ? decoded : err(refused);
     },
   };
 };
@@ -2618,8 +2654,8 @@ const selectSpelledSelector = (
 };
 
 /**
- * Decode run-time JSON, then map the values to the contract input and the
- * selected delivery. When the projection decodes JSON at run time, the
+ * Map decoded values to the contract input and selected delivery.
+ * When the projection decodes JSON at run time, the
  * decoded input, delivery and view are admitted together by the contract
  * input schema, so the contract's own rules and messages apply. When argv
  * supplies the whole contract input, it is parsed once the same way and the
@@ -2655,9 +2691,7 @@ const admitInvocation = (
     wholeInput,
     checkedFields,
   } = command;
-  const inline = decodeInlineJson(contract.name, parameters, values);
-  if (!inline.ok) return inline;
-  const decoded = inline.value;
+  const decoded = values;
   const input = toContractInput(decoded);
   const detail = evidenceDelivery
     ? (decoded[rename("detail")] as "complete" | "summary" | undefined)

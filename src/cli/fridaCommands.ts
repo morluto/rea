@@ -1,5 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { z } from "incur";
+import { z } from "zod";
 
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";

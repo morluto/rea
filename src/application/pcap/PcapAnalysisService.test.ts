@@ -201,7 +201,10 @@ it("preserves pcap caller field constraints before provider execution", async ()
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "invalid_request",
     details: {
-      issues: [{ path: ["path"], reason: "out_of_range", minimum: 1 }],
+      issues: [
+        { path: ["path"], reason: "out_of_range", minimum: 1 },
+        { path: ["path"], reason: "invalid_format", expected: "regex" },
+      ],
     },
   });
   expect(calls).toBe(0);

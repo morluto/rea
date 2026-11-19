@@ -84,6 +84,8 @@ jobs:
       agentenv: ${{ steps.plan.outputs.agentenv }}
       nativeaot: ${{ steps.plan.outputs.nativeaot }}
       ghidra_bridge: ${{ steps.plan.outputs.ghidra_bridge }}
+      go_binary: ${{ steps.plan.outputs.go_binary }}
+      android_metadata: ${{ steps.plan.outputs.android_metadata }}
       website: ${{ steps.plan.outputs.website }}
       matrix: ${{ steps.plan.outputs.matrix }}
       test_selection: ${{ steps.plan.outputs.test_selection }}
@@ -94,6 +96,7 @@ jobs:
         with:
           ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0
+          filter: blob:none
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
@@ -334,7 +337,7 @@ jobs:
       fail-fast: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}
       matrix:
         # scripts/ci/test-selection.mjs owns the shard counts: twelve fast
-        # built shards, six full-qualification shards with coverage, or one
+        # built shards, twelve full-qualification shards with coverage, or one
         # job per group of a selected PR subset.
         shard: ${{ fromJSON(needs.changes.outputs.test_shards) }}
     steps:
@@ -393,6 +396,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
       - name: Run reverse tools tests with coverage
         run: npm run test:coverage:reverse-tools
       - name: Preflight both reverse tools mutation configurations
@@ -429,7 +434,9 @@ jobs:
       needs.changes.outputs.web_source_map == 'true' ||
       needs.changes.outputs.agentenv == 'true' ||
       needs.changes.outputs.packet_capture == 'true' ||
-      needs.changes.outputs.signal_recording == 'true'
+      needs.changes.outputs.signal_recording == 'true' ||
+      needs.changes.outputs.go_binary == 'true' ||
+      needs.changes.outputs.ghidra_bridge == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -476,7 +483,6 @@ jobs:
           path: |
             dist/
             skills/
-            .cache/mcp-tool-catalog.json
             .cache/ci-test-history/test-results.json
             docs/public/product-catalog.json
             docs/verification/managed-conformance-*.json
@@ -688,20 +694,34 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - name: Prepare cross compiler
+      # Include runner ImageOS/ImageVersion and a UTC date bucket so runner image
+      # rollouts invalidate immediately and cached MinGW outputs refresh daily.
+      - name: Compute Windows native cache key
+        id: windows-native-key
+        env:
+          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', '.github/actions/windows-cross-compiler/action.yml', '.github/actions/ubuntu-archive/action.yml', 'package.json') }}
         run: |
-          # Slow Azure archive transfers can exhaust the job before compilation.
-          # Keep the same signed packages and avoid slow HTTP mirror fallback.
-          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$source" ]; then
-              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
-      - run: npm run build:windows-native
+          utc_date="$(date -u +%Y-%m-%d)"
+          printf 'key=rea-windows-native-v3-%s-%s-%s-%s-%s-%s\n' \
+            "${RUNNER_OS}" "${RUNNER_ARCH}" "${ImageOS:-ubuntu}" "${ImageVersion:-rolling}" "${utc_date}" "${SOURCE_HASH}" \
+            >> "${GITHUB_OUTPUT}"
+      - name: Restore Windows native build outputs
+        id: windows-native-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            native/windows/build/
+            .cache/windows-native-inspection-fixture/
+            .cache/windows-process-boundary/
+          key: ${{ steps.windows-native-key.outputs.key }}
+      - name: Prepare cross compiler
+        if: steps.windows-native-cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/windows-cross-compiler
+      - if: steps.windows-native-cache.outputs.cache-hit != 'true'
+        run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
-      - run: node scripts/build-windows-native.mjs --inspection-fixture
+      - if: steps.windows-native-cache.outputs.cache-hit != 'true'
+        run: node scripts/build-windows-native.mjs --inspection-fixture
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-native-inspection-fixture
@@ -712,11 +732,30 @@ jobs:
       # results from a separate executable. Cross-build it in the lane that
       # already has MinGW so the Windows job can observe them too.
       - name: Build Windows process boundary fixture
+        if: steps.windows-native-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p .cache/windows-process-boundary
           x86_64-w64-mingw32-g++ -municode -std=c++17 -O2 -static -Wall -Wextra \
             -o .cache/windows-process-boundary/process-boundary.exe \
             tests/fixtures/windows/processBoundary.cc -ladvapi32
+      - name: Verify cross-built Windows test fixtures
+        run: >-
+          node -e "const fs = require('node:fs');
+          for (const p of ['.cache/windows-native-inspection-fixture/manifest.json', '.cache/windows-process-boundary/process-boundary.exe']) {
+          if (fs.statSync(p).size <= 0) throw new Error('empty Windows fixture: ' + p); }"
+      - name: Save validated Windows native build outputs
+        if: >-
+          success() &&
+          steps.windows-native-cache.outputs.cache-hit != 'true' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            native/windows/build/
+            .cache/windows-native-inspection-fixture/
+            .cache/windows-process-boundary/
+          key: ${{ steps.windows-native-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-process-boundary-fixture
@@ -766,9 +805,17 @@ jobs:
           console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.os != 'windows-latest'
         with:
           name: rea-build-cache
           path: .turbo/cache/
+      - name: Restore Windows Turbo build cache
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
@@ -819,21 +866,19 @@ jobs:
         env:
           REA_ARTIFACT_NODE_COMPILE_CACHE: ${{ runner.temp }}/rea-artifact-node-cache
         run: |
-          npm run verify:keyed-archive
-          npm run verify:asset-catalog
-          npm run verify:macos-bundle
-          npm run verify:legacy-simulator
-          npm run verify:apple-dispatch
-          npm run verify:interface-builder
-      - name: Verify portable iNES CLI, MCP and source boundaries
+          npm run build:cached
+          node scripts/verify/apple/keyed-archive.mjs
+          node scripts/verify/apple/asset-catalog.mjs
+          node scripts/verify/apple/macos-bundle.mjs
+          node scripts/verify/apple/legacy-simulator.mjs
+          node scripts/verify/apple/dispatch.mjs
+          node scripts/verify/apple/interface-builder.mjs
+      - name: Run native Apple, iNES, and process boundary regressions
         run: >-
           npm run test:focused --
           tests/acceptance/inesContainer.test.ts
           tests/boundary/filesystem/inesArtifact.test.ts
           tests/boundary/filesystem/inesCancellation.test.ts
-      - name: Run native Apple and process boundary regressions
-        run: >-
-          npm run test:focused --
           tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts
           tests/acceptance/providers/hopperStartupRecovery.test.ts
           tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts
@@ -884,6 +929,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
       - name: Verify static CLI/MCP journeys and synthetic report conformance
         env:
           REA_READINESS_REPORT_PATH: readiness-report.json
@@ -917,21 +964,32 @@ jobs:
         with:
           save: "true"
       - run: npm ci
+      - name: Restore Windows Turbo build cache
+        id: windows-build-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Typecheck with the official Windows compiler
         env:
           GOMAXPROCS: "2"
           GOMEMLIMIT: "3GiB"
-        run: npm run typecheck -- --checkers 2
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: rea-build-cache
-          path: .turbo/cache/
+        run: node scripts/run-turbo.mjs run typecheck
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
           path: native/windows/build/
       - run: npm run verify:windows-native:artifact
       - run: npm run build:cached
+      - name: Save validated Windows Turbo build cache
+        if: >-
+          success() && steps.npm-cache.outputs.can-save == 'true' &&
+          steps.windows-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: ${{ steps.windows-build-cache.outputs.cache-primary-key }}
       - name: Record named Windows host capabilities
         run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
       - name: Validate Windows host capability report
@@ -1022,19 +1080,18 @@ jobs:
           tests/process-global/runnerCancellation.test.ts
           tests/process-global/windowsOwnedCommand.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
+          tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
+          tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
+          tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
+      # Use the runtime prepared above. npm pack still runs prepack.
       - name: Verify real Node Inspector discovery and observation
         timeout-minutes: 10
         env:
           NODE_OPTIONS: "--max-old-space-size=1024"
           UV_THREADPOOL_SIZE: "2"
-        run: npm run verify:inspector
-      - run: npm run verify:package:windows
-      - name: Verify native directory identity on Node 24
-        run: >-
-          npx vitest run --coverage.enabled=false
-          tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
-          tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
-          tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
+        run: node scripts/verify/inspector/runtime-observation.mjs
+      - name: Verify installed Windows package
+        run: node scripts/verify-windows-package.mjs
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.23.4
@@ -1067,6 +1124,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
       - run: npm run docs:check
       - name: Verify published routes, source links and local anchors
         run: npm run verify:docs:routes
@@ -1202,15 +1261,35 @@ jobs:
       build_cache_artifact: rea-build-cache
       remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
+  go_binary:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.go_binary == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-go-binary.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
   nativeaot:
     needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
     uses: ./.github/workflows/nativeaot-fixtures.yml
 
   ghidra_bridge:
-    needs: [changes, static]
+    needs: [changes, static, build]
     if: needs.changes.outputs.ghidra_bridge == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/ghidra-bridge-sources.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
+  android_metadata:
+    needs: [changes, static]
+    if: needs.changes.outputs.android_metadata == 'true'
+    uses: ./.github/workflows/real-android-metadata.yml
 
   website:
     needs: [changes, static]
@@ -1252,14 +1331,22 @@ jobs:
         web_runtime,
         web_source_map,
         agentenv,
+        go_binary,
         nativeaot,
         ghidra_bridge,
+        android_metadata,
         website,
       ]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            .nvmrc
+            scripts/ci
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc

@@ -27,7 +27,6 @@ import {
   parseMultiImageTable,
   parseUImageHeaderFields,
   UIMAGE_HEADER_SIZE,
-  UIMAGE_MAGIC,
   UIMAGE_MULTI_TABLE_WINDOW,
   type UImageHeaderFields,
   type UImageParseError,
@@ -301,7 +300,7 @@ const toMetadata = (
   subImageCount: number,
 ): UImageMetadata => ({
   kind: "uimage",
-  magic: UIMAGE_MAGIC,
+  magic: facts.magic,
   timestamp: facts.timestamp,
   timestamp_iso: facts.timestampIso,
   payload_size: facts.payloadSize,

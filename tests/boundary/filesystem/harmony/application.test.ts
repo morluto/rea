@@ -28,6 +28,7 @@ import {
 } from "../../../../src/domain/harmony/harmonyApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -394,6 +395,38 @@ describe("HarmonyOS packaging boundaries", () => {
     expect(projection.components.resources.map(({ path }) => path)).toEqual([
       "assets/entry/resources/rawfile/module.json",
     ]);
+  });
+
+  it("stops resolving retained inventory pages when the caller cancels mid-request", async () => {
+    const path = await writeApplicationZip("rea-harmony-cancel-", "entry.hap", [
+      { path: "module.json", content: '{"module":{"name":"entry"}}' },
+      { path: "resources.index", content: "resource index" },
+    ]);
+    const pages = fragmentInventoryEvidence(
+      await inventoryApplicationPackage(path),
+      2,
+    );
+    const controller = new AbortController();
+    const reason = { request: "cancel Harmony projection" };
+    const looked: string[] = [];
+    const result = projectHarmonyApplicationEvidence(
+      {
+        inventory_evidence: pages.map(({ evidence_id }) => ({
+          kind: "retained-evidence",
+          evidence_id,
+        })),
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return pages.find(({ evidence_id }) => evidence_id === id);
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([pages[0]?.evidence_id]);
   });
 
   it("rejects non-HarmonyOS inventory Evidence", async () => {

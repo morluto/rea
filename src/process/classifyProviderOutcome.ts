@@ -12,6 +12,11 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProviderAdapterErrorOptions } from "../domain/providerAdapterError.js";
+import {
+  UnclassifiedProviderFailure,
+  type ExaminedProviderOutcome,
+} from "../domain/unclassifiedProviderFailure.js";
 import type { AnalysisLimit } from "../domain/analysisSettings.js";
 import {
   describeLaunchFailure,
@@ -68,6 +73,12 @@ export interface LaunchFailureContext {
   readonly selection?: string;
   /** Bytes of the refused argument list, when the caller measured them. */
   readonly argumentBytes?: number;
+  /**
+   * The command's arguments do not depend on the request, so an oversized
+   * launch (E2BIG) can only be repaired by shrinking the environment REA
+   * passes to it.
+   */
+  readonly fixedArguments?: boolean;
   /**
    * The provider's report that it cannot be started, such as a message naming
    * its configured executable. Without it the shared report names the
@@ -139,8 +150,19 @@ export const classifyLaunchFailure = (
         },
         {
           ...details,
+          diagnostics: {
+            ...details.diagnostics,
+            // Fixed arguments leave the environment as the only input to shrink.
+            oversized_launch_input:
+              context.fixedArguments === true
+                ? "environment"
+                : "request_and_environment",
+          },
           retryable: false,
-          remediationAction: `Select less input for one call, or pass large values through a file, then retry; ${unchanged}. An unchanged request fails the same way.`,
+          remediationAction:
+            context.fixedArguments === true
+              ? `This command's arguments do not depend on the request, so the environment REA passes to it is too large. Remove large or unneeded variables from the environment REA runs with, then retry; ${unchanged}. Retrying in the same environment fails the same way.`
+              : `Select less input for one call, or pass large values through a file, then retry; ${unchanged}. An unchanged request fails the same way.`,
         },
       );
     case "missing":
@@ -165,6 +187,38 @@ export const classifyLaunchFailure = (
 };
 
 type ReportedLimits = Readonly<Record<string, JsonValue>> | null;
+
+/**
+ * Reports the dialect outcome being classified as unrecognised by the
+ * context's provider. The report always carries the examined outcome and the
+ * classifier's details; `options` add provider facts to those details.
+ */
+export type UnclassifiedOutcomeReport = (
+  options?: ProviderAdapterErrorOptions,
+) => UnclassifiedProviderFailure;
+
+/** The facts the classifier examined for one dialect outcome. */
+const examinedOutcome = (
+  outcome: ProviderDialectOutcome,
+): ExaminedProviderOutcome => {
+  const snapshot = outcome.output?.snapshot;
+  return {
+    failure_kind: outcome.kind,
+    reason: outcome.message,
+    exit_code:
+      outcome.kind === "exited"
+        ? outcome.exitCode
+        : (snapshot?.exitCode ?? null),
+    signal:
+      outcome.kind === "exited" ? outcome.signal : (snapshot?.signal ?? null),
+    ...(outcome.kind === "exited"
+      ? { stop_requested: outcome.stopRequested }
+      : {}),
+    ...(outcome.output === undefined
+      ? {}
+      : { output_truncated: outcome.output.truncated }),
+  };
+};
 
 /** What one provider command needs to turn its outcome into a typed error. */
 export interface ProviderOutcomeContext {
@@ -218,10 +272,15 @@ export interface ProviderOutcomeContext {
    * provider's to interpret.
    */
   readonly launchUnavailable?: LaunchFailureContext["unavailable"];
-  /** Provider-specific meaning of an exit or a stream failure. */
+  /**
+   * Provider-specific meaning of an exit or a stream failure. What the
+   * provider does not recognise it reports through `unclassified`, which
+   * carries the examined outcome.
+   */
   readonly dialect: (
     outcome: ProviderDialectOutcome,
     details: AnalysisErrorOptions,
+    unclassified: UnclassifiedOutcomeReport,
   ) => AnalysisError;
 }
 
@@ -342,6 +401,22 @@ export const classifyProviderOutcome = (
       });
     case "exited":
     case "protocol":
-      return context.dialect(outcome, details);
+      return context.dialect(
+        outcome,
+        details,
+        (options) =>
+          new UnclassifiedProviderFailure(
+            context.providerId,
+            operation,
+            examinedOutcome(outcome),
+            {
+              ...details,
+              ...options,
+              // Provider facts join the context's diagnostics; neither
+              // replaces the other.
+              diagnostics: { ...details.diagnostics, ...options?.diagnostics },
+            },
+          ),
+      );
   }
 };

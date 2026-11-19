@@ -1,5 +1,5 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { rizinDebugMcpServer } from "../../fixtures/rizinDebugMcp.js";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,7 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "reports Rizin launch provenance and lossy frame decoding through MCP",
@@ -56,13 +57,17 @@ process.stdin.on("data", (chunk) => {
     await chmod(provider, 0o700);
     const manager = createRizinTestManager({ REA_RIZIN_COMMAND: provider });
     const server = rizinDebugMcpServer("rizin-evidence-provenance", manager);
-    const client = new Client({
-      name: "rizin-evidence-provenance",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "rizin-evidence-provenance",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const callerPath = "./relative/../rizin-fixture.bin";
+    // An absolute spelling that resolution changes: interior "." is removed.
+    const callerPath = "/tmp/./relative/../rizin-fixture.bin";
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
@@ -143,7 +148,10 @@ it("admits Rizin startup across a bound analysis session", async () => {
     manager,
     analysisSession,
   );
-  const client = new Client({ name: "rizin-start-admission", version: "1" });
+  const client = new Client(
+    { name: "rizin-start-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -203,7 +211,10 @@ process.stdin.on("data", async (chunk) => {
       REA_RIZIN_COMMAND: provider,
     });
     const server = rizinDebugMcpServer("rizin-cancellation", manager);
-    const client = new Client({ name: "rizin-cancellation", version: "1" });
+    const client = new Client(
+      { name: "rizin-cancellation", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

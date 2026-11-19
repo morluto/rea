@@ -78,24 +78,26 @@ export const electronFuseFailure = (
     return new AnalysisInputError(operation, { cause }, [
       { path: ["path"], reason: cause.reason, message: cause.message },
     ]);
-  if (cause instanceof ElectronFuseResourceFailure)
+  if (cause instanceof ElectronFuseResourceFailure) {
+    const { name, maximum } = cause.limit;
+    const fileSize = name === "maximum_input_bytes";
     return new AnalysisResourceConstraintError(
       operation,
-      cause.boundary === "file-size" ? "file-size" : "capacity",
+      fileSize ? "file-size" : "capacity",
       cause.message,
-      cause.boundary === "file-size"
-        ? { maximum_input_bytes: 1024 * 1024 * 1024 }
-        : { maximum_sentinels_per_slice: 32 },
+      { [name]: maximum },
       {
         cause,
         ...fixedAllowanceOptions(
-          cause.boundary === "file-size"
-            ? "the 1 GiB Electron fuse input allowance"
+          fileSize
+            ? "the Electron fuse input allowance"
             : "The Electron fuse sentinel inventory",
-          cause.boundary === "file-size" ? "input" : "count",
+          fileSize ? "input" : "count",
+          { limit: maximum, unit: fileSize ? "bytes" : "sentinels per slice" },
         ),
       },
     );
+  }
   const formatFailure = parseFailureAnalysisError(operation, path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (cause instanceof RegularFileChangedError)

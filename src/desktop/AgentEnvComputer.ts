@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { getHeapStatistics } from "node:v8";
 
@@ -8,6 +8,7 @@ import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { Deadline } from "../domain/deadline.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { isCanonicalBase64 } from "../domain/stringPatterns.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
 import type { ComputerHelper } from "./AgentEnvComputerHelper.js";
@@ -26,6 +27,7 @@ import { DRAWN_WAIT_MS, drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -212,6 +214,17 @@ export interface DriverResult {
   readonly content: readonly Readonly<Record<string, JsonValue>>[];
   readonly structured: Readonly<Record<string, JsonValue>> | null;
 }
+
+/** Decode the driver's first screenshot only when its encoded bytes are intact. */
+export const readComputerScreenshotBytes = (
+  reply: DriverResult,
+): Buffer | undefined => {
+  if (reply.isError) return undefined;
+  const data = reply.content.find((block) => block.type === "image")?.data;
+  if (typeof data !== "string" || data.length === 0 || !isCanonicalBase64(data))
+    return undefined;
+  return Buffer.from(data, "base64");
+};
 
 /** A response body read only while it stays within `maxBytes`. */
 const readBounded = async (
@@ -536,10 +549,7 @@ export class AgentEnvComputer implements ControlledComputer {
     )?.file?.bytes;
     const bytes =
       encoded === undefined ? undefined : Buffer.from(encoded, "base64");
-    if (
-      bytes?.length !== segment.bytes ||
-      createHash("sha256").update(bytes).digest("hex") !== segment.sha256
-    )
+    if (bytes?.length !== segment.bytes || sha256Hex(bytes) !== segment.sha256)
       throw new Error(
         `Recording segment ${segment.path} is missing or differs from its manifest.`,
       );

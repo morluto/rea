@@ -1,4 +1,5 @@
-import { Cli, z } from "incur";
+import type { CliInstance } from "./types.js";
+import { z } from "zod";
 
 import {
   captureProcessScenarioFile,
@@ -13,7 +14,7 @@ import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
-import type { CliInstance } from "./types.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
@@ -22,24 +23,33 @@ import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Register direct process capture and comparison commands. */
 export const registerProcessCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.captureProcess, {
-    description: "Capture one caller-selected process scenario",
-    args: z.object({
-      scenario: localPathStringSchema.describe("Scenario JSON path"),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "capture-process", () =>
-          captureProcessScenarioFile(args.scenario, environment, signal).catch(
-            projectProcessCliInputCleanupError,
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.captureProcess,
+    {
+      description: "Capture one caller-selected process scenario",
+      args: z.object({
+        scenario: localPathStringSchema.describe("Scenario JSON path"),
+      }),
+      run: ({ args }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, "capture-process", () =>
+            captureProcessScenarioFile(
+              args.scenario,
+              environment,
+              signal,
+            ).catch(projectProcessCliInputCleanupError),
           ),
         ),
-      ),
-  });
+    },
+    {
+      operations: [{ name: "capture_process_scenario", flags: {} }],
+    },
+  );
   registerContractCommand(
     cli as CliInstance,
     logger,

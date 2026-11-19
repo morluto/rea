@@ -95,7 +95,7 @@ export class EvidenceReferenceError extends EvidenceIntegrityError {
 }
 
 /** Evidence bundle filesystem access failed within the configured policy. */
-/** A recognized document kind supplied where an Evidence bundle is required. */
+/** A recognized file kind supplied where a different Evidence input is required. */
 export type EvidenceFileDetectedKind = "analysis-snapshot" | "evidence-record";
 
 export class EvidenceFileError extends AnalysisError {

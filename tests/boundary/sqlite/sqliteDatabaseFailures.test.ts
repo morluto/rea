@@ -101,13 +101,23 @@ it("does not recommend a timer above the supported maximum", () => {
   expect(failure.remediation.action).not.toContain("Increase");
 });
 
-it("says diagnostic capture has no runtime override", () => {
+it("reports exceeded diagnostic capture as a fixed resource constraint", () => {
   const projected = projectAnalysisError(
     classifyProviderFailure(
       new OwnedCommandFailure("output-limit", "diagnostics exceeded"),
       sqliteDatabaseDialect("/selected.db", "worker"),
     ),
   );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      operation: "inspect_sqlite_database",
+      reported_limits: {
+        diagnostic_capture_bytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+      },
+    },
+  });
   expect(projected.remediation.action).toContain(
     String(SQLITE_DATABASE_LIMITS.diagnosticBytes),
   );

@@ -36,12 +36,14 @@ describe("early-year clock formats", () => {
 });
 
 describe("composed response values", () => {
+  const addedClock: FieldRule = {
+    field: "date_added",
+    rule: "clock",
+    format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+  };
   const rules: readonly FieldRule[] = [
-    {
-      field: "date_added",
-      rule: "clock",
-      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
-    },
+    addedClock,
+    { field: "url", rule: "echo" },
     {
       field: "date_modified",
       rule: "clock",
@@ -100,7 +102,10 @@ describe("composed response values", () => {
   it.each(["live", "env", "both"] as const)(
     "reports an incoherent %s composition, including equal but stale URLs",
     (side) => {
-      const invalid = "https://web.archive.org/web/stale";
+      const invalid =
+        side === "env"
+          ? "https://web.archive.org/web/20261001090009/https://example.test/page"
+          : "https://web.archive.org/web/stale";
       const result = compare(
         side === "env" ? live : { ...live, web_archive_snapshot_url: invalid },
         side === "live" ? env : { ...env, web_archive_snapshot_url: invalid },
@@ -165,7 +170,7 @@ describe("composed response values", () => {
       new IdMap(),
       [201, 201],
       [
-        rules[0]!,
+        addedClock,
         {
           field: "url",
           rule: "composed",
@@ -333,57 +338,6 @@ const registerGeneratedValueComparisonCases = () => {
     expect(result.normalised.generated).toBe(1);
   });
 };
-
-describe("composed response fields", () => {
-  const rules: readonly FieldRule[] = [
-    {
-      field: "date_added",
-      rule: "clock",
-      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
-    },
-    { field: "url", rule: "echo" },
-    {
-      field: "web_archive_snapshot_url",
-      rule: "composed",
-      parts: [
-        { text: "https://web.archive.org/web/" },
-        { from: "date_added", as: "clock", pattern: "YYYYMMDDhhmmss" },
-        { text: "/" },
-        { from: "url", as: "value" },
-      ],
-    },
-  ];
-  const bookmark = (stamp: string, snapshot: string) => ({
-    date_added: `2026-10-01T09:00:${stamp}Z`,
-    url: "https://quarry.example.test/ledger",
-    web_archive_snapshot_url: `https://web.archive.org/web/${snapshot}/https://quarry.example.test/ledger`,
-  });
-
-  it("normalizes a composed field each side spells from its own fields", () => {
-    const result = compare(
-      bookmark("00", "20261001090000"),
-      bookmark("05", "20261001090005"),
-      new IdMap(),
-      [200, 200],
-      rules,
-    );
-    expect(result.differences).toEqual([]);
-    expect(result.normalised).toMatchObject({ clocks: 1, generated: 1 });
-  });
-
-  it("reports a composed field one side does not spell from its own fields", () => {
-    const result = compare(
-      bookmark("00", "20261001090000"),
-      bookmark("05", "20261001090009"),
-      new IdMap(),
-      [200, 200],
-      rules,
-    );
-    expect(
-      result.differences.map(({ category, pointer }) => [category, pointer]),
-    ).toEqual([["value", "/web_archive_snapshot_url"]]);
-  });
-});
 
 describe("compareAnswers", () => {
   registerGeneratedValueComparisonCases();

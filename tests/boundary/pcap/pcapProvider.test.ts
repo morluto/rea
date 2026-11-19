@@ -972,6 +972,19 @@ it("requests HTTP/2 URI facts and projects them through capture inspection", asy
   expect(result.coverage).toBe("complete");
 });
 
+it("keeps the packet summary when only the DNS wire pass exits unsuccessfully", async () => {
+  const { provider, root } = await providerWith({ failDnsPass: true });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    packet_count: 3,
+  });
+});
+
 it("reports partial DNS coverage when raw extraction fails without selected DNS facts", async () => {
   const base: { _source: { layers: Record<string, unknown> } }[] =
     JSON.parse(TSHARK_JSON);

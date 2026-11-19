@@ -1,5 +1,5 @@
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
-import { admitElfLoadSegment } from "../elfProgramHeader.js";
+import { admitElfLoadSegment, elfLoadSpans } from "../elfProgramHeader.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -45,19 +45,18 @@ export const readElfImageFromDirectory = (
       file_size: size,
       memory_size: memorySize,
     } = program;
-    const admitted = admitElfLoadSegment(
-      { virtualAddress: address, memorySize, fileSize: size },
-      bits,
-    );
+    const span = {
+      virtualAddress: address,
+      offset: fileOffset,
+      memorySize,
+      fileSize: size,
+    };
+    const admitted = admitElfLoadSegment(span, bits);
     if (!admitted.ok)
       throw new BinaryFormatFailure("malformed", admitted.error.message);
-    const mapping = {
-      ...(size === 0n
-        ? { offset: 0, size: 0 }
-        : reader.fileRange(fileOffset, size, "ELF load segment")),
-      address,
-    };
-    if (mapping.size !== 0) {
+    if (size !== 0n) reader.fileRange(fileOffset, size, "ELF load segment");
+    const { fileBacked: mapping, zeroFill } = elfLoadSpans(span);
+    if (mapping !== undefined) {
       mappings.push(mapping);
       loadRegions.push({
         mapping,
@@ -68,8 +67,7 @@ export const readElfImageFromDirectory = (
       });
       if ((flags & 1) !== 0) executableMappings.push(mapping);
     }
-    if (memorySize > size)
-      zeroFills.push({ address: address + size, size: memorySize - size });
+    if (zeroFill !== undefined) zeroFills.push(zeroFill);
   }
   for (const section of directory.sections) {
     const range = declaredFileRange(bytes.length, section.offset, section.size);

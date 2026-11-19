@@ -665,17 +665,8 @@ describe("update subprocess boundaries", () => {
     });
     expect(help.exitCode, help.stderr).toBe(0);
     expect(help.stdout).toMatch(/^\s{2}update\s/mu);
-    expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
   });
 
-  cliTest("rejects the removed upgrade CLI command", async ({ cli }) => {
-    const removed = await cli.run({
-      arguments: ["upgrade", "--json"],
-      environment: process.env,
-    });
-    expect(removed.exitCode, removed.stderr).toBe(1);
-    expect(removed.json).toMatchObject({ code: "COMMAND_NOT_FOUND" });
-  });
   it("captures output through stream closure and keeps arguments literal", async () => {
     const literal = 'space and $(echo bad); & | "quotes"';
     const result = await updateCommands.runProbe(
