@@ -344,16 +344,20 @@ it("reads a shared long ELF section name once without materializing its string t
   const shnum = 16_383;
   const stringOffset = 64;
   const strings = Buffer.alloc(1024 * 1024, 0x61);
+  strings[0] = 0;
+  strings[strings.length - 1] = 0;
   const tableOffset = stringOffset + strings.length;
   const bytes = Buffer.alloc(tableOffset + shnum * 64);
   elfPrefix().copy(bytes, 0);
   bytes.writeBigUInt64LE(BigInt(tableOffset), 40);
   bytes.writeUInt16LE(64, 58);
   bytes.writeUInt16LE(shnum, 60);
-  bytes.writeUInt16LE(0, 62);
+  bytes.writeUInt16LE(1, 62);
   strings.copy(bytes, stringOffset);
-  for (let index = 0; index < shnum; index += 1) {
+  for (let index = 1; index < shnum; index += 1) {
     const header = tableOffset + index * 64;
+    bytes.writeUInt32LE(1, header);
+    bytes.writeUInt32LE(index === 1 ? 3 : 1, header + 4);
     bytes.writeBigUInt64LE(BigInt(stringOffset), header + 24);
     bytes.writeBigUInt64LE(BigInt(strings.length), header + 32);
   }
