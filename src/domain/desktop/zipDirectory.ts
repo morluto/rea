@@ -12,10 +12,9 @@ import {
   zipEndUsesSingleVolume,
 } from "../zipEndOfCentralDirectory.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
+import { readZipCentralExtent } from "../zip/zipCentralHeader.js";
 import { ZIP_EXTRA_FIELD, lastZipExtraField } from "../zip/zipExtraFields.js";
 
-const CENTRAL_HEADER = 0x02014b50;
-const CENTRAL_HEADER_BYTES = 46;
 const UTF8_NAME = 0x800;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
@@ -169,16 +168,9 @@ export const scanZipDirectory = (
   let count = 0;
   let seen = 0;
   for (let at = start; at < located.end;) {
-    if (
-      at + CENTRAL_HEADER_BYTES > located.end ||
-      reader.u32(at) !== CENTRAL_HEADER
-    )
-      return undefined;
-    const name = at + CENTRAL_HEADER_BYTES;
-    const extra = name + reader.u16(at + 28);
-    const comment = extra + reader.u16(at + 30);
-    const next = comment + reader.u16(at + 32);
-    if (next > located.end) return undefined;
+    const extent = readZipCentralExtent(reader, at, located.end);
+    if (!extent.ok) return undefined;
+    const { name, extra, comment, next } = extent.value;
     const slash = endsInSlash(reader, {
       name,
       extra,

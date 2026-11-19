@@ -1,5 +1,9 @@
 import { BinaryReader } from "./binaryContainer.js";
 import {
+  ZIP_CENTRAL_HEADER,
+  readZipCentralExtent,
+} from "./zip/zipCentralHeader.js";
+import {
   ZIP_LOCAL_HEADER_BYTES,
   zipLocalDataOffset,
 } from "./zip/zipLocalHeader.js";
@@ -48,9 +52,6 @@ export const hasZipSignature = (bytes: Uint8Array): boolean =>
     signature.every((byte, index) => bytes[index] === byte),
   );
 
-const CENTRAL_DIRECTORY_HEADER = 0x02014b50;
-const CENTRAL_HEADER_BYTES = 46;
-
 /** Positional read of at most `length` bytes; a short result means end of file. */
 export type PositionalRead = (
   position: number,
@@ -58,20 +59,20 @@ export type PositionalRead = (
 ) => Promise<Uint8Array>;
 
 /**
- * Locate a single-disk ZIP whose end-of-central-directory record ends the
+ * Recognize a single-disk ZIP whose end-of-central-directory record ends the
  * file after leading non-ZIP bytes, such as a self-extractor or script stub.
- * Its central directory and first local header must resolve, whether member
- * offsets include the leading bytes or were written before them. Zip64,
- * split and empty archives are not located. Returns the leading byte count.
+ * The first directory entry and the local header it refers to must fit their
+ * respective regions. The probe handles adjusted and unadjusted member offsets
+ * for nonempty classic ZIPs on a single volume.
  */
-export const locateTrailingZipArchive = async (
+export const hasTrailingZipArchive = async (
   size: number,
   read: PositionalRead,
-): Promise<{ readonly leadingBytes: number } | undefined> => {
-  if (!Number.isSafeInteger(size) || size < ZIP_EOCD_BYTES) return undefined;
+): Promise<boolean> => {
+  if (!Number.isSafeInteger(size) || size < ZIP_EOCD_BYTES) return false;
   const tailStart = Math.max(0, size - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES);
   const tail = Buffer.from(await read(tailStart, size - tailStart));
-  if (tail.length !== size - tailStart) return undefined;
+  if (tail.length !== size - tailStart) return false;
   // A comment may contain EOCD-like bytes; validate each candidate's directory.
   for (const candidate of zipEndOfCentralDirectoryCandidates(tail)) {
     const {
@@ -85,6 +86,7 @@ export const locateTrailingZipArchive = async (
       entriesOnDisk === 0 ||
       entriesOnDisk === 0xffff ||
       entriesOnDisk !== candidate.totalEntries ||
+      directoryBytes < ZIP_CENTRAL_HEADER.bytes ||
       directoryBytes === 0xffffffff ||
       declaredDirectory === 0xffffffff
     )
@@ -93,25 +95,21 @@ export const locateTrailingZipArchive = async (
     // Offsets written before leading bytes were prepended are shifted by them.
     const shift = directory - declaredDirectory;
     if (directory < 0 || shift < 0) continue;
-    const header = Buffer.from(await read(directory, CENTRAL_HEADER_BYTES));
+    const header = Buffer.from(await read(directory, ZIP_CENTRAL_HEADER.bytes));
     const headerReader = new BinaryReader(header, true, "zip");
-    if (
-      header.length !== CENTRAL_HEADER_BYTES ||
-      headerReader.u32(0) !== CENTRAL_DIRECTORY_HEADER
-    )
+    if (!readZipCentralExtent(headerReader, 0, directoryBytes).ok) continue;
+    const localOffset =
+      headerReader.u32(ZIP_CENTRAL_HEADER.localHeaderOffset) + shift;
+    if (localOffset === 0 || localOffset > directory - ZIP_LOCAL_HEADER_BYTES)
       continue;
-    const firstLocal = headerReader.u32(42) + shift;
-    if (firstLocal === 0 || firstLocal > directory - ZIP_LOCAL_HEADER_BYTES)
-      continue;
-    const local = Buffer.from(await read(firstLocal, ZIP_LOCAL_HEADER_BYTES));
+    const local = Buffer.from(await read(localOffset, ZIP_LOCAL_HEADER_BYTES));
     const dataOffset = zipLocalDataOffset(
       new BinaryReader(local, true, "zip"),
-      firstLocal,
+      localOffset,
     );
-    if (dataOffset !== undefined && dataOffset <= directory)
-      return { leadingBytes: firstLocal };
+    if (dataOffset !== undefined && dataOffset <= directory) return true;
   }
-  return undefined;
+  return false;
 };
 
 /**
