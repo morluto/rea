@@ -1347,3 +1347,31 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
   if (result.ok) throw new Error("Expected directory capacity failure");
   expect(result.error._tag).toBe("AnalysisResourceConstraintError");
 });
+
+it("checks Clang bundle ID bounds before the retained directory allowance", async () => {
+  const name = "host-" + "x".repeat(65_537 - 5);
+  const header = Buffer.alloc(56);
+  header.write("__CLANG_OFFLOAD_BUNDLE__");
+  header.writeBigUInt64LE(1n, 24);
+  header.writeBigUInt64LE(BigInt(header.length + name.length), 32);
+  header.writeBigUInt64LE(1n, 40);
+  header.writeBigUInt64LE(BigInt(name.length), 48);
+  const framed = Buffer.concat([header, Buffer.from(name), Buffer.alloc(1)]);
+  const limited = await inspect(framed, { analysis: "inventory" });
+  if (limited.ok) throw new Error("Expected a directory capacity failure");
+  expect(limited.error._tag).toBe("AnalysisResourceConstraintError");
+
+  const short = Buffer.from(header);
+  short.writeBigUInt64LE(BigInt(short.length), 32);
+  short.writeBigUInt64LE(0n, 40);
+  const overlaps = Buffer.from(framed);
+  overlaps.writeBigUInt64LE(BigInt(header.length + 1), 32);
+  for (const bytes of [short, overlaps]) {
+    const result = await inspect(bytes, { analysis: "inventory" });
+    if (result.ok) throw new Error("Expected a malformed bundle directory");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    });
+  }
+});
