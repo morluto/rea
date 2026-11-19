@@ -231,6 +231,38 @@ it.each([80, 200])(
   },
 );
 
+describe("ReleaseExposureReader inline base64 map URLs", () => {
+  const encoded = embeddedSourceMap().toString("base64").replace(/=+$/u, "");
+
+  it.each([
+    { separator: "%0A", suffix: "", exposed: true },
+    { separator: "", suffix: "#", exposed: true },
+    { separator: "", suffix: "#ignored,fragment", exposed: true },
+    { separator: "!", suffix: "", exposed: false },
+    { separator: "%21", suffix: "", exposed: false },
+    { separator: "%23", suffix: "#ignored", exposed: false },
+    { separator: "", suffix: "?body#ignored", exposed: false },
+  ])(
+    "treats separator '$separator' and suffix '$suffix' as exposed=$exposed",
+    async ({ separator, suffix, exposed }) => {
+      const root = await createTestTempDirectory("rea-release-inline-map-url-");
+      const path = join(root, "app.js");
+      await writeFile(
+        path,
+        `//${INLINE_MAP_PREFIX}${encoded.slice(0, 4)}${separator}${encoded.slice(4)}${suffix}\n`,
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: exposed ? 1 : 0,
+        unparsed: exposed ? 0 : 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe(
+        exposed ? "exposed" : "unknown",
+      );
+    },
+  );
+});
+
 describe("ReleaseExposureReader review regressions", () => {
   it("keeps inline CSS source-map coverage unknown in files and packages", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-css-");
