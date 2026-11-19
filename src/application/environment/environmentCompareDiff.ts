@@ -385,8 +385,21 @@ class Differ {
         (typeof item === "string" && this.map.isStateReference(item, field)) ||
         ((typeof item === "number" || typeof item === "string") &&
           ID_LIST_FIELD.test(field))
-      )
+      ) {
+        if (
+          ID_LIST_FIELD.test(field) &&
+          (typeof item === "number" || typeof item === "string")
+        ) {
+          const scoped = this.map.env(item, this.entity.scope);
+          if (scoped !== undefined)
+            return typeof item === "string"
+              ? String(scoped)
+              : typeof scoped === "number"
+                ? scoped
+                : item;
+        }
         return translateValue(item, this.map);
+      }
       return item;
     });
     const key = (items: JsonValue[]): string =>
