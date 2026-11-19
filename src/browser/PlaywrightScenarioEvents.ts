@@ -28,10 +28,11 @@ import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCapt
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 import {
   captureNetworkBody,
-  networkBodyMediaType,
+  type NetworkBodyRedaction,
   type NetworkReadOptions,
 } from "./network/PlaywrightNetworkContent.js";
 import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
+import { CONTENT_TYPE_HEADER } from "../domain/browserNetworkMediaType.js";
 
 type EventName =
   | "console"
@@ -105,6 +106,11 @@ type EventKind = BrowserScenarioEvent["kind"];
 /** Arrival-ordered Playwright event capture with current-step attribution. */
 export class PlaywrightScenarioEvents {
   private readonly items: BrowserScenarioEvent[] = [];
+  /** Keep only the observed redaction mode for retained bodies, outside Evidence. */
+  private readonly networkBodyRedaction = new WeakMap<
+    BrowserScenarioEvent,
+    NetworkBodyRedaction
+  >();
   private readonly retained: Budget;
   private dropped = 0;
   private readonly omittedKinds = new Map<
@@ -160,7 +166,7 @@ export class PlaywrightScenarioEvents {
         selection: network,
         limits: this.limits,
         secrets: options.secrets,
-        emit: (event) => this.push(event),
+        emit: (event, bodyRedaction) => this.push(event, bodyRedaction),
         admitText: (kind, values) => this.admitProducerText(kind, values, true),
         admitContentBody: (input) => this.admitContentBody(input),
         omitNetwork: (id, kind, reason) => this.omitNetwork(id, kind, reason),
@@ -535,7 +541,11 @@ export class PlaywrightScenarioEvents {
         const protectedBody = await captureNetworkBody(
           async () => Buffer.from(prior.content, "base64"),
           event.phase,
-          () => networkBodyMediaType(prior.media_type),
+          () => ({
+            value: prior.media_type,
+            redaction: this.networkBodyRedaction.get(event) ?? "unknown",
+            declarationNames: [CONTENT_TYPE_HEADER],
+          }),
           this.secrets,
           readOptions,
         );
@@ -573,7 +583,10 @@ export class PlaywrightScenarioEvents {
       : { ...event, ...metadata };
   }
 
-  private push(event: UnindexedEvent): BrowserScenarioEventAdmission {
+  private push(
+    event: UnindexedEvent,
+    bodyRedaction?: NetworkBodyRedaction,
+  ): BrowserScenarioEventAdmission {
     this.sequence += 1;
     const cost =
       allocationCost(event, this.limits.max_event_allocation_bytes) + 128;
@@ -591,6 +604,8 @@ export class PlaywrightScenarioEvents {
       sequence: this.sequence,
       step_index: this.stepIndex,
     });
+    if (bodyRedaction !== undefined)
+      this.networkBodyRedaction.set(parsed, bodyRedaction);
     this.items.push(parsed);
     return { status: "retained", sequence: this.sequence };
   }

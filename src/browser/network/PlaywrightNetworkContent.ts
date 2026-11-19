@@ -75,9 +75,11 @@ const errorMessage = (
     : "Network read failed; diagnostic exceeds the allocation budget.";
 };
 
+export type NetworkBodyRedaction = "json" | "unknown" | "bytes";
+
 interface BodyMediaType {
   readonly value: string | null;
-  readonly redaction: "json" | "unknown" | "bytes";
+  readonly redaction: NetworkBodyRedaction;
   readonly declarationNames: readonly string[];
 }
 
