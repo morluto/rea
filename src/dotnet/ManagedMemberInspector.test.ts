@@ -403,7 +403,6 @@ it.each([
       bytes,
       layout,
       row.readIndex(layout.blobIndexSize),
-      layout.blob?.size ?? 0,
     );
     const blobOffset = blob.byteOffset - bytes.byteOffset;
     const result = inspectManagedMembersBytes(
@@ -493,7 +492,6 @@ const memberSignatureBlobOffset = (
     bytes,
     layout,
     row.readIndex(layout.blobIndexSize),
-    layout.blob?.size ?? 0,
   );
   return blob.byteOffset - bytes.byteOffset;
 };
@@ -1812,7 +1810,11 @@ describe("managed user string issues", () => {
       ...Array.from({ length: 64 }, () => Buffer.from([0x80, 0x00])),
     ]);
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: heap.length },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: heap.length },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     // Leave 24 KiB: enough for the failures, not for 512 bytes leaked each.
     managedDecodeBudget(layout).reserve(64 * 1024 * 1024 - 24 * 1024, null);
@@ -1963,7 +1965,11 @@ describe("managed user string scan completeness", () => {
 
   it("marks user strings partial when selected type identity is unreadable", () => {
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: 1 },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: 1 },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     expect(
       parseUserStrings(Buffer.from([0]), layout, {
@@ -1976,7 +1982,11 @@ describe("managed user string scan completeness", () => {
 
   it("marks user strings partial when an inspected method row was not read", () => {
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: 1 },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: 1 },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     // The omitted row's body, and any ldstr in it, was never scanned.
     expect(

@@ -723,7 +723,11 @@ directly when their number facts need no further classification; explicitly
 identified JSON sources can have scalar roots. Unidentified primitive text keeps
 its existing conversion route, so OpenStep `123` remains a string. OpenStep,
 unsupported XML encodings such as UTF-32 and declared legacy encodings, and JSON
-numbers requiring XML type facts retain the `plutil` route. Invalid UTF-8 and
+numbers requiring XML type facts retain the `plutil` route. So does XML that
+REA's XML reader rejects as not well-formed, which CoreFoundation can still
+accept: a limitation names REA's reason, and a document `plutil` also rejects
+stays refused with its diagnostic. Plist structure errors in well-formed XML
+remain refusals without conversion. Invalid UTF-8 and
 encoding-declaration mismatches remain explicit failures. Direct-source
 provenance records `file` without claiming conversion; conversion limitations
 and invocations appear only when conversion actually ran.
@@ -813,6 +817,13 @@ ranges to container offsets by adding the observed slice offset. Zero-fill
 segments do not produce file ranges. When the selected slice's container offset
 is unknown, those mapped locations are omitted with an explicit limitation;
 architecture inventory locations remain available.
+
+If a load-command or FAT table allowance stops inspection, the refusal reports
+the producer's budget name in `details.reported_limits.boundary` and its
+effective maximum in `details.reported_limits.maximum`. For example,
+`macho_load_command_projected_bytes` names the retained-output allowance and
+`macho_fat_slice_records` names the selected-slice table allowance. The native
+command timeout does not raise these budgets.
 
 `inspect_macho.encryption` reports the `LC_ENCRYPTION_INFO(_64)` state of every
 slice, not only the selected one. It decodes only the FAT table, slice headers

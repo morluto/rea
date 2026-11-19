@@ -251,3 +251,8 @@ Graph expansion and compiler-path retention consume the same selected report
 allowance. The independent compressed dependency limit (1 MiB), inflated JSON
 limits (8 MiB and 64 times the consumed stream), parser nesting and transport
 budgets remain enforced; increasing report admission does not raise those.
+When PE file alignment adds padding, the reader learns the exact consumed
+stream length only after inflation completes. If inflation stops first,
+`reported_limits.maximum_bytes` gives the allocation ceiling in force, the
+smaller of 8 MiB and 64 times the stored extent. If inflation completes, the
+ratio check uses the consumed stream length.

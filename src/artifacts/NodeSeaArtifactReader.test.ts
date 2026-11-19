@@ -331,6 +331,50 @@ it.each([
   },
 );
 
+it.each(["thin", "universal"] as const)(
+  "requires a named SEA segment to fit its %s Mach-O image before charging blob bytes",
+  async (carrier) => {
+    const image =
+      carrier === "thin"
+        ? nodeSeaMachO(populated)
+        : nodeSeaUniversal(populated);
+    const sliceOffset = carrier === "thin" ? 0 : image.readUInt32BE(16);
+    const sliceSize = image.length - sliceOffset;
+    // In a universal image the outer file contains the byte beyond the
+    // declared slice, so using outer EOF would incorrectly pass this check.
+    const valid =
+      carrier === "thin" ? image : Buffer.concat([image, Buffer.alloc(1)]);
+    const malformed = Buffer.from(valid);
+    const segment = sliceOffset + 32;
+    const payloadOffset = malformed.readBigUInt64LE(segment + 40);
+    const blobLength = Number(malformed.readBigUInt64LE(segment + 72 + 40));
+    const limits = {
+      ...DEFAULT_NODE_SEA_READER_LIMITS,
+      blob_bytes: blobLength - 1,
+    };
+    const impossibleLength = BigInt(sliceSize) - payloadOffset + 1n;
+    malformed.writeBigUInt64LE(impossibleLength, segment + 32);
+    malformed.writeBigUInt64LE(impossibleLength, segment + 48);
+
+    const locate = async (bytes: Buffer) => {
+      const handle = await open(
+        await writeCarrier("macho-segment", bytes),
+        "r",
+      );
+      try {
+        return await locateNodeSea(handle, bytes.length, undefined, limits);
+      } finally {
+        await handle.close();
+      }
+    };
+    await expect(locate(valid)).rejects.toMatchObject({ reason: "limit" });
+    await expect(locate(malformed)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("segment range is outside the file"),
+    });
+  },
+);
+
 it("classifies a main script without a JavaScript suffix as javascript-bundle", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier(

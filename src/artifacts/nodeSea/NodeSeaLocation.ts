@@ -3,7 +3,10 @@ import {
   hashArtifactRange,
   readArtifactRange as readExact,
 } from "../ArtifactCarrierRange.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentCommand,
+  readMachoSegmentHeader,
+} from "../../domain/apple/machoSegmentHeader.js";
 import {
   machoSectionBacking,
   readMachoSectionHeader,
@@ -349,6 +352,12 @@ const locateThinMachO = async (
         const table = offset + segmentHeader;
         if (nsects > Math.floor((size - segmentHeader) / sectionSize))
           throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
+        const admission = admitMachoSegmentCommand(
+          segment,
+          size,
+          framing.value.wide ? 64 : 32,
+          sliceSize,
+        );
         for (let index = 0; index < nsects; index += 1) {
           const section = table + index * sectionSize;
           const parsedSection = readMachoSectionHeader(
@@ -360,18 +369,17 @@ const locateThinMachO = async (
             throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
           const record = parsedSection.value;
           if (cString(record.nameBytes, 0, 16) !== SEA_SECTION) continue;
+          if (!admission.ok)
+            throw formatFailure(`Node SEA ${admission.error.message}`);
           const { issue } = machoSectionBacking(record, segment);
           if (issue !== null)
             throw formatFailure(`Mach-O Node SEA section ${issue}`);
-          const length = Number(record.size);
           const fileOffset = record.offset;
-          if (!Number.isSafeInteger(length))
-            throw limitFailure(
-              "Node SEA blob length exceeds exact-number representation",
-            );
+          // The segment and section bounds admit every nonempty payload.
+          // Empty segments can still declare an offset outside the image.
+          if (fileOffset > sliceSize) throw formatFailure(NODE_SEA_TRUNCATED);
+          const length = Number(record.size);
           admitBlobBytes(carrier, length);
-          if (fileOffset > sliceSize || length > sliceSize - fileOffset)
-            throw formatFailure(NODE_SEA_TRUNCATED);
           found.push({ offset: base + fileOffset, length });
         }
       }

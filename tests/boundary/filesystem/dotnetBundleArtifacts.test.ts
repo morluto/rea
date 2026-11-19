@@ -24,6 +24,37 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeMinimalElfHeader } from "../../fixtures/nativeHeaders.js";
 
+it.each([
+  {
+    length: [0x80, 0x80, 0x80, 0x80, 0x08],
+    message: "Invalid .NET bundle string length",
+  },
+  {
+    length: [0xff, 0xff, 0xff, 0xff, 0x07],
+    message: "Truncated .NET bundle manifest",
+  },
+])(
+  "reports malformed bundle ID length $length as a format failure",
+  async ({ length, message }) => {
+    const root = await createTestTempDirectory("rea-dotnet-invalid-string-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture([
+      { path: "member", bytes: Buffer.from("x") },
+    ]);
+    // The fixed manifest prefix contains two version fields and a file count.
+    fixture.bytes.set(length, fixture.headerOffset + 12);
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r");
+    try {
+      await expect(
+        readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+      ).rejects.toMatchObject({ reason: "format", message });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
 it.each(["close", "cancel"] as const)(
   "does not complete a .NET bundle inventory after %s at the last entry",
   async (interruption) => {
@@ -366,12 +397,34 @@ it.each([
     "unavailable",
   ],
   [
+    "entry count with no room for its manifest rows",
+    () => {
+      const fixture = dotnetBundleFixture();
+      fixture.bytes.writeInt32LE(0x7fff_ffff, fixture.fields.entryCount);
+      return fixture.bytes;
+    },
+    "format",
+  ],
+  [
+    "uncompressed member crossing the manifest above the member allowance",
+    () =>
+      dotnetBundleFixture([
+        {
+          path: "large",
+          bytes: Buffer.from("x"),
+          declaredSize: 600 * 1024 * 1024,
+        },
+      ]).bytes,
+    "format",
+  ],
+  [
     "expanded budget",
     () =>
       dotnetBundleFixture([
         {
           path: "large",
           bytes: Buffer.from("x"),
+          compressed: true,
           declaredSize: 600 * 1024 * 1024,
         },
       ]).bytes,

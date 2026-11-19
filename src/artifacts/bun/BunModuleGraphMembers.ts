@@ -2,6 +2,7 @@ import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
+import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import { setImmediate } from "node:timers/promises";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import {
@@ -315,8 +316,7 @@ const named = <Names extends readonly string[]>(
 const textFact = (bytes: Buffer, emptyIsText: boolean): BunTextFact => {
   if (bytes.length === 0)
     return emptyIsText ? { text: "", hex: null } : { text: null, hex: null };
-  const text = bytes.toString("utf8");
-  if (Buffer.from(text, "utf8").equals(bytes)) return { text, hex: null };
+  if (isStrictUtf8(bytes)) return { text: bytes.toString("utf8"), hex: null };
   return { text: null, hex: bytes.toString("hex") };
 };
 

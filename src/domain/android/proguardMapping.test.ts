@@ -642,6 +642,60 @@ it("treats CRLF and tab indentation like LF and spaces", () => {
 });
 
 it.each([
+  ["tabs", "\t->\t"],
+  ["multiple spaces", "   ->  "],
+  ["no spaces", "->"],
+  ["one-sided spacing", "\t->"],
+] as const)("reads the same mapping when arrows use %s", (_name, arrow) => {
+  expect(parse(fixture.replaceAll(" -> ", arrow))).toEqual(mapping);
+});
+
+it("maps fields and methods whose types are separated by tabs", () => {
+  const observed = parse(
+    [
+      "example.Original -> a:",
+      "    int\t\tcounter -> c",
+      "    4:4:void\trun():5:5 -> r",
+    ].join("\n"),
+  );
+  expect(
+    resolveProguardField(observed, { className: "a", name: "c", type: "I" }),
+  ).toMatchObject({ status: "mapped", mapped: { name: "counter" } });
+  expect(
+    resolveProguardMethod(observed, {
+      className: "a",
+      name: "r",
+      descriptor: "()V",
+    }),
+  ).toMatchObject({ status: "mapped", mapped: { name: "run" } });
+});
+
+it("reports extra mapping arrows on their original source lines", () => {
+  const observed = parse(
+    [
+      "example.Original -> a:",
+      "    int count -> c -> other",
+      "    void run() -> r -> other",
+      "example.Broken -> b -> other:",
+      "    int orphan -> x",
+      "example.Next -> n:",
+    ].join("\n"),
+  );
+  expect(observed.records).toEqual({
+    classes: 2,
+    fields: 0,
+    methods: 0,
+    malformed: 4,
+  });
+  expect(observed.malformed).toEqual([
+    { line: 2, reason: "member-line" },
+    { line: 3, reason: "member-line" },
+    { line: 4, reason: "class-line" },
+    { line: 5, reason: "member-without-class" },
+  ]);
+});
+
+it.each([
   ["empty", ""],
   ["comment-only", "# compiler: R8\n# just a comment\n"],
   ["usage.txt", "com.example.Unused\n    void unused()\n    int field\n"],

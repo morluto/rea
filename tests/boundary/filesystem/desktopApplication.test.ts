@@ -502,6 +502,30 @@ it.each(["Game_Data/Managed", "Contents/Resources/Data/Managed"])(
   },
 );
 
+it("retains PE/CLI evidence without inferring Unity from competing managed table streams", async () => {
+  const root = await createTestTempDirectory("rea-desktop-table-conflict-");
+  const managedPath = "Game_Data/Managed/Assembly-CSharp.dll";
+  await put(
+    root,
+    managedPath,
+    buildManagedPeFixture({
+      references: ["UnityEngine.CoreModule"],
+      competingTableStream: "distinct",
+    }),
+  );
+  const { report } = await inspect(root);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.candidates.map(({ family }) => family)).toEqual(["dotnet"]);
+  const file = report.files.find(({ path }) => path === managedPath);
+  expect(file?.facts.map(({ kind }) => kind)).toContain("pe-cli-directory");
+  expect(file?.facts.map(({ kind }) => kind)).not.toContain(
+    "unity-assembly-reference",
+  );
+  expect(file?.issues).toContainEqual(
+    expect.stringContaining("Metadata row layout is unknown."),
+  );
+});
+
 it("orders member probes for Unity predefined script assemblies before every managed artifact probe", async () => {
   const root = await createTestTempDirectory("rea-desktop-mono-members-");
   const unity = buildManagedPeFixture({
@@ -1380,16 +1404,13 @@ it.each([
       metadataOffset,
       image.length - metadataOffset,
     );
-    if (layout.blob === null)
-      throw new Error("Fixture requires a #Blob stream");
-    const blobSize = layout.blob.size;
     const reference = layout.table(35)!;
     // ECMA-335 AssemblyRef: 8 version bytes, 4 flag bytes, then PublicKeyOrToken.
     // Keep its name valid while making that unrelated blob index invalid.
     if (layout.blobIndexSize === 2)
       image.writeUInt16LE(0xffff, reference.offset + 12);
     else image.writeUInt32LE(0xffff_ffff, reference.offset + 12);
-    expect(() => readAssemblyReference(image, layout, 1, blobSize)).toThrow();
+    expect(() => readAssemblyReference(image, layout, 1)).toThrow();
     await put(root, `${managedDirectory}/Assembly-CSharp.dll`, image);
     const { report } = await inspect(root);
     expect(report.candidates.map((candidate) => candidate.family)).toEqual([
