@@ -1,6 +1,9 @@
 import { gt, major, valid } from "semver";
 import { z } from "zod";
-import { releaseSection } from "./release-markdown.mjs";
+import {
+  releaseMigrationWording,
+  releaseSection,
+} from "./release-markdown.mjs";
 
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
@@ -121,7 +124,7 @@ function readCommits(text) {
           .matchAll(
             /^BREAKING(?: CHANGE|-CHANGE):[ \t]*(\S[^\n]*(?:\n(?!\n|[A-Za-z-]+: )[^\n]+)*)/gmu,
           ),
-        (match) => match[1].replace(/\s+/gu, " ").trim(),
+        (match) => match[1].trim(),
       ),
     });
   }
@@ -143,15 +146,27 @@ function releaseNotes(text, expectedVersion) {
   const section = releaseSection(text, expectedVersion);
   if (section === undefined)
     throw new Error(`CHANGELOG.md must start with release ${expectedVersion}.`);
-  return section.lines.map(({ line }) => line).join("\n");
+  return section.blocks;
 }
 
-function breakingSection(notes) {
-  const heading = /^### [^\n]*BREAKING CHANGES[^\n]*\n/imu.exec(notes);
-  if (heading === null) return "";
-  const body = notes.slice(heading.index + heading[0].length);
-  const end = body.search(/^### /mu);
+function breakingSection(blocks) {
+  const start = blocks.findIndex(({ heading }) =>
+    /^### .*BREAKING CHANGES/iu.test(heading ?? ""),
+  );
+  if (start === -1) return [];
+  const body = blocks.slice(start + 1);
+  const end = body.findIndex(({ heading }) => heading?.startsWith("### "));
   return end < 0 ? body : body.slice(0, end);
+}
+
+function referenceProse(blocks) {
+  return blocks
+    .map(({ parts }) =>
+      parts
+        .map(({ text, href }) => (href ? `${text} ${href} ` : text))
+        .join(""),
+    )
+    .join("\n");
 }
 
 async function requireAncestor(git, ancestor, descendant, description) {
@@ -304,22 +319,22 @@ async function validateCandidate(git, sha, version, commits) {
     version,
   );
   const breakingNotes = breakingSection(notes);
-  const normalizedBreakingNotes = breakingNotes.replace(/\s+/gu, " ");
+  const breakingReferences = referenceProse(breakingNotes);
+  const containsMigrationWording = releaseMigrationWording(breakingNotes);
   const missingBreaking = commits.filter(
     (commit) =>
       commit.breaking &&
-      !referencesCommit(breakingNotes, commit) &&
+      !referencesCommit(breakingReferences, commit) &&
       (commit.breakingNotes.length === 0 ||
-        commit.breakingNotes.some(
-          (note) => !normalizedBreakingNotes.includes(note),
-        )),
+        !commit.breakingNotes.every(containsMigrationWording)),
   );
   if (missingBreaking.length > 0) {
     throw new Error(
       `Release ${version} migration notes omit unreleased breaking changes: ${missingBreaking.map((commit) => `${commit.sha} ${commit.subject}`).join("; ")}`,
     );
   }
-  return commits.filter((commit) => !referencesCommit(notes, commit));
+  const references = referenceProse(notes);
+  return commits.filter((commit) => !referencesCommit(references, commit));
 }
 
 /** Validate a recorded checkpoint and optional candidate using exact Git ancestry. */
