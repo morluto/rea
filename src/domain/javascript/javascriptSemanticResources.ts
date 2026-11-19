@@ -756,15 +756,34 @@ const rejectsSocketArguments = (
     return true;
 
   const inheritable = prototypeMutationMayPrecede(state, "Object", node);
-  const path = effective("path");
-  const skipsTcp = (value: SocketOptionValue): boolean =>
-    value === "unknown" ||
-    (value === undefined
-      ? inheritable
-      : !isNullishPlaceholder(value, state) &&
-        staticJavaScriptTruthiness(value) !== false);
-  if (skipsTcp(path) || (specifier === "tls" && skipsTcp(effective("socket"))))
+  const truthiness = (value: SocketOptionValue): boolean | undefined => {
+    if (value === "unknown") return undefined;
+    if (value === undefined) return inheritable ? undefined : false;
+    if (isNullishPlaceholder(value, state)) return false;
+    const syntax = unwrapJavaScriptExpression(value).node;
+    const literal = readExactJavaScriptLiteral(syntax);
+    if (literal.found) return Boolean(literal.value);
+    const number = nonFiniteGlobalNumber(syntax, state);
+    if (number !== undefined) return Boolean(number);
+    if (t.isNewExpression(syntax) || t.isObjectMethod(syntax)) return true;
+    return staticJavaScriptTruthiness(syntax);
+  };
+  const rejectsStringOption = (value: SocketOptionValue): boolean => {
+    if (value === undefined || value === "unknown") return false;
+    const kind = socketArgumentKind(
+      unwrapJavaScriptExpression(value).node,
+      state,
+    );
+    return kind === "object" || kind === "non-object";
+  };
+  // A supplied TLS socket bypasses transport connection. Otherwise a truthy
+  // path selects a pipe and Node requires a string before it reads TCP options.
+  if (specifier === "tls" && truthiness(effective("socket")) !== false)
     return false;
+  const path = effective("path");
+  const hasPath = truthiness(path);
+  if (hasPath === undefined) return false;
+  if (hasPath) return rejectsStringOption(path);
 
   const port = effective("port");
   if (port === undefined && specifier === "net" && node.arguments.length === 0)
@@ -778,12 +797,7 @@ const rejectsSocketArguments = (
 
   const host = effective("host");
   // Node falls back to localhost for falsy hosts. An unknown host cannot prove a refusal.
-  return (
-    host !== undefined &&
-    host !== "unknown" &&
-    staticJavaScriptTruthiness(host) === true &&
-    !t.isStringLiteral(unwrapJavaScriptExpression(host).node)
-  );
+  return truthiness(host) === true && rejectsStringOption(host);
 };
 
 /** Validate a TCP port after later options and pipe precedence are resolved. */
@@ -883,6 +897,7 @@ const socketArgumentKind = (
     return "object";
   if (
     isFunctionValuedSyntax(value) ||
+    t.isObjectMethod(value) ||
     nonFiniteGlobalNumber(value, state) !== undefined
   )
     return "non-object";

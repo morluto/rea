@@ -16,8 +16,8 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *
  * The positional second argument is a different slot Node does not validate —
  * `net.connect(0, 5)` connects — so only the member is decided. Only shapes with a
- * static truthiness are decided; the other rejected shapes above (`/x/`, boxed
- * values, `!0`, `Infinity`, intrinsic calls) keep the acquisition.
+ * statically known truthiness and string type are decided. Opaque expressions
+ * such as intrinsic calls retain the acquisition.
  */
 const acquisitionsFor = (body: string) =>
   analyzeJavaScriptSemantics(
@@ -45,6 +45,9 @@ it.each([
   ["an array host", `net.connect({ port: 0, host: [] })`],
   ["a function host", `net.connect({ port: 0, host: () => {} })`],
   ["a negated number host", `net.connect({ port: 0, host: -1 })`],
+  ["a unary number host", `net.connect({ port: 0, host: +1 })`],
+  ["an Infinity host", `net.connect({ port: 0, host: Infinity })`],
+  ["a boxed string host", `net.connect({ port: 0, host: new String("x") })`],
   ["a tls numeric host", `tls.connect({ port: 0, host: 5 })`],
   ["a tls object host", `tls.connect({ port: 0, host: {} })`],
   ["a falsy tls socket", `tls.connect({ port: 0, socket: null, host: 1 })`],
