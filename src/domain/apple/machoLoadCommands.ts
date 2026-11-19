@@ -254,6 +254,7 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
   [LC.ATOM_INFO, ["dataoff", "datasize"]],
   [LC.FUNCTION_VARIANTS, ["dataoff", "datasize"]],
   [LC.FUNCTION_VARIANT_FIXUPS, ["dataoff", "datasize"]],
+  [LC.LAZY_LOAD_DYLIB_INFO, ["dataoff", "datasize"]],
 ]);
 
 /** Names of a command's fixed uint32 fields, or undefined for other layouts. */
