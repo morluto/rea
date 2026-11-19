@@ -76,7 +76,7 @@ export const withoutCredentialsIn = (text: string): string =>
 const withTrailingSlash = (uri: string): string =>
   uri.endsWith("/") ? uri : `${uri}/`;
 
-const SCHEME_AUTHORITY = /^([a-z][a-z0-9+.-]*):\/\//iu;
+const SCHEME_PREFIX = /^([a-z][a-z0-9+.-]*):/iu;
 const LONG_MAX = (1n << 63n) - 1n;
 const LONG_MIN = -(1n << 63n);
 /** Largest magnitude strtol can return: LONG_MAX, or LONG_MIN's absolute value. */
@@ -140,48 +140,69 @@ const authorityEnd = (value: string): number => {
 };
 
 /**
+ * One pass over a host: copy every non-bracket character once, and remember
+ * the debracketed offset where a port suffix may begin.
+ */
+const debracketHost = (
+  host: string,
+): {
+  readonly text: string;
+  readonly portEnd: number;
+  readonly open: boolean;
+} => {
+  const pieces: string[] = [];
+  let start = 0;
+  let length = 0;
+  let portEnd = 0;
+  let inBracket = false;
+  for (let index = 0; index < host.length; index += 1) {
+    const character = host[index];
+    const opening = character === "[";
+    const closing = inBracket && character === "]";
+    if (!opening && !closing) continue;
+    if (index > start) {
+      pieces.push(host.slice(start, index));
+      length += index - start;
+    }
+    start = index + 1;
+    if (opening) inBracket = true;
+    else {
+      inBracket = false;
+      portEnd = length;
+    }
+  }
+  if (start < host.length) pieces.push(host.slice(start));
+  return { text: pieces.join(""), portEnd, open: inBracket };
+};
+
+/**
  * APT's deb822 Repo-URI host and port. Path octets stay as authored. An
  * unclosed IPv6 bracket or a port that consumes the host drops the authority.
+ * `scheme:host/path` gains the slashes APT inserts; `scheme:/path` does not.
  */
-const aptAuthorityUri = (uri: string): string => {
-  const scheme = SCHEME_AUTHORITY.exec(uri);
-  if (scheme === null) return uri;
-  const schemeText = scheme[1] ?? "";
-  const rest = uri.slice(scheme[0].length);
-  const end = authorityEnd(rest);
-  const authority = rest.slice(0, end);
-  const path = rest.slice(end);
+const renderHostUri = (
+  schemeText: string,
+  authority: string,
+  path: string,
+  sawSlashes: boolean,
+): string => {
   // `file://` has no path, and APT keeps both slashes. A path after the
   // empty host, as in `file:///srv`, drops that host.
   if (authority.length === 0)
-    return path.length === 0 ? `${schemeText}://` : `${schemeText}:${path}`;
+    return sawSlashes && path.length === 0
+      ? `${schemeText}://`
+      : `${schemeText}:${path}`;
 
   const at = authority.lastIndexOf("@");
   const userinfo = at === -1 ? "" : authority.slice(0, at + 1);
-  let host = at === -1 ? authority : authority.slice(at + 1);
-  let portEnd = 0;
-  let inBracket = false;
-  let index = 0;
-  while (index < host.length) {
-    const character = host[index];
-    if (character === "[") {
-      inBracket = true;
-      host = `${host.slice(0, index)}${host.slice(index + 1)}`;
-      continue;
-    }
-    if (inBracket && character === "]") {
-      inBracket = false;
-      host = `${host.slice(0, index)}${host.slice(index + 1)}`;
-      portEnd = index;
-      continue;
-    }
-    index += 1;
-  }
-  if (inBracket) return `${schemeText}:${path}`;
-
+  const separated = debracketHost(
+    at === -1 ? authority : authority.slice(at + 1),
+  );
+  if (separated.open) return `${schemeText}:${path}`;
+  let host = separated.text;
   const colon = host.lastIndexOf(":");
   let port = 0;
-  if (colon !== -1 && colon >= portEnd) {
+  if (colon !== -1 && colon >= separated.portEnd) {
     port = aptPort(host.slice(colon + 1));
     host = host.slice(0, colon);
   }
@@ -190,6 +211,28 @@ const aptAuthorityUri = (uri: string): string => {
     host.includes(":") || host.includes("/") ? `[${host}]` : host;
   const renderedPort = port === 0 ? "" : `:${String(port)}`;
   return `${schemeText}://${userinfo}${rendered}${renderedPort}${path}`;
+};
+
+const aptAuthorityUri = (uri: string): string => {
+  const scheme = SCHEME_PREFIX.exec(uri);
+  if (scheme === null) return uri;
+  const schemeText = scheme[1] ?? "";
+  const after = uri.slice(scheme[0].length);
+  if (after.startsWith("//")) {
+    const rest = after.slice(2);
+    const end = authorityEnd(rest);
+    return renderHostUri(schemeText, rest.slice(0, end), rest.slice(end), true);
+  }
+  // `copy:/srv` is a path. `http:127.0.0.1:18743/archive` is a host APT
+  // rewrites with `//`.
+  if (after.startsWith("/")) return `${schemeText}:${after}`;
+  const end = authorityEnd(after);
+  return renderHostUri(
+    schemeText,
+    after.slice(0, end),
+    after.slice(end),
+    false,
+  );
 };
 
 /** APT fixes up deb822 URIs before emitting Repo-URI, leaving path octets intact. */

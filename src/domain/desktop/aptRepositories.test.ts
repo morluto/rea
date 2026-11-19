@@ -701,6 +701,58 @@ describe("empty-authority file URIs", () => {
   });
 });
 
+describe("APT scheme:host shorthand", () => {
+  it.each([
+    ["http:127.0.0.1:18743/archive", "http://127.0.0.1:18743/archive/"],
+    ["http:[::1]:18743/archive", "http://[::1]:18743/archive/"],
+    ["https:vendor.invalid:/archive", "https://vendor.invalid/archive/"],
+    ["copy:/srv/repo", "copy:/srv/repo/"],
+  ])(
+    "matches shorthand %s to APT's Repo-URI and keeps the authored URI",
+    (authored, repoUri) => {
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+        deb822LookupFile,
+      );
+      expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+        file: deb822LookupFile,
+        position: 1,
+        uri: authored,
+        credentials: false,
+        suite: "stable",
+        components: ["main"],
+        architectures: [],
+        signedBy: [],
+        inlineKey: null,
+      });
+      const untouched = authored.endsWith("/") ? authored : `${authored}/`;
+      if (untouched !== repoUri)
+        expect(entryForTarget(targetFor(untouched), stanzas)).toBeUndefined();
+    },
+  );
+
+  it("reads a long bracketed host in one pass and keeps the authored URI", () => {
+    const repeats = 16_384;
+    const authored = `https://${"[a]".repeat(repeats)}:18743/archive`;
+    const repoUri = `https://${"a".repeat(repeats)}:18743/archive/`;
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+      deb822LookupFile,
+    );
+    expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+      file: deb822LookupFile,
+      position: 1,
+      uri: authored,
+      credentials: false,
+      suite: "stable",
+      components: ["main"],
+      architectures: [],
+      signedBy: [],
+      inlineKey: null,
+    });
+  });
+});
+
 describe("APT source URI lookup", () => {
   it("matches APT's deb822 Repo-URI spellings without changing the source URI", () => {
     const stanzas = parseDeb822Sources(
