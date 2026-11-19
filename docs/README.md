@@ -210,3 +210,4 @@ the exact commit messages and references from the release they describe.
 - [Rust binary dependency metadata](rust-binaries.md)
 - [U-Boot legacy uImage containers](uimage.md)
 - [UnityFS AssetBundle archives](unityfs.md)
+- [VS Code extension packages](guides/managed/vsix-package.md)

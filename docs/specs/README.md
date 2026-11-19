@@ -45,3 +45,4 @@ for new work, roadmap granularity and producer-owned contracts.
 - [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))
 
 - [NuGet package inspection](artifacts/nuget-nupkg/spec.md) ([plan](artifacts/nuget-nupkg/plan.md), [tasks](artifacts/nuget-nupkg/tasks.md))
+- [VS Code extension package inspection](artifacts/vsix-package/spec.md) ([plan](artifacts/vsix-package/plan.md), [tasks](artifacts/vsix-package/tasks.md))

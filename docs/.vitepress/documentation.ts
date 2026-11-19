@@ -218,6 +218,11 @@ export const documentationSections = [
         source: "guides/managed/nuget-nupkg.md",
         route: "/nuget-nupkg",
       },
+      {
+        text: "VS Code extension packages",
+        source: "guides/managed/vsix-package.md",
+        route: "/vsix-package",
+      },
     ],
   },
   {
