@@ -549,6 +549,19 @@ const observeAcquisitionCancel = (onCancel) => {
       if (cancelled === undefined) {
         for (let index = chunks.length - 1; index >= 0; index -= 1)
           process.stdin.unshift(chunks[index]);
+        // Leave stdin paused until a later data listener owns it. Resuming
+        // here would drain the unshifted handshake before serveStdio (or a
+        // fixture transport) attaches; the deferred path never resumes a
+        // paused stdin itself, unlike eagerRuntime's explicit handoff/resume.
+        const resumeWhenOwned = (event) => {
+          if (event !== "data") return;
+          process.stdin.off("newListener", resumeWhenOwned);
+          queueMicrotask(() => {
+            if (!process.stdin.readableEnded && !process.stdin.destroyed)
+              process.stdin.resume();
+          });
+        };
+        process.stdin.on("newListener", resumeWhenOwned);
       }
       chunks.length = 0;
       retainedBytes = 0;

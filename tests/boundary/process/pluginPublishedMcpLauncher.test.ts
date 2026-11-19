@@ -1169,7 +1169,13 @@ const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
 writeFileSync(
   entry,
-  \`process.stdin.pipe(process.stdout);
+  // data listener (not pipe): pipe() resumes stdin and would mask a paused
+  // handoff. Do not resume here — the launcher must resume once this
+  // transport owns the stream, matching deferred serveStdio.
+  \`process.stdout.write("stdin handoff runtime\\\\n");
+process.stdin.on("data", (chunk) => {
+  process.stdout.write(chunk);
+});
 process.stdin.on("end", () => { process.exitCode = 0; });
 \`,
   { mode: 0o600 },
@@ -1182,17 +1188,28 @@ process.stdin.on("end", () => { process.exitCode = 0; });
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
+  let stdout = "";
+  child.stdout.on("data", (bytes: Buffer) => {
+    stdout += bytes.toString();
+  });
   await waitForFile(startedPath);
   const handshake = '{"jsonrpc":"2.0","id":"handoff"}\n';
+  const followUp = '{"jsonrpc":"2.0","id":"follow-up"}\n';
   child.stdin.write(handshake);
   await new Promise((resolve) => setTimeout(resolve, 50));
   await writeFile(releasePath, "go", { mode: 0o600 });
-  // Unshifted acquisition bytes should reach the runtime without waiting on EOF.
-  await awaitStdoutChunk(child, "stdin handoff runtime");
+  // Runtime banner proves the entry started while stdin may still be paused.
+  await expect
+    .poll(() => stdout.includes("stdin handoff runtime\n"))
+    .toBe(true);
+  // Unshifted acquisition bytes must reach the data listener without pipe().
+  await expect.poll(() => stdout.includes(handshake)).toBe(true);
+  child.stdin.write(followUp);
+  await expect.poll(() => stdout.includes(followUp)).toBe(true);
   child.stdin.end();
   const result = await closed;
   expect(result.code, result.stderr).toBe(0);
-  expect(result.stdout).toBe(handshake);
+  expect(stdout).toBe(`stdin handoff runtime\n${handshake}${followUp}`);
 });
 
 it("owns Windows installer cancellation through taskkill process trees", async () => {
@@ -1334,9 +1351,13 @@ setInterval(() => {}, 1000);
       );
       expect(npmPid).toBeGreaterThan(0);
       expect(lifecyclePid).toBeGreaterThan(0);
-      child.kill("SIGTERM");
+      // Windows child.kill("SIGTERM") force-terminates Node and skips the
+      // launcher’s taskkill handler (see mcpHttpShutdown). Cancel through the
+      // supported stdin-EOF path instead; expect its zero status while the
+      // launcher still owns installer-tree cleanup.
+      child.stdin.end();
       const result = await closed;
-      expect(result.code).toBe(143);
+      expect(result.code).toBe(0);
       expect(result.stdout).toBe("");
       await waitForProcessExit(npmPid, "npm installer");
       await waitForProcessExit(lifecyclePid, "npm lifecycle child");
