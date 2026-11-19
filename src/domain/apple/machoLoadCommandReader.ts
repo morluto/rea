@@ -798,7 +798,10 @@ const decodeCommand = (
     return decodeLazyLoadDylibInfoCommand(body, index);
   const name = machoDependencyCommand(command);
   if (name !== null)
-    return { kind: "parsed", value: decodeDependency(name, body, index) };
+    return {
+      kind: "parsed",
+      value: decodeDependency(name, command, body, index),
+    };
   return undefined;
 };
 
@@ -1060,10 +1063,11 @@ const payloadString = (
 
 const decodeDependency = (
   command: MachoDependency["command"],
+  code: number,
   body: Uint8Array,
   index: number,
 ): MachoDependency => {
-  const parsed = readMachoDylibCommandFacts(body, true);
+  const parsed = readMachoDylibCommandFacts(body, code, true);
   if (!parsed.ok) {
     if (parsed.error._tag === "InvalidMachoDylibCommand")
       throw machoIssue(

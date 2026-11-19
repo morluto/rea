@@ -347,6 +347,7 @@ const collectFixupCommand = (
   } else if (machoDependencyCommand(kind) !== null) {
     const parsed = readMachoDylibCommandFacts(
       bytes.subarray(cursor, cursor + size),
+      kind,
       true,
     );
     if (!parsed.ok) {
