@@ -44,6 +44,52 @@ const parse = (
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
 
+const elf64ProgramHeaders = (original: Buffer) => {
+  const phoff = Number(original.readBigUInt64LE(32));
+  const phentsize = original.readUInt16LE(54);
+  const phnum = original.readUInt16LE(56);
+  const programHeaders = Array.from(
+    { length: phnum },
+    (_, index) => phoff + index * phentsize,
+  );
+  return { phoff, phentsize, phnum, programHeaders };
+};
+
+const elf64DynamicTags = (original: Buffer, headers: readonly number[]) => {
+  const dynamic = headers.find((offset) => original.readUInt32LE(offset) === 2);
+  if (dynamic === undefined) throw new Error("Expected PT_DYNAMIC");
+  const start = Number(original.readBigUInt64LE(dynamic + 8));
+  const count = Number(original.readBigUInt64LE(dynamic + 32)) / 16;
+  return new Map(
+    Array.from({ length: count }, (_, index) => {
+      const offset = start + index * 16;
+      return [
+        original.readBigInt64LE(offset),
+        original.readBigUInt64LE(offset + 8),
+      ];
+    }),
+  );
+};
+
+const appendElf64ZeroFill = (
+  original: Buffer,
+  { phoff, phentsize, phnum }: ReturnType<typeof elf64ProgramHeaders>,
+) => {
+  const bytes = Buffer.concat([
+    original,
+    Buffer.alloc((phnum + 1) * phentsize),
+  ]);
+  original.copy(bytes, original.length, phoff, phoff + phnum * phentsize);
+  bytes.writeBigUInt64LE(BigInt(original.length), 32);
+  bytes.writeUInt16LE(phnum + 1, 56);
+  const alias = original.length + phnum * phentsize;
+  bytes.writeUInt32LE(1, alias);
+  bytes.writeUInt32LE(4, alias + 4);
+  bytes.writeBigUInt64LE(1n, alias + 40);
+  bytes.writeBigUInt64LE(1n, alias + 48);
+  return { bytes, alias };
+};
+
 it.each([
   { stripped: true, unmappedTail: false },
   { stripped: false, unmappedTail: false },
@@ -52,46 +98,14 @@ it.each([
   "leaves dynamic strings unknown on a zero-fill overlap (stripped: $stripped, unmapped tail: $unmappedTail)",
   ({ stripped, unmappedTail }) => {
     const original = elfDependencyFixture({ bits: 64, little: true, stripped });
-    const phoff = Number(original.readBigUInt64LE(32));
-    const phentsize = original.readUInt16LE(54);
-    const phnum = original.readUInt16LE(56);
-    const programHeaders = Array.from(
-      { length: phnum },
-      (_, index) => phoff + index * phentsize,
-    );
-    const dynamic = programHeaders.find(
-      (offset) => original.readUInt32LE(offset) === 2,
-    );
-    if (dynamic === undefined) throw new Error("Expected PT_DYNAMIC");
-    const start = Number(original.readBigUInt64LE(dynamic + 8));
-    const count = Number(original.readBigUInt64LE(dynamic + 32)) / 16;
-    const tags = new Map(
-      Array.from({ length: count }, (_, index) => {
-        const offset = start + index * 16;
-        return [
-          original.readBigInt64LE(offset),
-          original.readBigUInt64LE(offset + 8),
-        ];
-      }),
-    );
+    const headers = elf64ProgramHeaders(original);
+    const { phoff, programHeaders } = headers;
+    const tags = elf64DynamicTags(original, programHeaders);
     const stringAddress = tags.get(5n);
     const stringSize = tags.get(10n);
     if (stringAddress === undefined || stringSize === undefined)
       throw new Error("Expected DT_STRTAB and DT_STRSZ");
-
-    const bytes = Buffer.concat([
-      original,
-      Buffer.alloc((phnum + 1) * phentsize),
-    ]);
-    original.copy(bytes, original.length, phoff, phoff + phnum * phentsize);
-    bytes.writeBigUInt64LE(BigInt(original.length), 32);
-    bytes.writeUInt16LE(phnum + 1, 56);
-    const alias = original.length + phnum * phentsize;
-    bytes.writeUInt32LE(1, alias);
-    bytes.writeUInt32LE(4, alias + 4);
-    bytes.writeBigUInt64LE(1n, alias + 40);
-    bytes.writeBigUInt64LE(1n, alias + 48);
-
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
     if (unmappedTail) {
       const load = programHeaders.find(
         (offset) => original.readUInt32LE(offset) === 1,
@@ -118,6 +132,29 @@ it.each([
     );
   },
 );
+
+it("does not use dynamic symbol rows from a section beyond a load-map disagreement", () => {
+  const original = elfDependencyFixture();
+  const headers = elf64ProgramHeaders(original);
+  const symtab = elf64DynamicTags(original, headers.programHeaders).get(6n);
+  if (symtab === undefined) throw new Error("Expected DT_SYMTAB");
+  const { bytes, alias } = appendElf64ZeroFill(original, headers);
+  bytes.writeBigUInt64LE(BigInt(original.length), alias + 16);
+  expect(parse(bytes).imports.map(({ name }) => name)).toEqual([
+    "printf",
+    "memcpy",
+    "_ZSt4cout",
+    "abort",
+    "_exit",
+  ]);
+
+  // The symbol table start stays mapped; a later symbol occupies both kinds of storage.
+  bytes.writeBigUInt64LE(symtab + 24n, alias + 16);
+  const report = parse(bytes);
+  expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+  expect(report.imports).toEqual([]);
+  expect(report.coverage.status).toBe("partial");
+});
 
 /** The version_unresolved issue a GNU version table reports at its own offset. */
 const versionTableIssue = (table: {

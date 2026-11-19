@@ -423,12 +423,24 @@ const agreedSection = (
   sizeAgrees: (section: SectionFacts) => boolean = () => true,
 ): SectionFacts | undefined => {
   if (section === undefined || declared === undefined) return section;
-  if (
-    section.address === declared &&
-    mapAddress(mappings, declared, 1) === section.offset &&
-    sizeAgrees(section)
-  )
-    return section;
+  if (section.address === declared && sizeAgrees(section)) {
+    const mapped = resolveMappedFileOffset(
+      mappings.fileBacked,
+      declared,
+      Math.max(1, section.size),
+      mappings.zeroFills,
+    );
+    if (mapped.ok) {
+      if (mapped.value === section.offset) return section;
+    } else if (
+      mapped.error.reason === "unmapped" &&
+      !mapped.error.overlapsZeroFill &&
+      mapAddress(mappings, declared, 1) === section.offset
+    ) {
+      // A plain gap still allows recovery from the section's file bytes.
+      return section;
+    }
+  }
   issues.push({
     code: "malformed_entry",
     location: hex(section.offset),
@@ -801,8 +813,9 @@ export const readElfDependenciesSteps = function* (
   const strsz = unique.get(DT_STRSZ);
   const linkedStrings =
     dynsymSection === undefined ? undefined : sectionFacts[dynsymSection.link];
+  const stringSection = linkedStrings?.type === 3 ? linkedStrings : undefined;
   const dynstrSection = agreedSection(
-    linkedStrings?.type === 3 ? linkedStrings : undefined,
+    stringSection,
     addresses.get(DT_STRTAB),
     mappings,
     ".dynstr",
@@ -834,9 +847,9 @@ export const readElfDependenciesSteps = function* (
   // where the load mapping supplies zeros or conflicts.
   const ambiguousStrings =
     mappingFailure?.reason === "ambiguous" ||
-    (dynstrSection !== undefined &&
-      mappingFailure?.reason === "unmapped" &&
-      mappingFailure.overlapsZeroFill);
+    (mappingFailure?.reason === "unmapped" &&
+      mappingFailure.overlapsZeroFill &&
+      stringSection?.address === strtab);
   const dynstrTable = ambiguousStrings
     ? null
     : (tableFromSection(
