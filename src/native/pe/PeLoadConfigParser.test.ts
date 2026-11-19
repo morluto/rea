@@ -208,6 +208,20 @@ it("retains a callback in virtual-only section storage with unknown file offset"
   ).toMatchObject({ rva: 0x2200, file_offset: null, section: ".text" });
 });
 
+it("requires the full physical section extent even when its virtual bytes fit", async () => {
+  const bytes = peLoadConfigImage({ textVirtualSize: 0x20 }).subarray(
+    0,
+    0x1620,
+  );
+  await expect(
+    parsePeLoadConfig(
+      bytes,
+      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    ),
+  ).rejects.toMatchObject({ failure: { kind: "truncated" } });
+});
+
 it("resolves callback sections without rescanning the largest section table", async () => {
   const bytes = peManySectionsImage(65535, 4096);
   // Building the section index reads each entry about twice (131071 here); a

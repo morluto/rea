@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished } from "vitest";
@@ -83,6 +84,36 @@ cliTest(
     }
   },
 );
+
+it("does not publish a method-93 member with an incomplete final frame magic", async () => {
+  const root = await createTestTempDirectory("rea-zip-zstd-incomplete-");
+  const path = join(root, "method93.zip");
+  const outputRoot = join(root, "extracted");
+  const content = Buffer.from("first complete text frame\n");
+  const second = zstdCompressSync(Buffer.from("second text frame\n"));
+  const compressed = Buffer.concat([
+    zstdCompressSync(content),
+    second.subarray(0, 3),
+  ]);
+  const archive = zstandardZipFixture(content, { compressed });
+  await writeFile(path, archive);
+
+  const target = await parseBinaryTarget(path);
+  if (!target.ok) throw target.error;
+  const result = await withArtifactClient(target.value, (client) =>
+    client.execute("extract_artifact", { output_root: outputRoot }),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ArtifactOperationError",
+      reason: "format",
+      detail: "ZIP archive is malformed: Invalid compressed data",
+    },
+  });
+  expect(await readdir(root)).toEqual(["method93.zip"]);
+  expect((await readFile(path)).equals(archive)).toBe(true);
+});
 
 for (const zip64 of [false, true]) {
   cliTest(

@@ -379,6 +379,7 @@ describe("stripped ELF symbol-table ownership", () => {
       reason: expect.stringMatching(
         /_kDartIsolateSnapshotData.*not in the dynamic symbol table/i,
       ),
+      missingSymbol: "_kDartIsolateSnapshotData",
     });
     image.writeBigUInt64LE(0x60000001n, dynamic + 4 * 16); // No recognized count table.
     expect(
@@ -518,6 +519,39 @@ describe("readSnapshotHeader", () => {
     expect(header.kind).toBe(3);
   });
 
+  it("reports invalid magic for offsets outside a complete byte-aligned prefix", () => {
+    const bytes = snapshotSection(GALLERY_HASH);
+    for (const offset of [-1, 0.5, bytes.length - 3])
+      expect(readSnapshotHeader(bytes, offset)).toEqual({
+        magicValid: false,
+        kind: null,
+        headerLength: null,
+        hash: null,
+        complete: false,
+      });
+  });
+
+  it("retains a backed length when the kind is truncated or unrepresentable", () => {
+    const bytes = snapshotSection(GALLERY_HASH);
+    expect(readSnapshotHeader(bytes.subarray(0, 19), 0)).toEqual({
+      magicValid: true,
+      kind: null,
+      headerLength: 48,
+      hash: null,
+      complete: false,
+    });
+    for (const kind of [-1n, 1n << 53n]) {
+      bytes.writeBigInt64LE(kind, 12);
+      expect(readSnapshotHeader(bytes, 0)).toEqual({
+        magicValid: true,
+        kind: null,
+        headerLength: 48,
+        hash: GALLERY_HASH,
+        complete: false,
+      });
+    }
+  });
+
   it("reports nulls for sections without the data magic", async () => {
     const header = readSnapshotHeader(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]), 0);
     expect(header).toEqual({
@@ -568,7 +602,10 @@ it.each([256, 257])(
         : {
             symbols: [],
             failures: [
-              { reason: `symbol ${name} is not in the dynamic symbol table` },
+              {
+                reason: `symbol ${name} is not in the dynamic symbol table`,
+                missingSymbol: name,
+              },
             ],
           },
     );
@@ -596,7 +633,10 @@ it("checks raw symbol precision only after definition and requested-name selecti
   expect(await readElfSymbols(bytes, ["unselected"])).toEqual({
     symbols: [],
     failures: [
-      { reason: "symbol unselected is not in the dynamic symbol table" },
+      {
+        reason: "symbol unselected is not in the dynamic symbol table",
+        missingSymbol: "unselected",
+      },
     ],
   });
 });

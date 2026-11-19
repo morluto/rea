@@ -1,11 +1,18 @@
 import { expect, it, onTestFinished } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../../src/domain/analysisResourceLimits.js";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
+import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cudaFixture,
@@ -35,6 +42,45 @@ const inspect = async (
   onTestFinished(() => provider.close());
   return provider.inspect({ path, analysis: "kernels", ...options });
 };
+it("reports a Zstandard frame-count refusal as an adjustable GPU limit", async () => {
+  const frame = (byte: number) =>
+    Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+  const compressed = Buffer.concat([frame(0x61), frame(0x62)]);
+  const entry = Buffer.alloc(64 + Math.ceil(compressed.length / 8) * 8);
+  entry.writeUInt16LE(1, 0);
+  entry.writeUInt16LE(0x101, 2);
+  entry.writeUInt32LE(64, 4);
+  entry.writeBigUInt64LE(BigInt(entry.length - 64), 8);
+  entry.writeUInt32LE(compressed.length, 16);
+  entry.writeUInt32LE(80, 28);
+  entry.writeBigUInt64LE(0x11n | 0x8000n, 40);
+  entry.writeBigUInt64LE(2n, 56);
+  compressed.copy(entry, 64);
+  const header = Buffer.alloc(16);
+  header.writeUInt32LE(0xba55ed50);
+  header.writeUInt16LE(1, 4);
+  header.writeUInt16LE(16, 6);
+  header.writeBigUInt64LE(BigInt(entry.length), 8);
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "zstd.max_frames": 1 } },
+    () => inspect(Buffer.concat([header, entry])),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 1,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
+
 it.each(["none", "zstd", "lz4"] as const)(
   "reads selected CUDA metadata and PTX with %s compression",
   async (compression) => {
@@ -69,6 +115,52 @@ it.each(["none", "zstd", "lz4"] as const)(
     ]);
   },
 );
+
+it("observes cancellation during a cubin kernel directory read", async () => {
+  const cubin = cubinFixture();
+  const section = Number(cubin.readBigUInt64LE(40)) + 64;
+  const offset = Number(cubin.readBigUInt64LE(section + 24));
+  const size = Number(cubin.readBigUInt64LE(section + 32));
+  const names = cubin.subarray(offset, offset + size);
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(2);
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  const encodedNames = Buffer.concat([
+    compressionHeader,
+    zstdCompressSync(names),
+  ]);
+  const bytes = Buffer.concat([cubin, encodedNames]);
+  bytes.writeBigUInt64LE(0x800n, section + 8);
+  bytes.writeBigUInt64LE(BigInt(cubin.length), section + 24);
+  bytes.writeBigUInt64LE(BigInt(encodedNames.length), section + 32);
+
+  const controller = new AbortController();
+  const inventory = new GpuInventory(
+    { path: "/artifacts/cubin", analysis: "kernels" },
+    controller.signal,
+  );
+  const cancelled = new Error("kernel directory read cancelled");
+  let payloadReads = 0;
+  let pendingAbort: NodeJS.Immediate | undefined;
+  try {
+    await expect(
+      inventory.inspect({
+        size: bytes.length,
+        containerId: null,
+        read: async (at, count) => {
+          // The selected payload is re-read into the kernel parser's buffer.
+          if (at === 0 && count === bytes.length && ++payloadReads === 1)
+            pendingAbort = setImmediate(() => controller.abort(cancelled));
+          return bytes.subarray(at, at + count);
+        },
+      }),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: cancelled });
+    expect(payloadReads).toBe(1);
+  } finally {
+    if (pendingAbort !== undefined) clearImmediate(pendingAbort);
+  }
+});
 it("decodes a CUDA 0x2000 LZ4 entry to the exact declared payload", async () => {
   const ptx = Buffer.from(ptxFixture),
     bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]),
@@ -1258,6 +1350,16 @@ it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", asyn
   expect(result).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisUnsupportedTargetError" },
+  });
+});
+it("preserves the PE layout refusal at the GPU provider boundary", async () => {
+  const result = await inspect(pe(0x014c, 4));
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisUnsupportedTargetError",
+      message: expect.stringContaining("overlapping PE header"),
+    },
   });
 });
 it.each(["zlib", "zstd"] as const)(

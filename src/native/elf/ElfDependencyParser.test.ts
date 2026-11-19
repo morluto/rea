@@ -6,6 +6,8 @@ import {
   MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
 } from "../../domain/native/elfDependencies.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readElfDependencies } from "../../domain/desktop/elfDependencies.js";
+import { readElfHardening } from "../hardening/ElfHardening.js";
 import { elfDependencyFixture, elfHash } from "./ElfDependencies.fixture.js";
 import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
 
@@ -43,6 +45,57 @@ const parse = (
   );
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
+
+it.each([
+  { bits: 32, little: false },
+  { bits: 64, little: true },
+] as const)(
+  "reports a partial PT_DYNAMIC row in ELF$bits without discarding earlier dependencies",
+  async ({ bits, little }) => {
+    const width = bits === 64 ? 16 : 8;
+    for (const extra of [width, 1, 1 - width]) {
+      const bytes = elfDependencyFixture({
+        bits,
+        little,
+        stripped: true,
+        interpreter: null,
+        dynamicTailBytes: extra,
+      });
+      const report = parse(bytes);
+      expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+      const desktop = await readElfDependencies(
+        async (offset, size) => bytes.subarray(offset, offset + size),
+        bytes.length,
+      );
+      if (extra === width) {
+        expect(report.coverage.status).toBe("complete");
+        expect(desktop).toMatchObject({
+          ok: true,
+          value: { needed: defaultNeeded },
+        });
+        expect(readElfHardening(bytes).format).toBe("elf");
+      } else {
+        expect(report.coverage.status).toBe("partial");
+        expect(report.issues).toContainEqual({
+          code: "malformed_entry",
+          // PT_DYNAMIC is the final payload of the stripped fixture.
+          location: `0x${(bytes.length - 1).toString(16)}`,
+          message: "ELF PT_DYNAMIC size is not a whole number of entries",
+        });
+        expect(desktop).toMatchObject({
+          ok: false,
+          error: {
+            kind: "unreadable",
+            reason: "ELF PT_DYNAMIC size is not a whole number of entries",
+          },
+        });
+        expect(() => readElfHardening(bytes)).toThrow(
+          "ELF PT_DYNAMIC size is not a whole number of entries",
+        );
+      }
+    }
+  },
+);
 
 const elf64ProgramHeaders = (original: Buffer) => {
   const phoff = Number(original.readBigUInt64LE(32));

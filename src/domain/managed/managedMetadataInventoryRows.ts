@@ -11,7 +11,6 @@ import type { TypeMemberListFacts } from "./managedTypeMemberLists.js";
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
-  NamedManagedModule,
 } from "./managedArtifact.js";
 import {
   MANAGED_CODED_INDEXES,
@@ -28,6 +27,7 @@ import {
   metadataBlobOffset,
   readMetadataGuid,
   readMetadataString,
+  readRequiredMetadataName,
 } from "./managedMetadataHeaps.js";
 import {
   managedFailure,
@@ -86,31 +86,27 @@ export const readModule = (
   const encIndex = cursor.readIndex(layout.guidIndexSize);
   const encBaseIndex = cursor.readIndex(layout.guidIndexSize);
 
-  const readGuid = (index: number) =>
-    readMetadataGuid(bytes, layout, index) ?? null;
-  if (ambiguousNames && nameIndex !== 0) {
-    const independentGuid = (index: number) =>
-      readManagedValue(() => readGuid(index), issues) ?? null;
-    return {
-      name: null,
-      name_index: nameIndex,
-      generation,
-      mvid: independentGuid(mvidIndex),
-      enc_id: independentGuid(encIndex),
-      enc_base_id: independentGuid(encBaseIndex),
-      token: "0x00000001",
-      row_offset: table.offset,
-    };
-  }
-  return {
-    name: readMetadataString(bytes, layout, nameIndex),
+  const readName = () => readMetadataString(bytes, layout, nameIndex);
+  // A unique row establishes its coordinates even when the name heap read fails.
+  const name =
+    table.rowCount === 1 ? readManagedValue(readName, issues) : readName();
+  const readGuid = (index: number) => {
+    const read = () => readMetadataGuid(bytes, layout, index);
+    return (
+      (name === undefined ? readManagedValue(read, issues) : read()) ?? null
+    );
+  };
+  const facts = {
     generation,
     mvid: readGuid(mvidIndex),
     enc_id: readGuid(encIndex),
     enc_base_id: readGuid(encBaseIndex),
-    token: metadataToken(0, 1),
+    token: "0x00000001" as const,
     row_offset: table.offset,
-  } satisfies NamedManagedModule;
+  };
+  return name === undefined
+    ? { ...facts, name: null, name_index: nameIndex }
+    : { ...facts, name };
 };
 
 export const readAssembly = (
@@ -318,7 +314,13 @@ export const managedMetadataTypeNames = (
       } else {
         const source = readTypeDefinitionRowFacts(bytes, layout, row);
         flags = source.flags;
-        name = readMetadataString(bytes, layout, source.nameIndex);
+        name = readRequiredMetadataName(
+          bytes,
+          layout,
+          "TypeDef",
+          metadataToken(2, row),
+          source,
+        );
         namespace = readMetadataString(bytes, layout, source.namespaceIndex);
       }
       parentRow = nesting.enclosing.get(row) ?? null;

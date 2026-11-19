@@ -731,3 +731,41 @@ describe("repository kinds and key files", () => {
     expect(dearmorPublicKeys(Buffer.from("not a key"))).toBeUndefined();
   });
 });
+
+it("keeps APT's source positions when a false Enabled field disables a stanza", () => {
+  const source = (enabled: string) =>
+    `Types: deb\nURIs: https://example.org/repo\nSuites: stable\nComponents: main\nEnabled: ${enabled}\n`;
+  const disabled = [
+    "false",
+    "0",
+    "Off",
+    "without",
+    "disable",
+    "+0",
+    "-0",
+    "0x0",
+    "-0x0",
+    "\tFaLsE \t",
+    "\n false",
+    "\n\t-0",
+  ];
+  const enabled = [
+    "yes",
+    "1",
+    "0x1",
+    "-1",
+    "0.0",
+    "fal\u017fe",
+    "\u00a0false",
+    "false\u00a0",
+    "\u3000FaLsE\u3000",
+    "\n\tfalse",
+  ];
+  const stanzas = parseDeb822Sources(
+    Buffer.from([...disabled, ...enabled].map(source).join("\n")),
+    "example.sources",
+  );
+  expect(stanzas.map((entry) => entry.position)).toEqual(
+    enabled.map((_, index) => disabled.length + index + 1),
+  );
+});
