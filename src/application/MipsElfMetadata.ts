@@ -4,6 +4,7 @@ import {
   type ElfProgramHeader,
 } from "../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
+import { isElfRelocationSectionType } from "../domain/elfRelocation.js";
 import type { FileHandle } from "node:fs/promises";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import type {
@@ -207,7 +208,7 @@ export const readMipsElfMetadata = async (
       if (
         metadata.type === 3 &&
         "entrySize" in declaration &&
-        (type === 4 || type === 9 || type === 19)
+        isElfRelocationSectionType(type)
       )
         relocationSections.push({
           type,
