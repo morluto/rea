@@ -985,6 +985,7 @@
 * **elf:** preserve unwind parser limit facts ([#12308](https://github.com/morluto/rea/issues/12308)) ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
 * **elf:** preserve unwind parser limit ownership ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
 * **elf:** read IKCONFIG gzip and boot fields through BinaryReader ([#12525](https://github.com/morluto/rea/issues/12525)) ([84731ee](https://github.com/morluto/rea/commit/84731eefdf4f7489b87b96ce096ec7dab2befabb))
+* **elf:** share bounded note header reads ([#12527](https://github.com/morluto/rea/issues/12527)) ([b239ea8](https://github.com/morluto/rea/commit/b239ea80111bff71247efdec159362e961d4e306))
 * **elf:** share bounded RISC-V attribute reads ([#12515](https://github.com/morluto/rea/issues/12515)) ([aaa8e1c](https://github.com/morluto/rea/commit/aaa8e1cee0dfa26f0d5d5ee745f62a0cee690f54))
 * **elf:** share fixed header declaration widths ([#12391](https://github.com/morluto/rea/issues/12391)) ([1ba93c8](https://github.com/morluto/rea/commit/1ba93c8a1bbddab3c775320ac37f8977717b4bca))
 * **elf:** share fixed symbol record widths ([#12379](https://github.com/morluto/rea/issues/12379)) ([205ab4a](https://github.com/morluto/rea/commit/205ab4a587bf4567d15285e16477a945f31a64d7))
