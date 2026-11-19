@@ -645,3 +645,37 @@ describe("utmp truncated tails", () => {
     expect(result.value.records).toEqual([]);
   });
 });
+
+/**
+ * Coverage ends at the last declared member, not at the padded record size:
+ *
+ *   glibc-time64: session 336, time 344..352, `ut_addr_v6` 360..376, `__glibc_reserved` 376..396,
+ *                 `struct timeval` alignment to 400
+ *   musl-time64:  the same tail, with `__unused` in place of `__glibc_reserved`
+ *
+ * A 396-byte tail therefore holds every declared member and only loses alignment padding.
+ */
+it.each([
+  ["glibc-time64", "glibc-time64", "__glibc_reserved"],
+  ["musl-time64", "musl-time64", "__unused"],
+] as const)(
+  "reports %s as complete once the reserved member is whole",
+  (_label, profileName, _member) => {
+    const target = profile(profileName);
+    const trimmed = recordBytes(target, login()).subarray(0, 396);
+    const result = parseUtmpFile(trimmed, { source: "wtmp", profile: target });
+    if (!result.ok) throw new Error("expected the tail to decode");
+    expect(result.value.records[0]?.coverage).toEqual({
+      complete: true,
+      missing: [],
+    });
+  },
+);
+
+it("names the missing reserved member with the profile's own spelling", () => {
+  const mu = profile("musl-time64");
+  const trimmed = recordBytes(mu, login()).subarray(0, 384);
+  const result = parseUtmpFile(trimmed, { source: "wtmp", profile: mu });
+  if (!result.ok) throw new Error("expected the tail to decode");
+  expect(result.value.records[0]?.coverage.missing).toEqual(["__unused"]);
+});

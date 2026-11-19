@@ -19,6 +19,9 @@ import { decodeStrictUtf8, isStrictUtf8 } from "../strictUtf8.js";
  * ambiguous file reports every profile instead of decoding.
  */
 
+/** The trailing reserved member both libcs reserve, in bytes. */
+const RESERVED_BYTES = 20;
+
 /** Fixed-width string sizes from glibc `bits/utmp.h`. */
 const LINE_BYTES = 32;
 const ID_BYTES = 4;
@@ -80,6 +83,8 @@ export interface UtmpFormatProfile {
   readonly timeBytes: 4 | 8;
   /** glibc declares `ut_addr_v6` as `int32_t`, musl as `unsigned`. */
   readonly addressSigned: boolean;
+  /** The name the profile gives its trailing reserved member. */
+  readonly reservedMemberName: string;
 }
 
 /**
@@ -100,6 +105,7 @@ export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
     sessionPadBefore: false,
     timeBytes: 4,
     addressSigned: true,
+    reservedMemberName: "__glibc_reserved",
   },
   {
     name: "glibc-time32-be",
@@ -110,6 +116,7 @@ export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
     sessionPadBefore: false,
     timeBytes: 4,
     addressSigned: true,
+    reservedMemberName: "__glibc_reserved",
   },
   {
     name: "glibc-time64",
@@ -120,6 +127,7 @@ export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
     sessionPadBefore: false,
     timeBytes: 8,
     addressSigned: true,
+    reservedMemberName: "__glibc_reserved",
   },
   {
     name: "glibc-time64-be",
@@ -130,6 +138,7 @@ export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
     sessionPadBefore: false,
     timeBytes: 8,
     addressSigned: true,
+    reservedMemberName: "__glibc_reserved",
   },
   {
     name: "musl-time64",
@@ -140,6 +149,7 @@ export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
     sessionPadBefore: false,
     timeBytes: 8,
     addressSigned: false,
+    reservedMemberName: "__unused",
   },
   {
     name: "musl-time64-be",
@@ -150,6 +160,7 @@ export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
     sessionPadBefore: true,
     timeBytes: 8,
     addressSigned: false,
+    reservedMemberName: "__unused",
   },
 ];
 
@@ -397,12 +408,18 @@ const decodeRecords = (
         Math.floor((availableBytes - layout.addressOffset) / 4),
       ),
     );
+    // The reserved member ends before the record does: `struct timeval`'s 8-byte
+    // alignment pads the struct, and that padding carries no member. Coverage therefore
+    // ends at the last declared member, not at `recordBytes`, or a 396-byte `glibc-time64`
+    // tail would report a missing member it fully holds.
+    const reservedEnd =
+      layout.addressOffset + ADDRESS_V6_FIELDS * 4 + RESERVED_BYTES;
     const missing = [
       ...Array.from(
         { length: ADDRESS_V6_FIELDS - availableAddressWords },
         (_, slot) => `ut_addr_v6[${String(availableAddressWords + slot)}]`,
       ),
-      ...(availableBytes < profile.recordBytes ? ["__glibc_reserved"] : []),
+      ...(availableBytes < reservedEnd ? [profile.reservedMemberName] : []),
     ];
     const coverage: UtmpCoverage = {
       complete: missing.length === 0,
