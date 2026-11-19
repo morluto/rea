@@ -97,7 +97,7 @@ const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE =
   "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.";
 
 const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
-  "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
+  "Allow the application that macOS identifies as responsible for REA under System Settings > Privacy & Security > Automation. Some MCP clients, including Claude Desktop, disclaim responsibility so macOS attributes the request to the REA runtime (such as node), which cannot be authorized by changing the client's Automation setting. In that case start REA from a client macOS can authorize, such as Claude Code or Terminal. If the responsible client lacks the com.apple.security.automation.apple-events entitlement, ask its developer to add it. Retrying from the same unauthorized client will not succeed until authorization changes.";
 
 export class HopperTimeoutError extends HopperError {
   readonly _tag = providerErrorTag("HopperTimeoutError");
