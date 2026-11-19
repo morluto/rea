@@ -707,6 +707,21 @@ it.each([
   });
 });
 
+const capacityRefusal = (name: string, maximum: number, line: number) => ({
+  ok: false,
+  error: {
+    kind: "capacity",
+    line,
+    cause: {
+      failure: {
+        kind: "limit",
+        format: "proguard-mapping",
+        limit: { name, maximum },
+      },
+    },
+  },
+});
+
 it("refuses class-index growth at its source line with an explicit retained budget", () => {
   const parsed = parseProguardMapping(
     Array.from({ length: 8 }, (_, index) => `Owner${index} -> a${index}:`).join(
@@ -714,10 +729,7 @@ it("refuses class-index growth at its source line with an explicit retained budg
     ),
     { indexBytes: 4096 },
   );
-  expect(parsed).toEqual({
-    ok: false,
-    error: { kind: "capacity", resource: "index", limit_bytes: 4096, line: 4 },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("index", 4096, 4));
 });
 
 it("admits a method's parameter representation before allocating its split array", () => {
@@ -733,10 +745,7 @@ it("admits a method's parameter representation before allocating its split array
   } finally {
     split.mockRestore();
   }
-  expect(parsed).toMatchObject({
-    ok: false,
-    error: { kind: "capacity", resource: "index", line: 2 },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("index", 4096, 2));
   expect(splits).toBe(0);
 });
 
@@ -751,15 +760,7 @@ it("refuses oversized JSON metadata before JSON.parse materializes its tree", ()
   } finally {
     json.mockRestore();
   }
-  expect(parsed).toEqual({
-    ok: false,
-    error: {
-      kind: "capacity",
-      resource: "projection",
-      limit_bytes: 1024,
-      line: 2,
-    },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("projection", 1024, 2));
   expect(calls).toBe(0);
 });
 
@@ -885,15 +886,7 @@ it("bounds repeated shared class names in expanded per-class mapping claims", ()
       projectionBytes: 1024,
     },
   );
-  expect(parsed).toEqual({
-    ok: false,
-    error: {
-      kind: "capacity",
-      resource: "projection",
-      limit_bytes: 1024,
-      line: 3,
-    },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("projection", 1024, 3));
 });
 
 it("does not cumulatively charge deduplicated line-range splits", () => {

@@ -2,6 +2,7 @@ import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema, dexTypeSchema } from "./dexTypes.js";
 import { parseJsonWithDuplicatePolicy } from "../jsonDuplicateMember.js";
 import { jsonStringByteLength } from "../jsonStringByteLength.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 
 /** Retained representation and per-residual-class claim budgets, not file-size limits. */
 export const PROGUARD_MAPPING_LIMITS = Object.freeze({
@@ -17,8 +18,7 @@ export type ProguardMappingFailure =
   | { readonly kind: "no-class-records" }
   | {
       readonly kind: "capacity";
-      readonly resource: "index" | "projection";
-      readonly limit_bytes: number;
+      readonly cause: ParseFailureError<"limit">;
       readonly line: number;
     };
 
@@ -234,12 +234,18 @@ const capacity = (
 ): false => {
   state.failure ??= {
     kind: "capacity",
-    resource,
     line,
-    limit_bytes:
-      resource === "index"
-        ? state.limits.indexBytes
-        : state.limits.projectionBytes,
+    cause: decodeLimit(
+      "proguard-mapping",
+      `The mapping exceeds its ${resource} admission budget.`,
+      {
+        name: resource,
+        maximum:
+          resource === "index"
+            ? state.limits.indexBytes
+            : state.limits.projectionBytes,
+      },
+    ),
   };
   return false;
 };
