@@ -550,6 +550,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         ghidraPinnedLanguage(target) !== undefined ||
         extensions.value.length !== 0 ||
         baseProfile.parameters.loader !== "auto-from-header" ||
+        // A committed ELF image base is an import-time loader option; restoring
+        // a saved Program would not re-apply it, so it is not a stock import.
+        baseProfile.parameters.elf_image_base !== undefined ||
         baseProfile.parameters.psp_extension !== undefined ||
         seeds.value !== undefined ||
         this.config.ghidraLanguageOverride !== undefined ||

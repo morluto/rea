@@ -64,9 +64,13 @@ export const nugetNupkgLogicalPath = (name: string): string =>
 export const nugetNupkgEntryRole = (name: string): NugetNupkgEntryRole => {
   const logical = nugetNupkgLogicalPath(name);
   const lower = logical.toLowerCase();
+  // NuGet excludes `_rels/`, `package/` and `[Content_Types].xml` from package
+  // files; `nuget pack` writes the OPC core properties part under
+  // `package/services/metadata/core-properties/`.
   if (
     lower === "[content_types].xml" ||
     lower.startsWith("_rels/") ||
+    lower.startsWith("package/") ||
     lower.endsWith(".rels")
   )
     return "opc";

@@ -59,6 +59,29 @@ def program_span(raw):
     index = 0
     if tokens and tokens[0][0].split("/")[-1] == "env":
         index = 1
+        directory = None
+        while index < len(tokens):
+            option = tokens[index][0]
+            if option == "--ignore-environment" or re.fullmatch(r"-i+", option):
+                index += 1
+                continue
+            short_directory = re.fullmatch(r"-i*C(.*)", option, re.DOTALL)
+            if option == "--chdir" or (short_directory and not short_directory[1]):
+                index += 1
+                directory = tokens[index][0] if index < len(tokens) else ""
+            elif option.startswith("--chdir="):
+                directory = option[len("--chdir="):]
+            elif short_directory:
+                directory = short_directory[1]
+            else:
+                break
+            index += 1
+        if directory == "":
+            raise ValueError("missing env chdir directory in desktop Exec")
+        if index < len(tokens) and tokens[index][0] == "--":
+            index += 1
+        if index < len(tokens) and tokens[index][0] == "-":
+            index += 1
         while index < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[index][0]):
             index += 1
     if index >= len(tokens) or not tokens[index][0]:

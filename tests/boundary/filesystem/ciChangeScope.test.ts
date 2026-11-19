@@ -559,7 +559,7 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const staticOnly of [
     "scripts/lib/module-layers.baseline.json",
     "scripts/verify/architecture-guards.mjs",
-    "scripts/verify/baselines/incur-import.json",
+    "scripts/verify/baselines/raw-buffer-read.json",
     "tsconfig.scripts.json",
   ]) {
     expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
@@ -1102,6 +1102,10 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-prototype-conflicts.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -1135,6 +1139,10 @@ it.each([
   ],
   [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaPrototypeConflictProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -1217,6 +1225,14 @@ it.each([
   [
     "src/domain/windowsNativeArtifact.ts",
     { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/windows-cross-compiler/action.yml",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/ubuntu-archive/action.yml",
+    { code: true, runtime: true, package: true, binary_layout: true },
   ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
@@ -1782,10 +1798,6 @@ it.each([
   ],
   [
     ".github/workflows/release.yml",
-    { workflows: true, code: true, package: false, website: false },
-  ],
-  [
-    ".github/workflows/pr-readiness.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
   [

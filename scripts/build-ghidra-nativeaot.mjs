@@ -11,6 +11,12 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_VERSION,
+  ghidraReleaseAccepted,
+  ghidraReleaseLine,
+} from "../src/ghidra/GhidraReleasePolicy.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(
@@ -20,16 +26,16 @@ const source = resolve(
 const install = process.env.GHIDRA_INSTALL_DIR;
 if (!install)
   throw new Error(
-    "NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra 12.1.x).",
+    `NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra ${ghidraReleaseLine()}, verified with ${SUPPORTED_GHIDRA_VERSION}).`,
   );
 const properties = await readFile(
   join(install, "Ghidra/application.properties"),
   "utf8",
 );
 const ghidraVersion = propertyValue(properties, "application.version");
-if (!ghidraReleaseLineAccepted(ghidraVersion))
+if (!ghidraReleaseAccepted(ghidraVersion))
   throw new Error(
-    `NativeAOT build lane accepts Ghidra 12.1.x (verified with 12.1.4). Observed application.version=${ghidraVersion ?? "missing"}.`,
+    `NativeAOT build lane accepts Ghidra ${ghidraReleaseLine()} (verified with ${SUPPORTED_GHIDRA_VERSION}). Observed application.version=${ghidraVersion ?? "missing"}.`,
   );
 const output = resolve(
   process.env.REA_NATIVEAOT_BUILD_ROOT ??
@@ -52,9 +58,9 @@ const run = (command, args) => {
 const javac = java ? join(java, "javac") : "javac";
 const javacBanner = capture(javac, ["-version"]);
 const javacMajor = Number(/^javac (\d+)/mu.exec(javacBanner)?.[1]);
-if (!Number.isInteger(javacMajor) || javacMajor < 21)
+if (!Number.isInteger(javacMajor) || javacMajor < SUPPORTED_GHIDRA_JAVA_MAJOR)
   throw new Error(
-    `NativeAOT build lane requires javac 21 or newer and compiles with --release 21. Observed: ${javacBanner || "no version"}. REA does not install or upgrade Java.`,
+    `NativeAOT build lane requires javac ${String(SUPPORTED_GHIDRA_JAVA_MAJOR)} or newer and compiles with --release ${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}. Observed: ${javacBanner || "no version"}. REA does not install or upgrade Java.`,
   );
 const revision = run("git", ["-C", source, "rev-parse", "HEAD"]);
 if (
@@ -99,7 +105,7 @@ try {
     "-J-Xmx512m",
     "-J-XX:ActiveProcessorCount=1",
     "--release",
-    "21",
+    String(SUPPORTED_GHIDRA_JAVA_MAJOR),
     `@${join(output, "javac.args")}`,
   ]);
   await writeFile(
@@ -155,12 +161,6 @@ function propertyValue(content, name) {
     return value.length === 0 ? null : value;
   }
   return null;
-}
-
-/** Release line supported by the separately pinned NativeAOT integration. */
-function ghidraReleaseLineAccepted(raw) {
-  const match = /^(\d+)\.(\d+)(?:\.(\d+))?([-+].*)?$/u.exec(raw ?? "");
-  return match !== null && Number(match[1]) === 12 && Number(match[2]) === 1;
 }
 
 function capture(command, args) {

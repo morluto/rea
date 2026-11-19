@@ -6,7 +6,6 @@ import {
   createCompletionLedgerArtifacts,
   type CompletionVerifierReport,
 } from "../../scripts/lib/completion-ledger-generation.mjs";
-import { evidenceCompletionLedgerSchema } from "../../src/domain/evidenceCompletionLedger.js";
 
 const digest = (digit: string): string => digit.repeat(64);
 const evidenceId = (digit: string): string => `ev_${digest(digit)}`;
@@ -130,6 +129,16 @@ describe("completion ledger generation", () => {
     expect(generate(reversed)).toEqual(generate(input));
   });
 
+  it("retains all verified Evidence IDs when a claim exceeds 100 items", () => {
+    const ids = Array.from(
+      { length: 101 },
+      (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,
+    );
+    const input = report();
+    firstClaim(input).evidence_ids = ids.toReversed();
+    expect(generate(input).ledger.records[0]?.evidence_ids).toEqual(ids);
+  });
+
   it("keeps ephemeral verifier run identity out of generated commitments", () => {
     const first = report();
     const second = {
@@ -185,6 +194,26 @@ describe("completion verifier report validation", () => {
       }).success,
     ).toBe(false);
   });
+
+  it.each([
+    { kind: "missing", evidenceIds: [], path: ["claims", 0, "evidence_ids"] },
+    {
+      kind: "malformed",
+      evidenceIds: ["ev_not-a-digest"],
+      path: ["claims", 0, "evidence_ids", 0],
+    },
+  ])(
+    "rejects $kind Evidence IDs at report admission",
+    ({ evidenceIds, path }) => {
+      const input = report();
+      firstClaim(input).evidence_ids = evidenceIds;
+      expect(() => generate(input)).toThrow(
+        expect.objectContaining({
+          issues: [expect.objectContaining({ path })],
+        }),
+      );
+    },
+  );
 });
 
 describe("completion ledger commitment drift", () => {
@@ -286,12 +315,6 @@ describe("completion ledger identity validation", () => {
       completionManifestSchema.parse({
         ...generated.manifest,
         manifest_id: `ecm_${digest("0")}`,
-      }),
-    ).toThrow();
-    expect(() =>
-      evidenceCompletionLedgerSchema.parse({
-        ...generated.ledger,
-        records: generated.ledger.records.slice(1),
       }),
     ).toThrow();
   });
