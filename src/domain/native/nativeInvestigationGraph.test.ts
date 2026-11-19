@@ -246,6 +246,37 @@ describe("native investigation graph traces", () => {
   );
 });
 
+it.each(["forward", "backward"] as const)(
+  "reports a missing endpoint after the last eligible %s edge fills the budget",
+  (direction) => {
+    const forward = direction === "forward";
+    const partial = nativeInvestigationGraphSchema.parse({
+      ...graph,
+      truncated: true,
+      edges: [
+        graph.edges[0],
+        {
+          ...graph.edges[0],
+          id: "missing-endpoint",
+          from: forward ? "b" : "missing",
+          to: forward ? "missing" : "a",
+        },
+      ],
+    });
+    const trace = traceNativeInvestigationGraph(partial, {
+      start: forward ? "a" : "b",
+      direction,
+      limits: { max_edges: 1 },
+    });
+    expect(trace.edges.map(({ id }) => id)).toEqual(["1"]);
+    expect(trace).toMatchObject({
+      truncated: true,
+      reason: "edge_target_missing_from_graph",
+      reached_depth: 1,
+    });
+  },
+);
+
 describe("Interface Builder dispatch joins", () => {
   it.each([
     {

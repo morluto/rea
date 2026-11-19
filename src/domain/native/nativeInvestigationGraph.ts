@@ -242,19 +242,24 @@ export const traceNativeInvestigationGraph = (
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
+      const nextId =
+        edge.resolution === "unresolved"
+          ? null
+          : direction === "forward"
+            ? edge.to
+            : edge.from;
+      if (nextId !== null && !nodeById.has(nextId)) {
+        truncated = true;
+        reason ??= "edge_target_missing_from_graph";
+        continue;
+      }
       if (selectedEdges.size + unresolved.size >= limits.max_edges) {
         truncated = true;
         reason = "max_edges_reached";
         break;
       }
-      if (edge.resolution === "unresolved") {
+      if (nextId === null) {
         unresolved.set(edge.id, edge);
-        continue;
-      }
-      const nextId = direction === "forward" ? edge.to : edge.from;
-      if (!nodeById.has(nextId)) {
-        truncated = true;
-        reason ??= "edge_target_missing_from_graph";
         continue;
       }
       const alreadyVisited = visited.has(nextId);
