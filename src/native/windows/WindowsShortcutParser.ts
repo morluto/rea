@@ -42,7 +42,14 @@ const isoFromUnsigned100ns = (ticks: bigint, epoch: bigint): string | null => {
     : new Date(Number(unixMs)).toISOString();
 };
 
-const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
+// MS-SHLLINK §2.1.1 identifies the ExtraData blocks declared by LinkFlags.
+const LINK_FLAGS: ReadonlyArray<
+  readonly [
+    bit: number,
+    name: string,
+    requiredExtraSignature?: keyof typeof EXTRA_SIGNATURE_NAMES,
+  ]
+> = [
   [0x00000001, "HasLinkTargetIDList"],
   [0x00000002, "HasLinkInfo"],
   [0x00000004, "HasName"],
@@ -52,13 +59,13 @@ const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000040, "HasIconLocation"],
   [0x00000080, "IsUnicode"],
   [0x00000100, "ForceNoLinkInfo"],
-  [0x00000200, "HasExpString"],
+  [0x00000200, "HasExpString", 0xa0000001],
   [0x00000400, "RunInSeparateProcess"],
-  [0x00001000, "HasDarwinID"],
+  [0x00001000, "HasDarwinID", 0xa0000006],
   [0x00002000, "RunAsUser"],
-  [0x00004000, "HasExpIcon"],
+  [0x00004000, "HasExpIcon", 0xa0000007],
   [0x00008000, "NoPidlAlias"],
-  [0x00020000, "RunWithShimLayer"],
+  [0x00020000, "RunWithShimLayer", 0xa0000008],
   [0x00040000, "ForceNoLinkTrack"],
   [0x00080000, "EnableTargetMetadata"],
   [0x00100000, "DisableLinkPathTracking"],
@@ -69,6 +76,7 @@ const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x02000000, "PreferEnvironmentPath"],
   [0x04000000, "KeepLocalIDListForUNCTarget"],
 ];
+const LINK_FLAG_NAMES = LINK_FLAGS.map(([bit, name]) => [bit, name] as const);
 
 const FILE_ATTRIBUTE_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000001, "READONLY"],
@@ -96,7 +104,7 @@ const DRIVE_TYPES = [
   "ramdisk",
 ] as const;
 
-const EXTRA_SIGNATURE_NAMES: Readonly<Record<number, string>> = {
+const EXTRA_SIGNATURE_NAMES = {
   0xa0000001: "EnvironmentVariableDataBlock",
   0xa0000002: "ConsoleDataBlock",
   0xa0000003: "TrackerDataBlock",
@@ -108,6 +116,12 @@ const EXTRA_SIGNATURE_NAMES: Readonly<Record<number, string>> = {
   0xa0000009: "PropertyStoreDataBlock",
   0xa000000b: "KnownFolderDataBlock",
   0xa000000c: "VistaAndAboveIDListDataBlock",
+} as const;
+
+const extraSignatureName = (signature: number): string | null => {
+  const names: Readonly<Partial<Record<number, string>>> =
+    EXTRA_SIGNATURE_NAMES;
+  return names[signature] ?? null;
 };
 
 const VIRTUAL_KEYS: Readonly<Record<number, string>> = {
@@ -1201,21 +1215,6 @@ const parseIdList = async (
   };
 };
 
-const EXPECTED_EXTRA_DATA_BLOCKS = [
-  {
-    flag: 0x00000200,
-    flagName: "HasExpString",
-    signature: 0xa0000001,
-    blockName: "EnvironmentVariableDataBlock",
-  },
-  {
-    flag: 0x00004000,
-    flagName: "HasExpIcon",
-    signature: 0xa0000007,
-    blockName: "IconEnvironmentDataBlock",
-  },
-] as const;
-
 const parseExtraData = async (
   bytes: Buffer,
   walk: Walk,
@@ -1277,7 +1276,7 @@ const parseExtraData = async (
       offset: walk.offset,
       size,
       signature,
-      signature_name: EXTRA_SIGNATURE_NAMES[signature] ?? null,
+      signature_name: extraSignatureName(signature),
       decoded: decodeExtra(signature, payload, walk, walk.offset),
     });
     walk.offset += size;
@@ -1389,12 +1388,14 @@ export const parseWindowsShortcut = async (
       `${String(bytes.length - walk.offset)} byte(s) follow the ExtraData TerminalBlock and are not part of the Shell Link`,
     );
   const signatures = new Set(extraData.blocks.map((block) => block.signature));
-  const unseenBlocks = EXPECTED_EXTRA_DATA_BLOCKS.filter(
-    ({ flag, signature }) => (flags & flag) !== 0 && !signatures.has(signature),
+  const unseenBlocks = LINK_FLAGS.flatMap(([bit, flagName, signature]) =>
+    signature !== undefined && (flags & bit) !== 0 && !signatures.has(signature)
+      ? [{ flagName, blockName: EXTRA_SIGNATURE_NAMES[signature] }]
+      : [],
   );
   // Only a TerminalBlock proves the whole section was read. Without one an
   // unseen block is unknown, not absent.
-  if (extraData.terminal_offset !== null)
+  if (extraData.terminal_offset !== null) {
     for (const { flagName, blockName } of unseenBlocks)
       note(
         walk,
@@ -1402,7 +1403,7 @@ export const parseWindowsShortcut = async (
         extraData.terminal_offset,
         `${flagName} is set and ${blockName} is absent`,
       );
-  else if (unseenBlocks.length > 0 && walk.issues.length === 0)
+  } else if (unseenBlocks.length > 0 && walk.issues.length === 0)
     note(walk, "truncated", walk.offset, "ExtraData TerminalBlock is absent");
   const reportBase = {
     artifact,

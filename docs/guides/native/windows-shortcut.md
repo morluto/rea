@@ -60,6 +60,10 @@ birth-droid GUIDs. Version-1 UUID MAC and timestamp values are labelled
 keep their folder identifiers. `ConsoleFEDataBlock` keeps the code page.
 `PropertyStoreDataBlock` and unrecognized signatures stay raw with SHA-256.
 Unknown signatures are listed and are not dropped.
+When `HasExpString`, `HasDarwinID`, `HasExpIcon`, or `RunWithShimLayer`
+declares a block, the terminal record lets REA report a missing block and mark
+coverage partial. If parsing stops before the terminal, an unseen block remains
+unknown.
 
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
