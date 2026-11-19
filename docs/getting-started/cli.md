@@ -516,8 +516,8 @@ Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
 rea inspect-elf-notes /absolute/path/to/program --json
 ```
 
-The workflow reports note owners, types, descriptor hashes, and GNU build-id
-or ABI-tag fields when those descriptors match. A missing note table is
+The workflow reports note owners, types, descriptor hashes, and supported
+GNU, Linux CORE, Android, and FDO metadata fields. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
 Inspect DWARF compile units without executing the image:

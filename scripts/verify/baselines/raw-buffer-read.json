@@ -61,8 +61,6 @@
   "src/domain/python/pythonBytecodeIdentity.ts": 1,
   "src/domain/riscvIsaDeclaration.ts": 1,
   "src/domain/unityfsFormat.ts": 5,
-  "src/domain/windows/ntfsMftAttributes.ts": 38,
-  "src/domain/windows/ntfsUsnJournal.ts": 23,
   "src/dotnet/ManagedConstantValue.ts": 12,
   "src/dotnet/ManagedMemberInstructionDecoder.ts": 30,
   "src/dotnet/ManagedMethodBodyReader.ts": 5,

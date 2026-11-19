@@ -12,6 +12,13 @@ hash is the artifact SHA-256. `metadata.tools` names the provider recorded in
 the parent Evidence, the reader that observed these facts, so the document
 depends only on its parent and not on the REA build that projects it.
 
+The Go and Rust readers record `artifact.file_name` using the source host's
+filesystem path rules. A later projection uses that recorded name, including
+literal backslashes in a POSIX file name and mixed separators in a Windows
+path. Older Evidence without this field remains readable: the component name
+keeps the full recorded artifact path, and `rea:unknown` explains that its file
+name is unknown. The path and SHA-256 identity are preserved in both cases.
+
 That hash covers the whole file, and the inventory of a universal Mach-O covers
 one slice of it. For a slice, `metadata.component.properties` names the selection
 with `rea:macho:architecture`, `rea:macho:container`, `rea:macho:offset`,
