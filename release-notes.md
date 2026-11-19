@@ -496,6 +496,8 @@
 * **javascript:** preserve global escapes across callback boundaries ([4e1e9b6](https://github.com/morluto/rea/commit/4e1e9b62a7d2763a0ca528f9f70173e86ccf841d))
 * **javascript:** preserve GraphQL Source ownership across spreads ([#10338](https://github.com/morluto/rea/issues/10338)) ([adf8bdf](https://github.com/morluto/rea/commit/adf8bdf8334b78900fe6be7528755b32c42ef784))
 * **javascript:** preserve loader conditions across application evidence ([#12023](https://github.com/morluto/rea/issues/12023)) ([34f7d21](https://github.com/morluto/rea/commit/34f7d2131cd8b5894497e599e8cfce1dbd69e967))
+* **javascript:** preserve read-time dependencies through const aliases ([#12513](https://github.com/morluto/rea/issues/12513)) ([a5e9f3a](https://github.com/morluto/rea/commit/a5e9f3a979a6f989f6d595e4aed574e6c38e4562))
+* **javascript:** preserve read-time dependencies through const source aliases ([a5e9f3a](https://github.com/morluto/rea/commit/a5e9f3a979a6f989f6d595e4aed574e6c38e4562))
 * **javascript:** preserve timer delays after global escapes ([54677ec](https://github.com/morluto/rea/commit/54677ec1d6e3f135056d710c80ced4353b1aac89))
 * **javascript:** preserve trailing-slash exports uncertainty ([3a25046](https://github.com/morluto/rea/commit/3a25046b8c69b85c6cd11f64b2f936ad7252cc1f)), closes [#9998](https://github.com/morluto/rea/issues/9998) [#10107](https://github.com/morluto/rea/issues/10107)
 * **javascript:** preserve unknown Electron path bases ([#11991](https://github.com/morluto/rea/issues/11991)) ([4230ae1](https://github.com/morluto/rea/commit/4230ae1cd42fc6386f40f6494aff5f0526d3e36c))
