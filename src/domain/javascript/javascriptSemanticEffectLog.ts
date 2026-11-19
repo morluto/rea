@@ -27,6 +27,7 @@ import {
 } from "./javascriptSemanticEffectPathIndex.js";
 import {
   isUnshadowedGlobal,
+  isSemanticArrayPatternEffect,
   semanticBindingEffectFollowsCapture,
   semanticEscapeFollowsCapture,
   semanticDefiniteEffectPrecedesReference,
@@ -581,6 +582,27 @@ export const bindingMemberEffectMayPrecedeReads = (
   return false;
 };
 
+/** Whether a selected receiver's contents can change before use.
+ * Writes replacing the receiver are covered by the source-selection query.
+ */
+export const bindingProjectedContentsMayChangeAt = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  path: JavaScriptSemanticPropertyPath,
+  read: t.Node,
+): boolean =>
+  opaqueCodeMayReachBindingReference(binding, state, read) ||
+  bindingMemberEffectMayPrecedeReads(
+    state,
+    binding,
+    (kind, effect) =>
+      (kind === "escape" || effect.path.length > path.length) &&
+      semanticEffectPathMatches(effect.path.slice(0, path.length), path)
+        ? [read]
+        : undefined,
+    "activation",
+  );
+
 /**
  * Whether an assignment to `binding` recorded as a reference initializer
  * (a pattern or other non-ordinary write) may run before `read`.
@@ -1028,6 +1050,37 @@ export const capturedBindingPathMayHaveChanged = (
           state.parentsByNode,
         ),
     )
+  );
+};
+
+/** Preserve an own-data read when the only possible changes follow it in an iterator phase. */
+export const bindingPathOnlyEscapesAtLaterIteratorEffects = (
+  binding: JavaScriptSemanticBindingState,
+  path: readonly string[],
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let laterIterator = false;
+  const matches = (effect: JavaScriptSemanticMemberEffect): boolean =>
+    semanticEffectPathMatches(effect.path, path);
+  if (
+    semanticSomeEffectPathCandidate(binding.escapedPaths, path, (effect) => {
+      if (!matches(effect)) return false;
+      if (
+        !isSemanticArrayPatternEffect(effect.node) ||
+        semanticEffectTiming(read, effect.node, state) !== "after"
+      )
+        return true;
+      laterIterator = true;
+      return false;
+    }) ||
+    !laterIterator
+  )
+    return false;
+  return (
+    !opaqueCodeMayReachBindingReference(binding, state, read) &&
+    !semanticOpaqueGlobalMayHaveChanged(read, state) &&
+    !semanticSomeEffectPathCandidate(binding.memberWrites, path, matches)
   );
 };
 

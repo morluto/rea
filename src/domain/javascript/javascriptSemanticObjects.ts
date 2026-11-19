@@ -146,7 +146,7 @@ const collectDestructuring = (
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
   const rootArray = t.isArrayPattern(root);
-  let ownSlot =
+  const sourcePresence =
     initializer != null && source.path !== null
       ? readPresence(
           source.bindingId,
@@ -154,13 +154,15 @@ const collectDestructuring = (
           rootArray ? source.path : undefined,
         )
       : undefined;
+  let ownSlot = sourcePresence;
   // An unsupported property still occupies its place in the pattern's
   // evaluation order, even when it cannot produce a graph operation.
   const pending: ({
     readonly pattern: t.Node | undefined;
     readonly path: readonly string[];
+    readonly plainObjectPath?: boolean;
     readonly lookup?: "own" | "unproven";
-  } | null)[] = [{ pattern: root, path: [] }];
+  } | null)[] = [{ pattern: root, path: [], plainObjectPath: !rootArray }];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) break;
@@ -184,6 +186,8 @@ const collectDestructuring = (
     // contributes no binding once the shared slot check has run.
     if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
+    const plainObjectPath =
+      next.plainObjectPath === true && !t.isAssignmentPattern(occurrence);
     if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
     const pattern = t.isAssignmentPattern(occurrence)
       ? unwrapJavaScriptExpression(occurrence.left).node
@@ -204,6 +208,7 @@ const collectDestructuring = (
         pending.push({
           pattern: property.value,
           path: [...path, name],
+          plainObjectPath: plainObjectPath && !property.computed,
           lookup: property.computed ? "unproven" : "own",
         });
       }
@@ -242,7 +247,12 @@ const collectDestructuring = (
         objectBindingId: source.bindingId,
         targetBindingId: targetBinding?.bindingId ?? null,
         propertyPath,
-        provenOwnSlot: ownSlot !== undefined,
+        provenOwnSlot:
+          ownSlot !== undefined ||
+          (plainObjectPath &&
+            targetBinding !== undefined &&
+            propertyPath !== null &&
+            sourcePresence?.(propertyPath, occurrence) !== undefined),
       },
       state,
       output,

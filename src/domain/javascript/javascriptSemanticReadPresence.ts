@@ -4,6 +4,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  bindingPathOnlyEscapesAtLaterIteratorEffects,
   capturedBindingPathMayHaveChanged,
   hasRecordedReferenceEffects,
   opaqueCodeMayRebindBinding,
@@ -134,10 +135,18 @@ export const createSemanticReadPresenceQuery = (
     )
       return undefined;
     const { value } = origin;
-    if (iterationPath !== undefined) {
+    // An identifier RHS in an object pattern can select numeric own data
+    // without starting an iterator, even when a later read closes one.
+    const arrayPath =
+      iterationPath ??
+      (t.isArrayExpression(value) &&
+      t.isIdentifier(unwrapJavaScriptExpression(capture).node)
+        ? []
+        : undefined);
+    if (arrayPath !== undefined) {
       // The RHS must select an own data value before numeric array slots can
       // explain the binding. Temporal checks still use the full origin path.
-      const literal = ownDataAtPath(value, iterationPath);
+      const literal = ownDataAtPath(value, arrayPath);
       if (!t.isArrayExpression(literal)) return undefined;
       const array = evaluateSemanticExpression(
         capture,
@@ -146,12 +155,18 @@ export const createSemanticReadPresenceQuery = (
         "query",
       );
       if (
-        !semanticKnownArrayIteration(array, state, capture) ||
-        array.unknownItems
+        array.status !== "array" ||
+        array.unknownItems ||
+        (iterationPath !== undefined &&
+          !semanticKnownArrayIteration(array, state, capture))
       )
         return undefined;
-      return (path: readonly string[]): t.Node | undefined => {
-        const key = path[iterationPath.length];
+      return (
+        path: readonly string[],
+        beforeIterator?: t.Node,
+      ): t.Node | undefined => {
+        if (beforeIterator !== undefined) return undefined;
+        const key = path[arrayPath.length];
         if (key === undefined) return undefined;
         const index = semanticArrayIndex(key);
         if (index === null) return undefined;
@@ -166,7 +181,7 @@ export const createSemanticReadPresenceQuery = (
         const selected = ownDataAtPath(
           unwrapJavaScriptExpression(element).node,
           path,
-          iterationPath.length + 1,
+          arrayPath.length + 1,
         );
         return selected === undefined ||
           capturedBindingPathMayHaveChanged(
@@ -180,13 +195,28 @@ export const createSemanticReadPresenceQuery = (
       };
     }
     if (!t.isObjectExpression(value)) return undefined;
-    return (path: readonly string[]): t.Node | undefined => {
+    return (
+      path: readonly string[],
+      beforeIterator?: t.Node,
+    ): t.Node | undefined => {
       if (path.length === 0) return undefined;
       const selected = ownDataAtPath(value, path);
-      return selected === undefined ||
-        capturedBindingPathMayHaveChanged(origin.binding, path, capture, state)
-        ? undefined
-        : selected;
+      if (selected === undefined) return undefined;
+      const stillPresent =
+        beforeIterator === undefined
+          ? !capturedBindingPathMayHaveChanged(
+              origin.binding,
+              path,
+              capture,
+              state,
+            )
+          : bindingPathOnlyEscapesAtLaterIteratorEffects(
+              origin.binding,
+              path,
+              beforeIterator,
+              state,
+            );
+      return stillPresent ? selected : undefined;
     };
   };
 };
