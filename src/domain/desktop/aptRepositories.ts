@@ -334,7 +334,8 @@ export const entryForTarget = (
   );
   if (at === undefined) return undefined;
   const { uris, suites, ...entry } = at;
-  const single = uris.length === 1 && suites.length === 1;
+  const single =
+    !at.file.endsWith(".sources") && uris.length === 1 && suites.length === 1;
   // A one-line entry has one URI and one suite. Only deb822 needs a URI lookup.
   const matches = single
     ? uris
