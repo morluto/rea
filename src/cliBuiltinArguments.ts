@@ -33,6 +33,13 @@ export const CLI_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--timings",
 ]);
 
+export const MCP_HTTP_MODE_FLAG = "--http";
+export const MCP_HTTP_VALUED_FLAGS: ReadonlySet<string> = new Set([
+  "--host",
+  "--port",
+  "--allowed-hosts",
+]);
+
 /** The timing global's spellings: `--timings`, `--no-timings`, `--timings=<text>`. */
 const cliTimingFlagValue = (token: string): boolean | undefined =>
   token === "--timings"
@@ -270,17 +277,7 @@ export const isProjectScopedAmpRegistration = ({
   return !global && (agents.length === 0 || agents.includes("amp"));
 };
 
-/**
- * The arguments production `mcp doctor` parses itself: the caller's, without
- * the `mcp doctor` words and the timing global the launcher measures. Returns
- * undefined for any other command.
- */
-export const productionMcpDoctorArguments = (
-  arguments_: readonly string[],
-):
-  | { readonly arguments: readonly string[]; readonly timings: boolean }
-  | undefined => {
-  const global = parseCliGlobalArguments(arguments_);
+const mcpDoctorArguments = (global: CliGlobalArguments) => {
   if (
     global.command[0] !== "mcp" ||
     global.command[1] !== "doctor" ||
@@ -296,6 +293,42 @@ export const productionMcpDoctorArguments = (
     arguments: global.arguments.filter((_, index) => !removed.has(index)),
     timings: global.timings,
   };
+};
+
+type CliLauncherRoute =
+  | { readonly kind: "cli" | "mcp-stdio" | "mcp-http" }
+  | {
+      readonly kind: "mcp-doctor";
+      readonly arguments: readonly string[];
+      readonly timings: boolean;
+    };
+
+/** Select the entrypoint before loading the command runtime. */
+export const classifyCliLauncherArguments = (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv,
+): CliLauncherRoute => {
+  if (cliCompletionShell(environment) !== undefined) return { kind: "cli" };
+  const entry = arguments_[0];
+  const mcpEntry = entry === "mcp" || entry === "--mcp";
+  if (mcpEntry && arguments_.length === 1) return { kind: "mcp-stdio" };
+
+  const global = parseCliGlobalArguments(arguments_);
+  const doctor = mcpDoctorArguments(global);
+  if (doctor !== undefined) return { kind: "mcp-doctor", ...doctor };
+  if (mcpEntry) {
+    // Global output values are already consumed. Once a subcommand or the
+    // option terminator is reached, its remaining tokens belong to the CLI.
+    for (const token of global.command.slice(entry === "mcp" ? 1 : 0)) {
+      if (token === "--" || !token.startsWith("-")) break;
+      if (
+        token === MCP_HTTP_MODE_FLAG ||
+        MCP_HTTP_VALUED_FLAGS.has(token.split("=", 1)[0]!)
+      )
+        return { kind: "mcp-http" };
+    }
+  }
+  return { kind: "cli" };
 };
 
 /** The command parser accepts the schema key and its kebab-case spelling. */

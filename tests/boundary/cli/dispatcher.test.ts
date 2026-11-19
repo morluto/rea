@@ -327,6 +327,7 @@ describe("executable dispatcher", () => {
         ["--mcp", "--http"],
         ["mcp", "-h", "--http"],
         ["mcp", "--host", "127.0.0.1", "--http"],
+        ["mcp", "--port=8765"],
       ])
         await expect(invoke(args)).resolves.toEqual({
           adapter: "mcp-http",
@@ -335,6 +336,13 @@ describe("executable dispatcher", () => {
       await expect(invoke(["mcp", "doctor", "--http"])).resolves.toEqual({
         adapter: "mcp-doctor",
         args: ["--http"],
+        stdoutIsTerminal: false,
+      });
+      await expect(
+        invoke(["mcp", "--format", "--http", "doctor"]),
+      ).resolves.toEqual({
+        adapter: "mcp-doctor",
+        args: ["--format", "--http"],
         stdoutIsTerminal: false,
       });
       await expect(invoke(["mcp", "add", "--http"])).resolves.toEqual({

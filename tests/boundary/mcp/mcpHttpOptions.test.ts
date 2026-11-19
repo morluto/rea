@@ -178,6 +178,39 @@ processTest(
   },
 );
 
+processTest(
+  "routes malformed MCP options to their owning parser in the compiled launcher",
+  async ({ processes }) => {
+    const launcher = fileURLToPath(
+      new URL("../../../scripts/rea.mjs", import.meta.url),
+    );
+    for (const args of [
+      ["--format", "--http", "doctor"],
+      ["doctor", "--format", "--http"],
+    ]) {
+      const result = await processes.run(process.execPath, [
+        launcher,
+        "mcp",
+        ...args,
+      ]);
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.stdout).toContain("VALIDATION_ERROR");
+      expect(result.stdout).toContain("Invalid output format: --http");
+      expect(result.stderr).toBe("");
+    }
+    for (const args of [["--port", "8765"], ["--port=8765"]]) {
+      const result = await processes.run(process.execPath, [
+        launcher,
+        "mcp",
+        ...args,
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("--host and --port require --http\n");
+    }
+  },
+);
+
 describe("MCP_HOST and MCP_PORT", () => {
   it("defaults to loopback and an ephemeral port", () => {
     expect(parseMcpHttpEndpoint({})).toEqual({

@@ -37,21 +37,7 @@ const builtinArgumentRuntime = "dist/cli-runtime/cliBuiltinArguments.js";
 const builtinArguments = (await compiledRuntimeExists([builtinArgumentRuntime]))
   ? await import("../dist/cli-runtime/cliBuiltinArguments.js")
   : undefined;
-const isShellCompletion =
-  builtinArguments?.cliCompletionShell?.(process.env) !== undefined;
-const doctorArguments = isShellCompletion
-  ? undefined
-  : builtinArguments?.productionMcpDoctorArguments(args);
-const isMcpEntry =
-  !isShellCompletion && (args[0] === "--mcp" || args[0] === "mcp");
-const isMcpMode = isMcpEntry && args.length === 1;
-const isMcpDoctorMode = doctorArguments !== undefined;
-// Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
-// while `mcp -h --http` reaches the HTTP entry's own help.
-const isMcpHttpMode =
-  isMcpEntry &&
-  (args[1]?.startsWith("-") ?? false) &&
-  args.slice(1).includes("--http");
+const route = builtinArguments?.classifyCliLauncherArguments(args, process.env);
 /** How long an exiting command may wait for its remaining handles to close. */
 const EXIT_DRAIN_GRACE_MS = 1_000;
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
@@ -60,9 +46,9 @@ const SIGPIPE_EXIT_STATUS = 141;
 let stdoutClosed = false;
 const runtimeFiles = [
   builtinArgumentRuntime,
-  ...(isMcpMode || isMcpHttpMode
+  ...(route?.kind === "mcp-stdio" || route?.kind === "mcp-http"
     ? ["dist/mcp/main.js"]
-    : isMcpDoctorMode
+    : route?.kind === "mcp-doctor"
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
       : [
           "dist/cli-runtime/cli.js",
@@ -76,18 +62,17 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
   );
   process.exitCode = 1;
-} else if (isMcpMode) {
+} else if (route?.kind === "mcp-stdio") {
   const { runEntrypoint } = await import("../dist/mcp/main.js");
   await runEntrypoint();
-} else if (isMcpHttpMode) {
+} else if (route?.kind === "mcp-http") {
   const { runMcpHttpEntrypoint } = await import("../dist/mcp/main.js");
   await runMcpHttpEntrypoint(args.slice(1));
-} else if (isMcpDoctorMode) {
+} else if (route?.kind === "mcp-doctor") {
   guardClosedStdout();
   // Doctor runs outside the command dispatcher, so the launcher measures its
   // timing global, which the global argument reader has taken out.
-  const { arguments: doctorCliArguments, timings: timingRequested } =
-    doctorArguments;
+  const { arguments: doctorCliArguments, timings: timingRequested } = route;
   const started = performance.now();
   try {
     const { runProductionMcpDoctorCli } =

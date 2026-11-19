@@ -1,3 +1,7 @@
+import {
+  MCP_HTTP_MODE_FLAG,
+  MCP_HTTP_VALUED_FLAGS,
+} from "../cliBuiltinArguments.js";
 import { formatCommandHelp } from "../cli/help.js";
 import { z } from "zod";
 import type { HttpHostname } from "../domain/httpHostname.js";
@@ -40,12 +44,6 @@ const MCP_HTTP_COMMAND = "rea mcp --http";
 const MCP_HTTP_DESCRIPTION =
   "Serve the MCP server over streamable HTTP for one local client";
 const HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
-const VALUED_FLAGS: ReadonlySet<string> = new Set([
-  "--host",
-  "--port",
-  "--allowed-hosts",
-]);
-
 /** Render help for the dispatcher entry, which accepts no global options. */
 export const renderMcpHttpHelp = (): string =>
   formatCommandHelp(MCP_HTTP_COMMAND, {
@@ -90,12 +88,12 @@ export const parseMcpHttpArguments = (
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index] ?? "";
     if (HELP_FLAGS.has(argument)) return { ok: false, help: true };
-    if (argument === "--http") {
+    if (argument === MCP_HTTP_MODE_FLAG) {
       http = true;
       continue;
     }
     const [flag, inline] = splitFlag(argument);
-    if (!VALUED_FLAGS.has(flag))
+    if (!MCP_HTTP_VALUED_FLAGS.has(flag))
       return invalid(`Unknown mcp --http argument: ${argument}`);
     const value = inline ?? arguments_[index + 1];
     if (inline === undefined) index += 1;
