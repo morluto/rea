@@ -2586,6 +2586,65 @@ describe("ReleaseExposureReader lossy source-map URL suffixes", () => {
   );
 });
 
+describe("ReleaseExposureReader lossy HTML script URLs", () => {
+  it.each([
+    {
+      field: "script fragment",
+      before: '<script src="z.payload#',
+      after: '"></script>',
+      target: "z.payload",
+      status: "exposed",
+    },
+    {
+      field: "base query",
+      before: '<base href="nested/?v=',
+      after: '"><script src="z.payload"></script>',
+      target: "nested/z.payload",
+      status: "exposed",
+    },
+    {
+      field: "script path",
+      before: '<script src="z',
+      after: '.payload#ignored"></script>',
+      target: "z\ufffd.payload",
+      status: "unknown",
+    },
+    {
+      field: "base path",
+      before: '<base href="nested',
+      after: '/?v=1"><script src="z.payload"></script>',
+      target: "nested\ufffd/z.payload",
+      status: "unknown",
+    },
+  ] as const)(
+    "reports $status when an HTML $field contains undecodable bytes",
+    async ({ before, after, target, status }) => {
+      const root = await createTestTempDirectory("rea-release-html-loss-");
+      const script = join(root, target);
+      await mkdir(dirname(script), { recursive: true });
+      await writeFile(
+        script,
+        `//${INLINE_MAP_PREFIX}${embeddedSourceMap().toString("base64")}\n`,
+      );
+      await writeFile(
+        join(root, "a.html"),
+        Buffer.concat([
+          Buffer.from(before),
+          Buffer.from([0xff]),
+          Buffer.from(after),
+        ]),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.text_members.skipped).toBe(1);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: status === "exposed" ? 1 : 0,
+        skipped: 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe(status);
+    },
+  );
+});
+
 describe("ReleaseExposureReader text encodings address identity", () => {
   it.each(["javascript", "html"])(
     "does not turn a lossy %s declaration into another file's path",

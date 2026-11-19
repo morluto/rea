@@ -119,6 +119,7 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
+import { stripQueryAndFragment } from "../domain/artifactPathSyntax.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import {
   inspectSourceMap,
@@ -2042,17 +2043,9 @@ const examineHtmlScripts = (
 ): void => {
   const { baseHref, scripts, inlineScripts, inlineScriptCount } =
     htmlArtifactReferences(source);
-  for (const { scriptPath, scriptType } of scripts) {
-    if (scriptType === null) continue;
-    if (
-      !complete &&
-      (scriptPath.includes("\ufffd") || baseHref?.includes("\ufffd"))
-    ) {
-      state.skippedMaps += 1;
-      continue;
-    }
-    noteScriptReference(state, member, scriptPath, baseHref);
-  }
+  for (const { scriptPath, scriptType } of scripts)
+    if (scriptType !== null)
+      noteScriptReference(state, member, scriptPath, baseHref, complete);
   for (const script of inlineScripts)
     examineInlineMaps(
       state,
@@ -2076,7 +2069,16 @@ const noteScriptReference = (
   member: MemberView,
   scriptPath: string,
   baseHref: string | null,
+  complete: boolean,
 ): void => {
+  if (
+    !complete &&
+    (stripQueryAndFragment(scriptPath).includes("\ufffd") ||
+      (baseHref !== null && stripQueryAndFragment(baseHref).includes("\ufffd")))
+  ) {
+    state.skippedMaps += 1;
+    return;
+  }
   try {
     const page = pathToFileURL(anchoredLocation(state, member.location));
     const url = new URL(
@@ -2200,7 +2202,7 @@ const noteLocalMapReference = (
   url: string,
   complete: boolean,
 ): void => {
-  const path = url.replace(/[?#].*$/su, "");
+  const path = stripQueryAndFragment(url);
   if (!complete && path.includes("\ufffd")) {
     state.skippedMaps += 1;
     return;
