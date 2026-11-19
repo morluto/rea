@@ -13,7 +13,7 @@ export const UEFI_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_uefi_firmware"),
     kind: "firmware-provider",
     description:
-      "Map PI firmware volumes, FFS files, section chains, AMD PSP directory candidates and uncovered ranges in a local flash image. Report integrity observations and coverage limits. LZMA-custom and AMD-zlib streams can contain nested volumes or section chains. Decoded offsets are relative to the stream identified by source_stream. LZMAF86, EFI standard compression and other unsupported handlers remain explicit limitations.",
+      "Map PI firmware volumes, FFS files, section chains, AMD PSP directory candidates and uncovered ranges in a local flash image. Report integrity observations and coverage limits. LZMA-custom, LZMAF86, and AMD-zlib streams can contain nested volumes or section chains. Decoded offsets are relative to the stream identified by source_stream. EFI standard compression and other unsupported handlers remain explicit limitations.",
     inputSchema: uefiInputSchemas.inspect_uefi_firmware,
     outputSchema: evidenceResultOf(uefiResultSchemas.inspect_uefi_firmware),
     examples: [

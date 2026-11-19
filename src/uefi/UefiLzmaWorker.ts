@@ -3,9 +3,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { z } from "zod";
+import { undoUefiX86BranchFilter } from "./UefiX86BranchFilter.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 
 const requestSchema = z.strictObject({
+  format: z.enum(["lzma", "lzmaf86"]),
   payload_path: z.string(),
   output_path: z.string(),
   reply_path: z.string(),
@@ -83,9 +85,11 @@ const main = async (): Promise<void> => {
         "LZMA dictionary exceeds the worker memory budget.",
       );
     }
-    const declaredOutput = payload.readBigUInt64LE(5);
+    const declaredOutputSize = payload.readBigUInt64LE(5);
+    const declaredOutput =
+      declaredOutputSize === 0xffffffffffffffffn ? null : declaredOutputSize;
     if (
-      declaredOutput !== 0xffffffffffffffffn &&
+      declaredOutput !== null &&
       declaredOutput > BigInt(request.max_output_bytes)
     ) {
       throw new UefiLzmaOutputLimit(
@@ -95,6 +99,12 @@ const main = async (): Promise<void> => {
     const output = new BoundedLzmaOutput(request.max_output_bytes);
     lzma.decompressFile(payload, output);
     const decoded = output.getBuffer();
+    if (declaredOutput !== null && BigInt(decoded.length) !== declaredOutput) {
+      throw new Error(
+        `LZMA decoded ${decoded.length} bytes; stream declared ${declaredOutput} bytes.`,
+      );
+    }
+    if (request.format === "lzmaf86") undoUefiX86BranchFilter(decoded);
     await writeFile(request.output_path, decoded, { flag: "wx", mode: 0o600 });
     reply = {
       ok: true,

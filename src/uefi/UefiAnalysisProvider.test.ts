@@ -14,6 +14,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
 import {
+  buildCompressionSection,
   buildFfsFile,
   buildFv,
   buildGuidedSection,
@@ -291,6 +292,71 @@ it.skipIf(!lzmaWorkerAvailable)(
   45_000,
 );
 
+it.skipIf(!lzmaWorkerAvailable)(
+  "restores an EDK II LZMAF86 section stream before mapping and extracting its PE payload",
+  async () => {
+    const pePayload = Buffer.from(
+      "4d5a90e80c00000090e9f1ffffff9090e8e9ff00009090c3e9",
+      "hex",
+    );
+    // EDK II LzmaCompress -e --f86 at 556dcfb466e9f05affeaff881d738807f8156d3c,
+    // over buildSection(0x10, pePayload). Plain LZMA leaves different operands.
+    const compressed = Buffer.from(
+      "5d000000012000000000000000000e802f20d6bb0779fccd0af806e72f54b89b62db3e8de253e82174580000",
+      "hex",
+    );
+    const file = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 0x07,
+      payload: buildGuidedSection({
+        definitionGuid: "d42ae6bd-1352-4bfb-909a-ca72a6eae889",
+        body: compressed,
+      }),
+    });
+    const directory = await createTestTempDirectory("rea-uefi-f86-");
+    const imagePath = join(directory, "image.fi");
+    await writeFile(imagePath, buildFv({ files: [file] }).buffer);
+    const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
+
+    const result = expectOk(
+      await provider.execute(
+        extractRequest(imagePath, join(directory, "out"), {
+          include_compressed: false,
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.extraction_gaps).toEqual([]);
+    expect(result.derivations).toMatchObject([
+      {
+        handler: expect.stringContaining("+x86-bcj"),
+        parent_file_range: { length: compressed.length },
+      },
+    ]);
+    const restored = result.files.find(
+      (entry) => entry.source === "decompressed-lzmaf86",
+    );
+    const payload = result.files.find(
+      (entry) => entry.source === "raw-section",
+    );
+    if (restored === undefined || payload === undefined) {
+      throw new Error(
+        "LZMAF86 extraction did not publish its stream and PE payload",
+      );
+    }
+    expect(await readFile(restored.path)).toEqual(
+      buildSection(0x10, pePayload),
+    );
+    expect(await readFile(payload.path)).toEqual(pePayload);
+    expect(payload).toMatchObject({
+      source_stream: restored.source_stream,
+      source_range: { offset: 4, length: pePayload.length },
+      original_file_range: null,
+    });
+  },
+  45_000,
+);
+
 const amdZlibSection = (content: Buffer): Buffer => {
   const stream = deflateSync(content);
   const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH);
@@ -492,19 +558,16 @@ it("publishes repeated raw GUIDs under distinct portable paths and exposes unusa
     typeCode: 1,
     payload: Buffer.from("other raw bytes"),
   });
-  const lzmaf86 = buildGuidedSection({
-    definitionGuid: "d42ae6bd-1352-4bfb-909a-ca72a6eae889",
-    body: Buffer.from("unavailable x86 filter"),
-  });
+  const standard = buildCompressionSection(
+    Buffer.from([0x01, 0x23, 0x45]),
+    1,
+    172,
+  );
   const truncated = Buffer.from([0xff, 0x0f, 0, 0x10, 0xde, 0xad]);
   const driver = buildFfsFile({
     guid: GUID_DRIVER,
     typeCode: 7,
-    payload: Buffer.concat([
-      lzmaf86,
-      Buffer.alloc((4 - (lzmaf86.length % 4)) % 4),
-      truncated,
-    ]),
+    payload: Buffer.concat([standard, truncated]),
   });
   await writeFile(
     imagePath,
@@ -529,7 +592,7 @@ it("publishes repeated raw GUIDs under distinct portable paths and exposes unusa
   expect(result.extraction_gaps).toMatchObject([
     {
       kind: "unsupported-compression",
-      detail: expect.stringContaining("lzmaf86"),
+      detail: expect.stringContaining("efi-standard"),
     },
     { kind: "size-truncated", detail: expect.stringContaining("4095") },
   ]);

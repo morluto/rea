@@ -45,6 +45,7 @@ import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessR
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type {
   UefiImageScanSummary,
+  UefiDecodeFormat,
   UefiDecodeResult,
   UefiPayload,
 } from "./UefiImageScan.js";
@@ -605,7 +606,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               sourceStream: stream,
               range: { offset: 0, length: decoded.bytes.length },
             },
-            format === "zlib" ? "decompressed-zlib" : "decompressed-lzma",
+            `decompressed-${format}`,
             stream,
           )
         : null;
@@ -616,7 +617,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         parent_stream_range: carrier.range,
         child_path: child,
         child_stream: stream,
-        handler: `${format === "zlib" ? "node-zlib" : "lzma-purejs"}@${decoderVersion}`,
+        handler: `${format === "zlib" ? "node-zlib" : "lzma-purejs"}@${decoderVersion}${format === "lzmaf86" ? "+x86-bcj" : ""}`,
       });
     };
 
@@ -766,7 +767,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   async #decodeStream(
     operation: UefiRequest["operation"],
     payload: Buffer,
-    format: "lzma" | "zlib",
+    format: UefiDecodeFormat,
     maxOutputBytes: number,
     signal: AbortSignal,
   ): Promise<UefiDecodeResult> {
@@ -805,6 +806,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       await writeFile(
         requestPath,
         JSON.stringify({
+          format,
           payload_path: payloadPath,
           output_path: outputPath,
           reply_path: replyPath,

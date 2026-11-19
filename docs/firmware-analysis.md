@@ -50,7 +50,8 @@ Files carved directly from the image have an `original_file_range`. Decoded
 files have a null original range and retain their byte range in the named
 stream. Read `derivations` to trace each decoded stream back to its carrier.
 
-LZMA-custom and AMD-zlib can yield nested volumes or section chains. LZMAF86,
+LZMA-custom, LZMAF86, and AMD-zlib can yield nested volumes or section chains.
+The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
 EFI standard compression and other unsupported guided handlers produce
 extraction gaps. Set MCP `include_compressed` to false or pass
 `--no-include-compressed` to omit undecoded carriers. PSP locations remain

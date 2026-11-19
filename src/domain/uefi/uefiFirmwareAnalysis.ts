@@ -461,6 +461,7 @@ export const uefiResultSchemas = {
         source: z.enum([
           "raw-section",
           "decompressed-lzma",
+          "decompressed-lzmaf86",
           "decompressed-zlib",
           "uncompressed-payload",
           "compressed-passthrough",

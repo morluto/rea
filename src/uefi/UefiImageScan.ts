@@ -46,12 +46,13 @@ interface UefiLzmaDecodeOutcome {
   readonly decoderVersion: string;
 }
 
+export type UefiDecodeFormat = "lzma" | "lzmaf86" | "zlib";
+
 /** One decodable stream submitted to the injected decode lane. */
 interface UefiLzmaDecodeRequest {
   readonly payload: Buffer;
   readonly logicalPath: string;
-  /** Compression format of payload: zlib-wrapped stream or LZMA (default). */
-  readonly format: "lzma" | "zlib";
+  readonly format: UefiDecodeFormat;
   readonly maxOutputBytes: number;
   /** Physical image range of the compressed stream, when inside the image. */
   readonly physicalRange: {
@@ -113,7 +114,7 @@ export interface UefiPayload {
 
 interface UefiDecodedStream {
   readonly bytes: Buffer;
-  readonly format: "lzma" | "zlib";
+  readonly format: UefiDecodeFormat;
   readonly decoderVersion: string;
   readonly carrier: UefiPayload;
 }
@@ -705,6 +706,7 @@ export const scanUefiImage = async (
         }
       } else if (
         compression.kind === "lzma-custom" ||
+        compression.kind === "lzmaf86" ||
         compression.kind === "ami-zlib"
       ) {
         const decoded = await resolveDecodedSection(
@@ -759,7 +761,7 @@ export const scanUefiImage = async (
     payload: UefiPayload,
     logicalPath: string,
     depth: number,
-    kind: "lzma-custom" | "ami-zlib",
+    kind: "lzma-custom" | "lzmaf86" | "ami-zlib",
   ): Promise<UefiDecodedStream | null> => {
     const maxOutputBytes = Math.min(
       UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
@@ -772,7 +774,8 @@ export const scanUefiImage = async (
         `Decode depth or aggregate output limit reached under ${logicalPath}.`,
       );
     }
-    const format = kind === "ami-zlib" ? "zlib" : "lzma";
+    const format =
+      kind === "ami-zlib" ? "zlib" : kind === "lzmaf86" ? "lzmaf86" : "lzma";
     let carrier = payload;
     if (format === "zlib") {
       const peeled = peelAmiZlibPayload(payload.bytes);

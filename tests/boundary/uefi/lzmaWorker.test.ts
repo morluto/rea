@@ -37,6 +37,7 @@ const runLzmaWorker = async (
   await writeFile(
     requestPath,
     JSON.stringify({
+      format: "lzma",
       payload_path: payloadPath,
       output_path: outputPath,
       reply_path: replyPath,
