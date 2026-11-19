@@ -88,6 +88,25 @@ export const REQUESTED_VERSION_KINDS = [
 ] as const;
 export type RequestedVersionKind = (typeof REQUESTED_VERSION_KINDS)[number];
 
+// Gradle VersionRangeSelector recognizes finite, half-open, and single-value
+// range spellings. Brackets within an otherwise literal version do not suffice.
+// Java Pattern's default whitespace class is ASCII, including inside bounds.
+const GRADLE_RANGE_WHITESPACE = String.raw` \t\n\x0b\f\r`;
+const GRADLE_RANGE_SPACE = `[${GRADLE_RANGE_WHITESPACE}]*`;
+const GRADLE_RANGE_BOUND = String.raw`[^${GRADLE_RANGE_WHITESPACE},\[\]()]+`;
+const GRADLE_RANGE_OPEN = String.raw`[\[\](]`;
+const GRADLE_RANGE_CLOSE = String.raw`[\[\])]`;
+const GRADLE_RANGE_SEPARATOR = `${GRADLE_RANGE_SPACE},${GRADLE_RANGE_SPACE}`;
+const GRADLE_RANGE = new RegExp(
+  `^(?:${[
+    `${GRADLE_RANGE_OPEN}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SEPARATOR}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_CLOSE}`,
+    String.raw`\(${GRADLE_RANGE_SEPARATOR}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_CLOSE}`,
+    String.raw`${GRADLE_RANGE_OPEN}${GRADLE_RANGE_SPACE}${GRADLE_RANGE_BOUND}${GRADLE_RANGE_SEPARATOR}\)`,
+    String.raw`\[${GRADLE_RANGE_SPACE}${GRADLE_RANGE_BOUND}\]`,
+  ].join("|")})$`,
+  "u",
+);
+
 /**
  * Classify a requested version as spelled for its document format, without
  * interpolating or resolving. Gradle also writes an exclusive lower bound as `]`,
@@ -100,13 +119,10 @@ export const requestedVersionKind = (
 ): RequestedVersionKind => {
   if (value === null) return "missing";
   if (!mavenPropertyOccurrences(value).next().done) return "property";
-  const rangeDelimiter = format === "gradle-module" ? /[[(\]]/u : /[[(]/u;
-  if (rangeDelimiter.test(value)) return "range";
-  if (
-    format === "gradle-module" &&
-    (value.endsWith("+") || /^latest\.[^.]+$/u.test(value))
-  )
-    return "dynamic";
+  if (format === "gradle-module") {
+    if (GRADLE_RANGE.test(value)) return "range";
+    if (value.endsWith("+") || value.startsWith("latest.")) return "dynamic";
+  } else if (value.startsWith("[") || value.startsWith("(")) return "range";
   return "literal";
 };
 

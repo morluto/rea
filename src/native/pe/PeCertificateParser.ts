@@ -13,7 +13,7 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
+import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const fail = (message: string): never => {
@@ -23,7 +23,7 @@ const fail = (message: string): never => {
 /** Shared PE header admission, with malformed headers as format failures. */
 const readCertificateImageHeaders = (bytes: Buffer) => {
   try {
-    return readPeHeaders(bytes);
+    return readPeImageHeaders(bytes);
   } catch (cause) {
     throw artifactParseFailure(cause, undefined);
   }

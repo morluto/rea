@@ -75,7 +75,7 @@ export interface DesktopBuildFacts {
   readonly archive: {
     readonly path: string;
     readonly source: "environment" | "cache";
-    readonly status: "current" | "missing" | "stale" | "unknown";
+    readonly status: "current" | "missing" | "stale" | "invalid" | "unknown";
     readonly detail?: string;
   };
   /** Each considered client's registration, by setting names only. */

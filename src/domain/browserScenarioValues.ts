@@ -15,6 +15,7 @@ import {
 import {
   browserEndpointSchema,
   browserOriginSchema,
+  browserResponseStatusSchema,
 } from "./browserObservation.js";
 
 export const scenarioIdentifierSchema = z.string().regex(IDENTIFIER_PATTERN);
@@ -342,7 +343,12 @@ const locatorSchema = z.discriminatedUnion("kind", [
       "tab",
       "textbox",
     ]),
-    name: z.string().min(1),
+    name: z
+      .string()
+      .min(1)
+      .describe(
+        "The exact full accessible name of the element with this role.",
+      ),
   }),
   z.strictObject({
     kind: z.literal("css"),
@@ -429,14 +435,13 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
       ),
     expected_status: z
       .array(
-        z
-          .int()
-          .min(100)
-          .max(999)
-          .refine((status) => status < 300 || status > 399, {
+        browserResponseStatusSchema.refine(
+          (status) => status < 300 || status > 399,
+          {
             message:
               "Request steps follow no redirects, so a 3xx status cannot complete one",
-          }),
+          },
+        ),
       )
       .min(1)
       .optional()

@@ -12,6 +12,8 @@ import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.zip.*;
 import kotlin.coroutines.EmptyCoroutineContext;
 import kotlinx.coroutines.BuildersKt;
@@ -697,6 +699,7 @@ public class ReaJadxMetadataRegression {
     require(ordinary.get("mode").getAsString().equals("java") && ordinary.get("body").getAsString().contains("COUNT"),
         "Ordinary executable method no longer produces Java");
     verifyNoBodyMethods(handle, bridge, holder.current());
+    verifyDisassemblyGenerationFailure(handle, bridge, holder.current());
     verifyMergedMethods(handle, bridge);
     verifyConstantFields(handle, bridge, holder.current());
     verifyRawMemberNames(handle, bridge);
@@ -855,17 +858,67 @@ public class ReaJadxMetadataRegression {
         select.invoke(null, new JadxSession.MethodSmali("highlightText", blocks, true, null), "highlightText()V");
         throw new AssertionError("Unproven disassembly identity or completeness was accepted");
       } catch (InvocationTargetException failure) {
-        require(failure.getCause() instanceof IllegalArgumentException,
-            "Disassembly uncertainty lost its failure reason");
+        require(failure.getCause().getClass().getSimpleName().equals("MethodDisassemblyUnavailable")
+            && failure.getCause().getMessage().contains("highlightText()V"),
+            "Disassembly uncertainty lost its method-scoped reason");
       }
     }
-    String reason = "smali generation failed: controlled timeout";
+    for (String reason : Arrays.asList(null, "class has no smali (no code)",
+        "smali generation failed: controlled timeout")) {
+      try {
+        select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, reason), "highlightText()V");
+        throw new AssertionError("Missing disassembly was accepted as a body");
+      } catch (InvocationTargetException failure) {
+        require(failure.getCause().getClass().getSimpleName().equals("MethodDisassemblyUnavailable")
+            && failure.getCause().getMessage().contains("highlightText()V")
+            && (reason == null || failure.getCause().getMessage().contains(reason)),
+            "Missing disassembly lost its method-scoped reason: " + failure.getCause());
+      }
+    }
+    Thread.currentThread().interrupt();
     try {
-      select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, reason), "highlightText()V");
-      throw new AssertionError("Disassembly generation failure was accepted");
+      select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, "smali generation failed: null"),
+          "highlightText()V");
+      throw new AssertionError("Interrupted disassembly returned a body");
     } catch (InvocationTargetException failure) {
-      require(failure.getCause() instanceof IllegalArgumentException
-          && failure.getCause().getMessage().contains(reason), "Original disassembly failure reason was lost");
+      require(failure.getCause().getClass() == IllegalArgumentException.class
+          && Thread.currentThread().isInterrupted(), "Disassembly consumed the caller interruption");
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  private static void verifyDisassemblyGenerationFailure(Method handle, Object bridge, JadxSession session)
+      throws Exception {
+    JsonObject input = methodArguments("fixture.MixedInitialization", "<clinit>");
+    JsonObject complete = call(handle, bridge, "get_method_body", input);
+    Field pool = JadxSession.class.getDeclaredField("decompilePool");
+    pool.setAccessible(true);
+    ExecutorService rejected = Executors.newSingleThreadExecutor();
+    rejected.shutdown();
+    Object original = pool.get(session);
+    pool.set(session, rejected);
+    try {
+      JsonObject unavailable = call(handle, bridge, "get_method_body", input);
+      require(unavailable.get("mode").getAsString().equals("unavailable")
+          && !unavailable.has("body") && !unavailable.has("fell_back") && !unavailable.has("markers"),
+          "Rejected disassembly work did not report an unavailable body: " + unavailable);
+      require(unavailable.get("body_unavailable_reason").getAsString().contains("smali generation failed"),
+          "JADX generation failure reason was discarded: " + unavailable);
+      for (String key : List.of("class_name", "method_name", "full_name", "dex_descriptor",
+          "overload_index", "overload_count")) {
+        require(complete.get(key).equals(unavailable.get(key)), "Disassembly failure changed " + key);
+      }
+      try {
+        call(handle, bridge, "get_method_body", methodArguments("fixture.MixedInitialization", "touch"));
+        throw new AssertionError("A Java generation error was classified as unavailable disassembly");
+      } catch (AssertionError failure) {
+        require(failure.getCause() instanceof IllegalArgumentException
+            && failure.getCause().getMessage().startsWith("// ERROR:"),
+            "Java generation did not keep its provider error: " + failure);
+      }
+    } finally {
+      pool.set(session, original);
     }
   }
 

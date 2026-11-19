@@ -48,3 +48,45 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "mcp add refuses a malformed OpenCode environment before writing settings",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-mcp-opencode-environment-");
+    const configDirectory = join(home, ".config", "opencode");
+    await mkdir(configDirectory, { recursive: true });
+    const path = join(configDirectory, "opencode.json");
+    const original =
+      '{"mcp":{"rea":{"type":"local","command":["rea","mcp"],"environment":{"EXAMPLE_SETTING":17}}}}\n';
+    await writeFile(path, original);
+    const result = await cli.run({
+      arguments: [
+        "mcp",
+        "add",
+        "--agent",
+        "opencode",
+        "--command",
+        "/replacement mcp",
+        "--json",
+      ],
+      cwd: home,
+      environment: await registrationEnvironment(home),
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    const report = mcpRegistrationReportSchema.parse(result.json);
+    expect(report.clients).toEqual([
+      expect.objectContaining({
+        client: "opencode",
+        config_path: path,
+        status: "failed",
+        error: expect.objectContaining({
+          reason: expect.stringContaining("environment.EXAMPLE_SETTING"),
+        }),
+      }),
+    ]);
+    expect(await readFile(path, "utf8")).toBe(original);
+    await expect(access(`${path}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);

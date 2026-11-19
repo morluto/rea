@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { joinCoverageStatus } from "../coverage.js";
 import type { Evidence } from "../evidence.js";
@@ -590,7 +591,7 @@ export const buildVerificationResult = ({
       evidence_id: managedEvidence.evidence_id,
       artifact_sha256: managed.artifact.sha256,
       artifact_path: managed.artifact.path,
-      mvid: managed.module?.mvid ?? null,
+      mvid: managedModuleRow(managed)?.mvid ?? null,
       metadata_status: managed.metadata.status,
       pinvoke_imports_total: managed.pinvoke_imports.length,
       native_implementations_total: managed.native_implementations.length,

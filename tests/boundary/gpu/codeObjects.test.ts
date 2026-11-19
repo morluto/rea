@@ -35,7 +35,7 @@ const inspect = async (
   onTestFinished(() => provider.close());
   return provider.inspect({ path, analysis: "kernels", ...options });
 };
-it.each(["none", "zstd"] as const)(
+it.each(["none", "zstd", "lz4"] as const)(
   "reads selected CUDA metadata and PTX with %s compression",
   async (compression) => {
     const result = await inspect(cudaFixture(compression));
@@ -69,6 +69,49 @@ it.each(["none", "zstd"] as const)(
     ]);
   },
 );
+it("decodes a CUDA 0x2000 LZ4 entry to the exact declared payload", async () => {
+  const ptx = Buffer.from(ptxFixture),
+    bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]),
+    // The first fatbinary header is 16 bytes, so the first entry starts there.
+    entry = 16;
+  // The fixture must really encode: a stored-profile fallback would leave the
+  // LZ4 selection path unexercised while this control still passed.
+  expect(bytes.readBigUInt64LE(entry + 40)).toBe(0x2011n);
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    kind: "ptx",
+    compression: "lz4",
+    compression_id: "cuda-flags:0x2011",
+    decoded_size: ptx.length,
+    inspection: "complete",
+    sha256: createHash("sha256").update(ptx).digest("hex"),
+  });
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.ptx_artifacts.map((row) => row.text)).toEqual([
+    ptxFixture,
+  ]);
+});
+it("rejects a CUDA LZ4 entry whose declared decoded length disagrees", async () => {
+  const bytes = cudaFixture("lz4", [
+      { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
+    ]),
+    entry = 16;
+  // Grow only the declared output length; the encoded literals cannot reach it.
+  bytes.writeBigUInt64LE(
+    BigInt(Buffer.byteLength(ptxFixture) + 16),
+    entry + 56,
+  );
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    compression: "lz4",
+    inspection: "malformed",
+    sha256: null,
+  });
+  expect(result.value.coverage.payloads).toBe("partial");
+  expect(result.value.ptx_artifacts).toEqual([]);
+});
 it("retains the unsupported legacy CUDA compression declaration and extents", async () => {
   const result = await inspect(
     cudaFixture("legacy", [
@@ -804,7 +847,43 @@ it.each([".align 8 .b8", ".b8 .align 8"])(
     });
   },
 );
-it.each([".b8 .align 3", ".align 8 .b8 .align 8"])(
+it.each(["9007199254740991", "0x1fffffffffffff"])(
+  "retains PTX parameter facts when aligning an extent of %s exceeds the exact range",
+  async (extent) => {
+    const result = await inspect(
+      Buffer.from(
+        `.version 8.0
+.target sm_80
+.entry wide(.param .b8 payload[${extent}], .param .u32 count, .param .u8 tail) { ret; }
+.entry later(.param .u32 value) { ret; }`,
+      ),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels).toMatchObject([
+      {
+        name: "wide",
+        parameter_bytes: null,
+        parameters: [
+          { name: "payload", offset: 0, size: 9007199254740991 },
+          { name: "count", offset: null, size: 4 },
+          { name: "tail", offset: null, size: 1 },
+        ],
+      },
+      {
+        name: "later",
+        parameter_bytes: 4,
+        parameters: [{ name: "value", offset: 0, size: 4 }],
+      },
+    ]);
+  },
+);
+
+it.each([
+  ".b8 .align 3",
+  ".b8 .align 4503599627370495",
+  ".align 8 .b8 .align 8",
+])(
   "retains PTX names and partial layout for unsupported alignment %s",
   async (type) => {
     const bytes = Buffer.from(

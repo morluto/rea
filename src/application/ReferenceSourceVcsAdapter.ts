@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { isAborted } from "../domain/analysisErrorCore.js";
 import fs from "node:fs";
 import { join } from "node:path";
@@ -142,7 +143,7 @@ const resolveSourceVcs = async (
     }
   };
   const readMetadataText = async (path: string): Promise<string> =>
-    (await readMetadataBytes(path)).toString("utf8");
+    decodeStrictUtf8(await readMetadataBytes(path), "preserve");
   const throwCleanupFailures = (primary: unknown): never => {
     const observations = cleanupFailures.flatMap((failure) =>
       failure.cleanup === undefined ? [] : [failure.cleanup],

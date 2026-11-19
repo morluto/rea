@@ -35,7 +35,8 @@ selected default remains recorded.
 `coordinates` holds `group_id`, `artifact_id`, `version`, and `packaging` as
 spelled. Missing project coordinates stay `null`. A `${property}` spelling is
 kept as written and listed in `unresolved`; this reader does not interpolate
-properties or inherit parent or BOM values.
+properties or inherit parent or BOM values. POM text goes through XML
+end-of-line handling, as Maven's reader applies it: CRLF and lone CR read as LF.
 When a parent is declared, omitted project group/version fields point to the
 parent as possible sources. An omitted project `artifactId` is a missing child
 coordinate: [only group/version coordinates may be inherited](https://maven.apache.org/pom.html#Maven_Coordinates).
@@ -43,7 +44,10 @@ coordinate: [only group/version coordinates may be inherited](https://maven.apac
 For a POM, `parent` records the declared parent coordinates and `relative_path`
 when present. `relative_path_declared` distinguishes an empty `<relativePath/>`,
 which disables Maven's local parent lookup, from an omitted tag. `properties`
-lists each child of `<properties>` as name and value. URL userinfo
+lists each child of `<properties>` as its written qualified name and value.
+Prefixes remain part of the key: `a:revision` and `b:revision` stay distinct
+even when both prefixes bind to the same XML namespace URI, and match the
+spelling kept in `${a:revision}` and `${b:revision}` references. URL userinfo
 credentials in a property value are removed and `value_credentials_redacted`
 is `true`; when the credential span cannot be located, `value` is `null`.
 `dependencies` comes from the project's `<dependencies>` list.

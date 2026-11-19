@@ -21,6 +21,8 @@ import {
 } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { servedCatalog } from "../../../src/application/environment/environmentState.js";
+import { environmentToolAnswer } from "../../../src/application/environment/environmentToolAnswer.js";
+import { createEnvironmentMcpServer } from "../../../src/server/environment/serveEnvironment.js";
 import { servedFrom } from "../../fixtures/environmentStateServing.js";
 import type { TimedCaptureRow } from "../../fixtures/analysisView.js";
 import {
@@ -77,6 +79,22 @@ function expectStrictInputSchemaParity(
   }
 }
 
+async function listAdvertisedTools(server: McpServer) {
+  const client = new Client(
+    { name: "schema-validation", version: "0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return (await client.listTools()).tools;
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+}
+
 let cachedCanonicalTools:
   | Promise<Awaited<ReturnType<Client["listTools"]>>["tools"]>
   | undefined;
@@ -84,25 +102,13 @@ let cachedCanonicalTools:
 function listCanonicalAdvertisedTools() {
   cachedCanonicalTools ??= (async () => {
     const server = new McpServer({ name: "schema-validation", version: "0" });
-    const client = new Client(
-      { name: "schema-validation", version: "0" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
     for (const contract of TOOL_CONTRACTS)
       server.registerTool(
         contract.name,
         toolRegistrationOptions(contract),
         async () => ({ content: [] }),
       );
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      return (await client.listTools()).tools;
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    return listAdvertisedTools(server);
   })();
   return cachedCanonicalTools;
 }
@@ -430,7 +436,7 @@ const advertiseAndEnforceProcessEnvironmentKeyConstraint =
   };
 
 describe("served environment catalogs", () => {
-  it("advertises served environment catalogs in schemas clients accept: bulk bodies, pinned queries and fixed members", () => {
+  it("lists portable schemas for bulk bodies, pinned queries and fixed members", async () => {
     const edition = { format: "HC", featured: 1 };
     const stored = { ...THIRD_BOOK, ...edition };
     const captures: readonly (readonly TimedCaptureRow[])[] = [
@@ -457,28 +463,42 @@ describe("served environment catalogs", () => {
         ["GET", "/api/books/3", stored],
       ],
     ];
-    const tools = captures.flatMap((rows) => {
+    const tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
+    for (const rows of captures) {
       const served = servedFrom(rows);
       const catalog = servedCatalog(served.source, served.state, "books");
       if (!catalog.ok) throw catalog.error;
-      return catalog.value.tools;
-    });
+      const server = createEnvironmentMcpServer(
+        "books",
+        catalog.value.tools,
+        environmentToolAnswer(served.source, served.store),
+      );
+      tools.push(...(await listAdvertisedTools(server)));
+    }
     const create = tools.find((tool) => tool.name === "post_books");
-    expect(create?.inputSchema.properties["notify"]).toMatchObject({
+    expect(create?.inputSchema.properties?.["notify"]).toMatchObject({
       enum: ["quiet"],
     });
-    expect(JSON.stringify(create?.inputSchema)).toContain(
-      '"const":"hardcover"',
+    expect(create?.inputSchema).toHaveProperty(
+      "properties.body.properties.books.items.properties.format.enum",
+      ["hardcover"],
     );
-    expect(tools.some((tool) => tool.name === "delete_books")).toBe(true);
+    expect(create?.inputSchema).toHaveProperty(
+      "properties.body.properties.books.items.properties.featured.description",
+      expect.stringMatching(/\btrue\b/u),
+    );
     expect(
-      advertisedSchemaErrors(
-        tools.map((tool) => ({
-          name: tool.name,
-          inputSchema: tool.inputSchema as unknown as Record<string, unknown>,
-        })),
-      ),
-    ).toEqual([]);
+      tools.find((tool) => tool.name === "delete_books")?.inputSchema
+        .properties?.["body"],
+    ).toMatchObject({
+      type: "array",
+      items: { type: "object" },
+    });
+    expect(advertisedSchemaErrors(tools)).toEqual([]);
+    for (const { name, inputSchema } of tools)
+      expect(
+        unsupportedInputLiteralSchemaError(inputSchema, name),
+      ).toBeUndefined();
   });
 });
 
