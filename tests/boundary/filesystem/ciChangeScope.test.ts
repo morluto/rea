@@ -1700,6 +1700,20 @@ it.each(["test:sqlite", "test:sqlite:run"])(
   },
 );
 
+it.each([
+  ["pretest:coverage:reverse-tools", "reverse_tools"],
+  ["posttest:mutation:reverse-tools", "reverse_tools"],
+  ["pretest:python", "python"],
+  ["posttest:sqlite:run", "sqlite"],
+])("routes a change to %s to the %s lane", async (script, scope) => {
+  expect(
+    await classifyPackage(
+      JSON.stringify({ scripts: { [script]: "node before.mjs" } }),
+      JSON.stringify({ scripts: { [script]: "node after.mjs" } }),
+    ),
+  ).toMatchObject({ code: true, [scope]: true, runtime: false });
+});
+
 it("keeps unrelated test script changes off the SQLite runtime matrix", async () => {
   expect(
     await classifyPackage(

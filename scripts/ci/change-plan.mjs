@@ -147,15 +147,19 @@ export function planChanges(request, repository) {
       ]),
     ].filter((key) => beforeScripts?.[key] !== afterScripts?.[key]);
     for (const script of changed) {
-      if (/^test:(coverage|mutation):reverse-tools$/.test(script)) {
+      const lifecycleTarget = script.replace(/^(?:pre|post)(?=test:)/u, "");
+      if (/^test:(coverage|mutation):reverse-tools$/.test(lifecycleTarget)) {
         selected.reverse_tools = true;
         continue;
       }
-      if (script === "test:python") {
+      if (lifecycleTarget === "test:python") {
         selected.python = true;
         continue;
       }
-      if (script === "test:sqlite" || script === "test:sqlite:run") {
+      if (
+        lifecycleTarget === "test:sqlite" ||
+        lifecycleTarget === "test:sqlite:run"
+      ) {
         selected.sqlite = true;
         continue;
       }
