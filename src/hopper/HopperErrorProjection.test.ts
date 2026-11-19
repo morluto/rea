@@ -107,6 +107,8 @@ describe("analysis error projection: Hopper provider failures", () => {
         launcher: { exit_code: 2, signal: null },
       },
     });
+    expect(projected.remediation.action).toContain("disclaim responsibility");
+    expect(projected.remediation.action).toContain("REA runtime");
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
