@@ -25,15 +25,17 @@ export interface MetadataMemberOwners {
 
 /** Own member record widths and validate all counts before any row allocation. */
 export const readIl2cppMemberTables = ({
-  widths,
+  typeIndexWidth,
   indexing,
   section,
-}: Pick<MetadataTables, "widths" | "indexing" | "section">) => {
+}: Pick<MetadataTables, "indexing" | "section"> & {
+  readonly typeIndexWidth: MetadataTables["widths"]["type"];
+}) => {
   const recordBytes = {
-    fields: 8 + widths.type,
+    fields: 8 + typeIndexWidth,
     properties: 20,
-    events: 20 + widths.type,
-    parameters: 8 + widths.type,
+    events: 20 + typeIndexWidth,
+    parameters: 8 + typeIndexWidth,
     stringLiterals: indexing === "counted" ? 4 : 8,
   };
   const literalRecords = checkedSectionCount(

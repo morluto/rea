@@ -220,6 +220,11 @@ const recordBytes = (section: Il2cppMetadataSection): number | null => {
       );
     return null;
   }
+  if (section.size === 0)
+    throw new Il2cppMetadataFormatFailure(
+      "record-size-mismatch",
+      `section ${section.name} declares ${count} records with no bytes`,
+    );
   if (section.size % count !== 0)
     throw new Il2cppMetadataFormatFailure(
       "record-size-mismatch",
@@ -238,15 +243,14 @@ const FIXED_WIDTHS: Il2cppMetadataDecoded["index_widths"] = {
 
 const GENERIC_CONTAINER_RECORD_BYTES = 16;
 
-const resolveWidths = (
+const resolveCountedTables = (
   section: (name: SectionName) => Il2cppMetadataSection,
-): Il2cppMetadataDecoded["index_widths"] => {
-  const genericContainers = section("genericContainers");
+  genericContainerCount: number,
+) => {
   const type_definition = il2cppIndexWidth(
     headerCount(section("typeDefinitions")),
   );
-  const generic_container = il2cppIndexWidth(headerCount(genericContainers));
-  const parameter = il2cppIndexWidth(headerCount(section("parameters")));
+  const generic_container = il2cppIndexWidth(genericContainerCount);
   // TypeIndex counts native types, so its width is recovered from records.
   const interfaceOffset = recordBytes(section("interfaceOffsets"));
   let type: number;
@@ -267,13 +271,19 @@ const resolveWidths = (
       "type-index-width",
       `the ${type_width_source} does not imply a 1-, 2- or 4-byte TypeIndex`,
     );
-  return {
+  const members = readIl2cppMemberTables({
+    typeIndexWidth: type,
+    indexing: "counted",
+    section,
+  });
+  const widths: Il2cppMetadataDecoded["index_widths"] = {
     type_definition,
     generic_container,
-    parameter,
+    parameter: il2cppIndexWidth(members.counts.parameters),
     type,
     type_width_source,
   };
+  return { widths, members };
 };
 
 /** Record counts checked against the record sizes the widths imply. */
@@ -282,47 +292,28 @@ const recordCounts = (
   section: (name: SectionName) => Il2cppMetadataSection,
   expected: Readonly<Record<RecordSection, number>>,
   widths: Il2cppMetadataDecoded["index_widths"],
+  genericContainers: number,
 ): Readonly<
   Record<
     RecordSection | "nestedTypes" | "genericContainers" | "genericParameters",
     number
   >
 > => {
-  const genericContainers = checkedSectionCount(
-    section("genericContainers"),
-    GENERIC_CONTAINER_RECORD_BYTES,
-  );
   const genericParameters = checkedSectionCount(
     section("genericParameters"),
     widths.generic_container + 12,
   );
-  const names = ["typeDefinitions", "images", "methods"] as const;
-  if (VERSION_LAYOUTS[version].indexing === "fixed") {
+  if (VERSION_LAYOUTS[version].indexing === "fixed")
     checkedSectionCount(section("interfaceOffsets"), widths.type + 4);
-    const sized = Object.fromEntries(
-      names.map((name) => [
-        name,
-        checkedSectionCount(section(name), expected[name]),
-      ]),
-    ) as Record<RecordSection, number>;
-    return {
-      ...sized,
-      nestedTypes: checkedSectionCount(
-        section("nestedTypes"),
-        NESTED_TYPE_ENTRY_BYTES,
-      ),
-      genericContainers,
-      genericParameters,
-    };
-  }
-  const counted = Object.fromEntries(
+  const names = ["typeDefinitions", "images", "methods"] as const;
+  const sized = Object.fromEntries(
     names.map((name) => [
       name,
       checkedSectionCount(section(name), expected[name]),
     ]),
   ) as Record<RecordSection, number>;
   return {
-    ...counted,
+    ...sized,
     nestedTypes: checkedSectionCount(
       section("nestedTypes"),
       NESTED_TYPE_ENTRY_BYTES,
@@ -867,15 +858,22 @@ function* readMetadataCoreSteps(
   const byName = new Map(sections.map((entry) => [entry.name, entry]));
   const section = (name: SectionName) => byName.get(name)!;
   const layout = VERSION_LAYOUTS[version];
-  const widths =
-    layout.indexing === "counted" ? resolveWidths(section) : FIXED_WIDTHS;
+  const genericContainers = checkedSectionCount(
+    section("genericContainers"),
+    GENERIC_CONTAINER_RECORD_BYTES,
+  );
+  const counted =
+    layout.indexing === "counted"
+      ? resolveCountedTables(section, genericContainers)
+      : undefined;
+  const widths = counted?.widths ?? FIXED_WIDTHS;
   const expected = il2cppMetadataRecordBytes(widths, version);
   let tables: MetadataTables = {
     bytes,
     section,
     widths,
     recordBytes: expected,
-    counts: recordCounts(version, section, expected, widths),
+    counts: recordCounts(version, section, expected, widths, genericContainers),
     typeDefinitionTypeIndices: layout.typeDefinitionTypeIndices,
     indexing: layout.indexing,
     methodReturnParameterToken: layout.methodReturnParameterToken,
@@ -884,11 +882,13 @@ function* readMetadataCoreSteps(
       section("strings"),
       options.beforeText,
     ),
-    members: readIl2cppMemberTables({
-      widths,
-      indexing: layout.indexing,
-      section,
-    }),
+    members:
+      counted?.members ??
+      readIl2cppMemberTables({
+        typeIndexWidth: widths.type,
+        indexing: layout.indexing,
+        section,
+      }),
     beforeText: options.beforeText,
     onRow: options.onRow,
   };

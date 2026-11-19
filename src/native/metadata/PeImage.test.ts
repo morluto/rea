@@ -68,7 +68,7 @@ it.each(["NE", "LE", "LX"])(
   (signature) => {
     const bytes = pe(0x014c).subarray(0, 66);
     bytes.write(signature, 64, "ascii");
-    expect(() => readBinaryContainer(bytes)).toThrow(
+    expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
       expect.objectContaining({
         kind: "unsupported",
         message: expect.stringContaining(signature),

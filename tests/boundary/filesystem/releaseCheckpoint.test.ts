@@ -447,6 +447,44 @@ it.each([
   },
 );
 
+it.each([
+  { spacing: "adjacent", separator: "\n", includeRestart: true },
+  { spacing: "separated", separator: "\n\n", includeRestart: true },
+  { spacing: "separated", separator: "\n\n", includeRestart: false },
+])(
+  "validates $spacing list migration with restart step $includeRestart",
+  async ({ separator, includeRestart }) => {
+    const steps =
+      "- Set `--new-path` to an absolute path.\n- Restart the client.";
+    const f = await fixture(
+      "fix(contracts)!: change path inputs",
+      "BREAKING CHANGE: Migrate configuration:" +
+        separator +
+        steps +
+        "\n\nReviewed-by: Fixture Reviewer",
+    );
+    const notes = includeRestart ? steps : steps.split("\n")[0];
+    await candidate(
+      f,
+      "6.0.0",
+      "### ⚠ BREAKING CHANGES\n\nMigrate configuration:\n\n" + notes,
+    );
+    const result = verify(f);
+    if (includeRestart) {
+      await expect(result).resolves.toMatchObject({
+        stdout: expect.stringContaining('"expectedVersion": "6.0.0"'),
+      });
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
 it("rejects a minor when a GitHub merge commit carries its bang marker in the PR title", async () => {
   const f = await fixture("fix(contracts)!: require absolute paths", "", {
     mergePullRequest: true,
@@ -489,7 +527,7 @@ it.each([
 it("does not treat an ordinary body example as a merge title or breaking declaration", async () => {
   const f = await fixture(
     "fix: improve diagnostics",
-    "Example subject:\n\nfix(contracts)!: example only",
+    "Example subject:\n\nfix(contracts)!: example only\n\n~~~text\nBREAKING CHANGE: example only\n~~~",
   );
   await candidate(f, "5.0.1", `### Bug Fixes\n\n${f.changedSha}`);
   await expect(verify(f, "5.0.1")).resolves.toMatchObject({ stderr: "" });
@@ -520,19 +558,254 @@ it("allows release examples with a release heading before genuine migration note
   await expect(verify(f)).resolves.toMatchObject({ stderr: "" });
 });
 
-it("requires genuine migration notes outside a fenced Markdown example", async () => {
+it.each([
+  {
+    form: "a fenced example",
+    notes:
+      "### Features\n\n~~~markdown\n### ⚠ BREAKING CHANGES\n\nSee #948.\n~~~",
+  },
+  {
+    form: "a wrapped inline code example",
+    notes: "### ⚠ BREAKING CHANGES\n\n- Syntax: `See #948\n  for details.`",
+  },
+])("requires genuine migration notes outside $form", async ({ notes }) => {
   const f = await fixture();
-  await candidate(
-    f,
-    "6.0.0",
-    "### Features\n\n~~~markdown\n### ⚠ BREAKING CHANGES\n\nSee #948.\n~~~",
-  );
+  await candidate(f, "6.0.0", notes);
   await expect(verify(f)).rejects.toMatchObject({
     code: 1,
     stderr: expect.stringContaining(
       "migration notes omit unreleased breaking changes",
     ),
   });
+});
+
+it.each([
+  {
+    form: "the entire footer quoted as wrapped code",
+    footer: "Use absolute MCP paths. Relative paths are rejected.",
+    notes: "Example: `Use absolute MCP paths.\n  Relative paths are rejected.`",
+    accepted: false,
+  },
+  {
+    form: "a migration instruction with the exact inline options",
+    footer: "Replace `--old-path` with `--mcp-path`.",
+    notes: "**Replace** `--old-path` with\n  `--mcp-path`.",
+    accepted: true,
+  },
+  {
+    form: "the same instruction with a different inline option",
+    footer: "Replace `--old-path` with `--mcp-path`.",
+    notes: "**Replace** `--old-path` with\n  `--mcp-paths`.",
+    accepted: false,
+  },
+  {
+    form: "a different value inside an inline command",
+    footer:
+      'Run `rea capture --name "two  spaces"` before collecting Evidence.',
+    notes: 'Run `rea capture --name "two spaces"` before collecting Evidence.',
+    accepted: false,
+  },
+  {
+    form: "a migration link with the same destination and formatted label",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download [**the replacement**](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "plain migration prose with a hyperlink added in the notes",
+    footer: "Download the replacement.",
+    notes: "Download [the replacement](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "a migration link with a different destination",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download [the replacement](https://example.com/v1).",
+    accepted: false,
+  },
+  {
+    form: "a migration link reduced to its label",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download the replacement.",
+    accepted: false,
+  },
+  {
+    form: "the same destination linked from different words",
+    footer: "Download [the replacement](https://example.com/v2) now.",
+    notes: "Download [the replacement now](https://example.com/v2).",
+    accepted: false,
+  },
+  {
+    form: "a required Markdown link alongside an added link with the same destination",
+    footer:
+      "Download [the replacement](https://example.com/v2) and restart the client.",
+    notes:
+      "Download [the replacement](https://example.com/v2) and restart [the client](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "a required Markdown link whose destination appears on an added link instead",
+    footer:
+      "Download [the replacement](https://example.com/v2) and restart the client.",
+    notes:
+      "Download [the replacement](https://example.com/v1) and restart [the client](https://example.com/v2).",
+    accepted: false,
+  },
+  {
+    form: "the same inline HTML link",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    accepted: true,
+  },
+  {
+    form: "an inline HTML link with a changed destination",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: 'Download <a href="https://example.com/v1">the replacement</a>.',
+    accepted: false,
+  },
+  {
+    form: "an inline HTML link reduced to its label",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: "Download the replacement.",
+    accepted: false,
+  },
+])(
+  "validates migration wording from $form",
+  async ({ footer, notes, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: change path inputs",
+      `BREAKING CHANGE: ${footer}`,
+    );
+    await candidate(f, "6.0.0", `### ⚠ BREAKING CHANGES\n\n- ${notes}`);
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+const migrationCommand = 'mv "old config.json" "new config.json"';
+const fencedMigrationCommand = `~~~sh\n${migrationCommand}\n~~~`;
+
+it.each([
+  { form: "missing command", command: "", accepted: false },
+  {
+    form: "different command",
+    command: fencedMigrationCommand.replace("new config", "other config"),
+    accepted: false,
+  },
+  { form: "inline code", command: `\`${migrationCommand}\``, accepted: false },
+  {
+    form: "exact fenced command",
+    command: fencedMigrationCommand,
+    accepted: true,
+  },
+  {
+    form: "exact indented command",
+    command: `    ${migrationCommand}`,
+    accepted: true,
+  },
+])(
+  "requires a literal migration block: $form",
+  async ({ command, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: rename the configuration file",
+      `BREAKING CHANGE: Rename the configuration file.\n\n${fencedMigrationCommand}\n\nReviewed-by: Fixture Reviewer`,
+    );
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\nRename the configuration file.\n\n${command}`,
+    );
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+const htmlMigrationBlock = "<pre>\nHeader: exact value\n</pre>";
+
+it.each([
+  { form: "preserved", block: htmlMigrationBlock, accepted: true },
+  { form: "omitted", block: "", accepted: false },
+])("keeps raw HTML migration blocks: $form", async ({ block, accepted }) => {
+  const f = await fixture(
+    "fix(contracts)!: migrate configuration",
+    `BREAKING CHANGE: Write the new configuration.\n\n${htmlMigrationBlock}\n\nReviewed-by: Fixture Reviewer`,
+  );
+  await candidate(
+    f,
+    "6.0.0",
+    `### ⚠ BREAKING CHANGES\n\nWrite the new configuration.\n\n${block}`,
+  );
+  const result = verify(f);
+  if (accepted) {
+    await expect(result).resolves.toHaveProperty("stdout");
+  } else {
+    await expect(result).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "migration notes omit unreleased breaking changes",
+      ),
+    });
+  }
+});
+
+it.each([
+  { form: "preserved", command: "Header: exact value", accepted: true },
+  { form: "changed", command: "Header: another value", accepted: false },
+])(
+  "keeps trailer-shaped text in code blocks: $form",
+  async ({ command, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: migrate configuration",
+      "BREAKING CHANGE: Write the new configuration.\n\n~~~text\nHeader: exact value\n~~~\n\nReviewed-by: Fixture Reviewer",
+    );
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\nWrite the new configuration.\n\n~~~text\n${command}\n~~~`,
+    );
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+it("accepts a code-only migration when its fence starts on the footer line", async () => {
+  const f = await fixture(
+    "fix(contracts): rename configuration",
+    `BREAKING CHANGE: ${fencedMigrationCommand}\n\nReviewed-by: Fixture Reviewer`,
+  );
+  await candidate(
+    f,
+    "6.0.0",
+    `### ⚠ BREAKING CHANGES\n\n${fencedMigrationCommand}`,
+  );
+  await expect(verify(f)).resolves.toHaveProperty("stdout");
 });
 
 it("recognizes a BREAKING CHANGE footer without a bang in the subject", async () => {

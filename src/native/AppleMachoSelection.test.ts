@@ -260,6 +260,62 @@ const mappingImage = (commands: readonly Buffer[]): Buffer => {
   return bytes;
 };
 
+it.each([
+  { flags: 0, fileAddress: 0x1000n, zeroAddress: 0x1008n },
+  { flags: 1, fileAddress: 0x1008n, zeroAddress: 0x1000n },
+])(
+  "maps the file-backed and zero-filled halves of a core segment ($flags)",
+  ({ flags, fileAddress, zeroAddress }) => {
+    const fileOffset = 104;
+    const segment = mappingSegment(0x1000n, fileOffset, 8, 16);
+    segment.write("__STACK", 8);
+    segment.writeUInt32LE(flags, 68);
+    const thin = Buffer.from(machoImage({ fileType: 4, commands: [segment] }));
+    thin.write("stackbuf", fileOffset);
+    const image = readMachoMetadataImage(thin);
+    expect(image.mappings).toEqual([
+      { address: fileAddress, offset: fileOffset, size: 8 },
+    ]);
+    expect(image.zero_fills).toEqual([{ address: zeroAddress, size: 8n }]);
+
+    const fat = Buffer.from(fatImage([{ cpu: CPU.arm64, bytes: thin }]));
+    const slice = fatSliceRange(fat, 0);
+    const layout = layoutFor(fat, "arm64", slice);
+    const offset = layout.offset(fileAddress, 8);
+    expect(offset).toBe(slice.offset + fileOffset);
+    expect(fat.toString("ascii", offset, offset + 8)).toBe("stackbuf");
+    expect(layout.segments[0]).toMatchObject({
+      address: fileAddress,
+      offset,
+    });
+    expect(() => layout.offset(zeroAddress)).toThrow("Unmapped");
+    expect(() => layout.offset(0x1007n, 2)).toThrow("Unmapped");
+  },
+);
+
+it("does not apply an ordinary fixup offset to high-backed segment bytes", () => {
+  const highSegment = mappingSegment(0x1000n, 0, 128, 256);
+  highSegment.writeUInt32LE(1, 68);
+  const dyldInfo = Buffer.alloc(48);
+  dyldInfo.writeUInt32LE(LC.DYLD_INFO_ONLY);
+  dyldInfo.writeUInt32LE(dyldInfo.length, 4);
+  dyldInfo.writeUInt32LE(200, 8);
+  dyldInfo.writeUInt32LE(1, 12);
+  const bytes = mappingImage([highSegment, dyldInfo]);
+  const layout = layoutFor(bytes, "arm64");
+  expect(layout.offset(0x1080n)).toBe(0);
+  expect(() =>
+    parsePointerFixups(
+      bytes,
+      layout.fixups,
+      layout.segments,
+      layout.baseAddress,
+    ),
+  ).toThrow(
+    "Mach-O pointer fixups with leading segment zero-fill are unsupported",
+  );
+});
+
 describe("Mach-O metadata span mapping", () => {
   it.each([
     ["file size larger than VM size", mappingSegment(0x1000n, 0, 128, 64)],

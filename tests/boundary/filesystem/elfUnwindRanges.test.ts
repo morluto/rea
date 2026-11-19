@@ -1,9 +1,16 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics.js";
 import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elfUnwindRanges.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
+import { compressedElfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("ELF unwind range stable filesystem boundary", () => {
@@ -175,4 +182,87 @@ describe("ELF unwind range budgets", () => {
       await service.close();
     }
   });
+});
+
+it("projects a section-name frame cap as an adjustable zstd.max_frames limit", async () => {
+  const root = await createTestTempDirectory("rea-elf-unwind-zstd-");
+  const path = join(root, "program");
+  const frame = Buffer.from([
+    0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, 0x61,
+  ]);
+  await writeFile(
+    path,
+    compressedElfNoteFixture(
+      64,
+      true,
+      2,
+      ".note.gnu.build-id",
+      Buffer.concat([frame, frame]),
+    ),
+  );
+  const service = createElfUnwindRangesService();
+  try {
+    const result = await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 1 } },
+      () => service.inspect({ path }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      operation: "inspect_elf_unwind_ranges",
+      resource: "cpu",
+      limit: {
+        setting: "zstd.max_frames",
+        effective_value: 1,
+        source: "runtime",
+        minimum: MINIMUM_ZSTD_MAX_FRAMES,
+        maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+        unit: "count",
+      },
+    });
+  } finally {
+    await service.close();
+  }
+});
+
+it("cancels a many-frame compressed section-name table", async () => {
+  const root = await createTestTempDirectory("rea-elf-unwind-cancel-");
+  const path = join(root, "program");
+  const frame = Buffer.from([
+    0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, 0x61,
+  ]);
+  const frames = Buffer.alloc(frame.length * 32);
+  for (let index = 0; index < 32; index += 1)
+    frame.copy(frames, index * frame.length);
+  await writeFile(
+    path,
+    compressedElfNoteFixture(64, true, 2, ".note.gnu.build-id", frames),
+  );
+  const reason = new Error("stop unwind frames");
+  const controller = new AbortController();
+  const yieldImpl = scheduler.yield.bind(scheduler);
+  let yields = 0;
+  const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+    yields += 1;
+    await yieldImpl();
+    if (yields === 1) controller.abort(reason);
+  });
+  const service = createElfUnwindRangesService();
+  try {
+    const result = await service.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_elf_unwind_ranges",
+      cause: reason,
+    });
+  } finally {
+    spy.mockRestore();
+    await service.close();
+  }
 });
