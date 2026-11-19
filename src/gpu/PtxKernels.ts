@@ -82,6 +82,19 @@ const integer = (token: string | undefined): number | null => {
   const value = Number(token);
   return Number.isSafeInteger(value) ? value : null;
 };
+/** Read a single nonnegative PTX integer literal used as an array extent. */
+const arrayExtent = (token: string | undefined): number | null => {
+  if (token === undefined) return null;
+  const digits = token.endsWith("U") ? token.slice(0, -1) : token;
+  if (/^0[0-7]+$/u.test(digits)) {
+    const value = Number(`0o${digits.slice(1)}`);
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  if (!/^0(?:[xX][0-9a-fA-F]+|[bB][01]+)$/u.test(digits))
+    return integer(digits);
+  const value = Number(digits);
+  return Number.isSafeInteger(value) ? value : null;
+};
 const alignmentValue = (token: string | undefined): number | null => {
   const value = integer(token);
   return value !== null && value > 0 && Number.isInteger(Math.log2(value))
@@ -230,7 +243,7 @@ const declaration = (
   const align = explicit ? alignment : size;
   if (dimensions.length === 1) {
     const dimension = dimensions[0]!,
-      count = dimension.length === 1 ? integer(dimension[0]) : null;
+      count = dimension.length === 1 ? arrayExtent(dimension[0]) : null;
     if (count === null || size === null || !Number.isSafeInteger(count * size))
       layoutKnown = false;
     else size *= count;
