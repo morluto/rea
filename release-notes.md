@@ -404,6 +404,7 @@
 * **gpu:** report malformed GPU containers as invalid_format through the shared parse-failure mapping ([3080a63](https://github.com/morluto/rea/commit/3080a63729a476de1061dee5f13672cb9f949409))
 * **guards:** refuse a counted-baseline file that is not in its written order ([#11150](https://github.com/morluto/rea/issues/11150)) ([2c7c59e](https://github.com/morluto/rea/commit/2c7c59e14ebcae81b2d2e7245819451d7acdbf35))
 * **har:** preserve failed Playwright requests with unavailable timings ([#11758](https://github.com/morluto/rea/issues/11758)) ([bb6e307](https://github.com/morluto/rea/commit/bb6e307de5c5fbdca8ccc9425e68ca3841485492))
+* **hopper:** explain disclaimed Apple Events responsibility ([#12309](https://github.com/morluto/rea/issues/12309)) ([0c672c1](https://github.com/morluto/rea/commit/0c672c19a9f908172e2896a1e55afe5d1adee137))
 * **hopper:** name the failing fields when a bridge reply misses its contract ([#10713](https://github.com/morluto/rea/issues/10713)) ([cd5ea9a](https://github.com/morluto/rea/commit/cd5ea9a9fb34107fb8f86d9bea59d59ba17c7fea))
 * **hopper:** name the unconfirmed shutdown step in retained cleanup ([#10594](https://github.com/morluto/rea/issues/10594)) ([e939cd0](https://github.com/morluto/rea/commit/e939cd04feae51ed4670f3068c8a32e0038ef8e2))
 * **hopper:** type the Apple Events authorization denial ([fd97d09](https://github.com/morluto/rea/commit/fd97d0926c6ecd6a97075d587fb8669fac3b29cd))
