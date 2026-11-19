@@ -1003,11 +1003,9 @@ export const openPlaywrightScenarioBrowser = async (
   if (preferredTemp !== undefined)
     await mkdir(preferredTemp, { recursive: true });
   const profilePath = await mkdtemp(
-    appendCallerPath(
-      preferredTemp ?? tmpdir(),
-      "rea-browser-scenario-",
-      platform,
-    ),
+    preferredTemp === undefined
+      ? appendCallerPath(tmpdir(), "rea-browser-scenario-")
+      : appendCallerPath(preferredTemp, "rea-browser-scenario-", platform),
   );
   let context: BrowserContext;
   const executablePath = await resolveAndroidChromiumExecutable(

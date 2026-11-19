@@ -13,6 +13,7 @@ import {
   symlink,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -81,6 +82,7 @@ it.each([
       platform,
     );
     let launchedEnvironment: unknown;
+    let launchedProfile: string | undefined;
     const scenario = browserScenarioSchema.parse({
       browser: { mode: "launch", executable_path: process.execPath },
       start_url: { url: "https://example.test" },
@@ -95,7 +97,8 @@ it.each([
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
           },
-          launchPersistentContext: async (_profile, options) => {
+          launchPersistentContext: async (profile, options) => {
+            launchedProfile = profile;
             launchedEnvironment = options?.env;
             throw new Error("launch boundary reached");
           },
@@ -109,6 +112,9 @@ it.each([
       PATH: "/selected/bin",
       [systemRootKey]: "C:/WINDOWS",
     });
+    expect(
+      launchedProfile?.startsWith(join(tmpdir(), "rea-browser-scenario-")),
+    ).toBe(true);
   },
 );
 
