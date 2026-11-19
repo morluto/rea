@@ -1,4 +1,5 @@
 import { decodeAsn1Oid } from "../../domain/asn1Oid.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
   Asn1BerFailure,
   Asn1BerReader,
@@ -152,8 +153,11 @@ const decodeBmpString = (bytes: Buffer, budget: DecodedNameBudget): string => {
   chargeDecodedName(budget, bytes.length);
   if (bytes.length === 0) return "";
   const decoded = Buffer.allocUnsafe(bytes.length);
+  // One big-endian reader covers the string: ASN.1 stores these code units in network
+  // byte order whichever host produced them.
+  const reader = new BinaryReader(bytes, false, "pe-asn1-string");
   for (let index = 0; index < bytes.length; index += 2) {
-    const codeUnit = bytes.readUInt16BE(index);
+    const codeUnit = reader.u16(index);
     // BMPString is UCS-2: even a paired UTF-16 surrogate is not a BMP character.
     if (codeUnit >= 0xd800 && codeUnit <= 0xdfff)
       return fail("BMPString holds a surrogate code point.");
@@ -169,9 +173,10 @@ const decodeUtf32Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
   // bounds the decoded string before any code point is copied.
   chargeDecodedName(budget, bytes.length);
   const decoded = Buffer.allocUnsafe(bytes.length);
+  const reader = new BinaryReader(bytes, false, "pe-asn1-string");
   let at = 0;
   for (let index = 0; index < bytes.length; index += 4) {
-    const codePoint = bytes.readUInt32BE(index);
+    const codePoint = reader.u32(index);
     if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff))
       return fail("UniversalString holds an invalid code point.");
     if (codePoint > 0xffff) {

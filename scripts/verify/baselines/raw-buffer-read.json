@@ -38,7 +38,6 @@
   "src/native/hardening/ElfHardening.ts": 2,
   "src/native/initializers/ElfInitializerSymbols.ts": 4,
   "src/native/initializers/MachoInitializers.ts": 22,
-  "src/native/pe/PeCertificateAsn1.ts": 2,
   "src/native/pe/PeLoadConfigParser.ts": 7,
   "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
   "src/native/windows/WindowsShortcutParser.ts": 48,
