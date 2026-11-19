@@ -491,3 +491,27 @@ describe("ESP bootloader location", () => {
     ]);
   });
 });
+
+it("keeps and discloses partitions after a matching prefix MD5", () => {
+  const [first, second, third] = TWO_OTA_PARTITIONS;
+  const prefix = partitionTable([first!]);
+  const decoded = table(
+    Buffer.concat([
+      prefix.subarray(0, 64),
+      partitionEntry(second!),
+      partitionEntry(third!),
+      prefix.subarray(64),
+    ]),
+  );
+  expect(decoded.md5).toMatchObject({ status: "valid", entryOffset: 32 });
+  expect(decoded.partitions.map(({ label }) => label)).toEqual([
+    first?.label,
+    second?.label,
+    third?.label,
+  ]);
+  expect(decoded.limitations).toEqual([
+    expect.stringContaining(
+      "2 partition entries after the MD5 record at 0x20 are outside its checksum coverage",
+    ),
+  ]);
+});

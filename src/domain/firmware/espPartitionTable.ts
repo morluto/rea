@@ -111,6 +111,7 @@ export const decodeEspPartitionTable = (
     stored: null,
     computed: null,
   };
+  let partitionsAfterMd5 = 0;
   for (let slot = 0; slot < MAX_ENTRIES; slot += 1) {
     const at = slot * ENTRY_BYTES;
     const entry = bytes.subarray(at, at + ENTRY_BYTES);
@@ -120,6 +121,7 @@ export const decodeEspPartitionTable = (
       );
     const magic = u16(entry, 0);
     if (magic === PARTITION_MAGIC) {
+      if (md5.entryOffset !== null) partitionsAfterMd5 += 1;
       partitions.push(partition(entry, partitions.length, at));
       continue;
     }
@@ -150,8 +152,13 @@ export const decodeEspPartitionTable = (
     const terminator =
       magic === END_MAGIC && entry[2] === END_TYPE && entry[3] === END_TYPE;
     // An MD5 entry is not a partition: a table declares at least one.
-    if (terminator && partitions.length > 0)
+    if (terminator && partitions.length > 0) {
+      if (md5.entryOffset !== null && partitionsAfterMd5 > 0)
+        limitations.push(
+          `${String(partitionsAfterMd5)} partition entries after the MD5 record at ${offsetText(md5.entryOffset)} are outside its checksum coverage.`,
+        );
       return ok({ partitions, md5, length: at + ENTRY_BYTES, limitations });
+    }
     return err(
       slot === 0 && magic === END_MAGIC
         ? "the first entry is empty"
