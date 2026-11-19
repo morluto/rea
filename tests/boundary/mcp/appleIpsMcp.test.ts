@@ -40,10 +40,12 @@ it("advertises and validates IPS facts and failures through production stdio MCP
     code: "resource_constraint",
     remediation: {
       action: expect.stringContaining(
-        "Raise max_integer_text_bytes on the next call",
+        "Effective max_integer_text_bytes is 1 UTF-16 bytes. Raise max_integer_text_bytes on the next call",
       ),
     },
     details: {
+      resource: "capacity",
+      reason: `Selected artifact ${path}: IPS integer text reservation exceeds the 1-byte UTF-16 allowance`,
       reported_limits: { boundary: "integer_text", maximum: 1 },
     },
   });
