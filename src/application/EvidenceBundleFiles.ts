@@ -5,6 +5,7 @@ import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCle
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { resemblesAnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
@@ -149,22 +150,29 @@ export const authenticateEvidenceBundleValue = (
         }),
       );
     if (
-      operation === "import_evidence_bundle" &&
-      typeof value === "object" &&
-      value !== null &&
+      isRecord(value) &&
       !Object.hasOwn(value, "records") &&
       resemblesAnalysisSnapshot(value)
-    )
+    ) {
+      const importing = operation === "import_evidence_bundle";
+      const explanation =
+        "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated.";
       return err(
         new EvidenceFileError("read", "wrong-kind", {
           path: absoluteCallerPath(path),
           cause: failure.cause,
           detectedKind: "analysis-snapshot",
-          related: { operations: ["open_binary", "export_evidence_bundle"] },
-          userMessage:
-            "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated. To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file to load the snapshot, and close_binary with snapshot_path to save updated state. Alternatively, supply a bundle from export_evidence_bundle.",
+          related: {
+            operations: importing
+              ? ["open_binary", "export_evidence_bundle"]
+              : ["export_evidence_bundle"],
+          },
+          userMessage: importing
+            ? `${explanation} To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file to load the snapshot, and close_binary with snapshot_path to save updated state. Alternatively, supply a bundle from export_evidence_bundle.`
+            : `${explanation} Supply a standalone Evidence bundle from export_evidence_bundle for this input.`,
         }),
       );
+    }
     return err(
       new EvidenceIntegrityError("Evidence bundle validation failed", {
         cause: failure.cause,
