@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -22,6 +20,7 @@ import { functionDossierSchema } from "../dist/domain/native/functionDossier.js"
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildPowerPc64Fixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import {
@@ -50,7 +49,6 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -85,11 +83,14 @@ const sha256 = async (path) =>
   createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
+// Compiler and CLI launches share one command owner. Its process group is what
+// a timeout stops, including a linker that would otherwise outlive Clang.
+const commands = await createVerifierCommands();
 
 /** A position-independent shared object the bounded lane must refuse by name. */
 const buildSharedObject = async (directory) => {
   const path = join(directory, "powerpc64le-unknown-linux-gnu.so");
-  await execute(
+  await commands.exec(
     fixtureCommand(FIXTURE_TOOLS.ppcClang),
     [
       "--target=powerpc64le-unknown-linux-gnu",
@@ -146,7 +147,11 @@ try {
     assert.match(JSON.stringify(rejected.content), /ET_EXEC only/u);
 
     for (const byteOrder of ["little", "big"]) {
-      const fixture = await buildPowerPc64Fixture(workspace, byteOrder);
+      const fixture = await buildPowerPc64Fixture(
+        workspace,
+        byteOrder,
+        commands,
+      );
       const independent = await inspectPowerPc64Readelf(
         fixture.path,
         byteOrder,
@@ -278,7 +283,7 @@ try {
       await call("close_binary");
 
       // Same public operation through CLI, not a private injected provider.
-      const cli = await execute(
+      const cli = await commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -346,6 +351,27 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `PPC64 command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "PPC64 verification and command cleanup both failed",
+            ),
+    },
+  );
 const completed = await completeVerifierRun(run);
 if (
   completed.process_lineage.status !== "verified" ||

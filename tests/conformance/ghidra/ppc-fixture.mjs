@@ -9,8 +9,15 @@ import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 const execute = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-/** Link one source-owned C file and probe; never execute the target code. */
-async function buildFixture(directory, { target, options, entry, sources }) {
+/**
+ * Link one source-owned C file and probe; never execute the target code.
+ * `run` is the owned-command runner. The 32-bit lane still uses the module
+ * launcher; PPC64 must pass the verifier's command owner.
+ */
+async function buildFixture(
+  directory,
+  { target, options, entry, sources, run = execute },
+) {
   const compiler = fixtureCommand(FIXTURE_TOOLS.ppcClang);
   const [source, probe] = sources.map((relative) =>
     fileURLToPath(new URL(relative, import.meta.url)),
@@ -32,8 +39,8 @@ async function buildFixture(directory, { target, options, entry, sources }) {
     "-o",
     path,
   ];
-  const version = await execute(compiler, ["--version"], { timeout: 10000 });
-  await execute(compiler, args, { timeout: 60000 });
+  const version = await run(compiler, ["--version"], { timeout: 10000 });
+  await run(compiler, args, { timeout: 60000 });
   const bytes = await readFile(path);
   return {
     bytes,
@@ -76,7 +83,9 @@ export async function buildPowerPcFixture(directory) {
  * Build the source-owned ELFv2 PPC64 executable for one byte order. Clang's
  * big-endian Linux default is ELFv1, so the ABI is requested explicitly.
  */
-export async function buildPowerPc64Fixture(directory, byteOrder) {
+export async function buildPowerPc64Fixture(directory, byteOrder, commands) {
+  if (typeof commands?.exec !== "function")
+    throw new TypeError("PPC64 fixture builds require an owned command runner");
   const little = byteOrder === "little";
   const { bytes, fixture } = await buildFixture(directory, {
     target: little
@@ -86,6 +95,7 @@ export async function buildPowerPc64Fixture(directory, byteOrder) {
     options: ["-mcpu=power9", "-mabi=elfv2"],
     entry: "rea_ppc64_entry",
     sources: ["../c/ppc64.c", "./ppc64-probe.S"],
+    run: (command, args, options) => commands.exec(command, args, options),
   });
   const u16 = (offset) =>
     little ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
