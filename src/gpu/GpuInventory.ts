@@ -40,7 +40,10 @@ import {
   readPeSectionDirectory,
   type NativeSectionDirectory,
 } from "../domain/native/nativeSectionDirectory.js";
-import { assertArtifactReadActive } from "../resources/index.js";
+import {
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../resources/index.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -184,6 +187,7 @@ export class GpuInventory {
         elf
           ? readElfSectionDirectory(source.size)
           : readPeSectionDirectory(source.size),
+        () => yieldArtifactRead(this.signal),
       );
       if (elf && (directory.machine === 190 || directory.machine === 224)) {
         const row = gpuObject(source, {
@@ -532,6 +536,7 @@ export class GpuInventory {
         (await readGpuNativeDirectory(
           child,
           readElfSectionDirectory(child.size),
+          () => yieldArtifactRead(this.signal),
         ));
       const inspected = await readAmdElfMetadata(child, native);
       const prepared = inspected.ok ? inspected.value : inspected.error.partial;

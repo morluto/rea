@@ -545,10 +545,13 @@ export const decodeZstandardFrames = (
  * decoder, and `pause` runs again after it so an abort during that decode
  * is visible before success is returned.
  */
+/** Yield point a caller uses to observe its existing abort signal between frames. */
+export type ZstandardFramePause = () => Promise<void>;
+
 export const decodeZstandardFramesCooperative = async (
   bytes: Uint8Array,
   options: ZstandardDecodeOptions,
-  pause: () => Promise<void>,
+  pause: ZstandardFramePause,
 ): Promise<ZstandardFrameResult> => {
   const prepared = prepareDecode(bytes, options);
   if ("reason" in prepared) return prepared;

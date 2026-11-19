@@ -3,8 +3,10 @@ import { inflateSync } from "node:zlib";
 import { nodeCodecResult } from "../../kernel/nodeCodecResult.js";
 import {
   decodeZstandardFrames,
+  decodeZstandardFramesCooperative,
   ZSTANDARD_WINDOW_LOG_MAX,
   type ZstandardFrameFailure,
+  type ZstandardFramePause,
 } from "../compression/zstandardExactFrame.js";
 import {
   zstandardWorkLimitFacts,
@@ -102,18 +104,23 @@ export const readElfCompressedSectionHeader = (
   return { state: "compressed", compressionType, declaredSize, headerBytes };
 };
 
-/**
- * Decode one ELF section payload. `subject` is the noun phrase used in
- * failure text so existing section-name messages stay stable.
- */
-export const decodeElfCompressedSection = (
+type PreparedElfSection =
+  | ElfCompressedSectionResult
+  | {
+      readonly state: "payload";
+      readonly payload: Buffer;
+      readonly declaredSize: bigint;
+      readonly compression: "zlib" | "zstd";
+    };
+
+const prepareElfCompressedSection = (
   bytes: Buffer,
   flags: bigint,
   bits: 32 | 64,
   little: boolean,
   maximumDecodedBytes: number,
   subject: string,
-): ElfCompressedSectionResult => {
+): PreparedElfSection => {
   const header = readElfCompressedSectionHeader(
     bytes,
     flags,
@@ -138,12 +145,109 @@ export const decodeElfCompressedSection = (
       requiredBytes: declaredSize,
       maximumBytes: maximumDecodedBytes,
     };
-  return inflateDeclared(
-    bytes.subarray(headerBytes),
+  return {
+    state: "payload",
+    payload: bytes.subarray(headerBytes),
     declaredSize,
-    compressionType === ELFCOMPRESS_ZSTD ? "zstd" : "zlib",
+    compression: compressionType === ELFCOMPRESS_ZSTD ? "zstd" : "zlib",
+  };
+};
+
+const zstdDecodeOptions = (expected: number) => ({
+  maxOutputLength: Math.max(1, expected),
+  // Retain Zstandard's default maximum decoder window of 128 MiB.
+  windowLogMax: ZSTANDARD_WINDOW_LOG_MAX,
+});
+
+const finishInflated = (
+  decoded: Buffer,
+  expected: number,
+  compression: "zlib" | "zstd",
+  subject: string,
+  inflatedBytes: number,
+): ElfCompressedSectionResult => {
+  if (decoded.length !== expected)
+    return {
+      state: "malformed",
+      message: `${subject} size is inconsistent`,
+      inflatedBytes,
+    };
+  return {
+    state: "available",
+    bytes: decoded,
+    compressed: true,
+    compression,
+    inflatedBytes,
+  };
+};
+
+/**
+ * Decode one ELF section payload. `subject` is the noun phrase used in
+ * failure text so existing section-name messages stay stable.
+ */
+export const decodeElfCompressedSection = (
+  bytes: Buffer,
+  flags: bigint,
+  bits: 32 | 64,
+  little: boolean,
+  maximumDecodedBytes: number,
+  subject: string,
+): ElfCompressedSectionResult => {
+  const prepared = prepareElfCompressedSection(
+    bytes,
+    flags,
+    bits,
+    little,
+    maximumDecodedBytes,
     subject,
   );
+  if (prepared.state !== "payload") return prepared;
+  return inflateDeclared(
+    prepared.payload,
+    prepared.declaredSize,
+    prepared.compression,
+    subject,
+  );
+};
+
+/**
+ * Same admission as {@link decodeElfCompressedSection}. Zstandard frames use
+ * the cooperative decoder so `pause` can observe the caller's abort signal.
+ */
+export const decodeElfCompressedSectionCooperative = async (
+  bytes: Buffer,
+  flags: bigint,
+  bits: 32 | 64,
+  little: boolean,
+  maximumDecodedBytes: number,
+  subject: string,
+  pause: ZstandardFramePause,
+): Promise<ElfCompressedSectionResult> => {
+  const prepared = prepareElfCompressedSection(
+    bytes,
+    flags,
+    bits,
+    little,
+    maximumDecodedBytes,
+    subject,
+  );
+  if (prepared.state !== "payload") return prepared;
+  if (prepared.compression !== "zstd")
+    return inflateDeclared(
+      prepared.payload,
+      prepared.declaredSize,
+      prepared.compression,
+      subject,
+    );
+  const expected = Number(prepared.declaredSize);
+  const inflatedBytes = Math.max(expected, prepared.payload.length);
+  const result = await decodeZstandardFramesCooperative(
+    prepared.payload,
+    zstdDecodeOptions(expected),
+    pause,
+  );
+  if (!result.ok) return zstdSectionFailure(result, subject, inflatedBytes);
+  return finishInflated(result.bytes, expected, "zstd", subject, inflatedBytes);
 };
 
 /**
@@ -223,11 +327,10 @@ const inflateDeclared = (
   try {
     const maxOutputLength = Math.max(1, expected);
     if (compression === "zstd") {
-      const result = decodeZstandardFrames(payload, {
-        maxOutputLength,
-        // Retain Zstandard's default maximum decoder window of 128 MiB.
-        windowLogMax: ZSTANDARD_WINDOW_LOG_MAX,
-      });
+      const result = decodeZstandardFrames(
+        payload,
+        zstdDecodeOptions(expected),
+      );
       if (!result.ok) return zstdSectionFailure(result, subject, inflatedBytes);
       decoded = result.bytes;
     } else {
@@ -249,17 +352,5 @@ const inflateDeclared = (
       message: `${subject} could not be decompressed: ${cause instanceof Error ? cause.message : "invalid compressed data"}`,
     };
   }
-  if (decoded.length !== expected)
-    return {
-      state: "malformed",
-      message: `${subject} size is inconsistent`,
-      inflatedBytes,
-    };
-  return {
-    state: "available",
-    bytes: decoded,
-    compressed: true,
-    compression,
-    inflatedBytes,
-  };
+  return finishInflated(decoded, expected, compression, subject, inflatedBytes);
 };

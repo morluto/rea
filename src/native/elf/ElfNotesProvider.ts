@@ -12,6 +12,7 @@ import {
   ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
+  yieldArtifactRead,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -36,7 +37,7 @@ import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   ELF_NOTE_TEXT_ALLOWANCE,
   elfNoteSectionNameBudget,
-  parseElfNotes,
+  parseElfNotesCooperative,
 } from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
@@ -70,7 +71,7 @@ export class ElfNotesProvider implements ElfNotesPort {
           this.#resources,
         );
         return ok(
-          parseElfNotes(
+          await parseElfNotesCooperative(
             snapshot.bytes,
             {
               path: input.path,
@@ -78,6 +79,7 @@ export class ElfNotesProvider implements ElfNotesPort {
               bytes: snapshot.bytes.length,
             },
             input,
+            () => yieldArtifactRead(options?.signal),
           ),
         );
       });

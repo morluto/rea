@@ -7,6 +7,7 @@ import {
   type StableArtifactSnapshot,
   ArtifactReaderFailure,
   readStableArtifact,
+  yieldArtifactRead,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -97,7 +98,13 @@ export class DwarfUnitsProvider {
           snapshot.bytes,
           input.architecture,
         );
-        const located = locateDwarfSections(selected.bytes);
+        const located = await locateDwarfSections(
+          selected.bytes,
+          undefined,
+          async () => {
+            await yieldArtifactRead(options?.signal);
+          },
+        );
         const report = dwarfUnitsSchema.parse(
           buildReport(
             input,

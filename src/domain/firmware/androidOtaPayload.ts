@@ -1,6 +1,9 @@
 import {
   decodeZstandardFrames,
+  decodeZstandardFramesCooperative,
   type ZstandardFrameFailure,
+  type ZstandardFramePause,
+  type ZstandardFrameResult,
 } from "../compression/zstandardExactFrame.js";
 import {
   zstandardWorkLimitFacts,
@@ -1436,17 +1439,16 @@ const hasCompleteExtentCoverage = (
   return false;
 };
 
-/**
- * Rebuild a full-payload partition image after checking declared blob hashes.
- * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
- * which leaves that decision to a caller applying its own integrity policy.
- */
-export const reconstructAndroidOtaPartition = (
+function* reconstructAndroidOtaPartitionSteps(
   partition: AndroidOtaPartition,
   blockSize: number,
   readBlob: (offset: number, length: number) => Uint8Array,
   options: { readonly verifyDeclaredHash?: boolean } = {},
-): Result<Uint8Array, AndroidOtaPayloadReconstructError> => {
+): Generator<
+  { readonly raw: Uint8Array; readonly maxOutputLength: number },
+  Result<Uint8Array, AndroidOtaPayloadReconstructError>,
+  ZstandardFrameResult
+> {
   const refused = androidOtaExtractRefusalError(partition);
   if (refused !== null) return err(refused);
   const size = partition.newPartitionInfo.size!;
@@ -1500,7 +1502,7 @@ export const reconstructAndroidOtaPartition = (
           1,
           Math.min(dstBytes.value, ANDROID_OTA_MAX_EXTRACT_BYTES),
         );
-        const decoded = decodeZstandardFrames(raw, { maxOutputLength });
+        const decoded = yield { raw, maxOutputLength };
         if (!decoded.ok) {
           if (
             decoded.reason === "invalid_allowance" &&
@@ -1558,4 +1560,77 @@ export const reconstructAndroidOtaPartition = (
       observedHashHex: observed,
     });
   return ok(image);
+}
+
+const driveAndroidOtaReconstruction = (
+  steps: Generator<
+    { readonly raw: Uint8Array; readonly maxOutputLength: number },
+    Result<Uint8Array, AndroidOtaPayloadReconstructError>,
+    ZstandardFrameResult
+  >,
+  decode: (
+    raw: Uint8Array,
+    maxOutputLength: number,
+  ) => ZstandardFrameResult | Promise<ZstandardFrameResult>,
+): Promise<Result<Uint8Array, AndroidOtaPayloadReconstructError>> => {
+  const run = async (): Promise<
+    Result<Uint8Array, AndroidOtaPayloadReconstructError>
+  > => {
+    let next = steps.next();
+    while (!next.done)
+      next = steps.next(
+        await decode(next.value.raw, next.value.maxOutputLength),
+      );
+    return next.value;
+  };
+  return run();
 };
+
+/**
+ * Rebuild a full-payload partition image after checking declared blob hashes.
+ * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
+ * which leaves that decision to a caller applying its own integrity policy.
+ */
+export const reconstructAndroidOtaPartition = (
+  partition: AndroidOtaPartition,
+  blockSize: number,
+  readBlob: (offset: number, length: number) => Uint8Array,
+  options: { readonly verifyDeclaredHash?: boolean } = {},
+): Result<Uint8Array, AndroidOtaPayloadReconstructError> => {
+  const steps = reconstructAndroidOtaPartitionSteps(
+    partition,
+    blockSize,
+    readBlob,
+    options,
+  );
+  let next = steps.next();
+  while (!next.done)
+    next = steps.next(
+      decodeZstandardFrames(next.value.raw, {
+        maxOutputLength: next.value.maxOutputLength,
+      }),
+    );
+  return next.value;
+};
+
+/**
+ * Same reconstruction as {@link reconstructAndroidOtaPartition}. REPLACE_ZSTD
+ * frames yield through `pause` so the caller's abort signal can land.
+ */
+export const reconstructAndroidOtaPartitionCooperative = (
+  partition: AndroidOtaPartition,
+  blockSize: number,
+  readBlob: (offset: number, length: number) => Uint8Array,
+  pause: ZstandardFramePause,
+  options: { readonly verifyDeclaredHash?: boolean } = {},
+): Promise<Result<Uint8Array, AndroidOtaPayloadReconstructError>> =>
+  driveAndroidOtaReconstruction(
+    reconstructAndroidOtaPartitionSteps(
+      partition,
+      blockSize,
+      readBlob,
+      options,
+    ),
+    (raw, maxOutputLength) =>
+      decodeZstandardFramesCooperative(raw, { maxOutputLength }, pause),
+  );
