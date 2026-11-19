@@ -52,7 +52,10 @@ not erase an earlier declared hash; a repeated scalar field keeps its last
 value. The resulting size and hash feed both inventory and extraction.
 
 Metadata and payload signature blobs are counted from the `Signatures`
-protobuf. `signatures_verified` is always `false`: sizes and counts are
+protobuf. A payload signature is declared when both `signatures_offset` and
+`signatures_size` are present. Inventory preserves a lone field as manifest
+metadata and leaves the payload signature blob size and count null.
+`signatures_verified` is always `false`: sizes and counts are
 facts, not a cryptographic check. `payload_properties.txt` and
 `META-INF/com/android/metadata` beside a zip member are out of scope. A zip
 that already lists `payload.bin` still classifies that member by `CrAU`

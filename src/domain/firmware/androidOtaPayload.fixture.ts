@@ -76,8 +76,8 @@ export interface AndroidOtaPayloadFixture {
   readonly apex?: readonly AndroidOtaApexFixture[];
   readonly metadataSignature?: Uint8Array;
   readonly payloadSignature?: Uint8Array;
-  readonly signaturesOffset?: number;
-  readonly signaturesSize?: number;
+  readonly signaturesOffset?: number | null;
+  readonly signaturesSize?: number | null;
   readonly truncateTo?: number;
 }
 
@@ -294,14 +294,16 @@ const encodeApex = (
 const encodeManifest = (
   fixture: AndroidOtaPayloadFixture,
   blob: { offset: number; chunks: Uint8Array[] },
-  signaturesOffset: number,
-  signaturesSize: number,
+  signaturesOffset: number | null,
+  signaturesSize: number | null,
 ): Uint8Array => {
   const writer = new BinaryWriter();
   const blockSize = fixture.blockSize ?? ANDROID_OTA_DEFAULT_BLOCK_SIZE;
   writer.tag(3, WireType.Varint).uint32(blockSize);
-  writer.tag(4, WireType.Varint).uint64(signaturesOffset);
-  writer.tag(5, WireType.Varint).uint64(signaturesSize);
+  if (signaturesOffset !== null)
+    writer.tag(4, WireType.Varint).uint64(signaturesOffset);
+  if (signaturesSize !== null)
+    writer.tag(5, WireType.Varint).uint64(signaturesSize);
   if (fixture.minorVersion !== undefined)
     writer.tag(12, WireType.Varint).uint32(fixture.minorVersion);
   for (const partition of fixture.partitions) {
@@ -375,8 +377,14 @@ export const buildAndroidOtaPayload = (
     androidOtaSignatureBlob(Buffer.from("payload-sig"));
   encodeManifest(fixture, layout, 0, payloadSignature.length);
   const data = Buffer.concat(layout.chunks);
-  const signaturesOffset = fixture.signaturesOffset ?? data.length;
-  const signaturesSize = fixture.signaturesSize ?? payloadSignature.length;
+  const signaturesOffset =
+    fixture.signaturesOffset === undefined
+      ? data.length
+      : fixture.signaturesOffset;
+  const signaturesSize =
+    fixture.signaturesSize === undefined
+      ? payloadSignature.length
+      : fixture.signaturesSize;
   const laidOut = { offset: 0, chunks: [] as Uint8Array[] };
   const manifest = encodeManifest(
     fixture,
