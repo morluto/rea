@@ -1,8 +1,9 @@
-import { pipeline, type Readable, type Transform } from "node:stream";
+import { pipeline, Transform, type Readable } from "node:stream";
 
 import {
   ArtifactReaderFailure,
   artifactReadCancelledBy,
+  type ArtifactEntry,
   type ArtifactResourceScope,
 } from "../resources/index.js";
 
@@ -63,6 +64,37 @@ export class ArtifactStreamLifecycle {
     };
   }
 }
+
+/** Verify byte delivery and caller-selected source identity before stream completion. */
+export const checkedArtifactMemberStream = (
+  entry: ArtifactEntry,
+  label: string,
+  incomplete: (detail: string) => Error,
+  verify: () => Promise<void>,
+): Transform => {
+  let bytes = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length;
+      callback(null, chunk);
+    },
+    flush(callback) {
+      if (bytes !== entry.declaredSize) {
+        callback(incomplete(`member ended early: ${entry.path}`));
+        return;
+      }
+      void verify().then(
+        () => callback(),
+        (cause: unknown) =>
+          callback(
+            cause instanceof Error
+              ? cause
+              : new Error(`${label} read failed`, { cause }),
+          ),
+      );
+    },
+  });
+};
 
 /** Keep the carrier and buffered output owned through production and retirement. */
 export const ownArtifactStream = (

@@ -1,17 +1,25 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
 import { buildGodotPck } from "../../tests/fixtures/godotPck.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { buildUImage } from "../../tests/fixtures/uimage.js";
-import { openRegularFile } from "../filesystem/RegularFile.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import * as regularFile from "../filesystem/RegularFile.js";
+import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
+import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
+import {
+  bunModuleGraphPayload,
+  elfAppendedBunPayload,
+} from "./bun/BunStandalone.fixture.js";
+import { denoElf } from "./deno/DenoStandalone.fixture.js";
 import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
 
 const godot = {
@@ -19,13 +27,35 @@ const godot = {
   Reader: GodotPckArtifactReader,
   fixture: () =>
     buildGodotPck(4, [{ path: "main.gd", data: "extends Node\n" }]),
+  owned: false,
 };
 
 const uimage = {
   label: "uImage",
   Reader: UImageArtifactReader,
   fixture: () => buildUImage({ payload: Buffer.from("inert payload") }),
+  owned: false,
 };
+
+const standaloneReaders = [
+  {
+    label: "Bun",
+    Reader: BunStandaloneArtifactReader,
+    fixture: () =>
+      elfAppendedBunPayload(
+        bunModuleGraphPayload({
+          modules: [
+            { name: "main.js", contents: Buffer.from("inert payload") },
+          ],
+        }),
+      ),
+  },
+  {
+    label: "Deno",
+    Reader: DenoStandaloneArtifactReader,
+    fixture: () => denoElf(),
+  },
+] as const;
 
 it.for([
   { ...godot, stage: "read", fail: true, order: "close" },
@@ -36,6 +66,7 @@ it.for([
     stage: "read",
     fail: true,
     order: "close",
+    owned: false,
   },
   { ...godot, stage: "read", fail: false, order: "close" },
   { ...godot, stage: "validation", fail: true, order: "close" },
@@ -45,22 +76,37 @@ it.for([
       [true, false].map((fail) => ({ ...uimage, stage, fail, order })),
     ),
   ),
+  ...standaloneReaders.flatMap((fixture) =>
+    ["read", "validation"].flatMap((stage) =>
+      [false, true].map((owned) => ({
+        ...fixture,
+        stage,
+        fail: true,
+        order: "close",
+        owned,
+      })),
+    ),
+  ),
 ])(
-  "settles admitted $label $stage after $order (I/O fault: $fail)",
-  async ({ Reader, fixture, stage, fail, order }) => {
+  "settles admitted $label $stage after $order (owned: $owned, I/O fault: $fail)",
+  async ({ Reader, fixture, stage, fail, order, owned }) => {
     const root = await createTestTempDirectory("rea-positional-close-");
     const path = join(root, "carrier");
     await writeFile(path, fixture());
-    const descriptor = await openRegularFile(path, { symlinks: "reject" });
-    const reader = new Reader(path, descriptor);
-    let acknowledge = () => {};
-    let release = () => {};
-    const started = new Promise<void>((resolve) => {
-      acknowledge = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const open = regularFile.openRegularFile;
+    const borrowed = owned
+      ? undefined
+      : await open(path, { symlinks: "reject" });
+    let descriptor = borrowed;
+    const admission = owned
+      ? vi
+          .spyOn(regularFile, "openRegularFile")
+          .mockImplementationOnce(
+            async (...args) => (descriptor = await open(...args)),
+          )
+      : undefined;
+    const reader = new Reader(path, borrowed);
+    const gate = phaseGate();
     const failure = Object.assign(new Error("physical descriptor I/O failed"), {
       code: "EIO",
     });
@@ -68,9 +114,7 @@ it.for([
     const callerReason = new Error("caller cancelled the member");
     const settle = async <T>(pending: Promise<T>): Promise<T> => {
       const result = await pending;
-      acknowledge();
-      await gate;
-      if (fail) throw failure;
+      await gate.hold();
       return result;
     };
     try {
@@ -80,19 +124,20 @@ it.for([
         break;
       }
       if (entry === undefined) throw new Error("Expected one carrier member");
+      const handle = descriptor?.handle;
+      if (handle === undefined)
+        throw new Error("Expected an admitted descriptor");
       if (stage === "read") {
-        const read = descriptor.handle.read.bind(descriptor.handle);
-        vi.spyOn(descriptor.handle, "read").mockImplementation(
-          (...args: unknown[]) =>
-            settle(Reflect.apply(read, descriptor.handle, args)),
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation((...args: unknown[]) =>
+          settle(Reflect.apply(read, handle, args)),
         );
       }
       const output = await reader.open(entry, caller.signal);
       if (stage === "validation") {
-        const stat = descriptor.handle.stat.bind(descriptor.handle);
-        vi.spyOn(descriptor.handle, "stat").mockImplementation(
-          (...args: unknown[]) =>
-            settle(Reflect.apply(stat, descriptor.handle, args)),
+        const stat = handle.stat.bind(handle);
+        vi.spyOn(handle, "stat").mockImplementation((...args: unknown[]) =>
+          settle(Reflect.apply(stat, handle, args)),
         );
       }
       const settled = finished(output, { cleanup: true }).catch(
@@ -102,7 +147,7 @@ it.for([
       output.on("data", (chunk: Buffer) => {
         bytesDelivered += chunk.length;
       });
-      await awaitAcknowledgement(started, settled, stage);
+      await gate.reached(settled, stage);
       let closed = false;
       if (order === "caller-first") caller.abort(callerReason);
       const closing = reader.close().then(() => {
@@ -111,7 +156,8 @@ it.for([
       if (order === "close-first") caller.abort(callerReason);
       await setImmediate();
       const closedBeforeSettlement = closed || output.closed;
-      release();
+      if (fail) gate.reject(failure);
+      else gate.release();
       const result = await settled;
       await closing;
       if (fail) expect(result).toBe(failure);
@@ -123,9 +169,64 @@ it.for([
       else expect(result).toMatchObject({ reason: "unavailable" });
       expect(closedBeforeSettlement).toBe(false);
       expect(bytesDelivered).toBe(stage === "read" ? 0 : entry.declaredSize);
-      expect(descriptor.handle.fd).toBeGreaterThanOrEqual(0);
+      if (owned) expect(handle.fd).toBe(-1);
+      else expect(handle.fd).toBeGreaterThanOrEqual(0);
     } finally {
-      release();
+      admission?.mockRestore();
+      gate.release();
+      await reader.close();
+      await borrowed?.handle.close();
+    }
+  },
+);
+
+it.for(standaloneReaders)(
+  "rejects a $label selected-path replacement after member admission",
+  async ({ Reader, fixture }, context) => {
+    const root = await createTestTempDirectory(
+      "rea-standalone-selected-close-",
+    );
+    const selected = join(root, "selected");
+    await mkdir(selected);
+    const path = join(selected, "carrier");
+    const bytes = fixture();
+    await writeFile(path, bytes);
+    const descriptor = await regularFile.openRegularFile(path, {
+      symlinks: "reject",
+    });
+    const reader = new Reader(path, descriptor);
+    const gate = phaseGate();
+    try {
+      let entry;
+      for await (const member of reader.entries()) {
+        entry = member;
+        break;
+      }
+      if (entry === undefined) throw new Error("Expected one carrier member");
+      const { handle } = descriptor;
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementationOnce(async (...args) => {
+        const result = await read(...args);
+        await gate.hold();
+        return result;
+      });
+      const output = await reader.open(entry);
+      const settled = finished(output, { cleanup: true }).catch(
+        (cause: unknown) => cause,
+      );
+      output.resume();
+      await gate.reached(settled, "standalone member read");
+      const renamed = await renameOpenParent(selected, join(root, "original"));
+      if (renamed.kind === "blocked") context.skip();
+      await mkdir(selected);
+      await writeFile(path, bytes);
+      gate.release();
+      await expect(settled).resolves.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "container-identity",
+      });
+    } finally {
+      gate.release();
       await reader.close();
       await descriptor.handle.close();
     }
