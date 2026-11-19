@@ -735,10 +735,23 @@ describe("repository kinds and key files", () => {
 it("keeps APT's source positions when a false Enabled field disables a stanza", () => {
   const source = (enabled: string) =>
     `Types: deb\nURIs: https://example.org/repo\nSuites: stable\nComponents: main\nEnabled: ${enabled}\n`;
-  const inputs = ["false", "0", "Off", "without", "disable", "yes"];
+  const disabled = [
+    "false",
+    "0",
+    "Off",
+    "without",
+    "disable",
+    "+0",
+    "-0",
+    "0x0",
+    "-0x0",
+  ];
+  const enabled = ["yes", "1", "0x1", "-1", "0.0", "fal\u017fe"];
   const stanzas = parseDeb822Sources(
-    inputs.map(source).join("\n"),
+    [...disabled, ...enabled].map(source).join("\n"),
     "example.sources",
   );
-  expect(stanzas.map((entry) => entry.position)).toEqual([6]);
+  expect(stanzas.map((entry) => entry.position)).toEqual(
+    enabled.map((_, index) => disabled.length + index + 1),
+  );
 });
