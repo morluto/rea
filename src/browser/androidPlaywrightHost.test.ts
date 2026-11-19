@@ -23,8 +23,7 @@ it("publishes the Android browsers path before the first Playwright import", asy
       import.meta.resolve("tsx"),
       "--input-type=module",
       "-e",
-      `Object.defineProperty(process, "platform", { value: "android" });
-       delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+      `delete process.env.PLAYWRIGHT_BROWSERS_PATH;
        delete process.env.npm_config_playwright_browsers_path;
        delete process.env.npm_package_config_playwright_browsers_path;
        const { loadPlaywrightCore } = await import(${JSON.stringify(hostUrl)});
@@ -33,7 +32,7 @@ it("publishes the Android browsers path before the first Playwright import", asy
          TMPDIR: "",
          TMP: "",
          TEMP: "",
-       });
+       }, "android");
        process.stdout.write(process.env.PLAYWRIGHT_BROWSERS_PATH ?? "");`,
     ],
     { env, encoding: "utf8", timeout: 30_000 },
@@ -64,15 +63,14 @@ it("preserves the caller-selected Playwright browsers path on Android", async ()
       import.meta.resolve("tsx"),
       "--input-type=module",
       "-e",
-      `Object.defineProperty(process, "platform", { value: "android" });
-       delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+      `delete process.env.PLAYWRIGHT_BROWSERS_PATH;
        delete process.env.npm_config_playwright_browsers_path;
        delete process.env.npm_package_config_playwright_browsers_path;
        const { loadPlaywrightCore } = await import(${JSON.stringify(hostUrl)});
        await loadPlaywrightCore({
          PREFIX: process.env.REA_TERMUX_PREFIX,
          PLAYWRIGHT_BROWSERS_PATH: process.env.REA_SELECTED_BROWSERS,
-       });
+       }, "android");
        process.stdout.write(process.env.PLAYWRIGHT_BROWSERS_PATH ?? "");`,
     ],
     { env, encoding: "utf8", timeout: 30_000 },

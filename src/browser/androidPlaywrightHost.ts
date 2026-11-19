@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { dirname, posix } from "node:path";
 
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 export const nonemptyEnvironmentValue = (
   environment: Readonly<Record<string, string | undefined>>,
@@ -19,8 +20,9 @@ export const nonemptyEnvironmentValue = (
  */
 export const androidScenarioTempDirectory = (
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): string | undefined => {
-  if (process.platform !== "android") return undefined;
+  if (platform !== "android") return undefined;
   const explicit = ["TMPDIR", "TMP", "TEMP"]
     .map((name) => nonemptyEnvironmentValue(environment, name))
     .find((value) => value !== undefined);
@@ -38,8 +40,9 @@ export const androidScenarioTempDirectory = (
 export const publishAndroidPlaywrightBrowsersPath = async (
   directory: string | undefined,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<void> => {
-  if (process.platform !== "android") return;
+  if (platform !== "android") return;
   const selected = nonemptyEnvironmentValue(
     environment,
     "PLAYWRIGHT_BROWSERS_PATH",
@@ -62,10 +65,12 @@ export const publishAndroidPlaywrightBrowsersPath = async (
 /** Publish the Android browser cache path, then load Playwright. */
 export const loadPlaywrightCore = async (
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<typeof import("playwright-core")> => {
   await publishAndroidPlaywrightBrowsersPath(
-    androidScenarioTempDirectory(environment),
+    androidScenarioTempDirectory(environment, platform),
     environment,
+    platform,
   );
   return import("playwright-core");
 };
@@ -79,8 +84,9 @@ const callerDirectory = (path: string): string =>
  */
 export const androidChromiumLaunchArgs = async (
   executablePath: string,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<string[]> => {
-  if (process.platform !== "android") return [];
+  if (platform !== "android") return [];
   const args = ["--disable-dev-shm-usage", "--single-process"];
   const directory = callerDirectory(executablePath);
   try {

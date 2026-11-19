@@ -373,8 +373,9 @@ const TERMUX_CHROMIUM_WRAPPERS = new Set(["chromium", "chromium-browser"]);
 const resolveAndroidChromiumExecutable = async (
   executablePath: string,
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
 ): Promise<string> => {
-  if (process.platform !== "android") return executablePath;
+  if (platform !== "android") return executablePath;
   const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
   if (prefix === undefined) return executablePath;
   const selected = posix.isAbsolute(executablePath)
@@ -422,9 +423,10 @@ const installAndroidTmpdirScope = (): void => {
 
 const withAndroidHostTempDirectory = <Value>(
   directory: string | undefined,
+  platform: NodeJS.Platform,
   launch: () => Promise<Value>,
 ): Promise<Value> => {
-  if (process.platform !== "android" || directory === undefined)
+  if (platform !== "android" || directory === undefined)
     return launch();
   installAndroidTmpdirScope();
   return androidLaunchTemp.run(directory, launch);
@@ -463,7 +465,7 @@ const allowedBrowserEnvironment = (
   // through the system linker and removes itself for the launched program.
   // Playwright must retain it for its Chromium child process.
   const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
-  const temporaryDirectory = androidScenarioTempDirectory(environment);
+  const temporaryDirectory = androidScenarioTempDirectory(environment, platform);
   const hasSelectedTemp =
     selected.TMPDIR !== undefined && selected.TMPDIR.length > 0;
   const withTemporaryDirectory =
@@ -971,12 +973,13 @@ export const openPlaywrightScenarioBrowser = async (
   const platform = options.platform ?? HOST_PLATFORM.platform;
   if (scenario.browser.mode === "launch")
     await publishAndroidPlaywrightBrowsersPath(
-      androidScenarioTempDirectory(environment),
+      androidScenarioTempDirectory(environment, platform),
       environment,
+      platform,
     );
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
-    options.launcher ?? (await loadPlaywrightCore(environment)).chromium;
+    options.launcher ?? (await loadPlaywrightCore(environment, platform)).chromium;
   const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
   if (scenario.browser.mode === "connect")
     return openAttachedScenarioBrowser(
@@ -990,7 +993,7 @@ export const openPlaywrightScenarioBrowser = async (
 
   throwIfScenarioCancelled(options.signal);
   const launchedBrowser = scenario.browser;
-  const preferredTemp = androidScenarioTempDirectory(environment);
+  const preferredTemp = androidScenarioTempDirectory(environment, platform);
   if (preferredTemp !== undefined)
     await mkdir(preferredTemp, { recursive: true });
   const profilePath = await mkdtemp(
@@ -1000,16 +1003,17 @@ export const openPlaywrightScenarioBrowser = async (
   const executablePath = await resolveAndroidChromiumExecutable(
     launchedBrowser.executable_path,
     environment,
+    platform,
   );
   const headless = scenario.browser.headless;
   const chromiumSandbox = chromiumSandboxEnabled(environment, platform);
-  const launchArgs = await androidChromiumLaunchArgs(executablePath);
+  const launchArgs = await androidChromiumLaunchArgs(executablePath, platform);
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
     throwIfScenarioCancelled(options.signal);
     launchStarted = true;
-    context = await withAndroidHostTempDirectory(preferredTemp, () =>
+    context = await withAndroidHostTempDirectory(preferredTemp, platform, () =>
       withScenarioCommandDeadline(
         () =>
           launcher.launchPersistentContext(profilePath, {

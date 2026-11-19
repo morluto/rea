@@ -146,7 +146,6 @@ it.skipIf(process.platform === "win32")(
 
 it("keeps Termux execution support when launching Chromium on Android", async () => {
   const prefix = await createTestTempDirectory("rea-termux-exec-");
-  Object.defineProperty(process, "platform", { value: "android" });
   const selected = { LANG: "selected-language", PREFIX: prefix };
   let launchOptions: Parameters<
     typeof import("playwright-core").chromium.launchPersistentContext
@@ -201,7 +200,6 @@ const androidLaunchScenario = (executablePath: string) =>
 const captureAndroidLaunch = async (
   environment: Readonly<Record<string, string | undefined>>,
 ) => {
-  Object.defineProperty(process, "platform", { value: "android" });
   let launchedProfile: string | undefined;
   let launchOptions: Parameters<
     typeof import("playwright-core").chromium.launchPersistentContext
@@ -211,6 +209,7 @@ const captureAndroidLaunch = async (
       androidLaunchScenario(process.execPath),
       environment,
       {
+        platform: "android",
         launcher: {
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
@@ -504,7 +503,6 @@ it("does not let a stuck Android launch block later launches", async () => {
   vi.stubEnv("TMPDIR", "");
   vi.stubEnv("TMP", "");
   vi.stubEnv("TEMP", "");
-  Object.defineProperty(process, "platform", { value: "android" });
   const nodeOs = createRequire(import.meta.url)("node:os") as {
     tmpdir: () => string;
   };
@@ -518,6 +516,7 @@ it("does not let a stuck Android launch block later launches", async () => {
       androidLaunchScenario(process.execPath),
       { PREFIX: root, TMPDIR: "", TMP: "", TEMP: "" },
       {
+        platform: "android",
         launcher: {
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
@@ -569,11 +568,11 @@ it("places Playwright's host artifact directory on the Termux temp directory", a
   vi.stubEnv("TMPDIR", "");
   vi.stubEnv("TMP", "");
   vi.stubEnv("TEMP", "");
-  Object.defineProperty(process, "platform", { value: "android" });
   await expect(
     openPlaywrightScenarioBrowser(
       androidLaunchScenario(join(prefix, "missing-chromium")),
       { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
+      { platform: "android" },
     ),
   ).rejects.toMatchObject({
     diagnostics: {
@@ -593,11 +592,11 @@ it("places Playwright's host artifact directory on the Termux temp directory", a
 it("publishes a writable Playwright browsers path before an Android launch", async () => {
   const prefix = await createTestTempDirectory("rea-termux-playwright-");
   vi.stubEnv("PLAYWRIGHT_BROWSERS_PATH", "");
-  Object.defineProperty(process, "platform", { value: "android" });
   await expect(
     openPlaywrightScenarioBrowser(
       androidLaunchScenario(join(prefix, "missing-chromium")),
       { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
+      { platform: "android" },
     ),
   ).rejects.toMatchObject({
     diagnostics: {
@@ -619,7 +618,6 @@ it("launches Termux Chromium from the binary next to its ICU data", async () => 
   await writeFile(wrapper, "#!/bin/sh\n");
   await writeFile(chrome, "#!/bin/sh\n");
   await writeFile(join(chromeDirectory, "icudtl.dat"), "icu");
-  Object.defineProperty(process, "platform", { value: "android" });
   let executablePath: string | undefined;
   let launchOptions: Parameters<
     typeof import("playwright-core").chromium.launchPersistentContext
@@ -629,6 +627,7 @@ it("launches Termux Chromium from the binary next to its ICU data", async () => 
       androidLaunchScenario(wrapper),
       { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
       {
+        platform: "android",
         launcher: {
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
@@ -680,13 +679,13 @@ it.skipIf(process.platform === "win32")(
     await writeFile(join(root, "work", "bin", "chromium-browser"), "decoy\n");
     await writeFile(decoyChrome, "decoy\n");
     const wrapper = `${root}/work/link/../bin/chromium-browser`;
-    Object.defineProperty(process, "platform", { value: "android" });
     let executablePath: string | undefined;
     await expect(
       openPlaywrightScenarioBrowser(
         androidLaunchScenario(wrapper),
         { PREFIX: `${root}/work/link/..`, TMPDIR: "", TMP: "", TEMP: "" },
         {
+          platform: "android",
           launcher: {
             connectOverCDP: async () => {
               throw new Error("Unexpected connection");
@@ -723,13 +722,13 @@ it("keeps a caller-selected Android browser that is not Termux Chromium", async 
   await mkdir(join(prefix, "lib", "chromium"), { recursive: true });
   await writeFile(selected, "#!/bin/sh\n");
   await writeFile(chrome, "#!/bin/sh\n");
-  Object.defineProperty(process, "platform", { value: "android" });
   let executablePath: string | undefined;
   await expect(
     openPlaywrightScenarioBrowser(
       androidLaunchScenario(selected),
       { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
       {
+        platform: "android",
         launcher: {
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
@@ -758,13 +757,13 @@ it.each(["chromium", "chromium-browser"])(
     await mkdir(dirname(sibling), { recursive: true });
     await writeFile(selected, "#!/bin/sh\n");
     await writeFile(sibling, "#!/bin/sh\n");
-    Object.defineProperty(process, "platform", { value: "android" });
     let launchedExecutable: string | undefined;
     await expect(
       openPlaywrightScenarioBrowser(
         androidLaunchScenario(selected),
         { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
         {
+          platform: "android",
           launcher: {
             connectOverCDP: async () => {
               throw new Error("Unexpected connection");
@@ -790,11 +789,11 @@ it("places each overlapping Playwright artifact directory in its own Termux temp
   vi.stubEnv("TMPDIR", "");
   vi.stubEnv("TMP", "");
   vi.stubEnv("TEMP", "");
-  Object.defineProperty(process, "platform", { value: "android" });
   const launch = (root: string) =>
     openPlaywrightScenarioBrowser(
       androidLaunchScenario(join(root, "missing-chromium")),
       { PREFIX: root, TMPDIR: "", TMP: "", TEMP: "" },
+      { platform: "android" },
     );
   const settled = await Promise.allSettled([
     launch(firstRoot),
