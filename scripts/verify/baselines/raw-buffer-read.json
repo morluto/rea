@@ -43,7 +43,6 @@
   "src/domain/native/readBinaryContainer.ts": 1,
   "src/domain/pe/peResourceInventory.ts": 7,
   "src/domain/pe/peResourceTreeFacts.ts": 9,
-  "src/domain/peOptionalHeader.ts": 12,
   "src/domain/peSectionHeader.ts": 5,
   "src/domain/pngHeader.ts": 4,
   "src/domain/pngVisualDiff.ts": 7,
