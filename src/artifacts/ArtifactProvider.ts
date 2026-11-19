@@ -486,6 +486,18 @@ class ArtifactClient implements AnalysisClient {
           kind: "artifact-path" as const,
           path,
         })),
+        // A universal trace selects its own slices. Thin files retain their
+        // architecture and use the default subject for the open target.
+        ...(this.target.format === "mach-o-universal"
+          ? {
+              subject: {
+                path: this.target.path,
+                sha256: this.target.sha256,
+                format: this.target.format,
+                selection: null,
+              },
+            }
+          : {}),
       }),
     );
   }

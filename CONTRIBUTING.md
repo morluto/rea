@@ -124,21 +124,11 @@ it or require another human sign-off. Keep the PR description and affected
 validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
-The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. PRs authored by
-@morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or @vincentkoc are
-exempt from the declaration. Their human ownership, review, and evidence
-responsibilities above still apply. The check identifies authors by GitHub
-account ID and verifies that they filled in the declaration.
-Existing PRs can copy the **Author readiness** section from the current template.
-Open PRs must have distinct head commits because GitHub shares commit statuses.
-
-Maintainers enable merge enforcement after the workflow is merged: run
-`gh workflow run pr-readiness.yml -f pull_request_number=NUMBER` for existing
-open PRs, then add `PR readiness` from GitHub Actions to the branch's required
-status checks alongside its existing checks. Deploy the workflow to each
-protected target branch before requiring it there. The workflow reads PR
-metadata using trusted default-branch code and writes only a commit status.
+Maintainers review the **Author readiness** declaration in the PR body. PRs
+authored by @morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or
+@vincentkoc are exempt from the declaration. Their human ownership, review,
+and evidence responsibilities above still apply. Existing PRs can copy the
+**Author readiness** section from the current template.
 
 When an open PR may overlap another open change or a recently landed fix, note
 the related PR, issue, or commit in the description or a comment as soon as the

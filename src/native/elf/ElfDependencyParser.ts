@@ -1,10 +1,28 @@
 import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
-import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
+import {
+  DT_FLAGS,
+  DT_FLAGS_1,
+  DT_GNU_HASH,
+  DT_HASH,
+  DT_NEEDED,
+  DT_RPATH,
+  DT_RUNPATH,
+  DT_STRTAB,
+  DT_STRSZ,
+  DT_SYMENT,
+  DT_SYMTAB,
+  walkElfDynamicTable,
+} from "../../domain/elfDynamicEntry.js";
+import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  admitElfLoadSegment,
+  elfLoadSpans,
+  readElfProgramHeader,
+  type ElfLoadMappings,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import {
@@ -44,7 +62,11 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
 } from "../../domain/binaryContainer.js";
-import type { FileMapping } from "../../domain/virtualFileMapping.js";
+import {
+  resolveMappedFileOffset,
+  type FileMapping,
+  type ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { architectureForElfMachine } from "../../domain/native/elfImage.js";
 import { Budget } from "../../domain/budget.js";
 
@@ -60,24 +82,12 @@ const SHT_GNU_HASH = 0x6ffffff6;
 const SHT_GNU_VERDEF = 0x6ffffffd;
 const SHT_GNU_VERNEED = 0x6ffffffe;
 const SHT_GNU_VERSYM = 0x6fffffff;
-const DT_NULL = 0;
-const DT_NEEDED = 1;
-const DT_HASH = 4;
-const DT_STRTAB = 5;
-const DT_SYMTAB = 6;
-const DT_STRSZ = 10;
-const DT_SYMENT = 11;
-const DT_SONAME = 14;
-const DT_RPATH = 15;
-const DT_RUNPATH = 29;
-const DT_FLAGS = 30;
-const DT_GNU_HASH = 0x6ffffef5;
-const DT_VERSYM = 0x6ffffff0;
-const DT_FLAGS_1 = 0x6ffffffb;
-const DT_VERDEF = 0x6ffffffc;
-const DT_VERDEFNUM = 0x6ffffffd;
-const DT_VERNEED = 0x6ffffffe;
-const DT_VERNEEDNUM = 0x6fffffff;
+const DT_SONAME = 14n;
+const DT_VERSYM = 0x6ffffff0n;
+const DT_VERDEF = 0x6ffffffcn;
+const DT_VERDEFNUM = 0x6ffffffdn;
+const DT_VERNEED = 0x6ffffffen;
+const DT_VERNEEDNUM = 0x6fffffffn;
 const VER_FLG_BASE = 1;
 const VER_FLG_WEAK = 2;
 /**
@@ -147,12 +157,6 @@ const fail = (message: string): never => {
 };
 
 const hex = (value: number | bigint): string => `0x${value.toString(16)}`;
-
-/** Class-width tag value, or null when it is wider than every known DT_* tag. */
-const asTag = (tag: bigint, bits: 32 | 64): number | null => {
-  const word = BigInt.asUintN(bits, tag);
-  return word > 0xffffffffn ? null : Number(word);
-};
 
 const asNumber = (value: bigint, label: string): number => {
   if (value > BigInt(Number.MAX_SAFE_INTEGER))
@@ -371,12 +375,17 @@ const searchPath = (
 };
 
 const mapAddress = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
   size: number,
 ): number | null => {
   try {
-    return mappedFileOffset(mappings, address, size);
+    return mappedFileOffset(
+      mappings.fileBacked,
+      address,
+      size,
+      mappings.zeroFills,
+    );
   } catch (cause) {
     if (cause instanceof BinaryMappingFailure) return null;
     throw cause;
@@ -385,44 +394,68 @@ const mapAddress = (
 
 /** File-offset end of the PT_LOAD mapping that contains a virtual address. */
 const mappedExtentEnd = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
 ): number | null => {
-  for (const mapping of mappings)
-    if (
-      address >= mapping.address &&
-      address < mapping.address + BigInt(mapping.size)
-    )
-      return mapping.offset + mapping.size;
-  return null;
+  const mapping = mappings.fileBacked.find(
+    (range) =>
+      address >= range.address && address < range.address + BigInt(range.size),
+  );
+  if (mapping === undefined) return null;
+  let end = mapping.address + BigInt(mapping.size);
+  for (const zeroFill of mappings.zeroFills)
+    if (zeroFill.address > address && zeroFill.address < end)
+      end = zeroFill.address;
+  return mapping.offset + Number(end - mapping.address);
 };
 
+interface SectionAdmission {
+  readonly declaration: SectionFacts | undefined;
+  readonly table: SectionFacts | undefined;
+}
+
 /**
- * DT_* entries are the load-time facts. A section header describing the same
- * table is accepted only when it names the same address, maps to the same file
- * bytes, and agrees on any declared size; otherwise the dynamic declaration wins.
+ * Admit the section declaration at the agreed start, then check its table
+ * extent. A conflicting extent does not invalidate the section header's links.
  */
 const agreedSection = (
   section: SectionFacts | undefined,
   declared: bigint | undefined,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   label: string,
   issues: ElfDependencyIssue[],
   sizeAgrees: (section: SectionFacts) => boolean = () => true,
-): SectionFacts | undefined => {
-  if (section === undefined || declared === undefined) return section;
-  if (
-    section.address === declared &&
-    mapAddress(mappings, declared, 1) === section.offset &&
-    sizeAgrees(section)
-  )
-    return section;
+): SectionAdmission => {
+  if (section === undefined || declared === undefined)
+    return { declaration: section, table: section };
+  let declaration: SectionFacts | undefined;
+  if (section.address === declared && sizeAgrees(section)) {
+    const mapped = resolveMappedFileOffset(
+      mappings.fileBacked,
+      declared,
+      Math.max(1, section.size),
+      mappings.zeroFills,
+    );
+    const start = mapped.ok ? mapped.value : mapAddress(mappings, declared, 1);
+    if (start === section.offset) {
+      declaration = section;
+      if (
+        mapped.ok ||
+        (mapped.error.reason === "unmapped" && !mapped.error.overlapsZeroFill)
+      )
+        // A plain gap still allows recovery from the section's file bytes.
+        return { declaration, table: section };
+    }
+  }
   issues.push({
     code: "malformed_entry",
     location: hex(section.offset),
-    message: `${label} section header disagrees with its dynamic-table declaration; using the dynamic declaration`,
+    message:
+      declaration === undefined
+        ? `${label} section header disagrees with its dynamic-table declaration; using the dynamic declaration`
+        : `${label} section extent conflicts with its load mapping. Using the dynamic declaration`,
   });
-  return undefined;
+  return { declaration, table: undefined };
 };
 
 const sectionInsideFile = (section: SectionFacts, fileBytes: number): boolean =>
@@ -454,7 +487,7 @@ const tableFromSection = (
 };
 
 const tableFromVirtual = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint | undefined,
   size: number,
 ): LocatedTable | null => {
@@ -498,10 +531,10 @@ const sysvSymbolCountAt = (
  */
 const mappedHashWords = (
   reader: BinaryReader,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
 ): ElfHashWordReader => {
-  const index = createFileMappingIndex(mappings);
+  const index = createFileMappingIndex(mappings.fileBacked, mappings.zeroFills);
   return (offset) => {
     if (offset < 0) return err("precedes its table");
     let at: number;
@@ -520,7 +553,7 @@ const mappedHashWords = (
 
 const sysvSymbolCount = (
   reader: BinaryReader,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
 ): number | null => {
   const count = readElfHashSymbolCount(
@@ -556,7 +589,7 @@ const gnuSymbolCount = function* (
 };
 
 const locateVersionTable = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   fileBytes: number,
   section: SectionFacts | undefined,
   address: bigint | undefined,
@@ -637,8 +670,8 @@ export const readElfDependenciesSteps = function* (
     fail(`ELF type ${String(type)} is not a loadable ET_EXEC or ET_DYN image.`);
   const raw = readElfRawTableDeclarations(bytes, header);
   if (!raw.ok) return fail(raw.error.message);
-  const presence = validateElfSectionTablePresence(raw.value);
-  if (!presence.ok) return fail(presence.error);
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return fail(sectionTable.error);
   const { programs, sections } = raw.value;
   if (
     programs.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
@@ -652,7 +685,7 @@ export const readElfDependenciesSteps = function* (
   const shentsize = sections.width;
   const shnum = sections.count;
   const shstrndx = sections.namesIndex;
-  if (phnum === 0xffff || shnum === 0xffff || shstrndx === 0xffff)
+  if (phnum === 0xffff || shstrndx === 0xffff)
     throw new BinaryFormatFailure(
       "unsupported",
       "ELF extended numbering is unsupported.",
@@ -671,7 +704,9 @@ export const readElfDependenciesSteps = function* (
   if (phentsize < (bits === 64 ? 56 : 32))
     fail("ELF program header width is invalid.");
   reader.range(phoff, phnum * phentsize, "ELF program headers");
-  const mappings: FileMapping[] = [];
+  const fileBacked: FileMapping[] = [];
+  const zeroFills: ZeroFillMapping[] = [];
+  const mappings: ElfLoadMappings = { fileBacked, zeroFills };
   let interp: Range | null = null;
   let dynamic: Range | null = null;
   for (let index = 0; index < phnum; index += 1) {
@@ -696,63 +731,48 @@ export const readElfDependenciesSteps = function* (
       continue;
     }
     if (program.type !== PT_LOAD) continue;
+    const admitted = admitElfLoadSegment(program, bits);
+    if (!admitted.ok) return fail(admitted.error.message);
     const range = fileRange(program.offset, program.fileSize, "PT_LOAD");
-    if (range.bytes === 0) continue;
-    reader.range(range.offset, range.bytes, "PT_LOAD");
-    mappings.push({
-      address: program.virtualAddress,
-      offset: range.offset,
-      size: range.bytes,
-    });
+    if (range.bytes > 0) reader.range(range.offset, range.bytes, "PT_LOAD");
+    const spans = elfLoadSpans(program);
+    if (spans.fileBacked !== undefined) fileBacked.push(spans.fileBacked);
+    if (spans.zeroFill !== undefined) zeroFills.push(spans.zeroFill);
   }
   const issues: ElfDependencyIssue[] = [];
   const interpreter = parseInterpreter(reader, interp, issues);
   if (dynamic === null)
     return emptyInventory(artifact, identity, interpreter, issues);
-  reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
-  const entrySize = bits === 64 ? 16 : 8;
-  const unique = new Map<number, number>();
-  const addresses = new Map<number, bigint>();
+  const table = reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
+  const unique = new Map<bigint, number>();
+  const addresses = new Map<bigint, bigint>();
   const neededOffsets: number[] = [];
-  let terminated = false;
-  for (
-    let base = dynamic.offset;
-    base + entrySize <= dynamic.offset + dynamic.bytes;
-    base += entrySize
-  ) {
-    const parsedEntry = readElfDynamicEntry(
-      bytes.subarray(base, base + entrySize),
-      bits,
-      reader.little,
+  const walked = walkElfDynamicTable<never>(
+    table,
+    { bits, littleEndian: reader.little },
+    UNIQUE_DYNAMIC_TAGS,
+    ({ tag, value, singleton }) => {
+      if (tag === DT_NEEDED) {
+        neededOffsets.push(asNumber(value, "DT_NEEDED"));
+        charge(
+          neededOffsets.length,
+          input.max_needed,
+          MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
+          "DT_NEEDED entries",
+          "max_needed",
+        );
+      } else if (ADDRESS_DYNAMIC_TAGS.has(tag)) addresses.set(tag, value);
+      else if (singleton)
+        unique.set(tag, asNumber(value, `DT tag ${hex(tag)}`));
+    },
+  );
+  if (!walked.ok)
+    return fail(
+      walked.error.kind === "duplicate-singleton"
+        ? `Duplicate dynamic tag ${hex(walked.error.tag)}`
+        : walked.error.error,
     );
-    if (!parsedEntry.ok) return fail(parsedEntry.error.message);
-    const tag = asTag(parsedEntry.value.tag, bits);
-    if (tag === null) continue;
-    if (tag === DT_NULL) {
-      terminated = true;
-      break;
-    }
-    if (tag === DT_NEEDED) {
-      neededOffsets.push(asNumber(parsedEntry.value.value, "DT_NEEDED"));
-      charge(
-        neededOffsets.length,
-        input.max_needed,
-        MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
-        "DT_NEEDED entries",
-        "max_needed",
-      );
-      continue;
-    }
-    if (!UNIQUE_DYNAMIC_TAGS.has(tag)) continue;
-    if (unique.has(tag) || addresses.has(tag))
-      fail(`Duplicate dynamic tag ${hex(tag)}`);
-    if (ADDRESS_DYNAMIC_TAGS.has(tag)) {
-      addresses.set(tag, parsedEntry.value.value);
-      continue;
-    }
-    unique.set(tag, asNumber(parsedEntry.value.value, `DT tag ${hex(tag)}`));
-  }
-  if (!terminated)
+  if (walked.value.terminatorOffset === null)
     issues.push({
       code: "malformed_entry",
       location: hex(dynamic.offset),
@@ -779,31 +799,35 @@ export const readElfDependenciesSteps = function* (
     });
     return undefined;
   };
-  const sectionOf = (type: number, tag: number, label: string) =>
+  const sectionOf = (type: number, tag: bigint, label: string) =>
     agreedSection(
       sectionOfType(type, label),
       addresses.get(tag),
       mappings,
       label,
       issues,
-    );
+    ).table;
   const syment = unique.get(DT_SYMENT);
-  const dynsymSection = agreedSection(
-    sectionOfType(SHT_DYNSYM, ".dynsym"),
-    addresses.get(DT_SYMTAB),
-    mappings,
-    ".dynsym",
-    issues,
-    (section) =>
-      syment === undefined ||
-      section.entrySize === 0 ||
-      section.entrySize === syment,
-  );
+  const { declaration: symbolDeclaration, table: dynsymSection } =
+    agreedSection(
+      sectionOfType(SHT_DYNSYM, ".dynsym"),
+      addresses.get(DT_SYMTAB),
+      mappings,
+      ".dynsym",
+      issues,
+      (section) =>
+        syment === undefined ||
+        section.entrySize === 0 ||
+        section.entrySize === syment,
+    );
   const strsz = unique.get(DT_STRSZ);
   const linkedStrings =
-    dynsymSection === undefined ? undefined : sectionFacts[dynsymSection.link];
-  const dynstrSection = agreedSection(
-    linkedStrings?.type === 3 ? linkedStrings : undefined,
+    symbolDeclaration === undefined
+      ? undefined
+      : sectionFacts[symbolDeclaration.link];
+  const stringSection = linkedStrings?.type === 3 ? linkedStrings : undefined;
+  const { table: dynstrSection } = agreedSection(
+    stringSection,
     addresses.get(DT_STRTAB),
     mappings,
     ".dynstr",
@@ -819,18 +843,50 @@ export const readElfDependenciesSteps = function* (
   const verdefSection = sectionOf(SHT_GNU_VERDEF, DT_VERDEF, ".gnu.version_d");
   const hashSection = sectionOf(5, DT_HASH, ".hash");
   const gnuHashSection = sectionOf(SHT_GNU_HASH, DT_GNU_HASH, ".gnu.hash");
-  const dynstrTable =
-    tableFromSection(dynstrSection, bytes.length, "Dynamic string", issues) ??
-    tableFromVirtual(mappings, addresses.get(DT_STRTAB), strsz ?? 0);
+  const strtab = addresses.get(DT_STRTAB);
+  const mappedStrings =
+    strtab === undefined
+      ? undefined
+      : resolveMappedFileOffset(
+          fileBacked,
+          strtab,
+          Math.max(1, strsz ?? dynstrSection?.size ?? 0),
+          zeroFills,
+        );
+  const mappingFailure =
+    mappedStrings?.ok === false ? mappedStrings.error : undefined;
+  // A section can recover an unmapped span, but cannot provide file bytes
+  // where the load mapping supplies zeros or conflicts.
+  const ambiguousStrings =
+    mappingFailure?.reason === "ambiguous" ||
+    (mappingFailure?.reason === "unmapped" &&
+      mappingFailure.overlapsZeroFill &&
+      stringSection?.address === strtab);
+  const dynstrTable = ambiguousStrings
+    ? null
+    : (tableFromSection(
+        dynstrSection,
+        bytes.length,
+        "Dynamic string",
+        issues,
+      ) ??
+      (mappedStrings?.ok === true
+        ? {
+            offset: mappedStrings.value,
+            size: strsz ?? 0,
+            location: { offset: mappedStrings.value, bytes: strsz ?? 0 },
+          }
+        : null));
   if (
     dynstrTable === null &&
-    (neededOffsets.length > 0 || unique.has(DT_SONAME))
+    (ambiguousStrings || neededOffsets.length > 0 || unique.has(DT_SONAME))
   )
     issues.push({
       code: "table_unavailable",
       location: hex(dynamic.offset),
-      message:
-        "Dynamic string table could not be located from section headers or DT_STRTAB",
+      message: ambiguousStrings
+        ? "ELF dynamic string table has ambiguous file mappings"
+        : "Dynamic string table could not be located from section headers or DT_STRTAB",
     });
   const dynstr = new DynamicStrings(
     dynstrTable === null
@@ -1158,11 +1214,11 @@ const readSections = (
 
 const locateSymbolCount = function* (
   reader: BinaryReader,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   dynsym: SectionFacts | undefined,
   hash: SectionFacts | undefined,
   gnuHash: SectionFacts | undefined,
-  tags: ReadonlyMap<number, bigint>,
+  tags: ReadonlyMap<bigint, bigint>,
   bits: 32 | 64,
   entrySize: number,
   issues: ElfDependencyIssue[],
@@ -1232,7 +1288,7 @@ const followVersionLink = (
 const parseVerneed = (
   reader: BinaryReader,
   bytes: Buffer,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: bigint | undefined,
@@ -1377,7 +1433,7 @@ const parseVerneed = (
 const parseVerdef = (
   reader: BinaryReader,
   bytes: Buffer,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: bigint | undefined,

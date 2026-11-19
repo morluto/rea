@@ -170,6 +170,50 @@ export const peImportImage = (
   return split;
 };
 
+/** A two-byte hint ends one section; its name begins at the next RVA in another file span. */
+export const peImportHintBoundaryImage = (
+  bits: 32 | 64,
+  kind: "standard" | "delay",
+  gap: "none" | "hint" | "name" = "none",
+): Buffer => {
+  const dll = {
+    name: "KERNEL32.dll",
+    functions: [{ name: "GetProcAddress", hint: 7 }],
+  };
+  const sectionBytes = 0x2000;
+  const splitAt = 0x1000;
+  const bytes = peImportImage({
+    bits,
+    sectionBytes,
+    splitAt,
+    ...(kind === "standard" ? { dlls: [dll] } : { dlls: [], delayDlls: [dll] }),
+  });
+  const descriptor = peImportFixtureOffset(SECTION_RVA);
+  const hintRva = SECTION_RVA + splitAt - 2;
+  const ilt = bytes.readUInt32LE(descriptor + (kind === "standard" ? 0 : 16));
+  const iat = bytes.readUInt32LE(descriptor + (kind === "standard" ? 16 : 12));
+  for (const table of [ilt, iat]) {
+    const at = peImportFixtureOffset(table);
+    if (bits === 64) bytes.writeBigUInt64LE(BigInt(hintRva), at);
+    else bytes.writeUInt32LE(hintRva, at);
+  }
+  bytes.writeUInt16LE(7, peImportFixtureOffset(hintRva));
+  bytes.write(
+    "GetProcAddress\0",
+    SECTION_OFFSET + sectionBytes + SPLIT_GAP_BYTES,
+    "ascii",
+  );
+  // Aligned PE section layout; a DLL need not declare an entry point.
+  bytes.writeUInt16LE(0x2002, 150);
+  bytes.writeUInt32LE(0x1000, 152 + 32);
+  bytes.writeUInt32LE(0x200, 152 + 36);
+  bytes.writeUInt32LE(gap === "name" ? 0x4000 : 0x3000, 152 + 56);
+  const section = 152 + (bits === 64 ? 112 : 96) + 16 * 8;
+  if (gap === "hint") bytes.writeUInt32LE(splitAt - 1, section + 16);
+  if (gap === "name") bytes.writeUInt32LE(0x3000, section + 40 + 12);
+  return bytes;
+};
+
 /** PE image whose optional header admits no import data directory. */
 export const peWithoutImportTableFixture = (bits: 32 | 64 = 64): Buffer =>
   peImportImage({ bits, importDirectory: false, delayDlls: [] });

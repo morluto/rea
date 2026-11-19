@@ -84,7 +84,13 @@ active-target native or archive workflows; target-free tools take their own
 explicit path or endpoint and do not need it.
 
 - ASAR or extracted JavaScript/Electron tree:
-  `analyze_javascript_application`.
+  `analyze_javascript_application`. To find a few files in a packaged
+  `app.asar`, open it with `open_binary`, start with `inspect_artifact`
+  using `detail: "summary"`, then analyze the selected files with
+  `source_paths`. When you intend to retain digest contradictions from
+  re-signed unpacked companions, pass `integrity_policy: "record-and-continue"`
+  starting with `inspect_artifact`. See the
+  [JavaScript applications reference](references/javascript-applications.md).
 - Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX, DMG, or a PyInstaller
   executable): `open_binary` with the supplied local path; use `inspect_artifact`
   when its graph and findings help answer the question. A PyInstaller CArchive
@@ -256,11 +262,12 @@ explicit path or endpoint and do not need it.
   other versions are unsupported. Optional matching `binary_path` enables static native addresses and type references; query `method_addresses` with indices or addresses/states, preserving every shared-body method and both artifact identities. Without a linked binary native counts remain unknown. Byte-pattern fallback is inferred; no runtime behavior or same-build pairing is proved. See the
   [IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
 - Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
-  with the explicit local ELF, PE, or thin Mach-O file. This built-in
-  target-free inspection requires no Rust installation or disassembler. Preserve
-  package order, dependency indices, and the section file range. A missing
-  `.dep-v0` section is null metadata, not proof the binary has no dependencies.
-  A rustc commit hash is an inference from a read-only `/rustc/<40-hex>/` path.
+  with the explicit local ELF, PE, thin Mach-O, or WebAssembly core-module
+  file. This built-in target-free inspection requires no Rust installation or
+  disassembler. Preserve package order, dependency indices, and the section file
+  range. A missing `.dep-v0` section is null metadata, not proof the binary has
+  no dependencies. A rustc commit hash is an inference from a
+  `/rustc/<40-hex>/` path in read-only data or a WebAssembly data section.
   For selected crates, use `view: {collection: "packages", names: [...],
   fields: ["name", "version", "source"]}` on the first call; explicitly include
   `dependencies` for direct index references. Use `detail: "summary"` for counts
@@ -458,7 +465,12 @@ explicit path or endpoint and do not need it.
   with an explicit path; portable, no active target or engine.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
-  inventory context is useful and available from the selected provider.
+  inventory context is useful and available from the selected provider. If
+  automatic selection returns `capability_unavailable` with
+  `selection_reason: "ambiguous"`, several providers are usable for the
+  selected target. Choose one of the reported candidates and retry with its
+  `provider_id`. Without an active target, `binary_session({})` shows host
+  availability and leaves target support unknown.
 
 For an existing IDA MCP configuration, use `open_binary` with the original
 input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.

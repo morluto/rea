@@ -11,8 +11,8 @@ executing anything in it or contacting a NuGet feed.
 ## Requirements
 
 - Report the artifact path, SHA-256 and byte length.
-- Select the `.nuspec` from a unique OPC `_rels/.rels` relationship whose Type
-  ends in `/manifest` when that target exists, otherwise from a unique root
+- Select the `.nuspec` from a unique OPC `_rels/.rels` relationship with Type
+  `http://schemas.microsoft.com/packaging/2010/07/manifest` when that target exists, otherwise from a unique root
   `.nuspec`. Missing, ambiguous or malformed manifests succeed with the ZIP
   inventory, `identity: null` and an explicit limitation.
 - Report `identity`, `license`, `repository` and `dependency_groups` as spelled

@@ -10,7 +10,7 @@ import { parseApplicationGraphEvidence } from "../../../src/application/javascri
 import { findApplicationFeatureSeeds } from "../../../src/domain/javascript/javascriptFeatureSeed.js";
 import { compareSourceToBundle } from "../../../src/domain/javascript/sourceToBundleComparison.js";
 import {
-  resolveJavaScriptSourceMapReferences,
+  resolveJavaScriptSourceMapReference,
   resolveJavaScriptSourceMapUrl,
 } from "../../../src/domain/javascript/javascriptSourceMapPaths.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -935,7 +935,7 @@ it.each([
   "checks encoded source-map separators in the parsed pathname of $source",
   ({ source, expected }) => {
     expect(
-      resolveJavaScriptSourceMapReferences([source], null, "ordinary.js.map")[0]
+      resolveJavaScriptSourceMapReference(source, null, "ordinary.js.map")
         ?.resolution,
     ).toEqual({ kind: "suffix", path: expected });
   },

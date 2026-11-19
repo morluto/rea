@@ -29,7 +29,10 @@ import {
 } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
-import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
+import {
+  nodeDiscoveryTargetUrl,
+  startFakeV8Inspector,
+} from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createNodeDiscoveryTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -274,8 +277,8 @@ test("lists all connectable targets on the selected endpoint across directories"
   const fixture = await runtimeFixture();
   const outside = await temporaryFile("outside.js");
   const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(fixture.entry).href,
-    additionalTargets: [{ url: pathToFileURL(outside).href }],
+    targetUrl: nodeDiscoveryTargetUrl(fixture.entry),
+    additionalTargets: [{ url: nodeDiscoveryTargetUrl(outside) }],
     additionalTargetCount: 205,
   });
   try {
@@ -395,6 +398,45 @@ test("preserves attachment facts and refuses attached or unconnectable Inspector
     await fake.close();
   }
 });
+
+// Node reports the raw pathname: spaces and % stay literal, and quotes or
+// backslashes become underscores that cannot identify the original path.
+test.skipIf(process.platform === "win32")(
+  "resolves discovery paths with spaces and percent signs but not quote spellings",
+  async () => {
+    const root = await createNodeDiscoveryTempDirectory("rea-v8-spelling-");
+    const spaced = join(root, "with space %41.js");
+    const quoted = join(root, 'with "quote".js');
+    await writeFile(spaced, "export {};\n");
+    await writeFile(quoted, "export {};\n");
+    expect(nodeDiscoveryTargetUrl(spaced)).toBe(`file://${spaced}`);
+    expect(nodeDiscoveryTargetUrl(quoted)).toBe(
+      `file://${join(root, "with _quote_.js")}`,
+    );
+    const fake = await startFakeV8Inspector({
+      targetUrl: nodeDiscoveryTargetUrl(spaced),
+      additionalTargets: [{ url: nodeDiscoveryTargetUrl(quoted) }],
+    });
+    try {
+      const result = await new V8InspectorProvider().listTargets({
+        inspector_endpoint: fake.endpoint,
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.targets.map(({ location }) => location)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "file", file_path: spaced }),
+          {
+            kind: "unresolved",
+            reported_url: nodeDiscoveryTargetUrl(quoted),
+            reason: "unverifiable-file-location",
+          },
+        ]),
+      );
+    } finally {
+      await fake.close();
+    }
+  },
+);
 
 test("captures complete metadata with two enable commands", async () => {
   const fixture = await runtimeFixture();

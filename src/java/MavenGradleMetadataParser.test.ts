@@ -470,7 +470,24 @@ it("lists properties in packaging, scope, type and classifier", () => {
   ]);
 });
 
-it("classifies a Gradle exclusive-lower-bound request as a range", () => {
+it.each([
+  ["]1.0,2.0]", "range"],
+  ["[1.0,2.0[", "range"],
+  ["(,2.0]", "range"],
+  ["[1.0,)", "range"],
+  ["[1.0]", "range"],
+  ["[1.0\u00a0beta,2.0]", "range"],
+  ["[1.0\u2003beta]", "range"],
+  ["[1.0\tbeta,2.0]", "literal"],
+  ["[\t1.0,\r\n2.0 ]", "range"],
+  ["[\u00a01.0 ,2.0]", "range"],
+  ["[1.0 \u00a0,2.0]", "literal"],
+  ["1.+", "dynamic"],
+  ["latest.release", "dynamic"],
+  ["latest.release.candidate", "dynamic"],
+  ["sdk[preview]", "literal"],
+  ["[1.0,2.0", "literal"],
+])("reports Gradle selector %s as %s", (requires, versionKind) => {
   const report = parse(
     JSON.stringify({
       formatVersion: "1.1",
@@ -479,11 +496,7 @@ it("classifies a Gradle exclusive-lower-bound request as a range", () => {
         {
           name: "apiElements",
           dependencies: [
-            {
-              group: "com.example",
-              module: "lib",
-              version: { requires: "]1.0,2.0]" },
-            },
+            { group: "com.example", module: "lib", version: { requires } },
           ],
         },
       ],
@@ -491,35 +504,10 @@ it("classifies a Gradle exclusive-lower-bound request as a range", () => {
     "/artifacts/demo-1.0.0.module",
   );
   expect(report.dependencies[0]).toMatchObject({
-    version: "]1.0,2.0]",
-    version_kind: "range",
+    version: requires,
+    version_kind: versionKind,
   });
 });
-
-it.each(["1.+", "latest.release"])(
-  "classifies a Gradle dynamic selector %s as dynamic, not literal",
-  (requires) => {
-    const report = parse(
-      JSON.stringify({
-        formatVersion: "1.1",
-        component: { group: "com.example", module: "demo", version: "1.0.0" },
-        variants: [
-          {
-            name: "apiElements",
-            dependencies: [
-              { group: "com.example", module: "lib", version: { requires } },
-            ],
-          },
-        ],
-      }),
-      "/artifacts/demo-1.0.0.module",
-    );
-    expect(report.dependencies[0]).toMatchObject({
-      version: requires,
-      version_kind: "dynamic",
-    });
-  },
-);
 
 it("keeps an empty relativePath and a property-spelled optional distinct from omission", () => {
   const report = parse(`<project>

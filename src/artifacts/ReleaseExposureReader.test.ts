@@ -1,3 +1,4 @@
+import { WEB_SOURCE_MAP_LIMITS } from "../domain/sourceMapLimits.js";
 import { writeMinimalElfHeader } from "../../tests/fixtures/nativeHeaders.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -32,7 +33,6 @@ import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTa
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
-import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -207,6 +207,62 @@ const ignoreText = (): void => undefined;
 // Keep the marker separate so Vite does not treat fixture text as this file's source map.
 const INLINE_MAP_PREFIX = "# sourceMappingURL=data:application/json;base64,";
 
+it.each([80, 200])(
+  "keeps a PE header truncated at %s bytes unclassified with PDB coverage unresolved",
+  async (length) => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-truncated-header-",
+    );
+    const path = join(root, "app.exe");
+    const bytes = pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" });
+    await writeFile(path, bytes.subarray(0, length));
+    for (const input of [root, path]) {
+      const scanned = await inspect(input);
+      expect(scanned.native_images).toEqual([]);
+      expect(scanned.pdb).toMatchObject({
+        examined: 0,
+        failed: 1,
+        paths: [],
+      });
+      expect(scanned.limitations).toContain(
+        `Could not decode the PE header in ${path} to inspect debug records.`,
+      );
+    }
+  },
+);
+
+describe("ReleaseExposureReader inline base64 map URLs", () => {
+  const encoded = embeddedSourceMap().toString("base64").replace(/=+$/u, "");
+
+  it.each([
+    { separator: "%0A", suffix: "", exposed: true },
+    { separator: "", suffix: "#", exposed: true },
+    { separator: "", suffix: "#ignored,fragment", exposed: true },
+    { separator: "!", suffix: "", exposed: false },
+    { separator: "%21", suffix: "", exposed: false },
+    { separator: "%23", suffix: "#ignored", exposed: false },
+    { separator: "", suffix: "?body#ignored", exposed: false },
+  ])(
+    "treats separator '$separator' and suffix '$suffix' as exposed=$exposed",
+    async ({ separator, suffix, exposed }) => {
+      const root = await createTestTempDirectory("rea-release-inline-map-url-");
+      const path = join(root, "app.js");
+      await writeFile(
+        path,
+        `//${INLINE_MAP_PREFIX}${encoded.slice(0, 4)}${separator}${encoded.slice(4)}${suffix}\n`,
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: exposed ? 1 : 0,
+        unparsed: exposed ? 0 : 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe(
+        exposed ? "exposed" : "unknown",
+      );
+    },
+  );
+});
+
 describe("ReleaseExposureReader review regressions", () => {
   it("keeps inline CSS source-map coverage unknown in files and packages", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-css-");
@@ -254,8 +310,8 @@ describe("ReleaseExposureReader review regressions", () => {
     },
   );
 
-  it.each([80, 200, 520, 550])(
-    "preserves CodeView parsing truncated at %s bytes as unresolved",
+  it.each([520, 550])(
+    "preserves CodeView data truncated at %s bytes as unresolved",
     async (length) => {
       const root = await createTestTempDirectory(
         "rea-release-exposure-truncated-",
@@ -265,7 +321,10 @@ describe("ReleaseExposureReader review regressions", () => {
       });
       await writeFile(join(root, "app.exe"), bytes.subarray(0, length));
       const scanned = await inspect(root);
-      expect(scanned.pdb).toMatchObject({ failed: 1, paths: [] });
+      expect(scanned.native_images).toMatchObject([
+        { path: join(root, "app.exe"), format: "pe" },
+      ]);
+      expect(scanned.pdb).toMatchObject({ examined: 1, failed: 1, paths: [] });
     },
   );
 
@@ -432,11 +491,11 @@ describe("ReleaseExposureReader", () => {
     const elf = Buffer.alloc(300 * 1024);
     writeMinimalElfHeader(elf);
     await writeFile(join(root, "app.elf"), elf);
-    const pe = Buffer.concat([
-      windowsNativeArtifactFixture().bytes,
+    const peImage = Buffer.concat([
+      pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" }),
       Buffer.alloc(300 * 1024),
     ]);
-    await writeFile(join(root, "app.exe"), pe);
+    await writeFile(join(root, "app.exe"), peImage);
     const calls: string[] = [];
     const real = stableRead.impl;
     stableRead.impl = async (...args) => {
@@ -451,7 +510,14 @@ describe("ReleaseExposureReader", () => {
           (image) => image.format === "elf" && image.path.endsWith("app.elf"),
         ),
       ).toBe(true);
-      expect(scanned.pdb.examined).toBeGreaterThanOrEqual(1);
+      expect(scanned.native_images).toContainEqual(
+        expect.objectContaining({ path: join(root, "app.exe"), format: "pe" }),
+      );
+      expect(scanned.pdb).toMatchObject({
+        examined: 1,
+        failed: 0,
+        paths: ["app.pdb"],
+      });
       expect(calls.some((path) => path.endsWith("app.elf"))).toBe(false);
       expect(calls.some((path) => path.endsWith("app.exe"))).toBe(true);
     } finally {
@@ -612,6 +678,33 @@ describe("ReleaseExposureReader member reads", () => {
       await reader.close();
     }
   });
+});
+
+it("keeps observed embedded sources when generated coordinates exceed their budget", async () => {
+  const root = await createTestTempDirectory("rea-release-exposure-offset-");
+  const map = {
+    version: 3,
+    sections: [
+      {
+        offset: { line: WEB_SOURCE_MAP_LIMITS.decodedRows - 1, column: 0 },
+        map: {
+          version: 3,
+          sources: ["src/app.ts"],
+          sourcesContent: ["export {};"],
+          mappings: ";",
+        },
+      },
+    ],
+  };
+  await writeFile(join(root, "app.js.map"), JSON.stringify(map));
+  const scanned = await inspect(root);
+  expect(scanned.source_maps).toMatchObject({
+    embedded: 1,
+    unparsed: 1,
+    without_sources: 0,
+    embedded_paths: [join(root, "app.js.map")],
+  });
+  expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
 });
 
 describe("ReleaseExposureReader limits", () => {
@@ -1949,6 +2042,38 @@ describe("ReleaseExposureReader unread packaged maps", () => {
 });
 
 describe("ReleaseExposureReader undecided PE members", () => {
+  it("keeps a malformed complete member separate from an unexamined header", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-pe-");
+    const bytes = pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" });
+    const image = Buffer.concat([bytes, Buffer.alloc(2 * 1024 * 1024)]);
+    // The complete optional header lies in the probe, but its magic is invalid.
+    image.writeUInt16LE(0, 64 + 24);
+    await writeFile(
+      join(root, "app.exe"),
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "malformed.bin",
+            typeCode: "x",
+            compress: false,
+            payload: image,
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.pdb).toMatchObject({ examined: 1, failed: 1, paths: [] });
+    expect(scanned.omitted).not.toContainEqual(
+      expect.objectContaining({ subject: PACKAGED_NATIVE_IMAGES }),
+    );
+    expect(scanned.limitations.join("\n")).toContain(
+      "malformed.bin to inspect debug records.",
+    );
+  });
+
   it.each(["payload.map", "payload.bin", "payload.json"])(
     "keeps a large PE member named %s with a late header undecided",
     async (name) => {
@@ -4957,9 +5082,19 @@ describe("ReleaseExposureReader packaged map identity", () => {
   );
 });
 
-it.for(["a.js", "z.js"])(
-  "keeps a distinct normalized linker-map occurrence when %s declares the other",
-  async (script, context) => {
+it.for(
+  ["map", "script"].flatMap((role) =>
+    ["a", "z"].flatMap((order) =>
+      [1, 2].map((declarations) => ({
+        role,
+        owner: `${order}.${role === "map" ? "js" : "html"}`,
+        declarations,
+      })),
+    ),
+  ),
+)(
+  "keeps a distinct normalized linker-map occurrence for $declarations $role declarations in $owner",
+  async ({ role, owner, declarations }, context) => {
     const root = await createTestTempDirectory("rea-map-identities-");
     const first = "café.map";
     const second = "cafe\u0301.map";
@@ -4969,25 +5104,101 @@ it.for(["a.js", "z.js"])(
       context.skip();
       return;
     }
-    await writeFile(join(root, script), `//# sourceMappingURL=${first}\n`);
+    const declaration =
+      role === "map"
+        ? `//# ${"sourceMappingURL"}=${first}\n`
+        : `<script src="${first}"></script>`;
+    await writeFile(join(root, owner), declaration.repeat(declarations));
     const scanned = await inspect(root);
     expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
   },
 );
 
-it("keeps a distinct normalized linker map beside a page's script target", async (context) => {
-  const root = await createTestTempDirectory("rea-script-map-identities-");
-  const first = "café.map";
-  const second = "cafe\u0301.map";
-  await writeFile(join(root, first), "const value = 1;\n");
+it.for(
+  ["map", "script"].flatMap((firstRole) =>
+    [false, true].map((otherSpelling) => ({ firstRole, otherSpelling })),
+  ),
+)(
+  "retracts exact occurrences across callers, $firstRole first, other spelling: $otherSpelling",
+  async ({ firstRole, otherSpelling }, context) => {
+    const root = await createTestTempDirectory("rea-shared-map-identity-");
+    const first = "café.map";
+    const second = "cafe\u0301.map";
+    await writeFile(join(root, first), "linker map\n");
+    await writeFile(join(root, second), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      context.skip();
+      return;
+    }
+    await writeFile(
+      join(root, firstRole === "map" ? "z.js" : "zz.js"),
+      `//# ${"sourceMappingURL"}=${firstRole === "map" || !otherSpelling ? first : second}\n`,
+    );
+    await writeFile(
+      join(root, firstRole === "script" ? "z.html" : "zz.html"),
+      `<script src="${firstRole === "script" || !otherSpelling ? first : second}"></script>`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toEqual(
+      otherSpelling ? [] : [join(root, second)],
+    );
+  },
+);
+
+it.for([false, true])(
+  "retracts an exact guess produced after an early script declaration (NFD script: %s)",
+  async (nfdScript, context) => {
+    const root = await createTestTempDirectory("rea-late-exact-map-guess-");
+    const first = "café.map";
+    const second = "cafe\u0301.map";
+    await writeFile(join(root, first), "linker map\n");
+    await writeFile(join(root, second), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      context.skip();
+      return;
+    }
+    const scriptTarget = nfdScript ? second : first;
+    const otherTarget = nfdScript ? first : second;
+    await writeFile(
+      join(root, "a.html"),
+      `<script src="${scriptTarget}"></script>`,
+    );
+    await writeFile(
+      join(root, "b.js"),
+      `//# ${"sourceMappingURL"}=${otherTarget}\n`,
+    );
+    // The other spelling's map declaration routes both candidates through the
+    // map reader. That can create an exact guess after the HTML was admitted.
+    await writeFile(
+      join(root, "z.js"),
+      `//# ${"sourceMappingURL"}=${scriptTarget}\n`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+    expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+  },
+);
+
+it("keeps a missing exact declaration unresolved when later guesses share its lookup key", async (context) => {
+  const root = await createTestTempDirectory("rea-missing-exact-map-guess-");
+  const missing = "cấ.map";
+  const first = "câ\u0301.map";
+  const second = "ca\u0302\u0301.map";
+  await writeFile(join(root, first), "linker map\n");
   await writeFile(join(root, second), "linker map\n");
   if ((await readdir(root)).length !== 2) {
     context.skip();
     return;
   }
-  await writeFile(join(root, "a.html"), `<script src="${first}"></script>`);
+  expect(first.normalize("NFC")).toBe(missing);
+  expect(second.normalize("NFC")).toBe(missing);
+  await writeFile(join(root, "a.html"), `<script src="${missing}"></script>`);
+  await writeFile(join(root, "b.js"), `//# ${"sourceMappingURL"}=${first}\n`);
+  await writeFile(join(root, "z.js"), `//# ${"sourceMappingURL"}=${missing}\n`);
   const scanned = await inspect(root);
-  expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
+  expect(scanned.debug_companions).toEqual({ paths: [], skipped: 1 });
+  expect(debugCompanionsStatus(scanned)).toBe("unknown");
 });
 
 it("keeps a distinct normalized sibling linker map beside a declared one", async (context) => {

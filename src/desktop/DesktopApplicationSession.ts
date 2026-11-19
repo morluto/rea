@@ -95,7 +95,7 @@ const sampleSession = async (
       signal,
     );
   else observations.unreadableWindowSamples += 1;
-  await sampleOpenFiles(observations, plan.roots);
+  await sampleOpenFiles(observations, plan.roots, signal);
   if (!observations.announced && observations.firstWindowMs !== null) {
     observations.announced = true;
     await plan.report(
@@ -288,7 +288,18 @@ const launch = async (
   runId: string,
   signal: AbortSignal,
 ) => {
-  const [command, ...arguments_] = plan.argv;
+  // An env wrapper can clear or overwrite the token supplied to its own
+  // process. Give the application the supervisor's token as the last
+  // assignment, without changing the recorded argv or the wrapper's options.
+  const argv =
+    plan.envProgramIndex === undefined
+      ? plan.argv
+      : plan.argv.toSpliced(
+          plan.envProgramIndex,
+          0,
+          `REA_PROCESS_RUN_ID=${runId}`,
+        );
+  const [command, ...arguments_] = argv;
   const spawned = await spawnOwnedProviderProcess({
     command: command ?? "",
     arguments: arguments_,

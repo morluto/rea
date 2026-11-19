@@ -26,7 +26,31 @@ source digests remain unchanged. Temporary objects and libraries are removed.
 `--runtime-root /path/to/checkout` selects another built runtime for a baseline.
 This qualifies x86 wire formats; the full NDK/APK workflow below is separate.
 
-## Android NDK fixture
+## Portable RELR tag compatibility witness
+
+`relr-tags.c` is a separate, freestanding layout witness: two
+`JNINativeMethod`-shaped records and one constructor. It has no JNI runtime or
+registration calls. GCC emits 32-bit and 64-bit x86 objects; LLD links each with
+both standard and Android RELR tags. No multilib C runtime is needed, and none
+of these shared objects is loaded or executed.
+
+After building REA, run with GCC and an LLD supporting
+`--use-android-relr-tags` (qualified with GCC 14.2 and LLD 19.1.7 on Linux):
+
+```sh
+python3 tests/fixtures/android/jni-bindings/verify-relr-tags.py --lld /path/to/ld.lld
+```
+
+The existing independent Python ELF oracle reads source symbols, exact string
+bytes and RELR address/bitmap records. The witness requires an emitted bitmap,
+checks JNI names/descriptors/function values and slot locations, then runs the
+public `inspect-native-initializers` CLI and compares its constructor address
+with the source symbol. It verifies all input digests remain unchanged and
+removes its temporary objects and libraries. `--runtime-root /path/to/checkout`
+selects another built REA revision for a baseline comparison. This qualifies
+both wire encodings on x86, not Android loading or ARM execution.
+
+## Android NDK source fixture
 
 This fixture contains genuine Java `native` declarations, javac-generated JNI
 headers, `Java_*` exports and actual `JNI_OnLoad`/`RegisterNatives` source. Its

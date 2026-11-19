@@ -1,8 +1,9 @@
 import {
-  capturedHomePath,
+  type capturedHomePlan,
   launchCommand,
   type DesktopAppExportPlan,
 } from "../../domain/desktop/appExport.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { electronLaunchArguments } from "../../domain/desktop/appExportInstall.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
@@ -10,6 +11,7 @@ import {
   type DesktopApplicationState,
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
+import { unwrapDesktopCommand } from "../../domain/desktop/desktopEntry.js";
 import { openSeedDocument } from "../../domain/desktop/seedDocument.js";
 import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import type { SeedVersion } from "./DesktopExportFiles.js";
@@ -113,37 +115,94 @@ export const planLaunch = (
   capture: DesktopApplicationCapture,
   electron: boolean,
   seeds: ReadonlyMap<string, SeedVersion>,
-  files: ReadonlyMap<string, StatePath>,
+  replay: Pick<
+    ReturnType<typeof capturedHomePlan>,
+    "homePath" | "launchPath"
+  > & {
+    readonly files: ReadonlyMap<string, StatePath>;
+    readonly restoredFiles: Iterable<string>;
+  },
 ): Pick<DesktopAppExportPlan, "command" | "opens"> => {
   const { application, host } = capture;
+  const { files, homePath: homeOf } = replay;
   const isDocument = (home: string) => files.get(home)?.role === "document";
-  const homeOf = capturedHomePath(capture);
-  const capturedDirectory = application.working_directory;
-  const workingDirectory = (() => {
-    if (!capturedDirectory.startsWith(`${host.home}/`))
-      return capturedDirectory;
-    const relative = capturedDirectory.slice(host.home.length + 1);
-    const seed = homeOf(capturedDirectory) ?? relative;
-    return seed === relative ? capturedDirectory : `${host.home}/${seed}`;
-  })();
-  const launch = openSeedDocument(
-    electronLaunchArguments(application.argv, electron),
-    {
-      home: host.home,
-      // Resolve captured relative arguments against the directory the app used,
-      // then place the process in the seeded spelling of that directory.
-      workingDirectory: capturedDirectory,
-      launchDirectory: workingDirectory,
-      exec: application.desktop_entry?.exec ?? null,
-      documents: [...seeds.keys()].filter(isDocument).sort(),
-      isDocument,
-      isCaptured: capturedLaunchPaths(capture, files, homeOf),
-      spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
-      mapOutside: homeOf,
-    },
-  );
+  const retained = new Map<string, string>();
+  for (const home of replay.restoredFiles) {
+    const file = files.get(home);
+    if (file !== undefined) retained.set(file.path, home);
+  }
+  const fileSources = [...files.values()].map((file) => file.path);
+  const observedFile = (path: string) =>
+    fileSources.some((physical) => isWithinAny(physical, [path]));
+  const mapTraversal = (path: string, as: "explicit" | "inferred") => {
+    const mapped = replay.launchPath(
+      path,
+      retained,
+      as === "inferred" ? observedFile : undefined,
+    );
+    if (mapped === null)
+      throw new AnalysisInputError("export_desktop_application", {
+        userMessage: `Captured paths under ${JSON.stringify(path)} do not agree on a replay location.`,
+        remediationAction:
+          "Capture the app again with an explicit state directory that does not traverse parent segments.",
+        conformsToInputContract: true,
+      });
+    return mapped;
+  };
+  const capturedDirectory =
+    application.application_working_directory ?? application.working_directory;
+  const seedDirectory = (directory: string): string => {
+    const mapped = mapTraversal(directory, "explicit");
+    if (mapped?.kind === "mapped")
+      return mapped.path === "" ? host.home : `${host.home}/${mapped.path}`;
+    if (!directory.startsWith(`${host.home}/`)) return directory;
+    const relative = directory.slice(host.home.length + 1);
+    const seed = homeOf(directory) ?? relative;
+    return seed === relative ? directory : `${host.home}/${seed}`;
+  };
+  const selectedSeed =
+    application.application_working_directory === undefined
+      ? null
+      : homeOf(capturedDirectory);
+  const workingDirectory =
+    selectedSeed === null
+      ? seedDirectory(capturedDirectory)
+      : `${host.home}/${selectedSeed}`;
+  const chdir =
+    application.application_working_directory === undefined
+      ? undefined
+      : unwrapDesktopCommand(application.argv).chdir;
+  const argv =
+    chdir !== undefined
+      ? [
+          ...application.argv.slice(0, chdir.start),
+          ...(chdir.includesClearEnvironment ? ["-i"] : []),
+          "-C",
+          workingDirectory,
+          ...application.argv.slice(chdir.end),
+        ]
+      : application.argv;
+  const launch = openSeedDocument(electronLaunchArguments(argv, electron), {
+    home: host.home,
+    // Resolve captured relative arguments against the directory the app used,
+    // then place the process in the seeded spelling of that directory.
+    workingDirectory: capturedDirectory,
+    launchDirectory: workingDirectory,
+    exec: application.desktop_entry?.exec ?? null,
+    documents: [...seeds.keys()].filter(isDocument).sort(),
+    isDocument,
+    isCaptured: capturedLaunchPaths(capture, files, homeOf),
+    spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
+    mapOutside: homeOf,
+    mapTraversal,
+  });
   return {
-    command: launchCommand(launch.argv, host.home, workingDirectory),
+    command: launchCommand(
+      launch.argv,
+      host.home,
+      seedDirectory(application.working_directory),
+      chdir === undefined ? undefined : workingDirectory,
+    ),
     opens: launch.opens,
   };
 };

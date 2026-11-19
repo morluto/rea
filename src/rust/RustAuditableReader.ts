@@ -1,4 +1,4 @@
-import { nodeCodecResult } from "../compression/NodeCodecResult.js";
+import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
 import { inflateSync } from "node:zlib";
 import { z } from "zod";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
