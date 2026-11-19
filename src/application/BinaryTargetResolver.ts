@@ -213,6 +213,7 @@ export const parseBinaryTarget = async (
             {
               path,
               sourcePath,
+              callerInputPath: admitted.data,
               selectedPath: candidate,
               classifiedAs,
               ...bundle,
@@ -293,6 +294,7 @@ const readOpenedBinaryTarget = async (
   selected: {
     readonly path: string;
     readonly sourcePath: string;
+    readonly callerInputPath: string;
     readonly selectedPath: string;
     /** Spelling whose name supplies format hints: the selected file, or a bundle's executable. */
     readonly classifiedAs: string;
@@ -301,13 +303,20 @@ const readOpenedBinaryTarget = async (
   options: BinaryTargetResolverOptions,
 ): Promise<TargetResolution> => {
   const { handle, initial: metadata } = source;
-  const { path, sourcePath, selectedPath, classifiedAs, bundleInfoPlist } =
-    selected;
+  const {
+    path,
+    sourcePath,
+    callerInputPath,
+    selectedPath,
+    classifiedAs,
+    bundleInfoPlist,
+  } = selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   // Every admitted target shares one identity; routes add their own facts.
   const identity = async () => ({
     path,
     sourcePath,
+    ...(callerInputPath === path ? {} : { callerInputPath }),
     ...bundle,
     sha256: await sha256Handle(source, path, signal),
   });

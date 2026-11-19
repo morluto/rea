@@ -27,10 +27,14 @@ describe("REA's CLI command table", () => {
       },
     ]);
     // `--kind procedures` chooses another operation.
-    expect(entry("search").operations.map(({ name }) => name)).toEqual([
-      "search_strings",
-      "open_binary",
-      "search_procedures",
+    expect(entry("search").operations).toEqual([
+      { name: "search_strings", flags: expect.any(Object) },
+      { name: "open_binary", flags: expect.any(Object) },
+      {
+        name: "search_procedures",
+        flags: expect.any(Object),
+        selector: "--kind procedures",
+      },
     ]);
     expect(entry("decompile").operations.map(({ name }) => name)).toEqual([
       "procedure_pseudo_code",
@@ -49,7 +53,6 @@ describe("REA's CLI command table", () => {
       "binary_overview",
       "open_binary",
     ]);
-    expect(entry("analyze").source.kind).toBe("routed");
     expect(entry("inspect-byte-entropy").operations).toEqual([
       {
         name: "inspect_byte_entropy",
@@ -91,10 +94,28 @@ describe("REA's CLI command table", () => {
     });
   });
 
-  it("lists host commands without operations", () => {
-    for (const name of ["setup", "doctor", "guidance", "capture-process"]) {
-      expect(entry(name).source).toEqual({ kind: "host" });
+  it("records the operations available from host commands", () => {
+    for (const name of ["setup", "doctor"]) {
       expect(entry(name).operations).toEqual([]);
     }
+    expect(entry("guidance").operations).toEqual([
+      {
+        name: "search_guidance",
+        flags: {
+          query: "--query",
+          limit: "--limit",
+          cursor: "--cursor",
+        },
+      },
+      {
+        name: "read_guidance_section",
+        flags: {
+          locator: "--locator",
+        },
+      },
+    ]);
+    expect(entry("capture-process").operations).toEqual([
+      { name: "capture_process_scenario", flags: {} },
+    ]);
   });
 });

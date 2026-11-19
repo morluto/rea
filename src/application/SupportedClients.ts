@@ -1890,12 +1890,6 @@ export const supportedClientDefinition = (
   return definition;
 };
 
-/** Setup and registration consume the same already-bound native profile object. */
-export const supportedClientRegistrationProfile = (
-  name: SupportedClientName,
-): ClientRegistrationProfile =>
-  supportedClientDefinition(name).registrationProfile;
-
 /**
  * Paths whose presence means the product itself is applicable, so doctor and
  * setup should inspect the client. Layered sources count: OpenCode still loads

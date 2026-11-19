@@ -18,7 +18,7 @@ type StatePath = DesktopApplicationState["paths"][number];
 
 /**
  * The owned files present at the seed with their digests, and those read as
- * uncompressed text, which boot respells as UTF-8, but for those `isLeftOut`
+ * uncompressed text, which boot respells in its original encoding, excluding `isLeftOut`
  * names: lock files the app holds while it runs, since a copied one makes it
  * find its profile or document in use, and its logs, which record facts about
  * the capture host.

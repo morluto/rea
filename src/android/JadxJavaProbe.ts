@@ -24,6 +24,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   prepareOwnedCommand,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   OwnedCommandFailure,
 } from "../process/OwnedCommand.js";
@@ -221,7 +222,11 @@ export const inspectJadxJava = async (
               },
             },
           });
-        } else if (preparation !== undefined && command?.reason !== "timeout") {
+        } else if (
+          preparation !== undefined &&
+          command?.reason !== "timeout" &&
+          hostConstraint === undefined
+        ) {
           primary = new ProviderAdapterError("jadx", operation, {
             cause,
             ...(output === undefined ? {} : { capturedOutput: output }),
@@ -295,7 +300,9 @@ const hostLaunchConstraint = (
   command: Pick<OwnedCommandFailure, "processError"> | undefined,
   cause: unknown,
 ) => {
-  const launch = launcherFailureOf(command?.processError ?? cause);
+  const launch =
+    preparationHostCapacityFailure(cause) ??
+    launcherFailureOf(command?.processError ?? cause);
   return launch?.kind === "host-exhausted" || launch?.kind === "argument-list"
     ? launch
     : undefined;
