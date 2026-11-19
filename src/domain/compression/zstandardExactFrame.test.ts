@@ -6,7 +6,10 @@ import {
   DEFAULT_ZSTD_MAX_FRAMES,
 } from "../analysisResourceLimits.js";
 import { ConfigurationError } from "../configurationErrors.js";
-import { decodeZstandardFrames } from "./zstandardExactFrame.js";
+import {
+  decodeZstandardFrames,
+  ownedZstandardBytes,
+} from "./zstandardExactFrame.js";
 import {
   resolveZstandardFrameAllowance,
   ZSTD_MAX_FRAMES_ENVIRONMENT,
@@ -159,6 +162,18 @@ describe("exact Zstandard frames", () => {
     expect(decoded.bytes[0]).toBe(0x61);
     expect(decoded.bytes[count - 1]).toBe(0x61);
   });
+});
+
+it("does not retain a decoder chunk behind a short frame", () => {
+  const backing = Buffer.alloc(16 * 1024, 0x61);
+  const slice = backing.subarray(0, 1);
+  const owned = ownedZstandardBytes(slice);
+  expect(owned.length).toBe(1);
+  expect(owned[0]).toBe(0x61);
+  expect(owned.buffer).not.toBe(backing.buffer);
+  const exact = Buffer.allocUnsafeSlow(1);
+  exact[0] = 0x62;
+  expect(ownedZstandardBytes(exact)).toBe(exact);
 });
 
 describe("zstd.max_frames allowance", () => {

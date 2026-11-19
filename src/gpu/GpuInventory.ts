@@ -22,6 +22,7 @@ import {
 import { readCudaTarget } from "./CudaTarget.js";
 import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
+import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
 import {
@@ -295,6 +296,7 @@ export class GpuInventory {
   }
   #retainFailure(row: GpuObject, cause: unknown): void {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
+    if (cause instanceof ZstandardFrameAllowanceError) throw cause;
     const capacity =
       cause instanceof BinaryResourceFailure || isBinaryStringReadLimit(cause);
     if (!capacity && !(cause instanceof BinaryFormatFailure)) throw cause;
@@ -358,7 +360,11 @@ export class GpuInventory {
             this.signal,
           );
         } catch (cause) {
-          if (cause instanceof BinaryResourceFailure) throw cause;
+          if (
+            cause instanceof BinaryResourceFailure ||
+            cause instanceof ZstandardFrameAllowanceError
+          )
+            throw cause;
           assertArtifactReadActive(this.signal);
           throw new BinaryFormatFailure(
             "malformed",

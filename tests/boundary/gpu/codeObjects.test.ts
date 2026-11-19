@@ -3,6 +3,11 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
@@ -35,6 +40,45 @@ const inspect = async (
   onTestFinished(() => provider.close());
   return provider.inspect({ path, analysis: "kernels", ...options });
 };
+it("reports a Zstandard frame-count refusal as an adjustable GPU limit", async () => {
+  const frame = (byte: number) =>
+    Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+  const compressed = Buffer.concat([frame(0x61), frame(0x62)]);
+  const entry = Buffer.alloc(64 + Math.ceil(compressed.length / 8) * 8);
+  entry.writeUInt16LE(1, 0);
+  entry.writeUInt16LE(0x101, 2);
+  entry.writeUInt32LE(64, 4);
+  entry.writeBigUInt64LE(BigInt(entry.length - 64), 8);
+  entry.writeUInt32LE(compressed.length, 16);
+  entry.writeUInt32LE(80, 28);
+  entry.writeBigUInt64LE(0x11n | 0x8000n, 40);
+  entry.writeBigUInt64LE(2n, 56);
+  compressed.copy(entry, 64);
+  const header = Buffer.alloc(16);
+  header.writeUInt32LE(0xba55ed50);
+  header.writeUInt16LE(1, 4);
+  header.writeUInt16LE(16, 6);
+  header.writeBigUInt64LE(BigInt(entry.length), 8);
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "zstd.max_frames": 1 } },
+    () => inspect(Buffer.concat([header, entry])),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 1,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
+
 it.each(["none", "zstd", "lz4"] as const)(
   "reads selected CUDA metadata and PTX with %s compression",
   async (compression) => {

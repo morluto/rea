@@ -33,7 +33,12 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -114,8 +119,33 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         input.path,
         primary,
       );
+      const frameAllowance =
+        primary instanceof ZstandardFrameAllowanceError
+          ? primary
+          : cause instanceof ZstandardFrameAllowanceError
+            ? cause
+            : undefined;
       let error: AnalysisError;
-      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+      if (frameAllowance !== undefined)
+        error = parseLimitConstraint(OPERATION, "cpu", frameAllowance, {
+          retryable: false,
+          limit: analysisSettingLimit(
+            frameAllowance.setting,
+            frameAllowance.value,
+            frameAllowance.source,
+          ),
+          reportedLimitContext: {
+            setting: frameAllowance.setting,
+            value: frameAllowance.value,
+            source: frameAllowance.source,
+            minimum: frameAllowance.minimum,
+            maximum: frameAllowance.maximum,
+          },
+        });
+      else if (
+        origin === "owned-or-classified" &&
+        primary instanceof AnalysisError
+      )
         error = primary;
       else if (primary instanceof BinaryResourceFailure)
         error = new AnalysisResourceConstraintError(

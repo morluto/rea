@@ -346,6 +346,20 @@ const decompress = (
   }
 };
 
+/**
+ * Node's synchronous decoder returns a view onto a larger chunk allocation.
+ * Retaining that view keeps the whole chunk. One byte from a 16 KiB chunk,
+ * repeated for every frame, retains mebibytes for a few kibibytes of output.
+ * Copy only when the backing store is larger than the bytes in use.
+ */
+export const ownedZstandardBytes = (bytes: Buffer): Buffer => {
+  if (bytes.byteOffset === 0 && bytes.buffer.byteLength === bytes.byteLength)
+    return bytes;
+  const owned = Buffer.allocUnsafe(bytes.byteLength);
+  bytes.copy(owned);
+  return owned;
+};
+
 const withinOutput = (
   bytes: Buffer,
   remaining: number,
@@ -366,7 +380,7 @@ const decodeFrames = (
     if (isFrameFailure(bounded)) return bounded;
     return {
       ok: true,
-      bytes: bounded.bytes,
+      bytes: ownedZstandardBytes(bounded.bytes),
       consumedBytes: consumed,
       frames: frames.length,
     };
@@ -385,7 +399,7 @@ const decodeFrames = (
     const bounded = withinOutput(decoded.bytes, remaining, frame.offset);
     if (isFrameFailure(bounded)) return bounded;
     total += bounded.bytes.length;
-    chunks.push(bounded.bytes);
+    chunks.push(ownedZstandardBytes(bounded.bytes));
   }
   return {
     ok: true,
