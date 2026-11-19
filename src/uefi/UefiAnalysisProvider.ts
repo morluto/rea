@@ -602,6 +602,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       });
     };
 
+    recordDerivation(selection.source_stream);
     for (const volume of scan.volumes) {
       for (const file of volume.ffs_files) {
         checkpoint();
@@ -740,6 +741,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           outcome: {
             bytes,
             decoderVersion: process.versions.zlib ?? "unknown",
+            consumedBytes,
           },
         };
       } catch (cause: unknown) {
@@ -836,6 +838,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (!reply.ok) {
         return reply;
       }
+      const consumedBytes = reply.input_bytes_consumed;
+      if (consumedBytes > payload.length) {
+        return {
+          ok: false,
+          reason: "decoder",
+          message: `LZMA worker reported consuming ${consumedBytes} bytes from a ${payload.length}-byte input.`,
+        };
+      }
       signal.throwIfAborted();
       const decoded = await readStableArtifact(
         outputPath,
@@ -859,6 +869,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         outcome: {
           bytes: decoded.bytes,
           decoderVersion: reply.lzma_version,
+          consumedBytes,
         },
       };
     };
