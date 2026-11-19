@@ -30,8 +30,8 @@ function inlineFacts(tokens) {
             : "";
       if (link) link.text += text;
       else if (text) parts.push({ text });
-      if (token.type === "code_inline")
-        wording.push({ kind: "inline-code", content: token.content });
+      if (token.type === "code_inline" || token.type === "html_inline")
+        wording.push({ kind: token.type, content: token.content });
       else if (text) wording.push(text);
     }
   }
@@ -167,63 +167,93 @@ export function releaseBullets(blocks) {
   return bullets.values();
 }
 
-function normalizeWording(parts) {
+function migrationProjection(blocks) {
   const chunks = [];
-  for (const part of parts) {
-    if (typeof part === "string" && typeof chunks.at(-1) === "string")
-      chunks[chunks.length - 1] += part;
-    else chunks.push(part);
+  const literals = new Map();
+  const links = [];
+  let position = 0;
+  let space = false;
+  let link;
+
+  function append(text) {
+    if (space && position > 0) {
+      chunks.push(" ");
+      position++;
+    }
+    space = false;
+    if (link) link.start ??= position;
+    chunks.push(text);
+    position += text.length;
   }
-  return chunks
-    .map((part, index) => {
-      if (typeof part !== "string") return part;
-      let text = part.replace(/\s+/gu, " ");
-      if (index === 0) text = text.trimStart();
-      if (index === chunks.length - 1) text = text.trimEnd();
-      return text;
-    })
-    .filter((part) => part !== "");
+
+  for (const { wording } of blocks) {
+    for (const part of wording) {
+      if (typeof part === "string") {
+        const prose = part.replace(/\s+/gu, " ");
+        if (prose.startsWith(" ")) space = true;
+        const text = prose.trim();
+        if (text) append(text);
+        if (prose.endsWith(" ")) space = true;
+      } else if (part.kind === "link-open") {
+        link = { href: part.content, start: undefined };
+      } else if (part.kind === "link-close") {
+        links.push({
+          href: link.href,
+          start: link.start ?? position,
+          end: position,
+        });
+        link = undefined;
+      } else {
+        // Markdown-it replaces source NULs. Reserve one position for each
+        // literal and compare its kind and exact content at that position.
+        append("\0");
+        literals.set(position - 1, part);
+      }
+    }
+    space = true;
+  }
+
+  return { text: chunks.join(""), literals, links };
 }
 
-function normalizeBlockWording(blocks) {
-  return normalizeWording(blocks.flatMap(({ wording }) => [...wording, " "]));
+function linkKey(start, end, href) {
+  return JSON.stringify([start, end, href]);
 }
 
-function isLinkBoundary(part) {
-  return part.kind === "link-open" || part.kind === "link-close";
-}
-
-/** Match footer prose, link destinations, and literal content in the breaking section. */
+/** Match footer prose and literals, then verify links at their label positions. */
 export function releaseMigrationWording(blocks) {
-  const observed = normalizeBlockWording(blocks);
-  let observedWithoutLinks;
+  const observed = migrationProjection(blocks);
+  const observedLinks = new Set(
+    observed.links.map(({ start, end, href }) => linkKey(start, end, href)),
+  );
   return (footer) => {
     const tokens = parser.parse(footer, {});
-    const expected = normalizeBlockWording(
+    const expected = migrationProjection(
       tokens
         .map((_token, index) => blockFacts(tokens, index))
         .filter((facts) => facts !== undefined),
     );
-    if (expected.length === 0) return false;
-    // A hyperlink added to plain migration prose need not change its wording.
-    // When the footer specifies a link, compare its destination and label span.
-    const candidates = expected.some(isLinkBoundary)
-      ? observed
-      : (observedWithoutLinks ??= normalizeWording(
-          observed.filter((part) => !isLinkBoundary(part)),
-        ));
-    // The first and last prose chunks may be part of a longer passage.
-    return candidates.some((_part, start) =>
-      expected.every((part, offset) => {
-        const actual = candidates[start + offset];
-        if (typeof part !== "string")
-          return actual?.kind === part.kind && actual.content === part.content;
-        if (typeof actual !== "string") return false;
-        if (expected.length === 1) return actual.includes(part);
-        if (offset === 0) return actual.endsWith(part);
-        if (offset === expected.length - 1) return actual.startsWith(part);
-        return actual === part;
-      }),
-    );
+    if (expected.text === "" && expected.links.length === 0) return false;
+
+    for (let from = 0; from <= observed.text.length;) {
+      const offset = observed.text.indexOf(expected.text, from);
+      if (offset === -1) return false;
+      const linksMatch = expected.links.every(({ start, end, href }) =>
+        observedLinks.has(linkKey(start + offset, end + offset, href)),
+      );
+      if (linksMatch) {
+        const literalsMatch = [...expected.literals].every(
+          ([position, part]) => {
+            const actual = observed.literals.get(position + offset);
+            return (
+              actual?.kind === part.kind && actual.content === part.content
+            );
+          },
+        );
+        if (literalsMatch) return true;
+      }
+      from = offset + 1;
+    }
+    return false;
   };
 }

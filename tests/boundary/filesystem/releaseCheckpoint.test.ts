@@ -635,6 +635,40 @@ it.each([
     notes: "Download [the replacement now](https://example.com/v2).",
     accepted: false,
   },
+  {
+    form: "a required Markdown link alongside an added link with the same destination",
+    footer:
+      "Download [the replacement](https://example.com/v2) and restart the client.",
+    notes:
+      "Download [the replacement](https://example.com/v2) and restart [the client](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "a required Markdown link whose destination appears on an added link instead",
+    footer:
+      "Download [the replacement](https://example.com/v2) and restart the client.",
+    notes:
+      "Download [the replacement](https://example.com/v1) and restart [the client](https://example.com/v2).",
+    accepted: false,
+  },
+  {
+    form: "the same inline HTML link",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    accepted: true,
+  },
+  {
+    form: "an inline HTML link with a changed destination",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: 'Download <a href="https://example.com/v1">the replacement</a>.',
+    accepted: false,
+  },
+  {
+    form: "an inline HTML link reduced to its label",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: "Download the replacement.",
+    accepted: false,
+  },
 ])(
   "validates migration wording from $form",
   async ({ footer, notes, accepted }) => {
