@@ -1102,7 +1102,7 @@ const releasePatchFixture = async (outsideProject = false) => {
     project,
     source,
   );
-  for (const dependency of ["semver", "zod"])
+  for (const dependency of ["markdown-it", "semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),
       join(dependencies, dependency),

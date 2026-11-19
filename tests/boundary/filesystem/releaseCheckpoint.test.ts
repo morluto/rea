@@ -515,7 +515,7 @@ it("allows release examples with a release heading before genuine migration note
   await candidate(
     f,
     "6.0.0",
-    "~~~markdown\n## [5.0.0]\n~~~\n\n### ⚠ BREAKING CHANGES\n\nSee #948.",
+    "- ~~~markdown\n  ## [5.0.0]\n  ~~~\n\n### ⚠ BREAKING CHANGES\n\nSee #948.",
   );
   await expect(verify(f)).resolves.toMatchObject({ stderr: "" });
 });

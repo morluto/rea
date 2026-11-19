@@ -1,35 +1,47 @@
-// Release metadata uses top-level headings and bullets. Keep source offsets
-// so the selected changelog section can be published with its examples intact.
-export function* releaseProseLines(markdown) {
-  let fence;
-  for (const match of markdown.matchAll(/([^\r\n]*)(?:\r\n?|\n|$)/gu)) {
-    const [, line] = match;
-    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/su.exec(line);
-    if (marker) {
-      const [, run, rest] = marker;
-      if (!fence) {
-        if (run[0] === "~" || !rest.includes("`")) fence = run;
-      } else if (
-        run[0] === fence[0] &&
-        run.length >= fence.length &&
-        /^[ \t]*$/u.test(rest)
-      ) {
-        fence = undefined;
-      }
-      continue;
-    }
-    if (!fence) yield { line, offset: match.index };
-  }
-}
+import MarkdownIt from "markdown-it";
+
+const parser = new MarkdownIt("commonmark");
+const nonProseBlocks = new Set(["fence", "code_block", "html_block"]);
 
 export function releaseSection(markdown, expectedVersion) {
+  // The parser maps block tokens to line intervals. Use the original lines
+  // to retain source offsets and publish the selected Markdown verbatim.
+  const lines = Array.from(
+    markdown.matchAll(/([^\r\n]*)(?:\r\n?|\n|$)/gu),
+    (match, index) => ({ line: match[1], offset: match.index, index }),
+  );
+
+  const excluded = new Set();
   let start;
-  for (const { line, offset } of releaseProseLines(markdown)) {
-    const version = /^## \[([^\]]+)\]/u.exec(line)?.[1];
+  let end = lines.length;
+  for (const { type, level, tag, map } of parser.parse(markdown, {})) {
+    if (!map) continue;
+    const [first, limit] = map;
+    if (nonProseBlocks.has(type)) {
+      for (let index = first; index < limit; index++) excluded.add(index);
+      continue;
+    }
+    if (type !== "heading_open" || level !== 0 || tag !== "h2") continue;
+    const version = /^## \[([^\]]+)\]/u.exec(lines[first].line)?.[1];
     if (version === undefined) continue;
-    if (start !== undefined) return markdown.slice(start, offset);
+    if (start !== undefined) {
+      end = first;
+      break;
+    }
     if (version !== expectedVersion) return undefined;
-    start = offset;
+    start = first;
   }
-  return start === undefined ? undefined : markdown.slice(start);
+
+  if (start === undefined) return undefined;
+  const sectionOffset = lines[start].offset;
+  return {
+    source: markdown.slice(
+      sectionOffset,
+      lines[end]?.offset ?? markdown.length,
+    ),
+    lines: lines
+      .slice(start, end)
+      .filter(({ index }) => !excluded.has(index))
+      .map(({ line, offset }) => ({ line, offset: offset - sectionOffset })),
+  };
 }
