@@ -266,16 +266,31 @@ type StreamMemberValue =
  */
 const unaryBigIntOperand = (
   value: t.UnaryExpression,
-): t.BigIntLiteral | undefined => {
+): bigint | "throws" | undefined => {
+  // Walk to the innermost caller before applying the operators outward, because `~0n` is
+  // `-1n` and `~-1n` is `0n`: reading only the literal's digits swaps truthy for falsy.
+  const chain: t.UnaryExpression[] = [];
   let current: t.Node = value;
+  let literal: t.BigIntLiteral | undefined;
   for (let depth = 0; depth < 8; depth += 1) {
     const node: t.Node = unwrapJavaScriptExpression(current).node;
-    if (t.isBigIntLiteral(node)) return node;
+    if (t.isBigIntLiteral(node)) {
+      literal = node;
+      break;
+    }
     if (!t.isUnaryExpression(node) || !["+", "-", "~"].includes(node.operator))
       return undefined;
+    chain.push(node);
     current = node.argument;
   }
-  return undefined;
+  if (literal === undefined) return undefined;
+  let result = BigInt(String(literal.value).replace(/_/gu, ""));
+  for (const operator of chain.reverse()) {
+    // Unary `+` on a BigInt throws a TypeError, so the call never reaches a handle.
+    if (operator.operator === "+") return "throws";
+    result = operator.operator === "-" ? -result : ~result;
+  }
+  return result;
 };
 
 const streamMemberValue = (
@@ -608,10 +623,10 @@ const encodingTruthiness = (
   // other value is truthy. Measured on Node 24.22.1, `{encoding: -1n}` throws
   // `ERR_INVALID_ARG_VALUE` while `{encoding: -0n}` is accepted as "not given".
   const bigint = unaryBigIntOperand(value);
-  if (bigint !== undefined) {
-    const digits = String(bigint.value).replace(/_/gu, "");
-    return digits.replace(/^0+/u, "").length > 0;
-  }
+  // A unary `+` on a BigInt throws before the member is read, so nothing is constructed;
+  // the truthy branch refuses it, which is the same verdict by the other route.
+  if (bigint === "throws") return true;
+  if (bigint !== undefined) return bigint !== 0n;
   const number = unaryOperandNumber(value, context, 0);
   if (number === undefined) return undefined;
   return number !== 0 && !Number.isNaN(number);

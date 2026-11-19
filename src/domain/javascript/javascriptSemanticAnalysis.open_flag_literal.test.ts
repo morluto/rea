@@ -1547,3 +1547,23 @@ it("keeps a zero BigInt encoding as not given", () => {
     ),
   ).toBe(true);
 });
+
+/**
+ * The chain is evaluated, not just read: `~0n` is `-1n` (truthy, refused for `encoding`)
+ * and `~-1n` is `0n` (falsy, so the member is skipped). Unary `+` on a BigInt throws.
+ */
+it.each([
+  ["a bitwise-not zero encoding", `{ encoding: ~0n }`],
+  ["a bitwise-not minus-one start", `{ start: ~-1n }`],
+  ["a unary-plus BigInt encoding", `{ encoding: +1n }`],
+] as const)("emits no stream acquisition for %s", (_name, options) => {
+  expect(streamRelationsFor(options)).not.toContain("acquires/candidate");
+});
+
+it("keeps a bitwise-not minus-one encoding, which evaluates to zero", () => {
+  expect(
+    streamRelationsFor(`{ encoding: ~-1n }`).some((relation) =>
+      relation.startsWith("acquires/"),
+    ),
+  ).toBe(true);
+});
