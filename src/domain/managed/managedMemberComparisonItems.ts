@@ -484,7 +484,7 @@ const methodOnlyItem = (
       ),
       unpaired: undecoded,
       ownIdentityUnavailable: identityUnavailable,
-      ownNameUnavailable: context.scope.left.emptyMethodNames.has(member.left),
+      ownNameUnavailable: context.scope.left.emptyMemberNames.has(member.left),
       opposite: "right",
       inventory: "method",
     });
@@ -508,7 +508,7 @@ const methodOnlyItem = (
     ),
     unpaired: undecoded,
     ownIdentityUnavailable: identityUnavailable,
-    ownNameUnavailable: context.scope.right.emptyMethodNames.has(member.right),
+    ownNameUnavailable: context.scope.right.emptyMemberNames.has(member.right),
     opposite: "left",
     inventory: "method",
   });
@@ -540,7 +540,7 @@ const absenceLimitations = (
   opposite: {
     readonly oppositeComplete: boolean;
     readonly ownIdentityUnavailable: boolean;
-    readonly ownNameUnavailable?: boolean;
+    readonly ownNameUnavailable: boolean;
     readonly unpaired: UndecodedOneSidedNames;
     readonly opposite: "left" | "right";
     readonly inventory: "method" | "field";
@@ -550,7 +550,7 @@ const absenceLimitations = (
     ? [
         limitation(
           "unknown-within-incomplete-metadata",
-          "The recorded MethodDef name is empty, so its nominal identity is unavailable.",
+          `The recorded ${opposite.inventory === "method" ? "MethodDef" : "Field"} name is empty, so its nominal identity is unavailable.`,
         ),
       ]
     : opposite.ownIdentityUnavailable
@@ -724,6 +724,7 @@ const fieldOnlyItem = (
       ),
       unpaired: undecoded,
       ownIdentityUnavailable: identityUnavailable,
+      ownNameUnavailable: context.scope.left.emptyMemberNames.has(member.left),
       opposite: "right",
       inventory: "field",
     });
@@ -746,6 +747,7 @@ const fieldOnlyItem = (
     ),
     unpaired: undecoded,
     ownIdentityUnavailable: identityUnavailable,
+    ownNameUnavailable: context.scope.right.emptyMemberNames.has(member.right),
     opposite: "left",
     inventory: "field",
   });

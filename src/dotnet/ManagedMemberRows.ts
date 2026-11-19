@@ -1,4 +1,7 @@
-import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
+import {
+  readFieldDefinitionName,
+  readFieldDefinitionRow,
+} from "./ManagedFieldDefinitionRows.js";
 import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
 import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
 import {
@@ -111,9 +114,9 @@ export const parseFields = (
     )
       continue;
     readManagedValue(() => {
-      const { token, rowOffset, flags, nameIndex, signatureIndex } =
-        readFieldDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+      const definition = readFieldDefinitionRow(bytes, layout, row);
+      const { token, rowOffset, flags, signatureIndex } = definition;
+      const name = readFieldDefinitionName(bytes, layout, definition);
       const owned = owner ?? 0;
       core.set(token, {
         token,
@@ -507,10 +510,10 @@ export const readReferencedMemberCores = (
       const declared = ranges[ownerOf(table, row) - 1];
       const name =
         table === 4
-          ? readMetadataString(
+          ? readFieldDefinitionName(
               bytes,
               layout,
-              readFieldDefinitionRow(bytes, layout, row).nameIndex,
+              readFieldDefinitionRow(bytes, layout, row),
             )
           : readMethodDefinitionName(
               bytes,
