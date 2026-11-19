@@ -108,7 +108,9 @@ partial success. Truncation after a valid header, ExtraData size overruns, and
 odd Unicode lengths return partial coverage with `coverage.failing_offset`.
 A LinkInfo, VolumeID, or network-name string offset that points inside its
 structure header or outside its structure is reported at the offset field itself,
-so every issue offset lies inside the file.
+so every issue offset lies inside the file. A `LinkInfoHeaderSize` below 0x1C
+does not shrink the mandatory 28-byte header, so an offset in that header is
+still reported at the offset field and the path stays unreadable.
 Coverage is never `complete` when issues are present.
 A PropertyStoreDataBlock shorter than 12 bytes or a ShimDataBlock shorter than
 136 bytes makes coverage partial. The report retains the block's signature,

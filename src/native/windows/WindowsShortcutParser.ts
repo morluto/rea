@@ -921,6 +921,10 @@ const parseLinkInfo = (
     declaresUnicodeOffsets && size >= LINK_INFO_UNICODE_HEADER_BYTES;
   const localUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(28) : 0;
   const suffixUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(32) : 0;
+  // A declared HeaderSize below the mandatory 0x1C must not expose those
+  // fields as string data. Larger declared headers, including reserved
+  // 0x1D..0x23 sizes, keep their own end as the floor.
+  const stringOffset = Math.max(headerSize, LINK_INFO_FIXED_HEADER_BYTES);
   const info: NonNullable<WindowsShortcut["link_info"]> = {
     location: { offset: walk.offset, bytes: size },
     header_size: headerSize,
@@ -935,7 +939,7 @@ const parseLinkInfo = (
         : null,
     local_base_path:
       (flags & 0x1) !== 0
-        ? readAnsiAt(view, walk.offset, localOffset, 16, walk, headerSize)
+        ? readAnsiAt(view, walk.offset, localOffset, 16, walk, stringOffset)
         : null,
     local_base_path_unicode:
       (flags & 0x1) !== 0
@@ -945,7 +949,7 @@ const parseLinkInfo = (
             localUnicodeOffset,
             28,
             walk,
-            headerSize,
+            stringOffset,
           )
         : null,
     common_network_relative_link:
@@ -958,7 +962,7 @@ const parseLinkInfo = (
       suffixOffset,
       24,
       walk,
-      headerSize,
+      stringOffset,
     ),
     common_path_suffix_unicode: readUtf16At(
       view,
@@ -966,7 +970,7 @@ const parseLinkInfo = (
       suffixUnicodeOffset,
       32,
       walk,
-      headerSize,
+      stringOffset,
     ),
   };
   walk.pathUncertainty.local ||=
