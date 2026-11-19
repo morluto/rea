@@ -1,17 +1,19 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { z } from "incur";
+import { z } from "zod";
 
 import type { DoctorScope } from "../application/Doctor.js";
 import {
   DESKTOP_BUILD_PROVIDER_ID,
   DOCTOR_PROVIDER_IDS,
-} from "../application/DoctorProviderIds.js";
+} from "../domain/doctorProviderIds.js";
 import {
   isSetupFailure,
   type SetupOptions,
 } from "../application/SetupTypes.js";
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import {
   mcpToolFamiliesSchema,
   toolFamiliesConstraint,
@@ -29,8 +31,9 @@ import {
 } from "./interactiveSetup.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 
@@ -54,7 +57,7 @@ const registerSetupCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.setup, {
+  registerCliCommand(cli, CLI_COMMANDS.setup, {
     description: "Configure agent integrations and optional analysis providers",
     outputPolicy: "agent-only",
     options: z.object({
@@ -141,10 +144,12 @@ const registerDoctorCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.doctor, {
+  registerCliCommand(cli, CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
-      target: z.string().optional().describe("Optional app path to check"),
+      target: localPathStringSchema
+        .optional()
+        .describe("Optional app path to check"),
       client: z
         .array(supportedClientSchema)
         .default([])
@@ -183,7 +188,7 @@ const registerMaintenanceCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.uninstall, {
+  registerCliCommand(cli, CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
     options: z.object({
       purgeData: z
@@ -201,16 +206,17 @@ const registerMaintenanceCommands = (
           return runUninstall(
             options.purgeData,
             systemUninstallHost(
-              homeDirectoryFromEnvironment(environment, process.platform),
+              homeDirectoryFromEnvironment(environment, HOST_PLATFORM.platform),
               undefined,
               environment,
+              HOST_PLATFORM.platform,
             ),
           );
         },
         isUninstallFailure,
       ),
   });
-  cli.command(CLI_COMMANDS.update, {
+  registerCliCommand(cli, CLI_COMMANDS.update, {
     description:
       "Update this REA installation and verify the installed release",
     run: ({ formatExplicit }) =>
@@ -224,7 +230,12 @@ const registerMaintenanceCommands = (
           ]);
           return runUpdate(
             PRODUCT_IDENTITY.packageVersion,
-            systemUpdateHost(undefined, undefined, environment),
+            systemUpdateHost(
+              undefined,
+              undefined,
+              environment,
+              HOST_PLATFORM.platform,
+            ),
             formatExplicit ? "structured" : "human",
           );
         },
@@ -274,12 +285,11 @@ const runSetupCommand = async (
       : undefined,
   );
   if (interactive) renderInteractiveSetupResult(result, environment);
-  else if (
-    options.dryRun &&
-    !input.formatExplicit &&
-    hasInteractiveTerminal()
-  ) {
-    if (result.status === "planned") renderSetupDryRun(result.plannedActions);
+  // Setup's output is agent-only, which incur hides when stdout is a terminal
+  // and no format was chosen, so that terminal gets a rendered summary instead.
+  else if (!input.formatExplicit && process.stdout.isTTY === true) {
+    if (result.status === "planned")
+      renderSetupDryRun(result.plannedActions, result.remediation);
     else renderInteractiveSetupResult(result, environment);
   }
   return result;

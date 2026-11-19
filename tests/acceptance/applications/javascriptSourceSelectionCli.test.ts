@@ -186,7 +186,7 @@ cliTest(
     expect(response.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [{ path: ["source_paths"], reason: "invalid_value" }],
+        issues: [{ path: ["sourcePath"], reason: "invalid_value" }],
       },
     });
   },
@@ -250,7 +250,7 @@ cliTest.for([
     if (format === "asar") {
       expect(evidence.subject).toMatchObject({
         local_path: target,
-        digest: {
+        identity: {
           sha256: createHash("sha256")
             .update(await readFile(target))
             .digest("hex"),
@@ -314,7 +314,7 @@ cliTest(
     expect(response.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [{ path: ["source_paths"], reason: "invalid_value" }],
+        issues: [{ path: ["sourcePathsJson"], reason: "invalid_value" }],
       },
     });
   },

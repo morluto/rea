@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,7 +9,7 @@ import {
   analysisViewNativeEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { JsonInputPhysicalReadFailure } from "../JsonInputFile.js";
 import { failFileReadAfterAbort } from "../../../tests/support/failFileReadAfterAbort.js";
@@ -228,7 +229,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;
@@ -262,7 +263,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;
@@ -309,7 +310,7 @@ it("keeps bundle-selection errors useful when operation labels exceed the reply 
   const operation = '\u0000"'.repeat(50_000);
   const records = [1, 2].map((ordinal) =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation,

@@ -7,6 +7,7 @@ import { browserScenarioReferences } from "../fixtures/browserScenarioReferences
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest.for([
   ["CLI", "query"],
@@ -46,16 +47,18 @@ cliTest.for([
       const result = await cli.run({
         arguments: ["capture-browser-scenario", path, "--json"],
         environment: { HOME: home, REA_LOG_LEVEL: "silent" },
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject(expected);
       return;
     }
-    const client = new Client({
-      name: "scenario-reference-diagnostics",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "scenario-reference-diagnostics",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],

@@ -3,13 +3,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 import {
   readAndroidJniLibraries,
   ANDROID_JNI_LIBRARY_LIMITS,
 } from "../../../src/android/AndroidJniLibraries.js";
 import { JadxInterruption } from "../../../src/android/JadxInterruption.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -24,7 +25,18 @@ import {
 } from "../../../src/domain/android/androidJniBindings.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../fixtures/zipZstandard.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
+import {
+  ArtifactReaderFailure,
+  ZipArtifactReader,
+} from "../../../src/resources/index.js";
+import { InternalInvariantError } from "../../../src/domain/internalInvariant.js";
+import type { ArtifactReaderFailureReason } from "../../../src/resources/ArtifactReader.js";
 
 const OPERATION = "inspect_android_jni_bindings";
 const LIBRARY = "lib/arm64-v8a/libfixture.so";
@@ -210,6 +222,24 @@ it("retains a malformed selected library's exact carrier identity and digest", a
   expect(source.resources.hasPending).toBe(false);
 });
 
+it("keeps the ZIP decoder window's recompression advice in the library failure", async () => {
+  const directory = await createTestTempDirectory("rea-android-jni-zstd-");
+  const snapshot = join(directory, "window.apk");
+  // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+  const { content, compressed } = zstandardWindowFrameFixture(0x90);
+  const bytes = zstandardZipFixture(content, { compressed, name: LIBRARY });
+  await writeFile(snapshot, bytes);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(async () => {
+    await resources.close();
+  });
+  const result = await read({ snapshot, apkSha256: digest(bytes), resources });
+  expect(result.libraries[0]?.failure).toMatchObject({
+    kind: "limit",
+    message: expect.stringContaining(ZIP_ZSTANDARD_WINDOW_CEILING.narrowing!),
+  });
+});
+
 it("preserves declared capacity metadata without presenting unread bytes as verified", async () => {
   const source = await fixture();
   const originalEntries = ZipArtifactReader.prototype.entries;
@@ -236,6 +266,91 @@ it("preserves declared capacity metadata without presenting unread bytes as veri
   } finally {
     entries.mockRestore();
     open.mockRestore();
+  }
+});
+
+it("names the reader check when a selected library fails an integrity check", async () => {
+  const source = await fixture();
+  const originalEntries = ZipArtifactReader.prototype.entries;
+  const entries = vi
+    .spyOn(ZipArtifactReader.prototype, "entries")
+    .mockImplementation(async function* (this: ZipArtifactReader, signal) {
+      for await (const entry of originalEntries.call(this, signal))
+        yield { ...entry, declaredSize: (entry.declaredSize ?? 0) + 1 };
+    });
+  try {
+    const result = await read(source);
+    const failure = result.libraries[0]?.failure;
+    // The reader refuses an entry whose metadata differs from what it produced.
+    expect(failure).toMatchObject({
+      kind: "integrity",
+      integrity_check: "entry-metadata",
+    });
+    // The checkpoint schema retains the check across Evidence boundaries.
+    expect(
+      androidJniLibraryCheckpointSchema.parse({
+        scan_state: "completed",
+        libraries: result.libraries,
+        inventory: result.inventory,
+      }).libraries[0]?.failure,
+    ).toEqual(failure);
+    // An integrity failure without its check, or a check on another kind, is
+    // refused by the runtime schema and by its JSON Schema conversion.
+    const library = result.libraries[0];
+    const checkpoint = (failure: unknown) => ({
+      scan_state: "completed",
+      libraries: [{ ...library, failure }],
+      inventory: result.inventory,
+    });
+    const advertised = new Ajv2020({ strict: false }).compile(
+      z.toJSONSchema(androidJniLibraryCheckpointSchema, { io: "output" }),
+    );
+    expect(advertised(checkpoint(failure))).toBe(true);
+    for (const malformed of [
+      { kind: "integrity", message: "x" },
+      { kind: "io", message: "x", integrity_check: "entry-metadata" },
+    ]) {
+      expect(
+        androidJniLibraryCheckpointSchema.safeParse(checkpoint(malformed))
+          .success,
+      ).toBe(false);
+      expect(advertised(checkpoint(malformed))).toBe(false);
+    }
+  } finally {
+    entries.mockRestore();
+  }
+});
+
+it("refuses an integrity read failure that names no check and releases the reader", async () => {
+  const source = await fixture();
+  // Only the non-literal rebuild constructor can carry an explicit undefined check.
+  const reason: ArtifactReaderFailureReason = "integrity";
+  const open = vi.spyOn(ZipArtifactReader.prototype, "open").mockRejectedValue(
+    new ArtifactReaderFailure(reason, "unnamed check", {
+      integrityCheck: undefined,
+    }),
+  );
+  const close = vi.spyOn(ZipArtifactReader.prototype, "close");
+  const observations: AndroidJniLibraryCheckpoint[] = [];
+  try {
+    const failure = await read(source, {}, undefined, undefined, (checkpoint) =>
+      observations.push(checkpoint),
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(Error);
+    expect(
+      failure instanceof Error &&
+        [failure, failure.cause].some(
+          (error) => error instanceof InternalInvariantError,
+        ),
+    ).toBe(true);
+    expect(close).toHaveBeenCalled();
+    for (const checkpoint of observations)
+      expect(
+        androidJniLibraryCheckpointSchema.safeParse(checkpoint).success,
+      ).toBe(true);
+  } finally {
+    open.mockRestore();
+    close.mockRestore();
   }
 });
 

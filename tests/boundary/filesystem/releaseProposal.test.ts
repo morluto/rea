@@ -20,6 +20,7 @@ import {
   releaseProposalSearchDepth,
 } from "../../../scripts/lib/release-proposal.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -136,6 +137,140 @@ function respond(value: unknown, status = 200) {
     headers: { "content-type": "application/json" },
   });
 }
+
+it.each([true, false])(
+  "handles an HTTP 200 Git blob without content (recovers: %s)",
+  async (recovers) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    const path = "CHANGELOG.md";
+    const contents = "# Changelog\n";
+    let reads = 0;
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string, options: { method?: string }) => {
+        const { pathname } = new URL(input);
+        expect(options.method).toBe("GET");
+        if (pathname === "/repos/fixture/rea/git/trees/main")
+          return respond({ tree: [{ path, sha: baseline, type: "blob" }] });
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        reads += 1;
+        return respond({
+          sha: baseline,
+          encoding: "base64",
+          ...(recovers && reads > 1
+            ? { content: Buffer.from(contents).toString("base64") }
+            : {}),
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch(path, "main");
+    if (recovers)
+      await expect(result).resolves.toMatchObject({ parsedContent: contents });
+    else
+      await expect(result).rejects.toThrow(
+        "GitHub returned an incomplete Git blob for CHANGELOG.md on main",
+      );
+    expect(reads).toBe(recovers ? 2 : 3);
+    expect(sleep.mock.calls).toEqual(recovers ? [[1000]] : [[1000], [2000]]);
+  },
+);
+
+it.each([0, 12])(
+  "checks an empty Git blob response declaring size %s",
+  async (size) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    let reads = 0;
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string) => {
+        const { pathname } = new URL(input);
+        if (pathname === "/repos/fixture/rea/git/trees/main")
+          return respond({
+            tree: [{ path: "CHANGELOG.md", sha: baseline, type: "blob" }],
+          });
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        reads += 1;
+        return respond({
+          sha: baseline,
+          encoding: "base64",
+          content: "",
+          size,
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch("CHANGELOG.md", "main");
+    if (size === 0) {
+      await expect(result).resolves.toMatchObject({ parsedContent: "" });
+      expect(reads).toBe(1);
+      expect(sleep).not.toHaveBeenCalled();
+    } else {
+      await expect(result).rejects.toThrow(
+        "GitHub returned an incomplete Git blob",
+      );
+      expect(reads).toBe(3);
+      expect(sleep.mock.calls).toEqual([[1000], [2000]]);
+    }
+  },
+);
+
+it.each([
+  { statuses: [504, 200], expectedReads: 2, status: null },
+  { statuses: [504, 504, 504], expectedReads: 3, status: 504 },
+  { statuses: [403], expectedReads: 1, status: 403 },
+])(
+  "retries release note reads with HTTP responses $statuses",
+  async ({ statuses, expectedReads, status }) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    const branch = "proposal--release-notes";
+    const path = "release-notes.md";
+    const notes = "Existing release notes";
+    const reads: string[] = [];
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string, options: { method?: string }) => {
+        const { pathname } = new URL(input);
+        expect(options.method).toBe("GET");
+        if (pathname === `/repos/fixture/rea/git/trees/${branch}`) {
+          reads.push(pathname);
+          const responseStatus = statuses[reads.length - 1];
+          if (responseStatus !== 200) return respond({}, responseStatus);
+          return respond({ tree: [{ path, sha: baseline, type: "blob" }] });
+        }
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        return respond({
+          sha: baseline,
+          content: Buffer.from(notes).toString("base64"),
+          encoding: "base64",
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch(path, branch);
+    if (status === null) {
+      await expect(result).resolves.toMatchObject({ parsedContent: notes });
+    } else {
+      await expect(result).rejects.toMatchObject({ status });
+    }
+    expect(reads).toHaveLength(expectedReads);
+    expect(sleep.mock.calls).toEqual(
+      [[1000], [2000]].slice(0, expectedReads - 1),
+    );
+  },
+);
 
 function associatedPullRequest(number = 42, mergeCommit = latest) {
   return {
@@ -1019,11 +1154,13 @@ it("requires complete local history when sizing the upstream search", async () =
   );
 });
 
-const releasePatchFixture = async () => {
+const releasePatchFixture = async (outsideProject = false) => {
   const root = await createTestTempDirectory("rea-release-git-patch-");
   const project = join(root, "project space Ω");
-  const dependencyPath = "node_modules/release dependency space Ω";
-  const directory = join(project, dependencyPath);
+  const dependencies = join(project, "node_modules");
+  const directory = outsideProject
+    ? join(root, "release dependency space Ω")
+    : join(dependencies, "release-please");
   const upstreamDirectory = dirname(
     require.resolve("release-please/package.json"),
   );
@@ -1038,24 +1175,22 @@ const releasePatchFixture = async () => {
     if (member === undefined) throw new Error("Patch header omitted its path");
     return member;
   });
-  await mkdir(join(project, "scripts/lib"), { recursive: true });
   await mkdir(dirname(patchPath), { recursive: true });
+  await mkdir(dependencies, { recursive: true });
   await mkdir(directory, { recursive: true });
+  if (outsideProject)
+    await symlink(directory, join(dependencies, "release-please"), "junction");
   await writeFile(join(project, "package.json"), '{"type":"module"}');
   await writeFile(patchPath, patch);
-  for (const script of [
-    "release-proposal.mjs",
-    "release-notes.mjs",
-    "release-pull-request.mjs",
-  ])
-    await copyFile(
-      join(source, "scripts/lib", script),
-      join(project, "scripts/lib", script),
-    );
-  for (const dependency of ["semver", "zod"])
+  await copyScriptsWithImports(
+    ["scripts/lib/release-proposal.mjs"],
+    project,
+    source,
+  );
+  for (const dependency of ["markdown-it", "semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),
-      join(project, "node_modules", dependency),
+      join(dependencies, dependency),
       "junction",
     );
   for (const member of ["package.json", ...members]) {
@@ -1069,17 +1204,17 @@ const releasePatchFixture = async () => {
     GIT_CONFIG_VALUE_0: "true",
   };
   const git = (...args: string[]) =>
-    execute("git", args, { cwd: project, env: environment });
+    execute("git", args, { cwd: directory, env: environment });
   // Installation owns the patched dependency. Reverse only the private copy
   // to obtain the exact upstream input for the fresh-application control.
-  await git("apply", "--reverse", "--directory", dependencyPath, patchPath);
+  await git("apply", "--reverse", patchPath);
   const apply = () =>
     execute(
       process.execPath,
       [
         "--input-type=module",
         "-e",
-        `import { applyReleasePleasePatch } from ${JSON.stringify(pathToFileURL(join(project, "scripts/lib/release-proposal.mjs")).href)}; await applyReleasePleasePatch(${JSON.stringify(directory)});`,
+        `import { applyReleasePleasePatch } from ${JSON.stringify(pathToFileURL(join(project, "scripts/lib/release-proposal.mjs")).href)}; await applyReleasePleasePatch();`,
       ],
       { cwd: project, env: environment, timeout: 10_000 },
     );
@@ -1087,27 +1222,26 @@ const releasePatchFixture = async () => {
     Promise.all(
       members.map((member) => readFile(join(directory, member), "utf8")),
     );
-  return { directory, apply, contents, git, dependencyPath, patchPath };
+  return { directory, apply, contents, git, patchPath };
 };
 
-it("applies the private dependency patch with protected Git paths and is idempotent", async () => {
-  const fixture = await releasePatchFixture();
-  const original = await fixture.contents();
-  await fixture.apply();
-  const patched = await fixture.contents();
-  expect(patched).not.toEqual(original);
-  expect(patched.join("\n")).toContain("const rootOnlyNode =");
-  await fixture.git(
-    "apply",
-    "--check",
-    "--reverse",
-    "--directory",
-    fixture.dependencyPath,
-    fixture.patchPath,
-  );
-  await fixture.apply();
-  expect(await fixture.contents()).toEqual(patched);
-});
+it.each([
+  { location: "inside the checkout", outsideProject: false },
+  { location: "outside the checkout", outsideProject: true },
+])(
+  "applies the private dependency patch $location and is idempotent",
+  async ({ outsideProject }) => {
+    const fixture = await releasePatchFixture(outsideProject);
+    const original = await fixture.contents();
+    await fixture.apply();
+    const patched = await fixture.contents();
+    expect(patched).not.toEqual(original);
+    expect(patched.join("\n")).toContain("const rootOnlyNode =");
+    await fixture.git("apply", "--check", "--reverse", fixture.patchPath);
+    await fixture.apply();
+    expect(await fixture.contents()).toEqual(patched);
+  },
+);
 
 it("rejects a different dependency version before patching", async () => {
   const fixture = await createTestTempDirectory("rea-release-patch-");

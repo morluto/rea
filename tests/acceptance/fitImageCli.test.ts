@@ -14,7 +14,7 @@ import {
 import {
   cells,
   dtString,
-} from "../../src/firmware/devicetree/Devicetree.fixture.js";
+} from "../../src/domain/firmware/devicetree.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {

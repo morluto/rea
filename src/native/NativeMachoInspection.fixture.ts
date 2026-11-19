@@ -7,7 +7,7 @@ import {
   readerOf,
   segmentCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
-import { readMachoCommandNames } from "./MachoCommandNames.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,

@@ -3,7 +3,7 @@ import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 // `npm run verify:electron`.
 import { afterEach, expect, it, vi } from "vitest";
 import type { ElectronApplication } from "playwright-core";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
@@ -406,7 +406,7 @@ it("runs an untargeted deep-link without requiring a BrowserWindow", async () =>
   ]);
 });
 
-it("honors caller-selected Electron waits beyond the former action timeout", async () => {
+it("honors a caller-selected Electron wait duration exactly", async () => {
   const input = electronActiveObservationInputSchema.parse({
     executable_path: "/opt/electron",
     application_path: "/opt/app/main.js",
@@ -599,6 +599,7 @@ const finalState = {
     observed_ipc: 0,
     observed_runtime: 0,
     hook_error: false,
+    single_instance_lock_refused: false,
   },
 };
 

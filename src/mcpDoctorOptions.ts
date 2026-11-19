@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 
 import { CLI_DOCUMENT_OUTPUT_FORMATS } from "./cliOutput.js";
 

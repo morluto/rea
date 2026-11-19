@@ -388,6 +388,12 @@ export const findOverlappingFatSlices = (
   return null;
 };
 
+/** The malformed-container reason for two FAT declarations whose byte ranges overlap. */
+export const fatSliceOverlapReason = (
+  overlap: readonly [FatSliceDeclaration, FatSliceDeclaration],
+): string =>
+  `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
+
 /** Validate byte-range and table/header identity facts shared by Mach-O readers. */
 export const validateFatSlice = (
   declaration: FatSliceDeclaration,

@@ -1,6 +1,7 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import type { ClientRegistrationCommand } from "../domain/clientRegistrationCommand.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import type { Result } from "../domain/result.js";
 import {
   clientConfigurationValuesEqual,
   clientServerPath,
@@ -13,22 +14,47 @@ import {
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import {
+  admitClientConfigurationCandidate,
   clientConfigurationForWrite,
   mergeClientConfigurationDocuments,
-  readConfigurationFile,
+  readClientConfigurationFiles,
+  type ClientConfigurationFileError,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
+import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
-import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
+const registrationLocation = (client: McpRegistrationClient) => ({
+  ...client.setupClient,
+  ...client,
+  name: client.setupClient?.name ?? client.id,
+});
+
+const requireAdmittedConfiguration = <T>(
+  result: Result<T, ClientConfigurationFileError>,
+): T => {
+  if (!result.ok)
+    throw (
+      result.error.cleanupFailure ?? new ConfigurationError(result.error.detail)
+    );
+  return result.value;
+};
+
+/**
+ * Merge REA's entry into one selected client document. `platform` is the host
+ * the catalog resolved the client for; it decides the document's environment
+ * name rules.
+ */
 export const prepareRegistration = async (
   path: string,
   client: McpRegistrationClient,
   launcher: ClientRegistrationCommand,
+  platform: NodeJS.Platform,
 ) => {
   const snapshot = await readRegularFileTextSnapshot(path, {
     symlinks: "reject",
@@ -46,12 +72,19 @@ export const prepareRegistration = async (
     original ?? empty.value,
     client.format,
   );
-  const layers = await readRegistrationLayers(client, target);
+  const location = registrationLocation(client);
+  const layers = requireAdmittedConfiguration(
+    await readClientConfigurationFiles(location, undefined, platform, {
+      targetDocument: target,
+    }),
+  );
   const parsed = clientConfigurationForWrite(target, layers);
-  const paths = client.configPaths ?? [client.configPath];
-  const targetIndex = paths.lastIndexOf(client.configPath);
+  const targetIndex = layers.findLastIndex(
+    ({ sourcePath }) => sourcePath === client.configPath,
+  );
   const inherited = mergeClientConfigurationDocuments(
     layers.slice(0, targetIndex),
+    platform,
   );
   const desired = replaceClientRegistrationLauncher(
     { dialect: parsed.dialect, profile: client.registrationProfile },
@@ -62,12 +95,28 @@ export const prepareRegistration = async (
       : effectiveClientServer(inherited, PRODUCT_IDENTITY.mcpServerKey),
   );
   if (!desired.ok) throw desired.error;
+  // The client's own settings policy can exclude or override this entry.
+  if (client.setupClient !== undefined) {
+    const policy = await readClientPolicyBlock(
+      client.setupClient,
+      parsed,
+      desired.value,
+    );
+    if (!policy.ok)
+      throw (
+        policy.error.cleanupFailure ??
+        new ConfigurationError(policy.error.detail)
+      );
+    if (policy.value !== undefined)
+      throw new ConfigurationError(`${policy.value} No settings were written.`);
+  }
   const updated = withClientServers(
     parsed,
     {
       ...parsed.servers,
       [PRODUCT_IDENTITY.mcpServerKey]: desired.value,
     },
+    platform,
     PRODUCT_IDENTITY.mcpServerKey,
   );
   const legacy = legacyClientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey);
@@ -86,16 +135,15 @@ export const prepareRegistration = async (
       `Client configuration member is shadowed at ${serialized.error.path.join(".")}.`,
     );
   const candidate = parseClientConfiguration(serialized.value, client.format);
-  // Native loaders may visit one file at multiple precedence positions. A
-  // physical update changes every occurrence without deduplicating its order.
-  const candidateLayers = layers.map((document, index) =>
-    paths[index] === client.configPath ? candidate : document,
+  const effective = requireAdmittedConfiguration(
+    admitClientConfigurationCandidate(location, layers, candidate, platform),
   );
-  assertEffectiveLauncher(client, candidateLayers, launcher);
+  assertEffectiveLauncher(client, effective, launcher);
   return {
     path,
     client,
     launcher,
+    platform,
     snapshot,
     original,
     parsed,
@@ -104,49 +152,11 @@ export const prepareRegistration = async (
   };
 };
 
-/** File layers and inline authority remain distinct; only the selected target is replaced. */
-const readRegistrationLayers = async (
-  client: McpRegistrationClient,
-  target: ClientConfigurationDocument,
-): Promise<ClientConfigurationDocument[]> => {
-  const layers: ClientConfigurationDocument[] = [];
-  const paths = client.configPaths ?? [client.configPath];
-  if (!paths.includes(client.configPath))
-    throw new ConfigurationError(
-      "The selected configuration is missing from the native load order.",
-    );
-  for (const path of paths) {
-    if (path === client.configPath) {
-      layers.push(target);
-      continue;
-    }
-    const read = await readConfigurationFile(path, client.format);
-    if (!read.ok)
-      throw (
-        read.error.cleanupFailure ?? new ConfigurationError(read.error.detail)
-      );
-    // Retain an empty layer for missing files so target positions do not shift.
-    if (read.value !== undefined) layers.push(read.value);
-    else {
-      const empty = serializeClientConfiguration({}, client.format);
-      if (!empty.ok)
-        throw new ConfigurationError(
-          "An empty native configuration could not be serialized.",
-        );
-      layers.push(parseClientConfiguration(empty.value, client.format));
-    }
-  }
-  if (client.inlineConfiguration !== undefined)
-    layers.push(client.inlineConfiguration.parsed);
-  return layers;
-};
-
 const assertEffectiveLauncher = (
   client: McpRegistrationClient,
-  layers: readonly ClientConfigurationDocument[],
+  effective: ClientConfigurationDocument | undefined,
   launcher: ClientRegistrationCommand,
 ): void => {
-  const effective = mergeClientConfigurationDocuments(layers);
   const admitted = admitClientStdioConnection(
     effective === undefined
       ? undefined
@@ -182,13 +192,18 @@ export const verifyEffectiveRegistration = async (
   prepared: Awaited<ReturnType<typeof prepareRegistration>>,
   targetText: string,
 ): Promise<void> => {
-  const { client, launcher } = prepared;
+  const { client, launcher, platform } = prepared;
+  const layers = requireAdmittedConfiguration(
+    await readClientConfigurationFiles(
+      registrationLocation(client),
+      undefined,
+      platform,
+      { targetDocument: parseClientConfiguration(targetText, client.format) },
+    ),
+  );
   assertEffectiveLauncher(
     client,
-    await readRegistrationLayers(
-      client,
-      parseClientConfiguration(targetText, client.format),
-    ),
+    mergeClientConfigurationDocuments(layers, platform),
     launcher,
   );
 };

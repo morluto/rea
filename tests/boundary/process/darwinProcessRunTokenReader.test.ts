@@ -3,6 +3,7 @@ import {
   rethrowProcessOwnershipInspectionFailure,
 } from "../../../src/process/ProcessInspectionCancellation.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -17,7 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
@@ -25,6 +26,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processTest } from "../../support/process/processFixture.js";
 
 import {
   createSystemProcessOwnershipHost,
@@ -46,6 +48,73 @@ import { electronActiveObservationInputSchema } from "../../../src/domain/javasc
 
 const execFileAsync = promisify(execFile);
 const onDarwin = process.platform === "darwin";
+
+processTest
+  .skipIf(process.platform === "win32")
+  .for(["writable", "blocked", "closed-stderr"] as const)(
+  "preserves process exit status during Darwin helper cleanup (%s)",
+  async (mode, { processes, skip }) => {
+    if (mode !== "writable" && process.getuid?.() === 0)
+      skip("Root can remove entries from a read-only directory");
+    const directory = await createTestTempDirectory("rea-darwin-exit-cleanup-");
+    const compiler = join(directory, "fixture-xcrun");
+    await writeFile(
+      compiler,
+      '#!/usr/bin/env node\nconst { writeFileSync } = process.getBuiltinModule("node:fs");\nwriteFileSync(process.argv.at(-1), "fixture helper");\n',
+      { mode: 0o755 },
+    );
+    const readerModule = new URL(
+      "../../../src/process/DarwinProcessRunTokenReader.ts",
+      import.meta.url,
+    );
+    const probe = `
+import { chmodSync, closeSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { createDarwinProcessRunTokenReader } from ${JSON.stringify(readerModule.href)};
+const [directory, compiler, mode] = process.argv.slice(1);
+const reader = createDarwinProcessRunTokenReader({ compiler: { kind: "xcrun", executable: compiler } });
+await reader.prepare();
+const roots = readdirSync(directory).filter((name) => name.startsWith("rea-process-token-"));
+if (roots.length !== 1) throw new Error("Expected one per-run helper root");
+const root = join(directory, roots[0]);
+if (mode !== "writable") chmodSync(root, 0o500);
+process.stdout.write(root);
+if (mode === "closed-stderr") closeSync(2);
+`;
+    try {
+      const result = await processes.run(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "--eval",
+          probe,
+          directory,
+          compiler,
+          mode,
+        ],
+        { env: { ...process.env, TMPDIR: directory } },
+      );
+      const root = result.stdout;
+      expect(dirname(root)).toBe(directory);
+      expect(result.exitCode, result.stderr).toBe(0);
+      if (mode === "writable")
+        await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+      else await expect(access(root)).resolves.toBeUndefined();
+      if (mode === "blocked") {
+        expect(result.stderr.trimEnd().split("\n")).toHaveLength(1);
+        expect(result.stderr).toContain(
+          `could not remove the Darwin ownership helper root ${root} at exit`,
+        );
+      } else expect(result.stderr).toBe("");
+    } finally {
+      for (const entry of await readdir(directory, { withFileTypes: true }))
+        if (entry.isDirectory() && entry.name.startsWith("rea-process-token-"))
+          await chmod(join(directory, entry.name), 0o700);
+    }
+  },
+);
 
 // Readiness files are polled by another process; expose only complete JSON.
 const publishFixtureStateSource = `
@@ -182,9 +251,18 @@ it("reports an actionable missing Swift compiler without installing it", async (
     },
   });
   try {
-    await expect(reader.read([{ pid: 1 }])).rejects.toThrow(
-      /requires the Apple Swift compiler via xcrun/u,
+    const failure = await reader.read([{ pid: 1 }]).then(
+      () => undefined,
+      (cause: unknown) => cause,
     );
+    const normalized = normalizeCaptureFailure(failure);
+    if (!(normalized instanceof ProcessCaptureError)) throw failure;
+    expect(projectAnalysisError(normalized)).toMatchObject({
+      code: "process_capture_failed",
+      message: expect.stringMatching(
+        /requires the Apple Swift compiler via xcrun/u,
+      ),
+    });
   } finally {
     await reader.close();
   }
@@ -276,11 +354,16 @@ it.skipIf(process.platform === "win32")(
       expect(failure.message).toMatch(
         /ownership helper.*xcrun.*timed out after 3000 ms/iu,
       );
-      expect(failure.message).toContain("REA_SWIFTC_COMPILE_TIMEOUT_MS");
-      expect(failure.message).toContain("1..2147483647");
-      expect(failure.message).toContain("120000 ms");
-      expect(failure.message).toMatch(/restart REA/i);
-      expect(failure.message).toMatch(/next ownership-helper compile/i);
+      expect(failure.compileTimeout?.limit).toEqual({
+        control_kind: "environment",
+        environment: "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+        effective_value: 3_000,
+        unit: "ms",
+        minimum: 1,
+        maximum: 2_147_483_647,
+        default_value: 120_000,
+        applies_at: "next_startup",
+      });
       expect(failure.message).toContain(
         "error: PCH was compiled with module cache path that differs",
       );
@@ -1066,10 +1149,8 @@ it.skipIf(process.platform === "win32")(
       );
       if (!isProcessOwnershipInspectionCancellation(outcome.cause))
         throw new Error("Expected producer-owned inspection cancellation");
-      expect(outcome.cause.reason).toBeInstanceOf(DOMException);
-      if (!(outcome.cause.reason instanceof DOMException))
-        throw new Error("Expected the reader's default abort reason");
-      expect(outcome.cause.reason.name).toBe("AbortError");
+      // Closing the reader is owner-initiated, so it carries the typed reason.
+      expect(outcome.cause.reason).toBe(OwnerCancellation.ownerClosed);
       await expect(access(state.root)).rejects.toThrow();
       await expect(reader.prepare()).rejects.toMatchObject({
         _tag: "ProcessAdmissionError",
@@ -1401,7 +1482,7 @@ it.skipIf(!onDarwin)(
 );
 
 it.skipIf(!onDarwin)(
-  "retries a growing process table after ENOMEM and preserves other sysctl errors",
+  "preserves process-table failures and confirms run-token identity",
   { tags: ["long-running"] },
   async () => {
     const root = await mkdtemp(
@@ -1428,11 +1509,29 @@ it.skipIf(!onDarwin)(
       );
       const { stdout } = await execFileAsync(executable, [], {
         encoding: "utf8",
+        env: { ...process.env, REA_PROCESS_RUN_ID: "rea-snapshot-probe" },
         timeout: 10_000,
       });
       expect(JSON.parse(stdout)).toEqual({
         preservedOtherErrno: true,
         retriedAfterFreshSize: true,
+        openingRunTokenSnapshotReads: 1,
+        failedOpeningRunTokens: [42, 43].map((pid) => ({
+          pid,
+          state: "unavailable",
+          reason: "process_table_failed_13",
+        })),
+        absentRunTokens: [
+          { pid: 42, state: "unavailable", reason: "process_not_in_snapshot" },
+        ],
+        failedConfirmingRunTokens: [
+          {
+            state: "unavailable",
+            reason: "process_table_failed_5",
+            tokenPresent: false,
+          },
+        ],
+        confirmedRunTokens: [{ state: "readable", matchesFixtureToken: true }],
         successfulSnapshotMissingPidIsAbsent: true,
         failedSnapshotMissingPidIsUnavailable: true,
         invalidPidIsUnavailable: true,
@@ -1661,15 +1760,19 @@ const stopNodeChild = async (child: ChildProcess) => {
   await exited;
 };
 
-const waitForChildReadiness = async (child: ChildProcess): Promise<unknown> => {
+const waitForChildReadiness = async (
+  child: ChildProcess,
+  timeoutMs?: number,
+): Promise<unknown> => {
   const listeners = new AbortController();
   const message = once(child, "message", { signal: listeners.signal });
   const exit = once(child, "exit", { signal: listeners.signal });
   try {
     await awaitAcknowledgement(
-      message.then(() => undefined),
+      message,
       exit,
       "title-mutating child readiness",
+      timeoutMs,
     );
     return (await message)[0];
   } finally {
@@ -1682,7 +1785,8 @@ it("stops a child that never acknowledges readiness", async () => {
     stdio: ["ignore", "ignore", "ignore", "ipc"],
   });
   try {
-    await expect(waitForChildReadiness(child)).rejects.toThrow(
+    // The gate deadline is the behavior under test.
+    await expect(waitForChildReadiness(child, 2_000)).rejects.toThrow(
       "title-mutating child readiness was not acknowledged before the gate deadline",
     );
   } finally {

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { CPU, fatImage, machoImage, readerOf } from "./MachoImage.fixture.js";
-import { readMachoEncryption } from "./MachoEncryptionReader.js";
+import { readMachoEncryption } from "../../domain/apple/machoEncryptionReader.js";
 import {
   MAX_LOAD_COMMAND_BYTES,
   readMachoImage,
-} from "./MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 
 const LC_SEGMENT = 0x1;
 const LC_SEGMENT_64 = 0x19;

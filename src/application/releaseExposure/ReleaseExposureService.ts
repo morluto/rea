@@ -1,8 +1,9 @@
+import { boundedList } from "../../domain/boundedList.js";
 import { basename, dirname, posix, win32 } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { appendCallerPath } from "../../filesystem/callerPath.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DesktopApplicationService } from "../artifacts/DesktopApplicationService.js";
 import type { ElectronFuseService } from "../electron/ElectronFuseService.js";
 import type { GoBinaryService } from "../go/GoBinaryService.js";
@@ -14,6 +15,8 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../../domain/desktopApplication.js";
@@ -22,11 +25,8 @@ import {
   electronFuseReportSchema,
   type ElectronFuseReport,
 } from "../../domain/electron/electronFuses.js";
-import {
-  createEvidence,
-  evidenceSchema,
-  type Evidence,
-} from "../../domain/evidence.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { recognizeEvidence } from "../../domain/evidenceValidation.js";
 import { evidenceSubjectFormatSchema } from "../../domain/evidenceSubject.js";
 import { goBinarySchema } from "../../domain/go/goBinary.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -52,7 +52,8 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { goBuildPaths } from "../../domain/releaseExposureGoPaths.js";
 import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export interface ReleaseExposureOwners {
   readonly reader: ReleaseExposurePort;
@@ -98,11 +99,7 @@ export class ReleaseExposureService {
     );
     if (!input.ok) return input;
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(RELEASE_EXPOSURE_OPERATION, options.signal));
     const markerHits: CredentialMarkerHit[] = [];
     let omittedMarkerHits = 0;
     const interrupted: { scan?: ReleaseExposureScan } = {};
@@ -325,7 +322,7 @@ export class ReleaseExposureService {
         return err(cause);
       return ok({
         family: "unknown",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         archivePaths: [],
       });
     }
@@ -349,7 +346,7 @@ export class ReleaseExposureService {
         kind: "failed",
         role: candidate.role,
         path: candidate.path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
     if (!result.ok) {
@@ -417,11 +414,7 @@ export class ReleaseExposureService {
     present: (value: Evidence) => MetadataImageFact,
   ): Promise<Result<MetadataImageFact, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(RELEASE_EXPOSURE_OPERATION, options.signal));
     try {
       const result = await run();
       if (!result.ok) {
@@ -437,12 +430,7 @@ export class ReleaseExposureService {
     } catch (cause) {
       if (cause instanceof AnalysisError && stopsAudit(cause))
         return err(cause);
-      return ok(
-        failedMetadata(
-          cause instanceof Error ? cause.message : String(cause),
-          path,
-        ),
-      );
+      return ok(failedMetadata(errorMessage(cause), path));
     }
   }
 }
@@ -463,10 +451,9 @@ interface OwnerOutcome {
  * completeProviderEvidence carries as the error's partial observation.
  */
 const completedOwnerEvidence = (error: AnalysisError): Evidence | undefined => {
-  const partial = error.partialObservation;
-  return evidenceSchema.safeParse(partial).success
-    ? (partial as Evidence)
-    : undefined;
+  // Only authenticated Evidence settles the owner; otherwise it did not run.
+  const partial = recognizeEvidence(error.partialObservation);
+  return partial.ok ? partial.value : undefined;
 };
 
 /** Settle one fuse image from its owner's Evidence. */
@@ -557,8 +544,7 @@ const withAuditPartial = (
   report: Evidence,
 ): AnalysisError => {
   if (error.partialObservation !== undefined && !error.cleanupIncomplete)
-    return new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-      cause: error.cause,
+    return cancelledBy(RELEASE_EXPOSURE_OPERATION, carriedReason(error.cause), {
       partialObservation: report,
     });
   error.partialObservation = report;
@@ -590,7 +576,7 @@ const ownerCloseFailure = (
           cause instanceof AnalysisError
             ? projectAnalysisError(cause)
             : {
-                message: cause instanceof Error ? cause.message : String(cause),
+                message: errorMessage(cause),
               },
       })),
     },
@@ -852,11 +838,13 @@ const limitNativeSample = (
         (ranked.get(left.path) ?? 0) - (ranked.get(right.path) ?? 0),
     );
   const preferredPaths = new Set(preferred.map((image) => image.path));
-  const kept = [
-    ...preferred,
-    ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
-  ].slice(0, MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
-  const omittedNative = scan.native_images.length - kept.length;
+  const { items: kept, omitted: omittedNative } = boundedList(
+    [
+      ...preferred,
+      ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
+    ],
+    MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
+  );
   const keptPaths = new Set(kept.map((image) => image.path));
   // With no named host, any sampled sibling could be it, so none settles alone.
   const hostsAmong = (

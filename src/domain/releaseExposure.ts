@@ -464,6 +464,7 @@ const boundSamples = (samples: readonly string[]): string[] => {
 
 const boundLocations = (
   locations: readonly EvidenceLocation[],
+  // sample-cap: illustrative locations; observation.counts reports the totals
 ): EvidenceLocation[] => locations.slice(0, MAX_RELEASE_EXPOSURE_SAMPLES);
 
 const makeCheck = (
@@ -496,6 +497,7 @@ const findingLocations = (
   fallback: string,
 ): EvidenceLocation[] => {
   const locations = [...new Set(paths.filter((path) => path.length > 0))]
+    // sample-cap: illustrative locations; observation.counts reports the totals
     .slice(0, MAX_RELEASE_EXPOSURE_SAMPLES)
     .map((path) => ({ kind: "artifact-path" as const, path }));
   return locations.length > 0 ? locations : targetLocation(fallback);

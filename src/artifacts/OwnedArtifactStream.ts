@@ -1,6 +1,6 @@
 import { pipeline, type Readable, type Transform } from "node:stream";
 
-import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 /** Keep the carrier and buffered output owned through production and retirement. */
 export const ownArtifactStream = (

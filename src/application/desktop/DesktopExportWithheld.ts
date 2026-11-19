@@ -34,6 +34,8 @@ import {
   withRetainedContent,
   type RetainedContent,
 } from "./DesktopRetainedContent.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest retained file read back, as the export reads seeds. */
@@ -187,15 +189,12 @@ const dconfKeys = (
   version: DesktopStatePath["versions"][number] | undefined,
 ): ReadonlyMap<string, string> => {
   const view = version?.present === true ? version.view : null;
-  const groups =
-    typeof view === "object" && view !== null && !Array.isArray(view)
-      ? view.groups
-      : undefined;
+  const groups = isRecord(view) ? view.groups : undefined;
   if (typeof groups !== "object" || groups === null || Array.isArray(groups))
     return new Map();
   return new Map(
     Object.entries(groups).flatMap(([group, keys]) =>
-      typeof keys === "object" && keys !== null && !Array.isArray(keys)
+      isRecord(keys)
         ? Object.entries(keys).map(
             ([key, value]) =>
               [`${group}/${key}`, JSON.stringify(value)] as const,
@@ -280,7 +279,7 @@ const writeWithheldCopy = (
           Readable.from([bytes]),
           {
             bytes: bytes.length,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: sha256Hex(bytes),
           },
           signal,
         );

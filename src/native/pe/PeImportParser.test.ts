@@ -14,7 +14,7 @@ import {
   peImportNameAtRva,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
-import { parsePeImports, PeImportLimitFailure } from "./PeImportParser.js";
+import { parsePeImports } from "./PeImportParser.js";
 
 const input = inspectPeImportsInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -558,7 +558,11 @@ it("fails closed when the DLL budget is exhausted", async () => {
       }),
     ),
   ).rejects.toThrow(
-    expect.objectContaining({ limit: "dlls", maximum_bytes: 1 }),
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        limit: { name: "dlls", maximum: 1 },
+      }),
+    }),
   );
 });
 
@@ -581,7 +585,11 @@ it("fails closed when the function budget is exhausted", async () => {
       }),
     ),
   ).rejects.toThrow(
-    expect.objectContaining({ limit: "functions", maximum_bytes: 1 }),
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        limit: { name: "functions", maximum: 1 },
+      }),
+    }),
   );
 });
 
@@ -597,13 +605,12 @@ it("fails closed with a structured tag when retained name text is exhausted", as
     ],
   });
   const failure = parse(bytes);
-  await expect(failure).rejects.toThrow(PeImportLimitFailure);
-  await expect(failure).rejects.toThrow(
-    expect.objectContaining({
-      limit: "retained_text",
-      maximum_bytes: 16 * 1024 * 1024,
-    }),
-  );
+  await expect(failure).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: "retained_text", maximum: 16 * 1024 * 1024 },
+    },
+  });
 });
 
 it("computes a pefile import hash for oleaut32 ordinal names", async () => {

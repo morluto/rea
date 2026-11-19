@@ -18,10 +18,8 @@ import {
   wrongClsidShortcut,
 } from "../../../tests/fixtures/binaryDiagnostics/windowsShortcut.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const input = inspectWindowsShortcutInputSchema.parse({
   path: "/artifacts/shortcut.lnk",
@@ -499,7 +497,7 @@ it("lists an unknown ExtraData signature instead of dropping it", async () => {
 
 it("rejects a Shell Link whose CLSID is not the documented value", async () => {
   await expect(parse(wrongClsidShortcut())).rejects.toBeInstanceOf(
-    WindowsShortcutFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -507,8 +505,12 @@ it("rejects a HeaderSize other than 0x4C", async () => {
   await expect(
     parse(windowsShortcutBytes({ headerSize: 0x50, extraData: [] })),
   ).rejects.toMatchObject({
-    name: "WindowsShortcutFormatFailure",
-    kind: "malformed",
+    failure: {
+      kind: "malformed",
+      format: "windows-shortcut",
+      offset: 0,
+      field: "HeaderSize",
+    },
   });
 });
 
@@ -590,6 +592,26 @@ it("treats any TerminalSize below 4 as the ExtraData terminal", async () => {
     expect(report.extra_data.terminal_offset).toBe(base.length);
     expect(report.coverage.status).toBe("complete");
   }
+});
+
+it("reports bytes appended after the ExtraData TerminalBlock", async () => {
+  const link = powershellHiddenIconSpoofShortcut();
+  const report = await parse(
+    Buffer.concat([link, Buffer.from("PK\x03\x04appended", "latin1")]),
+  );
+  expect(report.extra_data.terminal_offset).toBe(link.length - 4);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: link.length,
+  });
+  expect(report.issues).toEqual([
+    {
+      code: "malformed_structure",
+      offset: link.length,
+      message:
+        "12 byte(s) follow the ExtraData TerminalBlock and are not part of the Shell Link",
+    },
+  ]);
 });
 
 it("derives target facts from a stored environment target alone", async () => {
@@ -1248,4 +1270,165 @@ it("charges the string budget before decoding a LinkInfo string", async () => {
       { max_string_bytes: 1 },
     ),
   ).rejects.toBeInstanceOf(WindowsShortcutResourceFailure);
+});
+
+it.each(
+  (["link-info", "environment"] as const).flatMap((origin) =>
+    [
+      {
+        label: "DBCS trail case",
+        target: "C:\\Tools\\\x83A.exe",
+        icon: "C:\\Tools\\\x83a.exe",
+        targetUnicode: "C:\\Tools\\ア.exe",
+        iconUnicode: "C:\\Tools\\ヂ.exe",
+        unicodeDiffers: true,
+      },
+      {
+        label: "fullwidth case",
+        target: "C:\\Tools\\\x82\x60.exe",
+        icon: "C:\\Tools\\\x82\x81.exe",
+        targetUnicode: "C:\\Tools\\Ａ.exe",
+        iconUnicode: "C:\\Tools\\ａ.exe",
+        unicodeDiffers: false,
+      },
+      {
+        label: "DBCS trail separator",
+        target: "C:\\Tools\\\x83\\..\\app.exe",
+        icon: "C:\\Tools\\app.exe",
+        targetUnicode: "C:\\Tools\\ソ..\\app.exe",
+        iconUnicode: "C:\\Tools\\app.exe",
+        unicodeDiffers: true,
+      },
+    ].map((test) => ({ origin, ...test })),
+  ),
+)(
+  "keeps $origin $label unknown without a system code page",
+  async ({
+    origin,
+    target,
+    icon,
+    targetUnicode,
+    iconUnicode,
+    unicodeDiffers,
+  }) => {
+    const options = (path: string, iconLocation: string, unicode: boolean) => ({
+      unicode,
+      flags:
+        LINK_FLAG.HasIconLocation |
+        (unicode ? LINK_FLAG.IsUnicode : 0) |
+        (origin === "link-info"
+          ? LINK_FLAG.HasLinkInfo
+          : LINK_FLAG.HasExpString),
+      idList: null,
+      relativePath: "",
+      linkInfo:
+        origin === "link-info" ? { localBasePath: path, unicode } : null,
+      extraData:
+        origin === "environment"
+          ? [
+              {
+                kind: "environment" as const,
+                ansi: path,
+                unicode: unicode ? path : "",
+              },
+            ]
+          : [],
+      iconLocation,
+    });
+    const opaque = await parse(
+      windowsShortcutBytes(options(target, icon, false)),
+    );
+    expect(iconDifference(opaque)).toBeNull();
+    expect(opaque.string_data.icon_location?.value).toBe(icon);
+    expect(opaque.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension: ".exe",
+    });
+    // Equal byte spellings remain equal without choosing any code page.
+    expect(
+      iconDifference(
+        await parse(windowsShortcutBytes(options(target, target, false))),
+      ),
+    ).toBe(false);
+    // The same names supplied as UTF-16 have known, comparable characters.
+    expect(
+      iconDifference(
+        await parse(
+          windowsShortcutBytes(options(targetUnicode, iconUnicode, true)),
+        ),
+      ),
+    ).toBe(unicodeDiffers);
+  },
+);
+
+it("does not reinterpret an ANSI trail backslash while joining LinkInfo parts", async () => {
+  const base = "C:\\Tools\\\x83\\";
+  const report = await parse(
+    windowsShortcutBytes({
+      unicode: false,
+      idList: null,
+      relativePath: "",
+      linkInfo: { localBasePath: base, commonPathSuffix: "app.exe" },
+      extraData: [],
+      iconLocation: base + "app.exe",
+    }),
+  );
+  expect(report.link_info?.local_base_path).toBe(base);
+  expect(report.link_info?.common_path_suffix).toBe("app.exe");
+  expect(iconDifference(report)).toBeNull();
+  expect(report.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: ".exe",
+  });
+  for (const [knownTarget, expected] of [
+    ["C:\\Known\\other.exe", null],
+    ["C:\\Known\\icon.exe", false],
+  ] as const) {
+    const mixed = await parse(
+      windowsShortcutBytes({
+        unicode: false,
+        idList: null,
+        relativePath: "",
+        linkInfo: { localBasePath: base, commonPathSuffix: "app.exe" },
+        extraData: [{ kind: "environment", unicode: knownTarget }],
+        iconLocation: "C:\\Known\\icon.exe",
+      }),
+    );
+    expect(iconDifference(mixed)).toBe(expected);
+  }
+});
+
+it("leaves non-ASCII ANSI extensions uninterpreted", async () => {
+  const path = "C:\\Tools\\report.\x83A";
+  const report = await parse(
+    windowsShortcutBytes({
+      unicode: false,
+      idList: null,
+      relativePath: "",
+      linkInfo: { localBasePath: path },
+      extraData: [],
+      iconLocation: path,
+    }),
+  );
+  expect(report.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: null,
+  });
+  expect(report.link_info?.local_base_path).toBe(path);
+  expect(iconDifference(report)).toBe(false);
+  const known = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Tools\\report.ア" },
+      extraData: [],
+      iconLocation: "C:\\Tools\\report.ア",
+    }),
+  );
+  expect(known.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: ".ア",
+  });
 });

@@ -1,5 +1,4 @@
 import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
-import { createHash } from "node:crypto";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
@@ -10,9 +9,12 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  GHIDRA_COM_EXECUTABLE_FORMAT,
+  type GhidraComImportSelection,
+} from "./GhidraComImport.js";
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
 const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
   "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.";
@@ -27,7 +29,11 @@ export type GhidraDosImage = {
   readonly header: DosMzHeader;
   readonly loadSegment: number;
   readonly modified: Buffer;
-  readonly expectedRelocations: NativeLoadImageObservation["relocations"];
+  /** The independent DOS check does not attest Ghidra's symbol name. */
+  readonly expectedRelocations: readonly Omit<
+    NativeLoadImageObservation["relocations"][number],
+    "symbol"
+  >[];
 };
 
 /** Prepare initialized bytes and relocation facts without copying overlays. */
@@ -137,7 +143,11 @@ export const attestGhidraDosLoadImage = (
   );
   check("entry_points", [entryAddress], [...observations.entry_points].sort());
   // A multiset preserves duplicate relocations and aliases; iteration order is not semantic.
-  const rows = (values: NativeLoadImageObservation["relocations"]): string[] =>
+  const rows = (
+    values: readonly (GhidraDosImage["expectedRelocations"][number] & {
+      readonly symbol?: string | null;
+    })[],
+  ): string[] =>
     values
       // The independent DOS check does not attest Ghidra's symbol name.
       .map(
@@ -258,7 +268,7 @@ const checkMappings = (
     check(
       `${at}.memory_sha256`,
       start !== null && end !== null && end <= modified.length
-        ? sha256(modified.subarray(start, end))
+        ? sha256Hex(modified.subarray(start, end))
         : null,
       mapping.sha256,
       start,
@@ -270,18 +280,69 @@ const checkMappings = (
   check(
     "initialized_unbacked_mappings",
     [],
-    observations.mappings
-      .filter(
-        (mapping) => mapping.initialized && mapping.source_file_index === null,
-      )
-      // Unmeasured permissions serialize as null so the observed value stays JSON.
-      .map((mapping) => ({
-        ...mapping,
-        readable: mapping.readable ?? null,
-        writable: mapping.writable ?? null,
-        executable: mapping.executable ?? null,
-      })),
+    observations.mappings.filter(
+      (mapping) => mapping.initialized && mapping.source_file_index === null,
+    ),
   );
+};
+
+const ZERO_PSP_SHA256 = sha256Hex(Buffer.alloc(0x100));
+
+const observedComLoader = (
+  format: string,
+): GhidraComImportSelection["loader"] | null =>
+  format === GHIDRA_COM_EXECUTABLE_FORMAT
+    ? "ComLoader"
+    : format === "Raw Binary"
+      ? "BinaryLoader"
+      : null;
+
+const observedComLoadAddress = (
+  start: string | null,
+): GhidraComImportSelection["loadAddress"] | null =>
+  start === "0x100" ? "0000:0100" : start === "0x10100" ? "1000:0100" : null;
+
+const COM_HEADERLESS_LIMITATION =
+  "DOS COM is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.";
+const COM_UNVERIFIED_RUNTIME_LIMITATION =
+  "The initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.";
+const COM_MAPPING_END_LIMITATION =
+  "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.";
+
+/** Coordinates and limitations for one measured COM layout, not the selector. */
+const appliedComLayout = (
+  loader: GhidraComImportSelection["loader"] | null,
+  loadAddress: GhidraComImportSelection["loadAddress"] | null,
+): {
+  readonly loadSegment: number;
+  readonly linearAddress: "0x100" | "0x10100";
+  readonly limitations: readonly string[];
+} | null => {
+  if (loader === "ComLoader" && loadAddress === "0000:0100")
+    return {
+      loadSegment: 0,
+      linearAddress: "0x100",
+      limitations: [
+        COM_HEADERLESS_LIMITATION,
+        "Ghidra ComLoader mapped a 256-byte zero-filled PSP placeholder at 0000:0000 and the file at 0000:0100 (linear 0x100). The placeholder is not file-backed and is not an observed DOS PSP.",
+        "Verification covers complete original/modified source identity, the placeholder and mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x0 is imposed for analysis; it is not an observed running process.",
+        COM_UNVERIFIED_RUNTIME_LIMITATION,
+        COM_MAPPING_END_LIMITATION,
+      ],
+    };
+  if (loader === "BinaryLoader" && loadAddress === "1000:0100")
+    return {
+      loadSegment: 0x1000,
+      linearAddress: "0x10100",
+      limitations: [
+        COM_HEADERLESS_LIMITATION,
+        "The measured BinaryLoader layout places the file at 1000:0100 (linear 0x10100).",
+        "Verification covers complete original/modified source identity, mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x1000 is imposed for analysis; it is not an observed running process.",
+        "The PSP, initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.",
+        COM_MAPPING_END_LIMITATION,
+      ],
+    };
+  return null;
 };
 
 /** Verify the explicit DOS COM interpretation against measured bytes and context. */
@@ -289,14 +350,28 @@ export const attestGhidraDosComLoadImage = (
   bytes: Buffer,
   targetSha256: string,
   observations: NativeLoadImageObservation,
+  selection: GhidraComImportSelection,
 ): Result<NativeLoadImage, string> => {
-  if (sha256(bytes) !== targetSha256)
+  if (sha256Hex(bytes) !== targetSha256)
     return err("Ghidra COM snapshot digest does not match the admitted target");
   const length = validateDosComLength(bytes.length);
   if (!length.ok) return length;
   const { checks, check } = createLoadImageChecks();
   const source = observations.source_files[0];
-  check("executable_format", "Raw Binary", observations.executable_format);
+  const observedLoader = observedComLoader(observations.executable_format);
+  const fileMapping = observations.mappings.find(
+    (mapping) => mapping.file_offset === 0 && mapping.source_file_index === 0,
+  );
+  const observedLoadAddress = observedComLoadAddress(
+    fileMapping?.start ?? null,
+  );
+  check(
+    "executable_format",
+    selection.executableFormat,
+    observations.executable_format,
+  );
+  check("loader", selection.loader, observedLoader);
+  check("load_address", selection.loadAddress, observedLoadAddress);
   check("language_id", "x86:LE:16:Real Mode", observations.language_id);
   check("compiler_spec_id", "default", observations.compiler_spec_id);
   check("image_base", "0x0", observations.image_base);
@@ -305,47 +380,126 @@ export const attestGhidraDosComLoadImage = (
   check("source_file_size", bytes.length, source?.size ?? null);
   check("original_file_sha256", targetSha256, source?.original_sha256 ?? null);
   check("modified_file_sha256", targetSha256, source?.modified_sha256 ?? null);
-  check("entry_points", ["0x10100"], [...observations.entry_points].sort());
+  check(
+    "entry_points",
+    [selection.linearAddress],
+    [...observations.entry_points].sort(),
+  );
   check(
     "entry_context",
     [
       {
-        address: "0x10100",
+        address: selection.linearAddress,
         registers: ["CS", "DS", "ES", "SS"].map((name) => ({
           name,
-          value_hex: "0x1000",
+          value_hex: selection.segmentRegister,
         })),
       },
     ],
     observations.entry_context,
   );
   check("relocation_records", [], observations.relocations);
-  checkMappings(
-    { headerBytes: 0, imageBytes: bytes.length },
-    0x10100,
-    bytes,
-    observations,
-    check,
-  );
+  if (selection.loader === "ComLoader")
+    checkComLoaderMappings(bytes, observations, check);
+  else
+    checkMappings(
+      { headerBytes: 0, imageBytes: bytes.length },
+      0x10100,
+      bytes,
+      observations,
+      check,
+    );
+  const matched = checks.every((item) => item.matched);
+  const applied = appliedComLayout(observedLoader, observedLoadAddress);
   return ok(
     nativeLoadImageSchema.parse({
-      status: checks.every((item) => item.matched) ? "verified" : "mismatch",
+      status: matched ? "verified" : "mismatch",
       format: "dos-com",
+      ...(observedLoader === null ? {} : { loader: observedLoader }),
+      ...(observedLoadAddress === null
+        ? {}
+        : { load_address: observedLoadAddress }),
+      ...(selection.fallback === undefined || observedLoader !== "BinaryLoader"
+        ? {}
+        : { loader_fallback: selection.fallback }),
       target_sha256: targetSha256,
-      load_segment: 0x1000,
+      ...(applied === null
+        ? {}
+        : {
+            load_segment: applied.loadSegment,
+            entry: {
+              relative_segment: 0,
+              offset: 0x100,
+              linear_address: applied.linearAddress,
+            },
+          }),
       header_bytes: 0,
       module_bytes: bytes.length,
       overlay_bytes: 0,
-      entry: { relative_segment: 0, offset: 0x100, linear_address: "0x10100" },
       observations,
       checks,
-      limitations: [
-        "DOS COM is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
-        "Verification covers complete original/modified source identity, mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x1000 is imposed for analysis; it is not an observed running process.",
-        "The PSP, initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.",
-        "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
-      ],
+      limitations:
+        applied === null
+          ? [
+              COM_HEADERLESS_LIMITATION,
+              "The measured loader and load address are not a known COM import. checks retain the expected and observed values. No load segment or entry was derived.",
+              COM_MAPPING_END_LIMITATION,
+            ]
+          : [...applied.limitations],
     }),
+  );
+};
+
+const checkComLoaderMappings = (
+  bytes: Buffer,
+  observations: NativeLoadImageObservation,
+  check: ReturnType<typeof createLoadImageChecks>["check"],
+): void => {
+  const psp = observations.mappings.find((mapping) => mapping.start === "0x0");
+  const code = observations.mappings.find(
+    (mapping) => mapping.start === "0x100",
+  );
+  check("mapping_count", 2, observations.mappings.length);
+  check("psp.block", "PSP", psp?.block ?? null);
+  check("psp.end", "0xff", psp?.end ?? null, null, psp?.end ?? null);
+  check("psp.length", 0x100, psp?.length ?? null);
+  check("psp.initialized", true, psp?.initialized ?? null);
+  check("psp.loaded", true, psp?.loaded ?? null);
+  check("psp.overlay", false, psp?.overlay ?? null);
+  check("psp.readable", true, psp?.readable ?? null);
+  check("psp.writable", true, psp?.writable ?? null);
+  check("psp.executable", false, psp?.executable ?? null);
+  check("psp.source_file_index", null, psp?.source_file_index ?? null);
+  check("psp.file_offset", null, psp?.file_offset ?? null);
+  check("psp.memory_sha256", ZERO_PSP_SHA256, psp?.sha256 ?? null, null, "0x0");
+  check("code.block", "CODE", code?.block ?? null);
+  check(
+    "code.end",
+    address(0x100 + bytes.length - 1),
+    code?.end ?? null,
+    0,
+    code?.end ?? null,
+  );
+  check("code.length", bytes.length, code?.length ?? null, 0, "0x100");
+  check("code.initialized", true, code?.initialized ?? null);
+  check("code.loaded", true, code?.loaded ?? null);
+  check("code.overlay", false, code?.overlay ?? null);
+  check("code.readable", true, code?.readable ?? null);
+  check("code.writable", true, code?.writable ?? null);
+  check("code.executable", false, code?.executable ?? null);
+  check("code.source_file_index", 0, code?.source_file_index ?? null);
+  check("code.file_offset", 0, code?.file_offset ?? null, 0, "0x100");
+  check(
+    "code.memory_sha256",
+    sha256Hex(bytes),
+    code?.sha256 ?? null,
+    0,
+    "0x100",
+  );
+  check(
+    "code.address_space",
+    observations.default_address_space,
+    code?.address_space ?? null,
   );
 };
 

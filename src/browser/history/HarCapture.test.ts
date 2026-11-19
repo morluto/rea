@@ -34,7 +34,7 @@ it.each([
     });
     expect(() => decodeHarCapture(text, [])).toThrow(
       expect.objectContaining({
-        reason: "format",
+        failure: expect.objectContaining({ kind: "malformed" }),
         pointer: `/log/entries/0/timings${field}`,
       }),
     );
@@ -67,7 +67,7 @@ it.each([
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "format",
+      failure: expect.objectContaining({ kind: "malformed" }),
       pointer: "/log/entries/0/cache",
     }),
   );
@@ -85,7 +85,7 @@ it.each([-1, -0.5])("rejects negative HAR elapsed time: %s", (time) => {
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "format",
+      failure: expect.objectContaining({ kind: "malformed" }),
       pointer: "/log/entries/0/time",
     }),
   );
@@ -111,7 +111,7 @@ it.each(["onContentLoad", "onLoad"])(
         ),
       ).toThrow(
         expect.objectContaining({
-          reason: "format",
+          failure: expect.objectContaining({ kind: "malformed" }),
           pointer: `/log/pages/0/pageTimings/${field}`,
         }),
       );
@@ -965,7 +965,9 @@ it.each([
     if (accepted) expect(decodeHarCapture(text, []).total_records).toBe(0);
     else
       expect(() => decodeHarCapture(text, [])).toThrow(
-        expect.objectContaining({ reason: "input-limit" }),
+        expect.objectContaining({
+          limit: { name: "nesting-depth", maximum: 64 },
+        }),
       );
   },
 );
@@ -978,7 +980,9 @@ it("rejects excessive extension nesting instead of returning a partial capture",
       JSON.stringify({ ...historicalHar(), _extension: extension }),
       [],
     ),
-  ).toThrow(expect.objectContaining({ reason: "input-limit" }));
+  ).toThrow(
+    expect.objectContaining({ limit: { name: "nesting-depth", maximum: 64 } }),
+  );
 });
 
 it.each([

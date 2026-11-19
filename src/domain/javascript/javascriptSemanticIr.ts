@@ -506,6 +506,7 @@ export interface JavaScriptSemanticIr {
   readonly functionFingerprints: readonly JavaScriptSemanticFunctionFingerprint[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
   readonly coverage: JavaScriptSemanticCoverage;
+  readonly loaderCondition?: string;
   readonly limitations: readonly string[];
 }
 

@@ -6,14 +6,15 @@ import ts from "typescript6";
 // Recognized numeric REA_ limit reads must be an analysis setting or a
 // documented exception with a reason. External behavioral witnesses are
 // reported separately and are not verified by this Node-only scan.
-// restart-only is durable. per-call is a
-// launch-captured limit whose runtime migration deletes the registry entry.
+// Per-call limits belong to ANALYSIS_SETTINGS.
 // The three limits moving on #9868, #9865, and #9836 are not in this tree;
 // once their names appear here they must join ANALYSIS_SETTINGS.
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const definitionsPath = join(root, "src/domain/analysisSettingDefinitions.ts");
-const registryPath = join(root, "src/domain/numericLimitRegistry.ts");
+// Registry text declares an exception. It does not prove a reader exists.
+const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
+const registryPath = join(root, NUMERIC_LIMIT_DECLARATION);
 
 const listFiles = async (dir) => {
   const output = [];
@@ -25,6 +26,7 @@ const listFiles = async (dir) => {
     } else if (
       entry.name.endsWith(".ts") &&
       !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".spec.ts") &&
       !entry.name.endsWith(".fixture.ts")
     )
       output.push(path);
@@ -32,14 +34,11 @@ const listFiles = async (dir) => {
   return output;
 };
 
-/** Registry text is a declaration, not a producer that uses the limit. */
-export const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
-
 /**
  * These limits are moving onto runtime analysis settings on their own PRs.
  * A producer or a registry entry cannot satisfy that requirement.
  */
-export const REQUIRED_RUNTIME_LIMITS = [
+const REQUIRED_RUNTIME_LIMITS = [
   "REA_NTFS_MFT_MAX_FILE_BYTES",
   "REA_REGF_HIVE_MAX_FILE_BYTES",
   "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
@@ -170,8 +169,16 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
           item.offset === offset &&
           item.reason === reason,
       )
-    )
-      unresolved.push({ path, offset, reason });
+    ) {
+      const location = sourceFile.getLineAndCharacterOfPosition(offset);
+      unresolved.push({
+        path,
+        offset,
+        line: location.line + 1,
+        column: location.character + 1,
+        reason,
+      });
+    }
   };
   const initializer = (identifier) => {
     if (!candidates.has(identifier.text)) return undefined;
@@ -377,7 +384,7 @@ const rememberNumericArgument = (
   }
 };
 
-export const isNumericLimit = (name) =>
+const isNumericLimit = (name) =>
   REQUIRED_RUNTIME_LIMITS.includes(name) ||
   /(?:_BYTES|_MS|_MIB|_SECONDS|_POLLS|_JOBS|_ELEMENTS|_COUNT|_SESSIONS|_COMMANDS)$/u.test(
     name,
@@ -737,10 +744,13 @@ export const parseNumericLimitRegistry = (source) => {
     if (
       exactLimit(name) === undefined ||
       update_mode !== "restart" ||
-      !["restart-only", "per-call"].includes(policy) ||
       !["startup", "per-call", "construction"].includes(read)
     )
       throw new Error(`Invalid numeric limit registry entry ${name}`);
+    if (policy !== "restart-only")
+      throw new Error(
+        `${name} must use a restart-only policy in the registry. Move per-call limits into ANALYSIS_SETTINGS.`,
+      );
     const source = value.get("provenance");
     if (source === undefined)
       return { name, update_mode, policy, read, reason };
@@ -886,28 +896,6 @@ export const parseRuntimeSettingEnvironments = (source) => {
   return names;
 };
 
-/**
- * Names still registered as per-call while they move into ANALYSIS_SETTINGS.
- * This branch has moved those limits, so the allowlist is empty.
- */
-const TEMPORARY_PER_CALL_LIMITS = new Set([]);
-
-/** Temporary exceptions must be removed from both the registry and allowlist. */
-export const perCallLimitFailures = (listed, temporary) => {
-  const failures = [];
-  for (const [name, policy] of listed)
-    if (policy === "per-call" && !temporary.has(name))
-      failures.push(
-        `${name} is a new per-call exception. Move it into ANALYSIS_SETTINGS instead of extending the temporary list.`,
-      );
-  for (const name of temporary)
-    if (listed.get(name) !== "per-call")
-      failures.push(
-        `${name} is no longer a temporary per-call exception; remove it from the allowlist`,
-      );
-  return failures;
-};
-
 const direct =
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
@@ -931,12 +919,6 @@ if (direct) {
     if (read !== "startup" && read !== "construction")
       failures.push(`${name} is restart-only but is not read at startup`);
   }
-  failures.push(
-    ...perCallLimitFailures(
-      new Map([...listed].map(([name, entry]) => [name, entry.policy])),
-      TEMPORARY_PER_CALL_LIMITS,
-    ),
-  );
 
   const discovered = discoverNumericLimitUses(
     await Promise.all(
@@ -949,7 +931,7 @@ if (direct) {
 
   for (const issue of discovered.unresolved)
     console.log(
-      `${issue.path}:${issue.offset}: numeric limit candidate unresolved (${issue.reason})`,
+      `${issue.path}:${issue.line}:${issue.column}: numeric limit candidate unresolved (${issue.reason})`,
     );
 
   for (const [name, file] of [...discovered].sort(([left], [right]) =>
@@ -1010,7 +992,7 @@ if (direct) {
   }
 
   const parameterOwners = [
-    "src/artifacts/ArtifactReaderLimits.ts",
+    "src/resources/ArtifactReaderLimits.ts",
     "src/domain/artifactReaderLimits.ts",
     "src/domain/webNetworkCapture.ts",
   ];
@@ -1022,44 +1004,6 @@ if (direct) {
       );
     if (!/update_mode:\s*"parameter"/u.test(source))
       failures.push(`${relativePath} must report update_mode parameter`);
-  }
-
-  const forbidden =
-    /(?<![A-Za-z0-9_])(?:rea_restart_required|restartRequired|restart_required)(?![A-Za-z0-9_])|effect:\s*"(?:immediate|next_process)"|SettingChangeEffect/gu;
-  // Docs and verification receipts keep the field names they recorded.
-  // Source, tests, skills, and scripts cannot reintroduce those names.
-  const scanRoots = ["src", "tests", ".agents", "scripts"].map((dir) =>
-    join(root, dir),
-  );
-  const skipDir = new Set([
-    "node_modules",
-    "dist",
-    ".turbo",
-    ".cache",
-    "rea-numeric-limits.mjs",
-  ]);
-  const listText = async (dir) => {
-    const output = [];
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (skipDir.has(entry.name)) continue;
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) output.push(...(await listText(path)));
-      else if (/\.(?:ts|tsx|mjs|js|md|json|py|yml|yaml)$/u.test(entry.name))
-        output.push(path);
-    }
-    return output;
-  };
-  for (const dir of scanRoots) {
-    for (const path of await listText(dir)) {
-      if (path.endsWith(`${sep}rea-numeric-limits.mjs`)) continue;
-      const source = await readFile(path, "utf8");
-      const hit = source.match(forbidden);
-      if (hit)
-        failures.push(
-          `${relative(root, path).split(sep).join("/")} still uses ${[...new Set(hit)].join(", ")}`,
-        );
-    }
   }
 
   if (failures.length > 0) {

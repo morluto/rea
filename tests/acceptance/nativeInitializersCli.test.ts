@@ -6,13 +6,75 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   elfRelocatableCtors,
   elf64AliasedInitializers,
+  elf64PieInitializers,
   elfUnmappedInitializerTargets,
   machoArm64Initializers,
+  machoIndirectInitializerGolden,
 } from "../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { aps2InitializerImage } from "../fixtures/nativeAps2Initializers.js";
 
 const contract = toolContract("inspect_native_initializers");
+
+cliTest(
+  "reads APS2 RELA alongside RELR through the public CLI without changing the image",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-aps2-initializers-cli-");
+    const path = join(root, "library.so");
+    const bytes = aps2InitializerImage();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_entries: 7,
+    });
+    expect(
+      report.entries
+        .filter((entry) => entry.kind === "init_array")
+        .map((entry) => [entry.value_va, entry.resolution]),
+    ).toEqual([
+      ["0x100", "relative_addend"],
+      ["0x110", "relative_addend"],
+      [null, "unresolved_import"],
+    ]);
+    expect(
+      report.entries.find((entry) => entry.kind === "fini_array"),
+    ).toMatchObject({ value_va: "0x120", resolution: "relr" });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest(
+  "does not name an initializer from an LLVM indirect-symbol string index",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-native-init-indirect-cli-");
+    const path = join(root, "program.o");
+    const bytes = machoIndirectInitializerGolden();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.entries).toMatchObject([
+      {
+        value_va: "0x8",
+        value_file_offset: 376,
+        symbol: null,
+        resolution: "raw",
+      },
+    ]);
+    expect(report.artifact.sha256).toBe(
+      "dc67f456f3b98a7e2279971a5049b089668fadbbd75f0c4e630383d413f713bf",
+    );
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "keeps an unrelocated ELF alias's value and source identity through the CLI",
@@ -152,5 +214,34 @@ cliTest(
       examined_entries: 3,
       total_entries: 3,
     });
+  },
+);
+
+cliTest(
+  "resolves Android RELR initializer slots through the public CLI without changing source bytes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-android-relr-cli-");
+    const path = join(root, "library.so");
+    const bytes = elf64PieInitializers(0, "android");
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_entries: 7,
+    });
+    expect(
+      report.entries.find((entry) => entry.kind === "fini_array"),
+    ).toMatchObject({
+      slot_va: "0x220",
+      slot_file_offset: 0x220,
+      value_va: "0x120",
+      resolution: "relr",
+      symbol: { name: "fini_fn" },
+    });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
   },
 );

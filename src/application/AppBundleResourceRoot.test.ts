@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   findAppBundleResourceRoot,
@@ -144,6 +144,50 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   },
 );
 
+it("binds the target's selection to a provider subject naming its bytes", () => {
+  const flash: BinaryTarget = {
+    path: "/fixture/flash.bin",
+    sha256: "e".repeat(64),
+    kind: "archive",
+    format: "esp-flash-image",
+    espFlash: {
+      selected: true,
+      flashOffset: 0x1000,
+      partitionTableOffset: 0x8000,
+    },
+  };
+  const selection = {
+    kind: "esp-flash",
+    flash_offset: 0x1000,
+    partition_table_offset: 0x8000,
+  };
+  const subject = {
+    path: flash.path,
+    sha256: flash.sha256,
+    format: "esp-flash-image" as const,
+  };
+  const bind = (provided: {
+    readonly path: string;
+    readonly sha256: string;
+    readonly format: "esp-flash-image" | "file";
+  }) =>
+    bindExecutionTarget(
+      {
+        ok: true,
+        value: createAnalysisExecution({ ok: true }, provider, {
+          subject: provided,
+        }),
+      },
+      "inventory_artifact",
+      flash,
+    );
+  const bound = bind(subject);
+  expect(bound.ok && bound.value.subject).toEqual({ ...subject, selection });
+  // A different root (a member of the image) is not the target itself.
+  const member = bind({ ...subject, format: "file" });
+  expect(member.ok && member.value.subject).not.toHaveProperty("selection");
+});
+
 it("distinguishes default target binding from an explicitly unbound observation", () => {
   const defaultSubject = createAnalysisExecution({ ok: true }, provider);
   const unbound = createAnalysisExecution({ ok: true }, provider, {
@@ -169,6 +213,6 @@ it("distinguishes default target binding from an explicitly unbound observation"
   expect(preserved.ok && preserved.value.subject).toBeNull();
   expect(
     createAnalysisExecutionEvidence("inspect_plist", {}, unbound, "observed")
-      .subject,
-  ).toBeNull();
+      .subject.identity.kind,
+  ).toBe("unknown");
 });

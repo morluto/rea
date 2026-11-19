@@ -1,13 +1,22 @@
+import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, open } from "node:fs/promises";
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import {
   playwrightTraceFixture,
   playwrightTracePathFixture,
 } from "../../../../tests/fixtures/playwrightTrace.js";
+import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDirectory.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../../../tests/fixtures/zipZstandard.js";
+import { join } from "node:path";
+import { analysisRefusalRemediation } from "../../../domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../resources/ZipArtifactReader.js";
 
 it("imports real v10 recorder text with per-stream identity and resource presence, preserving source bytes", async () => {
   const fixture = await playwrightTraceFixture({ resources: true });
@@ -380,6 +389,35 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
     );
     if (result.ok) throw new Error("Expected node admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      refusal: { limit: 131072, unit: "parser nodes" },
+      reported_limits: {
+        boundary: "parser-nodes",
+        maximum: 131072,
+        parser_nodes: 131072,
+      },
+    });
+    expect(resources.hasPending).toBe(false);
+  } finally {
+    await resources.close();
+  }
+});
+
+it("names the nesting allowance, not the node allowance, for a deeply nested small record", async () => {
+  const trace =
+    header +
+    `{"type":"console","args":${"[".repeat(80)}${"]".repeat(80)},"time":1}\n`;
+  const fixture = await playwrightTraceFixture({ trace, network: "" });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+    );
+    if (result.ok) throw new Error("Expected nesting refusal");
+    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      refusal: { limit: 64, unit: "nesting levels" },
+    });
     expect(resources.hasPending).toBe(false);
   } finally {
     await resources.close();
@@ -447,6 +485,39 @@ it("keeps duplicate resource names ambiguous instead of selecting one ZIP occurr
       }),
     );
     expect(result.value.source_coverage.interpretation).toBe("partial");
+  } finally {
+    await resources.close();
+  }
+});
+
+it("names the ZIP decoder window for a large-window recorder stream", async () => {
+  const root = await createTestTempDirectory("rea-trace-zstd-");
+  const path = join(root, "trace.zip");
+  // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+  const { content, compressed } = zstandardWindowFrameFixture(0x90);
+  await writeFile(
+    path,
+    zstandardZipFixture(content, { compressed, name: "trace.trace" }),
+  );
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(path);
+    if (result.ok) throw new Error("Expected decoder window refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance: "The ZIP Zstandard decoder window allowance",
+      limit: 2 ** 27,
+    });
+    // The recovery is the reader's ceiling through the refusal formatter.
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_playwright_trace",
+        ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+      }),
+    );
   } finally {
     await resources.close();
   }

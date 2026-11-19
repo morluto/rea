@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   desktopViewPolicy,
   desktopViewPolicyInputSchema,
@@ -7,14 +8,16 @@ import {
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
@@ -41,7 +44,11 @@ import {
   stateRole,
 } from "../../domain/desktop/stateRoles.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
@@ -64,6 +71,7 @@ import {
   DESKTOP_PROVIDER,
   desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "inspect_desktop_application_state";
 
@@ -115,6 +123,10 @@ export const readDesktopCapture = async (
         );
       }
       const evidence = safeParseEvidence(loaded.value);
+      // A capture from another format revision is refused with the recreate
+      // guidance, not reported as some other kind of file.
+      if (!evidence.ok && isUnsupportedEvidenceFormat(evidence.error))
+        throw unsupportedEvidenceFormatError(evidence.error);
       if (
         !evidence.ok ||
         evidence.value.operation !== DESKTOP_OPERATION ||
@@ -146,12 +158,14 @@ export const readDesktopCapture = async (
       OPERATION,
       "Desktop capture input",
     );
-    if (outcome.ok && !signal?.aborted)
+    if (outcome.ok && !isAborted(signal))
       throw cleanup.retainPartialObservation(outcome.value.evidence);
     const primary = outcome.ok
-      ? new AnalysisCancelledError(OPERATION, {
-          cause: signal?.reason,
-        }).retainPartialObservation(outcome.value.evidence)
+      ? cancelledBy(
+          OPERATION,
+          // A completed outcome reaches here only after the caller aborted.
+          carriedReason(signal?.reason),
+        ).retainPartialObservation(outcome.value.evidence)
       : desktopOperationFailure(
           outcome.error,
           undefined,
@@ -159,15 +173,8 @@ export const readDesktopCapture = async (
           "Desktop capture input",
         );
     if (!outcome.ok && signal?.aborted)
-      analysisErrorWithCancellation(
-        primary,
-        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-      );
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      OPERATION,
-    ).bindCleanupDependencies([primary, cleanup]);
+      analysisErrorWithCancellation(primary, cancelledBy(OPERATION, signal));
+    throw analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   }
   if (!outcome.ok) {
     if (!signal?.aborted) throw outcome.error;
@@ -178,13 +185,13 @@ export const readDesktopCapture = async (
         OPERATION,
         "Desktop capture input",
       ),
-      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+      cancelledBy(OPERATION, signal),
     );
   }
   if (signal?.aborted)
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: signal.reason,
-    }).retainPartialObservation(outcome.value.evidence);
+    throw cancelledBy(OPERATION, signal).retainPartialObservation(
+      outcome.value.evidence,
+    );
   return outcome.value;
 };
 
@@ -402,9 +409,7 @@ const readVersion = async (
   context: ViewContext,
 ): Promise<void> => {
   if (context.signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: context.signal.reason,
-    });
+    throw cancelledBy(OPERATION, context.signal);
   if (!version.present) return;
   if (version.sha256 === null) {
     version.view_error = "content not retained";
@@ -431,9 +436,7 @@ const hasDconfGroups = (version: Version): boolean => {
   const view = version.view;
   return (
     version.format === "dconf" &&
-    typeof view === "object" &&
-    view !== null &&
-    !Array.isArray(view) &&
+    isRecord(view) &&
     typeof view.groups === "object" &&
     view.groups !== null &&
     Object.keys(view.groups).length > 0
@@ -555,9 +558,8 @@ const inspectState = async (
     paths,
     limitations,
   };
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
-  return createEvidence(undefined, DESKTOP_PROVIDER, {
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
+  return createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,
     parameters: {

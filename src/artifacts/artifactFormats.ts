@@ -1,9 +1,11 @@
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {
   ARTIFACT_FORMAT_IDS,
   type ArtifactFormatId,
 } from "../domain/artifactGraph.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
+import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -12,15 +14,17 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+  DirectoryArtifactReader,
+  ZipArtifactReader,
+} from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
+import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import { DotnetBundleArtifactReader } from "./DotnetBundleArtifactReader.js";
 import {
@@ -41,10 +45,10 @@ import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
+import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
-import { ZipArtifactReader } from "./ZipArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -61,6 +65,11 @@ export interface ArtifactReaderConstruction {
   readonly espFlashSelection?: EspFlashSelection | undefined;
   /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
   readonly selectedPath?: string | undefined;
+  /**
+   * Caller choice for a contradiction between a reader's independent witness
+   * and the container's own bytes; universal Mach-O lipo records consume it.
+   */
+  readonly integrity?: ArtifactIntegrityPolicyName | undefined;
 }
 
 export interface FormatDescriptor {
@@ -293,6 +302,7 @@ const NON_ZIP_FORMATS = {
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES inventory requires its admitted source descriptor",
+          { integrityCheck: "inventory-node" },
         );
       return new InesArtifactReader(path, source);
     },
@@ -342,6 +352,25 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new UImageArtifactReader(path, sourceOf(options)),
   }),
+  "android-boot-image": container("android-boot-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android boot image inventory establishes header facts and stored component bytes. Payloads are not decompressed, the v4 signature and AVB footer are not verified, and the image is not executed.",
+    createReader: (path, options) =>
+      new AndroidBootImageArtifactReader(path, sourceOf(options)),
+  }),
+  "android-ota-payload": container("android-ota-payload", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),
   "mach-o-universal": described("mach-o-universal", {
@@ -356,6 +385,7 @@ const NON_ZIP_FORMATS = {
         options.environment,
         undefined,
         sourceOf(options),
+        options.integrity,
       ),
   }),
   "mach-o": described("mach-o", plain),

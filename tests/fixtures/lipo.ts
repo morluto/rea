@@ -1,4 +1,4 @@
-import { parseLipoOutputResult } from "../../src/native/parsers/lipo.js";
+import { parseLipoOutputResult } from "../../src/domain/apple/lipo.js";
 
 /** Unwrap the production parser boundary for fixture setup and error assertions. */
 export const parseLipoFixture = (output: string, operandPath?: string) => {

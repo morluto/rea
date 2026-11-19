@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { serveCli } from "./cliServeHarness.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
@@ -44,10 +45,14 @@ describe("Cutter CLI commands", () => {
     });
 
     expect(result.exitCode).toBe(0);
+    // The CLI projects the shared discovery owner's limitation unchanged.
+    const limitations = cutterDiscoveryLimitations("no_live_bridge_found");
+    expect(limitations).not.toEqual([]);
     expect(JSON.parse(result.stdout)).toMatchObject({
       sessions: [],
       discovery_status: "no_live_bridge_found",
       bridge_directory: directory,
+      limitations,
     });
   });
 
@@ -98,7 +103,9 @@ describe("Cutter CLI commands", () => {
         ownsProcessLifetime: true,
       });
       try {
-        await expect.poll(() => accepted, { timeout: 5_000 }).toBe(8);
+        // Probes that time out close their sockets, so only a full concurrent
+        // wave holds eight open at once.
+        await expect.poll(() => sockets.size).toBe(8);
         launched.process.kill("SIGINT");
         expect(await supervisor.waitForExit(5_000)).toBe(true);
         expect(await supervisor.waitForOutputClose(1_000)).toBe(true);
@@ -132,7 +139,8 @@ describe("Cutter CLI commands", () => {
         operation: "cutter_command",
         issues: [
           {
-            path: ["session_id"],
+            // Projected from its contract, so the issue names the CLI key.
+            path: ["sessionId"],
             message:
               "Cutter bridge session is unavailable or stale; list sessions again and select an available session.",
           },

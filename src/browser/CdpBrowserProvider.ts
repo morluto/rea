@@ -1,8 +1,13 @@
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  type JavaScriptMemberMutationAllowance,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import type {
   ProviderIdentity,
   ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   sanitizeBrowserUrl,
   type InspectWebPageInput,
@@ -52,10 +57,14 @@ import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  AnalysisCancelledError,
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
+import {
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -84,7 +93,7 @@ import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
-import { comparePngScreenshots } from "./PngVisualDiff.js";
+import { comparePngScreenshots } from "../domain/pngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -92,6 +101,7 @@ import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const CLEANUP_DOMAINS = [
   "Network",
   "Debugger",
@@ -109,8 +119,24 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   #closePromise: Promise<void> | undefined;
   readonly #idleWaiters = new Set<() => void>();
 
-  constructor(admission?: WebBundleAnalysisAdmission) {
+  readonly #memberMutationAllowance: () => Result<
+    JavaScriptMemberMutationAllowance,
+    ConfigurationError
+  >;
+
+  /**
+   * `memberMutationAllowance` resolves the accepted operation's allowance at
+   * each bundle analysis; the default applies when the host selects none.
+   */
+  constructor(
+    admission?: WebBundleAnalysisAdmission,
+    memberMutationAllowance: () => Result<
+      JavaScriptMemberMutationAllowance,
+      ConfigurationError
+    > = () => ok(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE),
+  ) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
+    this.#memberMutationAllowance = memberMutationAllowance;
   }
 
   async close(): Promise<void> {
@@ -135,15 +161,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       const typed = failures.filter(
         (failure): failure is AnalysisError => failure instanceof AnalysisError,
       );
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         CDP_BROWSER_PROVIDER_IDENTITY.id,
-        typed.flatMap((failure) => failure.cleanupResources),
-        { reason: "Browser transport and analyzer cleanup remain incomplete" },
-        {
-          operation: "analyze_web_bundle",
-          cause: new AggregateError(failures),
-        },
-      ).bindCleanupDependencies(typed);
+        typed,
+        "Browser transport and analyzer cleanup remain incomplete",
+        { operation: "analyze_web_bundle", causes: failures },
+      );
     }
   }
 
@@ -223,8 +246,8 @@ export class CdpBrowserProvider implements BrowserObservationPort {
           limitations: [
             ...(discovery.limitations ?? []),
             input.allowed_origins.length === 0
-              ? "All page targets with supported HTTP(S) URLs are listed."
-              : "Only page targets whose current URL matches an explicitly requested exact origin are listed.",
+              ? "All page targets with supported HTTP(S) URLs and a validated CDP transport are listed."
+              : "Only page targets with a validated CDP transport whose current URL matches an explicitly requested exact origin are listed.",
             ...(selected.unconnectable === 0
               ? []
               : [
@@ -277,6 +300,9 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: AnalyzeWebBundleInput,
     options: ExecutionOptions,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
+    // An invalid setting is refused before capture, never replaced by the default.
+    const memberMutationAllowance = this.#memberMutationAllowance();
+    if (!memberMutationAllowance.ok) return memberMutationAllowance;
     const admission = await this.#bundleAnalyzer.reserve();
     if (!admission.ok) return admission;
     let captured: CapturedPage | undefined;
@@ -329,17 +355,19 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         },
         input,
         options.signal,
+        memberMutationAllowance.value,
       );
     } catch (cause: unknown) {
       // Capture and analyzer work can still throw the exact caller reason.
       if (options.signal?.aborted === true && cause === options.signal.reason) {
         return err(
-          new AnalysisCancelledError("analyze_web_bundle", {
-            cause,
-            ...(captured === undefined
+          cancelledBy(
+            "analyze_web_bundle",
+            carriedReason(cause),
+            captured === undefined
               ? {}
-              : { partialObservation: captured.inspection }),
-          }),
+              : { partialObservation: captured.inspection },
+          ),
         );
       }
       return err(providerError(cause, "analyze_web_bundle", options.signal));
@@ -607,7 +635,7 @@ const withTargetSession = async <
         : new ProviderCleanupError(
             "rea-cdp-browser",
             [input.target_id],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { operation, cause },
           );
   }
@@ -615,11 +643,8 @@ const withTargetSession = async <
   if (outcome.ok && options.signal?.aborted === true)
     outcome = err(
       partialObservation === undefined
-        ? new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          })
-        : new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
+        ? cancelledBy(operation, options.signal)
+        : cancelledBy(operation, options.signal, {
             partialObservation: partialObservation(outcome.value),
           }),
     );
@@ -724,7 +749,7 @@ const providerError = (
     : cause instanceof AnalysisError
       ? cause
       : signal?.aborted === true
-        ? new AnalysisCancelledError(operation, { cause })
+        ? cancelledBy(operation, carriedReason(cause))
         : new ProviderAdapterError(
             CDP_BROWSER_PROVIDER_IDENTITY.id,
             operation,

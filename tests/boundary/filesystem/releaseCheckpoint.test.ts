@@ -510,6 +510,31 @@ it("cannot satisfy migration references with notes retained from an older releas
   });
 });
 
+it("allows release examples with a release heading before genuine migration notes", async () => {
+  const f = await fixture();
+  await candidate(
+    f,
+    "6.0.0",
+    "- ~~~markdown\n  ## [5.0.0]\n  ~~~\n\n### ⚠ BREAKING CHANGES\n\nSee #948.",
+  );
+  await expect(verify(f)).resolves.toMatchObject({ stderr: "" });
+});
+
+it("requires genuine migration notes outside a fenced Markdown example", async () => {
+  const f = await fixture();
+  await candidate(
+    f,
+    "6.0.0",
+    "### Features\n\n~~~markdown\n### ⚠ BREAKING CHANGES\n\nSee #948.\n~~~",
+  );
+  await expect(verify(f)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(
+      "migration notes omit unreleased breaking changes",
+    ),
+  });
+});
+
 it("recognizes a BREAKING CHANGE footer without a bang in the subject", async () => {
   const f = await fixture(
     "fix(contracts): change path inputs (#948)",

@@ -32,6 +32,13 @@ export type ToolFamilyId = (typeof TOOL_FAMILY_IDS)[number];
 export const isToolFamilyId = (value: string): value is ToolFamilyId =>
   (TOOL_FAMILY_IDS as readonly string[]).includes(value);
 
+/** An absent selection advertises every tool. A selected scope admits known families only. */
+export const isToolFamilyAdvertised = (
+  selection: ReadonlySet<string> | undefined,
+  family: ToolFamilyId | undefined,
+): boolean =>
+  selection === undefined || (family !== undefined && selection.has(family));
+
 /**
  * Invoke one registrar per published family, in {@link TOOL_FAMILY_IDS} order.
  * Both CLI and MCP pass a complete map; a new id fails those call sites.

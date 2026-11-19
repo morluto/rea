@@ -1,5 +1,12 @@
+import type {
+  OwnedProviderSetting,
+  RecordedProviderSettings,
+} from "../ports/DesktopBuildHost.js";
 import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
-import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
@@ -22,13 +29,22 @@ import {
   snapshotEnvironment,
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
+import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
-export type ProviderRequestBudgetResolver = (
-  analysisProvider: AnalysisProviderSelector,
-  environment: Readonly<Record<string, string>>,
-) => Promise<Result<number | undefined, ConfigurationError>>;
+export interface ProviderRequestBudgetResolver {
+  (
+    analysisProvider: AnalysisProviderSelector,
+    environment: Readonly<Record<string, string>>,
+  ): Promise<Result<number | undefined, ConfigurationError>>;
+  /**
+   * Environment settings this resolver may read. Unresolved expressions in
+   * these settings block budget derivation; expressions in other settings
+   * stay preserved. An omitted set keeps the fail-closed whole-environment
+   * gate: every unresolved expression blocks the budget.
+   */
+  readonly budgetSettings?: ReadonlySet<string>;
+}
 
 export interface ClientRegistrationEnvironmentDetails {
   readonly values: Readonly<Record<string, string>>;
@@ -96,16 +112,16 @@ const expressionSettings = (
 export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   return details.ok ? ok(details.value.values) : details;
 };
@@ -114,9 +130,9 @@ export const clientRegistrationEnvironment = (
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
     const environment = dshDocument(parsed.document).environment(
@@ -142,7 +158,10 @@ export const clientRegistrationEnvironmentDetails = (
     registration,
     client?.registrationProfile,
   );
-  const raw = source.connection?.[key];
+  const field =
+    key === "envs" ? gooseEnvironmentField(source.connection) : ok(key);
+  if (!field.ok) return field;
+  const raw = source.connection?.[field.value];
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(
@@ -150,7 +169,7 @@ export const clientRegistrationEnvironmentDetails = (
         settings: existing.error.issues.map((issue) => ({
           setting: [
             ...(source.nested ? ["transport"] : []),
-            key,
+            field.value,
             ...issue.path,
           ].join("."),
           constraint:
@@ -173,21 +192,6 @@ export const clientRegistrationEnvironmentDetails = (
   );
 };
 
-/** Setting names a registration does not carry as the value selected here. */
-export interface RecordedProviderSettings {
-  /** Selected here and absent from the registration's recorded environment. */
-  readonly unrecorded: readonly string[];
-  /** Recorded with text other than the value selected here. */
-  readonly differing: readonly string[];
-  /** Recorded as an expression, or in a map REA could not read. */
-  readonly unresolved: readonly string[];
-  /** Recorded with a value the caller owns, as an archive setup packed for another version. */
-  readonly owned?: readonly string[];
-}
-
-/** Whether a recorded value is the caller's own, which it may replace; the value never leaves the reader. */
-export type OwnedProviderSetting = (name: string, value: string) => boolean;
-
 /** Consume a resolved setting inside its reader without including its value in diagnostics. */
 export type ProviderSettingObserver = (name: string, value: string) => void;
 
@@ -201,7 +205,7 @@ export const recordedProviderSettings = (
   parsed: ClientConfigurationDocument,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   selected: Readonly<Record<string, string>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   owns?: OwnedProviderSetting,
   observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
@@ -213,9 +217,9 @@ export const recordedProviderSettings = (
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     {},
     "fragment",
-    platform,
   );
   if (!details.ok) return { unrecorded: [], differing: [], unresolved: names };
   const recorded = snapshotEnvironment(details.value.values, platform);
@@ -267,21 +271,26 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
   overrides: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget: ProviderRequestBudgetResolver | undefined,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<ResolvedClientRegistrationEnvironmentDetails, ConfigurationError>
 > => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   if (!details.ok) return details;
+  // The budget gate stays fail-closed: settings the resolver may read must be
+  // literals, and an undeclared read set keeps every unresolved expression
+  // blocking, because an unreadable budget cannot be treated as absent.
+  const budgetSettings = resolveProviderRequestBudget?.budgetSettings;
   const unresolved = [...details.value.unresolvedSettings].filter(
     (setting) =>
-      resolveProviderRequestBudget !== undefined ||
+      (resolveProviderRequestBudget !== undefined &&
+        (budgetSettings === undefined || budgetSettings.has(setting))) ||
       TIMEOUT_INPUT_SETTINGS.has(setting),
   );
   if (details.value.timeoutInputs === undefined || unresolved.length > 0)

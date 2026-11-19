@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.window,normalized_result.blocks,normalized_result.thresholds --format json
+exit: 0
+--- stdout
+{"normalized_result":{"blocks":[{"offset":0,"length":20,"entropy":4.3219}],"thresholds":{"high":7.2,"low":1},"window":{"offset":0,"length":20}}}
+<end>
+--- stderr
+<end>

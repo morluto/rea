@@ -1,10 +1,11 @@
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
 import {
   androidIdentNote,
   compressedElfNoteFixture,
@@ -21,10 +22,7 @@ import {
   gnuBuildIdNote,
   gnuPropertyNote,
 } from "./ElfNotes.fixture.js";
-import {
-  ElfNoteSectionNameBudgetFailure,
-  parseElfNotes,
-} from "./ElfNoteParser.js";
+import { elfNoteSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -266,10 +264,9 @@ it.each([1, 2])(
     } catch (cause) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(ElfNoteSectionNameBudgetFailure);
-    expect(failure).toMatchObject({
-      minimumMaxFileBytes: BigInt(minimumMaxFileBytes),
-      selectedMaxFileBytes: bytes.length + 1,
+    expect(elfNoteSectionNameBudget(failure)).toMatchObject({
+      required: BigInt(minimumMaxFileBytes),
+      selected: bytes.length + 1,
     });
 
     const admitted = parse(
@@ -292,6 +289,119 @@ it("reports independent PT_NOTE and SHT_NOTE declarations of the same bytes", ()
   expect(
     report.entries.filter((entry) => entry.type_name === "gnu_build_id"),
   ).toHaveLength(2);
+});
+
+it.each([true, false])(
+  "decodes FDO package and dlopen notes (little endian: %s)",
+  (little) => {
+    const packaging = {
+      type: "rpm",
+      name: "café",
+      "extension-id": 9007199254740991,
+    };
+    const dlopen = [{ soname: ["libdemo.so.1"], feature: "examples" }];
+    const packagingBytes = Buffer.from(JSON.stringify(packaging) + "\0\0");
+    const dlopenBytes = Buffer.from(JSON.stringify(dlopen) + "\0");
+    const notes = Buffer.concat([
+      elfNote("FDO", 0xcafe1a7e, packagingBytes, little),
+      elfNote("FDO", 0x407c0c0a, dlopenBytes, little),
+      elfNote("FDO", 99, Buffer.from("opaque"), little),
+    ]);
+    const report = parse(elfNoteFixture({ ownership: "both", notes, little }));
+    const expected = [
+      ["fdo_packaging_metadata", { metadata: packaging, issue: null }],
+      ["fdo_dlopen_metadata", { metadata: dlopen, issue: null }],
+      ["unknown", null],
+    ];
+    expect(
+      report.entries.map(({ type_name, fdo }) => [type_name, fdo]),
+    ).toEqual([...expected, ...expected]);
+    expect(report.entries[0]?.descriptor.sha256).toBe(
+      createHash("sha256").update(packagingBytes).digest("hex"),
+    );
+    expect(report.coverage.status).toBe("complete");
+    expect(report.limitations).toContain(
+      "FDO packaging and dlopen metadata are unverified producer declarations.",
+    );
+  },
+);
+
+it.each([
+  ["missing terminator", 0xcafe1a7e, Buffer.from("{}"), /not NUL-terminated/u],
+  ["trailing data", 0xcafe1a7e, Buffer.from("{}\0x"), /non-NUL bytes/u],
+  ["invalid UTF-8", 0xcafe1a7e, Buffer.from([0xc3, 0]), /valid UTF-8/u],
+  ["invalid JSON", 0xcafe1a7e, Buffer.from("{\0"), /exact JSON/u],
+  [
+    "inexact number",
+    0xcafe1a7e,
+    Buffer.from('{"id":9007199254740993}\0'),
+    /exact JSON/u,
+  ],
+  [
+    "duplicate name",
+    0xcafe1a7e,
+    Buffer.from('{"name":"one","name":"two"}\0'),
+    /repeats/u,
+  ],
+  ["package array", 0xcafe1a7e, Buffer.from("[]\0"), /must be a JSON object/u],
+  ["dlopen scalar", 0x407c0c0a, Buffer.from("[1]\0"), /array of objects/u],
+  [
+    "Evidence nesting",
+    0xcafe1a7e,
+    Buffer.from('{"deep":' + "[".repeat(996) + "0" + "]".repeat(996) + "}\0"),
+    /nesting allowance/u,
+  ],
+] as const)(
+  "retains descriptor evidence when FDO metadata has %s",
+  (_case, type, descriptor, issue) => {
+    const report = parse(
+      elfNoteFixture({
+        ownership: "program",
+        notes: elfNote("FDO", type, descriptor),
+      }),
+    );
+    expect(report.entries[0]).toMatchObject({
+      descriptor: {
+        bytes: descriptor.length,
+        sha256: createHash("sha256").update(descriptor).digest("hex"),
+      },
+      fdo: { metadata: null, issue: expect.stringMatching(issue) },
+    });
+    expect(report.coverage.status).toBe("complete");
+  },
+);
+
+it("bounds distinct FDO decoding and each emitted copy independently", () => {
+  const metadata = { name: "x".repeat(33_000) };
+  const descriptor = Buffer.from(JSON.stringify(metadata) + "\0");
+  const note = elfNote("FDO", 0xcafe1a7e, descriptor);
+  const repeated = parse(elfNoteFixture({ ownership: "both", notes: note }));
+  expect(repeated.entries.map(({ fdo }) => fdo)).toEqual([
+    { metadata, issue: null },
+    {
+      metadata: null,
+      issue: expect.stringMatching(/projected JSON allowance/u),
+    },
+  ]);
+  expect(repeated.entries[0]?.descriptor).toEqual(
+    repeated.entries[1]?.descriptor,
+  );
+  const distinct = parse(
+    elfNoteFixture({
+      ownership: "program",
+      notes: Buffer.concat([note, note, gnuBuildIdNote()]),
+    }),
+  );
+  expect(distinct.entries.map(({ fdo }) => fdo)).toEqual([
+    { metadata, issue: null },
+    {
+      metadata: null,
+      issue: expect.stringMatching(/descriptor decode allowance/u),
+    },
+    null,
+  ]);
+  expect(distinct.entries[2]?.gnu?.build_id_hex).toBeTruthy();
+  expect(distinct.coverage.status).toBe("complete");
 });
 
 it("reports missing note tables without claiming notes never existed", () => {
@@ -532,8 +642,14 @@ it("bounds repeated scans of an unterminated section name", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  expect(failure).toMatchObject({ reason: "limit", boundary: "memory" });
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
+  });
   expect(failure).toHaveProperty(
     "message",
     expect.stringMatching(/byte budget/u),
@@ -549,7 +665,7 @@ it("rejects note text that repeats beyond the shared byte budget", () => {
     max_file_bytes: 200,
   });
   expect(parse(once, input).entries).toHaveLength(1);
-  expect(() => parse(twice, input)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(twice, input)).toThrow(ParseFailureError);
   expect(() => parse(twice, input)).toThrow(/byte budget/u);
 });
 
@@ -568,6 +684,22 @@ it("rejects an extended section count stored in section zero", () => {
   expect(() => parse(elf64({ shoff: 64, shnum: 0 }))).toThrow(
     /extended numbering/u,
   );
+});
+
+it("checks direct section count encoding in notes and the native directory", () => {
+  const bytes = elfExtendedSectionCountFixture();
+  const sectionZero = Number(bytes.readBigUInt64LE(40));
+  bytes.writeBigUInt64LE(0n, sectionZero + 32);
+  bytes.writeUInt16LE(0xfeff, 60);
+  expect(parse(bytes).tables[0]?.name).toBe(".note.gnu.build-id");
+  expect(readElfDirectoryFromBuffer(bytes).sections[1]?.name).toBe(
+    ".note.gnu.build-id",
+  );
+
+  bytes.writeUInt16LE(0xff00, 60);
+  const reason = /e_shnum uses a reserved direct section count/u;
+  expect(() => parse(bytes)).toThrow(reason);
+  expect(() => readElfDirectoryFromBuffer(bytes)).toThrow(reason);
 });
 
 const repeatedNotes = (count: number, notes: Buffer): Buffer => {
@@ -658,7 +790,22 @@ it("fails when the entry budget is exhausted", () => {
       },
       inspectElfNotesInputSchema.parse({ path: defaults.path, max_entries: 1 }),
     ),
-  ).toThrow(ArtifactReaderFailure);
+  ).toThrow(ParseFailureError);
+});
+
+it("reads a glibc-sized note table with the default entry budget", () => {
+  // Ubuntu's libc.so.6 has 79 SystemTap probe notes beside its build-id, ABI
+  // tag and GNU property notes; this table has the first two and the probes.
+  const probes = Array.from({ length: 79 }, () =>
+    elfNote("stapsdt", 3, Buffer.alloc(40)),
+  );
+  const report = parse(
+    elfNoteFixture({
+      ownership: "section",
+      notes: Buffer.concat([gnuBuildIdNote(), gnuAbiTagNote(), ...probes]),
+    }),
+  );
+  expect(report.entries).toHaveLength(81);
 });
 
 it("keeps unsafe table offsets ahead of unsupported extended numbering", () => {
@@ -1176,7 +1323,12 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
     },
   ]);
   expect(() => parse(bytes.subarray(0, bytes.length - 1))).toThrow(
-    expect.objectContaining({ reason: "limit", boundary: "memory" }),
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({ name: "note_text_bytes" }),
+      }),
+    }),
   );
 });
 
@@ -1369,10 +1521,13 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
   } catch (cause) {
     retainedFailure = cause;
   }
-  expect(retainedFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(retainedFailure).toBeInstanceOf(ParseFailureError);
   expect(retainedFailure).toMatchObject({
-    reason: "limit",
-    boundary: "memory",
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
     message: expect.stringMatching(/byte budget/u),
   });
 
@@ -1435,10 +1590,13 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
   } catch (cause) {
     scanFailure = cause;
   }
-  expect(scanFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(scanFailure).toBeInstanceOf(ParseFailureError);
   expect(scanFailure).toMatchObject({
-    reason: "limit",
-    boundary: "memory",
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
     message: expect.stringMatching(/259-byte budget/u),
   });
 });

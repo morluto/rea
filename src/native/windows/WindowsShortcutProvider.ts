@@ -1,32 +1,27 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import { lstat, open } from "node:fs/promises";
 import {
   projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
-} from "../../artifacts/readStableArtifact.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { WindowsShortcutPort } from "../../application/binaryDiagnostics/WindowsShortcutPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+import type { WindowsShortcutPort } from "../../ports/binaryDiagnostics/WindowsShortcutPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS,
@@ -39,11 +34,11 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  WindowsShortcutFormatFailure,
   WindowsShortcutResourceFailure,
   type WindowsShortcutSelectedBoundary,
 } from "./WindowsShortcut.errors.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_windows_shortcut";
 
@@ -146,7 +141,9 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
   readonly identity = WINDOWS_SHORTCUT_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  constructor(private readonly platform: NodeJS.Platform = process.platform) {}
+  constructor(
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  ) {}
 
   async close(): Promise<void> {
     try {
@@ -281,25 +278,12 @@ const windowsShortcutFailurePrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof WindowsShortcutResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -312,21 +296,8 @@ const windowsShortcutFailurePrimary = (
         remediationAction: budgetRemediation(input, cause.boundary),
       },
     );
-  if (cause instanceof WindowsShortcutFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -359,7 +330,7 @@ const windowsShortcutFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

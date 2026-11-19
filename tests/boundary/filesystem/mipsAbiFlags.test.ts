@@ -620,13 +620,21 @@ it.each([
   },
 );
 
-it("checks the GNU attribute size bound before attempting its file read", async () => {
-  const bytes = withGnuAttributes(fixture(), [attributeSection([4, 5])]);
-  bytes.writeUInt32LE(0xfffffff0, 224);
-  bytes.writeUInt32LE(4097, 228);
-  const result = await inspectDeclarations(bytes);
-  assert.ok(!result.ok);
-  assert.match(result.error, /outside REA's inspected bound of 4096 bytes/u);
+it("distinguishes a capped GNU attribute section from one extending past EOF", async () => {
+  const emptyScope = attributeSection([]).subarray(9);
+  const payload = Buffer.concat([
+    attributeSection([4, 5]),
+    ...Array.from({ length: 817 }, () => emptyScope),
+  ]);
+  payload.writeUInt32LE(payload.length - 1, 1);
+  const bytes = withGnuAttributes(fixture(), [payload]);
+  const capped = await inspectDeclarations(bytes);
+  assert.ok(!capped.ok);
+  assert.match(capped.error, /outside REA's inspected bound of 4096 bytes/u);
+
+  const truncated = await inspectDeclarations(bytes.subarray(0, -1));
+  assert.ok(!truncated.ok);
+  assert.match(truncated.error, /GNU attribute section lies outside the file/u);
 });
 
 it("uses section type and bounds the GNU attribute payload extent", async () => {

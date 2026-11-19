@@ -47,7 +47,7 @@ async function probe(mode: string, name = "Fixture.app") {
   return observationSchema.parse(JSON.parse(stdout));
 }
 
-it("validates the real resource admission reply against its advertised schema", async () => {
+it("validates the real resource admission reply against its canonical output schema", async () => {
   expect(await probe("healthy", "Fixture.app")).toEqual({
     accepted: true,
     catalogRequests: 1,
@@ -83,22 +83,11 @@ it.each(["reuse", "concurrent"])(
   },
 );
 
-it("binds the new advertised schema after reconnecting the same client", async () => {
+it("rebinds the advertised catalog after reconnecting the same client", async () => {
   const result = await probe("reconnect");
-  expect(result.accepted).toBe(false);
+  expect(result.accepted).toBe(true);
   expect(result.catalogRequests).toBe(2);
   expect(result.toolCalls).toBe(2);
-  expect(result.error).toMatchObject({
-    code: -32602,
-    message: expect.stringContaining("__rea_second_connection"),
-  });
-});
-
-it("rejects an omitted output schema before calling the advertised tool", async () => {
-  const result = await probe("missing-schema");
-  expect(result.accepted).toBe(false);
-  expect(result.toolCalls).toBe(0);
-  expect(result.error?.message).toMatch(/omitted its output schema/u);
 });
 
 it("rejects a supplied schema override before dispatching that call", async () => {

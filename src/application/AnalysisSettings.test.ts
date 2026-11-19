@@ -5,7 +5,7 @@ import {
   applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
-import { pwntoolsInputBytes } from "../native/pwntools/PwntoolsInputLimit.js";
+import { pwntoolsInputBytes } from "../config/pwntoolsInputLimit.js";
 import { resolveCaptureDecoderHeap } from "../config/captureDecoderHeap.js";
 import { resolveRegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import { resolveRegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
@@ -181,7 +181,11 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     store
       .inspect({ provider: "ghidra", operation: "search_strings" })
       .settings.map(({ setting }) => setting),
-  ).toEqual(["ghidra.startup_timeout_ms", "bridge.max_request_bytes"]);
+  ).toEqual([
+    "ghidra.startup_timeout_ms",
+    "bridge.max_request_bytes",
+    "bridge.max_reply_bytes",
+  ]);
   for (const operation of ["list_cutter_sessions", "cutter_command"] as const)
     expect(
       store

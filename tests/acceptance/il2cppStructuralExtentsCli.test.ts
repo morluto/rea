@@ -5,7 +5,7 @@ import { createIl2cppMetadataFixture } from "../fixtures/il2cpp/metadata.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
   "rejects partial IL2CPP table extents through CLI and MCP without a binary",
@@ -24,7 +24,7 @@ cliTest(
       });
       const path = join(root, `${version}-${name}.dat`);
       await writeFile(path, fixture.bytes);
-      const intact = await runFileCli(cli, {
+      const intact = await cli.run({
         arguments: ["inspect-il2cpp-metadata", path, "--json"],
       });
       expect(intact.exitCode, intact.stderr).toBe(0);
@@ -35,7 +35,7 @@ cliTest(
         fixture.header(name, "size"),
       );
       await writeFile(path, damaged);
-      const invalid = await runFileCli(cli, {
+      const invalid = await cli.run({
         arguments: ["inspect-il2cpp-metadata", path, "--json"],
       });
       const expected = {

@@ -69,4 +69,32 @@ describe("binary hardening stable filesystem boundary", () => {
       await service.close();
     }
   });
+
+  it("reports the dynamic-table allowance in entries, not bytes", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-entries-");
+    const path = join(root, "app");
+    // A file-backed PT_DYNAMIC of 65,537 entries (16 bytes each in ELF64).
+    const fixture = elfHardeningFixture();
+    const bytes = Buffer.concat([fixture, Buffer.alloc(65_537 * 16)]);
+    const programs = Number(bytes.readBigUInt64LE(32));
+    const dynamic = Array.from(
+      { length: bytes.readUInt16LE(56) },
+      (_, index) => programs + index * bytes.readUInt16LE(54),
+    ).find((at) => bytes.readUInt32LE(at) === 2);
+    if (dynamic === undefined) throw new Error("Fixture has no PT_DYNAMIC");
+    bytes.writeBigUInt64LE(BigInt(fixture.length), dynamic + 8);
+    bytes.writeBigUInt64LE(65_537n * 16n, dynamic + 32);
+    await writeFile(path, bytes);
+    const service = createBinaryHardeningService();
+    try {
+      const result = await service.inspect({ path });
+      if (result.ok) throw new Error("Expected the entry allowance refusal");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        fixedAllowance: { limit: 65_536, unit: "entries" },
+      });
+    } finally {
+      await service.close();
+    }
+  });
 });

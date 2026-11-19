@@ -1,4 +1,5 @@
-import type { ProviderIdentity } from "../AnalysisProvider.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 import {
   createEvidence,
   type Evidence,
@@ -22,7 +23,7 @@ export const createJavaScriptRuntimeObservationEvidence = (
   result: JavaScriptRuntimeTargetList | JavaScriptRuntimeObservation,
   provider: ProviderIdentity,
 ): Evidence =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     predicateType:
       operation === "list_javascript_runtime_targets"
         ? "rea.javascript-runtime-target-list"

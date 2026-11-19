@@ -3,8 +3,8 @@
 REA can analyze DOS MZ executables and explicitly selected COM images through the bring-your-own Ghidra adapter.
 The Linux x64 and macOS arm64 verification lanes exercise actual 16-bit disassembly and
 decompilation through the CLI and stdio MCP. Provider admission accepts Ghidra
-12.x (>=12.1) and that installation's declared JDK range. The verification lane uses
-Ghidra 12.1.4 and JDK 21; no DOS emulator or cross-compiler is required.
+12.x (>=12.2) and that installation's declared JDK range. The verification lane uses
+Ghidra 12.2 and JDK 25; no DOS emulator or cross-compiler is required.
 
 ## Open and inspect
 
@@ -48,9 +48,9 @@ the fixed Ghidra load segment `0x1000`, and the linear address convention are
 committed in the analysis profile. The handshake rejects language or compiler
 drift. Closing the session deletes the temporary project and snapshot.
 
-The profile also commits `function_body_evidence: complete-inclusive-ranges-v1`,
-so snapshots from older length-only Ghidra results do not satisfy the current
-profile.
+The profile also commits the REA release and a digest of the bridge scripts
+(`producer`), so snapshots from older Ghidra results, such as length-only
+function bodies, do not satisfy the current profile.
 
 ## Headerless COM images
 
@@ -59,9 +59,14 @@ COM has no identifying header. Select its interpretation explicitly; neither the
 
 ```bash
 rea inspect /absolute/path/to/legacy.com --target-format dos-com --provider ghidra --json
-rea function /absolute/path/to/legacy.com 0x10100 --target-format dos-com --provider ghidra --json
 rea inspect-native-load-image /absolute/path/to/legacy.com --target-format dos-com --provider ghidra --json
+rea function /absolute/path/to/recognized.com 0x100 --target-format dos-com --provider ghidra --json
+rea function /absolute/path/to/rejected.com 0x10100 --target-format dos-com --provider ghidra --json
 ```
+
+Use `entry.linear_address` from the load image for later lookups. A ComLoader
+import is `0x100`. A BinaryLoader fallback is `0x10100`; `0x100` is not mapped
+on that image.
 
 ```json
 {
@@ -76,18 +81,34 @@ rea inspect-native-load-image /absolute/path/to/legacy.com --target-format dos-c
 
 The caller's interpretation applies to the complete file, even if its filename
 suggests another format. Files must contain 1..65280 bytes: the 64 KiB COM segment
-minus the 256-byte PSP prefix. Ghidra uses `BinaryLoader` with real-mode language
-and maps file offset zero at `1000:0100` (linear `0x10100`). A packaged pre-analysis
-script seeds the entry function and CS/DS/ES/SS context `0x1000`. These settings
-and the preparation policy are committed in the analysis profile; a failed
+minus the 256-byte PSP prefix. REA does not ask the caller for a loader or a base
+address.
+
+When Ghidra 12.2 ComLoader accepts the image, REA imports it with `-loader
+ComLoader` and no base address. ComLoader requires a provider name ending in
+`.com`, rejects an `MZ` prefix, and requires its recognition score of DOS `INT`
+opcodes and `$`-terminated strings to reach 12. It maps a 256-byte zero-filled
+PSP placeholder at `0000:0000` and the file at `0000:0100` (linear `0x100`), with
+language `x86:LE:16:Real Mode`. The placeholder is not file-backed and is not an
+observed DOS PSP. The pre-analysis script accepts that format, keeps real mode,
+requires that segment:offset, and sets CS/DS/ES/SS to `0x0`.
+
+Images ComLoader rejects use an explicit `BinaryLoader` fallback at `1000:0100`
+(linear `0x10100`) with CS/DS/ES/SS `0x1000`. The analysis profile and the
+verified load image record the loader actually used, the segment:offset
+`load_address`, and, for the fallback, `loader_fallback.reason`:
+`filename_extension`, `mz_signature`, or `recognition_score`. A failed
 preparation prevents the resident bridge from serving results.
 
 Load-image verification checks all original and modified file bytes, complete
-source mapping/memory digests, absence of relocations, entry and measured register
-context. The context is imposed for analysis, not observed from execution. PSP
-memory, initial stack contents/SP, DOS interrupts and PC-98 devices are not
-modeled. COM has no MZ header, relocation table or appended-overlay model; all
-selected bytes belong to its analysis module. The original file stays unchanged.
+source mapping/memory digests, absence of relocations, the loader and load
+address, entry and measured register context. The context is imposed for
+analysis, not observed from execution. ComLoader's zero-filled PSP placeholder
+is measured as unbacked initialized bytes; it is not DOS PSP contents. Initial
+stack contents/SP, DOS interrupts and PC-98 devices are not modeled. COM has no
+MZ header, relocation table or appended-overlay model; all selected file bytes
+belong to its analysis module. The original file stays unchanged. A fallback
+image has no PSP mapping: reads at the old `0x10000` placeholder stay unmapped.
 
 ## Addresses and function extent
 
@@ -201,7 +222,7 @@ observations rather than asserting cross-process identity of raw p-code.
 
 ```json
 {
-  "procedure": "0x10100",
+  "procedure": "0x100",
   "name": "entry",
   "comment": "Recovered startup role",
   "inline_comment": "Inspect segment setup"
@@ -209,7 +230,10 @@ observations rather than asserting cross-process identity of raw p-code.
 ```
 
 ```bash
-rea annotate-native-function /local/program.com 0x10100 --target-format dos-com --provider ghidra --name entry --comment 'Recovered startup role' --json
+rea annotate-native-function /local/recognized.com 0x100 --target-format dos-com --provider ghidra --name entry --comment 'Recovered startup role' --json
+rea annotate-native-function /local/rejected.com 0x10100 --target-format dos-com --provider ghidra --name entry --comment 'Recovered startup role' --json
 ```
+
+`0x100` is the ComLoader entry. A fallback image is annotated at `0x10100`.
 
 The CLI returns the updated analysis before closing its isolated session. MCP edits remain visible to later reads until `close_binary`. Original bytes remain unchanged, database edits are discarded on close, and immutable analysis snapshots are invalidated after edits. This operation does not save a Ghidra project, change ABI/types/body ranges, patch instructions, or emulate a DOS runtime. Windows P0 does not admit it.

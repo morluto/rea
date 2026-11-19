@@ -1,4 +1,10 @@
+import { MavenGradleMetadataProvider } from "../../src/java/MavenGradleMetadataProvider.js";
+import { MavenGradleMetadataService } from "../../src/application/java/MavenGradleMetadataService.js";
+import { inspectMavenGradleMetadataInputSchema } from "../../src/domain/java/mavenGradleMetadata.js";
+import { mavenPomFixture } from "../../src/java/MavenGradleMetadata.fixture.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
+import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
 import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
 import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
@@ -7,6 +13,7 @@ import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ZipReader } from "@zip.js/zip.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -85,9 +92,9 @@ import {
   mapArtifactFileFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
+} from "../../src/resources/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
+import { translateArtifactFailure } from "../../src/resources/index.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import {
   OwnedRegularFileOperationFailure,
@@ -95,8 +102,8 @@ import {
   regularFileCancellation,
 } from "../../src/filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
+import { readStableArtifact } from "../../src/resources/readStableArtifact.js";
 import { ArtifactAnalysisResources } from "../../src/process/ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "../../src/process/LinuxResourceLimits.js";
 import { LocalWebSourceLocationArtifacts } from "../../src/browser/assets/WebSourceLocationArtifacts.js";
@@ -105,17 +112,24 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../fixtures/webSourceLocation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { GoBinaryProvider } from "../../src/go/GoBinaryProvider.js";
 import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";
+import { NugetNupkgProvider } from "../../src/nuget/NugetNupkgProvider.js";
+import { NugetNupkgService } from "../../src/application/nuget/NugetNupkgService.js";
+import { nugetNupkgFixture } from "../../src/nuget/NugetNupkg.fixture.js";
+import { inspectNugetNupkgInputSchema } from "../../src/domain/nuget/nupkg.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
+import { DwarfUnitsProvider } from "../../src/native/dwarf/DwarfUnitsProvider.js";
 import { NativeInitializersProvider } from "../../src/native/initializers/NativeInitializersProvider.js";
 import { ElfUnwindRangesProvider } from "../../src/native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
+import { ElfDebugLinkProvider } from "../../src/native/elf/ElfDebugLinkProvider.js";
+import { ElfDependenciesProvider } from "../../src/native/elf/ElfDependenciesProvider.js";
 import { KernelBuildConfigProvider } from "../../src/native/elf/KernelBuildConfigProvider.js";
 import { PeCertificatesProvider } from "../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../src/native/pe/PeImportsProvider.js";
@@ -123,10 +137,13 @@ import { WindowsShortcutProvider } from "../../src/native/windows/WindowsShortcu
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
+import { inspectDwarfUnitsInputSchema } from "../../src/domain/native/dwarfUnits.js";
 import { inspectNativeInitializersInputSchema } from "../../src/domain/native/nativeInitializers.js";
 import { inspectElfUnwindRangesInputSchema } from "../../src/domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
+import { inspectElfDebugLinkInputSchema } from "../../src/domain/native/elfDebugLink.js";
+import { inspectElfDependenciesInputSchema } from "../../src/domain/native/elfDependencies.js";
 import { inspectKernelBuildConfigInputSchema } from "../../src/domain/native/kernelBuildConfig.js";
 import { inspectPeCertificatesInputSchema } from "../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../src/domain/native/peImports.js";
@@ -136,7 +153,7 @@ import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
 import { ggufFixture } from "../fixtures/model/model.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createRustImage } from "../fixtures/rust/image.js";
@@ -161,6 +178,98 @@ const staticProviders = [
   ["PE", () => new PeResourcesProvider()],
   ["IL2CPP metadata", () => new Il2cppMetadataProvider()],
 ] as const;
+
+it("preserves opaque NuGet decoder failures and the completed file identity", async () => {
+  const path = await selectedImage();
+  const bytes = await nugetNupkgFixture();
+  await writeFile(path, bytes);
+  fault.blockNew = false;
+  const cause = new Error("controlled decoder runtime failure");
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* () {
+      throw cause;
+    });
+  const provider = new NugetNupkgProvider();
+  try {
+    const result = await provider.inspect(
+      inspectNugetNupkgInputSchema.parse({ path }),
+    );
+    if (result.ok) throw new Error("Expected opaque decoder failure");
+    expect(result.error._tag).toBe("ArtifactOperationError");
+    expect(result.error.cause).toBe(cause);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBe(-1);
+  } finally {
+    enumeration.mockRestore();
+    await provider.close();
+  }
+});
+
+it.each(
+  ["close failure", "close cancellation"].flatMap((outcome) =>
+    ["NuGet", "Maven/Gradle"].map((kind) => ({ outcome, kind })),
+  ),
+)(
+  "retains only the completed $kind file snapshot through $outcome and cleanup retry",
+  async ({ outcome, kind }) => {
+    const path = await selectedImage();
+    const bytes =
+      kind === "NuGet"
+        ? await nugetNupkgFixture()
+        : Buffer.from(mavenPomFixture);
+    await writeFile(path, bytes);
+    const controller = new AbortController();
+    const reason = { source: `${kind} file finalization` };
+    if (outcome === "close cancellation")
+      fault.onClose = () => controller.abort(reason);
+    const service =
+      kind === "NuGet"
+        ? new NugetNupkgService(new NugetNupkgProvider())
+        : new MavenGradleMetadataService(new MavenGradleMetadataProvider());
+    try {
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      if (result.ok)
+        throw new Error("Expected descriptor finalization failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+      const beforeCleanup = projectAnalysisError(result.error).details
+        ?.partial_observation;
+      if (outcome === "close cancellation")
+        expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      await expect(service.close()).rejects.toBeDefined();
+      expect(result.error.cleanupIncomplete).toBe(true);
+      fault.blocked.clear();
+      await service.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(
+        projectAnalysisError(resolvedAnalysisError(result.error)).details
+          ?.partial_observation,
+      ).toEqual(beforeCleanup);
+      expect(fault.handles).toHaveLength(1);
+      expect(fault.handles[0]?.fd).toBe(-1);
+    } finally {
+      fault.onClose = undefined;
+      fault.blocked.clear();
+      await service.close();
+    }
+  },
+);
 
 it.each(
   ["Rust service", "selected producer input", "source map"].flatMap(
@@ -188,7 +297,7 @@ it.each(
     const web = new LocalWebSourceLocationArtifacts({
       load: () => Promise.resolve(ok(script)),
     });
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "selected-test",
       "inspect_signal_recording",
       readStableArtifact,
@@ -295,7 +404,7 @@ const expectIl2cppSource = (
   expect(source.operation).toBe("observe_il2cpp_metadata_source");
   expect(source.subject).toMatchObject({
     local_path: path,
-    digest: { sha256 },
+    identity: { sha256 },
   });
   expect(source.normalized_result).toEqual({
     artifact: { path, sha256, bytes: bytes.length },
@@ -386,7 +495,9 @@ it.each(
     [
       name,
       makeProvider,
-      new ArtifactReaderFailure("integrity", "source replacement"),
+      new ArtifactReaderFailure("integrity", "source replacement", {
+        integrityCheck: "container-identity",
+      }),
       AnalysisArtifactChangedError,
     ] as const,
     [
@@ -439,6 +550,7 @@ it.each(staticProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "controlled source replacement",
+      { integrityCheck: "container-identity" },
     );
     fault.readFailure = { cause: primary };
     const controller = new AbortController();
@@ -477,6 +589,7 @@ it("clears the Python pyc cleanup flag once a retained descriptor closes", async
   const primary = new ArtifactReaderFailure(
     "integrity",
     "controlled source replacement",
+    { integrityCheck: "container-identity" },
   );
   fault.readFailure = { cause: primary };
   try {
@@ -532,7 +645,7 @@ it.each([
       if (result.ok) throw new Error("Expected finalization failure");
       const evidence = parseEvidence(result.error.partialObservation);
       expect(evidence.operation).toBe("inspect_model_artifact");
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       expect(evidence.normalized_result).toMatchObject({
         artifact: { path, sha256: null, read_scope: "header" },
         tensors: [{ name: "weight" }, { name: "quant" }],
@@ -878,7 +991,7 @@ it.each([
       foreignPath,
     );
     const foreignPartial = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "foreign", name: "foreign owner", version: null },
       {
         operation: "inspect_artifact",
@@ -1007,10 +1120,13 @@ it.each([
 const stableArtifactProviders = [
   ...staticProviders,
   ["ELF notes", () => new ElfNotesProvider()],
+  ["DWARF units", () => new DwarfUnitsProvider()],
   ["native initializers", () => new NativeInitializersProvider()],
   ["ELF unwind ranges", () => new ElfUnwindRangesProvider()],
   ["Apple IPS", () => new AppleIpsProvider()],
   ["kernel module", () => new KernelModuleProvider()],
+  ["ELF debug link", () => new ElfDebugLinkProvider()],
+  ["ELF dependencies", () => new ElfDependenciesProvider()],
   ["kernel build config", () => new KernelBuildConfigProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
@@ -1020,6 +1136,8 @@ const stableArtifactProviders = [
   ["Windows shortcut", () => new WindowsShortcutProvider()],
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
+  ["NuGet nupkg", () => new NugetNupkgProvider()],
+  ["Maven/Gradle metadata", () => new MavenGradleMetadataProvider()],
 ] as const;
 
 const fileFailureProviders = [
@@ -1033,6 +1151,16 @@ const inspectFileFailure = (
   signal?: AbortSignal,
 ) => {
   const options = signal === undefined ? undefined : { signal };
+  if (provider instanceof MavenGradleMetadataProvider)
+    return provider.inspect(
+      inspectMavenGradleMetadataInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof NugetNupkgProvider)
+    return provider.inspect(
+      inspectNugetNupkgInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof PythonPycProvider)
     return provider.inspect(
       inspectPythonPycInputSchema.parse({ path }),
@@ -1041,6 +1169,11 @@ const inspectFileFailure = (
   if (provider instanceof ElfNotesProvider)
     return provider.inspect(
       inspectElfNotesInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof DwarfUnitsProvider)
+    return provider.inspect(
+      inspectDwarfUnitsInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof NativeInitializersProvider)
@@ -1061,6 +1194,16 @@ const inspectFileFailure = (
   if (provider instanceof KernelModuleProvider)
     return provider.inspect(
       inspectKernelModuleInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof ElfDebugLinkProvider)
+    return provider.inspect(
+      inspectElfDebugLinkInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof ElfDependenciesProvider)
+    return provider.inspect(
+      inspectElfDependenciesInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof KernelBuildConfigProvider)
@@ -1141,11 +1284,16 @@ it.each(
       expect(result.error._tag).toBe(
         expectedTag ??
           (provider instanceof ElfNotesProvider ||
+          provider instanceof DwarfUnitsProvider ||
           provider instanceof ElfUnwindRangesProvider ||
           provider instanceof KernelModuleProvider ||
+          provider instanceof ElfDebugLinkProvider ||
+          provider instanceof ElfDependenciesProvider ||
           provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
-          provider instanceof PeResourcesProvider
+          provider instanceof PeResourcesProvider ||
+          provider instanceof NugetNupkgProvider ||
+          provider instanceof MavenGradleMetadataProvider
             ? "ArtifactOperationError"
             : "ProviderAdapterError"),
       );
@@ -1174,6 +1322,7 @@ it.each(fileFailureProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "original source replacement",
+      { integrityCheck: "container-identity" },
     );
     try {
       const nested = await scope

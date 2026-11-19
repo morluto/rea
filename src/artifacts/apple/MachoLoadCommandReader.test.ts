@@ -26,12 +26,13 @@ import {
 import {
   MAX_LOAD_COMMAND_BYTES,
   readMachoImage,
-} from "./MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { traceDylibResolution } from "./DylibResolutionReader.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
+import { MAX_JVM_CLASS_IDENTITY_BYTES } from "../../domain/apple/jvmClassFile.js";
+import { DirectoryArtifactReader } from "../../resources/index.js";
 
 // Independently exercise the dependency and reference budgets.
 const MAX_LAZY_INFO_DEPENDENCIES = 1024;
@@ -1790,6 +1791,28 @@ describe("Mach-O load command reader inputs", () => {
       await read(Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0x00])),
     ).toEqual({ status: "malformed", reason: "Mach-O header is truncated" });
   });
+
+  it.each([MAX_JVM_CLASS_IDENTITY_BYTES, MAX_JVM_CLASS_IDENTITY_BYTES + 1])(
+    "reports a known FAT range error and skips full class reads for %i bytes",
+    async (size) => {
+      const header = Buffer.alloc(28);
+      header.writeUInt32BE(0xcafebabe, 0);
+      header.writeUInt32BE(1, 4);
+      header.writeUInt32BE(CPU.arm64.type, 8);
+      header.writeUInt32BE(size, 16);
+      header.writeUInt32BE(32, 20);
+      const readAt = vi.fn(async (offset: number, length: number) =>
+        header.subarray(offset, offset + length),
+      );
+      expect(await readMachoImage(readAt, size)).toMatchObject({
+        status: "malformed",
+        reason: expect.stringContaining("slice range extends beyond the file"),
+      });
+      expect(Math.max(...readAt.mock.calls.map(([, length]) => length))).toBe(
+        28,
+      );
+    },
+  );
 
   it("keeps oversized CAFEBABE identity unknown when class payload is sparse", async () => {
     const classPrefix = Buffer.from(javaClassFile(4000, true));

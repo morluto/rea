@@ -28,7 +28,7 @@ it.each(["é", "😀", "\u00a0", "\u0085", "\u2028", "\u2029"])(
       parseXmlPropertyList(`<plist><data>AQ${character}ID</data></plist>`),
     ).toThrow(
       expect.objectContaining({
-        _tag: "XmlPlistDataError",
+        name: "XmlPlistDataError",
         reason: "non-ascii",
         characterOffset: 2,
       }),

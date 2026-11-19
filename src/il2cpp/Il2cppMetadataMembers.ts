@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import type { Il2cppMetadata } from "../domain/il2cpp/il2cppMetadata.js";
 import {
   checkRange,
@@ -141,7 +142,7 @@ function* readStringLiterals(
   const { bytes, section, indexing, members } = tables;
   const literals = section("stringLiterals"),
     data = section("stringLiteralData");
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   // Repeated spans reuse their decoded text for this immutable file snapshot.
   const decoded = new Map<string, Members["string_literals"][number]>();
   const rows: Members["string_literals"] = [];

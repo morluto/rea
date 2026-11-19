@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import type {
   InspectWindowsShortcutInput,
   WindowsShortcut,
@@ -11,10 +10,14 @@ import type {
   WindowsShortcutStringField,
   WindowsShortcutUuidV1,
 } from "../../domain/native/windowsShortcut.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
 import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../../domain/binaryContainer.js";
+import { malformedInput } from "../../domain/parseFailure.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
@@ -24,6 +27,8 @@ const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
 const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
+// MS-SHLLINK §2.4 exempts COMMAND_LINE_ARGUMENTS from this format limit.
+const MAX_STRING_DATA_CHARACTERS = 260;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
@@ -131,9 +136,6 @@ const LIMITATIONS = [
   "Volume serial, NetBIOS machine id, and Tracker droid values are recorded as stored. Host identity is not verified.",
 ];
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const namedBits = (
   raw: number,
   names: ReadonlyArray<readonly [number, string]>,
@@ -232,7 +234,7 @@ const uuidV1 = (
     evidence_kind: "derived",
     version: 1,
     mac: [...bytes.subarray(offset + 10, offset + 16)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .map((byte) => byteToHex(byte))
       .join(":"),
     timestamp_iso8601: isoFromUnsigned100ns(timestamp, UUID_UNIX_EPOCH),
     timestamp_100ns: timestamp.toString(10),
@@ -249,14 +251,15 @@ const driveType = (
   name: DRIVE_TYPES[raw] ?? null,
 });
 
-const extensionOf = (path: string | null | undefined): string | null => {
-  if (path === undefined || path === null || path.length === 0) return null;
+const extensionOf = (path: string, ansi: boolean): string | null => {
+  if (path.length === 0) return null;
   const normalized = path.replaceAll("/", "\\");
   const slash = normalized.lastIndexOf("\\");
   const name = slash === -1 ? normalized : normalized.slice(slash + 1);
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return null;
-  return name.slice(dot).toLowerCase();
+  const extension = name.slice(dot);
+  return ansi && !isAscii(extension) ? null : extension.toLowerCase();
 };
 
 const foldPath = (path: string): string =>
@@ -301,17 +304,20 @@ const hasUnexpandedVariable = (path: string): boolean =>
   /%[^%\\/]+%/u.test(path);
 
 /**
- * A recorded path and where its non-ASCII text came from. Every ANSI code page
- * agrees with ASCII, so only non-ASCII characters depend on the encoding. A
- * non-ASCII ANSI byte is a character from the unobserved system code page,
- * which its Latin1 projection does not name.
+ * A recorded path and where its text came from. All-ASCII strings agree across
+ * ANSI code pages, but an ASCII-valued trail byte in a multibyte string need not
+ * name an ASCII character. A Latin1 projection preserves bytes, not decoded
+ * character boundaries or case relationships.
  */
 type RecordedPath = {
-  readonly path: string;
+  /** Null when independently encoded parts cannot establish a joined path. */
+  readonly path: string | null;
   /** Holds non-ASCII text projected from ANSI bytes. */
   readonly ansi: boolean;
   /** Holds non-ASCII UTF-16 text. */
   readonly unicode: boolean;
+  /** A suffix may establish this even when its parent's identity is unknown. */
+  readonly extension: string | null;
 };
 
 type LinkInfoPathUncertainty = {
@@ -323,14 +329,47 @@ type LinkInfoPathUncertainty = {
 const isAscii = (text: string): boolean =>
   [...text].every((char) => char <= "\u007f");
 
-const recorded = (path: string, ansi: boolean): RecordedPath => {
+const recorded = (path: string, ansi: boolean) => {
   const nonAscii = !isAscii(path);
-  return { path, ansi: ansi && nonAscii, unicode: !ansi && nonAscii };
+  return {
+    path,
+    ansi: ansi && nonAscii,
+    unicode: !ansi && nonAscii,
+    extension: extensionOf(path, ansi),
+  };
 };
 
 /** Two paths compare as text only when their non-ASCII parts share one encoding. */
 const comparableText = (left: RecordedPath, right: RecordedPath): boolean =>
   !((left.ansi || right.ansi) && (left.unicode || right.unicode));
+
+/** Opaque ANSI bytes are not Unicode characters or path separators. */
+const pathsDiffer = (
+  left: RecordedPath,
+  right: RecordedPath,
+): boolean | null => {
+  if (left.path === null || right.path === null || !comparableText(left, right))
+    return null;
+  if (!left.ansi && !right.ansi)
+    return normalizePath(left.path) !== normalizePath(right.path);
+  if (left.path === right.path) return false;
+  // The identical prefix can end in a separator or a DBCS trail byte: either
+  // way, only the following ASCII tails are compared. The prefix stays opaque.
+  const asciiTail = (path: string) => {
+    const at = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/")) + 1;
+    const name = path.slice(at);
+    return name !== "" && name !== "." && name !== ".." && isAscii(name)
+      ? { prefix: path.slice(0, at), name }
+      : null;
+  };
+  const leftFile = asciiTail(left.path);
+  const rightFile = asciiTail(right.path);
+  return leftFile !== null &&
+    rightFile !== null &&
+    leftFile.prefix === rightFile.prefix
+    ? leftFile.name.toLowerCase() !== rightFile.name.toLowerCase()
+    : null;
+};
 
 const iconDiffersFromTarget = (
   icon: WindowsShortcut["string_data"]["icon_location"],
@@ -340,18 +379,16 @@ const iconDiffersFromTarget = (
   const text = icon.value;
   if (!isFullPath(text) || hasUnexpandedVariable(text)) return null;
   const iconPath = recorded(text, icon.encoding === "ansi");
-  const location = normalizePath(text);
-  const fullTargets = targets.filter((target) => isFullPath(target.path));
-  const fixedTargets = fullTargets.filter(
-    (target) =>
-      !hasUnexpandedVariable(target.path) && comparableText(target, iconPath),
+  const fullTargets = targets.filter(
+    (target) => target.path === null || isFullPath(target.path),
   );
-  if (fixedTargets.some((target) => normalizePath(target.path) === location))
-    return false;
-  // A variable-bearing target, or one whose ANSI bytes the icon text cannot be
-  // compared with, could name the icon's file, so no difference is claimed.
-  if (fullTargets.length > fixedTargets.length) return null;
-  return fixedTargets.length === 0 ? null : true;
+  const differences = fullTargets.map((target) =>
+    target.path !== null && hasUnexpandedVariable(target.path)
+      ? null
+      : pathsDiffer(target, iconPath),
+  );
+  if (differences.includes(false)) return false;
+  return differences.length === 0 || differences.includes(null) ? null : true;
 };
 
 /** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
@@ -368,14 +405,22 @@ const linkInfoTargets = (
       : recorded(suffixText, info.common_path_suffix_unicode === null);
   // Each part keeps its own encoding, so an ASCII ANSI part never hides a
   // comparable Unicode part.
-  const withSuffix = (base: RecordedPath): RecordedPath =>
-    suffix === null
-      ? base
-      : {
-          path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
-          ansi: base.ansi || suffix.ansi,
-          unicode: base.unicode || suffix.unicode,
-        };
+  const withSuffix = (base: ReturnType<typeof recorded>): RecordedPath => {
+    if (suffix === null) return base;
+    if (base.ansi || suffix.ansi)
+      return {
+        path: null,
+        ansi: base.ansi || suffix.ansi,
+        unicode: base.unicode || suffix.unicode,
+        extension: suffix.extension,
+      };
+    return {
+      path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
+      ansi: base.ansi || suffix.ansi,
+      unicode: base.unicode || suffix.unicode,
+      extension: suffix.extension,
+    };
+  };
   const values: RecordedPath[] = [];
   const local = info.local_base_path_unicode ?? info.local_base_path;
   if (
@@ -470,9 +515,7 @@ const observationsOf = (
     {
       kind: "target_extension",
       evidence_kind: "derived",
-      extension: targetPathUnknown
-        ? null
-        : extensionOf(targets[0]?.path ?? null),
+      extension: targetPathUnknown ? null : (targets[0]?.extension ?? null),
     },
     {
       kind: "show_command_minimized",
@@ -500,7 +543,7 @@ const decodeIdListItem = (
     offset,
     size,
     type_byte: typeByte,
-    sha256: sha256(data),
+    sha256: sha256Hex(data),
   });
   if (typeByte === 0x1f && data.length >= 18) {
     return {
@@ -920,60 +963,52 @@ const parseLinkInfo = (
 };
 
 const parseStringField = (
-  bytes: Buffer,
+  reader: BinaryReader,
   walk: Walk,
   unicode: boolean,
   label: string,
 ): WindowsShortcutStringField | null => {
-  if (!fits(bytes, walk.offset, 2)) {
+  const offset = walk.offset;
+  const payloadOffset = offset + 2;
+  let count: number | undefined;
+  try {
+    count = reader.u16(offset);
+    const payloadBytes = count * (unicode ? 2 : 1);
+    const payload = reader.range(payloadOffset, payloadBytes, label);
+    if (
+      label !== "COMMAND_LINE_ARGUMENTS" &&
+      count > MAX_STRING_DATA_CHARACTERS
+    )
+      note(
+        walk,
+        "malformed_structure",
+        offset,
+        `${label} declares ${String(count)} characters, above the ${String(MAX_STRING_DATA_CHARACTERS)}-character StringData limit`,
+      );
+    charge(walk, payloadBytes);
+    walk.offset = payloadOffset + payloadBytes;
+    return {
+      encoding: unicode ? "unicode" : "ansi",
+      count_characters: count,
+      byte_length: payloadBytes,
+      value: payload.toString(unicode ? "utf16le" : "latin1"),
+      location: { offset, bytes: 2 + payloadBytes },
+    };
+  } catch (cause: unknown) {
+    if (!(cause instanceof BinaryFormatFailure)) throw cause;
+    const oddUnicodePayload =
+      count !== undefined &&
+      unicode &&
+      (reader.bytes.length - payloadOffset) % 2 === 1;
     note(
       walk,
-      "truncated",
-      walk.offset,
-      `${label} CountCharacters is truncated`,
+      oddUnicodePayload ? "odd_unicode_length" : "truncated",
+      offset,
+      `${label} ${count === undefined ? "CountCharacters is" : "string bytes are"} truncated`,
       true,
     );
     return null;
   }
-  const count = bytes.readUInt16LE(walk.offset);
-  const unit = unicode ? 2 : 1;
-  const payloadBytes = count * unit;
-  if (unicode && payloadBytes % 2 === 1) {
-    note(
-      walk,
-      "odd_unicode_length",
-      walk.offset,
-      `${label} Unicode payload is an odd length`,
-      true,
-    );
-    return null;
-  }
-  if (!fits(bytes, walk.offset + 2, payloadBytes)) {
-    const remaining = bytes.length - (walk.offset + 2);
-    note(
-      walk,
-      remaining % 2 === 1 && unicode ? "odd_unicode_length" : "truncated",
-      walk.offset,
-      `${label} string bytes are truncated`,
-      true,
-    );
-    return null;
-  }
-  const payload = bytes.subarray(
-    walk.offset + 2,
-    walk.offset + 2 + payloadBytes,
-  );
-  charge(walk, payloadBytes);
-  const value = payload.toString(unicode ? "utf16le" : "latin1");
-  const field: WindowsShortcutStringField = {
-    encoding: unicode ? "unicode" : "ansi",
-    count_characters: count,
-    byte_length: payloadBytes,
-    value,
-    location: { offset: walk.offset, bytes: 2 + payloadBytes },
-  };
-  walk.offset += 2 + payloadBytes;
-  return field;
 };
 
 const environmentTargets = (
@@ -1001,7 +1036,7 @@ const decodeExtra = (
         offset,
         "Environment ExtraData payload is shorter than 780 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     charge(
       walk,
@@ -1021,7 +1056,7 @@ const decodeExtra = (
         offset,
         "TrackerDataBlock payload is shorter than 0x58 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const length = payload.readUInt32LE(0);
     const version = payload.readUInt32LE(4);
@@ -1032,7 +1067,7 @@ const decodeExtra = (
         offset,
         `TrackerDataBlock header is unsupported (Length 0x${length.toString(16)}, Version ${String(version)})`,
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const machine = latin1Z(payload.subarray(8, 24));
     charge(walk, machine.length);
@@ -1052,14 +1087,14 @@ const decodeExtra = (
   if (signature === 0xa0000004) {
     if (payload.length < 4) {
       note(walk, "truncated", offset, "ConsoleFEDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
   }
   if (signature === 0xa0000005) {
     if (payload.length < 8) {
       note(walk, "truncated", offset, "SpecialFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "special_folder",
@@ -1070,7 +1105,7 @@ const decodeExtra = (
   if (signature === 0xa000000b) {
     if (payload.length < 20) {
       note(walk, "truncated", offset, "KnownFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "known_folder",
@@ -1082,9 +1117,9 @@ const decodeExtra = (
     return {
       kind: "property_store",
       bytes: payload.length,
-      sha256: sha256(payload),
+      sha256: sha256Hex(payload),
     };
-  return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+  return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
 };
 
 const parseIdList = async (
@@ -1265,21 +1300,23 @@ export const parseWindowsShortcut = async (
 ): Promise<WindowsShortcut> => {
   assertArtifactReadActive(signal);
   if (bytes.length < HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
   const headerSize = bytes.readUInt32LE(0);
   if (headerSize !== HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `HeaderSize ${String(headerSize)} is not 0x4C`,
+      { offset: 0, field: "HeaderSize" },
     );
   const clsid = formatGuid(bytes, 4);
   if (clsid !== SHELL_LINK_CLSID)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `LinkCLSID ${clsid} is not ${SHELL_LINK_CLSID}`,
+      { offset: 4, field: "LinkCLSID" },
     );
   const flags = bytes.readUInt32LE(20);
   const unicode = (flags & 0x00000080) !== 0;
@@ -1331,9 +1368,10 @@ export const parseWindowsShortcut = async (
     [0x00000040, "icon_location", "ICON_LOCATION"],
   ];
   if (!walk.stopped) {
+    const reader = new BinaryReader(bytes, true, "windows-shortcut");
     for (const [bit, key, label] of stringFlags) {
       if ((flags & bit) === 0) continue;
-      const field = parseStringField(bytes, walk, unicode, label);
+      const field = parseStringField(reader, walk, unicode, label);
       stringData[key] = field;
       if (field === null) break;
     }
@@ -1341,6 +1379,15 @@ export const parseWindowsShortcut = async (
   const extraData = !walk.stopped
     ? await parseExtraData(bytes, walk, input.max_extra_data_blocks, signal)
     : { blocks: [], terminal_offset: null };
+  // The TerminalBlock ends the Shell Link. Appended bytes are not examined, so
+  // the file is not completely covered; payloads are often hidden there.
+  if (extraData.terminal_offset !== null && walk.offset < bytes.length)
+    note(
+      walk,
+      "malformed_structure",
+      walk.offset,
+      `${String(bytes.length - walk.offset)} byte(s) follow the ExtraData TerminalBlock and are not part of the Shell Link`,
+    );
   const signatures = new Set(extraData.blocks.map((block) => block.signature));
   const unseenBlocks = EXPECTED_EXTRA_DATA_BLOCKS.filter(
     ({ flag, signature }) => (flags & flag) !== 0 && !signatures.has(signature),

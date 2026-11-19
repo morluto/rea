@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { buildNativePeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";

@@ -16,6 +16,7 @@ import { err, ok, type Result } from "./result.js";
 import {
   readPeOptionalHeaderFixedFields,
   readPeOptionalHeaderDirectory,
+  readPeOptionalHeaderStructure,
 } from "./peOptionalHeader.js";
 import type { PeOptionalHeaderFacts } from "./peMachine.js";
 import { readPeCoffHeader } from "./peCoffHeader.js";
@@ -42,6 +43,7 @@ import {
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
+  type MachoHeaderDeclarations,
 } from "./apple/machoLoadCommands.js";
 
 /** Format and architecture facts recovered from an executable header. */
@@ -68,6 +70,11 @@ export type ExecutableMetadata =
       readonly format: "elf";
       readonly architecture: "hexagon";
       readonly availableArchitectures: readonly "hexagon"[];
+    }
+  | {
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
     }
   | {
       readonly format: "mach-o";
@@ -101,6 +108,11 @@ export type ExecutableMetadata =
       readonly managed: boolean;
       readonly codeView?: PeCodeViewRecord;
     };
+
+/** Fixed bytes through the end of the PE signature and COFF header. */
+export const PE_RECORD_HEADER_BYTES = 24;
+/** Bound the optional-header read used by structural PE admission. */
+export const MAX_PE_OPTIONAL_HEADER_BYTES = 4096;
 
 /**
  * Whether leading bytes begin an executable header family that
@@ -148,6 +160,56 @@ export const parseExecutableHeader = (
   return err("unsupported binary format");
 };
 
+/**
+ * The native executable format whose header structure decodes, whatever its
+ * CPU: an ELF fixed header, or a thin Mach-O header whose load-command framing
+ * walks within the retained bytes. `null` when the bytes claim neither; an
+ * error when they claim one whose header target admission would also refuse.
+ * Inventory classification uses this so a magic-only stub is not reported as
+ * an executable the resolver then rejects.
+ */
+export const readNativeHeaderFormat = (
+  bytes: Buffer,
+  fileSize = bytes.length,
+): Result<"elf" | "mach-o" | null, string> => {
+  if (
+    bytes.length >= 4 &&
+    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+  ) {
+    const header = readElfFixedHeader(bytes, fileSize);
+    return header.ok ? ok("elf") : header;
+  }
+  if (readMachoHeaderPrefixFacts(bytes).format === null) return ok(null);
+  const table = readMachoLoadCommandTableHeader(bytes, fileSize);
+  if (!table.ok) return table;
+  if (table.value === null) return err("unsupported Mach-O header");
+  const framing = walkMachoCommandFraming(bytes, table.value);
+  return framing.ok ? ok("mach-o") : framing;
+};
+
+/**
+ * Walk the load-command framing that `bytes` holds. Header-only callers may
+ * retain a prefix; file-backed admission walks every remaining command header
+ * through its bounded reader.
+ */
+const walkMachoCommandFraming = (
+  bytes: Buffer,
+  table: MachoHeaderDeclarations,
+): Result<null, string> => {
+  const commands = new MachoLoadCommandCursor(table);
+  while (commands.nextOffset !== null) {
+    const offset = table.headerSize + commands.nextOffset;
+    if (
+      offset + 8 > bytes.length &&
+      commands.nextOffset + 8 <= table.commandBytes
+    )
+      return ok(null);
+    const frame = commands.read(bytes.subarray(offset, offset + 8));
+    if (!frame.ok) return frame;
+  }
+  return commands.finish();
+};
+
 /** CPU_TYPE_ARM64_32: AArch64 instructions with 32-bit pointers (watchOS). */
 const CPU_TYPE_ARM64_32 = 0x0200000c;
 
@@ -161,23 +223,8 @@ const parseThinMachO = (
   const { identity } = table.value;
   const architecture = machoBinaryArchitecture(identity.cpuType);
   if (architecture === undefined) return err("unsupported Mach-O architecture");
-  const commands = new MachoLoadCommandCursor(table.value);
-  while (commands.nextOffset !== null) {
-    const offset = table.value.headerSize + commands.nextOffset;
-    // Header-only callers may retain a prefix. File-backed admission walks
-    // every remaining command header through its bounded reader.
-    if (
-      offset + 8 > bytes.length &&
-      commands.nextOffset + 8 <= table.value.commandBytes
-    )
-      break;
-    const frame = commands.read(bytes.subarray(offset, offset + 8));
-    if (!frame.ok) return frame;
-  }
-  if (commands.nextOffset === null) {
-    const complete = commands.finish();
-    if (!complete.ok) return complete;
-  }
+  const framing = walkMachoCommandFraming(bytes, table.value);
+  if (!framing.ok) return framing;
   if (architecture === "arm64_32")
     return ok({
       format: "mach-o",
@@ -498,6 +545,12 @@ const parseElf = (
       architecture,
       availableArchitectures: [architecture],
     });
+  if (architecture === "xtensa")
+    return ok({
+      format: "elf",
+      architecture,
+      availableArchitectures: [architecture],
+    });
   return ok({
     format: "elf",
     architecture,
@@ -546,6 +599,59 @@ export const parseMzExecutableMetadata = (
     : parsed;
 };
 
+/** Parse the CPU-agnostic PE structure needed by inventory classification. */
+export const parsePeRecordStructure = (
+  record: Buffer,
+): Result<
+  {
+    readonly machine: number;
+    readonly characteristics: number;
+    readonly optionalHeader: Buffer;
+  },
+  | {
+      readonly kind: "incomplete";
+      readonly requiredBytes: number;
+      readonly message: string;
+    }
+  | { readonly kind: "malformed"; readonly message: string }
+> => {
+  if (record.length < PE_RECORD_HEADER_BYTES)
+    return err({
+      kind: "incomplete",
+      requiredBytes: PE_RECORD_HEADER_BYTES,
+      message: "invalid or truncated PE header",
+    });
+  if (record.toString("binary", 0, 4) !== "PE\u0000\u0000")
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE header",
+    });
+  const coff = readPeCoffHeader(record.subarray(4, PE_RECORD_HEADER_BYTES));
+  if (!coff.ok)
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE header",
+    });
+  const { machine, optionalHeaderSize, characteristics } = coff.value;
+  if (optionalHeaderSize > MAX_PE_OPTIONAL_HEADER_BYTES)
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE optional header",
+    });
+  const declaredEnd = PE_RECORD_HEADER_BYTES + optionalHeaderSize;
+  if (record.length < declaredEnd)
+    return err({
+      kind: "incomplete",
+      requiredBytes: declaredEnd,
+      message: "invalid or truncated PE optional header",
+    });
+  const optionalHeader = record.subarray(PE_RECORD_HEADER_BYTES, declaredEnd);
+  const parsed = readPeOptionalHeaderStructure(optionalHeader);
+  if (!parsed.ok)
+    return err({ kind: "malformed", message: parsed.error.message });
+  return ok({ machine, characteristics, optionalHeader });
+};
+
 /** Parse a bounded PE signature, COFF record, and optional header without I/O. */
 export const parsePeRecordFacts = (
   record: Buffer,
@@ -557,26 +663,18 @@ export const parsePeRecordFacts = (
   },
   string
 > => {
-  if (
-    record.length < 24 ||
-    record.toString("binary", 0, 4) !== "PE\u0000\u0000"
-  )
-    return err("invalid or truncated PE header");
-  const coff = readPeCoffHeader(record.subarray(4, 24));
-  if (!coff.ok) return err("invalid or truncated PE header");
+  const structure = parsePeRecordStructure(record);
+  if (!structure.ok) return err(structure.error.message);
   const {
     machine: machineType,
-    optionalHeaderSize,
     characteristics,
-  } = coff.value;
+    optionalHeader,
+  } = structure.value;
   const machine = decodePeMachine(machineType);
   if (machine === undefined)
     return err(
       `unsupported PE architecture (COFF machine 0x${machineType.toString(16).padStart(4, "0")})`,
     );
-  if (optionalHeaderSize > 4096 || record.length < 24 + optionalHeaderSize)
-    return err("invalid or truncated PE optional header");
-  const optionalHeader = record.subarray(24, 24 + optionalHeaderSize);
   const facts = readPeOptionalHeader(optionalHeader, machineType);
   if (!facts.ok) return err(facts.error.message);
   if (facts.value.machine === null) return err("unsupported PE architecture");

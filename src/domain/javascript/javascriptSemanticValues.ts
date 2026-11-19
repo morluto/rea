@@ -1,9 +1,8 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
-  semanticBindingMayHaveOpaqueEffect,
-  semanticBindingCanBeRebound,
-  semanticOpaqueBindingReadMayHaveChanged,
-} from "./javascriptSemanticOpaqueEffects.js";
+  applySemanticBindingReferenceEffects,
+  opaqueCodeMayRebindBinding,
+} from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import { logicalRightOperand } from "./javascriptSymbolicControlFlow.js";
@@ -15,8 +14,6 @@ import {
 
 import {
   semanticCapturePosition,
-  semanticEscapeFollowsCapture,
-  semanticBindingEffectFollowsCapture,
   semanticBindingPrecedesCapture,
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -25,11 +22,6 @@ import {
   semanticSlotAtPath,
   semanticContainer,
 } from "./javascriptSemanticSlots.js";
-
-import {
-  invalidateSemanticEscapedPath,
-  invalidateSemanticMutationPaths,
-} from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
 import type {
@@ -233,8 +225,7 @@ export const evaluateSemanticBinding = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticValue =>
-  semanticBindingCanBeRebound(binding) &&
-  semanticBindingMayHaveOpaqueEffect(binding, state)
+  opaqueCodeMayRebindBinding(binding, state)
     ? {
         status: "unknown",
         reason: "Direct eval may have changed this lexical binding.",
@@ -297,8 +288,7 @@ export const evaluateSemanticProvenance = (
     dependence: { lowest: CALLER_INDEPENDENT },
     memo: createEvaluationMemo(state),
   });
-  return semanticBindingCanBeRebound(binding) &&
-    semanticBindingMayHaveOpaqueEffect(binding, state)
+  return opaqueCodeMayRebindBinding(binding, state)
     ? semanticAmbiguousProvenance(
         provenance.origins,
         "Direct eval may have changed this runtime value.",
@@ -551,50 +541,12 @@ const evaluateBinding = (
       ? callerDependence
       : Math.min(callerDependence, context.dependence.lowest);
   }
-  let projected = invalidateSemanticMutationPaths(
+  const projected = applySemanticBindingReferenceEffects(
     value,
-    binding.memberWrites
-      .filter(
-        ({ node }) =>
-          context.capturePoint === undefined ||
-          node === undefined ||
-          !semanticBindingEffectFollowsCapture(
-            binding,
-            context.capturePoint,
-            node,
-            context.state.parentsByNode,
-          ),
-      )
-      .map(({ path }) => path),
+    binding,
+    context.state,
+    context.capturePoint,
   );
-  for (const escape of binding.escapedPaths) {
-    // Escapes only invalidate object references; other lattice values survive.
-    if (projected.status !== "object" && projected.status !== "array") break;
-    if (
-      context.capturePoint !== undefined &&
-      semanticEscapeFollowsCapture(
-        binding,
-        context.capturePoint,
-        escape.node,
-        context.state.parentsByNode,
-      )
-    )
-      continue;
-    projected = invalidateSemanticEscapedPath(projected, escape.path);
-  }
-  if (
-    (projected.status === "object" || projected.status === "array") &&
-    semanticBindingMayHaveOpaqueEffect(
-      binding,
-      context.state,
-      context.capturePoint,
-      "reference",
-    )
-  )
-    projected = {
-      status: "unknown",
-      reason: "Direct eval may have mutated this object reference.",
-    };
   if (
     callerIndependent &&
     independent !== undefined &&
@@ -708,10 +660,10 @@ const evaluateExpressionValue = (
     }
     const atRead = read.binding;
     if (
-      semanticOpaqueBindingReadMayHaveChanged(
+      opaqueCodeMayRebindBinding(
         binding,
-        context.capturePoint ?? node,
         context.state,
+        context.capturePoint ?? node,
       )
     )
       return {
@@ -1410,7 +1362,7 @@ const provenanceForBindingAtRead = (
   read: t.Identifier,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  if (semanticOpaqueBindingReadMayHaveChanged(binding, read, context.state))
+  if (opaqueCodeMayRebindBinding(binding, context.state, read))
     return semanticAmbiguousProvenance(
       provenanceForBinding(binding, context).origins,
       "Direct eval may have changed this runtime value.",

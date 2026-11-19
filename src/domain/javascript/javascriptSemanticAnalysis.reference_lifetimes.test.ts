@@ -3,16 +3,31 @@ import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
 
-const resultValue = (body: string) =>
+const resultValue = (body: string, aliasStates?: number) =>
   onlyCallable(
-    analyzeJavaScriptSemantics(`export function result() { ${body} }`),
+    analyze(`export function result() { ${body} }`, aliasStates),
     "result",
   ).returnSites[0]?.value;
 
+/**
+ * Analyze within a member-mutation alias-state allowance; a refusal fails the
+ * test. Each bound is twice the states the case schedules today. Removing the
+ * path normalization or the covering antichain from 28595276fa makes the
+ * bounded cases need more than four times as many.
+ */
+function analyze(source: string, aliasStates?: number) {
+  return analyzeJavaScriptSemantics(
+    source,
+    undefined,
+    aliasStates === undefined ? undefined : { aliasStates, source: "request" },
+  );
+}
+
 describe("bounded paths through dynamic selectors and class origins", () => {
   it("bounds linked-list walks through class instances", () => {
-    const start = performance.now();
-    const analysis = analyzeJavaScriptSemantics(`
+    // 3 alias states; path normalization keeps this from growing.
+    const analysis = analyze(
+      `
       class List { tail = null; }
       export function walk() {
         const list = new List();
@@ -20,12 +35,13 @@ describe("bounded paths through dynamic selectors and class origins", () => {
         while (node) { use(node.value.parent); node = node.previous; }
         return 42;
       }
-    `);
+    `,
+      6,
+    );
     expect(onlyCallable(analysis, "walk").returnSites[0]?.value).toEqual({
       status: "literal",
       value: 42,
     });
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("retains effects through class getter aliases while bounding loop paths", () => {
@@ -41,8 +57,9 @@ describe("bounded paths through dynamic selectors and class origins", () => {
   });
 
   it("bounds dynamic-key setter loops that also create literal containers", () => {
-    const start = performance.now();
-    const analysis = analyzeJavaScriptSemantics(`
+    // 94 alias states; the covering antichain keeps this from growing.
+    const analysis = analyze(
+      `
       export function set(root, keys, value) {
         let node = root;
         for (const [index, key] of keys.entries()) {
@@ -56,7 +73,9 @@ describe("bounded paths through dynamic selectors and class origins", () => {
         return root;
       }
       export function unaffected() { return 42; }
-    `);
+    `,
+      188,
+    );
     expect(onlyCallable(analysis, "unaffected").returnSites[0]?.value).toEqual({
       status: "literal",
       value: 42,
@@ -64,7 +83,6 @@ describe("bounded paths through dynamic selectors and class origins", () => {
     expect(onlyCallable(analysis, "set").returnSites[0]?.value.status).toBe(
       "unknown",
     );
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("retains shared-child mutations reached by dynamic-key alias loops", () => {
@@ -94,15 +112,15 @@ describe("bounded member path propagation", () => {
       { length: 16 },
       (_, index) => `if (flag === ${index}) node = node.m${index};`,
     ).join(" else ");
-    const start = performance.now();
+    // 12,523 alias states; the covering antichain keeps this from growing.
     const callable = onlyCallable(
-      analyzeJavaScriptSemantics(
+      analyze(
         `export function result(seed) { let node=seed; while(node) { ${branches} use(node.state); } return seed.keep; }`,
+        25_046,
       ),
       "result",
     );
     expect(callable.returnSites[0]?.value.status).toBe("unknown");
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("preserves Array prototype effects through an otherwise unknown alias", () => {
@@ -118,30 +136,30 @@ describe("bounded member path propagation", () => {
       { length: 16 },
       (_, index) => `if (flag === ${index}) node = node.m${index};`,
     ).join(" else ");
-    const start = performance.now();
+    // 2 alias states; path normalization keeps this from growing.
     expect(
       resultValue(
         `const source={child:1,keep:{value:3}}; let node=source.child; while(node) { ${branches} use(node.state); } return source.keep.value;`,
+        4,
       ),
     ).toEqual({ status: "literal", value: 3 });
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   // A dynamic self alias escapes its repeated prefix, which conservatively
   // covers every child; a static key without that slot keeps the literal.
+  // Alias states today: 19, 11 and 25 (covering antichain), 21 (normalization).
   it.each([
-    ["node = node[key]", "node.name.toLowerCase();", "unknown"],
-    ["node = node[key]", "mutate(node);", "unknown"],
-    ["node = node[key]", "node.value = 2;", "unknown"],
-    ["node = node.next", "node.value = 2;", "literal"],
+    ["node = node[key]", "node.name.toLowerCase();", "unknown", 38],
+    ["node = node[key]", "mutate(node);", "unknown", 22],
+    ["node = node[key]", "node.value = 2;", "unknown", 50],
+    ["node = node.next", "node.value = 2;", "literal", 42],
   ])(
     "bounds a self alias below an observed container: %s; %s",
-    (alias, effect, status) => {
-      const start = performance.now();
+    (alias, effect, status, aliasStates) => {
       const value = resultValue(
         `class Item {} const seed = { child: { value: 1 } }; let node = flag ? seed : new Item(); while ((${alias})) ${effect} return seed.child.value;`,
+        aliasStates,
       );
-      expect(performance.now() - start).toBeLessThan(2000);
       expect(value?.status).toBe(status);
     },
   );
@@ -177,22 +195,22 @@ describe("bounded member path propagation", () => {
     },
   );
 
+  // Alias states today: 40 (normalization), 750 and 750 (both mechanisms).
   it.each([
-    ["use(node);", "m0.value", "unknown"],
-    ["node.value = 2;", "m0.value", "unknown"],
-    ["node.value = 2;", "mode", "literal"],
+    ["use(node);", "m0.value", "unknown", 80],
+    ["node.value = 2;", "m0.value", "unknown", 1_500],
+    ["node.value = 2;", "mode", "literal", 1_500],
   ])(
     "bounds a loop that reassigns one reference through many members: %s seed.%s",
-    (effect, read, status) => {
+    (effect, read, status, aliasStates) => {
       const branches = Array.from(
         { length: 9 },
         (_, index) => `if (flag === ${index}) node = node.m${index};`,
       ).join(" else ");
-      const start = performance.now();
       const value = resultValue(
         `const seed = { mode: "initial", m0: { value: 1 } }; let node = seed; while (node) { ${branches} ${effect} } return seed.${read};`,
+        aliasStates,
       );
-      expect(performance.now() - start).toBeLessThan(2000);
       expect(value?.status).toBe(status);
     },
   );
@@ -275,26 +293,26 @@ describe("reference lifetimes across calls and shallow copies", () => {
         `const alias${index + 1} = { left: alias${index}, right: alias${index} };`,
     ).join("\n");
     const pattern = "{ [key]: ".repeat(9) + "[copy]" + " }".repeat(9);
-    const start = performance.now();
-    resultValue(
-      `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
-    );
-    expect(performance.now() - start).toBeLessThan(2000);
+    // 31 alias states; the covering antichain keeps this from growing.
+    expect(
+      resultValue(
+        `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
+        62,
+      )?.status,
+    ).toBe("unknown");
   });
 
-  it("bounds conditional shallow-copy traversal while retaining shared children", () => {
+  it("retains shared children through conditional shallow-copy traversal", () => {
     const declarations = Array.from(
       { length: 20 },
       (_, i) =>
         `const alias${i + 1} = flag ? {...alias${i}, a${i}:{}} : {...alias${i}, b${i}:{}};`,
     ).join("\n");
-    const start = performance.now();
     expect(
       resultValue(
         `const alias0 = { value: { token: 1 } }; ${declarations} consume(alias20); return alias0.value.token;`,
       )?.status,
     ).toBe("unknown");
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it.each([

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,13 +9,16 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createVerifierMcpOwner } from "./lib/verifier-mcp-owner.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 /** Verify default-path CLI registration, client parsing and owned MCP discovery. */
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const command = process.env.REA_VERIFY_CLINE_COMMAND ?? "cline";
 const reaEntry = join(repo, "scripts/rea.mjs");
 const run = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-cline-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-cline-client-",
+});
 const home = join(lab, "home");
 await mkdir(home, { recursive: true });
 const dataDirectory = join(home, ".cline", "data");

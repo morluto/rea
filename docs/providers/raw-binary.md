@@ -63,7 +63,7 @@ original compiler or ABI of a headerless target. Ghidra's x86 languages do not
 provide a compiler specification named `default`.
 
 Those settings, the caller-supplied entry, and `language_selection:
-caller-supplied-v1` are committed in the analysis profile. A different entry
+caller-supplied` are committed in the analysis profile. A different entry
 or architecture is a different profile; snapshots from header-detected targets
 do not replay.
 

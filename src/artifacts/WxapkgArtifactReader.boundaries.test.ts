@@ -1,5 +1,4 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +12,7 @@ import { buildWxapkg } from "../../tests/fixtures/wxapkg.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
   const path = join(
@@ -104,6 +104,12 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(entries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg member table allowance",
+          kind: "parser",
+          limit: 16 * 1024 * 1024,
+          unit: "bytes",
+        },
       });
       expect(reads).toHaveBeenCalledTimes(1); // bounded header only
     } finally {
@@ -139,6 +145,10 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(entries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg directory representation allowance",
+          unit: "bytes",
+        },
       });
     } finally {
       await reader.close();
@@ -438,7 +448,12 @@ describe("wxapkg stream capacity and freshness", () => {
       ).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
-        message: expect.stringContaining("wxapkg directory-and-chunk I/O work"),
+        fixedAllowance: {
+          name: "The wxapkg directory-and-chunk I/O work allowance",
+          kind: "parser",
+          limit: expect.any(Number),
+          unit: "operations",
+        },
       });
     } finally {
       await reader.close();

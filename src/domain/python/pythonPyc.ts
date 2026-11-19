@@ -8,6 +8,8 @@ import {
 export const PYTHON_PYC_HEADER_BYTES = 16;
 export const PYTHON_PYC_HASH_BASED = 0x1;
 export const PYTHON_PYC_CHECK_SOURCE = 0x2;
+/** CPython 3.14a1 magic 3608 added TYPE_SLICE to marshal (gh-125063). */
+export const PYTHON_PYC_SLICE_MAGIC = 3608;
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const index = z.number().int().nonnegative();
@@ -59,6 +61,11 @@ export const PYTHON_PYC_MARSHAL_PROFILES: ReadonlyMap<
   ...consecutiveProfiles(3494, 3495, "py311"),
   ...consecutiveProfiles(3500, 3531, "py311"),
   ...consecutiveProfiles(3550, 3571, "py311"),
+  // 3.14 and 3.15 keep the 3.11 code layout; 3.14a1 magic 3608 adds slice
+  // constants to marshal, which the reader gates by magic. Only magics checked
+  // against a real interpreter are pinned: 3627 (CPython 3.14.6) and 3666
+  // (CPython 3.15.0b3). Other pre-release magics stay unpinned.
+  ...profiles([3627, 3666], "py311"),
 ]);
 
 export const pythonPycMarshalProfile = (
@@ -160,6 +167,7 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("frozenset"), length: uint }),
   z.strictObject({ kind: z.literal("dict"), length: uint }),
   z.strictObject({ kind: z.literal("ellipsis") }),
+  z.strictObject({ kind: z.literal("slice") }),
   z.strictObject({
     kind: z.literal("complex"),
     real: pythonFloatSchema,
@@ -253,7 +261,7 @@ export const pythonPycHeaderSchema = z
       });
   });
 
-/** Bounded CPython 3.7–3.13 pyc observation; marshal is walked, bytecode is not decompiled. */
+/** Bounded CPython 3.7–3.15 pyc observation; marshal is walked, bytecode is not decompiled. */
 export const pythonPycSchema = z
   .strictObject({
     artifact: z.strictObject({

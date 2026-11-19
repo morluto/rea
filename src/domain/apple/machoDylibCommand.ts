@@ -1,3 +1,4 @@
+import { LC } from "./machoLoadCommandCodes.js";
 import type { MachoDependency } from "./dylibResolution.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -7,11 +8,11 @@ import {
 
 const DEPENDENCY_COMMANDS: ReadonlyMap<number, MachoDependency["command"]> =
   new Map([
-    [0xc, "LC_LOAD_DYLIB"],
-    [0x80000018, "LC_LOAD_WEAK_DYLIB"],
-    [0x8000001f, "LC_REEXPORT_DYLIB"],
-    [0x20, "LC_LAZY_LOAD_DYLIB"],
-    [0x80000023, "LC_LOAD_UPWARD_DYLIB"],
+    [LC.LOAD_DYLIB, "LC_LOAD_DYLIB"],
+    [LC.LOAD_WEAK_DYLIB, "LC_LOAD_WEAK_DYLIB"],
+    [LC.REEXPORT_DYLIB, "LC_REEXPORT_DYLIB"],
+    [LC.LAZY_LOAD_DYLIB, "LC_LAZY_LOAD_DYLIB"],
+    [LC.LOAD_UPWARD_DYLIB, "LC_LOAD_UPWARD_DYLIB"],
   ]);
 
 /** Dependency order follows command order; LC_ID_DYLIB does not consume an ordinal. */

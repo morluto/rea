@@ -26,7 +26,7 @@ it.skipIf(process.platform === "win32")(
     );
     const readerModule = fileURLToPath(
       new URL(
-        "../../../dist/artifacts/DirectoryArtifactReader.js",
+        "../../../dist/resources/DirectoryArtifactReader.js",
         import.meta.url,
       ),
     );
@@ -70,7 +70,7 @@ it.skipIf(process.platform === "win32")(
     );
     const readerModule = fileURLToPath(
       new URL(
-        "../../../dist/artifacts/DirectoryArtifactReader.js",
+        "../../../dist/resources/DirectoryArtifactReader.js",
         import.meta.url,
       ),
     );

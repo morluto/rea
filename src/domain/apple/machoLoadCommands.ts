@@ -1,8 +1,11 @@
+import { LC } from "./machoLoadCommandCodes.js";
 import { err, ok, type Result } from "../result.js";
 import {
   machoLoadCommandAlignment,
   readMachoHeaderPrefixFacts,
 } from "./machoContainer.js";
+
+const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
 
 /** Header commitments needed to walk commands without retaining their payloads. */
 export interface MachoLoadCommandTableHeader {
@@ -12,8 +15,6 @@ export interface MachoLoadCommandTableHeader {
   readonly commandCount: number;
   readonly commandBytes: number;
 }
-
-const LC_SYMTAB = 0x2;
 
 /** Byte offset of `mach_header.flags`, shared by the 32- and 64-bit headers. */
 export const MACHO_HEADER_FLAGS_OFFSET = 24;
@@ -72,10 +73,14 @@ export const readMachoLoadCommandTableHeader = (
 ): Result<MachoHeaderDeclarations | null, string> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileSize);
   if (!parsed.ok || parsed.value === null) return parsed;
-  const { commandBytes, headerSize } = parsed.value;
+  const { commandBytes, commandCount, headerSize } = parsed.value;
   if (commandBytes > fileSize - headerSize)
     return err(
       `truncated Mach-O load commands: the header declares ${commandBytes} bytes after its ${headerSize}-byte header; the file has ${fileSize}`,
+    );
+  if (commandCount * MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes)
+    return err(
+      `Mach-O load command count ${commandCount} cannot fit in its ${commandBytes}-byte command table`,
     );
   return parsed;
 };
@@ -108,12 +113,15 @@ export class MachoLoadCommandCursor {
     string
   > {
     const { commandBytes, littleEndian, wide } = this.table;
-    if (this.#offset + 8 > commandBytes || bytes.byteLength < 8)
+    if (
+      this.#offset + MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes ||
+      bytes.byteLength < MACHO_LOAD_COMMAND_HEADER_BYTES
+    )
       return err(`load command ${this.#index} starts beyond sizeofcmds`);
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const size = view.getUint32(4, littleEndian);
     if (
-      size < 8 ||
+      size < MACHO_LOAD_COMMAND_HEADER_BYTES ||
       size % machoLoadCommandAlignment(wide) !== 0 ||
       size > commandBytes - this.#offset
     )
@@ -145,10 +153,10 @@ export class MachoLoadCommandCursor {
 // Fields with fixed uint32 layouts in mach-o/loader.h. This table is the single
 // owner of those layouts; consumers read decoded fields rather than offsets.
 const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
-  [0x2, ["symoff", "nsyms", "stroff", "strsize"]],
-  [0x3, ["offset", "size"]],
+  [LC.SYMTAB, ["symoff", "nsyms", "stroff", "strsize"]],
+  [LC.SYMSEG, ["offset", "size"]],
   [
-    0xb,
+    LC.DYSYMTAB,
     [
       "ilocalsym",
       "nlocalsym",
@@ -170,13 +178,13 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
       "nlocrel",
     ],
   ],
-  [0x16, ["offset", "nhints"]],
-  [0x17, ["cksum"]],
-  [0x1d, ["dataoff", "datasize"]],
-  [0x1e, ["dataoff", "datasize"]],
-  [0x21, ["cryptoff", "cryptsize", "cryptid"]],
+  [LC.TWOLEVEL_HINTS, ["offset", "nhints"]],
+  [LC.PREBIND_CKSUM, ["cksum"]],
+  [LC.CODE_SIGNATURE, ["dataoff", "datasize"]],
+  [LC.SEGMENT_SPLIT_INFO, ["dataoff", "datasize"]],
+  [LC.ENCRYPTION_INFO, ["cryptoff", "cryptsize", "cryptid"]],
   [
-    0x22,
+    LC.DYLD_INFO,
     [
       "rebase_off",
       "rebase_size",
@@ -191,7 +199,7 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
     ],
   ],
   [
-    0x80000022,
+    LC.DYLD_INFO_ONLY,
     [
       "rebase_off",
       "rebase_size",
@@ -205,16 +213,16 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
       "export_size",
     ],
   ],
-  [0x26, ["dataoff", "datasize"]],
-  [0x29, ["dataoff", "datasize"]],
-  [0x2b, ["dataoff", "datasize"]],
-  [0x2c, ["cryptoff", "cryptsize", "cryptid", "pad"]],
-  [0x2e, ["dataoff", "datasize"]],
-  [0x80000033, ["dataoff", "datasize"]],
-  [0x80000034, ["dataoff", "datasize"]],
-  [0x36, ["dataoff", "datasize"]],
-  [0x37, ["dataoff", "datasize"]],
-  [0x38, ["dataoff", "datasize"]],
+  [LC.FUNCTION_STARTS, ["dataoff", "datasize"]],
+  [LC.DATA_IN_CODE, ["dataoff", "datasize"]],
+  [LC.DYLIB_CODE_SIGN_DRS, ["dataoff", "datasize"]],
+  [LC.ENCRYPTION_INFO_64, ["cryptoff", "cryptsize", "cryptid", "pad"]],
+  [LC.LINKER_OPTIMIZATION_HINT, ["dataoff", "datasize"]],
+  [LC.DYLD_EXPORTS_TRIE, ["dataoff", "datasize"]],
+  [LC.DYLD_CHAINED_FIXUPS, ["dataoff", "datasize"]],
+  [LC.ATOM_INFO, ["dataoff", "datasize"]],
+  [LC.FUNCTION_VARIANTS, ["dataoff", "datasize"]],
+  [LC.FUNCTION_VARIANT_FIXUPS, ["dataoff", "datasize"]],
 ]);
 
 /** Names of a command's fixed uint32 fields, or undefined for other layouts. */
@@ -255,7 +263,7 @@ export const readMachoSymtabCommand = (
   readonly strsize: number;
 } | null => {
   const fields = decodeMachoFixedWordFields(
-    LC_SYMTAB,
+    LC.SYMTAB,
     body.subarray(8),
     littleEndian,
   );

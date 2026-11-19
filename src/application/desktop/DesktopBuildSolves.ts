@@ -1,28 +1,30 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   parsePortableBundleName,
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
 } from "../../domain/portableBundleName.js";
 import { createHash } from "node:crypto";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
+  writeTextFile,
+} from "../../resources/index.js";
 import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
 } from "../../desktop/AgentEnvComputer.js";
-import { writeTextFile } from "../JsonFiles.js";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   difficultyRecord,
@@ -36,7 +38,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   runSolveHelper,
   SolveCleanupError,
@@ -48,13 +50,13 @@ import {
   resolveBuildComputerEnvironment,
   type BuildComputerDefaults,
 } from "../../desktop/BuildComputerEnvironment.js";
-import { readHostFile } from "../../desktop/HostFileRead.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
-import { errorText } from "./DesktopBuildCommands.js";
+} from "../../ports/ProgressReporter.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const MEASURE = "measure_build_task";
 /** The file at the bundle's root that records each measured task. */
@@ -120,7 +122,7 @@ const recordsSchema = z.looseObject({
       passes: z.int(),
       k: z.int(),
       band: z.enum(["in_band", "too_easy", "too_hard", "undecided"]),
-      usd: z.number(),
+      usd: z.number().nullable(),
     }),
   ),
 });
@@ -129,6 +131,7 @@ const recordsSchema = z.looseObject({
 const taskDigest = async (
   bundle: string,
   task: string,
+  readHostFile: HostFileReader,
   signal: AbortSignal,
 ): Promise<Result<string, AnalysisError>> => {
   const paths = [`tasks/${task}.json`, `artifacts/${task}-check/verify.py`];
@@ -194,6 +197,7 @@ interface BundleRecords {
 /** The bundle's records, a missing file read as none; a file REA cannot read or parse is refused, so it is never replaced. */
 const readRecords = async (
   bundle: string,
+  readHostFile: HostFileReader,
   signal: AbortSignal,
 ): Promise<Result<BundleRecords, AnalysisError>> => {
   const unreadable = (file: string, why: string) =>
@@ -257,9 +261,10 @@ const recordMeasure = (
   record: DifficultyRecord,
   signal: AbortSignal,
   resources: ArtifactResourceScope,
+  readHostFile: HostFileReader,
 ): Promise<Result<string, AnalysisError>> =>
   afterEarlierWrites(bundle, async () => {
-    const current = await readRecords(bundle, signal);
+    const current = await readRecords(bundle, readHostFile, signal);
     if (!current.ok) return current;
     const tasks = { ...current.value.tasks, [task]: record };
     const path = join(bundle, DIFFICULTY_FILE);
@@ -290,6 +295,7 @@ export const measureBuildTask = async (
   request: MeasureRequest,
   solver: Solver,
   signal: AbortSignal,
+  readHostFile: HostFileReader,
   progress: ProgressReporter = silentProgressReporter,
   resources: ArtifactResourceScope = new ArtifactResourceScope(),
 ): Promise<Result<MeasuredTask, AnalysisError>> => {
@@ -310,10 +316,10 @@ export const measureBuildTask = async (
   let agentenv: string | null = null;
   let stopped: StopReason = "decided";
   try {
-    const digest = await taskDigest(request.bundle, task, signal);
+    const digest = await taskDigest(request.bundle, task, readHostFile, signal);
     if (!digest.ok) return digest;
     // Refuse records REA could not keep before any solve is paid for.
-    const records = await readRecords(request.bundle, signal);
+    const records = await readRecords(request.bundle, readHostFile, signal);
     if (!records.ok) return records;
     for (;;) {
       const decision = nextSolve(solves, request.budget_usd);
@@ -358,6 +364,7 @@ export const measureBuildTask = async (
       record,
       signal,
       resources,
+      readHostFile,
     );
     if (!file.ok) return err(retainSolves(file.error));
     const { versions: _versions, ...reported } = record;
@@ -391,13 +398,15 @@ export const measureBuildTask = async (
         (signal.aborted &&
           cause.fileCleanupFailure.outcome.kind === "completed");
       const failure = cancelled
-        ? new AnalysisCancelledError(MEASURE, {
-            cause:
+        ? cancelledBy(
+            MEASURE,
+            carriedReason(
               cause.cancellation === undefined
                 ? signal.reason
                 : cause.cancellation.reason,
-            cleanup,
-          })
+            ),
+            { cleanup },
+          )
         : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
             userMessage: `Measuring ${task} could not close an input file.`,
             cause,
@@ -410,9 +419,9 @@ export const measureBuildTask = async (
       cause instanceof AnalysisError
         ? cause
         : signal.aborted
-          ? new AnalysisCancelledError(MEASURE, { cause: signal.reason })
+          ? cancelledBy(MEASURE, signal)
           : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
-              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
+              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorMessage(cause)}`,
               remediationAction:
                 "Check the bundle files and host I/O error, then retry or retain the completed solve results.",
               cause,
@@ -429,6 +438,7 @@ export const measureInFreshComputers = async (
     readonly defaults: BuildComputerDefaults;
     readonly retainCleanup: (owner: SolveCleanupOwner) => void;
     readonly resources: ArtifactResourceScope;
+    readonly readHostFile: HostFileReader;
   },
   signal: AbortSignal,
   progress?: ProgressReporter,
@@ -437,7 +447,7 @@ export const measureInFreshComputers = async (
   if (!taskName.ok) return taskName;
   const environment = await resolveBuildComputerEnvironment(
     host.environment,
-    process.platform,
+    HOST_PLATFORM.platform,
     host.defaults,
   );
   return measureBuildTask(
@@ -451,6 +461,7 @@ export const measureInFreshComputers = async (
         retainCleanup: host.retainCleanup,
       }),
     signal,
+    host.readHostFile,
     progress,
     host.resources,
   );

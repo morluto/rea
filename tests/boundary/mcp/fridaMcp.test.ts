@@ -1,21 +1,29 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import type { DeviceManager } from "frida";
 import { afterAll, expect, it, onTestFinished } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
-import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
 import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const UNOBSERVED = unknownTarget("not-observed");
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -200,10 +208,12 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
   );
   const tools = (await client.listTools()).tools;
   const tool = tools.find((t) => t.name === "frida_session_status");
-  if (!tool?.outputSchema) throw new Error("Missing Frida status schema");
+  if (tool === undefined) throw new Error("Missing Frida status schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
-  const outputSchema: Record<string, unknown> = tool.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    tool.name,
+  );
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   for (const truncated of [false, true]) {
     statusTruncated = truncated;
@@ -228,7 +238,7 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
     expect(explicit.structuredContent).toEqual(parent);
     const summary = await client.callTool(
       { name: tool.name, arguments: { session_id: id, detail: "summary" } },
-      { toolDefinition: tool },
+      { toolDefinition: withCanonicalOutputSchema(tool) },
     );
     expect(summary.isError).not.toBe(true);
     const evidence = toolContract("frida_session_status").outputSchema.parse(
@@ -289,7 +299,7 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
     expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(parent);
     expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
     // Inline/file projection validates the owning result and exact source selection.
-    const malformed = createEvidence(undefined, parent.provider ?? undefined, {
+    const malformed = createEvidence(UNOBSERVED, parent.provider ?? undefined, {
       operation: parent.operation,
       parameters: { session_id: "00000000-0000-4000-8000-000000000099" },
       result: parent.normalized_result,
@@ -363,7 +373,8 @@ const expectFridaSelectorGuidance = async (
     (tool) => tool.name === "list_frida_processes",
   );
   if (processTool === undefined) throw new Error("Missing Frida process tool");
-  expect(processTool.inputSchema.description).toMatch(
+  // Compact input guidance is part of the tool description.
+  expect(processTool.description).toMatch(
     /exactly one of device_id or remote/u,
   );
   expect(ajv.validateSchema(processTool.inputSchema)).toBe(true);
@@ -415,14 +426,13 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
 
   const tools = (await client.listTools()).tools;
   const advertised = tools.find((tool) => tool.name === "list_frida_devices");
-  if (
-    advertised?.inputSchema === undefined ||
-    advertised.outputSchema === undefined
-  )
-    throw new Error("Missing advertised Frida schemas");
+  if (advertised === undefined)
+    throw new Error("Missing advertised Frida definition");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const response = await client.callTool(
@@ -432,7 +442,7 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
         remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
       },
     },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   expect(JSON.stringify(response.structuredContent)).not.toContain(
@@ -540,10 +550,10 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
   const oneShotContract = tools.find(
     (tool) => tool.name === "instrument_with_frida",
   );
-  if (oneShotContract?.outputSchema === undefined)
-    throw new Error("Missing one-shot Frida output schema");
+  if (oneShotContract === undefined)
+    throw new Error("Missing one-shot Frida definition");
   const validateOneShot = ajv.compile(
-    oneShotContract.outputSchema as AnySchema,
+    canonicalOutputSchema(oneShotContract.name) as AnySchema,
   );
   expect(validateOneShot(oneShot.structuredContent)).toBe(true);
 
@@ -610,22 +620,14 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
   });
-  let finishLoad: (() => void) | undefined;
-  const loadGate = new Promise<void>((resolve) => {
-    finishLoad = resolve;
-  });
-  let markLoadStarted: (() => void) | undefined;
-  const loadStarted = new Promise<void>((resolve) => {
-    markLoadStarted = resolve;
-  });
+  const scriptLoad = phaseGate();
   let markSessionClosed: (() => void) | undefined;
   const sessionClosed = new Promise<void>((resolve) => {
     markSessionClosed = resolve;
   });
   const provider = createFridaTestProvider({
     async loadScript() {
-      markLoadStarted?.();
-      await loadGate;
+      await scriptLoad.hold();
       return {
         ok: true,
         value: {
@@ -667,7 +669,7 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
   );
   const controller = new AbortController();
   onTestFinished(async () => {
-    finishLoad?.();
+    scriptLoad.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -691,9 +693,9 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     },
     { signal: controller.signal },
   );
-  await loadStarted;
+  await scriptLoad.reached(call, "Frida script load");
   controller.abort(new Error("cancel Frida observation"));
-  finishLoad?.();
+  scriptLoad.release();
   await expect(call).rejects.toThrow("cancel Frida observation");
   await sessionClosed;
   await client.ping();

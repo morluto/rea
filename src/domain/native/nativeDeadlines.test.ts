@@ -1,10 +1,10 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../analysisResourceLimits.js";
 import { expect, it } from "vitest";
 
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
   DEFAULT_NATIVE_UI_DEADLINE_MS,
   DEFAULT_PWNTOOLS_TIMEOUT_MS,
-  MAX_NATIVE_TIMER_MS,
   nativeCommandTimeoutField,
   nativeUiDeadlineField,
   pwntoolsTimeoutField,
@@ -15,7 +15,7 @@ it("keeps today's omitted native deadlines and the shared timer range", () => {
   expect(DEFAULT_NATIVE_COMMAND_TIMEOUT_MS).toBe(60_000);
   expect(DEFAULT_NATIVE_UI_DEADLINE_MS).toBe(180_000);
   expect(DEFAULT_PWNTOOLS_TIMEOUT_MS).toBe(30_000);
-  expect(MAX_NATIVE_TIMER_MS).toBe(2_147_483_647);
+  expect(MAX_NODE_TIMER_DELAY_MS).toBe(2_147_483_647);
   for (const field of [
     nativeCommandTimeoutField,
     nativeUiDeadlineField,
@@ -23,9 +23,9 @@ it("keeps today's omitted native deadlines and the shared timer range", () => {
   ]) {
     expect(field.safeParse(undefined).success).toBe(true);
     expect(field.safeParse(1).success).toBe(true);
-    expect(field.safeParse(MAX_NATIVE_TIMER_MS).success).toBe(true);
+    expect(field.safeParse(MAX_NODE_TIMER_DELAY_MS).success).toBe(true);
     expect(field.safeParse(0).success).toBe(false);
-    expect(field.safeParse(MAX_NATIVE_TIMER_MS + 1).success).toBe(false);
+    expect(field.safeParse(MAX_NODE_TIMER_DELAY_MS + 1).success).toBe(false);
     expect(field.safeParse(1.5).success).toBe(false);
   }
 });

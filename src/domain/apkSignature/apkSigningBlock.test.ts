@@ -179,6 +179,34 @@ describe("APK signing block locator", () => {
   });
 });
 
+describe("Zip64 volume declarations", () => {
+  it.each([16, 20])(
+    "refuses a Zip64 end record naming another volume at field %s",
+    async (field) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect(parseZipTail(bytes).ok).toBe(true);
+      new DataView(bytes.buffer).setUint32(recordOffset + field, 1, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "zip64-unsupported" },
+      });
+    },
+  );
+
+  it("accepts deferred classic disk fields but refuses another disk", async () => {
+    const { bytes, eocdOffset } = await zip64Tail();
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocdOffset + 4, 0xffff, true);
+    view.setUint16(eocdOffset + 6, 0xffff, true);
+    expect(parseZipTail(bytes).ok).toBe(true);
+    view.setUint16(eocdOffset + 6, 1, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "zip64-unsupported" },
+    });
+  });
+});
+
 describe("Zip64 end-of-central-directory", () => {
   it.each([43n, 45n, 1n << 63n])(
     "rejects a Zip64 record whose declared body size is %s",
@@ -358,5 +386,64 @@ describe("EOCD that cannot describe the archive", () => {
     expect(tail.ok).toBe(false);
     if (tail.ok) return;
     expect(tail.error.kind).toBe("malformed-zip");
+  });
+});
+
+describe("classic ZIP disk declarations", () => {
+  it.each([
+    [1, 0],
+    [0, 1],
+    [1, 1],
+  ])(
+    "refuses disk %s and directory disk %s before selecting a local span",
+    (disk, directoryDisk) => {
+      const bytes = apkWithBlock([]);
+      const eocd = bytes.length - 22;
+      const view = new DataView(bytes.buffer);
+      view.setUint16(eocd + 4, disk, true);
+      view.setUint16(eocd + 6, directoryDisk, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "multi-disk-unsupported" },
+      });
+    },
+  );
+
+  it.each([0, 2])(
+    "refuses a single-disk record declaring %s of its one entry",
+    (entriesOnDisk) => {
+      const bytes = apkWithBlock([]);
+      const eocd = bytes.length - 22;
+      new DataView(bytes.buffer).setUint16(eocd + 8, entriesOnDisk, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-zip", offset: eocd + 8 },
+      });
+    },
+  );
+
+  it("checks disk ownership in the count-saturated classic fallback", () => {
+    const bytes = apkWithBlock([]);
+    const eocd = bytes.length - 22;
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocd + 4, 1, true);
+    view.setUint16(eocd + 8, 0xffff, true);
+    view.setUint16(eocd + 10, 0xffff, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "multi-disk-unsupported" },
+    });
+  });
+
+  it("checks per-disk counts in the count-saturated classic fallback", () => {
+    const bytes = apkWithBlock([]);
+    const eocd = bytes.length - 22;
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocd + 8, 0xfffe, true);
+    view.setUint16(eocd + 10, 0xffff, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-zip", offset: eocd + 8 },
+    });
   });
 });

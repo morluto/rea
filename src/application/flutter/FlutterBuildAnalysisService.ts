@@ -1,5 +1,5 @@
 import type { FlutterBuildAnalysisPort } from "./FlutterBuildAnalysisPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   flutterRequestSchema,
   type FlutterOperation,

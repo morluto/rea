@@ -1,5 +1,5 @@
 import type { DolHeader } from "./gamecubeDol.js";
-import type { ZipPackageFormat } from "./zipPackageFormat.js";
+import type { TargetFormatsOfKind } from "./targetFormats.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
@@ -14,6 +14,7 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
   "m68k",
   "hexagon",
+  "xtensa",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -37,6 +38,7 @@ export interface ElfFamilyMetadata {
   readonly byteOrder: "little" | "big";
   readonly type: number;
   readonly flags: number;
+  readonly hasInterpreter?: boolean;
 }
 
 /** Referenced CodeView debug symbols from a PE debug directory. */
@@ -56,16 +58,19 @@ export const ELF_METADATA_ARCHITECTURES = [
 export type ElfMetadataArchitecture =
   (typeof ELF_METADATA_ARCHITECTURES)[number];
 
-/** Families whose ISA and ABI need a separate ELF declaration to be admitted. */
-export const isElfMetadataArchitecture = (
-  architecture: BinaryArchitecture,
-): architecture is ElfMetadataArchitecture =>
-  (ELF_METADATA_ARCHITECTURES as readonly string[]).includes(architecture);
+/** Families that require a specialized target variant instead of generic headers. */
+export const HEADER_ARCHITECTURE_EXCLUSIONS = [
+  ...ELF_METADATA_ARCHITECTURES,
+  ...RAW_ONLY_ARCHITECTURES,
+  "hexagon",
+  "xtensa",
+  "arm64_32",
+] as const satisfies readonly BinaryArchitecture[];
 
-/** Recognized family with no ELF metadata member; the header alone is the fact. */
+/** Recognized family with no specialized target member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon" | "arm64_32"
+  (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
@@ -81,8 +86,17 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
     | {
         readonly status: "complete";
         readonly relocationCount: number;
+        /** The dynamic table declares DF_1_PIE. */
+        readonly declaresPie?: true;
         readonly relocationTypes: readonly number[];
         readonly symbolRelativeCount: number;
+        /** Every PT_LOAD virtual address with its program-header index, in header order. */
+        readonly loadAddresses: readonly {
+          readonly headerIndex: number;
+          readonly virtualAddress: number;
+        }[];
+        /** Android prelink trailer base; null when the file has no trailer. */
+        readonly prelinkBase: number | null;
       }
     | { readonly status: "unavailable"; readonly reason: string };
 }
@@ -151,6 +165,8 @@ export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
+  /** Verbatim selected spelling when it differs from the inspected file path. */
+  readonly callerInputPath?: string;
   /** Selected artifact spelling determines name-based format hints and external companions. */
   readonly artifactSelectedPath?: string;
   /** Info.plist of the app bundle the target was resolved from. */
@@ -209,6 +225,14 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "hexagon";
       readonly availableArchitectures: readonly "hexagon"[];
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -287,23 +311,10 @@ export type BinaryTarget =
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
         readonly kind: "archive";
-        readonly format:
-          | ZipPackageFormat
-          | "asar"
-          | "ines"
-          | "godot-pck"
-          | "unityfs"
-          | "wxapkg"
-          | "uimage"
-          | "dmg"
-          | "pkg"
-          | "intel-hex"
-          | "srec"
-          | "esp-image"
-          | "uf2"
-          | "dfuse"
-          | "fit"
-          | "ntfs-mft";
+        readonly format: Exclude<
+          TargetFormatsOfKind<"archive">,
+          "esp-flash-image"
+        >;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
@@ -315,7 +326,7 @@ export type BinaryTarget =
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
         readonly kind: "artifact";
-        readonly format: "plist" | "javascript" | "source-map";
+        readonly format: TargetFormatsOfKind<"artifact">;
       });
 
 /** Caller inputs that select how an ESP flash dump is read. */

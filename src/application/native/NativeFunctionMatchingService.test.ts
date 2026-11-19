@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
@@ -27,17 +28,25 @@ const compare = async (input: unknown) => {
 };
 
 it("retains transitive provenance without treating dependencies as native observations and fails closed for a missing ancestor", async () => {
-  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_provenance",
-    parameters: {},
-    result: { provenance: "Synthetic ancestor" },
-  });
-  const dependency = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { provenance: "Synthetic dependency" },
-    evidenceLinks: [ancestor.evidence_id],
-  });
+  const ancestor = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_provenance",
+      parameters: {},
+      result: { provenance: "Synthetic ancestor" },
+    },
+  );
+  const dependency = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { provenance: "Synthetic dependency" },
+      evidenceLinks: [ancestor.evidence_id],
+    },
+  );
   const left = nativeMatchingInventory(
     "1",
     [{ address: "0x10", value: "main" }],

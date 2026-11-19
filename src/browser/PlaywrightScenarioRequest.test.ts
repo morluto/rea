@@ -6,6 +6,7 @@ import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { responsePointerValue } from "./BrowserScenarioResponseValues.js";
 import { performPlaywrightScenarioAction } from "./PlaywrightScenarioActions.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const ORIGIN = "https://app.example.test";
 
@@ -179,7 +180,13 @@ const fakePage = (options: {
         await new Promise((resolve) =>
           setTimeout(resolve, options.evaluateDelayMs),
         );
-      return fn(arg);
+      // Like Playwright, run the callback from its source text with a cloned
+      // argument, so it cannot reach this module's imports or closures.
+      const pageFunction = new Function(
+        "arg",
+        `return (${fn.toString()})(arg);`,
+      ) as (arg: Arg) => Result | Promise<Result>;
+      return await pageFunction(structuredClone(arg));
     },
   } as unknown as Page;
 };
@@ -281,6 +288,28 @@ describe("request dispatch boundary", () => {
       ),
     ).rejects.toThrow("ran out of time");
     expect(calls).toEqual([]);
+  });
+
+  it("aborts the page fetch when its deadline elapses", async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      async (_url: string, init: RequestInit) =>
+        await new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal!;
+          signals.push(signal);
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    const parsed = scenario([requestStep({ timeout_ms: 20 })]);
+    await expect(
+      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow();
+    expect(signals).toHaveLength(1);
+    await waitFor(() => expect(signals[0]!.aborted).toBe(true));
+    expect(signals[0]!.reason).toMatchObject({ name: "TimeoutError" });
   });
 
   it("guards dispatch after cancellation while evaluation was queued, and removes its route", async () => {
@@ -410,12 +439,15 @@ describe("request route cleanup", () => {
       const page = fakePage({});
       const secrets = resolved(parsed);
       const cancel = new AbortController();
-      const began = Date.now();
+      const began = performance.now();
       const unroute = vi.spyOn(page, "unroute").mockImplementation(async () => {
         if (end === "cancellation")
           cancel.abort("cancelled during final route cleanup");
         else {
-          const now = vi.spyOn(Date, "now").mockReturnValue(began + 5001);
+          // The step deadline is monotonic; move that clock past it.
+          const now = vi
+            .spyOn(performance, "now")
+            .mockReturnValue(began + 6_000);
           onTestFinished(() => now.mockRestore());
         }
       });
@@ -1614,7 +1646,7 @@ describe("ambiguous saved response observations", () => {
     ]);
     const running = perform(page, parsed.actions[0]!, secrets);
     const rejected = expect(running).rejects.toThrow("ambiguous");
-    await vi.waitFor(() => expect(reads.count).toBe(1));
+    await waitFor(() => expect(reads.count).toBe(1));
     for (const listener of listeners)
       listener({ method: () => "POST", url: () => `${ORIGIN}/api/items` });
     release('{"id":"wrong-object"}');

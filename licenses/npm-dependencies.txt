@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 966; runtime: 175.
+Locked package entries: 962; runtime: 171.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -340,11 +340,6 @@ obug@3.0.0 | development | MIT
   Package: https://www.npmjs.com/package/@bufbuild/protobuf/v/2.16.0
   Archive: https://registry.npmjs.org/@bufbuild/protobuf/-/protobuf-2.16.0.tgz
   Integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==
-@cfworker/json-schema@4.1.1 | runtime | MIT
-  Lockfile path: node_modules/@cfworker/json-schema
-  Package: https://www.npmjs.com/package/@cfworker/json-schema/v/4.1.1
-  Archive: https://registry.npmjs.org/@cfworker/json-schema/-/json-schema-4.1.1.tgz
-  Integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==
 @clack/core@1.4.3 | runtime | MIT
   Lockfile path: node_modules/@clack/core
   Package: https://www.npmjs.com/package/@clack/core/v/1.4.3
@@ -1440,11 +1435,6 @@ commander@13.1.0 | development | MIT
   Package: https://www.npmjs.com/package/@rollup/rollup-win32-x64-msvc/v/4.64.1
   Archive: https://registry.npmjs.org/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.64.1.tgz
   Integrity: sha512-KpxCwRn1Qh3tmBHAqIAF4HtUCVKqZd0w57TsItWblx3QVeJLtXaSgeBFAj1WAvBSpBo+Mh9iZCjj6YW/HaBVMw==
-@scalar/openapi-types@0.8.0 | runtime | MIT
-  Lockfile path: node_modules/@scalar/openapi-types
-  Package: https://www.npmjs.com/package/@scalar/openapi-types/v/0.8.0
-  Archive: https://registry.npmjs.org/@scalar/openapi-types/-/openapi-types-0.8.0.tgz
-  Integrity: sha512-WmaxVSfvY5K/TwcG2B2TU1WOe1As1uc2s7myswtP6dBlcjU3hM08SApxv/jmyGaCE8t4gO5BBhmHY4pDUfmr2g==
 @sec-ant/readable-stream@0.4.1 | development | MIT
   Lockfile path: node_modules/@sec-ant/readable-stream
   Package: https://www.npmjs.com/package/@sec-ant/readable-stream/v/0.4.1
@@ -2965,16 +2955,6 @@ imurmurhash@0.1.4 | runtime | MIT
   Package: https://www.npmjs.com/package/imurmurhash/v/0.1.4
   Archive: https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz
   Integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==
-incur@0.6.1 | runtime | MIT
-  Lockfile path: node_modules/incur
-  Package: https://www.npmjs.com/package/incur/v/0.6.1
-  Archive: https://registry.npmjs.org/incur/-/incur-0.6.1.tgz
-  Integrity: sha512-QgaPKsKH+/3SLdUTSkCYwMWzL56vO3wn7iheEwKE0jOtWSa9Irzn8KeyhkRIkTzHW0ReiQwo0EtT8bBGR9PpMw==
-@modelcontextprotocol/server@2.0.0-alpha.4 | runtime | MIT
-  Lockfile path: node_modules/incur/node_modules/@modelcontextprotocol/server
-  Package: https://www.npmjs.com/package/@modelcontextprotocol/server/v/2.0.0-alpha.4
-  Archive: https://registry.npmjs.org/@modelcontextprotocol/server/-/server-2.0.0-alpha.4.tgz
-  Integrity: sha512-/KEo3ZJ50HlagHp0lz2vPgfBZFtXHu6zTBXT9XqPc+4O9i4+IbBVWKq/a9yAfv/ifp0u3+mRo8SUk5kMKzhN8A==
 indent-string@4.0.0 | development | MIT
   Lockfile path: node_modules/indent-string
   Package: https://www.npmjs.com/package/indent-string/v/4.0.0

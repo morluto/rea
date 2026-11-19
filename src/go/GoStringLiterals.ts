@@ -14,7 +14,7 @@ import {
   type BinaryContainer,
   type FileMappingIndex,
   type LoadRegion,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 
 const MAX_REJECTED_SLICE_CACHE = 4096;
 const PE_MEM_READ = 0x40000000;

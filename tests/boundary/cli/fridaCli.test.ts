@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { expect, it } from "vitest";
 import type { DeviceManager } from "frida";
 
 import { createCli } from "../../../src/cli.js";
 import { FRIDA_TOOL_CONTRACTS } from "../../../src/contracts/fridaToolContracts.js";
-import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
 
@@ -311,9 +311,54 @@ it("maps one-shot Frida CLI target, script, duration, and remote options", async
       },
     },
   );
-  expect(exitCode).not.toBe(0);
+  // A remote credential without its address is refused by the contract
+  // before any device is contacted.
+  expect(JSON.parse(stdout)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "list_frida_devices",
+      issues: [{ path: ["remote", "address"], reason: "missing_argument" }],
+    },
+  });
   expect(calls).toHaveLength(3);
   expect(stdout).not.toContain("synthetic-secret-token");
+});
+
+it("records only the capture limit the caller selected and returns its Evidence", async () => {
+  const { calls, provider } = createFridaRecorder();
+  const cli = createCli({}, undefined, provider);
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve(
+    [
+      "instrument-with-frida",
+      "attach",
+      "71",
+      "--script",
+      "send(1)",
+      "--capture-json-nodes",
+      "100",
+      "--duration-ms",
+      "0",
+      "--json",
+    ],
+    {
+      env: {},
+      exit: (code) => {
+        exitCode = code;
+      },
+      stdout: (text) => {
+        stdout += text;
+      },
+    },
+  );
+  expect(exitCode, stdout).toBe(0);
+  const result = FRIDA_TOOL_CONTRACTS.find(
+    (contract) => contract.name === "instrument_with_frida",
+  )!.outputSchema.parse(JSON.parse(stdout));
+  // Strict equality: an omitted limit is absent, never undefined.
+  expect(result.parameters.capture_limits).toStrictEqual({ json_nodes: 100 });
+  expect(calls[0]).toMatchObject({ operation: "start" });
 });
 
 it("forwards every selected spawn argument through the CLI and shared service", async () => {
@@ -429,6 +474,17 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
     } as unknown as DeviceManager;
 
     for (const { name } of files) {
+      // The CLI resolves a relative script file against its working
+      // directory; the contract admits only the absolute path. A Windows
+      // temporary directory on another drive than the checkout has no
+      // relative spelling, so only there the absolute path is passed.
+      const relativeSpelling = relative(process.cwd(), join(directory, name));
+      if (name === "ascii.js" && process.platform !== "win32")
+        expect(isAbsolute(relativeSpelling)).toBe(false);
+      const scriptFile =
+        name === "ascii.js" && !isAbsolute(relativeSpelling)
+          ? relativeSpelling
+          : join(directory, name);
       const provider = new FridaInstrumentationManager({ deviceManager });
       let stdout = "";
       let exitCode = 0;
@@ -438,7 +494,7 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
           "attach",
           "71",
           "--script-file",
-          join(directory, name),
+          scriptFile,
           "--duration-ms",
           "0",
           "--json",
@@ -454,7 +510,10 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
         },
       );
       expect(exitCode).toBe(0);
-      const output: unknown = JSON.parse(stdout);
+      const output = JSON.parse(stdout) as {
+        readonly normalized_result: { readonly source_path: string };
+      };
+      expect(isAbsolute(output.normalized_result.source_path)).toBe(true);
       const bytes = files.find((file) => file.name === name)?.bytes;
       if (bytes === undefined) throw new Error(`Missing fixture ${name}`);
       const decodedSource = bytes.toString("utf8");

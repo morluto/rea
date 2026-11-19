@@ -15,26 +15,47 @@ export const IL2CPP_METADATA_FAILURE_REASONS = {
     "invalid-string",
   ],
 } as const;
-export type Il2cppMetadataFailureKind =
-  keyof typeof IL2CPP_METADATA_FAILURE_REASONS;
 export type Il2cppMetadataFailureReason =
-  (typeof IL2CPP_METADATA_FAILURE_REASONS)[Il2cppMetadataFailureKind][number];
+  (typeof IL2CPP_METADATA_FAILURE_REASONS)[keyof typeof IL2CPP_METADATA_FAILURE_REASONS][number];
 
-/** Distinguish inputs outside decoder coverage from damaged metadata. */
-export class Il2cppMetadataFormatFailure extends Error {
-  readonly kind: Il2cppMetadataFailureKind;
+/** The ParseFailure format of an IL2CPP `global-metadata.dat`. */
+export const IL2CPP_METADATA_FORMAT = "il2cpp-metadata";
+
+const metadataFailure = (
+  reason: Il2cppMetadataFailureReason,
+  detail: string,
+): ParseFailure & {
+  readonly kind: "malformed" | "truncated" | "unsupported";
+} =>
+  (IL2CPP_METADATA_FAILURE_REASONS.unsupported as readonly string[]).includes(
+    reason,
+  )
+    ? {
+        kind: "unsupported",
+        format: IL2CPP_METADATA_FORMAT,
+        detail,
+        undecodedContent: false,
+      }
+    : {
+        kind: reason === "truncated-header" ? "truncated" : "malformed",
+        format: IL2CPP_METADATA_FORMAT,
+        detail,
+      };
+
+/**
+ * Distinguish inputs outside decoder coverage from damaged metadata. The
+ * stable `reason` names the IL2CPP rule the bytes broke.
+ */
+export class Il2cppMetadataFormatFailure extends ParseFailureError<
+  "malformed" | "truncated" | "unsupported"
+> {
   constructor(
     readonly reason: Il2cppMetadataFailureReason,
     message: string,
     options?: ErrorOptions,
   ) {
-    super(`${reason}: ${message}`, options);
+    super(metadataFailure(reason, `${reason}: ${message}`), options);
     this.name = "Il2cppMetadataFormatFailure";
-    this.kind = (
-      IL2CPP_METADATA_FAILURE_REASONS.unsupported as readonly string[]
-    ).includes(reason)
-      ? "unsupported"
-      : "corrupt";
   }
 }
 
@@ -84,3 +105,7 @@ export const readIndex = (bytes: Buffer, offset: number, width: 1 | 2 | 4) => {
   return bytes.readInt32LE(offset);
 };
 import type { Il2cppMetadataSection } from "../domain/il2cpp/il2cppMetadata.js";
+import {
+  ParseFailureError,
+  type ParseFailure,
+} from "../domain/parseFailure.js";

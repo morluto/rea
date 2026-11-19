@@ -26,7 +26,7 @@ describe("managed direct-analysis path boundary", () => {
     expect(evidence).toMatchObject({
       operation: "inspect_managed_artifact",
       provider: { id: "rea-dotnet-static" },
-      subject: { local_path: path, format: "pe" },
+      subject: { local_path: path, identity: { format: "pe" } },
       normalized_result: {
         classification: { status: "managed", runtime_family: "modern-dotnet" },
         references: [expect.objectContaining({ name: "System.Runtime" })],
@@ -41,7 +41,7 @@ describe("managed direct-analysis path boundary", () => {
     expect(memberEvidence).toMatchObject({
       operation: "inspect_managed_members",
       provider: { id: "rea-dotnet-static" },
-      subject: { local_path: path, format: "pe" },
+      subject: { local_path: path, identity: { format: "pe" } },
       normalized_result: {
         identity_scope: { token_identity: "build-local" },
         methods: [expect.objectContaining({ token: expect.any(String) })],
@@ -58,7 +58,7 @@ describe("managed direct-analysis path boundary", () => {
     expect(boundaryEvidence).toMatchObject({
       operation: "inspect_managed_native_boundaries",
       provider: { id: "rea-dotnet-static" },
-      subject: { local_path: path, format: "pe" },
+      subject: { local_path: path, identity: { format: "pe" } },
       normalized_result: {
         identity_scope: { token_identity: "build-local" },
         pinvoke_imports: [],

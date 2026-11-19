@@ -1,6 +1,9 @@
 import { err, ok } from "./result.js";
 
-/** Fixed ELF32/ELF64 symbol facts; consumers own definition, visibility and processor-flag policies. */
+/** Fixed ELF32/ELF64 symbol facts; consumers own definition, visibility and processor-flag policies.
+ * section_index is the raw st_shndx field. Use readElfSymbolSectionReference
+ * before treating it as a directory index: SHN_XINDEX requires a companion.
+ */
 export const readElfSymbol = (
   bytes: Uint8Array,
   bits: 32 | 64,

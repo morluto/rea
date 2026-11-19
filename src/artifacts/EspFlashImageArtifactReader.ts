@@ -20,7 +20,7 @@ import {
 import { offsetText } from "../domain/firmware/espImageStructures.js";
 import { ESP_OTA_SELECT_ENTRY_BYTES } from "../domain/firmware/espOtaData.js";
 import { isEspAppPartition } from "../domain/firmware/espPartitionTable.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   decodeEspFlashImage,
   firstUnerasedInRange,
@@ -119,10 +119,7 @@ export class EspFlashImageArtifactReader extends PositionalArtifactReader {
       entries: plan.regions.map((region) =>
         regionEntry(region, written.get(region), fileSize),
       ),
-      coverage:
-        facts.coverage === "unknown" || limitations.length > 0
-          ? { status: facts.coverage, limitations }
-          : undefined,
+      coverage: { status: facts.coverage, limitations },
     };
   }
 

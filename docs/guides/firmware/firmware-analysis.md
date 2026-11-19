@@ -10,7 +10,7 @@ is needed. Arbitrary firmware bytes do not pass native executable admission;
 select a returned ELF separately for supported Ghidra analysis.
 
 On Linux, Binwalk and Unblob run as REA-owned processes and require a
-procps-compatible `ps` on REA's `PATH`; see the shared
+procps-compatible system `ps`; see the shared
 [Linux process prerequisite](../../getting-started/installation.md#linux-owned-process-prerequisite).
 
 ## Compare stored firmware components
@@ -299,7 +299,7 @@ Additional lanes are explicit, so the base lane stays small:
 REA_FIRMWARE_VERIFY_EXT4=1 npm run fixtures:firmware
 REA_FIRMWARE_VERIFY_EXT4=1 npm run verify:firmware
 
-# Existing Ghidra 12.x (>=12.1) and its declared JDK required.
+# Existing Ghidra 12.x (>=12.2) and its declared JDK required.
 REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 ```
 
@@ -359,6 +359,15 @@ payloads stay as stored. Intel HEX/S-record and FIT images are separate
 readers and are not covered here. See [U-Boot legacy uImage](../../uimage.md) for
 component padding, preserved names, resource policies and verification scope.
 
+## Inspect Android OTA update payloads
+
+`inspect-artifact` / `extract-artifact` recognize a CrAU v2 `payload.bin` by
+magic and inventory its DeltaArchiveManifest without applying the update or
+verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
+REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
+extraction. See [Android OTA update payloads](android-ota-payload.md)
+for header facts, operation types, limits and verification scope.
+
 ## Inspect UF2 and DfuSe images
 
 Use `inspect-artifact` / `inspect_artifact` on a UF2 file for each familyID's
@@ -375,3 +384,16 @@ images, declared load and entry addresses, configurations and verified hashes,
 then `extract-artifact` / `extract_artifact` for one raw file per image.
 Decoding is portable and requires no external tool. See
 [U-Boot FIT images](../../fit-images.md).
+
+## Inspect Android boot and vendor_boot images
+
+`inspect-artifact` / `extract-artifact` recognize `ANDROID!` (header versions
+0 through 4) and `VNDRBOOT` (vendor_boot versions 3 and 4) by magic. The root
+records page size, component sizes, the command line, OS version and security
+patch level when the header has them, the board name, and the header digest.
+Children are the stored kernel, ramdisk, second stage, recovery DTBO, DTB,
+vendor ramdisk table entries, bootconfig, and v4 signature. gzip, lz4, and
+zstd are recorded from leading magic and left compressed. An AVB footer is
+reported with its sizes and is not verified. `ANDROID!` does not say whether
+the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
+to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).

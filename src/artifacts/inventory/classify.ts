@@ -1,4 +1,11 @@
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  openRootArtifact,
+  releaseRootArtifact,
+  abortIfNeeded,
+  assertArtifactSelectedSource,
+} from "../../resources/index.js";
 import {
   nesContainerFormat,
   parseInesLayout,
@@ -15,7 +22,6 @@ import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../../domain/firmware/espFlashLocation.js";
-import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
@@ -38,23 +44,24 @@ import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
 import { readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { claimsExecutableHeader } from "../../domain/binaryTarget.js";
+import {
+  MAX_PE_OPTIONAL_HEADER_BYTES,
+  PE_RECORD_HEADER_BYTES,
+  claimsExecutableHeader,
+} from "../../domain/binaryTarget.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
-  locateTrailingZipArchive,
+  hasTrailingZipArchive,
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import type { HashResult } from "../ArtifactHash.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "./hashStableRootArtifact.js";
+  classifyStableRootArtifactHandle,
+  type HashResult,
+} from "../ArtifactHash.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
@@ -64,7 +71,7 @@ import {
 } from "../../domain/firmware/dfuse.js";
 import {
   observeMzWindowsHeader,
-  type MzWindowsHeaderSignatureEvidence,
+  type MzWindowsHeaderRecordEvidence,
 } from "../../domain/dosMz.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 
@@ -106,6 +113,7 @@ export const classifyAndHashRootForInventory = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Root artifact changed before inventory: ${path}`,
+      { integrityCheck: "container-identity" },
     );
   }
   if (directory && options.expectedRootSha256 !== undefined)
@@ -113,6 +121,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -143,6 +152,7 @@ export const classifyAndHashRootForInventory = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
     // Prior probe state can prove replacement without interpreting any bytes.
     const probes = new ArtifactEmbeddedFormatProbes(
@@ -155,7 +165,7 @@ export const classifyAndHashRootForInventory = async (
     const admittedDigest =
       options.expectedRootSha256 === undefined
         ? undefined
-        : await hashStableRootArtifactHandle(
+        : await classifyStableRootArtifactHandle(
             path,
             handle,
             initial,
@@ -181,7 +191,7 @@ export const classifyAndHashRootForInventory = async (
       typeof classified === "string" ? classified : classified.kind;
     const digest =
       admittedDigest ??
-      (await hashStableRootArtifactHandle(
+      (await classifyStableRootArtifactHandle(
         path,
         handle,
         initial,
@@ -321,7 +331,7 @@ const classifyRootFormat = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during classification: ${path}`,
-        { cause: cause.cause ?? cause },
+        { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
       );
     throw artifactOperationCause(cause);
   }
@@ -387,12 +397,19 @@ const classifyRootFormat = async (
   if (flash.ok)
     return { kind: "esp-flash-image", source, location: flash.value };
   const fatEvidence = await readRootFatSliceHeaders(handle, evidence, signal);
-  const mzWindowsHeaderSignature = await readRootMzWindowsHeaderSignature(
+  const mzWindowsHeaderRecord = await readRootMzWindowsHeaderRecord(
     handle,
     fatEvidence,
     archiveBytes,
     signal,
   );
+  const mzWindowsHeaderSignature =
+    mzWindowsHeaderRecord === undefined
+      ? fatEvidence.mzWindowsHeaderSignature
+      : {
+          offset: mzWindowsHeaderRecord.offset,
+          bytes: mzWindowsHeaderRecord.bytes.subarray(0, 4),
+        };
   // The probe stops at its bounded prefix, so a DfuSe trailer is read from
   // the file's own end unless the probe already observed every byte.
   const suffix =
@@ -407,6 +424,7 @@ const classifyRootFormat = async (
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
+    ...(mzWindowsHeaderRecord === undefined ? {} : { mzWindowsHeaderRecord }),
   };
   const format = classifyArtifactContent(
     classificationPath,
@@ -418,7 +436,7 @@ const classifyRootFormat = async (
   if (
     (format === "file" || format === "unknown") &&
     !claimsExecutableHeader(evidence.prefix, archiveBytes) &&
-    (await locateTrailingZipArchive(archiveBytes, read)) !== undefined
+    (await hasTrailingZipArchive(archiveBytes, read))
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
@@ -513,30 +531,38 @@ const readRootFatSliceHeaders = async (
   return { ...evidence, fatSliceHeaders: { header, sliceHeadersByOffset } };
 };
 
-/** Read only the missing signature bytes requested by the bounded MZ parser. */
-const readRootMzWindowsHeaderSignature = async (
+/** Read the missing PE record bytes requested by bounded MZ classification. */
+const readRootMzWindowsHeaderRecord = async (
   handle: FileHandle,
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
   signal?: AbortSignal,
-): Promise<MzWindowsHeaderSignatureEvidence | undefined> => {
+): Promise<MzWindowsHeaderRecordEvidence | undefined> => {
   const observation = observeMzWindowsHeader(evidence.prefix, fileSize);
-  if (observation.state !== "signature-needed")
-    return evidence.mzWindowsHeaderSignature;
+  if (
+    observation.state !== "signature-needed" &&
+    !(observation.state === "declared" && observation.signature === "PE")
+  )
+    return evidence.mzWindowsHeaderRecord;
   const { offset } = observation;
   if (!Number.isSafeInteger(offset) || offset < 0 || offset >= fileSize)
-    return evidence.mzWindowsHeaderSignature;
+    return evidence.mzWindowsHeaderRecord;
 
-  const window = Buffer.alloc(4);
+  const window = Buffer.alloc(
+    PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES,
+  );
   const existing =
-    evidence.mzWindowsHeaderSignature?.offset === offset
-      ? evidence.mzWindowsHeaderSignature.bytes
+    evidence.mzWindowsHeaderRecord?.offset === offset
+      ? evidence.mzWindowsHeaderRecord.bytes
       : undefined;
   const inline =
     offset < evidence.prefix.length
       ? evidence.prefix.subarray(
           offset,
-          Math.min(offset + 4, evidence.prefix.length),
+          Math.min(
+            offset + PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES,
+            evidence.prefix.length,
+          ),
         )
       : undefined;
   const known =
@@ -546,8 +572,16 @@ const readRootMzWindowsHeaderSignature = async (
       : inline;
   known?.copy(window);
   let available = known?.length ?? 0;
-  const requiredLength = (): number =>
-    available >= 2 && window[0] === 0x50 && window[1] === 0x45 ? 4 : 2;
+  const requiredLength = (): number => {
+    if (available < 2 || window[0] !== 0x50 || window[1] !== 0x45) return 2;
+    if (available < 4 || window[2] !== 0 || window[3] !== 0) return 4;
+    if (available < PE_RECORD_HEADER_BYTES) return PE_RECORD_HEADER_BYTES;
+    const optionalHeaderSize = new BinaryReader(window, true, "pe").u16(20);
+    return Math.min(
+      PE_RECORD_HEADER_BYTES + optionalHeaderSize,
+      PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES,
+    );
+  };
   while (available < requiredLength() && offset + available < fileSize) {
     abortIfNeeded(signal);
     const length = Math.min(
@@ -576,6 +610,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },

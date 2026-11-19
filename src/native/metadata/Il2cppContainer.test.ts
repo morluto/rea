@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { createRustImageWithGoSection } from "../../../tests/fixtures/rust/image.js";
 import { openImageSteps } from "../../il2cpp/Il2cppBinaryImage.js";
-import { readBinaryContainer } from "./readBinaryContainer.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 
 it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
   "keeps IL2CPP admission independent of a Mach-O Go build-info %s failure",
@@ -19,7 +19,7 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
       readBinaryContainer(control).load_regions,
     );
 
-    const image = openImageSteps(goNamed, undefined).next();
+    const image = openImageSteps(goNamed).next();
     expect(image.done).toBe(true);
     if (!image.done)
       throw new Error("container admission unexpectedly yielded");
@@ -39,7 +39,7 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
       ),
     ).toHaveLength(fault === "duplicate" ? 2 : 1);
 
-    const controlImage = openImageSteps(control, undefined).next();
+    const controlImage = openImageSteps(control).next();
     expect(controlImage.done).toBe(true);
     if (!controlImage.done)
       throw new Error("control container admission unexpectedly yielded");

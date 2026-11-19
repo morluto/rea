@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import { machoSliceArchitectureSchema } from "../apple/machoTargetSelection.js";
 import {
@@ -22,7 +23,8 @@ export const MAX_NATIVE_INITIALIZER_NAME_BYTES = 1024;
 export const MAX_NATIVE_INITIALIZER_NOTES = 24;
 /**
  * Upper bound on reported limitations: the standing ones, the note budget, a
- * line per tallied reason, an omission count and a withheld-name count.
+ * line per tallied reason, an omission count, a withheld-name count and the
+ * universal slice selection line.
  */
 const MAX_NATIVE_INITIALIZER_LIMITATIONS = 40;
 
@@ -115,7 +117,13 @@ const entrySchema = z.strictObject({
 export type NativeInitializerEntry = z.infer<typeof entrySchema>;
 
 const coverageSchema = z.strictObject({
-  status: z.enum(["complete", "incomplete"]),
+  /**
+   * `partial` when declared slots or names were examined but not reported
+   * (budgets, unreadable arrays, withheld names); `unknown` when whether the
+   * listed facts are complete cannot be determined (relocation, fixup, symbol
+   * or mapping coverage, an unterminated dynamic table).
+   */
+  status: coverageStatusSchema,
   examined_entries: z.number().int().min(0).max(MAX_NATIVE_INITIALIZER_ENTRIES),
   total_entries: z
     .number()

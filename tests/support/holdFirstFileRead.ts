@@ -1,6 +1,8 @@
 import { open, type FileHandle } from "node:fs/promises";
 import { vi } from "vitest";
 
+import { phaseGate } from "./lifecycleHarness.js";
+
 /** Pause after one selected file chunk reaches the operating system. */
 export const holdFirstFileRead = async (path: string) => {
   const probe = await open(path, "r");
@@ -16,14 +18,7 @@ export const holdFirstFileRead = async (path: string) => {
   await probe.close();
   let totalReadBytes = 0;
   let readCount = 0;
-  let resolveFirstRead: (() => void) | undefined;
-  const firstRead = new Promise<void>((resolve) => {
-    resolveFirstRead = resolve;
-  });
-  let releaseRead: (() => void) | undefined;
-  const readGate = new Promise<void>((resolve) => {
-    releaseRead = resolve;
-  });
+  const firstRead = phaseGate();
   const read = fileHandlePrototype.read;
   vi.spyOn(fileHandlePrototype, "read").mockImplementation(async function (
     this: FileHandle,
@@ -36,15 +31,13 @@ export const holdFirstFileRead = async (path: string) => {
     if (!isTarget) return result;
     totalReadBytes += result.bytesRead;
     readCount += 1;
-    if (readCount === 1) {
-      resolveFirstRead?.();
-      await readGate;
-    }
+    if (readCount === 1) await firstRead.hold();
     return result;
   });
   return {
-    firstRead,
-    release: () => releaseRead?.(),
+    /** Wait until the first read is held; fails if `operation` settles first. */
+    reached: firstRead.reached,
+    release: () => firstRead.release(),
     get readCount() {
       return readCount;
     },

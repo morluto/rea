@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -123,7 +124,10 @@ describe("OMP disabledServers denylist", () => {
     );
     const status = async () =>
       (
-        await readClientRegistrationStatuses(home, entry, { environment: {} })
+        await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        })
       ).find(({ client: name }) => name === "omp");
     expect(await status()).toMatchObject({ state: "stale" });
     // The enabledServers allowlist forces an `enabled: false` entry on, but

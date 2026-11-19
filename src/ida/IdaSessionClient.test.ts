@@ -10,8 +10,11 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import { z } from "zod";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   createIdaTarget,
   RecordingIdaMcp,
@@ -33,6 +36,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+import { idaConnectionDependencies } from "../../tests/support/idaConnectionDependencies.js";
 
 const roots: string[] = [];
 const windowsRuntimes = new Set<WindowsPrivateRuntime>();
@@ -76,7 +80,6 @@ const LIVE_PEER = {
 const fixture = async (
   mode: "attached" | "headless" = "attached",
   timeoutMs = 1000,
-  protocol?: "native",
 ) => {
   const { root, target } = await createIdaTarget();
   roots.push(root);
@@ -87,7 +90,7 @@ const fixture = async (
       args: [],
       env: {},
       mode,
-      ...(protocol === undefined ? {} : { protocol }),
+      protocol: mode === "attached" ? "native" : "modern",
       timeoutMs,
       workspaceRoot: root,
     },
@@ -123,6 +126,7 @@ it.each([
         url: selected,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
       },
       target,
@@ -157,6 +161,7 @@ it.each([
         url: `http://localhost:1234/mcp?token=${encoded}&cursor=keep`,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
       },
       target,
@@ -481,9 +486,7 @@ describe("attached IDA input identity and validation", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(producer.calls.some(({ name }) => name === "list_functions")).toBe(
-      true,
-    );
+    expect(producer.calls.some(({ name }) => name === "list_funcs")).toBe(true);
     await client.close();
   });
 
@@ -573,14 +576,17 @@ describe("attached IDA input identity and validation", () => {
   it("preserves hexadecimal-looking function names as names unless the caller uses an explicit 0x address", async () => {
     const { producer, client } = await fixture();
     producer.overrideCall = (name, args) =>
-      name === "get_function_by_name" && args.name === "f"
-        ? { address: "0x1000", name: "f", size: "0x20" }
+      name === "lookup_funcs"
+        ? [{ query: "f", fn: { addr: "0x1000", name: "f" }, error: null }]
         : undefined;
     const found = await client.execute("procedure_address", { procedure: "f" });
     expect(found.ok && found.value.result).toBe("0x1000");
     expect(
-      producer.calls.some(({ name }) => name === "get_function_by_address"),
-    ).toBe(false);
+      producer.calls
+        .filter(({ name }) => name === "lookup_funcs")
+        .map(({ args }) => args.queries),
+      "the selector is looked up by name, not rewritten as an address",
+    ).toEqual([["f"]]);
     await client.close();
   });
   it("preserves omitted optional arguments and rejects explicit null before connecting", async () => {
@@ -607,14 +613,14 @@ describe("attached IDA input identity and validation", () => {
       (await client.execute("procedure_pseudo_code", { procedure: "main" })).ok,
     ).toBe(true);
     expect(
-      producer.calls.filter(({ name }) => name === "decompile_function"),
+      producer.calls.filter(({ name }) => name === "decompile"),
     ).toHaveLength(1);
     await client.close();
   });
 });
 
 describe("attached IDA function observations", () => {
-  it("resolves interior addresses and call sites to canonical entries, preserves externals, and reports unknown body evidence", async () => {
+  it("resolves an interior address to its canonical entry, preserves externals, and reports unknown callers and body evidence", async () => {
     const { producer, client } = await fixture();
     const result = await client.execute("analyze_function", {
       procedure: "0x1004",
@@ -622,13 +628,16 @@ describe("attached IDA function observations", () => {
     if (!result.ok) throw result.error;
     const dossier = functionDossierSchema.parse(result.value.result);
     expect(dossier.procedure.address).toBe("0x1000");
-    expect(dossier.callers.map((caller) => caller.address)).toEqual(["0x1000"]);
+    expect(dossier.callers).toEqual([]);
+    expect(dossier.facet_availability?.callers).toMatchObject({
+      available: false,
+    });
     expect(dossier.callees.map((callee) => callee.address)).toEqual(["0x2000"]);
     expect(dossier.procedure.body.available).toBe(false);
     expect(dossier.comments).toEqual([]);
     expect(result.value.rawResult).toMatchObject({
       observations: expect.arrayContaining([
-        expect.objectContaining({ tool: "get_callers" }),
+        expect.objectContaining({ tool: "callees" }),
       ]),
     });
     expect(result.value.provider.version).toBe("1");
@@ -642,19 +651,19 @@ describe("attached IDA function observations", () => {
   });
   it("returns complete paged inventory and distinguishes literal from regex search", async () => {
     const { producer, client } = await fixture();
-    producer.overrideCall = (name, args) =>
-      name === "list_functions"
-        ? {
-            data: [
-              {
-                address: args.offset === 0 ? "0x1000" : "0x2000",
-                name: "main",
-                size: "0x10",
-              },
-            ],
-            next_offset: args.offset === 0 ? 100 : null,
-          }
-        : undefined;
+    producer.overrideCall = (name, args) => {
+      if (name !== "list_funcs") return undefined;
+      const first =
+        z.object({ offset: z.number() }).parse(args.queries).offset === 0;
+      return [
+        {
+          data: [
+            { addr: first ? "0x1000" : "0x2000", name: "main", size: "0x10" },
+          ],
+          next_offset: first ? 100 : null,
+        },
+      ];
+    };
     const inventory = await client.execute("list_procedures", {});
     expect(inventory.ok && inventory.value.result).toHaveLength(2);
     for (const [pattern, mode, count] of [
@@ -696,23 +705,24 @@ describe("attached IDA regex supervision", () => {
       const { producer, client } = await fixture();
       const values = ["skip", "ÄPFEL", "äpfel"];
       producer.overrideCall = (name) =>
-        name === "list_functions"
-          ? {
-              data: values.map((name, index) => ({
-                address: `0x${String(1000 + index)}`,
-                name,
-                size: "0x10",
-              })),
-              next_offset: null,
-            }
-          : name === "list_strings"
-            ? {
-                data: values.map((string, index) => ({
-                  address: `0x${String(3000 + index)}`,
-                  length: string.length,
-                  string,
+        name === "list_funcs"
+          ? [
+              {
+                data: values.map((name, index) => ({
+                  addr: `0x${String(1000 + index)}`,
+                  name,
+                  size: "0x10",
                 })),
                 next_offset: null,
+              },
+            ]
+          : name === "find_regex"
+            ? {
+                matches: values.map((string, index) => ({
+                  addr: `0x${String(3000 + index)}`,
+                  string,
+                })),
+                cursor: { done: true },
               }
             : undefined;
       try {
@@ -746,17 +756,17 @@ describe("attached IDA regex supervision", () => {
       const { producer, client } = await fixture();
       const value = "a".repeat(26) + "!";
       producer.overrideCall = (name) =>
-        name === "list_functions"
-          ? {
-              data: [{ address: "0x1000", name: value, size: "0x10" }],
-              next_offset: null,
-            }
-          : name === "list_strings"
-            ? {
-                data: [
-                  { address: "0x3000", length: value.length, string: value },
-                ],
+        name === "list_funcs"
+          ? [
+              {
+                data: [{ addr: "0x1000", name: value, size: "0x10" }],
                 next_offset: null,
+              },
+            ]
+          : name === "find_regex"
+            ? {
+                matches: [{ addr: "0x3000", string: value }],
+                cursor: { done: true },
               }
             : undefined;
       await client.execute("health", {});
@@ -786,10 +796,10 @@ describe("attached IDA regex supervision", () => {
     const { producer, client } = await fixture();
     const value = "a".repeat(40) + "!";
     producer.overrideCall = (name) =>
-      name === "list_strings"
+      name === "find_regex"
         ? {
-            data: [{ address: "0x3000", length: value.length, string: value }],
-            next_offset: null,
+            matches: [{ addr: "0x3000", string: value }],
+            cursor: { done: true },
           }
         : undefined;
     try {
@@ -850,10 +860,11 @@ describe("attached IDA function failure handling", () => {
         },
       });
     }
-    expect(producer.calls.map(({ name }) => name)).toEqual(["get_metadata"]);
+    expect(producer.calls).toEqual([]);
+    expect(producer.resources).toEqual(["ida://idb/metadata"]);
     producer.inputSha256 = target.sha256;
     producer.beforeCall = async (name) => {
-      if (name === "decompile_function") producer.imageBase = "0x2000";
+      if (name === "decompile") producer.imageBase = "0x2000";
     };
     const changed = await client.execute("procedure_pseudo_code", {
       procedure: "main",
@@ -882,10 +893,10 @@ describe("attached IDA function failure handling", () => {
       expect(invalidAddress.error._tag).toBe("AnalysisInputError");
     expect(producer.connects).toBe(0);
     producer.overrideCall = (name) =>
-      name === "list_functions" ? { data: [], next_offset: 0 } : undefined;
+      name === "list_funcs" ? [{ data: [], next_offset: 0 }] : undefined;
     expect((await client.execute("list_procedures", {})).ok).toBe(false);
     producer.overrideCall = (name) =>
-      name === "decompile_function" ? { unexpected: true } : undefined;
+      name === "decompile" ? { unexpected: true } : undefined;
     const malformed = await client.execute("procedure_pseudo_code", {
       procedure: "main",
     });
@@ -896,18 +907,9 @@ describe("attached IDA function failure handling", () => {
   it("drains in-flight read-only work on cancellation before closing its proxy", async () => {
     const { producer, client } = await fixture();
     await client.execute("health", {});
-    let release: (() => void) | undefined;
-    let notify: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      notify = resolve;
-    });
+    const readOnlyCall = phaseGate();
     producer.beforeCall = async (name) => {
-      if (name === "decompile_function") {
-        notify?.();
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      }
+      if (name === "decompile") await readOnlyCall.hold();
     };
     const controller = new AbortController();
     const call = client.execute(
@@ -916,11 +918,11 @@ describe("attached IDA function failure handling", () => {
       { signal: controller.signal },
     );
     try {
-      await awaitAcknowledgement(started, call, "IDA read-only call");
+      await readOnlyCall.reached(call, "IDA read-only call");
       controller.abort();
       const close = client.close();
       expect(producer.closes).toBe(0);
-      release?.();
+      readOnlyCall.release();
       const result = await call;
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
@@ -928,7 +930,7 @@ describe("attached IDA function failure handling", () => {
       expect(producer.closes).toBe(1);
     } finally {
       controller.abort();
-      release?.();
+      readOnlyCall.release();
       try {
         await call;
       } finally {
@@ -1236,7 +1238,7 @@ describe("headless IDA non-busy health payloads", () => {
 
 describe("IDA compatibility profile mismatch", () => {
   it("reports the native profile for an incompatible catalog", async () => {
-    const { producer, client } = await fixture("attached", 1000, "native");
+    const { producer, client } = await fixture("attached");
     producer.tools = [];
     const result = await client.execute("health", {});
     if (result.ok) throw new Error("Expected incompatible native catalog");
@@ -1284,9 +1286,9 @@ describe("IDA compatibility profile mismatch", () => {
     });
   });
 
-  it("reports the legacy profile when an attached producer serves modern tools", async () => {
+  it("reports the native profile when an attached registration reaches a database supervisor", async () => {
     const { producer, client } = await fixture("attached");
-    producer.tools = ["server_health", "lookup_funcs", "decompile", "disasm"];
+    producer.tools = ["idb_open", "idb_list", "idb_close", "server_health"];
     const result = await client.execute("health", {});
     expect(result.ok, "an incomplete profile cannot serve analysis").toBe(
       false,
@@ -1294,9 +1296,13 @@ describe("IDA compatibility profile mismatch", () => {
     if (result.ok) return;
     expect(
       projectAnalysisError(result.error).details,
-      "attached mode names the legacy profile it expected",
+      "attached mode names the native profile it expected",
     ).toMatchObject({
-      diagnostics: { mode: "attached", expected_profile: "legacy-1.4" },
+      diagnostics: {
+        mode: "attached",
+        expected_profile: "native",
+        missing_tools: expect.arrayContaining(["list_funcs", "decompile"]),
+      },
     });
   });
 });
@@ -2089,7 +2095,7 @@ it("binds retained transport diagnostics to the requested operation and recovery
   const { producer, client } = await fixture("attached");
   await client.execute("health", {});
   producer.beforeCall = async (name) => {
-    if (name === "list_functions")
+    if (name === "list_funcs")
       throw new ProviderAdapterError("ida", "transport", {
         diagnostics: { reason: "upstream closed" },
         capturedOutput: {
@@ -2114,46 +2120,14 @@ it("binds retained transport diagnostics to the requested operation and recovery
   await client.close();
 });
 
-describe("attached IDA legacy string inventory", () => {
-  it("fetches legacy strings and literal searches in single upstream calls", async () => {
-    const { producer, client } = await fixture();
-    const all = Array.from({ length: 250 }, (_, i) => ({
-      address: `0x${(0x3000 + i).toString(16)}`,
-      length: 5,
-      string: `hello-${i}`,
-    }));
-    producer.overrideCall = (name, args) => {
-      if (name !== "list_strings") return undefined;
-      const offset = Number(args.offset ?? 0);
-      const count = Number(args.count ?? 100);
-      const data = count === 0 ? all : all.slice(offset, offset + count);
-      return {
-        data,
-        next_offset:
-          count === 0 || offset + count >= all.length ? null : offset + count,
-      };
-    };
-    const listed = await client.execute("list_strings", {});
-    expect(listed.ok && listed.value.result).toHaveLength(250);
-    expect(
-      producer.calls.filter(({ name }) => name === "list_strings")[0]?.args
-        .count,
-    ).toBe(0);
-    expect(
-      producer.calls.filter(({ name }) => name === "list_strings"),
-    ).toHaveLength(1);
-    await client.close();
-  });
-});
-
 it("retains transport diagnostics on a cancellation regardless of stderr", async () => {
   const { producer, client } = await fixture("attached");
   await client.execute("health", {});
   const controller = new AbortController();
   producer.beforeCall = async (name) => {
-    if (name === "list_functions") {
+    if (name === "list_funcs") {
       controller.abort();
-      throw new AnalysisCancelledError("list_functions", {
+      throw new AnalysisCancelledError("list_funcs", {
         cause: controller.signal.reason,
         diagnostics: { reason: "upstream closed after cancellation" },
         capturedOutput: {
@@ -2218,7 +2192,7 @@ it.each([false, true])(
       diagnostics: { reason: "upstream closed before cancellation" },
     });
     producer.beforeCall = async (name) => {
-      if (name !== "list_functions") return;
+      if (name !== "list_funcs") return;
       if (lateAbort) queueMicrotask(() => controller.abort({ caller: "late" }));
       throw failure;
     };
@@ -2270,8 +2244,23 @@ it.each(["before", "during"] as const)(
   },
 );
 
+it("refuses null native IDA metadata before any analysis tool runs", async () => {
+  const { producer, client } = await fixture("attached");
+  producer.tools = [...nativeTools];
+  producer.overrideCall = (name) =>
+    name === "ida://idb/metadata" ? null : undefined;
+  const result = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  if (result.ok) throw new Error("Expected null metadata to be refused");
+  expect(result.error._tag).toBe("AnalysisOutputError");
+  expect(producer.resources).toEqual(["ida://idb/metadata"]);
+  expect(producer.calls).toEqual([]);
+  await expectCleanClose(producer, client);
+});
+
 it("attributes native IDA metadata timeout to the requested analysis operation", async () => {
-  const { producer, client } = await fixture("attached", 1000, "native");
+  const { producer, client } = await fixture("attached");
   producer.tools = [...nativeTools];
   const timeout = new AnalysisTimeoutError("ida_mcp_read_resource", 40, {
     diagnostics: { uri: "ida://idb/metadata" },
@@ -2300,10 +2289,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   const { root, target } = await createIdaTarget();
   roots.push(root);
   let deliver!: (response: Response) => void;
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const httpAcquisition = phaseArrival();
   const response = new Promise<Response>((resolve) => {
     deliver = resolve;
   });
@@ -2315,7 +2301,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   vi.stubGlobal(
     "fetch",
     vi.fn(() => {
-      entered();
+      httpAcquisition.arrive();
       return response;
     }),
   );
@@ -2323,16 +2309,17 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
     url: "http://127.0.0.1:12345/mcp",
     headers: {},
     mode: "attached" as const,
+    protocol: "native" as const,
     timeoutMs: 30,
   };
   const client = new IdaSessionClient(
     config,
     target,
-    createIdaMcpConnection(config, {}),
+    createIdaMcpConnection(config, {}, idaConnectionDependencies()),
   );
   const executing = client.execute("health", {});
   try {
-    await awaitAcknowledgement(started, executing, "IDA HTTP acquisition");
+    await httpAcquisition.reached(executing, "IDA HTTP acquisition");
     const result = await executing;
     expect(result).toMatchObject({
       ok: false,

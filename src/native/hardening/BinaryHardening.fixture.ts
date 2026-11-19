@@ -1,3 +1,4 @@
+import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
 import { elfNote, gnuBuildIdNote } from "../elf/ElfNotes.fixture.js";
 import {
   peLoadConfigImage,
@@ -705,12 +706,17 @@ const assignElfProgramSpans = (
   },
 ): void => {
   const programAt = (typeId: number, payload: number, size: number): void => {
-    const program = programs.find((candidate) => candidate.type === typeId);
-    if (program === undefined) return;
-    program.offset = payload;
-    program.address = payload;
-    program.filesz = size;
-    program.memsz = size;
+    const program = uniqueKeyed(
+      keyedBy(programs, ({ type }) => type),
+      typeId,
+    );
+    if (!program.ok) throw new Error("fixture repeats a program type");
+    if (program.value === undefined) return;
+    const header = program.value;
+    header.offset = payload;
+    header.address = payload;
+    header.filesz = size;
+    header.memsz = size;
   };
   if (facts.interp) programAt(PT_INTERP, facts.interpAt, facts.interpBytes);
   if (facts.dynamic)

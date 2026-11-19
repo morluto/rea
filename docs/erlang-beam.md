@@ -27,9 +27,15 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 Repeated names retain separate chunk occurrences. Decoded tables and the Code
 header use the last occurrence of each name, matching OTP's loader; the chunk
 inventory still exposes earlier payloads and their source ranges.
-The BEAM form size bounds the parsed chunks. Bytes after the declared form are
-ignored by the parser but remain part of the selected artifact's byte length
-and SHA-256.
+The BEAM form size bounds the parsed chunks. Bytes after the form remain part
+of the artifact's byte length and SHA-256. They are unexamined by the chunk
+reader, so the report sets `coverage.status` to `partial` and gives their exact
+count in `coverage.trailing_bytes`. Older retained Evidence may omit the count.
+When a selected atom, export, import, or lambda table has bytes left after its
+declared entries, coverage is also `partial`. A limitation names the table and
+counts its unexamined bytes. The report retains the decoded entries and the
+full chunk range. `coverage.trailing_bytes` counts only bytes outside the FOR1
+form, so it can be zero when a table leaves bytes unexamined.
 
 When a selected `AtU8` or `Atom` table is decoded, `atoms` is the 1-based name table and
 `module` is atom 1. Both the pre-OTP 28 table and the OTP 28+ compact table
@@ -124,8 +130,13 @@ coverage, and executes no bytecode.
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 64 chunks and 4096 atoms are examined by default, and at most 65536 export,
-import, and lambda rows together. Malformed `FOR1`/`BEAM` headers, truncated
+import, and lambda rows together. A refusal at this fixed row ceiling reports
+`max_table_rows` in `reported_limits`. It has no caller override.
+
+Malformed `FOR1`/`BEAM` headers, truncated
 chunks, and `AtU8` names that are not valid UTF-8 fail without partial success.
+The reader checks each encountered chunk's payload and alignment padding against
+the declared form before applying the chunk count limit.
 
 This workflow does not execute bytecode, inflate `LitT` literals, or decode
 `Attr`/`CInf` external-term payloads. Complete coverage describes this static

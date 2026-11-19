@@ -10,9 +10,9 @@ import type { NodeSeaMetadata } from "../domain/artifactFormatMetadata.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "./ArtifactPaths.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
+  ArtifactReaderFailure,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
 import {
   decodeNodeSeaBlob,
   type DecodedNodeSeaBlob,
@@ -175,10 +175,11 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
     this.#admission = undefined;
     return {
       entries,
-      coverage:
-        fuse.fuseContradiction === null
-          ? undefined
-          : { status: "complete", limitations: [fuse.fuseContradiction] },
+      coverage: {
+        status: "complete",
+        limitations:
+          fuse.fuseContradiction === null ? [] : [fuse.fuseContradiction],
+      },
     };
   }
 }

@@ -53,12 +53,29 @@ while (directories.length > 0) {
       htmlPages.push(path);
   }
 }
-for (const page of htmlPages.sort()) {
+htmlPages.sort();
+const READ_CONCURRENCY = 32;
+/** @type {Map<string, string>} */
+const htmlByPath = new Map();
+let nextPageIndex = 0;
+await Promise.all(
+  Array.from(
+    { length: Math.min(READ_CONCURRENCY, htmlPages.length) },
+    async () => {
+      while (nextPageIndex < htmlPages.length) {
+        const page = htmlPages[nextPageIndex++];
+        htmlByPath.set(page, await readFile(page, "utf8"));
+      }
+    },
+  ),
+);
+for (const page of htmlPages) {
   const route = page
     .slice(output.length + 1)
     .split(sep)
     .join("/");
-  const html = await readFile(page, "utf8");
+  const html = htmlByPath.get(page);
+  assert.ok(html !== undefined, route + ": missing cached HTML page");
   // The configured home layout and generated 404 render no edit action.
   // Their outgoing links still participate in the same all-page scan.
   if (route !== "404.html" && route !== "index.html") {
@@ -90,15 +107,18 @@ for (const page of htmlPages.sort()) {
       physical.startsWith(output + sep),
       destination + ": published path escaped site output",
     );
-    assert.ok(
-      (await stat(physical)).isFile(),
-      route + ": broken rendered target " + destination,
-    );
+    const cachedTargetHtml = htmlByPath.get(physical);
+    if (cachedTargetHtml === undefined) {
+      assert.ok(
+        (await stat(physical)).isFile(),
+        route + ": broken rendered target " + destination,
+      );
+    }
     if (url.hash && target.endsWith(".html")) {
       const fragment = decodeURIComponent(url.hash.slice(1));
-      const page = await readFile(physical, "utf8");
+      const targetHtml = cachedTargetHtml ?? (await readFile(physical, "utf8"));
       assert.ok(
-        page.includes('id="' + fragment + '"'),
+        targetHtml.includes('id="' + fragment + '"'),
         route + ": missing rendered anchor " + destination,
       );
     }

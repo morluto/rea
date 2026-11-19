@@ -253,6 +253,23 @@ export const compressedElfNoteSectionFixture = (
   return bytes;
 };
 
+/** Move an ELF64 little-endian fixture's existing section rows to a backed direct-count table. */
+export const withElf64DirectSectionCount = (
+  image: Buffer,
+  count: number,
+): Buffer => {
+  const offset = Number(image.readBigUInt64LE(40));
+  const priorCount = image.readUInt16LE(60);
+  const table = Math.ceil(image.length / 8) * 8;
+  const result = Buffer.alloc(table + count * 64);
+  image.copy(result);
+  image.copy(result, table, offset, offset + priorCount * 64);
+  result.writeBigUInt64LE(BigInt(table), 40);
+  result.writeUInt16LE(64, 58);
+  result.writeUInt16LE(count, 60);
+  return result;
+};
+
 /** Valid ELF64 section count stored in section header zero per the gABI. */
 export const elfExtendedSectionCountFixture = (): Buffer => {
   const count = 0xff00;

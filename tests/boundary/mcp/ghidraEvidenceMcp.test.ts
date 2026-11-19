@@ -1,8 +1,11 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
+import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
 import {
@@ -189,8 +192,7 @@ it("retains terminal-call qualifications across live dossiers and snapshot-backe
       expect(evidence.raw_result, name).toBeNull();
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
-        function_boundary_observations:
-          "ghidra-function-boundary-limitations-v4",
+        producer: ghidraProducerIdentity(),
       });
       const replay = await harness.session.execute(name, evidence.parameters);
       if (!replay.ok) throw replay.error;
@@ -339,7 +341,7 @@ const connectNamingMcp = async (name: string) => {
     if (toolDefinition === undefined) throw new Error(`Missing ${tool}`);
     return harness.mcp.callTool(
       { name: tool, arguments: arguments_ },
-      { toolDefinition },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
     );
   };
   return { harness, requests, bridge, call };
@@ -605,12 +607,16 @@ describe("Ghidra MCP evidence parity", () => {
       );
       expect(listed).toMatchObject({
         operation: "list_procedures",
-        provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+        provider: {
+          id: "ghidra",
+          name: "Ghidra",
+          version: SUPPORTED_GHIDRA_VERSION,
+        },
         analysis_profile: {
-          provider: { id: "ghidra", version: "12.1.4" },
+          provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
           parameters: {
             import_mode: "ephemeral-source-immutable",
-            annotation_policy: "atomic-function-entry-metadata-v1",
+            annotation_policy: "atomic-function-entry-metadata",
             analyzer_preset: "ghidra-default",
           },
         },
@@ -669,7 +675,7 @@ describe("Ghidra MCP evidence parity", () => {
       );
       expect(pseudocode).toMatchObject({
         operation: "procedure_pseudo_code",
-        provider: { id: "ghidra", version: "12.1.4" },
+        provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
         normalized_result: expect.stringContaining("return 42"),
         limitations: expect.arrayContaining([
           expect.stringMatching(/not text.equivalent to Hopper/iu),
@@ -687,7 +693,7 @@ describe("Ghidra MCP evidence parity", () => {
       );
       expect(analyzed).toMatchObject({
         operation: "analyze_function",
-        provider: { id: "ghidra", version: "12.1.4" },
+        provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
         normalized_result: {
           procedure: {
             address: "0x401000",
@@ -727,10 +733,10 @@ describe("Ghidra MCP evidence parity", () => {
           expect.stringMatching(/not original source.*Hopper.equivalent/iu),
         ]),
       );
-      const directAnalyzed = await new EnhancedTools(session).execute(
-        "analyze_function",
-        { procedure: "fixture_main" },
-      );
+      const directAnalyzed = await new EnhancedTools(session).executeValidated({
+        name: "analyze_function",
+        input: { procedure: "fixture_main" },
+      });
       if (!directAnalyzed.ok) throw directAnalyzed.error;
       expect(analyzed.normalized_result).toEqual(directAnalyzed.value);
     } finally {

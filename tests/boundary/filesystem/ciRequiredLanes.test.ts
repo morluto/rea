@@ -36,6 +36,74 @@ const scopeFlags = async () =>
       ),
     ).CI_FLAGS;
 
+const recordedCrashRefresh = "refresh --kill-after=5s 90s";
+const recordedCrashDownload = "download --kill-after=5s 180s";
+
+it.skipIf(process.platform === "win32").each([
+  ["ok", 0, [recordedCrashRefresh, recordedCrashDownload, "install untimed"]],
+  ["refresh", 100, [recordedCrashRefresh]],
+  ["download", 124, [recordedCrashRefresh, recordedCrashDownload]],
+] as const)(
+  "recorded-crash APT runs the expected stages and deadlines for the %s outcome",
+  async (mode, code, expected) => {
+    const steps = z
+      .array(z.object({ run: z.string().optional() }))
+      .parse(
+        (await workflow("real-recorded-crash.yml")).jobs["real-recorded-crash"]
+          ?.steps,
+      );
+    const provision = steps.find((step) =>
+      step.run?.includes("python3-venv gcc libc6-dev strace gdb"),
+    )?.run;
+    if (!provision) throw new Error("Missing recorded-crash APT step");
+    const mock = `
+      mode=$1
+      timeout() {
+        local args="$1 $2"
+        shift 2
+        apt_timeout="$args" "$@"
+      }
+      record_stage() { printf '%s %s\\n' "$1" "\${apt_timeout:-untimed}"; }
+      apt-get() {
+        case " $* " in
+          *" update "*)
+            record_stage refresh
+            if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
+              return 100
+            fi
+            ;;
+          *" --download-only "*)
+            record_stage download
+            if [[ $mode == download ]]; then return 124; fi
+            ;;
+          *" --no-download "*) record_stage install ;;
+          *) record_stage unexpected-install ;;
+        esac
+      }
+    `;
+    const outcome = await executeWorkflowFixture("bash", [
+      "-e",
+      "-c",
+      mock + provision,
+      "fixture",
+      mode,
+    ])
+      .then(({ stdout }) => ({ code: 0, stdout }))
+      .catch((cause: unknown) =>
+        z.object({ code: z.number(), stdout: z.string() }).parse(cause),
+      );
+    expect(outcome.code).toBe(code);
+    const lines = outcome.stdout.trim().split("\n");
+    expect(lines.filter((line) => !line.startsWith("::error::"))).toEqual(
+      expected,
+    );
+    if (code !== 0)
+      expect(lines.at(-1)).toContain(
+        mode === "refresh" ? "index refresh failed" : "package download failed",
+      );
+  },
+);
+
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
   const { engines } = z
     .object({ engines: z.object({ node: z.string() }) })
@@ -374,7 +442,7 @@ async function assertProviderCacheCallers(
   for (const name of [
     "sqlite-runtime",
     "nativeaot",
-    "ghidra_bridge",
+    "android_metadata",
     "website",
   ])
     expect(jobs[name]?.secrets, name).toBeUndefined();
@@ -430,6 +498,8 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "agentenv",
     "packet_capture",
     "signal_recording",
+    "go_binary",
+    "ghidra_bridge",
   ];
   const buildTerms = z
     .string()
@@ -593,7 +663,9 @@ it("keeps fast feedback separate from complete qualification and release proof",
   const shards = ci.jobs["test-shard"]?.steps ?? [];
   const fast = shards.find((step) => step.run?.includes("npm run test:built"));
   const full = shards.find((step) => step.run?.includes("test:ci:shard:run"));
-  expect(fast?.if).toBe("needs.changes.outputs.tier == 'fast'");
+  expect(fast?.if).toBe(
+    "needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full'",
+  );
   expect(fast?.run).toContain("--reporter=blob");
   expect(fast?.run).not.toContain("--coverage");
   expect(full?.if).toBe("needs.changes.outputs.tier == 'full'");
@@ -640,6 +712,7 @@ it.each([
             (await scopeFlags()).map((flag) => [flag, "false"]),
           ),
           tier: "fast",
+          test_mode: "full",
           code: "true",
           [scope]: selected,
         },
@@ -673,6 +746,7 @@ it("rejects incomplete or malformed classification even when available jobs succ
   const valid = {
     ...Object.fromEntries(flags.map((flag) => [flag, "false"])),
     tier: "fast",
+    test_mode: "full",
   };
   const run = (outputs: unknown) =>
     executeWorkflowFixture(
@@ -750,6 +824,7 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
         outputs: {
           ...Object.fromEntries(flags.map((flag) => [flag, "false"])),
           tier: "fast",
+          test_mode: "full",
           code: "true",
         },
       },
@@ -773,6 +848,106 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
       stderr: expect.stringContaining("test-shard"),
     });
   }
+});
+
+it("runs a selected PR subset in planner-owned groups and still gates it", async () => {
+  const { jobs } = await workflow();
+  // The planner owns every shard list, including one job per selected group.
+  expect(jobs["test-shard"]?.strategy).toMatchObject({
+    matrix: { shard: "${{ fromJSON(needs.changes.outputs.test_shards) }}" },
+  });
+  expect(jobs["test-source"]).toMatchObject({
+    if: expect.stringContaining("needs.changes.outputs.test_mode == 'full'"),
+  });
+  const selected = z
+    .array(
+      z.object({
+        if: z.string().optional(),
+        run: z.string().optional(),
+        env: z.record(z.string(), z.string()).optional(),
+      }),
+    )
+    .parse(jobs["test-shard"]?.steps)
+    .find(
+      (step) => step.if === "needs.changes.outputs.test_mode == 'selected'",
+    );
+  expect(selected?.run).toBe(
+    'node scripts/ci/test-group.mjs selected "${MATRIX_SHARD}" --reporter=default --reporter=blob',
+  );
+  expect(selected?.env).toEqual({
+    MATRIX_SHARD: "${{ matrix.shard }}",
+    CI_TEST_SELECTION: "${{ needs.changes.outputs.test_selection }}",
+    REA_CI_TEST_HISTORY: ".cache/ci-test-history/test-results.json",
+  });
+
+  const flags = await scopeFlags();
+  const gate = (
+    outputs: Record<string, unknown>,
+    results: Record<string, string>,
+    event = "pull_request",
+  ) =>
+    executeWorkflowFixture(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../../../scripts/ci/required.mjs", import.meta.url),
+        ),
+      ],
+      {
+        env: {
+          ...process.env,
+          GITHUB_EVENT_NAME: event,
+          CI_QUALIFICATION_DIRECTORY: "",
+          CI_JOBS: JSON.stringify({
+            changes: {
+              result: "success",
+              outputs: {
+                ...Object.fromEntries(flags.map((flag) => [flag, "false"])),
+                tier: "fast",
+                code: "true",
+                test_mode: "selected",
+                ...outputs,
+              },
+            },
+            static: { result: "success" },
+            test: { result: "success" },
+            ...Object.fromEntries(
+              Object.entries(results).map(([name, result]) => [
+                name,
+                { result },
+              ]),
+            ),
+          }),
+        },
+      },
+    );
+  const ran = { build: "success", "test-shard": "success" };
+  // A selected subset skips the separate source job.
+  await expect(gate({}, ran)).resolves.toMatchObject({ stderr: "" });
+  for (const [name, result] of [
+    ["test-shard", "skipped"],
+    ["test-shard", "failure"],
+    ["build", "cancelled"],
+  ] as const)
+    await expect(gate({}, { ...ran, [name]: result })).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(name),
+    });
+  // The complete fast suite still requires its source job.
+  await expect(gate({ test_mode: "full" }, ran)).rejects.toMatchObject({
+    stderr: expect.stringContaining("test-source"),
+  });
+  // Only a fast pull-request plan with code changes may select tests.
+  for (const [outputs, event] of [
+    [{ test_mode: undefined }, "pull_request"],
+    [{ test_mode: "candidate" }, "pull_request"],
+    [{}, "push"],
+    [{ code: "false" }, "pull_request"],
+  ] as const)
+    await expect(gate(outputs, ran, event)).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("valid test mode"),
+    });
 });
 
 it("binds each canonical lane to its explicit fast and full workflow jobs", async () => {
@@ -823,8 +998,10 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
         "web_runtime",
         "web_source_map",
         "agentenv",
+        "go_binary",
         "nativeaot",
         "ghidra_bridge",
+        "android_metadata",
         "website",
       ].map((name) => [name, { fast: [name], full: [name] }]),
     ),
@@ -870,6 +1047,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       outputs: {
         ...Object.fromEntries(flags.map((name) => [name, "false"])),
         tier: "fast",
+        test_mode: "full",
         [scope]: "true",
       },
     };
@@ -897,6 +1075,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
     outputs: {
       ...Object.fromEntries(flags.map((name) => [name, "true"])),
       tier: "full",
+      test_mode: "full",
     },
   };
   await expect(executeGate(fullContext)).resolves.toMatchObject({ stderr: "" });
@@ -908,4 +1087,32 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       name,
     ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(name) });
   }
+});
+
+it("requires every client schema engine in the build job of every code change", async () => {
+  const steps = z
+    .array(
+      z
+        .object({
+          if: z.string().optional(),
+          run: z.string().optional(),
+          env: z.record(z.string(), z.string()).optional(),
+          "continue-on-error": z.unknown().optional(),
+        })
+        .passthrough(),
+    )
+    .parse((await workflow()).jobs.build?.steps);
+  const checks = steps.filter((step) =>
+    step.run?.includes("node scripts/verify-advertised-schemas.mjs"),
+  );
+  expect(checks).toHaveLength(1);
+  const [check] = checks;
+  expect(check?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(check?.["continue-on-error"]).toBeUndefined();
+  expect(check?.env?.REA_REQUIRE_SCHEMA_ENGINES).toBe("1");
+  // Full qualification adds the Python jsonschema meta-validation.
+  expect(check?.env?.SCHEMA_CHECK_OPTIONS).toBe(
+    "${{ needs.changes.outputs.tier == 'full' && '--complete' || '' }}",
+  );
+  expect(check?.run).toContain("$SCHEMA_CHECK_OPTIONS");
 });
