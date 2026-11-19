@@ -1,11 +1,11 @@
 import type { FileHandle } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+  type AnalysisCleanupLease,
+} from "../resources/index.js";
 
 /** PID publication is decimal; allow the largest safe PID and a CRLF ending. */
 const TARGET_PID_FILE_MAX_BYTES = String(Number.MAX_SAFE_INTEGER).length + 2;

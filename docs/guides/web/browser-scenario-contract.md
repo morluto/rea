@@ -78,6 +78,10 @@ scenario whose declared variables are unset still validates; the missing-value
 failure belongs to capture. A schema-valid scenario does not prove that the
 executable or target is available on the host.
 
+For a locator with `kind: "role"`, set `name` to the element's exact full
+accessible name. Use the name shown in accessibility evidence, which can include
+text beyond the visible label. A partial name does not match.
+
 ## Minimal launch example
 
 Save this as `browser-scenario.json`, replacing the executable path with an
@@ -672,10 +676,9 @@ transaction only when it was observed; a null predecessor does not establish
 that no earlier hop existed. Request events require both transaction fields;
 an absent ID is malformed capture data. `redirected_from_transaction_state`
 records `root` when Playwright observed no predecessor and `unknown` when a
-predecessor exists but was outside the capture. A linked predecessor is carried
-by `redirected_from_transaction_id` with no state field. Older captures without
-the state field retain the conservative meaning that a null predecessor is
-unknown.
+predecessor exists but was outside the capture. It is required when
+`redirected_from_transaction_id` is null and refused when the predecessor is
+linked; a request event that breaks either rule is malformed capture data.
 
 `scenario.network_content` records the resolved content selection. Comparing
 captures with different selections reports network evidence as unknown with a
@@ -693,12 +696,21 @@ request URL when CDP has no response body. Event and transaction references
 identify the associated Playwright response object, but do not verify that the
 retained bytes came from the original network transaction. Successful selected
 response bodies include this limitation in the capture. These bytes are not
-the compressed wire representation.
+the compressed wire representation. Playwright body media types come from
+the duplicate-preserving header read and carry `media_type_source` set to
+`content-type-header`. Identical repeated declarations retain one value.
+Conflicting, unavailable or redacted declarations leave the type null.
+Selecting a body allows that lookup even when full header values are omitted
+from Evidence. Views use any retained type declarations to interpret captures
+that predate `media_type_source`. Earlier REA versions can reject captures
+that include the new field.
 Headers preserve producer order and duplicates. Authorization,
 Proxy-Authorization, Cookie, and Set-Cookie values are null with
 `redacted: true`; ordinary values remain intact. Declared UTF-8 secret values
-and their standard URI/form or JSON-escaped representations are replaced without
-decoding unrelated binary bytes. Other encodings are not interpreted. Digests describe the
+and their standard URI/form or JSON-escaped representations are replaced.
+Known binary bodies are redacted as bytes. For an unknown media type, a JSON
+redaction pass can remove decoded secret spellings without assigning a type.
+Other encodings are not interpreted. Digests describe the
 retained representation after redaction.
 The selected body-byte limit also bounds that retained representation after
 secret expansion, before base64 serialization. Credential header values are

@@ -1,6 +1,7 @@
 import { types } from "node:util";
 import { z } from "zod";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Maximum JSON nesting accepted before recursive result cloning. */
 export const MAX_JSON_DEPTH = 1000;
@@ -14,8 +15,6 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const immutableValidation = new WeakMap<object, string | undefined>();
 
 /** Validate JSON meaning and nesting without cloning a trusted immutable value. */
@@ -30,6 +29,28 @@ export const jsonValueValidationIssue = (root: unknown): string | undefined => {
 function* ownEnumerableKeys(value: Record<string, unknown>): Generator<string> {
   for (const key in value) if (Object.hasOwn(value, key)) yield key;
 }
+
+function* jsonObjectValues(
+  record: Record<string, JsonValue>,
+): Generator<JsonValue> {
+  for (const key of ownEnumerableKeys(record)) yield record[key]!;
+}
+
+/** Check a validated value's nesting without queuing whole containers. */
+export const jsonValueExceedsDepth = (
+  root: JsonValue,
+  limit: number,
+): boolean => {
+  const levels: Iterator<JsonValue>[] = [[root].values()];
+  for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
+    const next = level.next();
+    if (next.done === true) levels.pop();
+    else if (levels.length - 1 > limit) return true;
+    else if (Array.isArray(next.value)) levels.push(next.value.values());
+    else if (isRecord(next.value)) levels.push(jsonObjectValues(next.value));
+  }
+  return false;
+};
 
 /** Validate JSON in bounded steps; cache only authenticated immutable roots. */
 export function* jsonValueValidationSteps(

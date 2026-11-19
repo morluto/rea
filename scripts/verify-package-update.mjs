@@ -29,17 +29,27 @@ export async function verifyPackageUpdate({
   const fixture = new AbortController();
   const server = createServer((request, response) => {
     void serveRegistry(request, response).catch((error) => {
-      fixtureFailure ??= { cause: error };
-      fixture.abort(fixtureFailure.cause);
+      // Let npm retry an upstream reset using its registry retry policy.
+      const connectionReset =
+        error instanceof TypeError &&
+        error.cause instanceof Error &&
+        "code" in error.cause &&
+        error.cause.code === "ECONNRESET";
+      if (!connectionReset) {
+        fixtureFailure ??= { cause: error };
+        fixture.abort(fixtureFailure.cause);
+      }
       if (response.headersSent) {
         response.destroy();
         return;
       }
-      response.writeHead(500, {
+      response.writeHead(connectionReset ? 502 : 500, {
         "Content-Type": "text/plain; charset=utf-8",
         "X-Content-Type-Options": "nosniff",
       });
-      response.end(String(error));
+      response.end(
+        connectionReset ? "npm registry connection reset" : String(error),
+      );
     });
   });
   let registry;

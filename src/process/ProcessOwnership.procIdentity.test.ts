@@ -606,3 +606,71 @@ it("preserves cancellation before and after the signal-zero probe", async () => 
     probeAbort.mockRestore();
   }
 });
+
+it.each([
+  // PF_KTHREAD | PF_NOFREEZE | PF_FORKNOEXEC, as procfs reports a kworker.
+  ["a kernel thread", 0x00208040, true],
+  ["a user process", 0x00000040, false],
+] as const)(
+  "classifies a live unrelated %s whose environment read reports ESRCH",
+  async (_case, flags, cleaned) => {
+    // Reported on a root caller: a live kernel thread's environ read failed
+    // with ESRCH. Its credentials match the caller, so only the PF_KTHREAD
+    // task flag from the same stat record distinguishes it.
+    const callerUid = process.getuid?.() ?? 0;
+    const kernelThread: ProcessTableEntry = {
+      pid: 200,
+      parentPid: 2,
+      processGroupId: 0,
+      state: "I",
+      command: "kworker/0:1",
+    };
+    filesystem.readFile.mockImplementation(async (path) => {
+      if (String(path) === "/proc/200/stat")
+        return procStat(100, 2, 0, 200, flags);
+      if (String(path) === "/proc/200/status")
+        return `Uid:\t${callerUid}\t${callerUid}\t${callerUid}\t${callerUid}\nGid:\t0\t0\t0\t0\n`;
+      if (String(path) === "/proc/200/environ")
+        throw Object.assign(new Error("ESRCH: no such process, read"), {
+          code: "ESRCH",
+        });
+      throw new Error(`unexpected path: ${String(path)}`);
+    });
+    filesystem.readlink.mockImplementation(async () => "user:[1]");
+    filesystem.stat.mockResolvedValue({ uid: callerUid } as never);
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      ...createSystemProcessOwnershipHost("linux", {}),
+      listProcesses: async () => [kernelThread],
+      signalGroup,
+    };
+
+    try {
+      const result = await withCaller(callerUid, 0, () =>
+        verifyNoTokenOwnedProcesses("owned-run", host, undefined, {
+          leaderPid: 100,
+          processGroupId: 100,
+          evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+        }),
+      );
+
+      if (cleaned)
+        expect(result).toEqual({
+          cleaned: true,
+          signaled: false,
+          unverified: [
+            { pid: 200, diagnostic: "ESRCH: no such process, read" },
+          ],
+        });
+      else
+        expect(result).toMatchObject({
+          cleaned: false,
+          failures: [{ pid: 200, reason: "environment-unreadable" }],
+        });
+      expect(signalGroup).not.toHaveBeenCalled();
+    } finally {
+      filesystem.stat.mockReset();
+      filesystem.stat.mockRejectedValue(filesystemError("ENOENT"));
+    }
+  },
+);

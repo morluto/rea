@@ -1,5 +1,7 @@
 import * as commandOwner from "../process/OwnedCommand.js";
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -8,6 +10,7 @@ import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,
 } from "../process/ProcessInspectionCancellation.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,39 +60,45 @@ describe("resolveApktoolCommand", () => {
 
   it("rejects a relative environment path explicitly", async () => {
     await expect(
-      resolveApktoolCommand({ [APKTOOL_COMMAND_ENV]: "bin/apktool" }),
+      resolveApktoolCommand({ [APKTOOL_COMMAND_ENV]: "bin/apktool" }, "linux"),
+    ).rejects.toThrow(/must be an absolute path/u);
+    await expect(
+      resolveApktoolCommand(
+        { [APKTOOL_COMMAND_ENV]: "\\tools\\apktool.bat" },
+        "win32",
+      ),
     ).rejects.toThrow(/must be an absolute path/u);
   });
 });
 
 describe("parseApktoolVersionOutput", () => {
   it("reads the version from real apktool output", () => {
-    expect(parseApktoolVersionOutput("2.7.0-dirty\n")).toMatchObject({
+    expect(parseApktoolVersionOutput("2.7.0-dirty\n", "linux")).toMatchObject({
       version: "2.7.0-dirty",
     });
   });
 
   it("reports null when the launcher prints nothing usable", () => {
-    expect(parseApktoolVersionOutput(" \n")).toEqual({
+    expect(parseApktoolVersionOutput(" \n", "linux")).toEqual({
       version: null,
       reportedVersion: null,
     });
-    expect(parseApktoolVersionOutput("successful but not a version\n")).toEqual(
-      {
-        version: null,
-        reportedVersion: "successful but not a version",
-      },
-    );
+    expect(
+      parseApktoolVersionOutput("successful but not a version\n", "linux"),
+    ).toEqual({
+      version: null,
+      reportedVersion: "successful but not a version",
+    });
   });
 
   it("parses semantic prerelease versions without claiming they meet the minimum", () => {
-    expect(parseApktoolVersionOutput("2.7.0-beta.1\n")).toMatchObject({
+    expect(parseApktoolVersionOutput("2.7.0-beta.1\n", "linux")).toMatchObject({
       version: "2.7.0-beta.1",
     });
   });
 
   it("validates normalized semantic versions while preserving caller spelling", () => {
-    expect(parseApktoolVersionOutput("v2.7.0\n")).toMatchObject({
+    expect(parseApktoolVersionOutput("v2.7.0\n", "linux")).toMatchObject({
       version: "v2.7.0",
     });
   });
@@ -106,7 +115,7 @@ describe("reported Apktool version policy", () => {
   ])(
     "discloses the upstream advisory for %s without claiming engine patch identity",
     (version) => {
-      const identity = parseApktoolVersionOutput(version);
+      const identity = parseApktoolVersionOutput(version, "linux");
       if (identity.version === null) throw new Error("Expected parsed version");
       expect(identity.version).toBe(version);
       const warnings = identity.limitations.filter((limitation) =>
@@ -128,7 +137,7 @@ describe("reported Apktool version policy", () => {
   ])(
     "does not attach CVE-2024-21633 to a reported version at or beyond its fix: %s",
     (version) => {
-      const identity = parseApktoolVersionOutput(version);
+      const identity = parseApktoolVersionOutput(version, "linux");
       if (identity.version === null) throw new Error("Expected parsed version");
       expect(identity).toMatchObject({
         version,
@@ -152,7 +161,7 @@ describe("reported Apktool version policy", () => {
   ] as const)(
     "preserves the documented release floor for %s",
     (version, supported) => {
-      expect(parseApktoolVersionOutput(version)).toMatchObject({
+      expect(parseApktoolVersionOutput(version, "linux")).toMatchObject({
         version,
         supportsDocumentedVersion: supported,
       });
@@ -486,6 +495,7 @@ it("cancels a pending filesystem lookup and owns its eventual rejection", async 
   const pendingStat = new Promise((_resolve, reject) => {
     rejectLookup = reject;
   });
+  void pendingStat.catch(() => undefined);
   const observed = new Promise<void>((resolve) => {
     started = resolve;
   });
@@ -502,14 +512,20 @@ it("cancels a pending filesystem lookup and owns its eventual rejection", async 
     "win32",
     controller.signal,
   );
-  await observed;
-  controller.abort();
-  await expect(pending).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  rejectLookup(new Error("filesystem completed after cancellation"));
-  await Promise.resolve();
-  expect(lookup.stat).toHaveBeenCalledTimes(1);
+  try {
+    await awaitAcknowledgement(observed, pending, "apktool filesystem lookup");
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+    rejectLookup(new Error("filesystem completed after cancellation"));
+    await Promise.resolve();
+    expect(lookup.stat).toHaveBeenCalledTimes(1);
+  } finally {
+    controller.abort();
+    rejectLookup(new Error("fixture cleanup"));
+    await pending.catch(() => undefined);
+  }
 });
 
 it("bounds the entire pending PATH lookup by the selection deadline", async () => {
@@ -581,6 +597,7 @@ it.each([false, true])(
       const result: unknown = await inspectApktoolClient(
         { command: "/selected/apktool", commandSource: "environment" },
         commands,
+        { platform: "linux" },
       ).catch((cause: unknown) => cause);
       expect(result).toBeInstanceOf(AnalysisError);
       if (!(result instanceof AnalysisError)) throw result;
@@ -633,6 +650,7 @@ it("keeps a recorded command timeout primary with its actual inspection stop fac
     const result: unknown = await inspectApktoolClient(
       { command: "/selected/apktool", commandSource: "environment" },
       commands,
+      { platform: "linux" },
     ).catch((cause: unknown) => cause);
     expect(result).toMatchObject({
       _tag: "AnalysisTimeoutError",
@@ -648,6 +666,45 @@ it("keeps a recorded command timeout primary with its actual inspection stop fac
     expect(stopped.cause).toBe(reason);
     expect(Reflect.get(stopped, "inspectionFailure")).toBe(inspection);
     expect(result.cleanupResources).toEqual([]);
+  } finally {
+    command.mockRestore();
+    prepare.mockRestore();
+  }
+});
+
+it("reports EMFILE during macOS ownership helper preparation as a resource constraint", async () => {
+  const emfile = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const darwin = new DarwinProcessOwnershipInspectionError(
+    "helper capacity exhausted",
+    { cause: emfile },
+  );
+  const failure = new commandOwner.OwnedCommandFailure(
+    "process",
+    "Ownership preparation failed",
+    null,
+    null,
+    { preparationFailure: darwin },
+  );
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockResolvedValue(undefined);
+  const command = vi
+    .spyOn(commandOwner, "runOwnedCommand")
+    .mockRejectedValue(failure);
+  try {
+    const result: unknown = await inspectApktoolClient(
+      { command: "/selected/apktool", commandSource: "environment" },
+      commands,
+      { platform: "linux" },
+    ).catch((cause: unknown) => cause);
+    expect(result).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      retryable: true,
+      diagnostics: {
+        system_code: "EMFILE",
+        selected_command: "/selected/apktool",
+      },
+    });
   } finally {
     command.mockRestore();
     prepare.mockRestore();

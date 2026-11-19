@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  formatCommandForDisplay,
   installLinuxHopper,
-  linuxPackageManagerCommands,
+  LINUX_HOPPER_SETUP_HOSTS,
+  linuxHopperInstallDisclosure,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   supportsReaHost,
@@ -31,19 +31,6 @@ import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import * as nativeCommands from "../process/ExecFileOutput.js";
 import * as pythonRuntime from "./LinuxHopperPython.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-
-describe("Linux package-manager command display", () => {
-  it("preserves argument boundaries for paths with spaces and quotes", () => {
-    expect(
-      formatCommandForDisplay("pkexec", [
-        "pacman",
-        "-U",
-        "/tmp/rea test/hopper.arch",
-        "apostrophe'path",
-      ]),
-    ).toBe('pkexec pacman -U "/tmp/rea test/hopper.arch" "apostrophe\'path"');
-  });
-});
 
 class RecordingLinuxHost implements LinuxHopperInstallHost {
   distributionValue: LinuxDistribution | undefined = {
@@ -246,19 +233,45 @@ describe("Linux Hopper host classification", () => {
       architecture: "x64",
       hopperSetupSupported: false,
     });
-    expect(unsupportedLinuxHopperSetupRemediation(bazzite)).toBe(
-      "This host reports bazzite 43, rpm packages on x64. Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.",
-    );
+    const bazziteRemediation = unsupportedLinuxHopperSetupRemediation(bazzite);
+    for (const fact of [
+      "bazzite",
+      "43",
+      "rpm",
+      "x64",
+      LINUX_HOPPER_SETUP_HOSTS,
+    ])
+      expect(bazziteRemediation).toContain(fact);
+    expect(bazziteRemediation).toMatch(/existing supported provider/i);
+
     const ubuntuArm64 = parseLinuxDistribution(
       'ID=ubuntu\nVERSION_ID="24.04"\n',
       "arm64",
     );
-    expect(unsupportedLinuxHopperSetupRemediation(ubuntuArm64)).toContain(
-      "This host reports ubuntu 24.04, deb packages on arm64.",
-    );
-    expect(unsupportedLinuxHopperSetupRemediation(undefined)).toBe(
-      "This Linux distribution could not be read. Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.",
-    );
+    const ubuntuArm64Remediation =
+      unsupportedLinuxHopperSetupRemediation(ubuntuArm64);
+    for (const fact of [
+      "ubuntu",
+      "24.04",
+      "deb",
+      "arm64",
+      LINUX_HOPPER_SETUP_HOSTS,
+    ])
+      expect(ubuntuArm64Remediation).toContain(fact);
+    expect(ubuntuArm64Remediation).toMatch(/existing supported provider/i);
+
+    const nixos = parseLinuxDistribution("ID=nixos\n", "x64");
+    const nixosRemediation = unsupportedLinuxHopperSetupRemediation(nixos);
+    expect(nixosRemediation).toContain("nixos");
+    expect(nixosRemediation).toContain("x64");
+    expect(nixosRemediation).not.toContain("undefined");
+    expect(nixosRemediation).toContain(LINUX_HOPPER_SETUP_HOSTS);
+
+    const unreadableRemediation =
+      unsupportedLinuxHopperSetupRemediation(undefined);
+    expect(unreadableRemediation).toMatch(/could not be read/i);
+    expect(unreadableRemediation).toContain(LINUX_HOPPER_SETUP_HOSTS);
+    expect(unreadableRemediation).toMatch(/existing supported provider/i);
   });
 
   it("withholds host support from a distribution with no package family", () => {
@@ -291,47 +304,34 @@ describe("Linux Hopper installation", () => {
   ] as const)(
     "selects the %s native package manager and dependencies",
     (family, executable, packages) => {
-      expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", true),
-      ).toContainEqual(
-        expect.objectContaining({
-          executable,
-          args: expect.arrayContaining([...packages]),
-        }),
+      const root = linuxHopperInstallDisclosure(family, true).commands;
+      const nonRoot = linuxHopperInstallDisclosure(family, false).commands;
+      expect(root.some((command) => command.startsWith(`${executable} `))).toBe(
+        true,
       );
+      for (const dependency of packages)
+        expect(
+          root.some((command) => command.split(" ").includes(dependency)),
+        ).toBe(true);
       expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", false),
-      ).toContainEqual(
-        expect.objectContaining({
-          executable: "pkexec",
-          args: expect.arrayContaining([executable, "/tmp/Hopper package"]),
-        }),
-      );
+        nonRoot.some(
+          (command) =>
+            command.startsWith(`pkexec ${executable} `) &&
+            command.includes(`"<verified-hopper.${family}>"`),
+        ),
+      ).toBe(true);
     },
   );
 
   it.each([true, false])(
     "keeps installed apt dependencies at their versions while Hopper may upgrade (root: %s)",
     (isRoot) => {
-      const prefix = isRoot ? [] : ["pkexec"];
+      const prefix = isRoot ? "" : "pkexec ";
       expect(
-        linuxPackageManagerCommands("deb", "/tmp/Hopper package", isRoot).map(
-          ({ executable, args }) => [executable, ...args],
-        ),
+        linuxHopperInstallDisclosure("deb", isRoot).commands.slice(0, 2),
       ).toEqual([
-        [
-          ...prefix,
-          "apt-get",
-          "install",
-          "-y",
-          "--no-upgrade",
-          "xvfb",
-          "xauth",
-          "python3",
-          "libx11-6",
-          "libxtst6",
-        ],
-        [...prefix, "apt-get", "install", "-y", "/tmp/Hopper package"],
+        `${prefix}apt-get install -y --no-upgrade xvfb xauth python3 libx11-6 libxtst6`,
+        `${prefix}apt-get install -y "<verified-hopper.deb>"`,
       ]);
     },
   );

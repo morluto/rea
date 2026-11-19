@@ -34,14 +34,10 @@ const uf2Regions: RegionDecoding<Uf2Image> = {
       },
       bytes: region.bytes,
     })),
-    ...(image.complete && image.limitations.length === 0
-      ? {}
-      : {
-          coverage: {
-            status: image.complete ? "complete" : "unknown",
-            limitations: image.limitations,
-          },
-        }),
+    coverage: {
+      status: image.complete ? "complete" : "unknown",
+      limitations: image.limitations,
+    },
   }),
 };
 

@@ -112,9 +112,7 @@ await assert.rejects(() => commands.runProcess(fixture, [], root, 2000), error =
 console.log(JSON.stringify({ passed: true, timeoutHelpers: 3, controls: 7, childrenClosed: children.every(x => x.closed) }));
 `,
     );
-    const result = await processes.run(process.execPath, [driver], {
-      timeoutMs: Math.min(2_147_483_647, preparationBudgetMs + 35_000),
-    });
+    const result = await processes.run(process.execPath, [driver]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       passed: true,
@@ -180,7 +178,6 @@ registerHooks({ load(url, context, nextLoad) {
           REA_AGENT_EVAL_ROOT: parent,
           REA_AGENT_EVAL_KEEP_FIXTURES: "false",
         },
-        timeoutMs: 10_000,
       },
     );
     expect(result.exitCode).toBe(1);
@@ -224,14 +221,16 @@ processTest.for([
       import { setTimeout as delay } from "node:timers/promises";
       import { DarwinProcessOwnershipInspectionError } from ${JSON.stringify(new URL("../../../dist/process/DarwinProcessRunTokenReader.js", import.meta.url).href)};
       import { ProviderCleanupError } from ${JSON.stringify(new URL("../../../dist/domain/providerCleanupError.js", import.meta.url).href)};
+      import { AnalysisCleanupRelease } from ${JSON.stringify(new URL("../../../dist/domain/analysisCleanupRelease.js", import.meta.url).href)};
       let prepared = false;
-      const cleanup = new ProviderCleanupError("fixture", ["darwin-fixture-reader"], { reason: "fixture preparation cleanup denied" });
+      const release = new AnalysisCleanupRelease();
+      const cleanup = release.bind(new ProviderCleanupError("fixture", ["darwin-fixture-reader"], { reason: "fixture preparation cleanup denied" }));
       const preparation = new DarwinProcessOwnershipInspectionError("fixture preparation failure", {
         cleanupFailure: cleanup,
         cleanupOwner: { close: async () => {
           await writeFile(${JSON.stringify(retried)}, "exact preparation owner retried");
           if (${String(incomplete)}) throw new Error("fixture preparation cleanup denied");
-          cleanup.resolveCleanup();
+          release.confirm();
         } },
       });
       export class OwnedCommandFailure extends Error {
@@ -282,7 +281,6 @@ registerHooks({ load(url, context, nextLoad) {
           REA_AGENT_EVAL_ROOT: parent,
           REA_AGENT_EVAL_KEEP_FIXTURES: "false",
         },
-        timeoutMs: 10_000,
       },
     );
     expect(result.exitCode).toBe(1);

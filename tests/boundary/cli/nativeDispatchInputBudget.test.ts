@@ -54,6 +54,11 @@ describe.skipIf(process.platform !== "darwin")(
               input_bytes_source: "caller",
               observed_input_bytes: size,
             },
+            // The provider names the field; the CLI adds the flag.
+            limit: {
+              parameter: "max_input_bytes",
+              cli_flag: "--max-input-bytes",
+            },
           },
         });
       },

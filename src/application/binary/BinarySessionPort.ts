@@ -2,7 +2,7 @@ import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.j
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
 import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
-import type { ExecutableFormatHint } from "../../domain/dosCom.js";
+import type { TargetFormatHint } from "../../domain/targetFormats.js";
 import type {
   BinaryArchitecture,
   BinaryTarget,
@@ -18,7 +18,7 @@ import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import type { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 import type {
@@ -27,14 +27,18 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
-export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
 /** Selection observed at the end of one serialized open attempt. */
 export type OpenSelectionReceipt =
-  | { readonly kind: "binary"; readonly path: string; readonly sha256: string }
+  | {
+      readonly kind: "binary";
+      readonly path: string;
+      readonly sha256: string;
+      readonly caller_input_path?: string;
+    }
   | {
       readonly kind: "resources";
       readonly path: string;
@@ -90,7 +94,7 @@ export interface BinarySessionPort
     options?: {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
-      readonly formatHint?: ExecutableFormatHint;
+      readonly formatHint?: TargetFormatHint;
       readonly architecture?: BinaryArchitecture;
       readonly entryPoint?: string;
       readonly espFlash?: EspFlashSelection;
@@ -145,6 +149,10 @@ export interface BinarySessionPort
     readonly refreshCandidates?: boolean;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession?():
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
   readAnalysisSnapshot(
     path: string,
@@ -159,11 +167,22 @@ export interface BinarySessionPort
     operation?: AnalysisOperation,
   ): AnalysisProfileCommitment | undefined;
   allowsSnapshotReplay(operation: AnalysisOperation): boolean;
-  /** Invalidate cached Evidence before an external command may mutate the target. */
-  invalidateSnapshotForExternalMutation(): void;
   recordWorkflowSnapshot(
     input: WorkflowSnapshotRecordInput,
   ): Result<null, EvidenceIntegrityError>;
   onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
   onAnalysisSnapshotChanged?(listener: () => void | Promise<void>): () => void;
+}
+
+/** Narrow session interface required for one-shot managed provider execution. */
+export interface ManagedBinarySessionPort extends Pick<
+  BinarySessionPort,
+  "open" | "execute" | "close"
+> {
+  executeForDirectObservation?(
+    operation: AnalysisOperation,
+    parameters?: Readonly<Record<string, JsonValue>>,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
 }

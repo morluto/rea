@@ -1,7 +1,7 @@
+import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   ownMember,
-  pointerTokens,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -49,7 +49,7 @@ export const storedMembers = (
     rules.flatMap((rule) => {
       if (rule.rule === "echo") return [rule.field];
       if (rule.rule === "reference") return [rule.member];
-      const tokens = rule.rule === "copy" ? pointerTokens(rule.from) : [];
+      const tokens = rule.rule === "copy" ? jsonPointerTokens(rule.from) : [];
       // A member also stored otherwise under its own name is not stored as sent.
       return tokens.length === 1 && !Object.hasOwn(entity, tokens[0]!)
         ? tokens
@@ -214,9 +214,8 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 /** The instant a string spells: an ISO date, or a time readClock reads. */
 const instantOf = (value: JsonValue | undefined): number | undefined => {
   if (typeof value !== "string") return undefined;
-  return DATE_ONLY.test(value)
-    ? Date.parse(`${value}T00:00:00Z`)
-    : readClock(value)?.ms;
+  // Date.parse can roll invalid calendar dates into the following month.
+  return readClock(DATE_ONLY.test(value) ? `${value}T00:00:00Z` : value)?.ms;
 };
 
 /** Body members sending a date or time that a constant named after the member lies within two days of: the application derived it, so another value would leave it stale. */

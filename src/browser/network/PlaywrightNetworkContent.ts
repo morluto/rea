@@ -1,9 +1,14 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { isTransportCredentialHeader } from "../../domain/explicitSensitiveValues.js";
 import {
   isJson,
   mediaTypeEssence,
 } from "../../domain/analysisView/recordedMediaType.js";
-import { createHash } from "node:crypto";
 import { safeParseJson } from "../../domain/safeJson.js";
+import {
+  browserContentType,
+  CONTENT_TYPE_HEADER,
+} from "../../domain/browserNetworkMediaType.js";
 
 import {
   AnalysisCancelledError,
@@ -22,6 +27,7 @@ import type {
   ScenarioRedactionScope,
 } from "../BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "../PlaywrightExecutionBoundary.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The producer seam for ordered, duplicate-preserving HTTP headers. */
 export interface NetworkHeadersSource {
@@ -53,13 +59,6 @@ export type NetworkBodyPreflight = (input: {
   readonly mediaType: string | undefined;
 }) => BrowserScenarioEventAdmission | Promise<BrowserScenarioEventAdmission>;
 
-const credentialHeaders = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-]);
-
 const errorMessage = (
   cause: unknown,
   secrets: BrowserScenarioSecrets,
@@ -76,12 +75,67 @@ const errorMessage = (
     : "Network read failed; diagnostic exceeds the allocation budget.";
 };
 
+export type NetworkBodyRedaction = "json" | "unknown" | "bytes";
+
+interface BodyMediaType {
+  readonly value: string | null;
+  readonly redaction: NetworkBodyRedaction;
+  readonly declarationNames: readonly string[];
+}
+
+interface NetworkHeaderCapture {
+  readonly headers: BrowserNetworkHeaders;
+  readonly mediaType: BodyMediaType;
+}
+
+export const networkBodyMediaType = (
+  value: string | null,
+  declarationNames: readonly string[] = [CONTENT_TYPE_HEADER],
+): BodyMediaType => ({
+  value,
+  declarationNames,
+  redaction:
+    value === null
+      ? "unknown"
+      : isJson(mediaTypeEssence(value))
+        ? "json"
+        : "bytes",
+});
+
+/** Publish only the type that can still be read after privacy projection. */
+const retainNetworkMediaType = (
+  { value, declarationNames }: BodyMediaType,
+  secrets: BrowserScenarioSecrets,
+  options: NetworkReadOptions,
+): string | null => {
+  if (value === null) return null;
+  if (
+    secrets.redactionAllocationCost(value.length, options.redactionScope) >
+      options.maxHeaderAllocationBytes ||
+    declarationNames.some(
+      (name) => secrets.redact(name, options.redactionScope) !== name,
+    ) ||
+    secrets
+      .redactBytes(Buffer.from(value), options.redactionScope)
+      .toString("utf8") !== value
+  )
+    return null;
+  return value;
+};
+
 /** Read actual producer headers without flattening duplicates or exposing credentials. */
 export const captureNetworkHeaders = async (
   source: NetworkHeadersSource,
+  retainValues: boolean,
   secrets: BrowserScenarioSecrets,
   options: NetworkReadOptions,
-): Promise<BrowserNetworkHeaders> => {
+): Promise<NetworkHeaderCapture> => {
+  const unavailable = (message: string): NetworkHeaderCapture => ({
+    headers: retainValues
+      ? { state: "unavailable", message }
+      : { state: "not_requested" },
+    mediaType: networkBodyMediaType(null),
+  });
   try {
     const headers = await withPlaywrightExecutionBoundary(
       () => source.headersArray(),
@@ -93,41 +147,57 @@ export const captureNetworkHeaders = async (
       BrowserNetworkHeaders,
       { state: "captured" }
     >["items"] = [];
+    const declarations: string[] = [];
+    const declarationNames: string[] = [];
+    let typeRedacted = false;
     for (const { name, value } of headers) {
-      const credential = credentialHeaders.has(name.toLowerCase());
+      const contentType = name.toLowerCase() === CONTENT_TYPE_HEADER;
+      if (!retainValues && !contentType) continue;
+      const credential = isTransportCredentialHeader(name);
       cost +=
         secrets.redactionAllocationCost(
           name.length + (credential ? 0 : value.length),
           options.redactionScope,
         ) + 128;
       if (cost > options.maxHeaderAllocationBytes)
-        return {
-          state: "unavailable",
-          message: `Headers exceed the ${String(options.maxHeaderAllocationBytes)}-byte allocation budget.`,
-        };
+        return unavailable(
+          `Headers exceed the ${String(options.maxHeaderAllocationBytes)}-byte allocation budget.`,
+        );
+      if (contentType) {
+        declarationNames.push(name);
+        declarations.push(value);
+      }
+      if (!retainValues) continue;
       const safeName = secrets.redact(name, options.redactionScope);
       const safeValue = credential
         ? null
         : secrets
             .redactBytes(Buffer.from(value), options.redactionScope)
             .toString("utf8");
-      items.push({
-        name: safeName,
-        value: safeValue,
-        redacted: credential || safeName !== name || safeValue !== value,
-      });
+      const redacted = credential || safeName !== name || safeValue !== value;
+      items.push({ name: safeName, value: safeValue, redacted });
+      if (contentType) typeRedacted ||= redacted;
     }
-    return { state: "captured", items };
-  } catch (cause: unknown) {
+    const observed = browserContentType(declarations);
+    const mediaType = networkBodyMediaType(
+      observed.state === "known" ? observed.value : null,
+      declarationNames,
+    );
     return {
-      state: "unavailable",
-      message: errorMessage(
+      headers: retainValues
+        ? { state: "captured", items }
+        : { state: "not_requested" },
+      mediaType: typeRedacted ? { ...mediaType, value: null } : mediaType,
+    };
+  } catch (cause: unknown) {
+    return unavailable(
+      errorMessage(
         cause,
         secrets,
         options.maxMetadataAllocationBytes,
         options.redactionScope,
       ),
-    };
+    );
   }
 };
 
@@ -135,7 +205,7 @@ export const captureNetworkHeaders = async (
 export const captureNetworkBody = async (
   read: () => Promise<Buffer | null>,
   phase: "request" | "response",
-  source: NetworkHeadersSource,
+  getMediaType: () => BodyMediaType | Promise<BodyMediaType>,
   secrets: BrowserScenarioSecrets,
   options: NetworkReadOptions,
   preflight?: NetworkBodyPreflight,
@@ -173,7 +243,6 @@ export const captureNetworkBody = async (
       );
       if (!protection.retainBody) return { state: "not_requested" };
     }
-    const contentType = source.headers()["content-type"];
     const bodyAllocationCost = secrets.redactionAllocationCost(
       Math.max(observed.length, sourceBody.length),
       options.redactionScope,
@@ -194,52 +263,33 @@ export const captureNetworkBody = async (
         limit_allocation_bytes: maxBodyAllocationBytes,
         observed_allocation_bytes: observedBodyAllocationBytes,
       };
-    if (
-      contentType !== undefined &&
-      secrets.redactionAllocationCost(
-        contentType.length,
-        options.redactionScope,
-      ) > options.maxHeaderAllocationBytes
-    )
-      return {
-        state: "unavailable",
-        reason: "body-allocation-limit",
-        message:
-          "Content type exceeds the selected network header allocation budget.",
-        limit_allocation_bytes: options.maxHeaderAllocationBytes,
-        observed_allocation_bytes: secrets.redactionAllocationCost(
-          contentType.length,
-          options.redactionScope,
-        ),
-      };
-    const jsonBody =
-      protection !== undefined ||
-      (contentType !== undefined && isJson(mediaTypeEssence(contentType)));
+    const mediaType = await getMediaType();
     const admission = await preflight?.({
       observedBytes: observed.length,
       allocationBytes: observedBodyAllocationBytes,
-      mediaType: contentType,
+      mediaType: mediaType.value ?? undefined,
     });
     if (admission?.status === "omitted")
       return { state: "omitted", reason: admission.reason };
-    if (protection === undefined && jsonBody)
-      sourceBody = secrets.redactJsonBody(
+    let jsonBody = protection !== undefined;
+    if (protection === undefined && mediaType.redaction !== "bytes") {
+      const redacted = secrets.redactJsonBody(
         observed,
         {
           maxBytes: options.maxBodyBytes,
           maxAllocationBytes: options.maxBodyAllocationBytes,
         },
         options.redactionScope,
+        mediaType.redaction,
       );
+      sourceBody = redacted.bytes;
+      jsonBody = redacted.json;
+    }
     const retained = secrets.redactBytes(sourceBody, options.redactionScope);
     if (
       jsonBody &&
       !retained.equals(sourceBody) &&
-      !safeParseJson(
-        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-          retained,
-        ),
-      ).ok
+      !safeParseJson(decodeStrictUtf8(retained, "preserve")).ok
     )
       return {
         state: "unavailable",
@@ -265,13 +315,9 @@ export const captureNetworkBody = async (
       encoding: "base64",
       content: retained.toString("base64"),
       bytes: retained.length,
-      sha256: createHash("sha256").update(retained).digest("hex"),
-      media_type:
-        contentType === undefined
-          ? null
-          : secrets
-              .redactBytes(Buffer.from(contentType), options.redactionScope)
-              .toString("utf8"),
+      sha256: sha256Hex(retained),
+      media_type: retainNetworkMediaType(mediaType, secrets, options),
+      media_type_source: "content-type-header",
       redacted: !retained.equals(observed),
     };
   } catch (cause: unknown) {

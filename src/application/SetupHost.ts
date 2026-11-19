@@ -1,11 +1,16 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
 } from "./ClientConfigurationCleanup.js";
 import { access } from "node:fs/promises";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../resources/index.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
@@ -27,7 +32,7 @@ import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import {
   clientEvidencePaths,
-  supportedClients,
+  resolveSupportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
 import {
@@ -61,15 +66,12 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
-import {
-  AnalysisCleanupLeaseGroup,
-  type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { bindRegularFileCleanup } from "./RegularFileRead.js";
+import { bindRegularFileCleanup } from "../process/RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import { systemDesktopBuildSetupHost } from "../desktop/DesktopBuildSetupHost.js";
 import { clientEnvironment } from "./SetupPlan.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * The launcher setup registers, and why it must not be registered when it
@@ -299,10 +301,11 @@ export const systemSetupHost = (
       }),
     detectedClients: () => detectClients(homeDirectory, platform, environment),
     supportedClients: () =>
-      Promise.resolve(supportedClients(homeDirectory, platform, environment)),
+      resolveSupportedClients(homeDirectory, platform, environment),
     ...clientConfigurationOperations(
       resources,
       doctorHost.resolveProviderRequestBudget,
+      platform,
     ),
     skillNeedsInstall: (clientIds) =>
       canonicalSkillNeedsInstall(
@@ -363,6 +366,7 @@ const setupInstallerDiagnostic = (
 const clientConfigurationOperations = (
   resources: ArtifactResourceScope,
   resolveProviderRequestBudget: DoctorHost["resolveProviderRequestBudget"],
+  platform: NodeJS.Platform,
 ) => ({
   configureClient: (
     client: SetupClient,
@@ -377,6 +381,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           ),
     ),
   clientNeedsConfigure: (
@@ -392,6 +397,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           )),
     ),
   inspectClientConfiguration: (
@@ -405,6 +411,7 @@ const clientConfigurationOperations = (
         providerEnvironment,
         command,
         resolveProviderRequestBudget,
+        platform,
       ),
     ),
 });
@@ -461,18 +468,23 @@ const configurationCleanupError = (
   return error;
 };
 
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /** Detect supported agents from their config files or stable installation markers. */
 export const detectClients = async (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<readonly SetupClient[]> => {
   const detected: SetupClient[] = [];
-  for (const candidate of supportedClients(home, platform, environment)) {
-    if (candidate.configPathError !== undefined) continue;
+  for (const candidate of await resolveSupportedClients(
+    home,
+    platform,
+    environment,
+  )) {
+    if (
+      candidate.configPathError !== undefined ||
+      candidate.registrationApplicability === true
+    )
+      continue;
     if (await clientEvidencePresent(candidate)) detected.push(candidate);
   }
   return detected;

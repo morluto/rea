@@ -140,9 +140,9 @@ describe("Swift classification through MCP", () => {
           ? ok([{ address: "0x1", value: "$s4main4PairVMa" }])
           : err(failure),
     });
-    expect(await tools.execute("analyze_swift_types", {})).toEqual(
-      err(failure),
-    );
+    expect(
+      await tools.executeValidated({ name: "analyze_swift_types", input: {} }),
+    ).toEqual(err(failure));
   });
 
   it("returns cancellation during the symbol join", async () => {
@@ -154,9 +154,8 @@ describe("Swift classification through MCP", () => {
         return ok([{ address: "0x1", value: "$s4main4PairVMa" }]);
       },
     });
-    const result = await tools.execute(
-      "analyze_swift_types",
-      {},
+    const result = await tools.executeValidated(
+      { name: "analyze_swift_types", input: {} },
       controller.signal,
     );
     expect(result).toMatchObject({

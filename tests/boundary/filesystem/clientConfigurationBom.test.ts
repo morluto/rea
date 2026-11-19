@@ -15,10 +15,8 @@ import {
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
-import {
-  supportedClientRegistrationProfile,
-  supportedClients,
-} from "../../../src/application/SupportedClients.js";
+import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

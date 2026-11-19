@@ -1,16 +1,20 @@
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
-import { projectArtifactCloseFailure } from "../../artifacts/StableArtifactFailure.js";
 import {
+  projectArtifactCloseFailure,
+  imageFileSizeRemediation,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeLoadConfigPort } from "../../application/binaryDiagnostics/PeLoadConfigPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  type FixedCeilingFacts,
+} from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
   MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS,
@@ -20,7 +24,7 @@ import { err, ok } from "../../domain/result.js";
 import { PE_LOAD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeLoadConfig,
-  PeLoadConfigLimitFailure,
+  PE_LOAD_CONFIG_LIMITS,
   type PeLoadConfigLimit,
 } from "./PeLoadConfigParser.js";
 
@@ -74,14 +78,10 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
   }
 }
 
-const fileSizeRemediation = (input: InspectPeLoadConfigInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
 const limitRecovery = (
   limit: PeLoadConfigLimit | null,
   input: InspectPeLoadConfigInput,
+  ceiling: FixedCeilingFacts,
 ): ResourceConstraintRecovery =>
   limit === "callbacks"
     ? {
@@ -91,7 +91,11 @@ const limitRecovery = (
             ? `The image exceeds the ${String(MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS)}-callback ceiling; select a smaller artifact.`
             : `Raise max_callbacks above ${String(input.max_callbacks)} or select a smaller artifact.`,
       }
-    : fixedAllowanceOptions("The PE structural decoding allowance", "parser");
+    : fixedAllowanceOptions(
+        "The PE structural decoding allowance",
+        "parser",
+        ceiling,
+      );
 
 const peLoadConfigFailure = (
   cause: unknown,
@@ -104,10 +108,13 @@ const peLoadConfigFailure = (
     {
       operation: OPERATION,
       providerId: PE_LOAD_CONFIG_PROVIDER.id,
-      fileSizeRemediation: () => fileSizeRemediation(input),
-      limit: (failure) =>
-        failure instanceof PeLoadConfigLimitFailure ? failure.limit : null,
-      limitRecovery: (limit) => limitRecovery(limit, input),
+      fileSizeRemediation: () =>
+        imageFileSizeRemediation(
+          input.max_file_bytes,
+          MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
+        ),
+      limits: PE_LOAD_CONFIG_LIMITS,
+      limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
     },
     snapshot,
   );

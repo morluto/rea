@@ -6,7 +6,10 @@ import {
   MIN_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   inspectV8CodeCacheInputSchema,
 } from "../domain/v8/v8CodeCache.js";
-import { V8CodeCacheBudgetFailure } from "./V8CodeCache.errors.js";
+import {
+  v8CodeCacheBudgetFailure,
+  v8CodeCacheBudgetLimitOf,
+} from "./V8CodeCache.errors.js";
 import {
   observationBudgetRecovery,
   observationBudgetRemediation,
@@ -28,8 +31,14 @@ const input = (overrides: Record<string, number> = {}) =>
     ...overrides,
   });
 
-const exhausted = (limit: number) =>
-  new V8CodeCacheBudgetFailure("max_strings", limit, "budget exhausted");
+const exhausted = (limit: number) => {
+  const parsed = v8CodeCacheBudgetLimitOf(
+    v8CodeCacheBudgetFailure("max_strings", limit, "budget exhausted"),
+  );
+  if (parsed === undefined)
+    throw new Error("Expected V8 code cache budget limit");
+  return parsed;
+};
 
 it("leaves both retries open while both budgets have headroom", () => {
   // The default `min_string_bytes` is the schema minimum, so lowering it is not an
@@ -90,13 +99,14 @@ it("drops only the count retry when max_strings is at its ceiling", () => {
 });
 
 it("requires a smaller artifact only when the run length cannot drop", () => {
+  const limit = v8CodeCacheBudgetLimitOf(
+    v8CodeCacheBudgetFailure("min_string_bytes", 4096, "budget exhausted"),
+  );
+  if (limit === undefined)
+    throw new Error("Expected V8 code cache budget limit");
   expect(
     observationBudgetRecovery(
-      new V8CodeCacheBudgetFailure(
-        "min_string_bytes",
-        4096,
-        "budget exhausted",
-      ),
+      limit,
       input({ min_string_bytes: MIN_INSPECT_V8_CODE_CACHE_STRING_BYTES }),
     ),
   ).toMatchObject({

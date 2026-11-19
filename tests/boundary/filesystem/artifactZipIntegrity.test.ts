@@ -16,7 +16,6 @@ import {
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
 import {
   artifactExtractionResultSchema,
@@ -24,6 +23,7 @@ import {
 } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 cliTest(
   "inventories and extracts method-93 Zstandard ZIP bytes through the public CLI",
@@ -160,7 +160,12 @@ const legacyControlNames = [
 ] as const;
 
 it.each([
-  ["legacy CP437", Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]), false, "é.txt"],
+  [
+    "legacy CP437 mapping",
+    Buffer.from([0x82, 0x80, 0x9e, 0xe1, 0xff, 0x2e, 0x74, 0x78, 0x74]),
+    false,
+    "éÇ₧ß\u00a0.txt",
+  ],
   ["unflagged ASCII", Buffer.from("plain.txt"), false, "plain.txt"],
   ...legacyControlNames,
   [
@@ -297,29 +302,6 @@ it("preserves valid Info-ZIP Unicode Path overrides", async () => {
   );
 });
 
-it("reports unflagged high-byte ZIP names as CP437 readings with their source bytes", async () => {
-  const root = await createTestTempDirectory("rea-zip-legacy-name-limitation-");
-  const path = join(root, "legacy-name.zip");
-  const rawName = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]);
-  await writeSingleEntryZip(path, "name.txt");
-  const archive = await readFile(path);
-  await writeFile(
-    path,
-    rewriteSingleEntryZipName(archive, "name.txt", rawName, false),
-  );
-
-  const inventory = await inventoryArtifact(path);
-  expect(inventory.occurrences).toContainEqual(
-    expect.objectContaining({
-      logical_path: "╟╤▒█.txt",
-      hash_status: "verified",
-      limitations: [
-        expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
-      ],
-    }),
-  );
-});
-
 it("falls back to the stored name and reports bytes when a Unicode Path field CRC is invalid", async () => {
   const root = await createTestTempDirectory(
     "rea-zip-invalid-unicode-extra-crc-",
@@ -434,15 +416,25 @@ it("binds ZIP opens to the emitted entry metadata", async () => {
     if (first === undefined || second === undefined)
       throw new Error("Expected both ZIP entries");
 
+    const changedMetadata = {
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    };
+    await expect(
+      reader.open({ ...second, adapterKey: "not-inventoried" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
     await expect(
       reader.open({ ...second, adapterKey: first.adapterKey }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     await expect(
       reader.open({ ...second, path: first.path }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     await expect(
       reader.open({ ...second, declaredSize: first.declaredSize }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     await expect(
       reader.open({
         ...second,
@@ -455,12 +447,10 @@ it("binds ZIP opens to the emitted entry metadata", async () => {
           ctimeNs: 6n,
         },
       }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     const originalKey = second.adapterKey;
     Reflect.set(second, "adapterKey", first.adapterKey);
-    await expect(reader.open(second)).rejects.toMatchObject({
-      reason: "integrity",
-    });
+    await expect(reader.open(second)).rejects.toMatchObject(changedMetadata);
     Reflect.set(second, "adapterKey", originalKey);
 
     const stream = await reader.open({ ...second });

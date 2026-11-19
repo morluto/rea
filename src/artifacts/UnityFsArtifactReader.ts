@@ -1,4 +1,5 @@
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
@@ -7,20 +8,21 @@ import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  ArtifactFileSource,
+} from "../resources/index.js";
+import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type {
   ArtifactFormatMetadata,
   UnityFsMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
 import {
   decodeUnityFsLz4,
@@ -60,7 +62,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
   #header: UnityFsMetadata | undefined;
   #blocks: readonly UnityFsBlock[] = [];
   #dataStart = 0;
-  #remainingDecodeBytes = 0;
+  #decodeBytes = new Budget(0);
   #remainingReadOperations = 0;
   #cachedBlock: { readonly index: number; readonly bytes: Buffer } | undefined;
   #closing = false;
@@ -108,6 +110,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
               : "UnityFS blocks-and-directory table uses an unsupported compression; member identities remain unknown.",
         ],
       });
+      this.#assertOpen(signal);
       return;
     }
     let index = 0;
@@ -118,17 +121,18 @@ export class UnityFsArtifactReader implements ArtifactReader {
     }
     // A close while paused at yield must not turn a cleared map into completion.
     this.#assertOpen(signal);
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const state = this.#entries.get(entry.adapterKey);
-      if (state === undefined || !sameArtifactEntry(entry, state.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "UnityFS entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        state?.entry,
+        "UnityFS entry does not match its owning inventory",
+      );
       // Validate carrier freshness even when a cached block or unavailable fact suffices.
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
@@ -153,46 +157,17 @@ export class UnityFsArtifactReader implements ArtifactReader {
           { boundary: "capacity" },
         );
       const controller = new AbortController();
-      const output = Readable.from(
+      const output = ownAsyncArtifactStream(
         this.#memberChunks(handle, state, controller.signal),
+        controller,
         {
-          objectMode: false,
+          scope: this.#scope,
+          streams: this.#streams,
+          signal,
+          label: "UnityFS",
           highWaterMark: CHUNK_BYTES,
         },
       );
-      const onAbort = (): void => {
-        controller.abort(signal?.reason);
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "UnityFS member read cancelled",
-            { cause: signal?.reason },
-          ),
-        );
-      };
-      output.on("error", () => undefined);
-      this.#streams.set(output, controller);
-      const completion = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          signal?.removeEventListener("abort", onAbort);
-          this.#streams.delete(output);
-          resolve();
-        });
-      });
-      // Readable.from waits for its async iterator to retire before close. Keep
-      // that whole lifetime owned, including a suspended positional read/decoder.
-      void this.#scope
-        .run(() => completion)
-        .catch((cause: unknown) => {
-          controller.abort(cause);
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("UnityFS stream ownership failed", { cause }),
-          );
-        });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted === true) onAbort();
       return output;
     });
   }
@@ -287,7 +262,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
     this.#header = preparedMetadata;
     this.#dataStart = dataStart;
     this.#blocks = readableBlocks;
-    this.#remainingDecodeBytes = budget;
+    this.#decodeBytes = new Budget(budget);
     this.#entries = registered.entries;
     this.#remainingReadOperations = registered.remainingReadOperations;
   }
@@ -425,15 +400,16 @@ export class UnityFsArtifactReader implements ArtifactReader {
   ): Promise<Buffer> {
     if (this.#cachedBlock?.index === index) return this.#cachedBlock.bytes;
     const block = this.#blocks[index]!;
-    if (block.uncompressedSize > this.#remainingDecodeBytes)
-      throw expansionLimit(
+    const exhausted = () =>
+      expansionLimit(
         "cumulative block decoding",
         BigInt(block.uncompressedSize),
-        this.#remainingDecodeBytes,
+        this.#decodeBytes.remaining,
       );
+    if (block.uncompressedSize > this.#decodeBytes.remaining) throw exhausted();
     // Charge attempts too, before I/O/allocation; failed/cancelled work is not free.
     this.#reserveMemberRead();
-    this.#remainingDecodeBytes -= block.uncompressedSize;
+    this.#decodeBytes.charge(block.uncompressedSize, exhausted);
     const encoded = await readArtifactFileBytes(
       handle,
       this.#dataStart + block.compressedStart,

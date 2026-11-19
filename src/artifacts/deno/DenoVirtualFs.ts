@@ -1,35 +1,37 @@
-import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { normalizeArtifactPath } from "../ArtifactPaths.js";
+import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
+  normalizeArtifactPath,
+  abortIfNeeded,
+} from "../../resources/index.js";
 
 /** Directory, file, and symlink records admitted from one virtual filesystem. */
-export const MAX_DENO_VFS_ENTRIES = 100_000;
+const MAX_DENO_VFS_ENTRIES = 100_000;
 /** Logical path parts admitted before an indexed fallback. */
 export const MAX_DENO_LOGICAL_PATH_PARTS = 256;
 /**
  * UTF-16 code units retained for one virtual name. Longer names are indexed
  * and the original spelling is not copied into members.
  */
-export const MAX_DENO_VFS_NAME_UNITS = 4_096;
+const MAX_DENO_VFS_NAME_UNITS = 4_096;
 /**
  * Nested `walkEntries` calls. This is the recursion budget, separate from
  * the logical-path part fallback.
  */
-export const MAX_DENO_VFS_DEPTH = 512;
+const MAX_DENO_VFS_DEPTH = 512;
 /**
  * UTF-16 code units of the source path built for each entry, directories
  * included, plus retained symlink parts. Each path is rebuilt and normalized
  * once, so this also bounds the synchronous walk.
  */
-export const MAX_DENO_VFS_RETAINED_UNITS = 32 * 1024 * 1024;
+const MAX_DENO_VFS_RETAINED_UNITS = 32 * 1024 * 1024;
 /** POSIX NAME_MAX. A longer component makes extraction fail with ENAMETOOLONG. */
-export const MAX_DENO_PATH_COMPONENT_BYTES = 255;
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 /**
  * Natural logical path bytes. Half of the 1,024-byte Darwin PATH_MAX, leaving
  * the rest for the output root, so a long path does not abort extraction.
  */
-export const MAX_DENO_LOGICAL_PATH_BYTES = 512;
+const MAX_DENO_LOGICAL_PATH_BYTES = 512;
 /** Logical path suffixes of the regions stored beside an original file. */
 export const DENO_CHILD_SUFFIXES = {
   transpiled: ".deno-transpiled",
@@ -495,29 +497,36 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
   return Object.fromEntries(Object.entries(value));
 };
 
-const denoVfsEntryLimit = (count: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem entry allowance of ${String(MAX_DENO_VFS_ENTRIES)} entries`;
-  const message = `Deno compile virtual filesystem claims ${String(count)} entries, exceeding MAX_DENO_VFS_ENTRIES (${String(MAX_DENO_VFS_ENTRIES)} entries). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "capacity",
-    userMessage: message,
-  });
-};
+const denoVfsEntryLimit = (count: number): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: "The Deno compile virtual filesystem entry allowance",
+      kind: "count",
+      limit: MAX_DENO_VFS_ENTRIES,
+      unit: "entries",
+    },
+    `Deno compile virtual filesystem claims ${String(count)} entries, exceeding MAX_DENO_VFS_ENTRIES (${String(MAX_DENO_VFS_ENTRIES)} entries).`,
+  );
 
-const denoVfsDepthLimit = (depth: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem depth allowance of ${String(MAX_DENO_VFS_DEPTH)} levels`;
-  const message = `Deno compile virtual filesystem nests ${String(depth)} levels, exceeding MAX_DENO_VFS_DEPTH (${String(MAX_DENO_VFS_DEPTH)} levels). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "capacity",
-    userMessage: message,
-  });
-};
+const denoVfsDepthLimit = (depth: number): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: "The Deno compile virtual filesystem depth allowance",
+      kind: "count",
+      limit: MAX_DENO_VFS_DEPTH,
+      unit: "levels",
+    },
+    `Deno compile virtual filesystem nests ${String(depth)} levels, exceeding MAX_DENO_VFS_DEPTH (${String(MAX_DENO_VFS_DEPTH)} levels).`,
+  );
 
-const denoVfsRetainedLimit = (units: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem retained name allowance of ${String(MAX_DENO_VFS_RETAINED_UNITS)} UTF-16 code units`;
-  const message = `Deno compile virtual filesystem paths use ${String(units)} UTF-16 code units, exceeding MAX_DENO_VFS_RETAINED_UNITS (${String(MAX_DENO_VFS_RETAINED_UNITS)} units). ${fixedAllowanceRemediation(allowance, "bytes")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "memory",
-    userMessage: message,
-  });
-};
+const denoVfsRetainedLimit = (units: number): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: "The Deno compile virtual filesystem retained name allowance",
+      kind: "bytes",
+      limit: MAX_DENO_VFS_RETAINED_UNITS,
+      unit: "UTF-16 code units",
+    },
+    `Deno compile virtual filesystem paths use ${String(units)} UTF-16 code units, exceeding MAX_DENO_VFS_RETAINED_UNITS (${String(MAX_DENO_VFS_RETAINED_UNITS)} units).`,
+    "memory",
+  );

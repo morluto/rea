@@ -1,30 +1,33 @@
+import type { FixedCeilingFacts } from "../../domain/fixedAllowanceRemediation.js";
 import {
-  stableArtifactInputRecovery,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
+  projectSelectedArtifactFileFailure,
+  stableArtifactInputFailure,
   projectStableArtifactFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
-import {
+  readerIntegrityFailure,
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   type ResourceConstraintRecovery,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+  binaryResourceCeiling,
+  binaryResourceAllowance,
+} from "../../domain/binaryContainer.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -34,8 +37,13 @@ interface PeBinaryFailureOptions<Limit extends string> {
   readonly operation: string;
   readonly providerId: string;
   readonly fileSizeRemediation: () => string;
-  readonly limit: (cause: BinaryResourceFailure) => Limit | null;
-  readonly limitRecovery: (limit: Limit | null) => ResourceConstraintRecovery;
+  /** The allowances the parser names in its `BinaryResourceFailure`. */
+  readonly limits: readonly Limit[];
+  /** Recovery for the named allowance, or the structural allowance (`null`) at `ceiling`. */
+  readonly limitRecovery: (
+    limit: Limit | null,
+    ceiling: FixedCeilingFacts,
+  ) => ResourceConstraintRecovery;
 }
 
 const peBinaryFailurePrimary = <Limit extends string>(
@@ -52,45 +60,25 @@ const peBinaryFailurePrimary = <Limit extends string>(
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(
-      operation,
-      input.path,
-      cause.message,
-      { cause },
-    );
+    return readerIntegrityFailure(operation, input.path, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (cause instanceof BinaryResourceFailure) {
-    const limit = options.limit(cause);
-    return new AnalysisResourceConstraintError(
+    return cancelledBy(
       operation,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes, limit },
-      { cause, ...options.limitRecovery(limit) },
+      carriedReason(artifactFileCancellationCause(cause)),
     );
+  if (cause instanceof BinaryResourceFailure) {
+    const limit = binaryResourceAllowance(cause, options.limits);
+    return parseLimitConstraint(operation, "capacity", cause, {
+      path: input.path,
+      ...options.limitRecovery(limit, binaryResourceCeiling(cause)),
+    });
   }
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          operation,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(operation, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(operation, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -108,31 +96,20 @@ const peBinaryFailurePrimary = <Limit extends string>(
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        operation,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, operation);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(operation, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    operation,
+    input.path,
+    "image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(providerId, operation, {
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

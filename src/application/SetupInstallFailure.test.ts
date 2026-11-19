@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
+import { unsupportedLinuxHopperSetupRemediation } from "./LinuxHopper.js";
 import { setupInstallFailure } from "./SetupInstallFailure.js";
 
 describe("macOS Hopper setup failure projection", () => {
@@ -41,21 +42,37 @@ describe("macOS Hopper setup failure projection", () => {
   });
 
   it("names the detected Linux host when automated Hopper setup does not apply", () => {
+    const distribution = {
+      id: "bazzite",
+      versionId: "43",
+      packageFamily: "rpm",
+      architecture: "x64",
+      hopperSetupSupported: false,
+    } as const;
     const result = setupInstallFailure("unsupported_host", {
       platform: "linux",
-      distribution: {
-        id: "bazzite",
-        versionId: "43",
-        packageFamily: "rpm",
-        architecture: "x64",
-        hopperSetupSupported: false,
-      },
+      distribution,
     });
     expect(result.code).toBe("unsupported_host");
-    expect(result.remediation).toContain(
-      "This host reports bazzite 43, rpm packages on x64.",
+    expect(result.remediation).toBe(
+      unsupportedLinuxHopperSetupRemediation(distribution),
     );
-    expect(result.remediation).toContain("Ubuntu 24.04+");
+    for (const fact of ["bazzite", "43", "rpm", "x64", "Ubuntu 24.04+"])
+      expect(result.remediation).toContain(fact);
+  });
+});
+
+describe("Linux Hopper launcher digest projection", () => {
+  it("keeps the public integrity code without advising a retry", () => {
+    const failure = setupInstallFailure("launcher_digest_mismatch", {
+      platform: "linux",
+    });
+    expect(failure.code).toBe("integrity_mismatch");
+    expect(failure.remediation).toMatch(/signature verified/u);
+    expect(failure.remediation).not.toMatch(/^Retry setup/u);
+    expect(failure.remediation).not.toBe(
+      setupInstallFailure("integrity", { platform: "linux" }).remediation,
+    );
   });
 });
 
