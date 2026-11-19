@@ -9,7 +9,7 @@ import { formatCliOutput } from "./cli/cliOutputFormatter.js";
 import {
   parseOutputFilter,
   type OutputFilterPath,
-  type UnclosedOutputFilterSlice,
+  type OutputFilterError,
 } from "./cli/outputFilter.js";
 import type { Result } from "./domain/result.js";
 
@@ -104,7 +104,7 @@ interface CliOutputControls {
   readonly filterOutput: string | undefined;
   /** `--filter-output` parsed once; a parse failure fails validation. */
   readonly filterPaths:
-    | Result<readonly OutputFilterPath[], UnclosedOutputFilterSlice>
+    | Result<readonly OutputFilterPath[], OutputFilterError>
     | undefined;
   readonly columns: readonly string[] | undefined;
   readonly format: CliOutputFormat;
@@ -279,7 +279,9 @@ const validateCliOutputControls = (
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "INVALID_OUTPUT_FILTER",
       message:
-        "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+        filterPaths.error.kind === "unclosed_slice"
+          ? "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output."
+          : "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
     };
   const delimited = format === "csv" || format === "tsv";
   // Name missing delimited controls before their combination checks; preserve

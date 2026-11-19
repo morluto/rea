@@ -1,5 +1,9 @@
 import { BinaryReader } from "./binaryContainer.js";
 import {
+  ZIP_LOCAL_HEADER_BYTES,
+  zipLocalDataOffset,
+} from "./zip/zipLocalHeader.js";
+import {
   zipEndOfCentralDirectoryCandidates,
   zipEndUsesSingleVolume,
   ZIP_EOCD_BYTES,
@@ -45,7 +49,6 @@ export const hasZipSignature = (bytes: Uint8Array): boolean =>
   );
 
 const CENTRAL_DIRECTORY_HEADER = 0x02014b50;
-const LOCAL_FILE_HEADER = 0x04034b50;
 const CENTRAL_HEADER_BYTES = 46;
 
 /** Positional read of at most `length` bytes; a short result means end of file. */
@@ -98,12 +101,14 @@ export const locateTrailingZipArchive = async (
     )
       continue;
     const firstLocal = headerReader.u32(42) + shift;
-    if (firstLocal === 0 || firstLocal >= directory) continue;
-    const local = Buffer.from(await read(firstLocal, 4));
-    if (
-      local.length === 4 &&
-      new BinaryReader(local, true, "zip").u32(0) === LOCAL_FILE_HEADER
-    )
+    if (firstLocal === 0 || firstLocal > directory - ZIP_LOCAL_HEADER_BYTES)
+      continue;
+    const local = Buffer.from(await read(firstLocal, ZIP_LOCAL_HEADER_BYTES));
+    const dataOffset = zipLocalDataOffset(
+      new BinaryReader(local, true, "zip"),
+      firstLocal,
+    );
+    if (dataOffset !== undefined && dataOffset <= directory)
       return { leadingBytes: firstLocal };
   }
   return undefined;

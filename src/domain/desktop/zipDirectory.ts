@@ -41,9 +41,15 @@ const directoryEnd = (reader: BinaryReader) => {
   const eocd = found.value;
   const end = eocd.offset;
   const { totalEntries, directorySize, directoryOffset } = eocd;
-  const classic = zipEndUsesSingleVolume(eocd)
-    ? { end, size: directorySize, declaredOffset: directoryOffset }
-    : undefined;
+  const classic =
+    zipEndUsesSingleVolume(eocd) && eocd.entriesOnDisk === totalEntries
+      ? {
+          end,
+          size: directorySize,
+          declaredOffset: directoryOffset,
+          entries: BigInt(totalEntries),
+        }
+      : undefined;
   const locator = end - ZIP64_LOCATOR.bytes;
   // Like Python's zipfile, follow a locator whether or not the classic record defers to it.
   if (locator < 0 || reader.u32(locator) !== ZIP64_LOCATOR.signature)
@@ -59,13 +65,15 @@ const directoryEnd = (reader: BinaryReader) => {
     if (!record.ok || record.value.end !== locator) continue;
     if (
       !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
-      !zip64EndUsesSingleVolume(reader, locator, at)
+      !zip64EndUsesSingleVolume(reader, locator, at) ||
+      record.value.entriesOnDisk !== record.value.totalEntries
     )
       return undefined;
     return {
       end: at,
       size: Number(record.value.directorySize),
       declaredOffset: Number(record.value.directoryOffset),
+      entries: record.value.totalEntries,
     };
   }
   // Keep the classic values for a stray locator when the classic record is complete.
@@ -159,6 +167,7 @@ export const scanZipDirectory = (
   if (start < 0) return undefined;
   const records: Uint8Array[] = [];
   let count = 0;
+  let seen = 0;
   for (let at = start; at < located.end;) {
     if (
       at + CENTRAL_HEADER_BYTES > located.end ||
@@ -186,8 +195,10 @@ export const scanZipDirectory = (
       count += 1;
       if (records.length < keep) records.push(bytes.subarray(at, next));
     }
+    seen += 1;
     at = next;
   }
+  if (BigInt(seen) !== located.entries) return undefined;
   return { start, declaredOffset: located.declaredOffset, records, count };
 };
 

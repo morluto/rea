@@ -227,6 +227,20 @@ cliTest(
         details: { path },
       });
     }
+    for (const at of [
+      fixture.eocdOffset + 6,
+      fixture.recordOffset + 16,
+      fixture.recordOffset + 20,
+    ]) {
+      const bytes = Uint8Array.from(fixture.bytes);
+      new DataView(bytes.buffer).setUint16(at, 1, true);
+      await expectRefusal(cli, path, bytes, {
+        code: "unsupported_target",
+        category: "unsupported_target",
+        message: expect.stringContaining("selected single disk"),
+        details: { path },
+      });
+    }
     const split = Uint8Array.from(fixture.bytes);
     const view = new DataView(split.buffer);
     view.setUint32(fixture.locatorOffset + 4, 1, true);
