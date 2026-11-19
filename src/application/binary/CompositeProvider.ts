@@ -1,5 +1,6 @@
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import {
   closedAnalysisClientError,
   ProviderAdapterError,
@@ -32,36 +33,49 @@ const compositeProviderIdentity = (
   version: null,
 });
 
+/** A retained error needs only the release records, not the clients being closed. */
+const allClientsReleased = (releases: readonly AnalysisCleanupRelease[]) => ({
+  get cleanupReleased(): boolean {
+    return releases.every((release) => release.cleanupReleased);
+  },
+});
+
 const closeCompositeClients = (
   identity: ProviderIdentity,
   clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
 ): AnalysisClient["close"] => {
-  const completed = new Set<AnalysisClient>();
+  const releases = new WeakMap<AnalysisClient, AnalysisCleanupRelease>();
   return async (options) => {
     const outcomes = await Promise.all(
       [...clients.entries()].map(async ([provider, client]) => {
         const providerId = provider.identity().id;
-        if (completed.has(client)) return { providerId, result: ok(null) };
+        let release = releases.get(client);
+        if (release === undefined) {
+          release = new AnalysisCleanupRelease();
+          releases.set(client, release);
+        }
+        if (release.cleanupReleased)
+          return { providerId, release, result: ok(null) };
         const result = await closeAnalysisClient(client, providerId, options);
-        if (result.ok) completed.add(client);
-        return { providerId, result };
+        if (result.ok) release.confirm();
+        return { providerId, release, result };
       }),
     );
-    const failures = outcomes.flatMap(({ providerId, result }) =>
-      result.ok ? [] : [{ providerId, error: result.error }],
+    const failures = outcomes.flatMap(({ providerId, release, result }) =>
+      result.ok ? [] : [{ providerId, release, error: result.error }],
     );
     if (failures.length === 0) return ok(null);
     if (failures.length === 1) {
       const failure = failures[0];
       if (failure !== undefined) return err(failure.error);
     }
-    const resources = [
-      ...new Set(failures.flatMap(({ error }) => error.cleanupResources)),
-    ];
+    const unknownReleases = failures.flatMap(({ error, release }) =>
+      error.carriesCleanup ? [] : [release],
+    );
     return err(
       new ProviderCleanupError(
         identity.id,
-        resources,
+        [],
         {
           reason:
             "Multiple composed provider clients could not be confirmed closed.",
@@ -87,11 +101,9 @@ const closeCompositeClients = (
             "Composed provider cleanup failed.",
           ),
         },
-      ).bindCleanupDependencies(
-        failures
-          .map(({ error }) => error)
-          .filter((error) => error.cleanupIncomplete),
-      ),
+      )
+        .bindCleanupDependencies(failures.map(({ error }) => error))
+        .bindCleanupReleaseClaim(allClientsReleased(unknownReleases)),
     );
   };
 };

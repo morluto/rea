@@ -9,6 +9,8 @@ import {
   type ProviderIdentity,
 } from "../../ports/AnalysisProvider.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
 import { CompositeProvider } from "./CompositeProvider.js";
@@ -146,6 +148,69 @@ it("retains every failed child resource across composite cleanup retries", async
 
   expect(left.close).toHaveBeenCalledTimes(2);
   expect(right.close).toHaveBeenCalledTimes(2);
+});
+
+it.each(["live", "released", "unknown"] as const)(
+  "follows the second child's %s close outcome",
+  async (outcome) => {
+    const left = failingProvider("left", "address_name", "left-db");
+    const right = failingProvider("right", "procedure_info", "right-db");
+    const leftRelease = new AnalysisCleanupRelease();
+    const rightRelease = new AnalysisCleanupRelease();
+    leftRelease.bind(left.cleanupError);
+    if (outcome !== "unknown") rightRelease.bind(right.cleanupError);
+    else
+      right.close.mockResolvedValue(
+        err(new ProviderAdapterError("right", "close_binary", {})),
+      );
+    if (outcome === "released") rightRelease.confirm();
+    const client = new CompositeProvider([
+      left.provider,
+      right.provider,
+    ]).createClient(executableTarget);
+    await client.execute("address_name", {});
+    await client.execute("procedure_info", {});
+    const closed = await client.close();
+    if (closed.ok) throw new Error("Expected both child closes to fail");
+    expect(closed.error.cleanupIncomplete).toBe(true);
+    leftRelease.confirm();
+    expect(closed.error.cleanupIncomplete).toBe(outcome !== "released");
+    expect(closed.error.cleanupResources).toEqual(
+      outcome === "live" ? ["right-db"] : [],
+    );
+    rightRelease.confirm();
+    expect(closed.error.cleanupIncomplete).toBe(outcome === "unknown");
+    left.close.mockResolvedValue(ok(null));
+    right.close.mockResolvedValue(ok(null));
+    expect(await client.close()).toEqual(ok(null));
+    expect(closed.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+it("waits for each unconfirmed child to close on retry", async () => {
+  const left = failingProvider("left", "address_name", "left-db");
+  const right = failingProvider("right", "procedure_info", "right-db");
+  for (const child of [left, right])
+    child.close.mockResolvedValue(
+      err(
+        new ProviderAdapterError(child.provider.identity().id, "close_binary"),
+      ),
+    );
+  const client = new CompositeProvider([
+    left.provider,
+    right.provider,
+  ]).createClient(executableTarget);
+  await client.execute("address_name", {});
+  await client.execute("procedure_info", {});
+  const first = await client.close();
+  if (first.ok) throw new Error("Expected both child closes to fail");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  left.close.mockResolvedValue(ok(null));
+  expect((await client.close()).ok).toBe(false);
+  expect(first.error.cleanupIncomplete).toBe(true);
+  right.close.mockResolvedValue(ok(null));
+  expect(await client.close()).toEqual(ok(null));
+  expect(first.error.cleanupIncomplete).toBe(false);
 });
 
 it("preserves one child's typed cleanup error unchanged", async () => {
