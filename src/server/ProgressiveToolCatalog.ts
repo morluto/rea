@@ -57,6 +57,57 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  private rankMatches(query: string | undefined): string[] {
+    const words = (query ?? "")
+      .toLowerCase()
+      .split(/\s+/u)
+      .filter(Boolean);
+    if (words.length === 0) {
+      return [...this.tools.keys()].sort((left, right) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      );
+    }
+    const scored: Array<{
+      name: string;
+      allMatched: boolean;
+      wordHits: number;
+      nameHits: number;
+    }> = [];
+
+    for (const [name, tool] of this.tools) {
+      let wordHits = 0;
+      let nameHits = 0;
+      for (const word of words) {
+        if (!tool.search.includes(word)) continue;
+        wordHits++;
+        if (name.includes(word)) nameHits++;
+      }
+      if (wordHits > 0) {
+        scored.push({
+          name,
+          allMatched: wordHits === words.length,
+          wordHits,
+          nameHits,
+        });
+      }
+    }
+
+    scored.sort((left, right) => {
+      if (left.allMatched !== right.allMatched) {
+        return left.allMatched ? -1 : 1;
+      }
+      if (left.wordHits !== right.wordHits) {
+        return right.wordHits - left.wordHits;
+      }
+      if (left.nameHits !== right.nameHits) {
+        return right.nameHits - left.nameHits;
+      }
+      return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+    });
+
+    return scored.map((item) => item.name);
+  }
+
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {
     const names =
       input.names === undefined ? undefined : [...new Set(input.names)];
@@ -80,23 +131,7 @@ export class ProgressiveToolCatalog {
         ),
         false,
       );
-    const words = (input.query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
-    const matches =
-      names ??
-      [...this.tools]
-        .filter(([, tool]) => words.every((word) => tool.search.includes(word)))
-        .map(([name]) => name)
-        .sort((left, right) => {
-          const score = (name: string) =>
-            words.filter((word) => name.includes(word)).length;
-          return (
-            score(right) - score(left) ||
-            (left < right ? -1 : left > right ? 1 : 0)
-          );
-        });
+    const matches = names ?? this.rankMatches(input.query);
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
     const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));

@@ -215,3 +215,29 @@ it.each([
     expect(f.changed).not.toHaveBeenCalled();
   },
 );
+
+it("ranks multi-word task queries by relevance instead of failing with zero matches (#11707)", async () => {
+  const f = await connect();
+  // Multi-word query where no single tool matches all words:
+  const multiResult = await f.discover({
+    query: "binary alpha missing_token",
+    limit: 10,
+  });
+  expect(multiResult.isError).not.toBe(true);
+  expect(multiResult.structuredContent).toMatchObject({
+    total_matches: 2,
+    tools: [{ name: "alpha_sqlite" }, { name: "binary_session" }],
+  });
+
+  // When one tool matches all query words, it ranks strictly before partial matches:
+  const priorityResult = await f.discover({
+    query: "alpha sqlite inspection",
+    limit: 10,
+  });
+  expect(priorityResult.isError).not.toBe(true);
+  const toolNames = (
+    priorityResult.structuredContent as { tools: Array<{ name: string }> }
+  ).tools.map((t) => t.name);
+  expect(toolNames[0]).toBe("alpha_sqlite");
+  expect(toolNames.slice(1)).toEqual(["beta_sqlite", "binary_session"]);
+});
