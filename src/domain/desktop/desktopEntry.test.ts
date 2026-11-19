@@ -313,11 +313,19 @@ describe("unwrapDesktopCommand", () => {
   });
 });
 
-it("reads GLib's numeric terminal flag", () => {
-  const read = (flag: string) =>
+it.each([
+  ["1", true],
+  ["0", false],
+  ["\f1\t", true],
+  ["1\r ", true],
+  ["1\u00a0", false],
+  ["1\v", false],
+  ["true\u2028", false],
+  [String.raw`1\s`, false],
+] as const)("reads GLib's terminal flag %j as %s", (flag, terminal) => {
+  expect(
     parseDesktopEntry(
       `[Desktop Entry]\nName=Editor\nType=Application\nExec=editor\nTerminal=${flag}\n`,
-    );
-  expect(read("1")).toMatchObject({ ok: true, value: { terminal: true } });
-  expect(read("0")).toMatchObject({ ok: true, value: { terminal: false } });
+    ),
+  ).toMatchObject({ ok: true, value: { terminal } });
 });
