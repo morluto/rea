@@ -16,6 +16,8 @@ import { constants, zstdCompressSync } from "node:zlib";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
+import { buffer } from "node:stream/consumers";
+import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 
 import {
@@ -690,15 +692,12 @@ describe("ZipArtifactReader extraction finalization", () => {
       await writeFile(path, await writer.close());
       const held = holdZipProducerSettlement();
       const reader = new ZipArtifactReader(path, "zip");
+      let consuming: Promise<Buffer> | undefined;
       try {
         const entries: ArtifactEntry[] = [];
         for await (const entry of reader.entries()) entries.push(entry);
         const stream = await reader.open(entries[0]!);
-        const consuming = (async () => {
-          const chunks: Buffer[] = [];
-          for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-          return Buffer.concat(chunks);
-        })();
+        consuming = buffer(stream);
         let settled = false;
         void consuming.then(
           () => {
@@ -708,7 +707,11 @@ describe("ZipArtifactReader extraction finalization", () => {
             settled = true;
           },
         );
-        await held.reached;
+        await awaitAcknowledgement(
+          held.reached,
+          consuming,
+          "successful ZIP producer settlement",
+        );
         await setImmediate();
         expect(settled).toBe(false);
         expect(stream.readableEnded).toBe(false);
@@ -718,6 +721,7 @@ describe("ZipArtifactReader extraction finalization", () => {
       } finally {
         held.release();
         await reader.close();
+        await consuming?.catch(() => undefined);
         held.enumeration.mockRestore();
       }
     },
@@ -734,32 +738,29 @@ describe("ZipArtifactReader extraction finalization", () => {
     const failure = new Error(ERR_INVALID_COMPRESSED_DATA);
     const held = holdZipProducerSettlement(failure);
     const reader = new ZipArtifactReader(path, "zip");
+    let consuming: Promise<Buffer> | undefined;
     try {
       const entries: ArtifactEntry[] = [];
       for await (const entry of reader.entries()) entries.push(entry);
       const stream = await reader.open(entries[0]!);
-      let succeeded = false;
-      const consuming = (async () => {
-        for await (const _chunk of stream) {
-          /* drain */
-        }
-        succeeded = true;
-      })();
-      const outcome = consuming.catch((cause: unknown) => cause);
-      await held.reached;
+      consuming = buffer(stream);
+      await awaitAcknowledgement(
+        held.reached,
+        consuming,
+        "ZIP producer error settlement",
+      );
       await setImmediate();
-      expect(succeeded).toBe(false);
       held.release();
-      expect(await outcome).toMatchObject({
+      await expect(consuming).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
         reason: "format",
         cause: failure,
       });
-      expect(succeeded).toBe(false);
       expect(stream.readableEnded).toBe(false);
     } finally {
       held.release();
       await reader.close();
+      await consuming?.catch(() => undefined);
       held.enumeration.mockRestore();
     }
   });
@@ -774,30 +775,28 @@ describe("ZipArtifactReader finalization ownership", () => {
     await writeOrderedZip(path, ["member.txt"]);
     const held = holdZipProducerSettlement();
     const reader = new ZipArtifactReader(path, "zip");
+    let consuming: Promise<Buffer> | undefined;
     try {
       const entries: ArtifactEntry[] = [];
       for await (const entry of reader.entries()) entries.push(entry);
       const stream = await reader.open(entries[0]!);
-      let succeeded = false;
-      const consuming = (async () => {
-        for await (const _chunk of stream) {
-          /* drain */
-        }
-        succeeded = true;
-      })();
-      const outcome = consuming.catch((cause: unknown) => cause);
-      await held.reached;
+      consuming = buffer(stream);
+      await awaitAcknowledgement(
+        held.reached,
+        consuming,
+        "ZIP source verification",
+      );
       await appendFile(path, "changed after sink closure");
       held.release();
-      expect(await outcome).toMatchObject({
+      await expect(consuming).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
         reason: "integrity",
       });
-      expect(succeeded).toBe(false);
       expect(stream.readableEnded).toBe(false);
     } finally {
       held.release();
       await reader.close();
+      await consuming?.catch(() => undefined);
       held.enumeration.mockRestore();
     }
   });
@@ -812,21 +811,21 @@ describe("ZipArtifactReader finalization ownership", () => {
     const fileClose = vi.spyOn(OwnedFileHandle.prototype, "close");
     const reader = new ZipArtifactReader(path, "zip");
     const caller = new AbortController();
+    let consuming: Promise<Buffer> | undefined;
     try {
       const entries: ArtifactEntry[] = [];
       for await (const entry of reader.entries()) entries.push(entry);
       const stream = await reader.open(entries[0]!, caller.signal);
-      const consuming = (async () => {
-        for await (const _chunk of stream) {
-          /* drain */
-        }
-      })();
-      const outcome = consuming.catch((cause: unknown) => cause);
-      await held.reached;
+      consuming = buffer(stream);
+      await awaitAcknowledgement(
+        held.reached,
+        consuming,
+        "ZIP finalization cancellation",
+      );
       await setImmediate();
       const reason = { caller: "cancelled during ZIP finalization" };
       caller.abort(reason);
-      const error: unknown = await outcome;
+      const error: unknown = await consuming.catch((cause: unknown) => cause);
       expect(error).toBeInstanceOf(ArtifactReaderFailure);
       if (!(error instanceof ArtifactReaderFailure))
         throw new Error("Expected ZIP finalization cancellation");
@@ -846,6 +845,7 @@ describe("ZipArtifactReader finalization ownership", () => {
     } finally {
       held.release();
       await reader.close();
+      await consuming?.catch(() => undefined);
       held.enumeration.mockRestore();
       fileClose.mockRestore();
     }
@@ -893,7 +893,11 @@ describe("ZipArtifactReader producer ownership", () => {
         void secondClose.then(() => {
           secondClosed = true;
         });
-        await held.reached;
+        await awaitAcknowledgement(
+          held.reached,
+          closing,
+          "ZIP extraction retirement",
+        );
         expect(stream.destroyed).toBe(true);
         expect(fileClose).not.toHaveBeenCalled();
         let closed = false;
@@ -928,11 +932,18 @@ describe("ZipArtifactReader producer ownership", () => {
       const entries: ArtifactEntry[] = [];
       for await (const entry of reader.entries()) entries.push(entry);
       const stream = await reader.open(entries[0]!);
-      await held.reached;
-      const finished = once(stream, "finish");
+      const writableFinished = finished(stream, {
+        readable: false,
+        cleanup: true,
+      });
+      await awaitAcknowledgement(
+        held.reached,
+        writableFinished,
+        "buffered ZIP producer settlement",
+      );
       held.release();
       // getData has finished, but this tiny member remains buffered and unread.
-      await finished;
+      await writableFinished;
       const closeFailure = new Error("ZIP descriptor close denied");
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
@@ -1064,8 +1075,12 @@ it("joins a late ZIP producer and closes the source despite an enumeration clean
   try {
     const first = await traversal.next();
     if (first.done) throw new Error("Expected ZIP member");
-    await reader.open(first.value);
-    await held.reached;
+    const stream = await reader.open(first.value);
+    await awaitAcknowledgement(
+      held.reached,
+      finished(stream, { readable: false, cleanup: true }),
+      "ZIP producer before mixed cleanup",
+    );
     const closing = reader.close();
     const failureCheck = expect(closing).rejects.toBe(failure);
     await Promise.resolve();
