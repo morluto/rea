@@ -674,8 +674,11 @@ export const parseKernelModuleCooperative = async (
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
   signal?: AbortSignal,
-): Promise<Report> =>
-  parseKernelModule(
+): Promise<Report> => {
+  const compression = compressionCodec(bytes);
+  if (compression !== null)
+    return unsupportedCompression(artifact, compression);
+  return parseKernelModule(
     bytes,
     artifact,
     input,
@@ -683,3 +686,4 @@ export const parseKernelModuleCooperative = async (
       yieldArtifactRead(signal),
     ),
   );
+};
