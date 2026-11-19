@@ -2065,6 +2065,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "unity-addressables": inProcess(
+    covered(
+      test(
+        "tests/acceptance/unityAddressablesCli.test.ts",
+        "returns the same catalog through CLI and MCP and pages retained rows after the file is gone",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/unity/unityAddressablesProvider.test.ts",
+        "stops between decoding steps when cancelled",
+      ),
+    ),
+  ),
   "wabt-artifact": {
     ownership: "process",
     stages: {

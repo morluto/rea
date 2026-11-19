@@ -130,6 +130,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
     (module, context) =>
       module.registerIl2cppCommands(context.cli, context.logger),
   ),
+  unityAddressables: plain(
+    () => import("./unityAddressablesCommands.js"),
+    (module, context) =>
+      module.registerUnityAddressablesCommands(context.cli, context.logger),
+  ),
   model: plain(
     () => import("./modelCommands.js"),
     (module, context) =>
@@ -448,6 +453,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "releaseExposure",
     "go",
     "il2cpp",
+    "unityAddressables",
     "model",
     "gpu",
     "rust",

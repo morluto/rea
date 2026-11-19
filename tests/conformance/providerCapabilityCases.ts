@@ -154,6 +154,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   rustBinary: { cases: ["tests/acceptance/rustBinaryCli.test.ts"] },
   signalRecording: { cases: ["tests/boundary/mcp/signalRecordingMcp.test.ts"] },
   sqliteDatabase: { cases: ["tests/acceptance/sqliteDatabaseCli.test.ts"] },
+  unityAddressables: {
+    cases: ["tests/acceptance/unityAddressablesCli.test.ts"],
+  },
   v8CodeCache: { cases: ["tests/acceptance/v8CodeCacheCli.test.ts"] },
   wasmArtifact: { cases: ["tests/boundary/mcp/wasmArtifactMcp.test.ts"] },
   webModuleTrace: { cases: ["tests/boundary/mcp/webModuleTraceMcp.test.ts"] },
