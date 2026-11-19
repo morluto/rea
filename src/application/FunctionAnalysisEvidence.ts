@@ -57,30 +57,19 @@ export const executeFunctionAnalysisEvidence = async (
       : {}),
   };
   const dossier = parseFunctionDossier(execution.value.result);
+  const evidence = createAnalysisExecutionEvidence(
+    "analyze_function",
+    arguments_,
+    dossier.ok ? { ...observation, result: dossier.value } : observation,
+    "observed",
+    { callerTarget: target },
+  );
   if (!dossier.ok) {
-    dossier.error.retainPartialObservation(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        observation,
-        "observed",
-      ),
-    );
+    dossier.error.retainPartialObservation(evidence);
     return withEvidenceSources(dossier, sources);
   }
   return withEvidenceSources(
-    completeProviderEvidence(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        {
-          ...observation,
-          result: dossier.value,
-        },
-        "observed",
-      ),
-      options?.signal,
-    ),
+    completeProviderEvidence(evidence, options?.signal),
     sources,
   );
 };

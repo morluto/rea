@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { deflateSync } from "node:zlib";
+import { riscvInitializers } from "./RiscvInitializers.fixture.js";
 import { readNativeInitializers } from "./NativeInitializersProvider.js";
 
 /** Pass-through spies on the shared mapping module, so tests can count lookups made from other modules. */
@@ -560,7 +561,7 @@ describe("ELF section content admission", () => {
 describe("ELF incomplete inputs", () => {
   it("reports an unsupported relocation machine as incomplete, not as raw zeros", async () => {
     const bytes = elf64PieInitializers();
-    bytes.writeUInt16LE(243, 18);
+    bytes.writeUInt16LE(21, 18); // EM_PPC64 remains unsupported by the pointer decoder.
     const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
@@ -975,11 +976,12 @@ describe("ELF section lookups", () => {
     async () => {
       const base = elf64PieInitializers();
       const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
+      const sectionCount = 0xffff;
       const payload = Buffer.alloc(slots * 8);
       for (let slot = 0; slot < slots; slot += 1)
         payload.writeBigUInt64LE(0x100n, slot * 8);
       // Allocated, unnamed sections that cover every slot and target address.
-      const extra = Buffer.alloc((0xffff - 12) * 64);
+      const extra = Buffer.alloc((sectionCount - 12) * 64);
       for (let at = 0; at < extra.length; at += 64) {
         extra.writeUInt32LE(1, at + 4);
         extra.writeBigUInt64LE(2n, at + 8);
@@ -991,8 +993,11 @@ describe("ELF section lookups", () => {
         base.subarray(0x800, 0x800 + 12 * 64),
         extra,
       ]);
-      bytes.writeBigUInt64LE(BigInt(base.length + payload.length), 40);
-      bytes.writeUInt16LE(0xffff, 60);
+      const sectionTable = base.length + payload.length;
+      bytes.writeBigUInt64LE(BigInt(sectionTable), 40);
+      // Extended section numbering stores the count in section zero's sh_size.
+      bytes.writeUInt16LE(0, 60);
+      bytes.writeBigUInt64LE(BigInt(sectionCount), sectionTable + 32);
       // The single PT_LOAD maps the whole file; DT_INIT_ARRAY moves to the payload.
       bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 32);
       bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
@@ -1822,6 +1827,29 @@ it("reports an object-file import name over the name budget as partial coverage"
 });
 
 describe("Initializer target semantics", () => {
+  it.each([32, 64] as const)(
+    "does not interpret a defined RV%s TLS offset as an initializer address or name",
+    async (bits) => {
+      const report = await read(
+        riscvInitializers(bits, { definedSymbolIsTls: true }),
+      );
+      const slots = report.entries.filter(
+        (entry) => entry.kind === "init_array",
+      );
+      expect(slots).toHaveLength(3);
+      expect(slots[0]).toMatchObject({
+        resolution: "relative_addend",
+        value_va: "0x100",
+        symbol: null,
+      });
+      expect(slots[1]).toMatchObject({
+        resolution: "unresolved",
+        value_va: null,
+        symbol: null,
+      });
+    },
+  );
+
   it("keeps an absolute relocation against an IFUNC symbol unresolved", async () => {
     const bytes = elfRelocatableCtors();
     // `ctor` becomes a global STT_GNU_IFUNC, whose value is its resolver.

@@ -46,7 +46,7 @@ const constantDeclarations = (
   const budget = managedDecodeBudget(layout);
   for (let row = 1; row <= (layout.table(11)?.rowCount ?? 0); row++) {
     const cursor = metadataRowCursor(bytes, layout, 11, row);
-    const typeAndPadding = cursor.readUInt16();
+    const typeAndPadding = cursor.u16();
     const parentRaw = cursor.readIndex(layout.codedIndexSize("HasConstant"));
     const blobIndex = cursor.readIndex(layout.blobIndexSize);
     const definition = MANAGED_CODED_INDEXES.HasConstant;

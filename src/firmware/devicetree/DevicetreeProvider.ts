@@ -1,4 +1,8 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -23,7 +27,7 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  DevicetreeLimitFailure,
+  DEVICETREE_FORMAT,
   parseDevicetree,
 } from "../../domain/firmware/devicetreeParser.js";
 
@@ -80,17 +84,12 @@ const devicetreeFailurePrimary = (
   input: InspectDevicetreeInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof DevicetreeLimitFailure)
-    return new AnalysisResourceConstraintError(
+  if (isParseLimit(cause, DEVICETREE_FORMAT))
+    return parseLimitConstraint(
       OPERATION,
-      cause.limit === "decoded_bytes" ? "memory" : "capacity",
-      cause.message,
-      {
-        limit: cause.limit,
-        selected:
-          cause.limit === "decoded_bytes" ? 33554432 : input[cause.limit],
-      },
-      { cause, retryable: false, remediationAction: cause.message },
+      cause.failure.limit.name === "decoded_bytes" ? "memory" : "capacity",
+      cause,
+      { retryable: false, remediationAction: cause.failure.detail },
     );
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;

@@ -6,15 +6,11 @@ import { decodeValidatedSourceMapLeaves } from "../domain/decodedSourceMap.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
   AnalysisCancelledError,
-  AnalysisResourceConstraintError,
   isAborted,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  AnalysisError,
-  type AnalysisErrorOptions,
-} from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
 import { analyzeParsedJavaScriptReferences } from "../domain/javascript/javascriptSemanticAnalysis.js";
@@ -53,6 +49,7 @@ import {
   malformedInput,
   type ParseFailureError,
 } from "../domain/parseFailure.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { selectedBrowserDeadlineMs } from "../domain/browserDeadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -321,14 +318,19 @@ class SourceMapCallerAbort extends Error {
 const sourceMapCallerReason = (value: unknown): unknown =>
   value instanceof SourceMapCallerAbort ? value.reason : value;
 
-class SourceMapSizeLimitError extends Error {
-  constructor(maxBytes: number) {
-    super(
-      `Source-map response exceeded its retained budget. ${sourceMapLimitRecovery("fetch_bytes", maxBytes)}`,
-    );
-    this.name = "SourceMapSizeLimitError";
-  }
-}
+const sourceMapSizeLimitError = (
+  maxBytes: number,
+): ParseFailureError<"limit"> =>
+  sourceMapLimitFailure(
+    "Source-map response exceeded its retained budget.",
+    "fetch_bytes",
+    maxBytes,
+  );
+
+const isSourceMapSizeLimitError = (
+  cause: unknown,
+): cause is ParseFailureError<"limit"> =>
+  isSourceMapLimit(cause) && cause.failure.limit.name === "fetch_bytes";
 
 class SourceMapRedirectLocationError extends Error {
   constructor(url: string, location: string) {
@@ -608,11 +610,11 @@ const fetchOne = async (
         await cancelUnreadResponse(response, fetchedUrl, cause, signal);
       } catch (cleanupCause: unknown) {
         if (isSourceMapLimit(cause)) {
-          const error = sourceMapOutputError(
+          const error = parseLimitConstraint(
+            "analyze_web_bundle",
+            "transport",
             cause,
-            budget.decodedRecords.limits,
             {
-              cause,
               cleanup: {
                 reason:
                   "Source-map response cancellation is incomplete after its output exceeded capacity.",
@@ -718,7 +720,8 @@ const fetchOne = async (
     const cause =
       caught instanceof SourceMapResponseCleanup ? caught.cause : caught;
     if (cause instanceof AnalysisError) throw cause;
-    if (isSourceMapLimit(cause)) throw cause;
+    if (isSourceMapLimit(cause) && !isSourceMapSizeLimitError(cause))
+      throw cause;
     if (
       signal?.aborted === true &&
       !(signal.reason instanceof SourceMapDeadlineError)
@@ -728,7 +731,7 @@ const fetchOne = async (
       request,
       "fetch_failed",
       cause instanceof SourceMapRedirectLocationError ||
-        cause instanceof SourceMapSizeLimitError ||
+        isSourceMapSizeLimitError(cause) ||
         cause instanceof SourceMapDeadlineError
         ? cause.message
         : "Source-map fetch or validation failed.",
@@ -847,7 +850,7 @@ const readBoundedText = async (
       if (done) break;
       const nextBytes = value?.byteLength ?? 0;
       if (budget.retainedBytes + bytes + nextBytes > maxBytes) {
-        throw new SourceMapSizeLimitError(maxBytes);
+        throw sourceMapSizeLimitError(maxBytes);
       }
       if (value !== undefined) chunks.push(value);
       bytes += nextBytes;
@@ -879,7 +882,7 @@ const readBoundedText = async (
       signal,
       sourceMapCallerReason(cause),
     );
-    if (cause instanceof SourceMapSizeLimitError) {
+    if (isSourceMapSizeLimitError(cause)) {
       try {
         // Preserve the size-limit item's existing finalization boundary.
         const completion = cleanup.completion;
@@ -1497,19 +1500,6 @@ const expandedOutputFailure = (
     `Expanded source-map evidence exceeds public representation admission.`,
     "output_bytes",
     limits.outputBytes,
-  );
-
-const sourceMapOutputError = (
-  cause: ParseFailureError<"limit">,
-  limits: SourceMapLimits,
-  options?: AnalysisErrorOptions,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
-    "analyze_web_bundle",
-    "transport",
-    cause.message,
-    { maximum_source_map_output_bytes: limits.outputBytes },
-    { cause, ...options },
   );
 
 const resolvedSourceLimitFailure = (

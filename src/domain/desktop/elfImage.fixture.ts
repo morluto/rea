@@ -23,9 +23,9 @@ export const elfImage = (spec: ElfImageSpec): Buffer => {
   const strings = ["", ...(spec.needed ?? [])];
   if (spec.rpath !== undefined) strings.push(spec.rpath);
   if (spec.runpath !== undefined) strings.push(spec.runpath);
-  const table = Buffer.from(`${strings.join("\0")}\0`, "latin1");
+  const table = Buffer.from(`${strings.join("\0")}\0`, "utf8");
   const offsetOf = (value: string) =>
-    BigInt(table.indexOf(Buffer.from(`\0${value}\0`, "latin1")) + 1);
+    BigInt(table.indexOf(Buffer.from(`\0${value}\0`, "utf8")) + 1);
   const entries: [bigint, bigint][] = [
     ...(spec.rpath === undefined
       ? []

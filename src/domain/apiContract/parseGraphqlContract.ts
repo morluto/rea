@@ -4,6 +4,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../analysisErrorCore.js";
+import { isHostLimitFailure } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
 import type { GraphqlContract } from "./graphqlContract.js";
 import { API_CONTRACT_OPERATION } from "./apiContract.js";
@@ -41,7 +42,7 @@ export function* parseGraphqlContractSteps(
       inventory.roots = roots;
       model = constructed;
     } catch (cause) {
-      if (cause instanceof RangeError)
+      if (isHostLimitFailure(cause))
         throw new AnalysisResourceConstraintError(
           API_CONTRACT_OPERATION,
           "memory",

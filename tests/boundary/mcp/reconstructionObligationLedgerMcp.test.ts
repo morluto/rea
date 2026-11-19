@@ -296,29 +296,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       ),
     );
     const canonical = createEvidenceBundle(records);
-    const session = createTestBinarySession(() => ({
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
-      { name: "obligation-ledger-test", version: "1" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const request = (evidenceBundle: unknown) =>
-        client.callTool({
-          name: "build_reconstruction_obligation_ledger",
-          arguments: {
-            evidence_bundle: evidenceBundle,
-            reviewed_obligations: [],
-            manifest: { bindings: [], contradictions: [] },
-          },
-        });
+    await withLedgerClient(async (request) => {
       const valid = await request(canonical);
       expect(valid.isError).not.toBe(true);
       expect(valid.structuredContent).toMatchObject({
@@ -332,11 +310,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       expect(parseMcpToolError(result)).toMatchObject(
         integrityError("Evidence bundle sections are not canonical: records"),
       );
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    });
   });
 
   it("distinguishes corrupt source bundles from missing caller-selected review references", async () => {
@@ -384,38 +358,31 @@ describe("reconstruction obligation ledger MCP parity", () => {
         input.reviewed_obligations,
       );
       expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        normalized_result: { summary: MIXED_AUTHORITY_SUMMARY },
+      const ledger = reconstructionObligationLedgerSchema.parse(
+        evidenceSchema.parse(result.structuredContent).normalized_result,
+      );
+      expect(ledger.summary).toMatchObject(MIXED_AUTHORITY_SUMMARY);
+      const authorities = Object.fromEntries(
+        ledger.obligations.map(({ obligation_id, authority_references }) => [
+          obligation_id,
+          authority_references.map(
+            ({ authority, state }) => `${authority}/${state}`,
+          ),
+        ]),
+      );
+      expect(authorities).toEqual({
+        "review.mixed": expect.arrayContaining([
+          "shipped-artifact/candidate",
+          "controlled-replay/reviewed",
+        ]),
+        "review.shipped": ["shipped-artifact/candidate"],
       });
     });
   });
 
   it("returns the complete Evidence-backed ledger inline", async () => {
-    const session = createTestBinarySession(() => ({
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
-      { name: "obligation-ledger-test", version: "1" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "build_reconstruction_obligation_ledger",
-        arguments: {
-          evidence_bundle: createEvidenceBundle([]),
-          reviewed_obligations: [],
-          manifest: {
-            bindings: [],
-            contradictions: [],
-          },
-        },
-      });
+    await withLedgerClient(async (request) => {
+      const result = await request(createEvidenceBundle([]));
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
         evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
@@ -425,11 +392,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
           summary: { total: 0 },
         },
       });
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    });
   });
 });
 
