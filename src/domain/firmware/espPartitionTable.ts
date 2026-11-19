@@ -155,7 +155,7 @@ export const decodeEspPartitionTable = (
     if (terminator && partitions.length > 0) {
       if (md5.entryOffset !== null && partitionsAfterMd5 > 0)
         limitations.push(
-          `${String(partitionsAfterMd5)} partition entries after the MD5 record at ${offsetText(md5.entryOffset)} are outside its checksum coverage.`,
+          `${String(partitionsAfterMd5)} partition entries after the MD5 record at table-relative offset ${offsetText(md5.entryOffset)} are outside its checksum coverage.`,
         );
       return ok({ partitions, md5, length: at + ENTRY_BYTES, limitations });
     }

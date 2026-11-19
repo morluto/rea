@@ -511,7 +511,7 @@ it("keeps and discloses partitions after a matching prefix MD5", () => {
   ]);
   expect(decoded.limitations).toEqual([
     expect.stringContaining(
-      "2 partition entries after the MD5 record at 0x20 are outside its checksum coverage",
+      "2 partition entries after the MD5 record at table-relative offset 0x20 are outside its checksum coverage",
     ),
   ]);
 });
