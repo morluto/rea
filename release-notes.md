@@ -65,6 +65,7 @@
 * **debuggers:** name why a stopped GDB or Rizin session accepts no commands ([#11185](https://github.com/morluto/rea/issues/11185)) ([6510264](https://github.com/morluto/rea/commit/6510264bfdab5920db43e091207fd001c743ea37))
 * **debuggers:** name why an owned debugger stop is incomplete ([#11517](https://github.com/morluto/rea/issues/11517)) ([ff6467c](https://github.com/morluto/rea/commit/ff6467ca97b3e5d70b9945bf15f49b90ec67ac77))
 * **domain:** classify 64-bit PowerPC ELF (EM_PPC64) in the powerpc family ([#12089](https://github.com/morluto/rea/issues/12089)) ([cc971d6](https://github.com/morluto/rea/commit/cc971d6df53e2de83d36bf080c2472b4df64cb38))
+* **elf:** decode FDO packaging and dlopen note metadata ([#7237](https://github.com/morluto/rea/issues/7237)) ([dd1bb43](https://github.com/morluto/rea/commit/dd1bb43db3d406a92309b4f5b510423222eeb000))
 * **elf:** inspect dynamic dependencies and required symbol versions ([e9c72db](https://github.com/morluto/rea/commit/e9c72dbd1fa6b318cb3e455c92df064eed62333a))
 * **elf:** report separate debug-file linkage and verify a candidate debug file ([54e3918](https://github.com/morluto/rea/commit/54e3918d1c09991970aadf8f0eb1ab6bcf6f83fb))
 * **errors:** carry related parameters and operations and derive CLI flags and commands ([#11777](https://github.com/morluto/rea/issues/11777)) ([d5a9421](https://github.com/morluto/rea/commit/d5a942177fad030d3caf0f8d39856c116e3e5cda))
