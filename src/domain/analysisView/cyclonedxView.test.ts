@@ -1371,3 +1371,38 @@ it("keeps a Go dependency with a backslash out of the Package URL namespace", ()
   );
   expect(unknownsNaming(view.unknowns, path)).toHaveLength(1);
 });
+
+it("retains a single-segment Go module and its graph without inventing a Package URL", () => {
+  const view = projectGo(
+    goReport({
+      path: "standalone",
+      main: goModule("standalone", "(devel)"),
+      dependencies: [goModule("example.com/dep", "v1.2.3")],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    }),
+  );
+
+  const dependencyPurl = "pkg:golang/example.com/dep@v1.2.3";
+  expect(view.document.components).toMatchObject([
+    { name: "standalone", version: "(devel)", "bom-ref": "go-module:0" },
+    { name: "example.com/dep", purl: dependencyPurl },
+  ]);
+  expect(view.document.components[0]).not.toHaveProperty("purl");
+  expect(view.document.dependencies).toContainEqual({
+    ref: "go-module:0",
+    dependsOn: [dependencyPurl],
+  });
+  expect(view.document.properties).toContainEqual({
+    name: "rea:go:main",
+    value: "go-module:0",
+  });
+  const gap = "Go module path standalone has no Package URL namespace.";
+  expect(view.unknowns).toContain(gap);
+  expect(view.document.properties).toContainEqual({
+    name: "rea:unknown",
+    value: gap,
+  });
+});
