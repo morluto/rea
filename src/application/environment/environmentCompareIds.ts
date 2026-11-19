@@ -405,10 +405,13 @@ export const learnIds = (
   );
 
 /** A live identifier as the environment's value, in its own type; unchanged when unmapped. */
-const inEnvTerms = (
-  value: string | number,
-  env: string | number | undefined,
+export const translateScalarId = (
+  value: JsonValue,
+  map: IdMap,
+  scope?: string,
 ): JsonValue => {
+  if (!isScalarId(value)) return value;
+  const env = map.env(value, scope);
   if (env === undefined) return value;
   return typeof value === "string"
     ? String(env)
@@ -428,7 +431,7 @@ export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
         translateValue(item, map),
       ]),
     );
-  return isScalarId(value) ? inEnvTerms(value, map.env(value)) : value;
+  return translateScalarId(value, map);
 };
 
 /** A bulk write's body argument, how it names its entities, and the collection whose own mapping translates those ids. */
@@ -447,7 +450,7 @@ const translateBulkBody = (
 ): JsonValue => {
   const { address, idField, scope } = bulk;
   const id = (value: JsonValue): JsonValue =>
-    isScalarId(value) ? inEnvTerms(value, map.env(value, scope)) : value;
+    translateScalarId(value, map, scope);
   const entries = (value: JsonValue): JsonValue =>
     Array.isArray(value)
       ? value.map((entry) =>

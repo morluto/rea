@@ -731,6 +731,47 @@ describe("comparison body coverage", () => {
 });
 
 describe("scalar sets of mapped ids", () => {
+  it("scopes identifier lists to their owning response entity", () => {
+    const map = new IdMap();
+    map.learn(101, 1, "/api/books");
+    map.learn(101, 2, "/api/authors");
+    const answer = (body: JsonValue) => ({
+      status: 200,
+      body: { kind: "json" as const, value: body },
+    });
+    const live = answer({
+      data: [{ ids: [101, "101"], books: { ids: [101] }, counts: [101] }],
+      books: { ids: [101] },
+    });
+    const entity = { scope: "/api/authors", at: "/data" };
+    const compared = compareAnswers(
+      live,
+      answer({
+        data: [{ ids: [2, "2"], books: { ids: [1] }, counts: [101] }],
+        books: { ids: [1] },
+      }),
+      map,
+      entity,
+    );
+    expect(compared.differences).toEqual([]);
+    expect(compared.normalised.ids).toBe(4);
+
+    const differs = compareAnswers(
+      live,
+      answer({
+        data: [{ ids: [2, "2"], books: { ids: [2] }, counts: [2] }],
+        books: { ids: [2] },
+      }),
+      map,
+      entity,
+    );
+    expect(differs.differences.map(({ pointer }) => pointer)).toEqual([
+      "/data/0/books/ids/0",
+      "/data/0/counts/0",
+      "/books/ids/0",
+    ]);
+  });
+
   it("differ only in order once live ids are mapped", () => {
     const map = new IdMap();
     map.learn(101, 1);
