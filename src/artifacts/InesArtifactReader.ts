@@ -1,3 +1,4 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
@@ -27,8 +28,16 @@ import {
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
-export const INES_LIMITATION =
+const CLASSIC_INES_LIMITATION =
   "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.";
+const NES_2_LIMITATION =
+  "NES 2.0 file regions are observed; header mapper, nametable layout flags, RAM/NVRAM, timing, console and expansion-device values are declarations. Effective nametable wiring, mapper execution, CPU bank mappings, CHR-RAM contents, miscellaneous ROM boundaries, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. UNIF is unsupported.";
+
+/** Keep the classic inventory's existing semantic limitation and Evidence identity. */
+export const inesInventoryLimitation = (
+  header: InesInventory["header"],
+): string =>
+  header.format === "ines" ? CLASSIC_INES_LIMITATION : NES_2_LIMITATION;
 
 /** Actual concatenated bytes observed by the inventory's ordered region scan. */
 export type InesRegionScan = Omit<InesInventory["reconstruction"], "verified">;
@@ -70,7 +79,10 @@ export class InesArtifactReader implements ArtifactReader {
       // Concurrent source changes take precedence over malformed header diagnostics.
       await this.#verifySource(signal);
       const parsed = parseInesLayout(prefix, this.source.initial.size);
-      if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
+      if (!parsed.ok)
+        throw new ArtifactReaderFailure("format", parsed.error.detail, {
+          cause: new ParseFailureError(parsed.error),
+        });
       this.#layout = parsed.value;
       this.#entries.clear();
       return parsed.value;
