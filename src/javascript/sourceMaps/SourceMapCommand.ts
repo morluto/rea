@@ -32,7 +32,6 @@ import {
 import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
-import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import { isProcessOwnershipInspectionCancellation } from "../../process/ProcessInspectionCancellation.js";
 import {
   RuntimeControlUnavailableError,
@@ -73,7 +72,7 @@ export interface SourceMapDecoderDependencies {
   readonly launcher?: SourceMapCodecLauncher;
   readonly createRuntime?: () => Promise<SourceMapCodecRuntime>;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
-  /** Prepare host ownership inspection outside the codec execution deadline. */
+  /** Prepare host inspection outside the codec deadline, using its typed cancellation outcome. */
   readonly prepareOwnership?: (signal?: AbortSignal) => Promise<void>;
 }
 
@@ -131,35 +130,31 @@ export const runSourceMapCommand = async (
   } catch (cause: unknown) {
     const signal = options?.signal;
     const preparation =
-      cause !== signal?.reason &&
       cause instanceof DarwinProcessOwnershipInspectionError
         ? cause
         : undefined;
-    const knownPhysical =
-      cause !== signal?.reason &&
-      (cause instanceof AnalysisError ||
-        cause instanceof ProcessAdmissionError ||
-        (preparation !== undefined && preparation.cancellation === undefined));
-    const physical =
-      cause instanceof AnalysisError
-        ? cause
-        : new ProviderAdapterError(PROVIDER, OPERATION, {
-            cause,
-            ...(preparation?.capturedOutput === undefined
-              ? {}
-              : { capturedOutput: preparation.capturedOutput }),
-            diagnostics: {
-              map_path: path,
-              error_message: errorMessage(cause),
-              phase: "process_ownership_preparation",
-            },
-          });
+    const cancellation = isProcessOwnershipInspectionCancellation(cause)
+      ? cause
+      : preparation?.cancellation;
+    const failure =
+      cancellation !== undefined
+        ? cancelledBy(OPERATION, carriedReason(cancellation.reason))
+        : cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(PROVIDER, OPERATION, {
+              cause,
+              ...(preparation?.capturedOutput === undefined
+                ? {}
+                : { capturedOutput: preparation.capturedOutput }),
+              diagnostics: {
+                map_path: path,
+                error_message: errorMessage(cause),
+                phase: "process_ownership_preparation",
+              },
+            });
     const primary = signal?.aborted
-      ? analysisErrorWithCancellation(
-          knownPhysical ? physical : undefined,
-          cancelledBy(OPERATION, signal),
-        )
-      : physical;
+      ? analysisErrorWithCancellation(failure, cancelledBy(OPERATION, signal))
+      : failure;
     if (preparation?.cleanupFailure === undefined) return err(primary);
     const owner = new PreparationCleanup(preparation, path);
     retainedCleanup.owner = owner;
