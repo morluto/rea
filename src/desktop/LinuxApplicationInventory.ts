@@ -251,14 +251,15 @@ const launchEnvironment = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   inherited: LinuxApplicationRequest["environment"],
 ) => {
-  if (!wrapper.clearEnvironment) {
-    const environment = { ...inherited, ...wrapper.environment };
-    return { environment, lookupEnvironment: environment };
-  }
-  const environment = wrapper.environment;
-  // GNU env's execvp searches the Linux system path when PATH is absent.
+  const inheritedEnvironment = wrapper.clearEnvironment ? {} : { ...inherited };
+  for (const name of wrapper.unsetEnvironment ?? [])
+    delete inheritedEnvironment[name];
+  const environment = { ...inheritedEnvironment, ...wrapper.environment };
+  // GNU env's execvp searches the Linux system path when the prefix removes PATH.
+  const pathRemoved =
+    wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("PATH");
   const lookupEnvironment =
-    environment.PATH === undefined
+    pathRemoved && environment.PATH === undefined
       ? { ...environment, PATH: "/bin:/usr/bin" }
       : environment;
   return { environment, lookupEnvironment };
@@ -428,13 +429,14 @@ const directLaunchStateHome = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   packageKind: Package["kind"],
   hostHome: string,
-): string => {
+): string | undefined => {
   // Sandbox-managed directories continue to use the host home.
   if (wrapper.kind !== "direct" || packageKind === "snap") return hostHome;
   const launchHome = wrapper.environment.HOME;
-  return launchHome !== undefined && isAbsolute(launchHome)
-    ? launchHome
-    : hostHome;
+  if (launchHome !== undefined && isAbsolute(launchHome)) return launchHome;
+  if (wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("HOME"))
+    return undefined;
+  return hostHome;
 };
 
 /** Resolve what the request launches, where it came from and where it may keep state. */
@@ -447,6 +449,11 @@ export const inspectLinuxApplication = async (
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);
+  if (wrapper.invalidUnset)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "env unset does not name a variable",
+    });
   const directory = await envApplicationDirectory(
     wrapper.chdir?.path,
     workingDirectory,
@@ -517,6 +524,11 @@ export const inspectLinuxApplication = async (
     wrapper.kind === "flatpak" ? null : path,
     entry,
   );
+  const stateHome = directLaunchStateHome(wrapper, package_.kind, request.home);
+  if (stateHome === undefined)
+    limitations.push(
+      "The launch prefix provides no absolute HOME after removing the inherited value. The application's default home state paths are unknown. Select known locations with --state-path.",
+    );
   return ok({
     inventory: {
       desktop_entry: entry,
@@ -535,7 +547,7 @@ export const inspectLinuxApplication = async (
         names,
         {
           environment,
-          home: directLaunchStateHome(wrapper, package_.kind, request.home),
+          home: stateHome,
         },
         sandboxDirectories,
       ),

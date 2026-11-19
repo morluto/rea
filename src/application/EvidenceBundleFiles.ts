@@ -4,8 +4,6 @@ import { jsonValueValidationIssue } from "../domain/jsonValue.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { resemblesAnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import { isRecord } from "../kernel/isRecord.js";
 
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
@@ -30,6 +28,10 @@ import {
   bufferedJsonParts,
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
+import {
+  evidenceFileEnvelopeKind,
+  snapshotWrongEvidenceKind,
+} from "./EvidenceFileEnvelope.js";
 import { readJsonFile } from "./JsonFiles.js";
 import {
   writeTextParts,
@@ -114,6 +116,8 @@ const readBundle = async (
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok) return loaded;
   if (signal?.aborted) return err(cancelledBy(operation, signal));
+  if (evidenceFileEnvelopeKind(loaded.value) === "analysis-snapshot")
+    return err(snapshotWrongEvidenceKind(path, operation, "bundle"));
   return authenticateEvidenceBundleValue(loaded.value, path, {
     operation,
     immutable,
@@ -149,30 +153,6 @@ export const authenticateEvidenceBundleValue = (
           userMessage: failure.message,
         }),
       );
-    if (
-      isRecord(value) &&
-      !Object.hasOwn(value, "records") &&
-      resemblesAnalysisSnapshot(value)
-    ) {
-      const importing = operation === "import_evidence_bundle";
-      const explanation =
-        "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated.";
-      return err(
-        new EvidenceFileError("read", "wrong-kind", {
-          path: absoluteCallerPath(path),
-          cause: failure.cause,
-          detectedKind: "analysis-snapshot",
-          related: {
-            operations: importing
-              ? ["open_binary", "export_evidence_bundle"]
-              : ["export_evidence_bundle"],
-          },
-          userMessage: importing
-            ? `${explanation} To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file to load the snapshot, and close_binary with snapshot_path to save updated state. Alternatively, supply a bundle from export_evidence_bundle.`
-            : `${explanation} Supply a standalone Evidence bundle from export_evidence_bundle for this input.`,
-        }),
-      );
-    }
     return err(
       new EvidenceIntegrityError("Evidence bundle validation failed", {
         cause: failure.cause,

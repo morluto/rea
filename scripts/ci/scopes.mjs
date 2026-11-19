@@ -715,6 +715,7 @@ const PATH_SCOPES = {
   website: [
     "website/**",
     "scripts/*website*.py",
+    "scripts/read-authored-skill-manifest.mjs",
     "README*.md",
     "docs/readme/README*.md",
     ".github/workflows/website-check.yml",
@@ -791,7 +792,17 @@ export const CI_LANES = {
     { testInputs: true },
   ),
   website: sameJobs(PATH_SCOPES.website, ["website"], {
-    earlyInputs: [".agents/skills/reverse-engineer-anything/**"],
+    earlyInputs: [
+      ".agents/skills/reverse-engineer-anything/**",
+      "scripts/lib/verifier-source-loader.mjs",
+      "src/domain/skillManifest.ts",
+      "src/domain/result.ts",
+      "src/domain/strictUtf8.ts",
+      "package.json",
+      "package-lock.json",
+      ".nvmrc",
+      ".npmrc",
+    ],
   }),
 };
 // An input owner omitted from the registry must never silently lose a lane.

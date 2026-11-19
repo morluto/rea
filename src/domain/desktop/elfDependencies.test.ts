@@ -50,6 +50,34 @@ describe("readElfDependencies", () => {
     });
   });
 
+  it.each([
+    ["DT_STRTAB", 5, 4],
+    ["DT_STRSZ", 10, 5],
+    ["DT_RPATH", 15, 0],
+    ["DT_RUNPATH", 29, 3],
+  ] as const)("refuses a repeated %s singleton", async (_label, tag, row) => {
+    const image = elfImage({
+      needed: ["libc.so.6"],
+      repeatNeeded: 1,
+      rpath: "/opt/old",
+      runpath: "$ORIGIN",
+    });
+    expect(await dependencies(image)).toMatchObject({
+      ok: true,
+      value: { needed: ["libc.so.6"], runpath: ["$ORIGIN"], rpath: [] },
+    });
+
+    const offset = Number(image.readBigUInt64LE(64 + 56 + 8));
+    const duplicate = offset + row * 16;
+    image.copy(image, offset + 2 * 16, duplicate, duplicate + 16);
+    expect(await dependencies(image)).toMatchObject({
+      ok: false,
+      error: {
+        reason: `Duplicate dynamic tag 0x${tag.toString(16)}`,
+      },
+    });
+  });
+
   it("decodes each needed string once and refuses a table naming more libraries than the walk takes", async () => {
     const repeated = await dependencies(
       elfImage({ needed: ["libc.so.6"], repeatNeeded: 60_000 }),

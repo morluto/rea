@@ -31,7 +31,10 @@ import {
   readComputerScreenshotBytes,
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
-import { controller } from "../../desktop/BuildComputerController.js";
+import {
+  controller,
+  parseBuildComputerJson,
+} from "../../desktop/BuildComputerController.js";
 import type {
   BuildControllerAnswer,
   ControlledComputer,
@@ -178,10 +181,8 @@ const checkExportRuntime = async (
       );
     let rawSchema: unknown;
     try {
-      rawSchema = JSON.parse(content.toString("utf8"));
+      rawSchema = parseBuildComputerJson(content, "REA export schema");
     } catch {
-      // Parser errors can quote only a fragment of a credential, which cannot
-      // be removed reliably by exact-token redaction.
       return err(
         adapterError(
           START,

@@ -2,7 +2,7 @@ import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.j
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
 import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
-import type { ExecutableFormatHint } from "../../domain/dosCom.js";
+import type { TargetFormatHint } from "../../domain/targetFormats.js";
 import type {
   BinaryArchitecture,
   BinaryTarget,
@@ -94,7 +94,7 @@ export interface BinarySessionPort
     options?: {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
-      readonly formatHint?: ExecutableFormatHint;
+      readonly formatHint?: TargetFormatHint;
       readonly architecture?: BinaryArchitecture;
       readonly entryPoint?: string;
       readonly espFlash?: EspFlashSelection;

@@ -35,10 +35,12 @@ with a source that `inspect_analysis_view` also accepts:
 this session, or `{"kind": "evidence-file", "path": "/absolute/evidence.json"}`
 for a saved record or bundle. Add `evidence_id` to select one record from a
 bundle that holds more than one. Complete inline Evidence is still accepted as
-the third form. The comparison cites the records that the sources resolve to,
-so all three forms give the same comparison Evidence. A retained reference that
-the session cannot resolve is refused with `evidence_integrity_mismatch` and
-`details.reason: "missing"`.
+the third form. For Evidence stored in a snapshot, follow the
+[snapshot Evidence workflow](../getting-started/cli.md#use-snapshot-evidence-in-file-based-workflows)
+before selecting the exported file. The comparison cites the records that the
+sources resolve to, so all three forms give the same comparison Evidence. A
+retained reference that the session cannot resolve is refused with
+`evidence_integrity_mismatch` and `details.reason: "missing"`.
 
 `compare_artifacts` can also resolve an artifact summary to its exact retained
 parent in the session, or from the authenticated bundle containing a file-selected

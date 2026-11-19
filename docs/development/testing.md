@@ -920,7 +920,10 @@ For ZIP extraction, replace the pathname after inventory reader close while the
 admitted root descriptor remains owned. Verify that identical member bytes in a
 different carrier, a directory, or a missing pathname cannot switch the
 materialized source. Exercise descriptor close failure and retry before output
-publication.
+publication. Inject a producer finalization failure after its output sink
+closes and verify that the consumer observes the failure. Successful EOF
+requires the producer to settle successfully, even when all output bytes have
+arrived.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
 Include a physical I/O failure reused as the abort reason and genuine

@@ -1321,6 +1321,30 @@ it("refuses a confirmed Intel trailer when the allowance ends the outer search",
   });
 });
 
+it("locates a PE resource past a distant DOS stub using positional reads", async () => {
+  const section = buildDenoSection();
+  const { bytes: image } = peResourceFixture(
+    true,
+    [{ type: 10, name: "D3N0L4ND", language: 0, payload: section }],
+    65536,
+    4,
+    0x20080,
+  );
+  const handle = bytesHandle(image, (length) => {
+    if (length > 512) throw new Error("Read exceeded the header record bounds");
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      carrier: "pe",
+      embedding: "pe-resource",
+      length: section.length,
+    },
+  });
+});
+
 it("locates a small D3N0L4ND resource in a PE larger than 512 MiB", async () => {
   const section = buildDenoSection();
   const image = denoPe([section]);
@@ -1340,6 +1364,23 @@ it("locates a small D3N0L4ND resource in a PE larger than 512 MiB", async () => 
       length: section.length,
     },
   });
+});
+
+it("keeps a PE resource read failure when the caller aborts with that same error", async () => {
+  const image = denoPe([buildDenoSection()]);
+  const controller = new AbortController();
+  const failure = Object.assign(new Error("PE resource read failed"), {
+    code: "EIO",
+  });
+  const handle = bytesHandle(image, (length) => {
+    if (length === 16) {
+      controller.abort(failure);
+      throw failure;
+    }
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length, controller.signal),
+  ).rejects.toBe(failure);
 });
 
 it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_RCDATA branch", async () => {

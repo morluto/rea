@@ -95,7 +95,7 @@ const sampleSession = async (
       signal,
     );
   else observations.unreadableWindowSamples += 1;
-  await sampleOpenFiles(observations, plan.roots);
+  await sampleOpenFiles(observations, plan.roots, signal);
   if (!observations.announced && observations.firstWindowMs !== null) {
     observations.announced = true;
     await plan.report(

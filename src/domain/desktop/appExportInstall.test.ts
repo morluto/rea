@@ -572,6 +572,30 @@ describe("electronLaunchArguments", () => {
 });
 
 describe("adjustInstalledDesktopText", () => {
+  it("keeps the original separators around the effective Exec", () => {
+    const text =
+      "[Desktop Entry]\r\nName=App\nExec=old-app\r\nExec=current-app\n";
+    expect(adjustInstalledDesktopText(text, true)).toEqual({
+      ok: true,
+      value:
+        "[Desktop Entry]\r\nName=App\nExec=old-app\r\nExec=current-app --no-sandbox\n",
+    });
+  });
+
+  it.each(["", "[Desktop Action New]\nExec=action-app\n[Desktop Entry]\n"])(
+    "rewrites the effective command rather than an overridden Exec (%j)",
+    (between) => {
+      const text = `[Desktop Entry]\nType=Application\nName=App\nExec=old-app %F\n${between}Exec=current-app %U\n`;
+      const rewritten = adjustInstalledDesktopText(text, true);
+      expect(rewritten).toEqual({
+        ok: true,
+        value: text.replace(
+          "Exec=current-app %U",
+          "Exec=current-app --no-sandbox %U",
+        ),
+      });
+    },
+  );
   const entry = (exec: string) =>
     `[Desktop Entry]\nType=Application\nName=Typora\nExec=${exec}\n[Desktop Action New]\nExec=typora --new-window\n`;
 

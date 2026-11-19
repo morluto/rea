@@ -29,6 +29,9 @@ A path absent from the capture is an input error.
 `sqlite_tables`, `sqlite_rows`, `sqlite_view_bytes`, `text_lines`, `xml_nodes`, `xml_depth`,
 `parsed_bytes`, `json_depth`, `zip_entries`, `zip_entry_bytes`, `zip_bytes`,
 and `zip_ratio`. Unspecified controls keep the defaults described below.
+A request that raises `zip_entries` past the classic ZIP count range still uses
+the selected entry limit. The host and exported readers encode the retained
+directory's exact count with Zip64 fields when the classic fields are full.
 `xml_depth` admits at most 494 and `json_depth` at most 991: these bounds
 follow the fixed Evidence JSON nesting limit, including the captured-version
 and ZIP-member wrappers and XML's element/children representation. A request
@@ -138,20 +141,26 @@ Views hold the captured bytes as they are, the capture host's name and user
 included; the export removes those from the bundle. A version records
 whether the file was present, the SHA-256 of its retained bytes, and a view:
 
-| Format    | Detected by                                                            | View                                                                                   |
-| --------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `sqlite`  | The `SQLite format 3` header                                           | Every ordinary table's columns, primary key and up to 500 rows                         |
-| `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups            |
-| `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                   |
-| `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
-| `xml`     | An XML name, a declaration or a leading element that parses            | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
-| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
-| `text`    | Other decoded text                                                     | Lines, up to 5,000                                                                     |
-| `binary`  | Content that cannot be read as text                                    | None                                                                                   |
+| Format    | Detected by                                                              | View                                                                                   |
+| --------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `sqlite`  | The `SQLite format 3` header                                             | Every ordinary table's columns, primary key and up to 500 rows                         |
+| `dconf`   | The `GVariant` header                                                    | Groups whose path names the application, plus the names of the other groups            |
+| `zip`     | A ZIP local file header or an empty archive signature, whatever the name | Its file entries in archive order, each with its own format and view                   |
+| `json`    | A `.json` name or a leading `{` or `[` that parses                       | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
+| `xml`     | An XML name, a declaration or a leading element that parses              | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
+| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group   | Groups of `key` → string value, from files up to 4 MiB                                 |
+| `text`    | Other decoded text                                                       | Lines, up to 5,000                                                                     |
+| `binary`  | Content that cannot be read as text                                      | None                                                                                   |
 
 Text views decode UTF-8 or strictly valid UTF-16 with a leading byte-order
 mark. UTF-16 containing a NUL character stays binary. These rules also apply
 to documents inside gzip and ZIP files and to the exported task verifier.
+
+Keyfile views trim keys and skip spaces or tabs immediately after the first
+`=`. The rest of the value is preserved, including trailing whitespace and
+any additional `=` characters. Entries before the first group use the empty
+group name. Repeated groups share one view, and the last value for a key in
+that group wins. Capture and the exported verifier apply the same rules.
 
 A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
@@ -275,8 +284,9 @@ database, or an archive, inside an archive keeps its format and `sha256` and
 has a `view_error` instead of a view: it is not read. The view lists at most
 1,000 entries; `entry_count` counts them all, and `truncated` is true when some
 are not listed. REA reads the central directory itself, a record at a time,
-through the Zip64 end record whenever a Zip64 locator precedes the end record,
-as Python's `zipfile` does, and hands the zip reader only the records it lists,
+and follows a Zip64 locator to the complete end-record span, including any
+extension bytes. The fixed-record fallback supports prepended archives
+whose offsets omit the prefix. REA hands the zip reader only the records it lists,
 so an archive of hundreds of thousands of entries costs no more to read
 than one of a thousand. An archive whose central directory cannot be read has a
 `view_error` of its own.

@@ -6,7 +6,11 @@ import {
 } from "./AmdGpuTarget.js";
 import type { GpuPayloadTarget } from "./GpuObject.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { elfNoteLayout } from "../domain/native/elfNoteLayout.js";
+import {
+  ELF_NOTE_HEADER_BYTES,
+  elfNoteSectionStorage,
+  readElfNoteFrame,
+} from "../domain/native/elfNoteLayout.js";
 import {
   CudaMetadataBudget,
   readCudaInfo,
@@ -458,7 +462,7 @@ export const readAmdElfMetadata = async (
     };
 
     for (const section of directory.sections) {
-      if (section.type !== 7) continue;
+      if (elfNoteSectionStorage(section) === "not-note") continue;
       const sectionSize = gpuCount(section.size);
       if (sectionSize > AMD_METADATA_BYTES - retainedBytes)
         throw new BinaryResourceFailure(
@@ -467,24 +471,30 @@ export const readAmdElfMetadata = async (
           "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
         );
       retainedBytes += sectionSize;
-      const bytes = await sectionBytes(source, section),
-        r = new BinaryReader(bytes, directory.little, "elf");
+      const bytes = await sectionBytes(source, section);
       for (let p = 0; p < bytes.length;) {
-        if (bytes.length - p < 12) rejectGpu("Truncated ELF note header");
-        const namesize = r.u32(p),
-          size = r.u32(p + 4),
-          type = r.u32(p + 8);
         // AMDGPU metadata uses four-byte note padding regardless of section alignment.
-        const layout = elfNoteLayout(namesize, size, 4);
-        const nameOffset = p + 12,
-          desc = p + layout.descriptor,
-          end = p + layout.next;
-        r.range(nameOffset, namesize, "ELF note vendor");
-        r.range(desc, size, "ELF note descriptor");
-        if (end > bytes.length)
-          rejectGpu("ELF note alignment extends outside its section");
+        const frame = readElfNoteFrame(
+          bytes.subarray(p, p + ELF_NOTE_HEADER_BYTES),
+          directory.little,
+          4,
+          bytes.length - p,
+        );
+        if (!frame.ok) return rejectGpu(frame.error.message);
+        const {
+          namesz,
+          descsz: size,
+          type,
+          descriptor,
+          next,
+          framing,
+        } = frame.value;
+        if (framing !== "complete")
+          rejectGpu("ELF note entry exceeds its declared note section");
+        const nameOffset = p + ELF_NOTE_HEADER_BYTES;
+        const desc = p + descriptor;
         const vendor = bytes
-          .subarray(nameOffset, nameOffset + namesize)
+          .subarray(nameOffset, nameOffset + namesz)
           .toString("latin1")
           .replace(/\0$/u, "");
         if (vendor === "AMDGPU" && type === 32) {
@@ -514,7 +524,7 @@ export const readAmdElfMetadata = async (
             "Legacy AMDGPU YAML metadata is outside MessagePack coverage",
           );
         }
-        p = end;
+        p += next;
       }
     }
     targetMetadata.note_coverage =

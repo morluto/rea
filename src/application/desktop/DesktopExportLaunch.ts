@@ -1,8 +1,9 @@
 import {
-  capturedHomePath,
+  type capturedHomePlan,
   launchCommand,
   type DesktopAppExportPlan,
 } from "../../domain/desktop/appExport.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { electronLaunchArguments } from "../../domain/desktop/appExportInstall.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
@@ -114,14 +115,46 @@ export const planLaunch = (
   capture: DesktopApplicationCapture,
   electron: boolean,
   seeds: ReadonlyMap<string, SeedVersion>,
-  files: ReadonlyMap<string, StatePath>,
+  replay: Pick<
+    ReturnType<typeof capturedHomePlan>,
+    "homePath" | "launchPath"
+  > & {
+    readonly files: ReadonlyMap<string, StatePath>;
+    readonly restoredFiles: Iterable<string>;
+  },
 ): Pick<DesktopAppExportPlan, "command" | "opens"> => {
   const { application, host } = capture;
+  const { files, homePath: homeOf } = replay;
   const isDocument = (home: string) => files.get(home)?.role === "document";
-  const homeOf = capturedHomePath(capture);
+  const retained = new Map<string, string>();
+  for (const home of replay.restoredFiles) {
+    const file = files.get(home);
+    if (file !== undefined) retained.set(file.path, home);
+  }
+  const fileSources = [...files.values()].map((file) => file.path);
+  const observedFile = (path: string) =>
+    fileSources.some((physical) => isWithinAny(physical, [path]));
+  const mapTraversal = (path: string, as: "explicit" | "inferred") => {
+    const mapped = replay.launchPath(
+      path,
+      retained,
+      as === "inferred" ? observedFile : undefined,
+    );
+    if (mapped === null)
+      throw new AnalysisInputError("export_desktop_application", {
+        userMessage: `Captured paths under ${JSON.stringify(path)} do not agree on a replay location.`,
+        remediationAction:
+          "Capture the app again with an explicit state directory that does not traverse parent segments.",
+        conformsToInputContract: true,
+      });
+    return mapped;
+  };
   const capturedDirectory =
     application.application_working_directory ?? application.working_directory;
   const seedDirectory = (directory: string): string => {
+    const mapped = mapTraversal(directory, "explicit");
+    if (mapped?.kind === "mapped")
+      return mapped.path === "" ? host.home : `${host.home}/${mapped.path}`;
     if (!directory.startsWith(`${host.home}/`)) return directory;
     const relative = directory.slice(host.home.length + 1);
     const seed = homeOf(directory) ?? relative;
@@ -161,6 +194,7 @@ export const planLaunch = (
     isCaptured: capturedLaunchPaths(capture, files, homeOf),
     spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
     mapOutside: homeOf,
+    mapTraversal,
   });
   return {
     command: launchCommand(

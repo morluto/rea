@@ -271,6 +271,12 @@ fields conflict, carry that uncertainty forward before projecting the fields
 into a single value. A command launcher likewise needs the parser's token
 boundaries so an option value cannot select a transport mode.
 
+When one operation can show partial results and another requires a complete
+document, share the grammar and give each operation an explicit policy for
+handling diagnostics. Preserve source spelling and offset units alongside any
+normalized lookup value. Verify both operations with the same authored inputs
+and independently specified expectations. See [boundary regressions](testing.md#boundary-regressions).
+
 Give each nested parser the admitted extent of its containing record.
 Retain the source offset and the reason when a field is malformed or its
 encoding is unsupported. A stream may need more bytes to complete a frame.
