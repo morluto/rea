@@ -95,11 +95,9 @@ export const semanticArrayPatternCloseSelection = (
       consumed += 1;
     }
   }
-  // A dense prefix of own reads and lexical bindings cannot run user code.
-  // If it covers the complete array, even a live iterator has no value left.
-  return !array.unknownItems && consumed === array.items.length
-    ? undefined
-    : { excludedKeys: [], startIndex: consumed };
+  // The literal suffix can be empty while the iterator still has references
+  // from stored writes. Resolve those separately at the close site.
+  return { excludedKeys: [], startIndex: consumed };
 };
 
 /** Invocation spreads use the same native-iteration proof at their source read. */

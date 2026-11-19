@@ -262,6 +262,15 @@ export const semanticScopeExitEffect = (
   return marker;
 };
 
+/** The array pattern that owns a recorded native iterator close. */
+export const semanticArrayPatternCloseScope = (
+  effect: t.Node | undefined,
+): t.ArrayPattern | undefined => {
+  const scope =
+    effect === undefined ? undefined : scopeExitOwners.get(effect)?.scope;
+  return t.isArrayPattern(scope) ? scope : undefined;
+};
+
 const withinScopeExit = (
   reference: t.Node,
   scope: t.Node,

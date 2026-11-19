@@ -1378,3 +1378,44 @@ it.each([
     ).toMatchObject({ resolution });
   },
 );
+
+it.each([
+  ["before close", "none=(box.items[1]=box.next), items:[used]", "candidate"],
+  ["after close", "items:[used], none=(box.items[1]=box.next)", "resolved"],
+] as const)(
+  "follows an array-pattern close through a slot assigned %s",
+  (_name, prefix, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"second"}};
+    ${closeNextObject}
+    const {${prefix},next:{mode:selected}}=box;
+  `);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it("keeps consumed objects uncertain when an earlier default also stores them in the suffix", () => {
+  const graph = graphForJavaScript(`
+    const box={items:[{mode:"first"}]};
+    ${closeNextObject}
+    const {none=(box.items[1]=box.items[0]),items:[used],items:{0:{mode:selected}}}=box;
+  `);
+  const selected = graph.nodes.find(
+    (n) => n.kind === "binding" && n.label === "selected",
+  );
+  expect(
+    graph.relations.find(
+      (r) =>
+        r.relation === "destructures" && r.target_node_id === selected?.node_id,
+    ),
+  ).toMatchObject({ resolution: "candidate" });
+});

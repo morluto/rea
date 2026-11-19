@@ -14,6 +14,8 @@ const iteratorCloseSource = `
       return {};
     };
     const { label: beforeClose, items: [first], items: { 0: { mode: consumed }, 1: { mode: afterClose } } } = box;
+    const stored = { items: [0], next: { mode: "borrowed" } };
+    const { insert = (stored.items[1] = stored.next), items: [assigned], next: { mode: storedAfterClose } } = stored;
   `;
 
 cliTest(
@@ -92,6 +94,7 @@ cliTest(
       ["beforeClose", ["label"]],
       ["consumed", ["items", "0", "mode"]],
       ["afterClose", ["items", "1", "mode"], "candidate"],
+      ["storedAfterClose", ["next", "mode"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
         (node) => node.kind === "binding" && node.label === name,
