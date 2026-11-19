@@ -224,6 +224,12 @@ export const createAmbientPathResolver = (
   facts?: AmbientReferenceFacts,
 ) => {
   const cached = new WeakMap<t.Node, AmbientResolution>();
+  // Member syntax is fixed for this AST across reference-store worklist
+  // rounds. Identity resolution still uses the current store facts.
+  const memberPaths = new WeakMap<
+    t.Node,
+    ReturnType<typeof electronMemberPath>
+  >();
   const returnedReferences = createSemanticReturnedReferences(state);
   return (
     node: t.Node,
@@ -316,10 +322,15 @@ export const createAmbientPathResolver = (
       const pathsBefore = result.size;
       let resolvedIdentity = false;
       try {
-        const { root, members } = electronMemberPath(current.node);
+        let memberPath = memberPaths.get(current.node);
+        if (memberPath === undefined) {
+          memberPath = electronMemberPath(current.node);
+          memberPaths.set(current.node, memberPath);
+        }
+        const { root, members } = memberPath;
         let suffix: AmbientProjection =
-          current.suffix === undefined
-            ? undefined
+          current.suffix === undefined || members.length === 0
+            ? current.suffix
             : [...members, ...current.suffix];
         if (expanded.has(root)) {
           const previous = expanded.get(root);
