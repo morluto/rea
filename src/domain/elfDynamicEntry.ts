@@ -13,8 +13,15 @@ export const DT_FLAGS = 30n;
 export const DT_GNU_HASH = 0x6ffffef5n;
 export const DT_FLAGS_1 = 0x6ffffffbn;
 
-export const elfDynamicEntryWidth = (bits: 32 | 64): 8 | 16 =>
+const elfDynamicEntryWidth = (bits: 32 | 64): 8 | 16 =>
   bits === 64 ? 16 : 8;
+
+/** Geometry of a bounded file extent, independent of the logical DT_NULL. */
+export const elfDynamicTableGeometry = (bytes: number, bits: 32 | 64) => {
+  const width = elfDynamicEntryWidth(bits);
+  const trailingBytes = bytes % width;
+  return { width, completeBytes: bytes - trailingBytes, trailingBytes };
+};
 
 const dynamicReader = (
   bytes: Uint8Array,
@@ -69,9 +76,10 @@ type DynamicTableFailure<E> =
 
 /**
  * Walk an admitted dynamic-table byte span in order. All offsets are relative
- * to the span. DT_NULL closes the table and its value has no meaning. Only
- * tags the caller consumes as singletons are tracked, so ignored extensions
- * and repeated DT_NEEDED do not enlarge the reader's retained state.
+ * to the span. DT_NULL closes the table and its value has no meaning. Report
+ * incomplete trailing bytes independently of the terminator. Only tags the
+ * caller consumes as singletons are tracked, so ignored extensions and
+ * repeated DT_NEEDED do not enlarge the reader's retained state.
  */
 export const walkElfDynamicTable = <E>(
   bytes: Uint8Array,
@@ -82,15 +90,21 @@ export const walkElfDynamicTable = <E>(
   singletonTags: ReadonlySet<bigint>,
   visit: (row: DynamicRow) => Result<void, E> | void,
 ): Result<
-  { readonly terminatorOffset: number | null },
+  {
+    readonly terminatorOffset: number | null;
+    readonly trailingBytes: number;
+  },
   DynamicTableFailure<E>
 > => {
-  const width = elfDynamicEntryWidth(bits);
+  const { width, completeBytes, trailingBytes } = elfDynamicTableGeometry(
+    bytes.byteLength,
+    bits,
+  );
   const reader = dynamicReader(bytes, littleEndian);
   const firstOffsets = new Map<bigint, number>();
-  for (let offset = 0; offset + width <= bytes.byteLength; offset += width) {
+  for (let offset = 0; offset < completeBytes; offset += width) {
     const { tag, value } = readDynamicWords(reader, offset, bits);
-    if (tag === 0n) return ok({ terminatorOffset: offset });
+    if (tag === 0n) return ok({ terminatorOffset: offset, trailingBytes });
     const singleton = singletonTags.has(tag);
     if (singleton) {
       const firstOffset = firstOffsets.get(tag);
@@ -102,5 +116,5 @@ export const walkElfDynamicTable = <E>(
     if (visited !== undefined && !visited.ok)
       return err({ kind: "visitor", error: visited.error });
   }
-  return ok({ terminatorOffset: null });
+  return ok({ terminatorOffset: null, trailingBytes });
 };

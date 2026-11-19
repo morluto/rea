@@ -19,7 +19,7 @@ import {
   DT_STRSZ,
   DT_SYMENT,
   DT_SYMTAB,
-  elfDynamicEntryWidth,
+  elfDynamicTableGeometry,
   walkElfDynamicTable,
 } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
@@ -409,10 +409,10 @@ const readDynamic = (
   little: boolean,
   mapVa: MapVa,
 ): DynamicTable => {
-  const width = elfDynamicEntryWidth(bits);
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
-  if (size % width !== 0)
+  const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
+  if (trailingBytes !== 0)
     malformed("ELF PT_DYNAMIC size is not a whole number of entries");
   const count = size / width;
   budget(count, "ELF dynamic table");
