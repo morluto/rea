@@ -92,7 +92,8 @@ function blockFacts(tokens, index) {
   const kind = literalBlockKind(type);
   if (kind !== undefined) {
     // HTML tokens include the line ending after the block when it is present.
-    const wording = kind === "html-block" ? content.replace(/\n$/u, "") : content;
+    const wording =
+      kind === "html-block" ? content.replace(/\n$/u, "") : content;
     return { parts: [], wording: [{ kind, content: wording }] };
   }
 }
