@@ -8,6 +8,9 @@ layout and is unsupported until independently verified.
 Inspection retains the header facts: format version, player and engine version
 strings, declared size, dataflags, blocks-and-directory table bounds, the
 producer's 16-byte data hash as declared, and the resolved data-area offset.
+Desktop application inspection uses the same header bounds. When the initial
+file probe stops before both version strings and the fixed fields are read,
+its normal probe budget applies to the additional bytes.
 Members (`CAB-*` SerializedFiles, `.resS` resource streams, shared assets)
 retain declared source paths, virtual stream offsets, sizes and raw node flags.
 The directory flag identifies directories. `compare_artifacts` compares each
