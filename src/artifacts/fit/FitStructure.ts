@@ -16,13 +16,14 @@ import {
   type Devicetree,
 } from "../../domain/firmware/devicetree.js";
 import {
-  devicetreeLimitOf,
+  DEVICETREE_FORMAT,
   parseDevicetree,
 } from "../../domain/firmware/devicetreeParser.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
 } from "../../domain/binaryContainer.js";
+import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -573,16 +574,17 @@ const parseFit = (fdt: Buffer, path: string): Devicetree => {
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure)
       throw formatFailure(cause.message);
-    const limit = devicetreeLimitOf(cause);
-    if (limit !== undefined)
+    if (isParseLimit(cause, DEVICETREE_FORMAT)) {
+      const { name } = cause.failure.limit;
       throw new ArtifactReaderFailure(
         "limit",
-        `FIT devicetree exceeds the fixed ${limit.limit} allowance`,
+        `FIT devicetree exceeds the fixed ${name} allowance`,
         {
-          boundary: limit.limit === "decoded_bytes" ? "memory" : "capacity",
+          boundary: name === "decoded_bytes" ? "memory" : "capacity",
           cause,
         },
       );
+    }
     throw cause;
   }
 };
