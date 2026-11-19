@@ -54,11 +54,16 @@ it.skipIf(process.platform === "win32")(
           expect.objectContaining({
             format: "dconf",
             view: null,
-            view_error: expect.stringContaining("EACCES"),
+            view_failure: {
+              kind: "launch-failed",
+              code: "EACCES",
+              exit_code: null,
+              command,
+              stderr: null,
+            },
           }),
         ],
       }),
     ]);
-    expect(state.paths[0]?.versions[0]?.view_error).toContain(command);
   },
 );

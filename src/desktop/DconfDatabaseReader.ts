@@ -12,9 +12,14 @@ import {
   ownedCommandResources,
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import {
+  providerOutcomeOf,
+  type ProviderOutcome,
+} from "../process/ProviderOutcome.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import type { DconfViewFailureKind } from "../domain/desktop/desktopState.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 import {
   assertArtifactReadActive,
@@ -65,7 +70,120 @@ class DconfReadHandle extends OwnedFileHandle {
 /** The keyfile text of a dconf database, or why it could not be read. */
 export type DconfDump =
   | { readonly ok: true; readonly text: string }
-  | { readonly ok: false; readonly error: string };
+  | DconfDumpFailure;
+
+/**
+ * A dconf read that did not produce a view. `error` is display text;
+ * `kind` and `code` are the facts a caller branches on.
+ */
+export interface DconfDumpFailure {
+  readonly ok: false;
+  readonly error: string;
+  readonly kind: DconfViewFailureKind;
+  /** Host errno name, or null when this failure is not an errno. */
+  readonly code: string | null;
+  /** Child status when the selected command exited. */
+  readonly exitCode: number | null;
+  /** Selected executable, or null before one was chosen. */
+  readonly command: string | null;
+  /** Trimmed child stderr, or null when the child wrote none. */
+  readonly stderr: string | null;
+}
+
+const hostErrno = (cause: unknown): string | null => {
+  if (typeof cause !== "object" || cause === null || !("code" in cause))
+    return null;
+  const code = cause.code;
+  return typeof code === "string" && code.length > 0 ? code : null;
+};
+
+const dconfFailure = (
+  error: string,
+  facts: {
+    readonly kind: DconfViewFailureKind;
+    readonly code?: string | null;
+    readonly exitCode?: number | null;
+    readonly command?: string | null;
+    readonly stderr?: string | null;
+  },
+): DconfDumpFailure => ({
+  ok: false,
+  error,
+  kind: facts.kind,
+  code: facts.code ?? null,
+  exitCode: facts.exitCode ?? null,
+  command: facts.command ?? null,
+  stderr: facts.stderr ?? null,
+});
+
+const retainedStderr = (failure: ProviderOutcome): string | null => {
+  const text = failure.output?.snapshot.stderr.text.trim() ?? "";
+  return text.length === 0 ? null : text;
+};
+
+/** Project one owned-command outcome without rereading its message. */
+const dconfCommandFailure = (
+  failure: ProviderOutcome,
+  command: string | undefined,
+): DconfDumpFailure => {
+  const stderr = retainedStderr(failure);
+  const selected = command ?? null;
+  switch (failure.kind) {
+    case "launch-failed": {
+      // A later PATH miss must not replace the executable this refusal named.
+      const launched = failure.failure.executable ?? selected;
+      return failure.failure.code === "ENOENT"
+        ? dconfFailure(DCONF_NOT_INSTALLED, {
+            kind: "not-installed",
+            code: "ENOENT",
+            command: launched,
+          })
+        : dconfFailure(failure.message, {
+            kind: "launch-failed",
+            code: failure.failure.code ?? null,
+            command: launched,
+          });
+    }
+    case "exited":
+      return dconfFailure(
+        stderr ??
+          `Command failed: ${command ?? "dconf"} dump / (exit ${failure.exitCode ?? failure.signal})`,
+        {
+          kind: "exited",
+          exitCode: failure.exitCode,
+          command: selected,
+          stderr,
+        },
+      );
+    case "runtime-exhausted":
+      return dconfFailure(stderr ?? failure.message, {
+        kind: "runtime-exhausted",
+        exitCode: failure.exitCode,
+        command: selected,
+        stderr,
+      });
+    case "resource-signal":
+      return dconfFailure(stderr ?? failure.message, {
+        kind: "resource-signal",
+        command: selected,
+        stderr,
+      });
+    case "cancelled":
+      throw new ArtifactReaderFailure("cancelled", "dconf dump was cancelled", {
+        cause: failure.reason,
+        cancellation: { reason: failure.reason },
+      });
+    case "timeout":
+    case "output-limit":
+    case "memory-limit":
+    case "protocol":
+      return dconfFailure(stderr ?? failure.message, {
+        kind: failure.kind,
+        command: selected,
+        stderr,
+      });
+  }
+};
 
 /**
  * Read an offline dconf database through a parent-owned read-only descriptor.
@@ -95,11 +213,25 @@ export const dumpDconfDatabase = async (
         // Refer to the owning process: a shell background job replaces stdin,
         // and another interpreter may close inherited non-stdio descriptors.
         const sourcePath = `/proc/${process.pid}/fd/${source.fd}`;
-        await stat(sourcePath);
-        await writeFile(profile, `file-db:${sourcePath}\n`, {
-          mode: 0o600,
-          flag: "wx",
-        });
+        try {
+          await stat(sourcePath);
+        } catch (cause: unknown) {
+          return dconfFailure(errorMessage(cause), {
+            kind: "descriptor-unavailable",
+            code: hostErrno(cause),
+          });
+        }
+        try {
+          await writeFile(profile, `file-db:${sourcePath}\n`, {
+            mode: 0o600,
+            flag: "wx",
+          });
+        } catch (cause: unknown) {
+          return dconfFailure(errorMessage(cause), {
+            kind: "profile-write",
+            code: hostErrno(cause),
+          });
+        }
         const command = environment.REA_DCONF_COMMAND ?? "dconf";
         // Preserve the first refusal's candidate spelling for diagnostics. cwd and
         // PATH stay unchanged for interpreter and helper lookup as well.
@@ -188,26 +320,17 @@ export const dumpDconfDatabase = async (
         }
         if (refusal !== undefined) throw refusal;
         if (missing !== undefined) throw missing;
-        return { ok: false, error: DCONF_NOT_INSTALLED };
+        return dconfFailure(DCONF_NOT_INSTALLED, { kind: "not-installed" });
       },
     );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     const failure = providerOutcomeOf(cause);
-    if (failure?.kind === "launch-failed" && failure.failure.code === "ENOENT")
-      return {
-        ok: false,
-        error: DCONF_NOT_INSTALLED,
-      };
-    return {
-      ok: false,
-      error:
-        failure?.output?.snapshot.stderr.text.trim() ||
-        (failure?.kind === "exited"
-          ? `Command failed: ${selectedCommand} dump / (exit ${failure.exitCode ?? failure.signal})`
-          : undefined) ||
-        failure?.message ||
-        String(cause),
-    };
+    if (failure !== undefined)
+      return dconfCommandFailure(failure, selectedCommand);
+    return dconfFailure(errorMessage(cause), {
+      kind: "read-failed",
+      code: hostErrno(cause),
+    });
   }
 };

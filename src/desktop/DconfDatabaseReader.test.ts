@@ -228,6 +228,11 @@ describe.skipIf(process.platform !== "linux")("dumpDconfDatabase", () => {
               ok: false,
               error:
                 "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+              kind: "not-installed",
+              code: "ENOENT",
+              exitCode: null,
+              command: join(process.cwd(), "dconf"),
+              stderr: null,
             }
           : { ok: true, text: "selected" },
       );
@@ -294,6 +299,29 @@ describe.skipIf(process.platform !== "linux")("dumpDconfDatabase", () => {
 describe.skipIf(process.platform !== "linux")(
   "dconf command diagnostics",
   () => {
+    it("keeps an earlier PATH refusal's executable after a later miss", async () => {
+      const root = await createTestTempDirectory("dconf-path-refusal-");
+      const denied = join(root, "denied");
+      const missing = join(root, "missing");
+      await Promise.all([mkdir(denied), mkdir(missing)]);
+      const command = join(denied, "dconf");
+      await writeFile(command, "#!/bin/sh\nexit 17\n", { mode: 0o600 });
+      await writeFile(join(root, "user"), "GVariant");
+
+      const dump = await dumpDconfDatabase(join(root, "user"), {
+        PATH: `${denied}:${missing}`,
+      });
+
+      expect(dump).toMatchObject({
+        ok: false,
+        kind: "launch-failed",
+        code: "EACCES",
+        exitCode: null,
+        command,
+        stderr: null,
+      });
+    });
+
     it("retains the selected command and errno when execution is denied", async () => {
       const root = await createTestTempDirectory("dconf-denied-command-");
       const command = join(root, "dconf");
@@ -304,12 +332,14 @@ describe.skipIf(process.platform !== "linux")(
         REA_DCONF_COMMAND: command,
       });
 
-      expect(dump).toEqual({
+      expect(dump).toMatchObject({
         ok: false,
-        error: expect.stringContaining("EACCES"),
+        kind: "launch-failed",
+        code: "EACCES",
+        exitCode: null,
+        command,
+        stderr: null,
       });
-      if (dump.ok) throw new Error("Expected a command failure");
-      expect(dump.error).toContain(command);
     });
 
     it.each(["", " \t\n", "reader refused the database\n"])(
@@ -330,12 +360,14 @@ describe.skipIf(process.platform !== "linux")(
           REA_DCONF_COMMAND: command,
         });
 
-        expect(dump.ok).toBe(false);
-        if (dump.ok) throw new Error("Expected a command failure");
-        if (stderr.trim() === "") {
-          expect(dump.error).toContain("Command failed:");
-          expect(dump.error).toContain(command);
-        } else expect(dump.error).toBe(stderr.trim());
+        expect(dump).toMatchObject({
+          ok: false,
+          kind: "exited",
+          code: null,
+          exitCode: 17,
+          command,
+          stderr: stderr.trim() === "" ? null : stderr.trim(),
+        });
       },
     );
 
@@ -349,6 +381,11 @@ describe.skipIf(process.platform !== "linux")(
       ).toEqual({
         ok: false,
         error: "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+        kind: "not-installed",
+        code: "ENOENT",
+        exitCode: null,
+        command: join(root, "absent"),
+        stderr: null,
       });
     });
   },
@@ -604,9 +641,13 @@ it.skipIf(process.platform !== "linux")(
       await dumpDconfDatabase(database, {
         REA_DCONF_COMMAND: "/must-not-start-with-unavailable-descriptor-paths",
       }),
-    ).toEqual({
+    ).toMatchObject({
       ok: false,
-      error: expect.stringContaining("descriptor path unavailable"),
+      kind: "descriptor-unavailable",
+      code: "ENOENT",
+      exitCode: null,
+      command: null,
+      stderr: null,
     });
   },
 );
@@ -623,9 +664,13 @@ it.skipIf(process.platform !== "linux")(
       REA_DCONF_COMMAND: "/must-not-start-after-profile-write-failure",
     });
 
-    expect(dump).toEqual({
+    expect(dump).toMatchObject({
       ok: false,
-      error: expect.stringContaining("EEXIST"),
+      kind: "profile-write",
+      code: "EEXIST",
+      exitCode: null,
+      command: null,
+      stderr: null,
     });
     expect(await readFile(profile, "utf8")).toBe("existing staged profile");
   },

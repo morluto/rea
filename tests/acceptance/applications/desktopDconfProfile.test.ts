@@ -196,6 +196,91 @@ for (const [name, background] of [
   );
 }
 
+const pythonModule = (body: string) =>
+  [
+    ...PYTHON_IMPORTS.split("\n").filter(
+      (line) => !line.includes("agentenv_protocol"),
+    ),
+    PYTHON_HELPERS,
+    body,
+  ].join("\n");
+
+/** Report `_dconf` failures by errno and exit status, not traceback prose. */
+const DCONF_DUMP_PROBE = `try:
+    sys.stdout.write(_dconf(["dump", "/"], {}))
+except OSError as error:
+    sys.stdout.write(json.dumps({
+        "kind": "launch-failed",
+        "code": errno.errorcode.get(error.errno),
+        "command": error.filename,
+    }))
+    raise SystemExit(1)
+except subprocess.CalledProcessError as error:
+    command = error.cmd[0] if isinstance(error.cmd, list) else None
+    sys.stdout.write(json.dumps({
+        "kind": "exited",
+        "exit_code": error.returncode,
+        "command": command,
+        "stderr": error.stderr,
+    }))
+    raise SystemExit(1)
+`;
+
+interface SelectedDconfFailure {
+  readonly kind: "launch-failed" | "exited";
+  readonly code: "EACCES" | null;
+  readonly exitCode: number | null;
+  readonly command: string;
+  readonly stderr: string | null;
+}
+
+/** The typed failure the denied and exiting readers must surface. */
+const selectedDconfFailure = (
+  searchPath: string,
+  deniedCommand: string,
+  failedCommand: string,
+): SelectedDconfFailure | undefined => {
+  if (searchPath.endsWith("denied"))
+    return {
+      kind: "launch-failed",
+      code: "EACCES",
+      exitCode: null,
+      command: deniedCommand,
+      stderr: null,
+    };
+  if (searchPath === "failed:tools")
+    return {
+      kind: "exited",
+      code: null,
+      exitCode: 17,
+      command: failedCommand,
+      stderr: "selected reader failed",
+    };
+  return undefined;
+};
+
+const viewFailureOf = (failure: SelectedDconfFailure) => ({
+  kind: failure.kind,
+  code: failure.code,
+  exit_code: failure.exitCode,
+  command: failure.command,
+  stderr: failure.stderr,
+});
+
+const exportFailureOf = (failure: SelectedDconfFailure) =>
+  failure.kind === "exited"
+    ? {
+        kind: failure.kind,
+        exit_code: failure.exitCode,
+        command: failure.command,
+        stderr: failure.stderr,
+      }
+    : {
+        kind: failure.kind,
+        code: failure.code,
+        command: failure.command,
+      };
+
 // A command-lookup boundary, independent of the optional system dconf provider.
 for (const searchPath of [
   "tools",
@@ -292,18 +377,13 @@ dconf-helper
       const state = desktopApplicationStateSchema.parse(
         parseEvidence(result.json).normalized_result,
       );
-      if (searchPath.endsWith("denied")) {
-        expect
-          .soft(state.paths[0]?.versions[0]?.view_error)
-          .toContain("EACCES");
-        expect
-          .soft(state.paths[0]?.versions[0]?.view_error)
-          .toContain(join(denied, "dconf"));
-      } else if (searchPath === "failed:tools") {
-        expect
-          .soft(state.paths[0]?.versions[0]?.view_error)
-          .toContain("selected reader failed");
-      } else
+      const expected = selectedDconfFailure(
+        searchPath,
+        join(denied, "dconf"),
+        join(failed, "dconf"),
+      );
+      const version = state.paths[0]?.versions[0];
+      if (expected === undefined)
         expect.soft(state.paths).toEqual([
           expect.objectContaining({
             versions: [
@@ -317,41 +397,31 @@ dconf-helper
             ],
           }),
         ]);
+      else {
+        expect.soft(version?.view).toBeNull();
+        expect.soft(version?.view_failure).toEqual(viewFailureOf(expected));
+      }
       const helper = join(root, "exported.py");
-      await writeFile(
-        helper,
-        [
-          ...PYTHON_IMPORTS.split("\n").filter(
-            (line) => !line.includes("agentenv_protocol"),
-          ),
-          PYTHON_HELPERS,
-          'print(_dconf(["dump", "/"], {}), end="")',
-        ].join("\n"),
-      );
+      await writeFile(helper, pythonModule(DCONF_DUMP_PROBE));
       const pending = execFileOutput(python, ["-I", helper, staged], {
         cwd,
         env: { PATH: searchPath },
         timeout: 10_000,
         maxBuffer: 64 * 1024,
       });
-      if (searchPath.endsWith("denied")) {
-        const failure = await pending.then(
-          () => undefined,
-          (cause: unknown) => execFileOutputFailure(cause),
-        );
-        expect(failure?.stderr).toContain("PermissionError");
-        expect(failure?.stderr).toContain(join(denied, "dconf"));
-      } else if (searchPath === "failed:tools") {
-        const failure = await pending.then(
-          () => undefined,
-          (cause: unknown) => execFileOutputFailure(cause),
-        );
-        expect(failure?.stderr).toContain("CalledProcessError");
-        expect(failure?.stderr).toContain("exit status 17");
-      } else {
+      if (expected === undefined) {
         const exported = await pending;
         expect(exported.stderr).toBe("");
         expect(exported.stdout).toBe("[org/notes]\nselected=true\n");
+      } else {
+        const failure = await pending.then(
+          () => undefined,
+          (cause: unknown) => execFileOutputFailure(cause),
+        );
+        if (failure === undefined)
+          throw new Error("expected the exported helper to fail");
+        expect(failure.stderr).toBe("");
+        expect(JSON.parse(failure.stdout)).toEqual(exportFailureOf(expected));
       }
     },
   );
@@ -371,44 +441,42 @@ it.skipIf(process.platform === "win32" || !hasPython)(
     const helper = join(root, "io.py");
     await writeFile(
       helper,
-      [
-        ...PYTHON_IMPORTS.split("\n").filter(
-          (line) => !line.includes("agentenv_protocol"),
-        ),
-        PYTHON_HELPERS,
-        "started = []",
-        'failure = OSError(errno.EIO, "controlled pipe read failure")',
-        "original_popen = subprocess.Popen",
-        "class ReadFailure(original_popen):",
-        "    def __init__(self, *args, **kwargs):",
-        "        super().__init__(*args, **kwargs)",
-        "        started.append(self)",
-        "    def communicate(self, *args, **kwargs):",
-        "        raise failure",
-        "subprocess.Popen = ReadFailure",
-        "try:",
-        '    _dconf(["dump", "/"], {})',
-        "except OSError as error:",
-        "    assert error is failure",
-        "else:",
-        '    raise AssertionError("read failure was hidden")',
-        "assert len(started) == 1",
-        "assert started[0].poll() is not None",
-        'capacity = OSError(errno.EAGAIN, "controlled host spawn refusal")',
-        "attempted = []",
-        "def refuse_spawn(*args, **kwargs):",
-        "    attempted.append(args)",
-        "    raise capacity",
-        "subprocess.Popen = refuse_spawn",
-        "try:",
-        '    _dconf(["dump", "/"], {})',
-        "except OSError as error:",
-        "    assert error is capacity",
-        "else:",
-        '    raise AssertionError("spawn refusal was hidden")',
-        "assert len(attempted) == 1",
-        'print("read failure preserved; child reaped")',
-      ].join("\n"),
+      pythonModule(
+        [
+          "started = []",
+          'failure = OSError(errno.EIO, "controlled pipe read failure")',
+          "original_popen = subprocess.Popen",
+          "class ReadFailure(original_popen):",
+          "    def __init__(self, *args, **kwargs):",
+          "        super().__init__(*args, **kwargs)",
+          "        started.append(self)",
+          "    def communicate(self, *args, **kwargs):",
+          "        raise failure",
+          "subprocess.Popen = ReadFailure",
+          "try:",
+          '    _dconf(["dump", "/"], {})',
+          "except OSError as error:",
+          "    assert error is failure",
+          "else:",
+          '    raise AssertionError("read failure was hidden")',
+          "assert len(started) == 1",
+          "assert started[0].poll() is not None",
+          'capacity = OSError(errno.EAGAIN, "controlled host spawn refusal")',
+          "attempted = []",
+          "def refuse_spawn(*args, **kwargs):",
+          "    attempted.append(args)",
+          "    raise capacity",
+          "subprocess.Popen = refuse_spawn",
+          "try:",
+          '    _dconf(["dump", "/"], {})',
+          "except OSError as error:",
+          "    assert error is capacity",
+          "else:",
+          '    raise AssertionError("spawn refusal was hidden")',
+          "assert len(attempted) == 1",
+          'print("read failure preserved; child reaped")',
+        ].join("\n"),
+      ),
     );
     const result = await execFileOutput(python, ["-I", helper], {
       env: { PATH: `${tools}:${tools}` },

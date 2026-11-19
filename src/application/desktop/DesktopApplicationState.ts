@@ -27,9 +27,11 @@ import {
   type DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import type {
+  DconfViewFailure,
   DesktopApplicationState,
   DesktopStatePath,
 } from "../../domain/desktop/desktopState.js";
+import type { DconfDump } from "../../desktop/DconfDatabaseReader.js";
 import { openStateDocument } from "../../domain/desktop/gzipDocument.js";
 import { diffStateViews } from "../../domain/desktop/stateChanges.js";
 import {
@@ -95,7 +97,7 @@ export interface DesktopStateReaders {
   readonly dconf: (
     database: string,
     signal?: AbortSignal,
-  ) => Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  ) => Promise<DconfDump>;
 }
 
 type Version = DesktopStatePath["versions"][number];
@@ -270,9 +272,27 @@ const withStaged = async <Value>(
 
 type ViewOutcome =
   | { readonly view: JsonValue; readonly error: null }
-  | { readonly view: null; readonly error: string };
+  | {
+      readonly view: null;
+      readonly error: string;
+      readonly failure: DconfViewFailure | null;
+    };
 
-const failed = (error: string): ViewOutcome => ({ view: null, error });
+const failed = (error: string): ViewOutcome => ({
+  view: null,
+  error,
+  failure: null,
+});
+
+const dconfViewFailure = (
+  dump: Extract<DconfDump, { ok: false }>,
+): DconfViewFailure => ({
+  kind: dump.kind,
+  code: dump.code,
+  exit_code: dump.exitCode,
+  command: dump.command,
+  stderr: dump.stderr,
+});
 
 /** One retained version's verified document, a gzip file's decompressed, with its format already detected. */
 interface ReadInput {
@@ -354,7 +374,11 @@ const dconfView = async (
       const dump = await context.readers.dconf(database ?? "", context.signal);
       return dump.ok
         ? { view: dconfGroups(dump.text, context.names), error: null }
-        : failed(dump.error);
+        : {
+            view: null,
+            error: dump.error,
+            failure: dconfViewFailure(dump),
+          };
     },
     context.readers.resources,
   );
@@ -455,6 +479,8 @@ const readVersion = async (
       : await viewOf({ path, bytes: document.bytes, version }, context);
   version.view = outcome.view;
   version.view_error = outcome.error;
+  if (outcome.error !== null && outcome.failure !== null)
+    version.view_failure = outcome.failure;
 };
 
 const hasDconfGroups = (version: Version): boolean => {
