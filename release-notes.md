@@ -480,6 +480,7 @@
 * **il2cpp:** validate record extents before width inference ([#12429](https://github.com/morluto/rea/issues/12429)) ([0ea671a](https://github.com/morluto/rea/commit/0ea671abf537c62a427f7bb5d776ebff28324597))
 * **inventory:** validate PE headers before classification ([#11691](https://github.com/morluto/rea/issues/11691)) ([ad82b61](https://github.com/morluto/rea/commit/ad82b616416b5cfa33e429315bcfaa705679d015))
 * isolate concurrent doctor cleanup scopes, trace JS fixture helpers, and share MCP/home lifecycles ([116f159](https://github.com/morluto/rea/commit/116f159a8af041ea77aa79f84199e5155ec2064d))
+* **javascript:** acquire nested iterators from stored receivers ([#12542](https://github.com/morluto/rea/issues/12542)) ([f5573a0](https://github.com/morluto/rea/commit/f5573a0064b6afd1ba7c57d68eb3014d1468ee97))
 * **javascript:** apply observed loader grammar before analysis ([#12066](https://github.com/morluto/rea/issues/12066)) ([475250a](https://github.com/morluto/rea/commit/475250ac5220bf75f11c4afce91b914a5d1fa319))
 * **javascript:** attribute call-path unknowns only where the walk can reach Electron ([#4915](https://github.com/morluto/rea/issues/4915)) ([cad3209](https://github.com/morluto/rea/commit/cad320953306581bbe34ecc33fb3fada5ba46844))
 * **javascript:** count escapes of Function.prototype before trusting call and apply ([#11501](https://github.com/morluto/rea/issues/11501)) ([a86a668](https://github.com/morluto/rea/commit/a86a6687181ec8eb37860a838c850e72b15f7936))
