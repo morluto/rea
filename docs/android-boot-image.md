@@ -79,8 +79,9 @@ the header, a component, or the footer is malformed.
 ## Bounded work
 
 The reader admits at most 4,096 vendor ramdisk table entries and an entry size
-of at most 4,096 bytes. A vendor `header_size` above 1 MiB is the same kind of
-capacity limit. Those checks happen before the table is read. Unsupported
+of at most 4,096 bytes. It verifies that the table dimensions agree and the
+declared bytes fit in the image before applying those limits and reading the
+table. A vendor `header_size` above 1 MiB also exceeds a capacity limit. Unsupported
 header revisions return `unsupported_target`; truncated declared structures
 return `truncated`; malformed layouts return `invalid_request`. The page
 padding after the last component carries no data and may be absent. These refusals

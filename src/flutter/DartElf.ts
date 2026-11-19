@@ -13,7 +13,7 @@ import {
 } from "../domain/elfHashSymbolCount.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
-import { readElfSymbol } from "../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../domain/elfSymbol.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
 import { validateElfSectionTableFields } from "../domain/elfDeclaredRanges.js";
 import { Buffer } from "node:buffer";
@@ -216,7 +216,7 @@ export const readElfSymbols = async (
     e_phnum,
   } = parsed.header;
   const reader = new BoundedReader(bytes);
-  const entrySize = is64 ? 24 : 16;
+  const entrySize = elfSymbolSize(is64 ? 64 : 32);
   const segments: { vaddr: number; offset: number; filesz: number }[] = [];
   let dynamicSegment: { offset: number; filesz: number } | null = null;
   for (let index = 0; index < e_phnum; index += 1) {

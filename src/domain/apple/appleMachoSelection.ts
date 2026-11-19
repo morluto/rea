@@ -20,6 +20,7 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
+  machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
 import {
@@ -127,9 +128,14 @@ export const parseMachoLayout = (
         undecodedContent: true,
       },
     );
-  const commandEnd = slice + table.headerSize + table.commandBytes;
-  if (commandEnd > sliceEnd)
-    throw malformedInput("macho", "Malformed Mach-O command bounds");
+  const issue = machoCommandTableIssue(table, selectedBytes.length);
+  if (issue !== null)
+    throw malformedInput(
+      "macho",
+      issue.kind === "extent"
+        ? "Malformed Mach-O command bounds"
+        : issue.message,
+    );
   const state: LayoutState = {
     slice,
     sliceEnd,
@@ -341,6 +347,7 @@ const collectFixupCommand = (
   } else if (machoDependencyCommand(kind) !== null) {
     const parsed = readMachoDylibCommandFacts(
       bytes.subarray(cursor, cursor + size),
+      kind,
       true,
     );
     if (!parsed.ok) {

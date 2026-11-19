@@ -1791,6 +1791,11 @@ it.each([
     "docs/.vitepress/package.json",
     { code: true, docs: true, runtime: false, package: false },
   ],
+  ["package-lock.json", { code: true, docs: true, runtime: true }],
+  [
+    "scripts/generate-third-party-inventory.mjs",
+    { code: true, docs: true, runtime: false },
+  ],
   ["docs/data.json", { code: false, docs: true, package: false }],
   ["CHANGELOG.md", { code: false, docs: true, package: false }],
   ["SECURITY.md", { code: false, docs: true, package: false }],
