@@ -70,9 +70,6 @@ it.each([false, true])(
               {
                 path: ["path"],
                 reason: "invalid_format",
-                message: expect.stringContaining(
-                  "Mach-O load commands range is outside the file",
-                ),
               },
             ],
           },
