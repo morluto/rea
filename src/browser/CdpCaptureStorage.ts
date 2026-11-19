@@ -12,6 +12,7 @@ import {
   type CapturedCache,
   type CapturedStorageItems,
 } from "./CdpCaptureStorageFingerprints.js";
+import { captureCacheStorageEntries } from "./CdpCaptureStorageEntries.js";
 import { recordsValue, cdpStringValue } from "./CdpCaptureValues.js";
 
 /** Capture redacted storage metadata for an authorized page and its origin. */
@@ -27,6 +28,7 @@ export const captureStorage = async (
 ): Promise<{
   readonly value: WebPageInspection["storage"];
   readonly keysExclusion: BrowserExclusionReason | undefined;
+  readonly cacheEntriesExclusion: BrowserExclusionReason | undefined;
 }> => {
   const origin = new URL(pageUrl).origin;
   const quota = await optionalCdpCommand(
@@ -63,6 +65,9 @@ export const captureStorage = async (
     : undefined;
   const cacheValues = cacheReply?.ok ? cacheReply.value.caches : undefined;
   const caches = capturedCaches(recordsValue(cacheValues ?? []));
+  const cacheEntries = context.input.include_cache_storage_entries
+    ? await captureCacheStorageEntries(context, caches, limitations)
+    : { entries: [], exclusion: undefined };
   const fingerprints = context.input.include_storage_fingerprints
     ? await captureStorageFingerprints({
         context,
@@ -95,6 +100,7 @@ export const captureStorage = async (
         : undefined;
   return {
     keysExclusion,
+    cacheEntriesExclusion: cacheEntries.exclusion,
     value: {
       origin,
       usage_bytes: quota.ok ? quota.value.usage : null,
@@ -103,6 +109,7 @@ export const captureStorage = async (
       session_storage_keys: session.items.map(({ key }) => key),
       indexed_db_names: [...indexed],
       cache_names: caches.map(({ name }) => name),
+      cache_entries: cacheEntries.entries,
       content_fingerprints: [...fingerprints.items],
       fingerprint_algorithm: "sha256",
       fingerprints_complete: fingerprints.complete && structuredStorageComplete,
