@@ -675,7 +675,7 @@ export const sectionRelocations = async (
           ? word
           : elfRelocationWidth(input.machine, parsed.value.type, input.bits));
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
-      let span = extent ?? word;
+      const span = extent ?? word;
       if (span === 0) continue;
       const written = parsed.value.offset + (target?.address ?? 0n);
       if (recordTarget(input, target, parsed.value.offset, 1) === null) {
@@ -690,24 +690,12 @@ export const sectionRelocations = async (
           skip(section);
         continue;
       }
-      let writtenFileOffset = recordTarget(
+      const writtenFileOffset = recordTarget(
         input,
         target,
         parsed.value.offset,
         span,
       );
-      // An assumed word proves no overrun. An unknown type that ends its
-      // mapping, such as the 32-bit field of a tail call that ends .text, is
-      // narrowed to the bytes the mapping holds; the first is file-backed.
-      while (extent === undefined && writtenFileOffset === null && span > 1) {
-        span -= 1;
-        writtenFileOffset = recordTarget(
-          input,
-          target,
-          parsed.value.offset,
-          span,
-        );
-      }
       const fullWrite = writtenFileOffset !== null;
       if (!fullWrite) {
         complete = false;
