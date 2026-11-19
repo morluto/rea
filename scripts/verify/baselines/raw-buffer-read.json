@@ -14,7 +14,6 @@
   "src/domain/managed/managedMetadataHeaps.ts": 4,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/managed/managedMetadataLayout.ts": 7,
-  "src/domain/native/elfNoteLayout.ts": 3,
   "src/domain/native/elfPointerRelocations.ts": 6,
   "src/domain/native/nativeAotPe.ts": 26,
   "src/domain/native/readBinaryContainer.ts": 1,
