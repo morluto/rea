@@ -418,6 +418,32 @@ it("fails a truncated note payload without partial success", () => {
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
 });
 
+it("diagnoses incomplete note framing at the entry limit", () => {
+  const note = elfNote("REA", 9, Buffer.from([1]));
+  const truncatedName = Buffer.from(note);
+  truncatedName.writeUInt32LE(16);
+  const truncatedDescriptor = Buffer.from(note);
+  truncatedDescriptor.writeUInt32LE(8, 4);
+  const truncatedPadding = note.subarray(0, note.length - 1);
+  const input = { ...defaults, max_entries: 1 };
+  for (const truncated of [
+    truncatedName,
+    truncatedDescriptor,
+    truncatedPadding,
+  ]) {
+    const image = elfNoteFixture({
+      ownership: "program",
+      notes: Buffer.concat([note, truncated]),
+    });
+    expect(() => parse(image, input)).toThrow(
+      expect.objectContaining({
+        reason: "format",
+        message: "ELF note entry exceeds its table.",
+      }),
+    );
+  }
+});
+
 it("keeps non-GNU owners as unknown types with descriptor hashes", () => {
   const payload = Buffer.from("hello");
   const notes = elfNote("CORE", 1, payload);
@@ -790,7 +816,19 @@ it("fails when the entry budget is exhausted", () => {
       },
       inspectElfNotesInputSchema.parse({ path: defaults.path, max_entries: 1 }),
     ),
-  ).toThrow(ParseFailureError);
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "max_entries", maximum: 1, required: 2 },
+      }),
+    }),
+  );
+  expect(parse(bytes, { ...defaults, max_entries: 3 }).coverage).toEqual({
+    status: "complete",
+    examined_tables: 1,
+    examined_entries: 3,
+  });
 });
 
 it("reads a glibc-sized note table with the default entry budget", () => {

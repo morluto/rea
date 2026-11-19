@@ -9,6 +9,7 @@ import {
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import { readMachoImage } from "../../domain/apple/machoImage.js";
+import { elfNote, elfNoteFixture } from "../elf/ElfNotes.fixture.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,
@@ -1066,6 +1067,23 @@ it("reports the note budget it hit and keeps the header rows", () => {
     ),
   });
   expect(findRow(text.rows, "aarch64_bti_pac").state).toBe("not_applicable");
+});
+
+it("rejects an incomplete note at the hardening entry limit", () => {
+  const note = elfNote("REA", 9, Buffer.from([1]));
+  const image = elfNoteFixture({
+    ownership: "program",
+    notes: Buffer.concat([
+      ...Array<Buffer>(256).fill(note),
+      note.subarray(0, note.length - 1),
+    ]),
+  });
+  expect(() => readElfHardening(image)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: "ELF note entry exceeds its table.",
+    }),
+  );
 });
 
 it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
