@@ -1,3 +1,4 @@
+import { assertProcessOwnershipInspectionActive } from "../../process/ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import { access } from "node:fs/promises";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
@@ -368,3 +369,47 @@ it("retains a physical process admission error alongside cancellation", async ()
   );
   expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
 });
+
+it.each([
+  "distinct reason",
+  "shared admission error",
+  "observed cancellation",
+] as const)(
+  "keeps the launcher's reported outcome for %s",
+  async (scenario) => {
+    const controller = new AbortController();
+    const physical = new ProcessAdmissionError("baseline_unavailable");
+    const reason =
+      scenario === "distinct reason"
+        ? { caller: "during codec launch" }
+        : physical;
+    const result = await runSourceMapCommand(
+      "{}",
+      "/probe/source.map",
+      { signal: controller.signal },
+      {
+        prepareOwnership: async () => {},
+        launcher: async ({ signal }) => {
+          controller.abort(reason);
+          if (scenario === "observed cancellation")
+            assertProcessOwnershipInspectionActive(signal);
+          throw physical;
+        },
+      },
+      unexpectedCleanup,
+    );
+    if (result.ok) throw new Error("expected failed launch");
+    if (scenario === "observed cancellation") {
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.secondaryFailures).toHaveLength(0);
+    } else {
+      expect(result.error._tag).toBe("ProviderAdapterError");
+      expect(result.error.cause).toBe(physical);
+      expect(result.error.secondaryFailures).toHaveLength(1);
+      const [cancelled] = result.error.secondaryFailures;
+      expect(cancelled).toBeInstanceOf(AnalysisCancelledError);
+      expect(cancelled?.cause).toBe(reason);
+    }
+  },
+);

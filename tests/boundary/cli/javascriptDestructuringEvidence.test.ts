@@ -50,6 +50,8 @@ const expectedDependencies = [
   ["arrayObject", ["0", "mode"]],
   ["nestedElement", ["items", "0"]],
   ["innerElement", ["0", "0"]],
+  ["siblingInnerElement", ["1", "0"]],
+  ["spreadElement", ["1"]],
   ["aliasedPrototypeElement", ["0", "0"], "candidate"],
   ["selected", ["0"], "candidate"],
   ["beforeClose", ["label"]],
@@ -60,6 +62,24 @@ const expectedDependencies = [
   ["replacedBeforeClose", ["next", "mode"]],
   ["replacedAfterClose", ["next", "mode"], "candidate"],
   ["projectedAfterAcquisition", ["parent", "next", "mode"], "candidate"],
+] as const;
+
+const tracedBindings = [
+  "declared",
+  "ordinary",
+  "arrayAssigned",
+  "elided",
+  "projected",
+  "arrayObject",
+  "nestedElement",
+  "innerElement",
+  "siblingInnerElement",
+  "spreadElement",
+  "aliasedPrototypeElement",
+  "selected",
+  "beforeClose",
+  "consumed",
+  "afterClose",
 ] as const;
 
 cliTest(
@@ -106,9 +126,13 @@ cliTest(
     const nestedSource = { items: ["nested"] };
     const { items: [nestedElement] } = nestedSource;
     nestedSource.items[0] = "later";
-    const nestedPairs = [["read-time"]];
-    const [[innerElement]] = nestedPairs;
+    const nestedPairs = [["read-time"], ["sibling"]];
+    const [[innerElement], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
+    nestedPairs[1][0] = "later";
+    const spreadSource = [...["prefix"], "read-time"];
+    const [,spreadElement] = spreadSource;
+    spreadSource[1] = "later";
     const box = { items: [] };
     const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
@@ -162,21 +186,7 @@ cliTest(
       ),
     ).toMatchObject({ resolution: "resolved" });
     const queryPath = join(root, "query.json");
-    for (const name of [
-      "declared",
-      "ordinary",
-      "arrayAssigned",
-      "elided",
-      "projected",
-      "arrayObject",
-      "nestedElement",
-      "innerElement",
-      "aliasedPrototypeElement",
-      "selected",
-      "beforeClose",
-      "consumed",
-      "afterClose",
-    ]) {
+    for (const name of tracedBindings) {
       const binding = graph.nodes.find(
         ({ kind, label }) => kind === "binding" && label === name,
       );
