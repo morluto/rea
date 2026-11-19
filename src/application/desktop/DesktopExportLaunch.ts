@@ -10,6 +10,7 @@ import {
   type DesktopApplicationState,
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
+import { unwrapDesktopCommand } from "../../domain/desktop/desktopEntry.js";
 import { openSeedDocument } from "../../domain/desktop/seedDocument.js";
 import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import type { SeedVersion } from "./DesktopExportFiles.js";
@@ -118,32 +119,52 @@ export const planLaunch = (
   const { application, host } = capture;
   const isDocument = (home: string) => files.get(home)?.role === "document";
   const homeOf = capturedHomePath(capture);
-  const capturedDirectory = application.working_directory;
-  const workingDirectory = (() => {
-    if (!capturedDirectory.startsWith(`${host.home}/`))
-      return capturedDirectory;
-    const relative = capturedDirectory.slice(host.home.length + 1);
-    const seed = homeOf(capturedDirectory) ?? relative;
-    return seed === relative ? capturedDirectory : `${host.home}/${seed}`;
-  })();
-  const launch = openSeedDocument(
-    electronLaunchArguments(application.argv, electron),
-    {
-      home: host.home,
-      // Resolve captured relative arguments against the directory the app used,
-      // then place the process in the seeded spelling of that directory.
-      workingDirectory: capturedDirectory,
-      launchDirectory: workingDirectory,
-      exec: application.desktop_entry?.exec ?? null,
-      documents: [...seeds.keys()].filter(isDocument).sort(),
-      isDocument,
-      isCaptured: capturedLaunchPaths(capture, files, homeOf),
-      spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
-      mapOutside: homeOf,
-    },
-  );
+  const capturedDirectory =
+    application.application_working_directory ?? application.working_directory;
+  const seedDirectory = (directory: string): string => {
+    if (!directory.startsWith(`${host.home}/`)) return directory;
+    const relative = directory.slice(host.home.length + 1);
+    const seed = homeOf(directory) ?? relative;
+    return seed === relative ? directory : `${host.home}/${seed}`;
+  };
+  const selectedSeed =
+    application.application_working_directory === undefined
+      ? null
+      : homeOf(capturedDirectory);
+  const workingDirectory =
+    selectedSeed === null
+      ? seedDirectory(capturedDirectory)
+      : `${host.home}/${selectedSeed}`;
+  const { chdir } = unwrapDesktopCommand(application.argv);
+  const argv =
+    chdir !== undefined &&
+    application.application_working_directory !== undefined
+      ? [
+          ...application.argv.slice(0, chdir.start),
+          "--chdir",
+          workingDirectory,
+          ...application.argv.slice(chdir.end),
+        ]
+      : application.argv;
+  const launch = openSeedDocument(electronLaunchArguments(argv, electron), {
+    home: host.home,
+    // Resolve captured relative arguments against the directory the app used,
+    // then place the process in the seeded spelling of that directory.
+    workingDirectory: capturedDirectory,
+    launchDirectory: workingDirectory,
+    exec: application.desktop_entry?.exec ?? null,
+    documents: [...seeds.keys()].filter(isDocument).sort(),
+    isDocument,
+    isCaptured: capturedLaunchPaths(capture, files, homeOf),
+    spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
+    mapOutside: homeOf,
+  });
   return {
-    command: launchCommand(launch.argv, host.home, workingDirectory),
+    command: launchCommand(
+      launch.argv,
+      host.home,
+      seedDirectory(application.working_directory),
+    ),
     opens: launch.opens,
   };
 };
