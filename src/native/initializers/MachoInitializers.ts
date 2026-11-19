@@ -1,3 +1,4 @@
+import { readInitializerWord } from "./initializerWord.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../resources/index.js";
@@ -25,6 +26,7 @@ import { decodeMachoName } from "../../domain/apple/appleMachoNames.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   createFileMappingIndex,
   type ImageSection,
 } from "../../domain/binaryContainer.js";
@@ -78,6 +80,7 @@ export interface MachoInitializerImage {
 }
 
 interface MachoScan {
+  readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly notes: InitializerNotes;
   /** Known gaps (`partial`) and undetermined facts (`unknown`) noted so far. */
@@ -472,22 +475,6 @@ const decodePointer = (
   };
 };
 
-const readWord = (
-  bytes: Buffer,
-  offset: number,
-  width: number,
-  little: boolean,
-): bigint | null => {
-  if (offset < 0 || offset > bytes.length - width) return null;
-  if (width === 8)
-    return little
-      ? bytes.readBigUInt64LE(offset)
-      : bytes.readBigUInt64BE(offset);
-  return BigInt(
-    little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset),
-  );
-};
-
 interface SectionWalk {
   readonly scan: MachoScan;
   readonly image: ReturnType<typeof readMachoImage>;
@@ -694,7 +681,8 @@ const slotsOf = async (
   offsets: boolean,
   entries: CollectedInitializer[],
 ): Promise<boolean> => {
-  const stride = offsets ? 4 : walk.image.bits / 8;
+  const bits = offsets ? 32 : walk.image.bits;
+  const stride = bits / 8;
   if (!section.file_backed) {
     note(
       walk.scan,
@@ -710,7 +698,6 @@ const slotsOf = async (
       "partial",
     );
   const count = Math.floor(section.size / stride);
-  const little = walk.image.byte_order === "little";
   const relocations = walk.object
     ? objectRelocations(walk, section, stride)
     : undefined;
@@ -722,7 +709,7 @@ const slotsOf = async (
     }
     const slotVa = section.address + BigInt(index * stride);
     const slotFile = section.offset + index * stride;
-    const stored = readWord(walk.scan.bytes, slotFile, stride, little);
+    const stored = readInitializerWord(walk.scan.reader, slotFile, bits);
     const mappingMismatch =
       !walk.object && walk.locate(slotVa, stride) !== walk.fileBase + slotFile;
     if (mappingMismatch)
@@ -833,7 +820,9 @@ export const readMachoInitializers = async (
   );
   if (!header.ok || header.value === null)
     throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
+  const little = container.byte_order === "little";
   const scan: MachoScan = {
+    reader: new BinaryReader(image.bytes, little, "macho"),
     bytes: image.bytes,
     notes: new InitializerNotes(),
     coverage: "complete",
@@ -847,7 +836,6 @@ export const readMachoInitializers = async (
       "malformed",
       "arm64_32 Mach-O uses 4-byte pointers but declares a 64-bit header",
     );
-  const little = container.byte_order === "little";
   // Object files carry section relocations, not dyld fixups.
   const object = header.value.fileType === MH_OBJECT;
   const decoded = object
