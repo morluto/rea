@@ -498,6 +498,8 @@
 * **kuna:** reject lossy text in retained project exports ([#12171](https://github.com/morluto/rea/issues/12171)) ([f361ee1](https://github.com/morluto/rea/commit/f361ee1222f6fcffd08add5d268ab878b85f64fe))
 * **kuna:** stop calling executable-segment data sections definite data ([#10686](https://github.com/morluto/rea/issues/10686)) ([1920525](https://github.com/morluto/rea/commit/1920525900519f05553f37b178b788d31c193fb6))
 * **lifecycle:** supervise assetutil, keep cleanup-time interruptions, and cover browser-transport handshakes ([#11502](https://github.com/morluto/rea/issues/11502)) ([035d876](https://github.com/morluto/rea/commit/035d876d1f8ba4c3b6ce449ef5d30bd1fa3da0c4))
+* **macho:** map high-backed segment bytes at their declared virtual range ([#12479](https://github.com/morluto/rea/issues/12479)) ([833916b](https://github.com/morluto/rea/commit/833916bb4a29001f6a618d2b12696d614c381d1e))
+* **macho:** map high-backed segment file bytes at their declared virtual range ([833916b](https://github.com/morluto/rea/commit/833916bb4a29001f6a618d2b12696d614c381d1e))
 * **macho:** prove command table framing before capacity ([#12376](https://github.com/morluto/rea/issues/12376)) ([88983eb](https://github.com/morluto/rea/commit/88983ebac7fff0f70dcef00b1b3b0aaed7e732a2))
 * **macho:** share marker-bearing dylib field decoding ([#12400](https://github.com/morluto/rea/issues/12400)) ([e9af636](https://github.com/morluto/rea/commit/e9af636128c56a8f789a989f6a61929f4908f37f))
 * **macho:** validate command counts before record limits ([#12305](https://github.com/morluto/rea/issues/12305)) ([b1479de](https://github.com/morluto/rea/commit/b1479de3dd954ec35657d695c3c47d85cf88aa6d))
