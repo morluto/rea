@@ -47,7 +47,10 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixupsSteps } from "../domain/apple/appleMachoFixups.js";
-import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../domain/binaryContainer.js";
 import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   selectMachoSlice,
@@ -102,6 +105,7 @@ export function* decodeAppleDispatchMetadataSteps(
   }
   const layout = parseMachoLayout(bytes, selected.value);
   const { segments, sections, offset } = layout;
+  const metadata = new BinaryReader(bytes, true, "macho");
   const fixups = yield* parsePointerFixupsSteps(
     bytes,
     layout.fixups,
@@ -211,7 +215,7 @@ export function* decodeAppleDispatchMetadataSteps(
   };
   const readers = {
     u32,
-    i32: (address: bigint) => bytes.readInt32LE(offset(address, 4)),
+    i32: (address: bigint) => metadata.i32(offset(address, 4)),
     u64: (address: bigint) => bytes.readBigUInt64LE(offset(address, 8)),
     pointer,
     resolvePointer: decodePointer,
@@ -230,7 +234,6 @@ export function* decodeAppleDispatchMetadataSteps(
     objcListScanTruncated,
     objcClassListScanTruncated,
   } = decodeObjcDispatchFacets({
-    bytes,
     sections,
     segments,
     readers,
@@ -239,7 +242,6 @@ export function* decodeAppleDispatchMetadataSteps(
     result,
   });
   const swiftRelative = createSwiftRelativeReader({
-    bytes,
     readers,
     budget,
     result,

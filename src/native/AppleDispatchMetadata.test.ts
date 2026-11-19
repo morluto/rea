@@ -2,6 +2,10 @@ import { malformedInput } from "../domain/parseFailure.js";
 import { describe, expect, it } from "vitest";
 import { machoWithPropertyAttributes } from "../../tests/fixtures/objcPropertyMacho.js";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
+import {
+  CPU_ARM64,
+  universalMacho,
+} from "../../tests/fixtures/universalMacho.js";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 
@@ -2050,6 +2054,53 @@ describe("universal Apple dispatch metadata", () => {
       location: { file_offset: offset + 0x488 },
     });
   });
+
+  it.each([true, false])(
+    "requires all four mapped bytes of a relative method field (complete=%s)",
+    (complete) => {
+      const thin = fixture(true);
+      // Keep earlier class discovery in range. Only three bytes of the first
+      // relative method field are backed when the mapping ends at 0x48b.
+      thin.writeBigUInt64LE(0n, 0x330);
+      if (!complete) thin.writeBigUInt64LE(0x48bn, 80);
+      const { bytes, slices } = universalMacho([
+        { bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0 },
+      ]);
+      const slice = slices[0]!;
+      const result = decodeAdmitted(bytes, slice);
+      if (complete) {
+        expect(result.relative_pointers).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              field: {
+                address: "0x100000488",
+                file_offset: slice.offset + 0x488,
+              },
+              target: {
+                address: "0x100000460",
+                file_offset: slice.offset + 0x460,
+              },
+              displacement: -40,
+            }),
+          ]),
+        );
+      } else {
+        expect(result.relative_pointers).toEqual([]);
+        expect(result.objc_dispatch_implementations).toEqual([]);
+        expect(result.coverage).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              facet: "objc_class_method_ivar_metadata",
+              status: "partial",
+              reason: expect.stringContaining(
+                "Unmapped or ambiguous metadata pointer 0x100000488",
+              ),
+            }),
+          ]),
+        );
+      }
+    },
+  );
 });
 
 describe("FAT64 dispatch slice validation", () => {

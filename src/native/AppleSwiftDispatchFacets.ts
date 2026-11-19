@@ -1,8 +1,5 @@
 import { decodeLimit, parseFailureFromCause } from "../domain/parseFailure.js";
-import {
-  BinaryReader,
-  BinaryFormatFailure,
-} from "../domain/binaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import {
   createSwiftContextReader,
   type SwiftContextReader,
@@ -183,6 +180,7 @@ const readWitnessConformanceHeader = (
 /** Byte readers for Swift relative-pointer and conformance decode facets. */
 export interface SwiftDispatchReaders {
   u32(address: bigint): number;
+  i32(address: bigint): number;
   pointer(address: bigint): bigint;
   resolvePointer(address: bigint): PointerResolution;
   string(address: bigint): string;
@@ -206,24 +204,17 @@ const decoded = { status: "decoded" as const, reason: null };
 const SWIFT_STATIC_WITNESS_FLAGS_MASK = 0x78;
 /** Create a Swift ABI signed-relative pointer decoder that records relative_pointers. */
 export const createSwiftRelativeReader = (input: {
-  bytes: Buffer;
   readers: SwiftDispatchReaders;
   budget: DispatchRecordBudget;
   result: ObjcSwiftMetadata;
 }) => {
-  const { bytes, readers: read, budget, result } = input;
+  const { readers: read, budget, result } = input;
   return (field: bigint, kind: SwiftRelativeField): SwiftRelativeValue => {
     const contract = relativeFieldContracts[kind];
     const indirectable = contract.encoding === "indirectable";
     const taggedDirect = contract.encoding === "taggedDirect";
     const nullable = contract.nullability === "nullable";
-    // The relative displacement is a signed 32-bit field at a slot the loader already
-    // resolved; the shared reader repeats the range check and names the format.
-    const displacement = new BinaryReader(
-      bytes,
-      true,
-      "macho-swift-dispatch-facets",
-    ).i32(read.offset(field, 4));
+    const displacement = read.i32(field);
     const encodingTag = taggedDirect ? displacement & 3 : undefined;
     if (encodingTag !== undefined && encodingTag !== 0) {
       const reason = `Unsupported Swift type metadata record tag ${encodingTag}`;
