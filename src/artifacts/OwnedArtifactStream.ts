@@ -14,14 +14,14 @@ export const ownArtifactStream = (
     label,
   }: {
     readonly scope: ArtifactResourceScope;
-    readonly streams: Set<Readable>;
+    readonly streams?: Set<Readable>;
     readonly signal: AbortSignal | undefined;
     readonly cancellationFailure: (reason: unknown) => Error;
     readonly label: string;
   },
 ): void => {
   output.on("error", () => undefined);
-  streams.add(output);
+  streams?.add(output);
   let producerComplete = false;
   const onAbort = (): void => {
     // Active I/O and validation own failure precedence; cancellation also
@@ -31,7 +31,7 @@ export const ownArtifactStream = (
   };
   const retired = new Promise<void>((resolve) => {
     output.once("close", () => {
-      streams.delete(output);
+      streams?.delete(output);
       signal?.removeEventListener("abort", onAbort);
       resolve();
     });

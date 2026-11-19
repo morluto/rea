@@ -20,6 +20,8 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 
+const READER_CLOSED = Symbol("Positional artifact reader closed");
+
 /** An entry whose bytes are one range of the carrier. */
 export type PositionalArtifactEntry = ArtifactEntry & {
   readonly byteOffset: number;
@@ -45,7 +47,7 @@ export abstract class PositionalArtifactReader<
 > implements ArtifactReader {
   abstract readonly format: ArtifactReader["format"];
   readonly #scope = new ArtifactResourceScope();
-  readonly #streams = new Set<Readable>();
+  readonly #lifecycle = new AbortController();
   readonly #label: string;
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
@@ -56,7 +58,6 @@ export abstract class PositionalArtifactReader<
         readonly formatMetadata: Metadata | undefined;
       }
     | undefined;
-  #closing = false;
 
   constructor(
     path: string,
@@ -138,29 +139,36 @@ export abstract class PositionalArtifactReader<
         );
       const { handle } = await this.#source.read(signal);
       this.assertOpen(signal);
+      // Shutdown uses the same retirement path as caller cancellation, after
+      // the result of an admitted descriptor read has been observed.
+      const streamSignal =
+        signal === undefined
+          ? this.#lifecycle.signal
+          : AbortSignal.any([signal, this.#lifecycle.signal]);
       const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
-        new ArtifactReaderFailure(
-          "cancelled",
-          `${this.#label} read cancelled`,
-          {
-            cause: reason,
-          },
-        );
+        reason === READER_CLOSED
+          ? new ArtifactReaderFailure(
+              "unavailable",
+              `${this.#label} reader closed`,
+            )
+          : new ArtifactReaderFailure(
+              "cancelled",
+              `${this.#label} read cancelled`,
+              { cause: reason },
+            );
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
           : readFileHandleChunks(handle, {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
+              signal: streamSignal,
               cancellationFailure,
             });
       const output = this.#entryStream(stored, signal);
-      // Retirement can destroy the stream before its consumer listens.
       ownArtifactStream(source, output, {
         scope: this.#scope,
-        streams: this.#streams,
-        signal,
+        signal: streamSignal,
         cancellationFailure,
         label: this.#label,
       });
@@ -169,14 +177,7 @@ export abstract class PositionalArtifactReader<
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure(
-          "unavailable",
-          `${this.#label} reader closed`,
-        ),
-      );
+    this.#lifecycle.abort(READER_CLOSED);
     await this.#scope.close();
     await this.#source.close();
     this.#prepared = undefined;
@@ -197,7 +198,7 @@ export abstract class PositionalArtifactReader<
   /** Refuse work once the caller cancels or close begins. */
   protected assertOpen(signal?: AbortSignal): void {
     assertArtifactReadActive(signal);
-    if (this.#closing)
+    if (this.#lifecycle.signal.aborted)
       throw new ArtifactReaderFailure(
         "unavailable",
         `${this.#label} reader is closed`,
@@ -232,6 +233,7 @@ export abstract class PositionalArtifactReader<
           { integrityCheck: "declared-size" },
         );
       await this.#source.read(signal);
+      this.assertOpen(signal);
     };
     return new Transform({
       transform(chunk: Buffer, _encoding, callback) {
