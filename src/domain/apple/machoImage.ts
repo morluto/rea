@@ -87,7 +87,6 @@ export const readMachoImage = (
         );
       const {
         headerSize: segmentHeader,
-        address,
         memorySize,
         fileOffset,
         fileSize,
@@ -107,7 +106,7 @@ export const readMachoImage = (
           admitted.error.kind,
           admitted.error.message,
         );
-      const { unmapped } = admitted.value;
+      const { unmapped, fileAddress, zeroFill } = admitted.value;
       const fileRange =
         fileSize === 0n
           ? undefined
@@ -115,7 +114,7 @@ export const readMachoImage = (
       const mapping =
         unmapped || fileRange === undefined
           ? undefined
-          : { ...fileRange, address };
+          : { ...fileRange, address: fileAddress };
       const name = decodeMachoFixedName(nameBytes);
       if (mapping !== undefined && name !== "__PAGEZERO") {
         mappings.push(mapping);
@@ -132,11 +131,7 @@ export const readMachoImage = (
         });
         if ((protection & 4) !== 0) executableMappings.push(mapping);
       }
-      if (memorySize > fileSize && name !== "__PAGEZERO")
-        zeroFills.push({
-          address: address + fileSize,
-          size: memorySize - fileSize,
-        });
+      if (zeroFill !== null && name !== "__PAGEZERO") zeroFills.push(zeroFill);
       for (let sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
         const section = offset + segmentHeader + sectionIndex * sectionWidth;
         const parsedSection = readMachoSectionHeader(

@@ -510,26 +510,28 @@ export const keyMembers = (
 } => {
   const declared = (
     inspection: ManagedMemberInspection,
-    names: ReadonlyMap<string, string | null>,
+    side: ManagedComparisonScope["left"],
   ): ((item: Method | Field) => DeclaredName) => {
     return (item) => {
-      if (!inspection.nesting_read) return null;
-      const digest = names.get(item.declaring_type_token ?? "");
+      if (!inspection.nesting_read || side.emptyMemberNames.has(item))
+        return null;
+      const digest = side.names.get(item.declaring_type_token ?? "");
       return digest == null ? null : ["nominal-name-sha256", digest];
     };
   };
-  const declaredLeft = declared(left.result, scope.left.names);
-  const declaredRight = declared(right.result, scope.right.names);
+  const declaredLeft = declared(left.result, scope.left);
+  const declaredRight = declared(right.result, scope.right);
+  const matchable = {
+    inLeft: (item: Method | Field) =>
+      !scope.right.emptyMemberNames.has(item) && scope.inLeft(item),
+    inRight: (item: Method | Field) =>
+      !scope.left.emptyMemberNames.has(item) && scope.inRight(item),
+  };
   return {
     methodMatches: matchObserved(
       left.result.methods,
       right.result.methods,
-      {
-        inLeft: (item) =>
-          !scope.right.emptyMethodNames.has(item) && scope.inLeft(item),
-        inRight: (item) =>
-          !scope.left.emptyMethodNames.has(item) && scope.inRight(item),
-      },
+      matchable,
       (a, b) =>
         matchMethods(
           a,
@@ -539,21 +541,13 @@ export const keyMembers = (
             hasCompleteMethodRows(left.result) &&
             hasCompleteMethodRows(right.result),
         ),
-      (item) =>
-        keyMethod(
-          item,
-          scope.left.emptyMethodNames.has(item) ? null : declaredLeft(item),
-        ),
-      (item) =>
-        keyMethod(
-          item,
-          scope.right.emptyMethodNames.has(item) ? null : declaredRight(item),
-        ),
+      (item) => keyMethod(item, declaredLeft(item)),
+      (item) => keyMethod(item, declaredRight(item)),
     ),
     fieldMatches: matchObserved(
       left.result.fields,
       right.result.fields,
-      scope,
+      matchable,
       (a, b) =>
         matchFields(
           a,

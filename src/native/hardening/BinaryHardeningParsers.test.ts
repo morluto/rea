@@ -455,26 +455,34 @@ it("keeps Mach-O siblings when one slice is big-endian, mismatched or malformed"
   );
   expect(oneSlice[0]?.slice?.architecture).toBe("arm64");
 
-  const hugeSymbols = (
-    await readMachoHardening(machoHardeningFixture({ nsyms: 65537 }))
-  )[0];
+  const hugeSlice = machoHardeningFixture({ nsyms: 65537 });
+  const hugeSymbols = (await readMachoHardening(hugeSlice))[0];
   expect(hugeSymbols?.status).toBe("parsed");
   expect(findRow(hugeSymbols?.rows ?? [], "pie").state).toBe("enabled");
   expect(findRow(hugeSymbols?.rows ?? [], "stack_protector")).toMatchObject({
     state: "unknown",
     note: expect.stringContaining("structural budget"),
   });
-  const hugeSlice = machoHardeningFixture({ nsyms: 65537 });
+  // The fixture ends with one string-table NUL after its symbol array.
+  const truncatedSymbols = hugeSlice.subarray(0, -2);
+  const truncatedStrings = hugeSlice.subarray(0, -1);
+  for (const truncated of [truncatedSymbols, truncatedStrings])
+    await expect(readMachoHardening(truncated)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringContaining("table extends outside the slice"),
+    });
   const kept = await readMachoHardening(
     fatMachoHardeningFixture([
       { bytes: arm, cpuType: 0x0100000c, cpuSubtype: 0 },
       { bytes: hugeSlice, cpuType: 0x0100000c, cpuSubtype: 0 },
+      { bytes: truncatedSymbols, cpuType: 0x0100000c, cpuSubtype: 0 },
     ]),
   );
   expect(kept[0]?.status).toBe("parsed");
   expect(findRow(kept[0]?.rows ?? [], "pie").state).toBe("enabled");
   expect(kept[1]?.status).toBe("parsed");
   expect(findRow(kept[1]?.rows ?? [], "stack_protector").state).toBe("unknown");
+  expect(kept[2]).toMatchObject({ status: "malformed", rows: [] });
   await expect(
     readMachoHardening(machoHardeningFixture({ brokenStrx: true })),
   ).rejects.toMatchObject({ kind: "malformed" });

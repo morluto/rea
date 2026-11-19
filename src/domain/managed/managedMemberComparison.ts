@@ -291,6 +291,7 @@ const callEdgesByCaller = (
 
 const fieldAccessesByCaller = (
   result: ManagedMemberInspection,
+  emptyFieldTokens: ReadonlySet<string>,
 ): ReadonlyMap<
   string,
   readonly ManagedMemberInspection["field_accesses"][number][]
@@ -300,10 +301,15 @@ const fieldAccessesByCaller = (
     ManagedMemberInspection["field_accesses"][number][]
   >();
   for (const access of result.field_accesses) {
+    const observed =
+      emptyFieldTokens.has(access.field_token) &&
+      access.target_identity_sha256 !== null
+        ? { ...access, target_identity_sha256: null }
+        : access;
     const callerAccesses = accesses.get(access.method_token);
     if (callerAccesses === undefined)
-      accesses.set(access.method_token, [access]);
-    else callerAccesses.push(access);
+      accesses.set(access.method_token, [observed]);
+    else callerAccesses.push(observed);
   }
   return accesses;
 };
@@ -330,8 +336,14 @@ export const compareManagedMembers = (
     rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
-    leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),
-    rightFieldAccessesByCaller: fieldAccessesByCaller(right.result),
+    leftFieldAccessesByCaller: fieldAccessesByCaller(
+      left.result,
+      scope.left.emptyFieldTokens,
+    ),
+    rightFieldAccessesByCaller: fieldAccessesByCaller(
+      right.result,
+      scope.right.emptyFieldTokens,
+    ),
   };
   const methodItems = buildMethodItems(methodMatches, itemContext);
   const fieldItems = buildFieldItems(fieldMatches, itemContext);

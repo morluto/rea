@@ -575,13 +575,15 @@ const parseFit = (fdt: Buffer, path: string) => {
     if (cause instanceof BinaryFormatFailure)
       throw formatFailure(cause.message);
     if (isParseLimit(cause, DEVICETREE_FORMAT)) {
-      const { name } = cause.failure.limit;
+      const { limit: parserLimit } = cause.failure;
       throw new ArtifactReaderFailure(
         "limit",
-        `FIT devicetree exceeds the fixed ${name} allowance`,
+        `FIT devicetree exceeds the fixed ${parserLimit.name} allowance`,
         {
-          boundary: name === "decoded_bytes" ? "memory" : "capacity",
+          boundary:
+            parserLimit.name === "decoded_bytes" ? "memory" : "capacity",
           cause,
+          parserLimit,
         },
       );
     }

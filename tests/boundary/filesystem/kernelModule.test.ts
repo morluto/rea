@@ -6,10 +6,44 @@ import { createKernelModuleService } from "../../../src/composition/binaryDiagno
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,
+  moduleSignatureTrailer,
 } from "../../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("kernel module stable filesystem boundary", () => {
+  it("retains trailer fields but withholds an empty PKCS#7 range", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-empty-sig-");
+    const path = join(root, "demo.ko");
+    await writeFile(
+      path,
+      kernelModuleFixture({
+        signature: moduleSignatureTrailer(Buffer.alloc(0)),
+      }),
+    );
+    const service = createKernelModuleService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        coverage: { status: "partial" },
+        modinfo: {
+          entries: expect.arrayContaining([
+            expect.objectContaining({ key: "license", value: "GPL" }),
+          ]),
+        },
+        signature: {
+          status: "malformed",
+          reason: "signature_length_inconsistent",
+          magic: { bytes: 28 },
+          info: { sig_len: 0, id_type: 2 },
+          pkcs7: null,
+        },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it("reports non-file and malformed ELF selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-files-");
     const path = join(root, "demo.ko");

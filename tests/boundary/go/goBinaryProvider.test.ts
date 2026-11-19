@@ -4,7 +4,11 @@ import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
-import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { BinaryFormatFailure } from "../../../src/domain/binaryContainer.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createGoBinaryFixture,
@@ -64,18 +68,25 @@ it.each([false, true])(
             },
           },
         });
-      else
+      else {
+        expect(result.error).toBeInstanceOf(AnalysisInputError);
+        if (!(result.error instanceof AnalysisInputError)) throw result.error;
+        expect(result.error.cause).toBeInstanceOf(BinaryFormatFailure);
+        if (!(result.error.cause instanceof BinaryFormatFailure))
+          throw result.error.cause;
+        expect(result.error.cause.failure).toMatchObject({
+          kind: "truncated",
+          format: "macho",
+          field: "Mach-O load commands",
+          offset: 32,
+        });
         expect(projected).toMatchObject({
           code: "invalid_request",
           details: {
-            issues: [
-              {
-                path: ["path"],
-                reason: "invalid_format",
-              },
-            ],
+            issues: [{ path: ["path"], reason: "invalid_format" }],
           },
         });
+      }
     } finally {
       await provider.close();
     }
