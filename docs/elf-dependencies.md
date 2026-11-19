@@ -65,7 +65,8 @@ when its starting address, mapped file offset, and declared size or entry
 width agree. A plain gap in load coverage can still allow recovery from the
 section's file bytes. A different file translation or declared zero-fill in
 the requested span prevents that recovery. A disagreeing section is reported
-as an issue and the `DT_*` declaration is used. When section headers are
+as an issue and the `DT_*` declaration is used. An admitted symbol-section
+header can still name its string table when the symbol rows are unreadable. When section headers are
 stripped, tables are located from `PT_DYNAMIC` and `DT_*` virtual addresses
 through `PT_LOAD`. Coverage is `partial` when a table cannot be located or a
 string cannot be read. Complete coverage never retains issues.

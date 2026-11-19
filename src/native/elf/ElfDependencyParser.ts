@@ -409,10 +409,14 @@ const mappedExtentEnd = (
   return mapping.offset + Number(end - mapping.address);
 };
 
+interface SectionAdmission {
+  readonly declaration: SectionFacts | undefined;
+  readonly table: SectionFacts | undefined;
+}
+
 /**
- * DT_* entries are the load-time facts. A section header describing the same
- * table is accepted only when it names the same address, maps to the same file
- * bytes, and agrees on any declared size; otherwise the dynamic declaration wins.
+ * Admit the section declaration at the agreed start, then check its table
+ * extent. A conflicting extent does not invalidate the section header's links.
  */
 const agreedSection = (
   section: SectionFacts | undefined,
@@ -421,8 +425,10 @@ const agreedSection = (
   label: string,
   issues: ElfDependencyIssue[],
   sizeAgrees: (section: SectionFacts) => boolean = () => true,
-): SectionFacts | undefined => {
-  if (section === undefined || declared === undefined) return section;
+): SectionAdmission => {
+  if (section === undefined || declared === undefined)
+    return { declaration: section, table: section };
+  let declaration: SectionFacts | undefined;
   if (section.address === declared && sizeAgrees(section)) {
     const mapped = resolveMappedFileOffset(
       mappings.fileBacked,
@@ -430,23 +436,26 @@ const agreedSection = (
       Math.max(1, section.size),
       mappings.zeroFills,
     );
-    if (mapped.ok) {
-      if (mapped.value === section.offset) return section;
-    } else if (
-      mapped.error.reason === "unmapped" &&
-      !mapped.error.overlapsZeroFill &&
-      mapAddress(mappings, declared, 1) === section.offset
-    ) {
-      // A plain gap still allows recovery from the section's file bytes.
-      return section;
+    const start = mapped.ok ? mapped.value : mapAddress(mappings, declared, 1);
+    if (start === section.offset) {
+      declaration = section;
+      if (
+        mapped.ok ||
+        (mapped.error.reason === "unmapped" && !mapped.error.overlapsZeroFill)
+      )
+        // A plain gap still allows recovery from the section's file bytes.
+        return { declaration, table: section };
     }
   }
   issues.push({
     code: "malformed_entry",
     location: hex(section.offset),
-    message: `${label} section header disagrees with its dynamic-table declaration; using the dynamic declaration`,
+    message:
+      declaration === undefined
+        ? `${label} section header disagrees with its dynamic-table declaration; using the dynamic declaration`
+        : `${label} section extent conflicts with its load mapping. Using the dynamic declaration`,
   });
-  return undefined;
+  return { declaration, table: undefined };
 };
 
 const sectionInsideFile = (section: SectionFacts, fileBytes: number): boolean =>
@@ -797,24 +806,27 @@ export const readElfDependenciesSteps = function* (
       mappings,
       label,
       issues,
-    );
+    ).table;
   const syment = unique.get(DT_SYMENT);
-  const dynsymSection = agreedSection(
-    sectionOfType(SHT_DYNSYM, ".dynsym"),
-    addresses.get(DT_SYMTAB),
-    mappings,
-    ".dynsym",
-    issues,
-    (section) =>
-      syment === undefined ||
-      section.entrySize === 0 ||
-      section.entrySize === syment,
-  );
+  const { declaration: symbolDeclaration, table: dynsymSection } =
+    agreedSection(
+      sectionOfType(SHT_DYNSYM, ".dynsym"),
+      addresses.get(DT_SYMTAB),
+      mappings,
+      ".dynsym",
+      issues,
+      (section) =>
+        syment === undefined ||
+        section.entrySize === 0 ||
+        section.entrySize === syment,
+    );
   const strsz = unique.get(DT_STRSZ);
   const linkedStrings =
-    dynsymSection === undefined ? undefined : sectionFacts[dynsymSection.link];
+    symbolDeclaration === undefined
+      ? undefined
+      : sectionFacts[symbolDeclaration.link];
   const stringSection = linkedStrings?.type === 3 ? linkedStrings : undefined;
-  const dynstrSection = agreedSection(
+  const { table: dynstrSection } = agreedSection(
     stringSection,
     addresses.get(DT_STRTAB),
     mappings,

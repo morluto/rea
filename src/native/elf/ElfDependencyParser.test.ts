@@ -71,6 +71,21 @@ const elf64DynamicTags = (original: Buffer, headers: readonly number[]) => {
   );
 };
 
+const shortenElf64IdentityLoad = (
+  original: Buffer,
+  bytes: Buffer,
+  { phoff, programHeaders }: ReturnType<typeof elf64ProgramHeaders>,
+  end: bigint,
+) => {
+  const load = programHeaders.find(
+    (offset) => original.readUInt32LE(offset) === 1,
+  );
+  if (load === undefined) throw new Error("Expected PT_LOAD");
+  const movedLoad = original.length + load - phoff;
+  bytes.writeBigUInt64LE(end, movedLoad + 32);
+  bytes.writeBigUInt64LE(end, movedLoad + 40);
+};
+
 const appendElf64ZeroFill = (
   original: Buffer,
   { phoff, phentsize, phnum }: ReturnType<typeof elf64ProgramHeaders>,
@@ -99,23 +114,15 @@ it.each([
   ({ stripped, unmappedTail }) => {
     const original = elfDependencyFixture({ bits: 64, little: true, stripped });
     const headers = elf64ProgramHeaders(original);
-    const { phoff, programHeaders } = headers;
-    const tags = elf64DynamicTags(original, programHeaders);
+    const tags = elf64DynamicTags(original, headers.programHeaders);
     const stringAddress = tags.get(5n);
     const stringSize = tags.get(10n);
     if (stringAddress === undefined || stringSize === undefined)
       throw new Error("Expected DT_STRTAB and DT_STRSZ");
     const { bytes, alias } = appendElf64ZeroFill(original, headers);
-    if (unmappedTail) {
-      const load = programHeaders.find(
-        (offset) => original.readUInt32LE(offset) === 1,
-      );
-      if (load === undefined) throw new Error("Expected PT_LOAD");
-      const movedLoad = original.length + load - phoff;
+    if (unmappedTail)
       // The table starts in the identity mapping, but its section alone describes the tail.
-      bytes.writeBigUInt64LE(stringAddress + 2n, movedLoad + 32);
-      bytes.writeBigUInt64LE(stringAddress + 2n, movedLoad + 40);
-    }
+      shortenElf64IdentityLoad(original, bytes, headers, stringAddress + 2n);
     bytes.writeBigUInt64LE(stringAddress + stringSize, alias + 16);
     expect(parse(bytes).needed.map(({ name }) => name)).toEqual(defaultNeeded);
 
@@ -133,28 +140,36 @@ it.each([
   },
 );
 
-it("does not use dynamic symbol rows from a section beyond a load-map disagreement", () => {
-  const original = elfDependencyFixture();
-  const headers = elf64ProgramHeaders(original);
-  const symtab = elf64DynamicTags(original, headers.programHeaders).get(6n);
-  if (symtab === undefined) throw new Error("Expected DT_SYMTAB");
-  const { bytes, alias } = appendElf64ZeroFill(original, headers);
-  bytes.writeBigUInt64LE(BigInt(original.length), alias + 16);
-  expect(parse(bytes).imports.map(({ name }) => name)).toEqual([
-    "printf",
-    "memcpy",
-    "_ZSt4cout",
-    "abort",
-    "_exit",
-  ]);
+it.each([false, true])(
+  "keeps independent dependency names when dynamic symbol bytes disagree (string table gap: %s)",
+  (stringGap) => {
+    const original = elfDependencyFixture();
+    const headers = elf64ProgramHeaders(original);
+    const tags = elf64DynamicTags(original, headers.programHeaders);
+    const symtab = tags.get(6n);
+    const strtab = tags.get(5n);
+    if (symtab === undefined || strtab === undefined)
+      throw new Error("Expected DT_SYMTAB and DT_STRTAB");
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
+    if (stringGap)
+      shortenElf64IdentityLoad(original, bytes, headers, strtab + 2n);
+    bytes.writeBigUInt64LE(BigInt(original.length), alias + 16);
+    expect(parse(bytes).imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
 
-  // The symbol table start stays mapped; a later symbol occupies both kinds of storage.
-  bytes.writeBigUInt64LE(symtab + 24n, alias + 16);
-  const report = parse(bytes);
-  expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
-  expect(report.imports).toEqual([]);
-  expect(report.coverage.status).toBe("partial");
-});
+    // The symbol table start stays mapped; a later symbol occupies both kinds of storage.
+    bytes.writeBigUInt64LE(symtab + 24n, alias + 16);
+    const report = parse(bytes);
+    expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+    expect(report.imports).toEqual([]);
+    expect(report.coverage.status).toBe("partial");
+  },
+);
 
 /** The version_unresolved issue a GNU version table reports at its own offset. */
 const versionTableIssue = (table: {
