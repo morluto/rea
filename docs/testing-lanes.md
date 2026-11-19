@@ -565,10 +565,13 @@ real-provider lane. See [raw binary analysis](providers/raw-binary.md).
 `tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Linux
 Ghidra ELF import. The source-owned PIE fixture reads a `const` object from a
 provider library, which the linker copies into `.data.rel.ro` with a copy
-relocation that Ghidra imports as unapplied, the shape of #4177. The probe
-requires that relocation and the reader's read reference to it, a non-writable
-file-backed block, and the bridge's volatile marking and limitation. Source
-`FileBytes` and block permissions must be unchanged. Applied GOT relocations
+relocation that Ghidra imports as unapplied, the shape of #4177. It also reads
+an initial-exec TLS variable from the provider, whose unapplied
+`R_X86_64_TPOFF64` slot sits in the same read-only `.got` as the applied GOT
+entries. The probe requires those relocations and the reader's read reference,
+a non-writable file-backed block, and the bridge's limitation and volatile
+marking of each unapplied destination's data item. Source `FileBytes` and
+block permissions must be unchanged. The GOT block and its applied entries
 must stay non-volatile, and a full-RELRO `-fno-plt` GOT caller must decompile
 identically before and after protection. Ghidra 12.1.4 already shows this
 x86-64 read by name without protection, so the report records whether the
@@ -579,7 +582,7 @@ needs Ghidra/JDK with the native decompiler and a Linux C compiler. The
 change-selected [Ghidra bridge CI lane](https://github.com/morluto/rea/blob/main/.github/workflows/ghidra-bridge-sources.yml)
 runs it with its checksum-verified Ghidra distribution. Read-only sessions
 (Windows P0 and caller-owned existing projects) record the same limitation but
-do not mark blocks volatile; no real-provider lane covers them.
+mark nothing volatile; no real-provider lane covers them.
 
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
