@@ -26,6 +26,11 @@ import {
 import { readElfStringBytes } from "../domain/native/elfStringBytes.js";
 import { readElfSymbol } from "../domain/elfSymbol.js";
 import {
+  ELF_SHN_XINDEX,
+  ElfSymbolSectionIndexTables,
+  readElfSymbolSectionReference,
+} from "../domain/elfSymbolSectionIndex.js";
+import {
   gpuCount,
   readGpuNativeDirectory,
   rejectGpu,
@@ -260,6 +265,7 @@ const cudaKernels = async (
   onKernel: (kernel: GpuKernel) => void,
 ): Promise<"complete" | "partial"> => {
   const index = await indexCudaMetadata(source, directory);
+  const extendedTables = new ElfSymbolSectionIndexTables(directory.sections);
   let complete = index.allNamesKnown;
   let symbolTables = 0;
   for (const section of directory.sections) {
@@ -291,33 +297,33 @@ const cudaKernels = async (
       const symbol = parsedSymbol.value;
       // STO_CUDA_ENTRY distinguishes launchable kernels from ordinary device functions.
       if (symbol.type !== 2 || (symbol.other & 0x10) === 0) continue;
-      let sectionIndex = symbol.section_index;
-      if (sectionIndex === 0xffff) {
+      const sectionIndex = symbol.section_index;
+      if (sectionIndex === ELF_SHN_XINDEX) {
         if (extendedIndices === null) {
-          const matches = directory.sections.filter(
-            (row) => row.type === 18 && row.link === section.index,
+          const extended = extendedTables.tableFor(
+            section.index,
+            BigInt(symbolCount),
           );
-          if (matches.length !== 1)
-            rejectGpu(
-              "CUBIN extended symbol section-index table is unavailable",
-            );
-          const extended = matches[0]!;
-          if (
-            extended.entry_size !== 4n ||
-            extended.size !== BigInt(symbolCount) * 4n
-          )
-            rejectGpu(
-              "CUBIN extended symbol section-index table has an invalid extent",
-            );
-          extendedIndices = await sectionBytes(source, extended, index.budget);
+          if (!extended.ok) return rejectGpu(`CUBIN ${extended.error.message}`);
+          extendedIndices = await sectionBytes(
+            source,
+            extended.value,
+            index.budget,
+          );
         }
-        sectionIndex = new BinaryReader(
-          extendedIndices,
-          directory.little,
-          "elf",
-        ).u32((offset / width) * 4);
       }
-      const text = directory.sections[sectionIndex];
+      const resolved = readElfSymbolSectionReference(
+        sectionIndex,
+        offset / width,
+        directory.sections.length,
+        directory.little,
+        extendedIndices ?? undefined,
+      );
+      if (!resolved.ok) return rejectGpu(`CUBIN ${resolved.error.message}`);
+      const text =
+        resolved.value.kind === "section"
+          ? directory.sections[resolved.value.index]
+          : undefined;
       if (text === undefined || text.type !== 1 || (text.flags & 4n) === 0n)
         rejectGpu("CUBIN kernel symbol has no executable section");
       const kernel = blankKernel(

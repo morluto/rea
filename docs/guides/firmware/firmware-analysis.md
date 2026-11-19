@@ -299,7 +299,7 @@ Additional lanes are explicit, so the base lane stays small:
 REA_FIRMWARE_VERIFY_EXT4=1 npm run fixtures:firmware
 REA_FIRMWARE_VERIFY_EXT4=1 npm run verify:firmware
 
-# Existing Ghidra 12.x (>=12.1) and its declared JDK required.
+# Existing Ghidra 12.x (>=12.2) and its declared JDK required.
 REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 ```
 
@@ -358,6 +358,15 @@ addresses are facts from the header, not proven entry points, and compressed
 payloads stay as stored. Intel HEX/S-record and FIT images are separate
 readers and are not covered here. See [U-Boot legacy uImage](../../uimage.md) for
 component padding, preserved names, resource policies and verification scope.
+
+## Inspect Android OTA update payloads
+
+`inspect-artifact` / `extract-artifact` recognize a CrAU v2 `payload.bin` by
+magic and inventory its DeltaArchiveManifest without applying the update or
+verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
+REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
+extraction. See [Android OTA update payloads](android-ota-payload.md)
+for header facts, operation types, limits and verification scope.
 
 ## Inspect UF2 and DfuSe images
 

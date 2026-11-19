@@ -172,6 +172,7 @@ export interface JavaScriptStaticAnalysis {
   }[];
   readonly vendors: readonly string[];
   readonly electron: ElectronStaticFindings;
+  readonly loaderCondition?: string;
   readonly limitations: readonly string[];
 }
 

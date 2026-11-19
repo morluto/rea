@@ -1864,6 +1864,9 @@ export const semanticRequireExportsIdentity = <Key>(
 ): { readonly specifier: string; readonly path: readonly (Key | string)[] } => {
   const name = specifier.replace(/^node:/u, "");
   if (name === "fs/promises") return { specifier: name, path };
+  // The events export and its EventEmitter alias expose the same constructor.
+  if (name === "events" && path[0] === "EventEmitter" && path.length > 1)
+    return { specifier: name, path: path.slice(1) };
   if (["path", "path/posix", "path/win32"].includes(name)) {
     let selected = name;
     let remaining = path;
@@ -1886,6 +1889,7 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "http",
   "https",
   "child_process",
+  "events",
   "timers",
   "process",
   "path",
@@ -1907,6 +1911,8 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
   const specifier = origin.specifier.replace(/^node:/u, "");
   if (!MUTABLE_BUILTIN_DEFAULTS.has(specifier)) return undefined;
   if (path[0] === "default") return { specifier, path: path.slice(1) };
+  if (specifier === "events" && path[0] === "EventEmitter" && path.length > 1)
+    return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))
     return { specifier, path };
   return specifier === "fs" && path[0] === "promises"

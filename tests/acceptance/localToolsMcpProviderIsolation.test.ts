@@ -14,7 +14,7 @@ it("isolates Ghidra PATH discovery while honoring an explicit installation overr
   await mkdir(join(root, "support"), { recursive: true });
   await writeFile(
     join(root, "Ghidra", "application.properties"),
-    "application.version=12.1.4\napplication.java.min=21\n",
+    "application.version=12.2\napplication.java.min=25\n",
   );
   await writeFile(
     join(root, process.platform === "win32" ? "ghidraRun.bat" : "ghidraRun"),

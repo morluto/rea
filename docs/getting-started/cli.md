@@ -55,6 +55,14 @@ relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
 is supported by the command.
 
+For a numeric option whose `--schema` also accepts decimal strings, the string
+branch carries the same numeric range as the integer branch, so a client that
+validates raw argv text rejects out-of-range tokens. Leading zeros remain
+decimal: `--row-limit=0001` means one row, while `--row-limit=0` is invalid. A
+lower bound is still published when the option has no upper bound, so only the
+ceiling stays open. Refinements that are not a range, such as requiring a
+power-of-two entropy block size, stay parser-only.
+
 For example, a 334 MB Obsidian application Evidence file yields a summary view
 of about 10 KB. Replace the view with
 `{"kind": "page", "collection": "modules", "offset": 0, "limit": 32}` for a
@@ -374,6 +382,16 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
+
+```sh
+rea inspect-artifact ./payload.bin --detail summary --evidence_output payload.json --json
+rea extract-artifact ./payload.bin --json
+```
+
+See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
+facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
@@ -629,6 +647,30 @@ rea inspect-erlang-beam /absolute/path/to/app.beam --json
 The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](../erlang-beam.md).
+
+Inspect a Maven POM or Gradle module-metadata file without running Maven or
+Gradle, resolving a tree, or contacting a repository:
+
+```bash
+rea inspect-maven-gradle-metadata /absolute/path/to/pom.xml --json
+rea inspect-maven-gradle-metadata /absolute/path/to/demo-1.2.3.module --json
+```
+
+The workflow reports coordinates as spelled, dependency and
+dependencyManagement rows, BOM or platform notes, Gradle variants, and
+unresolved property or parent references. See
+[Maven POM and Gradle module metadata](../maven-gradle-metadata.md).
+
+Inspect a NuGet `.nupkg` without restoring the package or contacting a feed:
+
+```bash
+rea inspect-nuget-nupkg /absolute/path/to/Demo.Package.1.2.3.nupkg --json
+```
+
+The workflow reports package identity, license and repository fields as present,
+dependency groups with version ranges, and a ZIP contents inventory with
+path-derived folder roles. Missing or malformed `.nuspec` members still return
+the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
@@ -1446,7 +1488,20 @@ descendants in other process groups that inherited its run token. If that
 cleanup cannot be confirmed, the report keeps its earlier checks and adds a
 failed `cleanup` check with the reason and retained run identifier.
 
-The default terminal format is TOON. Use `--json` when saving results for a
+The default terminal format is TOON. Complete TOON results are validated
+before stdout receives the document. Large results use a private file in the
+system temporary directory until delivery finishes and need free space there.
+If closing or removing that stage fails, CLI shutdown retains and retries its
+cleanup in order. The reported cleanup failure preserves any original formatting
+or temporary-storage refusal. SIGINT/SIGTERM remain owned through staging,
+delivery and cleanup: pending I/O settles before further writes stop and the
+stage is removed.
+A document can exceed the runtime's string limit when each encoded line fits.
+Staging limits the encoded text kept in memory. The TOON encoder still
+normalizes the input tree before yielding lines, so working memory also
+depends on the size of the input and the longest encoded line.
+Token counting and token windows still require a complete formatted string.
+Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
 missing value fails with `MISSING_OUTPUT_VALUE` before the command runs.

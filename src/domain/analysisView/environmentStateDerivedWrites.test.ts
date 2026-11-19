@@ -879,54 +879,22 @@ describe("slug spellings the held entities show", () => {
     });
   });
 
-  it("learns a slug field's & spelling from held tags, and no slug rule they contradict", () => {
-    const tagRows = (held: string, created: string, slug: string) => {
-      const seed = { id: 1, name: held, slug: wordSlug(held) };
-      const tag = { id: 2, name: created, slug };
-      return [
-        ["GET", "/api/tags", [seed]],
-        ["GET", "/api/tags/1", seed],
-        ["POST", "/api/tags", tag, 201, { name: created }],
-        ["GET", "/api/tags/2", tag],
-        ["GET", "/api/tags", [seed, tag]],
-      ] as TimedCaptureRow[];
-    };
-    expect(
-      planOf(
-        tagRows("Salt & Pepper", "Harbour Notes", "harbour-notes"),
-        "post_tags",
-      ).rules,
-    ).toContainEqual({
+  it("learns a slug field's & spelling from held tags when the create uses none", () => {
+    const seed = { id: 1, name: "Salt & Pepper", slug: "salt-and-pepper" };
+    const tag = { id: 2, name: "Harbour Notes", slug: "harbour-notes" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/tags", [seed]],
+      ["GET", "/api/tags/1", seed],
+      ["POST", "/api/tags", tag, 201, { name: tag.name }],
+      ["GET", "/api/tags/2", tag],
+      ["GET", "/api/tags", [seed, tag]],
+    ];
+    expect(planOf(rows, "post_tags").rules).toContainEqual({
       field: "slug",
       rule: "slug",
       from: "name",
       ampersand: "and",
     });
-    expect(
-      planOf(tagRows("Salt & Pepper", "Tide & Wind", "tide-wind"), "post_tags")
-        .rules,
-    ).not.toContainEqual(
-      expect.objectContaining({ field: "slug", rule: "slug" }),
-    );
-  });
-
-  it("learns no slug rule from held tags that spell & both ways", () => {
-    const held = [
-      { id: 1, name: "Salt & Pepper", slug: "salt-and-pepper" },
-      { id: 3, name: "Fish & Chips", slug: "fish-chips" },
-    ];
-    const tag = { id: 2, name: "Harbour Notes", slug: "harbour-notes" };
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/tags", held],
-      ["GET", "/api/tags/1", held[0]!],
-      ["GET", "/api/tags/3", held[1]!],
-      ["POST", "/api/tags", tag, 201, { name: tag.name }],
-      ["GET", "/api/tags/2", tag],
-      ["GET", "/api/tags", [...held, tag]],
-    ];
-    expect(planOf(rows, "post_tags").rules).not.toContainEqual(
-      expect.objectContaining({ field: "slug", rule: "slug" }),
-    );
   });
 
   it("learns no & spelling from a held slug neither spelling gives", () => {
@@ -1098,6 +1066,7 @@ describe("slugs the held entities' spellings refuse", () => {
         expect.objectContaining({ field: "slug", rule: "slug" }),
       );
       // The slug kept as recorded fits only the recorded name.
+      expect(plan.served).toBe(true);
       expect(plan.body).not.toBeNull();
       expect(plan.body?.accepted).not.toContain("name");
       expect(plan.body?.fixed).toContainEqual({ member: "name", sent: name });

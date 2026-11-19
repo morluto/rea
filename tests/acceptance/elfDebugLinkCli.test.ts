@@ -4,10 +4,6 @@ import { expect } from "vitest";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
-  gnuDebuglinkCrc32,
-  gnuDebuglinkCrc32Hex,
-} from "../../src/native/elf/ElfDebugLink.js";
-import {
   debuglinkSection,
   elfDebugCandidateFixture,
   elfDebugLinkFixture,
@@ -28,11 +24,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-elf-debug-link-cli-");
     const candidate = elfDebugCandidateFixture();
     const image = elfDebugLinkFixture({
-      debuglink: debuglinkSection(
-        FIXTURE_DEBUG_NAME,
-        gnuDebuglinkCrc32(candidate),
-        true,
-      ),
+      debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, 0xae159abd, true),
     });
     const imagePath = join(root, "prog");
     const candidatePath = join(root, "prog.debug");
@@ -53,14 +45,23 @@ cliTest(
       path: imagePath,
       candidate_path: candidatePath,
     });
-    expect(evidence.normalized_result.verification?.status).toBe("matches");
+    expect(evidence.normalized_result.verification).toMatchObject({
+      status: "matches",
+      reason: null,
+      crc32: {
+        status: "match",
+        expected_hex: "ae159abd",
+        observed_hex: "ae159abd",
+      },
+      build_id: { status: "match", candidate_hex: FIXTURE_BUILD_ID_HEX },
+    });
     expect(evidence.normalized_result.candidate).toMatchObject({
+      path: candidatePath,
+      format: "elf64",
       debug_info: "present",
       symtab: "present",
     });
-    expect(evidence.normalized_result.debuglink.crc32_hex).toBe(
-      gnuDebuglinkCrc32Hex(candidate),
-    );
+    expect(evidence.normalized_result.debuglink.crc32_hex).toBe("ae159abd");
     expect(evidence.normalized_result.build_id.hex).toBe(FIXTURE_BUILD_ID_HEX);
     expect(evidence.normalized_result.debuglink.filename?.trust).toBe(
       "observed-untrusted",
