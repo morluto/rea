@@ -22,9 +22,9 @@ import {
   type LibraryFileProbe,
 } from "../domain/desktop/libraryPackages.js";
 import {
+  literalDpkgOwnershipPath,
   ownershipCandidates,
   parseAptPolicyPackageSources,
-  parseDpkgOwners,
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { abortIfNeeded } from "../resources/index.js";
@@ -32,7 +32,8 @@ import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
-import { succeeded, type QueryRunner } from "./HostQuery.js";
+import { queryDpkgOwnership } from "./DpkgOwnershipQuery.js";
+import { queryUtf8Text, succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
 export type LibraryPackages = {
@@ -240,26 +241,30 @@ const packageOwners = async (
 > => {
   // dpkg-query reads an argument with glob characters as a pattern.
   const unique = [...new Set(paths)];
-  const literal = unique.filter((path) => !/[*?[\\]/u.test(path));
+  const literal = unique.filter(literalDpkgOwnershipPath);
   const owners = new Map<string, readonly string[]>();
   const incomplete = (reason: string) => err({ owners, reason });
+  let unreadable = false;
   for (let start = 0; start < literal.length; start += QUERY_BATCH) {
     const batch = literal.slice(start, start + QUERY_BATCH);
-    const outcome = await runQuery("dpkg-query", ["-S", ...batch], signal);
-    if (outcome === "missing") return incomplete("dpkg-query is not installed");
-    if (outcome === "failed") return incomplete("dpkg-query -S did not finish");
-    // Exit 1 identifies unowned paths; a higher exit code answers none of the batch.
-    if (outcome.exitCode > 1)
+    const outcome = await queryDpkgOwnership(runQuery, batch, signal);
+    if (outcome.kind === "missing")
+      return incomplete("dpkg-query is not installed");
+    if (outcome.kind === "failed")
+      return incomplete("dpkg-query -S did not finish");
+    if (outcome.kind !== "read")
       return incomplete(
         "dpkg-query could not say which packages own the libraries",
       );
-    for (const path of batch)
-      owners.set(path, parseDpkgOwners(outcome.stdout, path));
+    for (const [path, names] of outcome.owners) owners.set(path, names);
+    unreadable ||= !outcome.complete;
   }
+  if (unreadable)
+    return incomplete("dpkg-query returned unreadable ownership records");
   return literal.length === unique.length
     ? ok(owners)
     : incomplete(
-        "dpkg-query cannot safely query library paths containing pattern characters",
+        "dpkg-query cannot safely query library paths containing pattern characters or invalid path delimiters",
       );
 };
 
@@ -447,16 +452,15 @@ const packageSources = async (
 ): Promise<ReadonlyMap<string, readonly string[]> | undefined> => {
   const sources = new Map<string, readonly string[]>();
   for (let start = 0; start < names.length; start += QUERY_BATCH) {
-    const output = succeeded(
-      await runQuery(
-        "apt-cache",
-        ["policy", ...names.slice(start, start + QUERY_BATCH)],
-        signal,
-      ),
+    const output = await queryUtf8Text(
+      runQuery,
+      "apt-cache",
+      ["policy", ...names.slice(start, start + QUERY_BATCH)],
+      signal,
     );
-    if (output === undefined) return undefined;
+    if (output.kind !== "read") return undefined;
     for (const [name, listed] of parseAptPolicyPackageSources(
-      output,
+      output.text,
       statusFile,
     ))
       sources.set(name, listed);

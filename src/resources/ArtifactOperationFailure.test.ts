@@ -1,4 +1,9 @@
 import { expect, it } from "vitest";
+import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../domain/analysisResourceLimits.js";
 import { createHash } from "node:crypto";
 
 import {
@@ -28,6 +33,26 @@ import {
   truncatedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
+
+it("projects a Zstandard frame-cap as an adjustable artifact limit", () => {
+  expect(
+    translateArtifactFailure(
+      "extract_artifact",
+      new ZstandardFrameAllowanceError({ maxFrames: 4, source: "runtime" }, 10),
+    ),
+  ).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 4,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
 
 it.each([
   malformedInput("pe", "bad field"),
@@ -296,6 +321,29 @@ it.each(["capacity", "file-size", "memory"] as const)(
     });
   },
 );
+
+it("reports a parser limit even when artifact cleanup also fails", () => {
+  const failure = new ArtifactReaderFailure("limit", "Plist decode limit", {
+    parserLimit: { name: "plist-decode-bytes", maximum: 512 },
+  });
+  const wrapped = ArtifactReaderFailure.withCleanup(failure, {
+    reason: "close failed",
+    resources: ["handle"],
+  });
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure("inspect_keyed_archive", wrapped),
+    ),
+  ).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      reason: "limit",
+      reported_limits: { boundary: "plist-decode-bytes", maximum: 512 },
+      cleanup: "incomplete",
+      resources: ["handle"],
+    },
+  });
+});
 
 it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public projection", () => {
   const failure = artifactFixedLimitFailure(

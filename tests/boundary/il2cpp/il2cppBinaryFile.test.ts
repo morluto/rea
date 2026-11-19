@@ -1112,7 +1112,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
       bytes.copy(bytes, 176, 120, 176);
       bytes.writeUInt16LE(3, 56);
     }
-    expect(() => readBinaryContainer(bytes)).not.toThrow();
+    expect(() => readBinaryContainer(bytes, "elf-directory")).not.toThrow();
     expect(() => link(bytes)).toThrow(
       shape === "duplicate"
         ? "multiple PT_DYNAMIC segments"
@@ -1123,7 +1123,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
 
 it.each([
   [{ dynamic: false }, "unsupported-container"],
-  [{ machine: 243 }, "unsupported-container"],
+  [{ machine: 21 }, "unsupported-container"], // EM_PPC64 has no pointer profile.
   [{ androidPacked: "aps1" }, "unsupported-pointer-encoding"],
 ] as const)(
   "refuses ELF relocations it cannot apply (%o)",

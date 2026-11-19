@@ -11,25 +11,39 @@ import { workspaceCliTest } from "../support/cli/workspaceCliFixture.js";
 // Exercise the real dispatcher and the pinned TOON and YAML encoders with an
 // authored capacity failure. No engine-sized document or native target
 // execution is needed.
-const encoderFailure = (value: string) => `
+const encoderFailure = (value: string, boundary = "") => `
   if (${value}?.operation === "inspect_managed_artifact" ||
       ${value}?.data?.operation === "inspect_managed_artifact" ||
       ${value}?.code === "target_unavailable" ||
       ${value}?.error?.code === "target_unavailable") {
-    process.stderr.write("REA_AUTHORED_FORMAT_CAPACITY\\n");
+    process.stderr.write("REA_AUTHORED_FORMAT_CAPACITY${boundary}\\n");
     throw new RangeError("Invalid string length");
   }
 `;
+// Default TOON and token presentations have different producing entrypoints.
+// Distinct markers prove which boundary each scenario actually exercises.
 const encoders = [
   {
     file: "/@toon-format/toon/dist/index.mjs",
-    signature: "function encode(input, options) {",
-    failure: encoderFailure("input"),
+    boundaries: [
+      {
+        signature: "function encode(input, options) {",
+        failure: encoderFailure("input", ":encode"),
+      },
+      {
+        signature: "function encodeLines(input, options) {",
+        failure: encoderFailure("input", ":encodeLines"),
+      },
+    ],
   },
   {
     file: "/yaml/dist/public-api.js",
-    signature: "function stringify(value, replacer, options) {",
-    failure: encoderFailure("value"),
+    boundaries: [
+      {
+        signature: "function stringify(value, replacer, options) {",
+        failure: encoderFailure("value"),
+      },
+    ],
   },
 ];
 const encoderCapacityHook = `data:text/javascript,${encodeURIComponent(`
@@ -40,9 +54,12 @@ registerHooks({
     const loaded = next(url, context);
     const encoder = encoders.find(({ file }) => url.endsWith(file));
     if (encoder === undefined) return loaded;
-    const source = String(loaded.source);
-    if (!source.includes(encoder.signature)) throw new Error("Pinned encoder boundary changed: " + encoder.file);
-    return { ...loaded, source: source.replace(encoder.signature, encoder.signature + encoder.failure) };
+    let source = String(loaded.source);
+    for (const boundary of encoder.boundaries) {
+      if (!source.includes(boundary.signature)) throw new Error("Pinned encoder boundary changed: " + encoder.file + " " + boundary.signature);
+      source = source.replace(boundary.signature, boundary.signature + boundary.failure);
+    }
+    return { ...loaded, source };
   },
 });
 `)}`;
@@ -69,18 +86,46 @@ type FormattingScenario = {
   readonly full: boolean;
   readonly format?: "yaml" | "md";
   readonly human?: boolean;
+  readonly toonEncoder?: "encode" | "encodeLines";
 };
 
 const scenarios: readonly FormattingScenario[] = [
-  { name: "default TOON", arguments: [], full: false },
-  { name: "human TOON", arguments: [], full: false, human: true },
-  { name: "full TOON", arguments: ["--full-output"], full: true },
-  { name: "TOON token count", arguments: ["--token-count"], full: false },
-  { name: "TOON token window", arguments: ["--token-limit", "3"], full: false },
+  {
+    name: "default TOON",
+    arguments: [],
+    full: false,
+    toonEncoder: "encodeLines",
+  },
+  {
+    name: "human TOON",
+    arguments: [],
+    full: false,
+    human: true,
+    toonEncoder: "encodeLines",
+  },
+  {
+    name: "full TOON",
+    arguments: ["--full-output"],
+    full: true,
+    toonEncoder: "encodeLines",
+  },
+  {
+    name: "TOON token count",
+    arguments: ["--token-count"],
+    full: false,
+    toonEncoder: "encode",
+  },
+  {
+    name: "TOON token window",
+    arguments: ["--token-limit", "3"],
+    full: false,
+    toonEncoder: "encode",
+  },
   {
     name: "full TOON token window",
     arguments: ["--full-output", "--token-limit", "3"],
     full: true,
+    toonEncoder: "encode",
   },
   { name: "YAML", format: "yaml", arguments: [], full: false },
   {
@@ -132,7 +177,9 @@ for (const scenario of scenarios)
           { cwd: workspace.root, env: { PATH: process.env.PATH ?? "" } },
         );
         expect(result.exitCode, result.stderr).toBe(1);
-        expect(result.stderr.trim()).toBe("REA_AUTHORED_FORMAT_CAPACITY");
+        expect(result.stderr.trim()).toBe(
+          `REA_AUTHORED_FORMAT_CAPACITY${scenario.toonEncoder === undefined ? "" : `:${scenario.toonEncoder}`}`,
+        );
         expect(result.stdout).toContain("resource_constraint");
         expect(result.stdout).toContain("--format json");
         expect(result.stdout).toContain("formatted_characters");
@@ -195,7 +242,7 @@ workspaceCliTest.skipIf(process.platform === "win32")(
     );
     expect({ code, stderr }).toEqual({
       code: 141,
-      stderr: "REA_AUTHORED_FORMAT_CAPACITY\n",
+      stderr: "REA_AUTHORED_FORMAT_CAPACITY:encodeLines\n",
     });
   },
 );

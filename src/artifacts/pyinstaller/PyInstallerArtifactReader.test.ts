@@ -1124,6 +1124,45 @@ it("reads a PE signature beyond the carrier prefix before projecting paths", asy
   }
 });
 
+it("requires DOS magic before a PE-like record can select Windows path semantics", async () => {
+  const storedName = String.raw`pkg\data.bin`;
+  const carrier = cArchiveExecutable({
+    carrier: "pe",
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [
+      {
+        name: storedName,
+        typeCode: "x",
+        payload: Buffer.from("data"),
+        compress: false,
+      },
+    ],
+  });
+  const withoutDosMagic = Buffer.from(carrier);
+  withoutDosMagic.write("XX");
+  for (const [bytes, expectedPath] of [
+    [carrier, "pkg/data.bin"],
+    [withoutDosMagic, storedName],
+  ] as const) {
+    const reader = new PyInstallerArtifactReader(
+      await writeArchive("carrier", bytes),
+    );
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries).toContainEqual(
+        expect.objectContaining({
+          path: expectedPath,
+          formatMetadata: expect.objectContaining({ source_name: storedName }),
+        }),
+      );
+    } finally {
+      await reader.close();
+    }
+  }
+});
+
 it("rejects a stored member whose declared size disagrees with its bytes", async () => {
   const path = await writeArchive(
     "stored-size",

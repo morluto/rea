@@ -23,6 +23,7 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import { ghidraProfileComImport } from "./GhidraComImport.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
@@ -62,6 +63,8 @@ import {
   GHIDRA_MIPS_SOFT_FLOAT_STORAGE,
   ghidraMips1Limitations,
   ghidraMipsSoftFloatFailure,
+  ghidraMipsElfImageBase,
+  ghidraMipsElfImageBaseCommitment,
   ghidraMipsRelocatableLimitations,
   ghidraMipsSharedLimitations,
   ghidraMipsSoftFloatLimitations,
@@ -410,6 +413,21 @@ export const createGhidraProviderClient = (input: {
         "Resolve the soft-float MIPS storage policy into the analysis profile before opening the session.",
       ),
     );
+  const elfImageBase = ghidraMipsElfImageBase(target);
+  if (
+    !isDeepStrictEqual(
+      committedProfile.parameters.elf_image_base,
+      ghidraMipsElfImageBaseCommitment(target),
+    )
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the MIPS shared-image link base into the analysis profile before opening the session.",
+        },
+      }),
+    );
   const riscvCallingConvention = ghidraRiscvCallingConvention(target);
   if (
     riscvCallingConvention !==
@@ -673,6 +691,7 @@ export const createGhidraProviderClient = (input: {
         ? { pspExtension: pspExtension.data }
         : {}),
       ...(softFloat ? { mipsSoftFloat: true as const } : {}),
+      ...(elfImageBase === undefined ? {} : { elfImageBase }),
       ...(riscvCallingConvention === undefined
         ? {}
         : { riscvCallingConvention }),
@@ -744,6 +763,9 @@ export const createGhidraProviderClient = (input: {
           expectedCompilerSpecId: "default",
         }
       : {}),
+    ...(elfImageBase === undefined
+      ? {}
+      : { expectedImageBase: `0x${elfImageBase}` }),
     ...(context === undefined ? {} : { runId: context.runId }),
     logger: logger.child({ layer: "ghidra-bridge" }),
   });

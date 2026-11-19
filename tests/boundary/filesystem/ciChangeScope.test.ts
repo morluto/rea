@@ -242,6 +242,7 @@ it.each([
   ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
   ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
   ["scripts/verify-pcap.mjs", "packet_capture"],
+  [".github/actions/ubuntu-archive/action.yml", "signal_recording"],
   ["src/signals/RecordingProvider.ts", "signal_recording"],
   ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
   ["src/process/LinuxResourceLimits.ts", "packet_capture"],
@@ -950,12 +951,20 @@ it("retains native Inspector verification on every documented package host", asy
       { os: "macos-15-intel", platform: "darwin", architecture: "x64" },
     ],
   });
-  const windowsInspector = stepSchema.parse(
-    workflow.jobs["windows-curated"].steps.find(
-      (step) => step.run === "npm run verify:inspector",
-    ),
+  const windowsSteps = workflow.jobs["windows-curated"].steps;
+  const windowsBuild = windowsSteps.findIndex(
+    (step) => step.run === "npm run build:cached",
   );
-  expect(windowsInspector.if).toBeUndefined();
+  expect(windowsBuild).toBeGreaterThanOrEqual(0);
+  expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
+  for (const verifier of [
+    "node scripts/verify/inspector/runtime-observation.mjs",
+    "node scripts/verify-windows-package.mjs",
+  ]) {
+    const step = windowsSteps.findIndex(({ run }) => run === verifier);
+    expect(step).toBeGreaterThan(windowsBuild);
+    expect(windowsSteps[step]?.if).toBeUndefined();
+  }
 });
 
 it.each([
@@ -1039,6 +1048,8 @@ it.each([
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
+  ["scripts/read-authored-skill-manifest.mjs", { website: true }],
+  ["src/domain/skillManifest.ts", { website: true }],
   [
     "docs/readme/README_ja.md",
     { code: false, docs: true, website: true, package: false },
@@ -1063,6 +1074,7 @@ it.each([
     {
       code: true,
       runtime: true,
+      website: true,
       package: true,
       evm: false,
       browser: false,
@@ -1102,6 +1114,10 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-prototype-conflicts.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -1135,6 +1151,10 @@ it.each([
   ],
   [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaPrototypeConflictProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -1225,6 +1245,41 @@ it.each([
   [
     ".github/actions/ubuntu-archive/action.yml",
     { code: true, runtime: true, package: true, binary_layout: true },
+  ],
+  [
+    ".github/actions/ubuntu-archive/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
   ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
@@ -1734,6 +1789,22 @@ it.each([
     { workflows: true, code: false, package: false, website: false },
   ],
   [
+    ".github/actions/npm-cache/action.yml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/example/nested/action.yaml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/publish-mcp/registry-state.mjs",
+    { workflows: false, code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actionlint.yml",
+    { workflows: true, code: false, runtime: false, package: false },
+  ],
+  [
     "src/domain/javascript/example.test.ts",
     { code: true, runtime: false, javascript_recovery: false, package: false },
   ],
@@ -1770,6 +1841,11 @@ it.each([
   [
     "docs/.vitepress/package.json",
     { code: true, docs: true, runtime: false, package: false },
+  ],
+  ["package-lock.json", { code: true, docs: true, runtime: true }],
+  [
+    "scripts/generate-third-party-inventory.mjs",
+    { code: true, docs: true, runtime: false },
   ],
   ["docs/data.json", { code: false, docs: true, package: false }],
   ["CHANGELOG.md", { code: false, docs: true, package: false }],
@@ -2256,3 +2332,21 @@ it.each([
     });
   },
 );
+
+it("reads a Git blob whose path contains a line break alongside an ordinary blob", async ({
+  skip,
+}) => {
+  skip(
+    process.platform === "win32",
+    "Windows paths cannot contain line breaks",
+  );
+  const { directory } = await fixture();
+  const path = "src/two\nlines.test.ts";
+  const head = await change(directory, [path], "multiline path\n");
+  expect(gitRepository(directory).readFiles(head, [path, "README.md"])).toEqual(
+    new Map([
+      [path, "multiline path\n"],
+      ["README.md", "Initial fixture content\n"],
+    ]),
+  );
+});

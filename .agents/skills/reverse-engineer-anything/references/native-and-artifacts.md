@@ -224,8 +224,8 @@ Authenticode and Mach-O code-signature rows report presence, not validity.
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
-question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, or GNU ABI-tag
-fields. No `open_binary` or target execution is required. The CLI equivalent
+question concerns PT_NOTE/SHT_NOTE owners or supported note metadata. Treat
+FDO package and dlopen fields as producer declarations. No `open_binary` or target execution is required. The CLI equivalent
 is `inspect-elf-notes PATH`. Preserve artifact SHA-256, table file ranges,
 descriptor hashes, and original owner spellings. A missing table is observed
 absence of those declarations, not proof the image never carried notes in
@@ -738,7 +738,8 @@ for one selected type. For questions about a selected type, select
 names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
-`field_accesses` or `user_strings`.
+`field_accesses`, `user_strings` or `unresolved_definitions`. The last collection
+pages checked TypeDef and MethodDef coordinates with failed name columns.
 Use exact `names` and `declaring_types` filters before paging supported
 collections. For a compact method lookup, request `fields: ["name",
 "declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,

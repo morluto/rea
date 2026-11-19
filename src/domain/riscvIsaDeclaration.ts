@@ -35,12 +35,26 @@ export const RISCV_ATTRIBUTES_MAX_BYTES = 4096;
 
 const FORMAT_VERSION = 0x41;
 const TAG_FILE = 1;
+const TAG_SECTION = 2;
+const TAG_SYMBOL = 3;
 const TAG_RISCV_ARCH = 5;
+// RISC-V psABI attributes include the three deprecated privilege-version tags.
+const KNOWN_RISCV_ATTRIBUTE_TAGS = new Set([
+  4,
+  TAG_RISCV_ARCH,
+  6,
+  8,
+  10,
+  12,
+  14,
+  16,
+]);
 
 /**
  * Read `Tag_RISCV_arch` from a `.riscv.attributes` section; null means the
- * section declares no ISA string. The psABI gives odd tags string values and
- * even tags integer values, so tags REA does not use are skipped by that rule.
+ * section declares no ISA string. Decode known unused tags and optional tags
+ * by the psABI's odd-string, even-integer rule. Unknown mandatory tags leave
+ * the file-level declaration unavailable.
  * Other vendors and section or symbol scopes fail closed: their declarations
  * are not skipped.
  */
@@ -94,7 +108,9 @@ export const parseRiscvAttributes = (
         return err("malformed RISC-V attribute scope tag");
       if (scope.value !== TAG_FILE)
         return err(
-          "RISC-V attributes scoped to sections or symbols are not inspected by REA",
+          scope.value === TAG_SECTION || scope.value === TAG_SYMBOL
+            ? "RISC-V attributes scoped to sections or symbols are not inspected by REA"
+            : `unknown RISC-V attribute scope tag ${scope.value}`,
         );
       if (end - scope.next < 4)
         return err("truncated RISC-V attribute scope length");
@@ -129,6 +145,9 @@ export const parseRiscvAttributes = (
             );
           cursor = value.next;
         }
+        // An uninterpreted value must fit the scope before applicability is checked.
+        if (tag.value % 128 < 64 && !KNOWN_RISCV_ATTRIBUTE_TAGS.has(tag.value))
+          return err(`unknown mandatory RISC-V attribute tag ${tag.value}`);
       }
     }
     position = end;

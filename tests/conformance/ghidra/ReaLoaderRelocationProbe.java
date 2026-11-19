@@ -10,6 +10,7 @@ import ghidra.app.script.GhidraScriptProvider;
 import ghidra.app.script.GhidraScriptUtil;
 import ghidra.program.database.mem.FileBytes;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.Instruction;
@@ -143,6 +144,11 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         return null;
     }
 
+    private boolean volatileDataAt(Address address) {
+        Data data = currentProgram.getListing().getDefinedDataAt(address);
+        return data != null && data.isVolatile();
+    }
+
     private static boolean targetBacked(MemoryBlock block, FileBytes target) {
         for (MemoryBlockSourceInfo source : block.getSourceInfos())
             if (source.getFileBytes().orElse(null) == target) return true;
@@ -265,6 +271,16 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         require("got_caller_references_loader_relocation",
             readReference(gotCaller, functionGotRelocation.getAddress()) != null ||
             readReference(gotCaller, dataGotRelocation.getAddress()) != null);
+        // An initial-exec TLS slot only the runtime loader fills, in the same
+        // read-only block as the applied GOT entries.
+        Relocation tlsGotRelocation = relocationForSymbol("rea_external_tls");
+        require("got_tls_relocation_present", tlsGotRelocation != null);
+        require("got_tls_relocation_not_applied_by_importer",
+            tlsGotRelocation.getStatus() != Relocation.Status.APPLIED &&
+            tlsGotRelocation.getStatus() != Relocation.Status.APPLIED_OTHER);
+        require("got_tls_slot_shares_applied_got_block",
+            memory.getBlock(tlsGotRelocation.getAddress()) ==
+                memory.getBlock(functionGotRelocation.getAddress()));
 
         MemoryBlock block = memory.getBlock(pointer);
         if (block == null) throw new IllegalStateException("Pointer relocation has no loaded memory block");
@@ -319,7 +335,6 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
             Method protect = privateMethod(
                 bridge.getClass(), "protectLoaderInitializedRelocations", boolean.class);
             invoke(protect, bridge, true);
-            require("destination_block_is_volatile", block.isVolatile());
             require("destination_permissions_preserved",
                 block.isRead() == readable && block.isWrite() == writable && block.isExecute() == executable);
             require("source_filebytes_unchanged", fileBytesUnchanged(sourceBefore));
@@ -367,10 +382,17 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
             MemoryBlock functionGotBlock = memory.getBlock(functionGotRelocation.getAddress());
             MemoryBlock dataGotBlock = memory.getBlock(dataGotRelocation.getAddress());
             // Applied GOT relocations already hold the loader's value; protecting
-            // them would turn external calls into opaque pointer calls.
+            // them would turn external calls into opaque pointer calls. The
+            // unapplied TLS slot in the same block must not change that.
             require("applied_got_relocations_not_volatile",
                 functionGotBlock != null && !functionGotBlock.isVolatile() &&
-                dataGotBlock != null && !dataGotBlock.isVolatile());
+                dataGotBlock != null && !dataGotBlock.isVolatile() &&
+                !volatileDataAt(functionGotRelocation.getAddress()) &&
+                !volatileDataAt(dataGotRelocation.getAddress()));
+            // Volatility is set on each unapplied destination's own data item.
+            require("destination_data_is_volatile", volatileDataAt(pointer));
+            require("got_tls_slot_data_is_volatile",
+                volatileDataAt(tlsGotRelocation.getAddress()));
 
             invoke(initialize, bridge);
             JsonObject protectedResult = (JsonObject)invoke(

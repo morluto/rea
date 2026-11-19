@@ -170,7 +170,7 @@ const configureClientDocument = async (
     client,
     undefined,
     platform,
-    environment,
+    { writeOverrides: environment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -558,7 +558,7 @@ const readClientRefresh = async (
     client,
     resources,
     platform,
-    providerEnvironment,
+    { writeOverrides: providerEnvironment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -872,7 +872,7 @@ const inspectClientDocument = async (
     client,
     undefined,
     platform,
-    providerEnvironment,
+    { writeOverrides: providerEnvironment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);

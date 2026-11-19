@@ -33,6 +33,23 @@ function assertRetentionPrefix(prefix) {
     );
 }
 
+const CACHE_TIMESTAMP =
+  /^(?<date>\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/u;
+
+/** Accept timestamp strings only and rule out native Date rollover. */
+function parseCacheTimestamp(value) {
+  if (typeof value !== "string") return NaN;
+  const date = CACHE_TIMESTAMP.exec(value)?.groups?.date;
+  if (date === undefined) return NaN;
+  const midnight = new Date(`${date}T00:00:00Z`);
+  if (
+    !Number.isFinite(midnight.getTime()) ||
+    midnight.toISOString().slice(0, 10) !== date
+  )
+    return NaN;
+  return Date.parse(value);
+}
+
 function normalizeCache(cache, index) {
   if (typeof cache !== "object" || cache === null || Array.isArray(cache))
     throw new Error(`Cache entry ${String(index + 1)} is malformed`);
@@ -41,8 +58,10 @@ function normalizeCache(cache, index) {
     throw new Error(`Cache entry ${String(index + 1)} has an invalid id`);
   if (typeof key !== "string" || key.length === 0 || /[\r\n]/u.test(key))
     throw new Error(`Cache entry ${String(index + 1)} has an invalid key`);
-  const createdAt = Date.parse(cache.created_at);
-  const accessedAt = Date.parse(cache.last_accessed_at ?? cache.created_at);
+  const createdAt = parseCacheTimestamp(cache.created_at);
+  const accessedAt = parseCacheTimestamp(
+    cache.last_accessed_at ?? cache.created_at,
+  );
   if (!Number.isFinite(createdAt) || !Number.isFinite(accessedAt))
     throw new Error(
       `Cache entry ${String(index + 1)} has an invalid timestamp`,
@@ -122,12 +141,15 @@ export function selectPrefixDeletions(
       throw new Error(
         `Refusing to evaluate a cache outside ${prefix}: ${entry.key}`,
       );
-  const protectedIds = new Set(
-    [...entries]
-      .sort(byNewest)
-      .slice(0, keepGenerations)
-      .map((entry) => entry.id),
-  );
+  // A newer snapshot on a different ref is unavailable to this ref.
+  const newestByRef = new Map();
+  for (const entry of entries.toSorted(byNewest)) {
+    const newest = newestByRef.get(entry.ref) ?? [];
+    if (newest.length >= keepGenerations) continue;
+    newest.push(entry.id);
+    newestByRef.set(entry.ref, newest);
+  }
+  const protectedIds = new Set([...newestByRef.values()].flat());
   if (keepKey !== undefined)
     for (const entry of entries)
       if (entry.key === keepKey) protectedIds.add(entry.id);

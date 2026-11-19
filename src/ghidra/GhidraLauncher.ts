@@ -265,6 +265,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly pspExtension?: GhidraPspExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
   readonly mipsSoftFloat?: true;
+  /** ELF image base (bare hex) committed by the analysis profile. */
+  readonly elfImageBase?: string;
   /** Apply this committed RISC-V calling-convention policy after analysis. */
   readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
   /** Spawn seam for provider-boundary lifecycle tests. */
@@ -458,6 +460,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.rawBinary === undefined
           ? {}
           : { rawBinary: this.options.rawBinary }),
+        ...(this.options.elfImageBase === undefined
+          ? {}
+          : { elfImageBase: this.options.elfImageBase }),
         ...(this.options.gamecubeDol === undefined ||
         gamecubeDolSectionPath === undefined
           ? {}
@@ -807,6 +812,8 @@ export interface GhidraHeadlessArgumentOptions {
     readonly sectionFilePath: string;
   };
   readonly languageOverride?: GhidraLanguageOverride;
+  /** Bare-hex ElfLoader image base; the loader's default may shift the image. */
+  readonly elfImageBase?: string;
   /** Auto-analyzers disabled by the pre-analysis options script. */
   readonly disabledAnalyzers?: readonly string[];
   /** Canonical seed snapshot passed to the pre-analysis seed script. */
@@ -824,6 +831,7 @@ type ExistingProjectOptions = Pick<
   | "languageOverride"
   | "mipsSoftFloat"
   | "riscvCallingConvention"
+  | "elfImageBase"
   | "seedPath"
   | "disabledAnalyzers"
 > & { readonly analysisSeeds?: GhidraSeedCommitment };
@@ -856,6 +864,8 @@ const validateExistingProjectOptions = (
       throw new GhidraAdmissionError(
         "existing_project_riscv_calling_convention",
       );
+    if (options.elfImageBase !== undefined)
+      throw new GhidraAdmissionError("existing_project_elf_image_base");
     if (
       options.seedPath !== undefined ||
       options.analysisSeeds !== undefined ||
@@ -928,6 +938,22 @@ export const ghidraHeadlessArguments = (
     (options.dosMz === true || options.dosCom !== undefined)
   )
     throw new GhidraAdmissionError("raw_binary_dos");
+  if (
+    options.elfImageBase !== undefined &&
+    (gamecubeDol !== undefined ||
+      options.psp === true ||
+      options.dosMz === true ||
+      options.dosCom !== undefined ||
+      options.riscvCallingConvention !== undefined ||
+      options.packedProgramPath !== undefined ||
+      rawBinary !== undefined)
+  )
+    throw new GhidraAdmissionError("elf_image_base_scope");
+  if (
+    options.elfImageBase !== undefined &&
+    !/^[0-9a-f]{1,8}$/u.test(options.elfImageBase)
+  )
+    throw new GhidraAdmissionError("elf_image_base_format");
   return [
     options.projectRoot,
     existing?.projectName ?? "rea-project",
@@ -981,15 +1007,25 @@ export const ghidraHeadlessArguments = (
                         "-cspec",
                         "default",
                       ]
-                    : override !== undefined
-                      ? [
-                          "-processor",
-                          override.languageId,
-                          ...(override.compilerSpecId === undefined
-                            ? []
-                            : ["-cspec", override.compilerSpecId]),
-                        ]
-                      : []
+                    : [
+                        ...(options.elfImageBase === undefined
+                          ? []
+                          : [
+                              "-loader",
+                              "ElfLoader",
+                              "-loader-imagebase",
+                              options.elfImageBase,
+                            ]),
+                        ...(override === undefined
+                          ? []
+                          : [
+                              "-processor",
+                              override.languageId,
+                              ...(override.compilerSpecId === undefined
+                                ? []
+                                : ["-cspec", override.compilerSpecId]),
+                            ]),
+                      ]
                   : [
                       "-loader",
                       "BinaryLoader",

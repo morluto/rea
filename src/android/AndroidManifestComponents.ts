@@ -1,10 +1,6 @@
-import { parseXmlDocument } from "../domain/xmlDocument.js";
-import {
-  androidAttribute,
-  plainAttribute,
-  childNodes,
-  isManifestElement,
-} from "./AndroidManifestXml.js";
+import { parseDecodedAndroidManifest } from "../domain/android/decodedAndroidManifest.js";
+import { isUnqualifiedXmlElement } from "../domain/xmlDocument.js";
+import { androidAttribute, childNodes } from "./AndroidManifestXml.js";
 import type { KnownCoverageStatus } from "../domain/coverage.js";
 import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDetails.js";
 import {
@@ -160,20 +156,14 @@ export const parseAndroidManifestComponents = (
       items: [],
       limitations: [PARTIAL_LIMITATION],
     };
-  const parsed = parseXmlDocument(manifestText, {
-    doctype: "reject",
-    lineEndings: "preserve",
-  });
+  const parsed = parseDecodedAndroidManifest(manifestText, "reject");
   if (!parsed.ok)
     return unavailable(
-      `The decoded manifest is not well-formed XML (${parsed.error.failure.field ?? parsed.error.kind}), so its component inventory is unavailable.`,
+      parsed.error.kind === "unexpected-root"
+        ? "The decoded manifest root is not <manifest>, so its component inventory is unavailable."
+        : `The decoded manifest is not well-formed XML (${parsed.error.failure.field ?? parsed.error.kind}), so its component inventory is unavailable.`,
     );
-  const root = parsed.value.documentElement;
-  if (!isManifestElement(root) || root.nodeName !== "manifest")
-    return unavailable(
-      "The decoded manifest root is not <manifest>, so its component inventory is unavailable.",
-    );
-  const rawPackageName = plainAttribute(root, "package");
+  const { root, packageName: rawPackageName } = parsed.value;
   const packageName = rawPackageName?.trim() || null;
   const packageHasInvalidWhitespace =
     rawPackageName !== null && rawPackageName !== rawPackageName.trim();
@@ -220,7 +210,8 @@ export const parseAndroidManifestComponents = (
   let targetSdkDeclared = false;
   let minimumSdkDeclared = false;
   for (const child of children) {
-    if (!isManifestElement(child) || child.nodeName !== "uses-sdk") continue;
+    if (!isUnqualifiedXmlElement(child) || child.nodeName !== "uses-sdk")
+      continue;
     // Match the bridge's declaration owner: the last uses-sdk supplies values.
     targetSdkDeclared = androidAttribute(child, "targetSdkVersion") !== null;
     minimumSdkDeclared = androidAttribute(child, "minSdkVersion") !== null;
@@ -237,7 +228,7 @@ export const parseAndroidManifestComponents = (
   // Parse the effective SDK once even when hundreds of providers share it.
   const providerDefault = targetSdkLevel === null ? null : targetSdkLevel <= 16;
   for (const node of children) {
-    if (!isManifestElement(node)) continue;
+    if (!isUnqualifiedXmlElement(node)) continue;
     const element = node;
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
@@ -259,7 +250,7 @@ export const parseAndroidManifestComponents = (
         ? null
         : Buffer.byteLength(applicationPermission);
     for (const child of childNodes(element)) {
-      if (!isManifestElement(child)) continue;
+      if (!isUnqualifiedXmlElement(child)) continue;
       const component = child;
       if (!isComponentKind(component.nodeName)) continue;
       // Every declaration counts against the bound, named or not, so an

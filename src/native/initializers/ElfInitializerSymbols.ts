@@ -1,7 +1,7 @@
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../resources/index.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   ELF_SHN_XINDEX,
   ElfSymbolSectionIndexTables,
@@ -60,6 +60,8 @@ export interface SlotRelocation {
 const STT_FUNC = 2;
 const STT_SECTION = 3;
 const STT_FILE = 4;
+/** `st_value` is an offset in thread-local storage. */
+const STT_TLS = 6;
 /** `st_value` is a resolver; the loader writes whatever the resolver returns. */
 const STT_GNU_IFUNC = 10;
 
@@ -174,7 +176,7 @@ const readTable = (
   readonly truncated: boolean;
   readonly incomplete: boolean;
 } => {
-  const width = facts.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(facts.bits);
   const strings = stringTableBytes(facts.bytes, sections[section.link]);
   const compressedStrings = sections[section.link]?.compressed === true;
   if (compressedStrings)
@@ -292,7 +294,12 @@ export const loadElfSymbolIndex = (
       (symbol.section.kind !== "section" && symbol.section.kind !== "absolute")
     )
       return;
-    if (symbol.type === STT_SECTION || symbol.type === STT_FILE) return;
+    if (
+      symbol.type === STT_SECTION ||
+      symbol.type === STT_FILE ||
+      symbol.type === STT_TLS
+    )
+      return;
     const func = symbol.type === STT_FUNC;
     rank(ranked, symbol.value, symbol.name, func);
     if (symbol.section.kind === "section")
@@ -313,7 +320,7 @@ export const loadElfSymbolIndex = (
       unreadable = true;
       return;
     }
-    const width = BigInt(facts.bits === 64 ? 24 : 16);
+    const width = BigInt(elfSymbolSize(facts.bits));
     if (section.entry_size !== 0n && section.entry_size !== width) {
       notes.add(
         "A symbol table has an unexpected entry size; its symbols were not decoded.",
@@ -375,8 +382,8 @@ export const relocationFromEntry = (
   symbols: readonly ElfInitializerSymbol[] | undefined,
   inplace: bigint | null,
 ): SlotRelocation => {
-  const relative = elfRelativeRelocationType(facts.machine);
-  const absolute = elfAbsoluteRelocationType(facts.machine);
+  const relative = elfRelativeRelocationType(facts.machine, facts.bits);
+  const absolute = elfAbsoluteRelocationType(facts.machine, facts.bits);
   if (entry.type === relative && entry.symbolIndex === 0) {
     const addend = addendOf(entry, inplace);
     if (addend === null) return unresolved();
@@ -400,6 +407,7 @@ export const relocationFromEntry = (
   if (
     (symbol.section.kind !== "section" && symbol.section.kind !== "absolute") ||
     entry.type !== absolute ||
+    symbol.type === STT_TLS ||
     symbol.type === STT_GNU_IFUNC
   )
     return unresolved();
@@ -572,8 +580,8 @@ export const sectionRelocations = async (
   };
   // One budget across every header, so many headers over one range cannot multiply the work.
   let budget = SECTION_RELOCATION_RECORD_SCAN;
-  const relative = elfRelativeRelocationType(input.machine);
-  const copy = elfCopyRelocationType(input.machine);
+  const relative = elfRelativeRelocationType(input.machine, input.bits);
+  const copy = elfCopyRelocationType(input.machine, input.bits);
   // Slot visits grow with each COPY span, so the spans together are limited to
   // the file size, as in the dynamic walk.
   let copyAllowance = input.bytes.length;
@@ -665,7 +673,7 @@ export const sectionRelocations = async (
         copied ??
         (parsed.value.type === relative
           ? word
-          : elfRelocationWidth(input.machine, parsed.value.type));
+          : elfRelocationWidth(input.machine, parsed.value.type, input.bits));
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
       const span = extent ?? word;
       if (span === 0) continue;

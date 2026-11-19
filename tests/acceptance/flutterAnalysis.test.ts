@@ -3,7 +3,7 @@ import {
   compressedElfNoteSectionFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createHash } from "node:crypto";
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { flutterResultSchemas } from "../../src/domain/flutter/flutterBuildAnalysis.js";
@@ -13,17 +13,23 @@ import {
   engineFixtureImage,
   REFERENCE_HASH,
   appendElfRanges,
+  mixedAotFixtureImage,
+  unifiedAotFixtureImage,
 } from "../../src/flutter/FlutterBuild.fixture.js";
 import {
   createFlutterApk,
   createDuplicateFlutterApk,
 } from "../fixtures/flutterApk.js";
 import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const connectLocalToolsMcp = lazyLocalToolsMcp();
+const connectProfileMcp = lazyLocalToolsMcp({
+  REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+});
 
 cliTest(
   "CLI and stdio MCP preserve AOT facts and exact artifact identity across ignored DT_BIND_NOW values",
@@ -58,6 +64,7 @@ cliTest(
           coverage: "complete",
           snapshot_hash: REFERENCE_HASH,
           snapshot_hash_sources: 2,
+          snapshot_profile: "legacy-split",
         },
         string_pool: {
           coverage: "complete",
@@ -77,6 +84,113 @@ cliTest(
     }
     expect(reports[1]).toEqual(reports[0]);
     expect(digests[1]).not.toBe(digests[0]);
+  },
+);
+
+cliTest(
+  "CLI and MCP preserve unified aliases and conflicting Dart profiles",
+  async ({ cli }) => {
+    const { client, call } = await connectProfileMcp();
+    const tool = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_dart_aot",
+    );
+    if (tool?.outputSchema === undefined)
+      throw new Error("Missing advertised AOT schema");
+    const { assertions, clear } = createMcpSchemaValidation();
+    onTestFinished(clear);
+    for (const test of [
+      {
+        label: "unified",
+        image: unifiedAotFixtureImage(),
+        profile: "unified",
+        sources: 1,
+        hash: REFERENCE_HASH,
+        sections: 2,
+        coverage: "complete",
+        pool: ["package:app/unified.dart"],
+      },
+      {
+        label: "aliases",
+        image: unifiedAotFixtureImage({ aliases: true }),
+        profile: "unified",
+        sources: 1,
+        hash: REFERENCE_HASH,
+        sections: 6,
+        coverage: "complete",
+        pool: ["package:app/unified.dart"],
+      },
+      {
+        label: "mixed",
+        image: mixedAotFixtureImage(),
+        profile: null,
+        sources: 3,
+        hash: null,
+        sections: 6,
+        coverage: "partial",
+        pool: [],
+      },
+      {
+        label: "malformed-unified",
+        image: mixedAotFixtureImage("unified"),
+        profile: "legacy-split",
+        sources: 2,
+        hash: REFERENCE_HASH,
+        sections: 6,
+        coverage: "partial",
+        pool: [
+          "package:adaptive_breakpoints/src/adaptive_breakpoints.dart",
+          "package:animations/src/fade_scale_transition.dart",
+        ],
+        malformed: { name: "_kDartSnapshotData", size: 4, kind: null },
+      },
+      {
+        label: "malformed-legacy",
+        image: mixedAotFixtureImage("legacy-split"),
+        profile: "unified",
+        sources: 1,
+        hash: "a".repeat(32),
+        sections: 6,
+        coverage: "partial",
+        pool: ["package:app/mixed.dart"],
+        malformed: { name: "_kDartIsolateSnapshotData", magic_valid: false },
+      },
+    ]) {
+      const path = await createFlutterApk(`${test.label}.apk`, [
+        { path: "lib/x86_64/libapp.so", bytes: test.image },
+      ]);
+      const cliReply = await cli.run({
+        arguments: ["inspect-dart-aot", path, "--json"],
+      });
+      expect(cliReply.exitCode, cliReply.stderr).toBe(0);
+      const evidence = toolContract("inspect_dart_aot").outputSchema.parse(
+        cliReply.json,
+      );
+      const reply = await call("inspect_dart_aot", { path });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      expect(
+        assertions.validate(tool.outputSchema, reply.structuredContent),
+        JSON.stringify(assertions.errors),
+      ).toBe(true);
+      expectCliMcpEvidenceParity(evidence, reply.structuredContent, path);
+      const report = flutterResultSchemas.inspect_dart_aot.parse(
+        evidence.normalized_result,
+      );
+      expect(report.libapp).toMatchObject({
+        coverage: test.coverage,
+        snapshot_profile: test.profile,
+        snapshot_hash_sources: test.sources,
+        snapshot_hash: test.hash,
+        sha256: createHash("sha256").update(test.image).digest("hex"),
+      });
+      expect(report.libapp.sections).toHaveLength(test.sections);
+      expect(report.string_pool.package_uris).toEqual(test.pool);
+      if (test.malformed !== undefined) {
+        expect(report.libapp.sections).toContainEqual(
+          expect.objectContaining(test.malformed),
+        );
+        expect(report.string_pool.coverage).toBe("complete");
+      }
+    }
   },
 );
 

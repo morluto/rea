@@ -495,6 +495,9 @@ it.each(["truncated", "overwritten"])(
     const root = await createTestTempDirectory("rea-ines-header-race-");
     const path = join(root, "source.nes");
     await writeFile(path, inesFixture());
+    // Same-size overwrites are visible only through timestamps. Age the
+    // fixture so a rewrite inside one clock tick cannot look unchanged.
+    await utimes(path, AGED_FIXTURE_TIME, AGED_FIXTURE_TIME);
     const handle = await open(path, "r");
     const reader = new InesArtifactReader(path, {
       handle,

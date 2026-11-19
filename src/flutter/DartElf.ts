@@ -13,8 +13,9 @@ import {
 } from "../domain/elfHashSymbolCount.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
-import { readElfSymbol } from "../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../domain/elfSymbol.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
+import { validateElfSectionTableFields } from "../domain/elfDeclaredRanges.js";
 import { Buffer } from "node:buffer";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { createElfLoadMap } from "./ElfLoadMap.js";
@@ -75,6 +76,8 @@ export interface ElfSymbol {
 
 export interface ElfParseFailure {
   readonly reason: string;
+  /** Requested name for an ordinary missing definition; other failures are structural. */
+  readonly missingSymbol?: string;
 }
 
 const SHT_DYNSYM = 11;
@@ -116,6 +119,8 @@ export const readElfHeader = (
     return { failure: { reason: "unsupported ELF type" } };
   const raw = readElfRawTableDeclarations(bytes, fixedHeader.value);
   if (!raw.ok) return { failure: { reason: raw.error.message } };
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return { failure: { reason: sectionTable.error } };
   const { programs, sections } = raw.value;
   const e_shoff =
     sections.offset <= BigInt(Number.MAX_SAFE_INTEGER)
@@ -213,7 +218,7 @@ export const readElfSymbols = async (
     e_phnum,
   } = parsed.header;
   const reader = new BoundedReader(bytes);
-  const entrySize = is64 ? 24 : 16;
+  const entrySize = elfSymbolSize(is64 ? 64 : 32);
   const segments: { vaddr: number; offset: number; filesz: number }[] = [];
   let dynamicSegment: { offset: number; filesz: number } | null = null;
   for (let index = 0; index < e_phnum; index += 1) {
@@ -523,12 +528,20 @@ export const readElfSymbols = async (
     failures.add(`Symbol ${name} has conflicting definitions`);
   }
   for (const name of unresolved) symbols.delete(name);
-  for (const name of wanted)
-    if (!symbols.has(name) && !ambiguous.has(name) && !unresolved.has(name))
-      failures.add(`symbol ${name} is not in the dynamic symbol table`);
   return {
     symbols: [...symbols.values()],
-    failures: [...failures].map((reason) => ({ reason })),
+    failures: [
+      ...[...failures].map((reason) => ({ reason })),
+      ...[...wanted]
+        .filter(
+          (name) =>
+            !symbols.has(name) && !ambiguous.has(name) && !unresolved.has(name),
+        )
+        .map((name) => ({
+          reason: `symbol ${name} is not in the dynamic symbol table`,
+          missingSymbol: name,
+        })),
+    ],
   };
 };
 
@@ -568,13 +581,12 @@ export const readSnapshotHeader = (
   // Dart's stored length excludes the four magic bytes and includes the
   // 20-byte fixed header and the version hash. Aligned data may follow it
   // inside the exported symbol, but the serialized snapshot must fit.
-  // Kind 3 is FullAOT in the supported Dart 2.14 layout; enum values change
-  // across SDK versions, so other kinds remain uninterpreted observations.
+  // The export profile interprets the kind. Its enum values vary by producer.
   const complete =
     headerLength !== null &&
     headerLength >= SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH - 4 &&
     headerLength <= bytes.length - offset - 4 &&
-    kind === 3 &&
+    kind !== null &&
     hash !== null;
   return { magicValid: true, kind, headerLength, hash, complete };
 };

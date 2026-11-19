@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { withElf64DirectSectionCount } from "../native/elf/ElfNotes.fixture.js";
 import { readElfSymbols, readSnapshotHeader } from "./DartElf.js";
 import {
   REFERENCE_HASH,
@@ -70,6 +71,16 @@ describe("readElfSymbol", () => {
     const header = readSnapshotHeader(image, isolateData.symbol.offset);
     expect(header.magicValid).toBe(true);
     expect(header.kind).toBe(3);
+  });
+
+  it("refuses to read snapshot symbols through a reserved direct section count", async () => {
+    const image = withElf64DirectSectionCount(imageWithSections(), 0xff00);
+    expect(await readElfSymbols(image, ["_kDartIsolateSnapshotData"])).toEqual({
+      symbols: [],
+      failures: [
+        { reason: "ELF e_shnum uses a reserved direct section count" },
+      ],
+    });
   });
 
   it("refuses a non-ELF image instead of guessing", async () => {
@@ -368,6 +379,7 @@ describe("stripped ELF symbol-table ownership", () => {
       reason: expect.stringMatching(
         /_kDartIsolateSnapshotData.*not in the dynamic symbol table/i,
       ),
+      missingSymbol: "_kDartIsolateSnapshotData",
     });
     image.writeBigUInt64LE(0x60000001n, dynamic + 4 * 16); // No recognized count table.
     expect(
@@ -557,7 +569,10 @@ it.each([256, 257])(
         : {
             symbols: [],
             failures: [
-              { reason: `symbol ${name} is not in the dynamic symbol table` },
+              {
+                reason: `symbol ${name} is not in the dynamic symbol table`,
+                missingSymbol: name,
+              },
             ],
           },
     );
@@ -585,7 +600,10 @@ it("checks raw symbol precision only after definition and requested-name selecti
   expect(await readElfSymbols(bytes, ["unselected"])).toEqual({
     symbols: [],
     failures: [
-      { reason: "symbol unselected is not in the dynamic symbol table" },
+      {
+        reason: "symbol unselected is not in the dynamic symbol table",
+        missingSymbol: "unselected",
+      },
     ],
   });
 });

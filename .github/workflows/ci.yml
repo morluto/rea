@@ -699,7 +699,7 @@ jobs:
       - name: Compute Windows native cache key
         id: windows-native-key
         env:
-          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', '.github/actions/windows-cross-compiler/action.yml', '.github/actions/ubuntu-archive/action.yml', 'package.json') }}
+          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', '.github/actions/windows-cross-compiler/action.yml', '.github/actions/ubuntu-archive/action.yml', '.github/actions/host-apt-packages/action.yml', 'package.json') }}
         run: |
           utc_date="$(date -u +%Y-%m-%d)"
           printf 'key=rea-windows-native-v3-%s-%s-%s-%s-%s-%s\n' \
@@ -1083,13 +1083,15 @@ jobs:
           tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
+      # Use the runtime prepared above. npm pack still runs prepack.
       - name: Verify real Node Inspector discovery and observation
         timeout-minutes: 10
         env:
           NODE_OPTIONS: "--max-old-space-size=1024"
           UV_THREADPOOL_SIZE: "2"
-        run: npm run verify:inspector
-      - run: npm run verify:package:windows
+        run: node scripts/verify/inspector/runtime-observation.mjs
+      - name: Verify installed Windows package
+        run: node scripts/verify-windows-package.mjs
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.23.4

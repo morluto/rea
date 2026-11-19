@@ -46,7 +46,8 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
-| `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
+| `npm run docs:build`              | Generate and build the VitePress site for local preview                                                                 |
+| `npm run verify:docs:routes`      | Build the VitePress site and verify rendered local routes, anchors, images, and physical edit targets                   |
 
 `typecheck` also checks the JavaScript verification scripts listed in
 `tsconfig.scripts.json` (`checkJs`, with the main compiler options). Those
@@ -70,11 +71,11 @@ semantics. Compare failures against the base revision, or run the suite on
 Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
 Windows source checkouts.
 
-The CI documentation lane runs both `docs:check` and `docs:build` when the
-existing change classifier selects documentation or its producing inputs.
-Generated facts and rendered page links have separate checks. VitePress does not
-establish that every external URL or GitHub-rendered localized heading exists;
-verify those destinations when editing them.
+The CI documentation lane runs `docs:check` and `verify:docs:routes` when the
+change classifier selects documentation or its producing inputs. Follow the
+[documentation authoring checks](documentation.md#generated-ownership-and-checks)
+and verify external URLs and GitHub-rendered headings separately when editing
+them.
 
 For example:
 
@@ -127,14 +128,15 @@ TypeScript versions.
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
 The build also records `dist/mcp-catalog.json` (compact inputs) from the
 canonical SDK registrations and binds it to the runtime with its SHA-256
-digest. Default target-free
-MCP startup serves its schemas without constructing analysis validators;
-the first tool or guided-workflow request materializes the canonical runtime
-on that same SDK server. Explicit compact/full input selections preserve
-their advertised schemas throughout materialization. Initial-target,
-HTTP and output-schema-off startup keep the eager path; source runs without
-recorded artifacts also use eager composition. Compare memory both after discovery and after a completed
-request; report diagnostic GC separately from normal resident memory.
+digest. Target-free stdio MCP startup with the default catalog and output
+profiles serves its schemas without constructing analysis validators, including
+when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The first tool or guided-workflow request materializes the canonical runtime
+on that same SDK server. It preserves the advertised schemas throughout
+materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold
+startup use eager composition, as do source runs without recorded artifacts.
+Compare memory both after discovery and after a completed request; report
+diagnostic GC separately from normal resident memory.
 
 Turbo's strict task environment preserves caller-selected `GOMAXPROCS`,
 `GOMEMLIMIT`, and `UV_THREADPOOL_SIZE` for resource-constrained builds and
@@ -565,14 +567,14 @@ integration, then a producer golden; use the table to select quick feedback and
 claim-specific additional evidence. Provider-behavior claims require the
 matching real-provider lane.
 
-| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                     |
-| ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
-| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port    |
-| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope |
-| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run docs:build` for rendered pages and links           |
-| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup           |
-| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services              |
-| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence            |
+| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                      |
+| ----------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port     |
+| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope  |
+| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run verify:docs:routes` for rendered routes and anchors |
+| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup            |
+| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services               |
+| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence             |
 
 ### Provider-backed workflow verification
 
@@ -737,6 +739,13 @@ consumers. Add [lifecycle regressions](#lifecycle-regressions) when resource
 ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
+When consolidating interpretation across consumers, use the same authored
+input and an independently specified expected fact at the boundary where
+each consumer previously made its own decision. Allow differences in
+recovery or display when those belong to the consumer. For generated
+installers and verifiers, exercise the emitted artifact in its supported
+runtime so the test covers the code that actually receives the input.
+
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |
@@ -754,9 +763,11 @@ control that keeps completed Evidence inline and preserves the original failure.
 
 For a seekable file with a known extent, distinguish a provably impossible wire
 extent from an independent representation limit. Pair the malformed declaration
-with a structurally possible over-limit control. A count-only truncated fixture
-does not establish capacity behavior. This does not require decoding an opaque
-compressed payload merely to apply its declared expansion limit.
+with a structurally possible over-limit control. Include a length that fits the
+remaining bytes by itself but would consume the framing required for a later
+field or row. A count-only truncated fixture does not establish capacity
+behavior. This does not require decoding an opaque compressed payload merely
+to apply its declared expansion limit.
 
 When producer order is unspecified, synchronize fixtures on the observed request
 or completion event. A filename, generated key, or fixed delay does not prove
@@ -913,7 +924,10 @@ For ZIP extraction, replace the pathname after inventory reader close while the
 admitted root descriptor remains owned. Verify that identical member bytes in a
 different carrier, a directory, or a missing pathname cannot switch the
 materialized source. Exercise descriptor close failure and retry before output
-publication.
+publication. Inject a producer finalization failure after its output sink
+closes and verify that the consumer observes the failure. Successful EOF
+requires the producer to settle successfully, even when all output bytes have
+arrived.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
 Include a physical I/O failure reused as the abort reason and genuine
@@ -1384,8 +1398,10 @@ baselines (`scripts/verify/baselines/*.json`,
 `scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
 analysis-efficiency test scripts, and advertised-schema summaries select no
 portable Vitest tests unless named by path, because static, Python, and build
-jobs check them. Non-module CLI parity fixtures with a single known test suite
-are bound in `EXPLICIT_FIXTURE_OWNERS` and fail closed if their owner is missing.
+jobs check them. `EXPLICIT_TEST_OWNERS` binds inputs with a known test suite the
+selector cannot reach by imports or file names. These include non-module CLI
+parity fixtures and the managed pointer rows integration test. Selection falls
+back to the complete suite if a declared owner is missing.
 
 The PR falls back to the complete fast suite when it cannot decide:
 

@@ -2,6 +2,7 @@ import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLay
 import {
   metadataRowCursor,
   metadataToken,
+  readRequiredMetadataName,
 } from "../domain/managed/managedMetadataHeaps.js";
 
 /** Scalar Field facts; consumers own heap admission and field selection. */
@@ -14,6 +15,7 @@ export const readFieldDefinitionRow = (
   readonly rowOffset: number;
   readonly flags: number;
   readonly nameIndex: number;
+  readonly nameOffset: number;
   readonly signatureIndex: number;
 } => {
   // Layout admission bounds the complete row independently of its heap values.
@@ -21,8 +23,25 @@ export const readFieldDefinitionRow = (
   return {
     token: metadataToken(4, row),
     rowOffset: cursor.start,
-    flags: cursor.readUInt16(),
+    flags: cursor.u16(),
+    nameOffset: cursor.offset,
     nameIndex: cursor.readIndex(layout.stringIndexSize),
     signatureIndex: cursor.readIndex(layout.blobIndexSize),
   };
 };
+
+export const readFieldDefinitionName = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  definition: Pick<
+    ReturnType<typeof readFieldDefinitionRow>,
+    "token" | "nameIndex" | "nameOffset"
+  >,
+): string =>
+  readRequiredMetadataName(
+    bytes,
+    layout,
+    "Field",
+    definition.token,
+    definition,
+  );

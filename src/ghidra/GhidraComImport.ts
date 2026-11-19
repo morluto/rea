@@ -33,7 +33,6 @@ export const GHIDRA_COM_BINARY_LOAD_ADDRESS = "1000:0100";
 export const GHIDRA_COM_BINARY_LINEAR_ADDRESS = "0x10100";
 export const GHIDRA_COM_BINARY_LOAD_SEGMENT = "0x1000";
 export const GHIDRA_COM_BINARY_SEGMENT_REGISTER = "0x1000";
-export const GHIDRA_COM_ENTRY_OFFSET = "0x100";
 
 export const GHIDRA_COM_LOADER_REJECTIONS = [
   "filename_extension",

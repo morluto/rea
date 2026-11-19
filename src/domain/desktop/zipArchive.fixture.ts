@@ -135,6 +135,9 @@ export const odtArchive = (
     ...others,
   ]);
 
+const ZIP64_END_BYTES = 56;
+const ZIP64_LOCATOR_BYTES = 20;
+
 /** An archive of `count` empty stored entries named `e/0`, `e/1` and so on, written straight into one buffer. */
 export const emptyEntriesArchive = (count: number): Buffer => {
   const names = Array.from({ length: count }, (_, index) =>
@@ -142,7 +145,11 @@ export const emptyEntriesArchive = (count: number): Buffer => {
   );
   const named = names.reduce((total, name) => total + name.length, 0);
   const directory = 30 * count + named;
-  const archive = Buffer.alloc(directory + 46 * count + named + 22);
+  const zip64 = count > 0xffff;
+  const zip64Bytes = zip64 ? ZIP64_END_BYTES + ZIP64_LOCATOR_BYTES : 0;
+  const archive = Buffer.alloc(
+    directory + 46 * count + named + zip64Bytes + 22,
+  );
   let local = 0;
   let central = directory;
   for (const name of names) {
@@ -159,13 +166,43 @@ export const emptyEntriesArchive = (count: number): Buffer => {
     local += 30 + name.length;
     central += 46 + name.length;
   }
-  archive.writeUInt32LE(0x06054b50, central);
-  // Past 65,535 entries the 16-bit counts wrap, as writers without Zip64 leave them.
-  archive.writeUInt16LE(count & 0xffff, central + 8);
-  archive.writeUInt16LE(count & 0xffff, central + 10);
-  archive.writeUInt32LE(central - directory, central + 12);
-  archive.writeUInt32LE(directory, central + 16);
+  const directorySize = central - directory;
+  if (zip64)
+    zip64Ending(central, count, directorySize, directory).copy(
+      archive,
+      central,
+    );
+  const classic = central + zip64Bytes;
+  archive.writeUInt32LE(0x06054b50, classic);
+  archive.writeUInt16LE(Math.min(count, 0xffff), classic + 8);
+  archive.writeUInt16LE(Math.min(count, 0xffff), classic + 10);
+  archive.writeUInt32LE(directorySize, classic + 12);
+  archive.writeUInt32LE(directory, classic + 16);
   return archive;
+};
+
+const zip64Ending = (
+  end: number,
+  entries: number,
+  size: number,
+  offset: number,
+  extension: Uint8Array = new Uint8Array(),
+): Buffer => {
+  const recordBytes = ZIP64_END_BYTES + extension.length;
+  const ending = Buffer.alloc(recordBytes + ZIP64_LOCATOR_BYTES);
+  ending.writeUInt32LE(0x06064b50, 0);
+  ending.writeBigUInt64LE(BigInt(recordBytes - 12), 4);
+  ending.writeUInt16LE(45, 12);
+  ending.writeUInt16LE(45, 14);
+  ending.writeBigUInt64LE(BigInt(entries), 24);
+  ending.writeBigUInt64LE(BigInt(entries), 32);
+  ending.writeBigUInt64LE(BigInt(size), 40);
+  ending.writeBigUInt64LE(BigInt(offset), 48);
+  ending.set(extension, ZIP64_END_BYTES);
+  ending.writeUInt32LE(0x07064b50, recordBytes);
+  ending.writeBigUInt64LE(BigInt(end), recordBytes + 8);
+  ending.writeUInt32LE(1, recordBytes + 16);
+  return ending;
 };
 
 /**
@@ -173,24 +210,15 @@ export const emptyEntriesArchive = (count: number): Buffer => {
  * and a classic one that defers to them, or with `sentinels` false keeps its
  * own counts, size and offset, as a writer may when they fit.
  */
-export const withZip64End = (archive: Buffer, sentinels = true): Buffer => {
+export const withZip64End = (
+  archive: Buffer,
+  sentinels = true,
+  extension: Uint8Array = new Uint8Array(),
+): Buffer => {
   const end = archive.length - 22;
   const entries = archive.readUInt16LE(end + 10);
   const size = archive.readUInt32LE(end + 12);
   const offset = archive.readUInt32LE(end + 16);
-  const record = Buffer.alloc(56);
-  record.writeUInt32LE(0x06064b50, 0);
-  record.writeBigUInt64LE(44n, 4);
-  record.writeUInt16LE(45, 12);
-  record.writeUInt16LE(45, 14);
-  record.writeBigUInt64LE(BigInt(entries), 24);
-  record.writeBigUInt64LE(BigInt(entries), 32);
-  record.writeBigUInt64LE(BigInt(size), 40);
-  record.writeBigUInt64LE(BigInt(offset), 48);
-  const locator = Buffer.alloc(20);
-  locator.writeUInt32LE(0x07064b50, 0);
-  locator.writeBigUInt64LE(BigInt(end), 8);
-  locator.writeUInt32LE(1, 16);
   const classic = Buffer.from(archive.subarray(end));
   if (sentinels) {
     classic.writeUInt16LE(0xffff, 8);
@@ -198,5 +226,9 @@ export const withZip64End = (archive: Buffer, sentinels = true): Buffer => {
     classic.writeUInt32LE(0xffffffff, 12);
     classic.writeUInt32LE(0xffffffff, 16);
   }
-  return Buffer.concat([archive.subarray(0, end), record, locator, classic]);
+  return Buffer.concat([
+    archive.subarray(0, end),
+    zip64Ending(end, entries, size, offset, extension),
+    classic,
+  ]);
 };
