@@ -1,4 +1,7 @@
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  yieldArtifactRead,
+} from "../../resources/index.js";
 import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
@@ -17,7 +20,10 @@ import type {
   ImageSection,
   BinaryContainer,
 } from "../../domain/binaryContainer.js";
-import { readElfImage } from "../../domain/native/elfImage.js";
+import {
+  readElfImage,
+  readElfImageCooperative,
+} from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
@@ -508,11 +514,12 @@ export const parseKernelModule = (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
+  image?: ReturnType<typeof readElfImage>,
 ): Report => {
   const compression = compressionCodec(bytes);
   if (compression !== null)
     return unsupportedCompression(artifact, compression);
-  const image = readElfImage(bytes, "inspect_kernel_module");
+  image = image ?? readElfImage(bytes, "inspect_kernel_module");
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
   const sections = image.sections.filter(
@@ -660,3 +667,19 @@ export const parseKernelModule = (
     limitations,
   };
 };
+
+/** Same report as {@link parseKernelModule}. Section names yield for `signal`. */
+export const parseKernelModuleCooperative = async (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelModuleInput,
+  signal?: AbortSignal,
+): Promise<Report> =>
+  parseKernelModule(
+    bytes,
+    artifact,
+    input,
+    await readElfImageCooperative(bytes, "inspect_kernel_module", () =>
+      yieldArtifactRead(signal),
+    ),
+  );

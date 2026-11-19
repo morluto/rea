@@ -8,8 +8,9 @@ import type {
   AndroidJniTableSlot,
 } from "./androidJniLibraryFacts.js";
 import { parseNativeExportsSteps } from "../native/nativeExportParser.js";
-import { readElfDirectoryFromBuffer } from "../native/nativeSectionDirectory.js";
-import { readElfImage } from "../native/elfImage.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import { readElfDirectoryFromBufferCooperative } from "../native/nativeSectionDirectory.js";
+import { readElfImageCooperative } from "../native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -91,7 +92,10 @@ const methodDescriptor = (descriptor: string): boolean => {
 /** Parse borrowed immutable ELF bytes; no filesystem, process or target execution. */
 export const inspectAndroidJniLibrary = async (
   bytes: Buffer,
-  options: { readonly signal?: AbortSignal } = {},
+  options: {
+    readonly signal?: AbortSignal;
+    readonly pause?: ZstandardFramePause;
+  } = {},
 ): Promise<Result<AndroidJniLibraryFacts, AndroidJniLibraryFailure>> => {
   const active = (): void => {
     if (options.signal?.aborted === true) throw options.signal;
@@ -103,11 +107,17 @@ export const inspectAndroidJniLibrary = async (
         kind: "unsupported",
         message: "JNI library inspection requires an ELF image",
       });
-    const directory = readElfDirectoryFromBuffer(
+    const pause = options.pause ?? (async () => undefined);
+    const directory = await readElfDirectoryFromBufferCooperative(
       bytes,
+      pause,
       "inspect_android_jni_bindings",
     );
-    const image = readElfImage(bytes, "inspect_android_jni_bindings");
+    const image = await readElfImageCooperative(
+      bytes,
+      "inspect_android_jni_bindings",
+      pause,
+    );
     const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
     if (image.executable_mappings === undefined)
       return err({

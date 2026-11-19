@@ -42,9 +42,9 @@ import {
 } from "../../domain/binaryContainer.js";
 import {
   continueGnuDebuglinkCrc32,
-  parseElfDebugLink,
+  parseElfDebugLinkCooperative,
   unreadableElfDebugCandidate,
-  verifyElfDebugCandidate,
+  verifyElfDebugCandidateCooperative,
 } from "./ElfDebugLink.js";
 import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
@@ -85,7 +85,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           undefined,
           this.#resources,
         );
-        const image = parseElfDebugLink(
+        const image = await parseElfDebugLinkCooperative(
           snapshot.bytes,
           {
             path: input.path,
@@ -93,6 +93,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
             bytes: snapshot.bytes.length,
           },
           input,
+          options?.signal,
         );
         if (input.candidate_path === undefined) return ok(image);
         field = "candidate_path";
@@ -119,7 +120,15 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           if (!candidateUnreadable(cause)) throw cause;
           return ok(unreadableElfDebugCandidate(image));
         }
-        return ok(verifiedCandidate(candidatePhase, candidate, crc32, input));
+        return ok(
+          await verifiedCandidate(
+            candidatePhase,
+            candidate,
+            crc32,
+            input,
+            options?.signal,
+          ),
+        );
       });
     } catch (cause) {
       return err(
@@ -130,11 +139,12 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           candidatePhase === undefined
             ? { imageSnapshot: snapshot }
             : {
-                retained: candidatePhaseObservation(
+                retained: await candidatePhaseObservation(
                   candidatePhase,
                   cause,
                   crc32,
                   input,
+                  options?.signal,
                 ),
               },
         ),
@@ -150,8 +160,9 @@ const verifiedCandidate = (
   candidate: StableArtifactStream,
   crc32: number,
   input: InspectElfDebugLinkInput,
-): ElfDebugLink =>
-  verifyElfDebugCandidate(
+  signal?: AbortSignal,
+): Promise<ElfDebugLink> =>
+  verifyElfDebugCandidateCooperative(
     phase.report,
     {
       path: phase.path,
@@ -161,6 +172,7 @@ const verifiedCandidate = (
       prefix: candidate.prefix,
     },
     input,
+    signal,
   );
 
 /**
@@ -168,12 +180,13 @@ const verifiedCandidate = (
  * completed before cancellation or a failed close keeps its full comparison;
  * otherwise only the image linkage is retained, without any comparison.
  */
-const candidatePhaseObservation = (
+const candidatePhaseObservation = async (
   phase: CandidatePhase,
   cause: unknown,
   crc32: number,
   input: InspectElfDebugLinkInput,
-): AnalysisPartialObservation => {
+  signal?: AbortSignal,
+): Promise<AnalysisPartialObservation> => {
   const completed = completedStableArtifactStream(cause);
   return completed === undefined
     ? {
@@ -183,7 +196,7 @@ const candidatePhaseObservation = (
           ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
         ],
       }
-    : verifiedCandidate(phase, completed, crc32, input);
+    : verifiedCandidate(phase, completed, crc32, input, signal);
 };
 
 /** Enough retained bytes for an ELF32 or ELF64 fixed header. */

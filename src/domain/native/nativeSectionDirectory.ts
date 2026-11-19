@@ -116,7 +116,7 @@ export interface NativeSectionDirectory {
   readonly programs: readonly ElfProgramDeclaration[];
   readonly sections: readonly NativeSection[];
 }
-type ElfSectionDirectory = NativeSectionDirectory & {
+export type ElfSectionDirectory = NativeSectionDirectory & {
   readonly format: "elf";
   readonly elf_type: number;
 };
@@ -544,8 +544,12 @@ const driveFromBuffer = <T>(
 const driveElfDirectoryCooperative = async (
   bytes: Buffer,
   pause: ZstandardFramePause,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): Promise<ElfSectionDirectory> => {
-  const steps = readElfSectionDirectory(bytes.length);
+  const steps = readElfSectionDirectory(
+    bytes.length,
+    maximumSourceAndDecodedNamesBytes,
+  );
   let next = steps.next();
   while (!next.done) {
     const step = next.value;
@@ -601,9 +605,14 @@ export const readElfDirectoryFromBufferCooperative = async (
   bytes: Buffer,
   pause: ZstandardFramePause,
   operation: string,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): Promise<ElfSectionDirectory> => {
   try {
-    return await driveElfDirectoryCooperative(bytes, pause);
+    return await driveElfDirectoryCooperative(
+      bytes,
+      pause,
+      maximumSourceAndDecodedNamesBytes,
+    );
   } catch (cause) {
     return projectDirectoryFrameAllowance(operation, cause);
   }

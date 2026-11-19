@@ -1,5 +1,8 @@
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../../resources/index.js";
 import {
   joinCoverageStatus,
   type CoverageStatus,
@@ -21,7 +24,10 @@ import {
   elfRelativeRelocationType,
   readElfRelocationWritesSteps,
 } from "../../domain/native/elfPointerRelocations.js";
-import { readElfImage } from "../../domain/native/elfImage.js";
+import {
+  readElfImage,
+  readElfImageCooperative,
+} from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -30,7 +36,7 @@ import {
   mappedFileOffset,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
-import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import { readElfDirectoryFromBufferCooperative } from "../../domain/native/nativeSectionDirectory.js";
 import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
@@ -972,9 +978,15 @@ export const readElfInitializers = async (
   signal?: AbortSignal,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
-  const image = readElfImage(bytes, "inspect_native_initializers");
-  const directory = readElfDirectoryFromBuffer(
+  const pause = () => yieldArtifactRead(signal);
+  const image = await readElfImageCooperative(
     bytes,
+    "inspect_native_initializers",
+    pause,
+  );
+  const directory = await readElfDirectoryFromBufferCooperative(
+    bytes,
+    pause,
     "inspect_native_initializers",
   );
   const scan: ElfScan = {

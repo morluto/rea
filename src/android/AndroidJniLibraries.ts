@@ -2,6 +2,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
   streamChunkToBuffer,
+  yieldArtifactRead,
   ZipArtifactReader,
 } from "../resources/index.js";
 import type {
@@ -210,6 +211,7 @@ export const readAndroidJniLibraries = async (input: {
               };
               const parsed = await inspectAndroidJniLibrary(bytes, {
                 signal: input.signal,
+                pause: () => yieldArtifactRead(input.signal),
               });
               throwIfJadxInterrupted(input.signal);
               observation = {

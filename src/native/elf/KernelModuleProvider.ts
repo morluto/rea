@@ -32,7 +32,7 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { parseKernelModule } from "./KernelModuleParser.js";
+import { parseKernelModuleCooperative } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
 
@@ -65,7 +65,7 @@ export class KernelModuleProvider implements KernelModulePort {
           this.#resources,
         );
         return ok(
-          parseKernelModule(
+          await parseKernelModuleCooperative(
             snapshot.bytes,
             {
               path: input.path,
@@ -73,6 +73,7 @@ export class KernelModuleProvider implements KernelModulePort {
               bytes: snapshot.bytes.length,
             },
             input,
+            options?.signal,
           ),
         );
       });

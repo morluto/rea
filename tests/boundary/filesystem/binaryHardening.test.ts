@@ -1,6 +1,7 @@
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import {
   MAXIMUM_ZSTD_MAX_FRAMES,
@@ -133,6 +134,38 @@ describe("binary hardening compressed ELF names", () => {
         },
       });
     } finally {
+      await service.close();
+    }
+  });
+
+  it("cancels a many-frame compressed section-name table", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-cancel-");
+    const path = join(root, "app");
+    await writeFile(path, elfFrameAllowanceFixture());
+    const reason = new Error("stop hardening frames");
+    const controller = new AbortController();
+    const yieldImpl = scheduler.yield.bind(scheduler);
+    let yields = 0;
+    const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+      yields += 1;
+      await yieldImpl();
+      if (yields === 1) controller.abort(reason);
+    });
+    const service = createBinaryHardeningService();
+    try {
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_binary_hardening",
+        cause: reason,
+      });
+    } finally {
+      spy.mockRestore();
       await service.close();
     }
   });
