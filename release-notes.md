@@ -315,6 +315,7 @@
 * **ghidra:** name the declared-seed recovery when no function covers an address ([#10623](https://github.com/morluto/rea/issues/10623)) ([5715009](https://github.com/morluto/rea/commit/57150091d2c7ca709e5c88504598a4d9167ab42a))
 * **ghidra:** name the failing fields when a bridge reply misses its contract ([#10749](https://github.com/morluto/rea/issues/10749)) ([441aa17](https://github.com/morluto/rea/commit/441aa170d37381fac61cb87cd1c2d7302e4d6e12))
 * **ghidra:** prevent loader relocations from constant folding ([#10483](https://github.com/morluto/rea/issues/10483)) ([8e2853d](https://github.com/morluto/rea/commit/8e2853dd7b3b01fcb462ba8f4549e285e974e23d))
+* **ghidra:** protect only unapplied relocation destinations, not their whole block ([#11996](https://github.com/morluto/rea/issues/11996)) ([9b1ffa1](https://github.com/morluto/rea/commit/9b1ffa1f7d48db12c69e3ff3f1e3fb9014959a88))
 * **ghidra:** qualify inferred no-return cuts by the excluded fall-through ([7db1b61](https://github.com/morluto/rea/commit/7db1b61790800662fa1d9a3252996b6aa9e81f8b))
 * **ghidra:** reject empty RISC-V PIE interpreter ranges ([55a50f5](https://github.com/morluto/rea/commit/55a50f53f9621b933b557df9f46b41dcc6c34588))
 * **ghidra:** report byte-search cursor mismatches without schema repair ([3fbc940](https://github.com/morluto/rea/commit/3fbc9403306d82d96c0f6942cb51b05b7ab02dd3)), closes [#8366](https://github.com/morluto/rea/issues/8366) [#8420](https://github.com/morluto/rea/issues/8420)
