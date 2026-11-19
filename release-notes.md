@@ -673,6 +673,7 @@
 * **web:** merge wide script analysis results without call spreads ([2032b5a](https://github.com/morluto/rea/commit/2032b5a819a90d37836822afaece0eaabfc702b0)), closes [#10445](https://github.com/morluto/rea/issues/10445) [#10446](https://github.com/morluto/rea/issues/10446)
 * **web:** recover type-wrapped source-map requires ([#12304](https://github.com/morluto/rea/issues/12304)) ([cf6116a](https://github.com/morluto/rea/commit/cf6116a28473b1baa39e33a982bfabbdc75a96f1))
 * **web:** require ambient identity for bundle require edges ([#12320](https://github.com/morluto/rea/issues/12320)) ([af0e0ed](https://github.com/morluto/rea/commit/af0e0edbc2f8afedd49008ad64b8ff6bbebb6f48))
+* **web:** retain cancellation alongside capture read failures ([#12347](https://github.com/morluto/rea/issues/12347)) ([5438185](https://github.com/morluto/rea/commit/5438185ae2693eb44f6d60dfe83309f9bb1582cb))
 * **web:** share TypeScript source-map filename grammar ([#12286](https://github.com/morluto/rea/issues/12286)) ([6fdfdc4](https://github.com/morluto/rea/commit/6fdfdc4af124aee698cf18fed98b11ab08db591b))
 * **website:** share authored skill manifest validation ([#12155](https://github.com/morluto/rea/issues/12155)) ([0b1ab37](https://github.com/morluto/rea/commit/0b1ab37a3391f277b3768aad52bc34711694348f))
 * **web:** verify worker script import identity ([#12264](https://github.com/morluto/rea/issues/12264)) ([519547d](https://github.com/morluto/rea/commit/519547d022819d8065457483d143c7268c77e17a))
