@@ -400,6 +400,21 @@ inventory and limitations. Encrypted members are listed and not extracted.
 Roles are folder conventions, not restore-time asset selection. See
 [NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
+## OCI image layouts
+
+Use `inspect_oci_image_layout` for an explicit local OCI image-layout directory
+(`oci-layout`, `index.json`, `blobs/<alg>/<hex>`) when the question concerns
+layout version, index entries, image config, layers, or blob digest
+verification. No `open_binary`, registry access, layer decompression, or
+target execution is required. The CLI equivalent is
+`inspect-oci-image-layout PATH`. Preserve snapshot identity, descriptor digests,
+and Env names; Env values stay omitted unless `include_env_values` is selected.
+Missing blobs, digest mismatches, size mismatches, unreferenced blobs, unknown
+media types, unsupported digest algorithms, and symlink blobs are findings.
+Child symbolic links are not followed. Directory form only; tar image layouts
+are not inspected. See
+[OCI image layouts](https://github.com/morluto/rea/blob/main/docs/guides/artifacts/oci-image-layout.md).
+
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its

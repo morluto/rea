@@ -1642,6 +1642,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-oci-image-layout": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/ociImageLayoutMcp.test.ts",
+        "advertises inspect_oci_image_layout and reads layout version",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/oci/OciImageLayoutService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(

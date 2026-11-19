@@ -231,6 +231,16 @@ export const documentationSections = [
     ],
   },
   {
+    text: "Container images",
+    items: [
+      {
+        text: "OCI image layouts",
+        source: "guides/artifacts/oci-image-layout.md",
+        route: "/oci-image-layout",
+      },
+    ],
+  },
+  {
     text: "HarmonyOS packages",
     items: [
       {

@@ -155,6 +155,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
     (module, context) =>
       module.registerNugetNupkgCommands(context.cli, context.logger),
   ),
+  ociImageLayout: plain(
+    () => import("./ociImageLayoutCommands.js"),
+    (module, context) =>
+      module.registerOciImageLayoutCommands(context.cli, context.logger),
+  ),
   erlang: plain(
     () => import("./erlangCommands.js"),
     (module, context) =>
@@ -453,6 +458,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "rust",
     "pythonPyc",
     "nugetNupkg",
+    "ociImageLayout",
     "erlang",
     "v8CodeCache",
     "mavenGradleMetadata",

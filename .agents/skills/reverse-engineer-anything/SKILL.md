@@ -439,6 +439,14 @@ explicit path or endpoint and do not need it.
   `.nuspec` members still return the inventory with limitations. Encrypted
   members are listed and not extracted. See the
   [NuGet packages guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
+- OCI image-layout directory (`oci-layout`, `index.json`, `blobs/`):
+  `inspect_oci_image_layout` with the explicit local directory. This built-in
+  target-free inspection does not unpack a tar, decompress layers, execute the
+  image, or contact a registry. Preserve layout version, index entries, config
+  facts, and blob digest verification. Env values stay omitted unless
+  `include_env_values` is selected. Missing blobs, digest mismatches, and
+  similar defects are findings. Directory form only. See the
+  [OCI image layouts guide](https://github.com/morluto/rea/blob/main/docs/guides/artifacts/oci-image-layout.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema

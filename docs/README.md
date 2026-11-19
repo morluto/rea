@@ -199,6 +199,7 @@ the exact commit messages and references from the release they describe.
 - [Match native functions across builds](native-function-matching.md)
 - [Node.js single executable applications](node-sea.md)
 - [NuGet packages](guides/managed/nuget-nupkg.md)
+- [OCI image layouts](guides/artifacts/oci-image-layout.md)
 - [PE Authenticode certificate tables](pe-certificates.md)
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)
