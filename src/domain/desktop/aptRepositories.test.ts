@@ -433,6 +433,25 @@ describe("APT source URI lookup", () => {
     codename: null,
   });
 
+  it("requires a single deb822 declaration to match the observed URI and suite", () => {
+    const stanzas = parseDeb822Sources(
+      "Types: deb\nURIs: https://vendor.invalid/archive\nSuites: stable\nComponents: main\n",
+      file,
+    );
+    expect(
+      entryForTarget(targetFor("https://vendor.invalid/archive/"), stanzas),
+    ).toMatchObject({ suite: "stable" });
+    expect(
+      entryForTarget(targetFor("https://other.invalid/archive/"), stanzas),
+    ).toBeUndefined();
+    expect(
+      entryForTarget(
+        { ...targetFor("https://vendor.invalid/archive/"), release: "testing" },
+        stanzas,
+      ),
+    ).toBeUndefined();
+  });
+
   it("matches APT's deb822 Repo-URI spellings without changing the source URI", () => {
     const stanzas = parseDeb822Sources(
       [
