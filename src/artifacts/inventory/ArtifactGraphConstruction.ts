@@ -597,6 +597,7 @@ const artifactRoleForFormat = (
       kind: "container",
       format: zipPackageFormatForPath(path) ?? format,
     };
+  if (format === "uefi") return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
   if (artifactFormatDescriptor(format)?.roleContainer === true)
     return { kind: "container", format };

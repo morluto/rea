@@ -169,6 +169,14 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
+const sameStatementPosition = (
+  left: StatementPosition,
+  right: StatementPosition,
+): boolean =>
+  left.body === right.body &&
+  left.index === right.index &&
+  left.declaratorIndex === right.declaratorIndex;
+
 /** Statement position of a node evaluated once by the program, outside loops and functions. */
 const computeTopLevelStatementPosition = (
   node: t.Node | undefined,
@@ -223,20 +231,23 @@ export const semanticTopLevelEffectFollowsCapture = (
   const after = topLevelStatementPosition(effect, parents);
   if (before === null || after === null) return false;
   if (positionPrecedes(before, after)) return true;
-  if (
-    before.body !== after.body ||
-    before.index !== after.index ||
-    before.declaratorIndex !== after.declaratorIndex
-  )
-    return false;
-  return expressionEvaluationOrder(capture, effect, parents) === "before";
+  return (
+    sameStatementPosition(before, after) &&
+    expressionEvaluationOrder(capture, effect, parents) === "before"
+  );
 };
 
 const scopeExitMarkers = new WeakMap<t.Node, t.EmptyStatement>();
-const scopeExitOwners = new WeakMap<t.Node, t.Node>();
+const scopeExitOwners = new WeakMap<
+  t.Node,
+  { readonly scope: t.Node; readonly positionOwner: t.Node }
+>();
 
-/** A derived scope-end effect keeps disposal separate from initializer evaluation. */
-export const semanticScopeExitEffect = (scope: t.Node): t.Node => {
+/** A derived scope-end effect keeps finalization separate from source evaluation. */
+export const semanticScopeExitEffect = (
+  scope: t.Node,
+  positionOwner = scope,
+): t.Node => {
   const cached = scopeExitMarkers.get(scope);
   if (cached !== undefined) return cached;
   const marker = t.emptyStatement();
@@ -247,8 +258,17 @@ export const semanticScopeExitEffect = (scope: t.Node): t.Node => {
   if (scope.loc != null)
     marker.loc = { ...scope.loc, start: scope.loc.end, end: scope.loc.end };
   scopeExitMarkers.set(scope, marker);
-  scopeExitOwners.set(marker, scope);
+  scopeExitOwners.set(marker, { scope, positionOwner });
   return marker;
+};
+
+/** The array pattern that owns a recorded native iterator close. */
+export const semanticArrayPatternCloseScope = (
+  effect: t.Node | undefined,
+): t.ArrayPattern | undefined => {
+  const scope =
+    effect === undefined ? undefined : scopeExitOwners.get(effect)?.scope;
+  return t.isArrayPattern(scope) ? scope : undefined;
 };
 
 const withinScopeExit = (
@@ -286,8 +306,8 @@ export const semanticEffectFollowsReference = (
   if (reference === effect) return false;
   const exit = effect === undefined ? undefined : scopeExitOwners.get(effect);
   if (exit !== undefined) {
-    if (withinScopeExit(reference, exit, parents)) return true;
-    effect = exit;
+    if (withinScopeExit(reference, exit.scope, parents)) return true;
+    effect = exit.scope;
   }
   let current: t.Node | undefined = reference;
   let child: t.Node | undefined;
@@ -341,8 +361,8 @@ export const semanticEffectTiming = (
   if (effect === undefined) return "unknown";
   const exit = scopeExitOwners.get(effect);
   if (exit !== undefined) {
-    if (withinScopeExit(site, exit, state.parentsByNode)) return "after";
-    effect = exit;
+    if (withinScopeExit(site, exit.scope, state.parentsByNode)) return "after";
+    effect = exit.scope;
   }
   // Invocation receives arguments after their values have been selected.
   if (
@@ -480,8 +500,10 @@ const expressionChildIndices = (
   if (cached !== undefined) return cached;
   const children = ((): readonly (t.Node | null)[] | null => {
     if (t.isSequenceExpression(node)) return node.expressions;
-    if (t.isArrayExpression(node)) return node.elements;
-    if (t.isObjectExpression(node)) return node.properties;
+    if (t.isArrayExpression(node) || t.isArrayPattern(node))
+      return node.elements;
+    if (t.isObjectExpression(node) || t.isObjectPattern(node))
+      return node.properties;
     if (t.isObjectProperty(node))
       return node.computed ? [node.key, node.value] : [node.value];
     if (
@@ -650,9 +672,7 @@ export const semanticDefiniteEffectPrecedesReference = (
     return false;
   if (positionPrecedes(before, after.position)) return true;
   return (
-    before.body === after.position.body &&
-    before.index === after.position.index &&
-    before.declaratorIndex === after.position.declaratorIndex &&
+    sameStatementPosition(before, after.position) &&
     expressionEvaluationOrder(effect, reference, parents) === "before"
   );
 };
@@ -669,9 +689,7 @@ export const semanticReadPrecedesEffectWithinActivation = (
     return false;
   if (positionPrecedes(before.position, after)) return true;
   return (
-    before.position.body === after.body &&
-    before.position.index === after.index &&
-    before.position.declaratorIndex === after.declaratorIndex &&
+    sameStatementPosition(before.position, after) &&
     expressionEvaluationOrder(read, effect, parents) === "before"
   );
 };
@@ -1970,14 +1988,24 @@ export const semanticEscapeFollowsCapture = (
   if (exit !== undefined) {
     // Unlike a source-global ordering proof, this binding was initialized in
     // the captured body. Its later sibling scope exits follow this activation.
-    const exitPosition = t.isStatement(exit)
-      ? statementPosition(exit, parents)
-      : null;
+    const { scope, positionOwner } = exit;
+    const exitPosition = t.isStatement(scope)
+      ? statementPosition(scope, parents)
+      : directMutationPosition(positionOwner, parents);
     return (
-      withinScopeExit(capture, exit, parents) ||
+      (t.isArrayPattern(scope) &&
+        ((t.isVariableDeclarator(positionOwner) &&
+          positionOwner.init === capture) ||
+          (t.isAssignmentExpression(positionOwner) &&
+            positionOwner.right === capture))) ||
+      withinScopeExit(capture, scope, parents) ||
       (capturePosition !== null &&
         exitPosition !== null &&
-        positionPrecedes(capturePosition, exitPosition))
+        (positionPrecedes(capturePosition, exitPosition) ||
+          (t.isArrayPattern(scope) &&
+            sameStatementPosition(capturePosition, exitPosition) &&
+            expressionEvaluationOrder(capture, positionOwner, parents) ===
+              "before")))
     );
   }
   const escapePosition = directMutationPosition(escape, parents);

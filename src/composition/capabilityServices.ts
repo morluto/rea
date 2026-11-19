@@ -1,3 +1,6 @@
+import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
+import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
@@ -149,6 +152,7 @@ export interface CapabilityServiceOptions {
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
+  readonly uefiAnalysis?: UefiAnalysisPort;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -483,6 +487,12 @@ const modules = {
             isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
       },
     }),
+  ),
+  uefiAnalysis: service(
+    ({ options }) =>
+      new UefiAnalysisService(
+        options.uefiAnalysis ?? createUefiAnalysisProvider(),
+      ),
   ),
   gdbSessions: capability(
     ({ providerEnvironment, platform }) =>

@@ -1,3 +1,4 @@
+import { probeUefiFlashImage } from "../../uefi/UefiFormatProbe.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   artifactOperationCause,
@@ -393,6 +394,7 @@ const classifyRootFormat = async (
     (await hasDiskImageSignature(archiveBytes, read))
   )
     return "dmg";
+  if (await probeUefiFlashImage(handle, signal)) return "uefi";
   const pck = await embeddedProbes.godotPck(evidence.prefix);
   if (pck !== undefined) return { kind: "godot-pck", source, location: pck };
   // A C3 or S3 dump begins with its bootloader, so the layout is located
