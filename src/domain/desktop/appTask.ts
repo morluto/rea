@@ -2,6 +2,7 @@ import { isPortableBundleName } from "../portableBundleName.js";
 import { z } from "zod";
 
 import { jsonRecordSchema } from "../jsonRecord.js";
+import { jsonPointerSyntaxProblem } from "../jsonPointer.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { describeValidationFailure } from "../validationFailure.js";
@@ -290,9 +291,10 @@ const pointerProblem = (check: PointerCheck): string | undefined => {
     return check.kind === "member_count"
       ? undefined
       : "the empty pointer names the whole file; point at the value that changed";
-  if (!check.pointer.startsWith("/"))
+  const syntax = jsonPointerSyntaxProblem(check.pointer);
+  if (syntax === "missing-slash")
     return `pointer ${JSON.stringify(check.pointer)} must start with /`;
-  if (/~(?![01])/u.test(check.pointer))
+  if (syntax === "invalid-escape")
     return `pointer ${JSON.stringify(check.pointer)} uses an invalid escape; use ~0 or ~1 for ~ or /`;
   return check.kind === "text_contains" &&
     check.normalize_whitespace === true &&
