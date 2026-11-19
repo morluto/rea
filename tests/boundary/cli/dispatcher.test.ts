@@ -1,4 +1,4 @@
-import { access, cp, symlink } from "node:fs/promises";
+import { access, cp, rename, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -17,10 +17,15 @@ const installCliRuntime = async (
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
   // one-shot owner and its output admission stay production code; only the
-  // command runtime, its recorded registrars, and result output are replaced.
+  // command runtime, its recorded registrars, and output factory are replaced.
   await cp("dist/cli-runtime", workspace.path("dist/cli-runtime"), {
     recursive: true,
   });
+  // Keep auxiliary output exports, such as cancellation classification, real.
+  await rename(
+    workspace.path("dist/cli-runtime/cliResultOutput.js"),
+    workspace.path("dist/cli-runtime/productionCliResultOutput.js"),
+  );
   // Production chunks import their packages from the installation root.
   await symlink(
     resolve("node_modules"),
@@ -34,7 +39,10 @@ const installCliRuntime = async (
       JSON.stringify({ type: "module", version: "1.0.0" }),
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
-    workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    workspace.write(
+      "dist/cli-runtime/cliResultOutput.js",
+      `export * from "./productionCliResultOutput.js";\n${resultOutput}`,
+    ),
     // Without a recording, every command loads the replaced complete CLI.
     workspace.write(
       "dist/recordedCliCommandRegistrations.js",
