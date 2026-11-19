@@ -280,7 +280,10 @@ looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
 has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded), and then in the
 `ldconfig -p` cache entries for the executable's
-machine. `$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
+machine. Dynamic library names and search paths preserve their original UTF-8
+filesystem bytes, including a leading BOM. ELF strings that cannot be
+represented exactly as UTF-8 paths leave the walk incomplete with a reason.
+`$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
 to the object declaring that dependency before full-path lookup and request
 deduplication; the same spelling in two libraries can name two different files.
 Lookup paths retain directory symlinks and subsequent `..` components until the
