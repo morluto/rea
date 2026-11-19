@@ -61,6 +61,10 @@ export interface ElfSectionNameDecodeRequest {
   readonly maximumDecodedBytes: number;
 }
 
+export type CooperativeElfSectionNameDecoder = (
+  request: ElfSectionNameDecodeRequest,
+) => Promise<ElfCompressedSectionResult>;
+
 /** Decode section names through the shared ELF compressed-section owner. */
 export const decodeElfSectionNameTable = (
   bytes: Buffer,
@@ -120,3 +124,42 @@ export const decodeElfSectionNameRequestCooperative = (
     request.maximumDecodedBytes,
     pause,
   );
+
+/** Reuse a decoded table across readers of one borrowed immutable artifact. */
+export const sharedElfSectionNameDecoder = (
+  pause: ZstandardFramePause,
+): CooperativeElfSectionNameDecoder => {
+  let admitted:
+    | {
+        request: ElfSectionNameDecodeRequest;
+        decoded: Extract<
+          ElfCompressedSectionResult,
+          { state: "available" | "unsupported" }
+        >;
+      }
+    | undefined;
+  return async (request) => {
+    if (admitted !== undefined) {
+      const { request: previous, decoded } = admitted;
+      if (
+        request.raw.buffer === previous.raw.buffer &&
+        request.raw.byteOffset === previous.raw.byteOffset &&
+        request.raw.byteLength === previous.raw.byteLength &&
+        request.bits === previous.bits &&
+        request.little === previous.little &&
+        request.flags === previous.flags &&
+        (decoded.state === "unsupported" ||
+          !decoded.compressed ||
+          decoded.bytes.length <= request.maximumDecodedBytes)
+      )
+        return decoded;
+    }
+    const decoded = await decodeElfSectionNameRequestCooperative(
+      request,
+      pause,
+    );
+    if (decoded.state === "available" || decoded.state === "unsupported")
+      admitted = { request, decoded };
+    return decoded;
+  };
+};

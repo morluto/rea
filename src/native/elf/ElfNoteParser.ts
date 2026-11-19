@@ -36,6 +36,7 @@ import {
   decodeElfSectionNameRequest,
   decodeElfSectionNameRequestCooperative,
   elfSectionNameBudgetFailure,
+  type CooperativeElfSectionNameDecoder,
   type ElfSectionNameDecodeRequest,
 } from "../../domain/native/elfSectionNameTable.js";
 import type { ElfCompressedSectionResult } from "../../domain/native/elfCompressedSection.js";
@@ -1030,10 +1031,10 @@ export const parseElfNotesCooperative = (
   input: InspectElfNotesInput,
   pause: ZstandardFramePause,
   options: ElfNoteParseOptions = {},
-): Promise<ElfNotes> =>
-  driveElfNotes(parseElfNoteSteps(bytes, artifact, input, options), (request) =>
+  decode: CooperativeElfSectionNameDecoder = (request) =>
     decodeElfSectionNameRequestCooperative(request, pause),
-  );
+): Promise<ElfNotes> =>
+  driveElfNotes(parseElfNoteSteps(bytes, artifact, input, options), decode);
 
 const toEntry = (
   note: ParsedNote,

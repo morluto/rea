@@ -31,6 +31,7 @@ import {
   decodeElfSectionNameRequest,
   decodeElfSectionNameRequestCooperative,
   elfSectionNameBudgetFailure,
+  type CooperativeElfSectionNameDecoder,
   type ElfSectionNameDecodeRequest,
 } from "./elfSectionNameTable.js";
 import type { ElfCompressedSectionResult } from "./elfCompressedSection.js";
@@ -543,7 +544,7 @@ const driveFromBuffer = <T>(
 
 const driveElfDirectoryCooperative = async (
   bytes: Buffer,
-  pause: ZstandardFramePause,
+  decode: CooperativeElfSectionNameDecoder,
   maximumSourceAndDecodedNamesBytes?: number,
 ): Promise<ElfSectionDirectory> => {
   const steps = readElfSectionDirectory(
@@ -557,9 +558,7 @@ const driveElfDirectoryCooperative = async (
       step.sectionNames !== undefined &&
       step.fulfillSectionNames !== undefined
     ) {
-      step.fulfillSectionNames(
-        await decodeElfSectionNameRequestCooperative(step.sectionNames, pause),
-      );
+      step.fulfillSectionNames(await decode(step.sectionNames));
       next = steps.next(Buffer.alloc(0));
       continue;
     }
@@ -606,11 +605,13 @@ export const readElfDirectoryFromBufferCooperative = async (
   pause: ZstandardFramePause,
   operation: string,
   maximumSourceAndDecodedNamesBytes?: number,
+  decode: CooperativeElfSectionNameDecoder = (request) =>
+    decodeElfSectionNameRequestCooperative(request, pause),
 ): Promise<ElfSectionDirectory> => {
   try {
     return await driveElfDirectoryCooperative(
       bytes,
-      pause,
+      decode,
       maximumSourceAndDecodedNamesBytes,
     );
   } catch (cause) {

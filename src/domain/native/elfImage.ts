@@ -11,6 +11,7 @@ import {
 } from "../binaryContainer.js";
 import { elfArchitecture } from "../elfFixedHeader.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import type { CooperativeElfSectionNameDecoder } from "./elfSectionNameTable.js";
 import {
   readElfDirectoryFromBuffer,
   readElfDirectoryFromBufferCooperative,
@@ -160,6 +161,7 @@ export const readElfImageCooperative = async (
   operation: string,
   pause: ZstandardFramePause,
   maximumSourceAndDecodedNamesBytes?: number,
+  decode?: CooperativeElfSectionNameDecoder,
 ): Promise<Extract<BinaryContainer, { format: "elf" }>> =>
   readElfImageFromDirectory(
     bytes,
@@ -168,5 +170,6 @@ export const readElfImageCooperative = async (
       pause,
       operation,
       maximumSourceAndDecodedNamesBytes,
+      decode,
     ),
   );
