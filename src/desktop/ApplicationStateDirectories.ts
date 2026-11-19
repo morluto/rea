@@ -1,7 +1,8 @@
 import { lstat, readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { xdgBase } from "./XdgBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
@@ -52,7 +53,7 @@ const recasedEntries = async (
         entry.startsWith(prefix) &&
         names.has(entry.slice(prefix.length).toLowerCase()),
     )
-    .map((entry) => join(folder, entry));
+    .map((entry) => appendCallerPath(folder, entry));
 
 /**
  * Folder names under XDG and dot-directories where the application may keep
@@ -65,11 +66,15 @@ export const stateDirectories = async (
   { environment, home }: StateLocations,
   extra: readonly string[],
 ): Promise<DesktopApplicationInventory["state_directories"]> => {
+  const config = xdgBase(
+    environment.XDG_CONFIG_HOME,
+    appendCallerPath(home, ".config"),
+  );
   const bases = [
-    xdgBase(environment.XDG_CONFIG_HOME, join(home, ".config")),
-    xdgBase(environment.XDG_DATA_HOME, join(home, ".local/share")),
-    xdgBase(environment.XDG_STATE_HOME, join(home, ".local/state")),
-    xdgBase(environment.XDG_CACHE_HOME, join(home, ".cache")),
+    config,
+    xdgBase(environment.XDG_DATA_HOME, appendCallerPath(home, ".local/share")),
+    xdgBase(environment.XDG_STATE_HOME, appendCallerPath(home, ".local/state")),
+    xdgBase(environment.XDG_CACHE_HOME, appendCallerPath(home, ".cache")),
   ];
   const variants = new Set(
     names
@@ -85,19 +90,18 @@ export const stateDirectories = async (
   const lowered = new Set([...variants].map((name) => name.toLowerCase()));
   const dotfiles = (await readdir(home).catch(() => [] as string[]))
     .filter((entry) => appNamedDotfile(entry, variants))
-    .map((entry) => join(home, entry));
+    .map((entry) => appendCallerPath(home, entry));
   // A folder present in another letter case than any name, such as GIMP's `~/.config/GIMP`, is the application's too.
   const recased = await Promise.all([
     ...bases.map((base) => recasedEntries(base, "", lowered)),
     recasedEntries(home, ".", lowered),
   ]);
-  const [config = join(home, ".config")] = bases;
   const paths = new Set([
     ...[...variants].flatMap((name) => [
-      ...bases.map((base) => join(base, name)),
-      join(home, `.${name}`),
+      ...bases.map((base) => appendCallerPath(base, name)),
+      appendCallerPath(home, `.${name}`),
       // KDE's settings file, such as Tellico's `~/.config/tellicorc`, which the app may first write during the capture.
-      ...(name.length < 3 ? [] : [join(config, `${name}rc`)]),
+      ...(name.length < 3 ? [] : [appendCallerPath(config, `${name}rc`)]),
     ]),
     ...recased.flat(),
     ...dotfiles,
