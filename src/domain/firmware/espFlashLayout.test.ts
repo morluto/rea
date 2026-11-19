@@ -388,7 +388,7 @@ describe("ESP boot selection without a derivable slot", () => {
             decodeEspOtaRecord(erased, 1),
           ],
         },
-        true,
+        "rejected",
       ),
     ).toEqual({
       basis: "none",

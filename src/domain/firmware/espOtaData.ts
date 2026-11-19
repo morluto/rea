@@ -1,7 +1,10 @@
 import { crc32 } from "node:zlib";
 
 import { hex, u32 } from "./espImageStructures.js";
-import type { EspBootPartitions } from "./espPartitionTable.js";
+import type {
+  EspBootPartitions,
+  EspBootTableAdmission,
+} from "./espPartitionTable.js";
 
 /*
  * OTA data, from ESP-IDF v6.1 `esp_flash_partitions.h`
@@ -127,7 +130,8 @@ const unusable = ({ ota_seq, ota_state }: EspOtaRecord): boolean =>
  *   tie), whose slot is `(ota_seq - 1) % ota_app_count`;
  * - no valid record, as after a CRC mismatch: the factory index, whether
  *   or not a factory app is declared.
- * `unknown` when the dump lacks a record the bootloader would read.
+ * `unknown` when an early MD5 leaves partition declarations uncovered or the
+ * dump lacks a record the bootloader would read.
  */
 export const selectEspBootPartition = (
   boot: EspBootPartitions,
@@ -138,7 +142,7 @@ export const selectEspBootPartition = (
         readonly records: readonly EspOtaRecord[];
       }
     | undefined,
-  tableRejected = false,
+  tableAdmission: EspBootTableAdmission = "admitted",
 ): EspBootSelection => {
   const selection = (
     basis: EspBootSelectionBasis,
@@ -159,8 +163,9 @@ export const selectEspBootPartition = (
           : [RECORDS_ASSUMPTION, ...BOOT_ASSUMPTIONS],
     running_partition: "unknown",
   });
+  if (tableAdmission === "rejected") return selection("none");
+  if (tableAdmission === "unknown") return selection("unknown");
   const factoryIndex = { partition_index: boot.factory?.index ?? null };
-  if (tableRejected) return selection("none");
   // The bootloader takes an otadata partition at offset 0 for none.
   if (otadata === undefined || otadata.offset === 0)
     return selection("no-otadata", factoryIndex);

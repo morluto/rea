@@ -14,6 +14,7 @@ import {
 import {
   TWO_OTA_PARTITIONS,
   otaRecord,
+  partitionEntry,
   partitionTable,
   type EspPartitionFixture,
 } from "./espFlash.fixture.js";
@@ -413,6 +414,44 @@ describe("ESP flash layout otadata", () => {
       expect.arrayContaining([...decoded.value.limitations]),
     );
   });
+
+  it.each([
+    ["valid", "unknown"],
+    ["corrupt", "none"],
+  ] as const)(
+    "preserves declarations after an early %s MD5 without selecting a boot partition",
+    (md5, basis) => {
+      const nvs = TWO_OTA_PARTITIONS.find((part) => part.label === "nvs")!;
+      const factory = TWO_OTA_PARTITIONS.find(
+        (part) => part.label === "factory",
+      )!;
+      const bytes = partitionTable([nvs], { md5 });
+      partitionEntry(factory).copy(bytes, 64);
+      const decoded = decodeEspPartitionTable(bytes);
+      if (!decoded.ok) throw new Error(decoded.error);
+      expect(decoded.value.md5).toMatchObject({
+        status: md5 === "valid" ? "valid" : "invalid",
+        entryOffset: 32,
+      });
+      expect(decoded.value.partitions).toMatchObject([
+        { index: 0, entryOffset: 0, label: "nvs" },
+        { index: 1, entryOffset: 64, label: "factory" },
+      ]);
+      const plan = planEspFlashLayout(input({ table: decoded.value }));
+      const facts = finishEspFlashLayout(plan, {
+        otadataRecords: [],
+        gapFirstUnerased: erasedGaps(plan.gaps.length),
+      });
+      expect(facts.boot_selection).toMatchObject({
+        basis,
+        active_record: null,
+        slot: null,
+        partition_index: null,
+        assumptions: [],
+        running_partition: "unknown",
+      });
+    },
+  );
 
   it("keeps the record a dump holds when it ends between the two", () => {
     const plan = planEspFlashLayout(input({ fileSize: 0xe000 }));

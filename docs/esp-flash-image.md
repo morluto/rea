@@ -21,9 +21,13 @@ structure ESP-IDF's bootloader verifies (`esp_partition_table_verify`):
 32-byte `0x50AA` entries, at most one `0xEBEB` MD5 entry over the entries
 before it, and a terminating entry within `0xC00` bytes. ESP-IDF accepts a
 table with no partition entries, but REA requires one, so that neither
-erased flash nor a lone MD5 entry is read as a table. A table whose MD5 does not match, or that has a second MD5 entry, is
-still read, with `md5.status` `invalid` and a limitation, because the
-bootloader would refuse it. The table is located in this order:
+erased flash nor a lone MD5 entry is read as a table. A table whose MD5
+does not match, or that has a second MD5 entry, is still read, with
+`md5.status` `invalid` and a limitation, because the bootloader would
+refuse it. If a matching MD5 entry precedes further partition declarations,
+`md5.status` remains `valid` for the checked prefix. REA inventories the
+later declarations and reports boot selection as unknown. The table is
+located in this order:
 
 1. at the caller's `partition_table_offset`, when given; no scan follows;
 2. at the default `0x8000`;
@@ -209,11 +213,13 @@ or anti-rollback, and `basis` names its branch:
 - `none`: the bootloader rejects the table, for an MD5 mismatch or a second
   MD5 entry, or cannot read an otadata partition smaller than two 4 KiB
   sectors, and resets without selecting an app;
-- `unknown`: the dump lacks an otadata record the bootloader reads.
+- `unknown`: a matching MD5 entry leaves later partition declarations
+  uncovered, or the dump lacks an otadata record the bootloader reads.
 
-Without an OTA app the records do not matter, so a dump that lacks them
-still selects a fallback. REA does not compare the partitions with the
-flash size in the bootloader header, which the bootloader also checks.
+For a table eligible for boot selection, the bootloader uses a fallback
+when it finds no OTA app, even if the dump lacks the otadata records. REA
+does not compare partitions with the flash size in the bootloader header,
+which the bootloader also checks.
 
 `active_record` and `slot` are set for `otadata` and `slot` for
 `ota_0-fallback`. `partition_index` is null when the table declares no
