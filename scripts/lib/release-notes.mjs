@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
+import { releaseProseLines, releaseSection } from "./release-markdown.mjs";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const actor = z.object({
@@ -178,34 +179,10 @@ export function contributionSummary(raw) {
 }
 
 export function selectedReleaseNotes(text, version) {
-  const headings = [...text.matchAll(/^## \[([^\]]+)\].*$/gmu)];
-  if (headings[0]?.[1] !== version)
+  const notes = releaseSection(text, version);
+  if (notes === undefined)
     throw new Error(`Notes must start with release [${version}]`);
-  return text
-    .slice(headings[0].index, headings[1]?.index ?? text.length)
-    .trim();
-}
-
-// Notes have one Markdown list item per line; fenced examples are never credit sources.
-function proseBullets(text) {
-  let fence;
-  return text.split("\n").filter((line) => {
-    const marker = /^ {0,3}(`{3,}|~{3,})([^\r]*)(?:\r)?$/u.exec(line);
-    if (marker) {
-      const [, run, rest] = marker;
-      if (!fence) {
-        if (run[0] === "~" || !rest.includes("`")) fence = run;
-      } else if (
-        run[0] === fence[0] &&
-        run.length >= fence.length &&
-        /^[ \t]*$/u.test(rest)
-      ) {
-        fence = undefined;
-      }
-      return false;
-    }
-    return !fence && /^[-*] /u.test(line);
-  });
+  return notes.trim();
 }
 
 function bulletPrs(bullet, repository) {
@@ -288,7 +265,8 @@ function verifyEditorialCredits(inventory, prose) {
   const errors = [];
   const requiredByContext = new Map();
   const thankedByContext = new Map();
-  for (const bullet of proseBullets(prose)) {
+  for (const bullet of prose) {
+    if (!/^[-*] /u.test(bullet)) continue;
     const references = bulletPrs(bullet, inventory.repository);
     const start = bullet.indexOf("Thanks ");
     const thanked = new Set(
@@ -324,6 +302,24 @@ function verifyEditorialCredits(inventory, prose) {
   return errors;
 }
 
+function editorialReleaseLines(notes, inventory) {
+  const record = contributionRecord(inventory).trim();
+  const summary = contributionSummary(inventory).trim();
+  const lines = [...releaseProseLines(notes)];
+  const summaryOffset = notes.length - summary.length;
+  const expected = notes.endsWith(summary) ? summary : record;
+  const contributionStart =
+    expected === summary
+      ? lines.find(({ offset }) => offset === summaryOffset)
+      : lines.find(({ line }) => line === "### Complete contribution record");
+  const start = contributionStart?.offset;
+  if (start === undefined || notes.slice(start).trim() !== expected)
+    throw new Error(
+      "Contribution record differs from inventory; regenerate it with release-notes record",
+    );
+  return lines.filter(({ offset }) => offset < start).map(({ line }) => line);
+}
+
 export function verifyReleaseNotes(raw, text, body) {
   const inventory = releaseInventorySchema.parse(raw);
   const notes = selectedReleaseNotes(text, inventory.version);
@@ -336,23 +332,10 @@ export function verifyReleaseNotes(raw, text, body) {
     throw new Error(
       "Release notes exceed GitHub's body budget; shorten prose without dropping credit",
     );
-  const record = contributionRecord(inventory).trim();
-  const summary = contributionSummary(inventory).trim();
-  const start = notes.endsWith(summary)
-    ? notes.length - summary.length
-    : notes.indexOf("### Complete contribution record");
-  if (
-    start < 0 ||
-    (notes.slice(start).trim() !== record &&
-      notes.slice(start).trim() !== summary)
-  )
-    throw new Error(
-      "Contribution record differs from inventory; regenerate it with release-notes record",
-    );
-  const prose = notes.slice(0, start);
+  const prose = editorialReleaseLines(notes, inventory);
   const errors = verifyEditorialCredits(inventory, prose);
   for (const heading of ["Highlights", "Changes", "Fixes"])
-    if (!prose.includes(`### ${heading}\n`))
+    if (!prose.includes(`### ${heading}`))
       errors.push(`Missing ${heading} section`);
   if (body !== undefined) {
     // Use the publisher's parser: finding a heading alone does not establish

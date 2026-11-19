@@ -776,13 +776,16 @@ it("keeps release credit examples inside Markdown fences until a valid closer", 
   const example = [
     "~~~markdown",
     "~~~not a closing fence",
+    "## [example]",
     "- Example issue #999.",
     "~~~~",
     "",
   ].join("\n");
   const notes = f.notes.replace("### Changes\n", `### Changes\n\n${example}`);
+  const body = join(f.directory, "release-body.md");
   await writeFile(join(f.directory, "CHANGELOG.md"), notes);
-  await f.invoke(["check", "--manifest", f.manifest]);
+  await writeFile(body, releaseBody(notes));
+  await f.invoke(["check", "--manifest", f.manifest, "--pr-body", body]);
 
   await writeFile(
     join(f.directory, "CHANGELOG.md"),
@@ -792,5 +795,19 @@ it("keeps release credit examples inside Markdown fences until a valid closer", 
     f.invoke(["check", "--manifest", f.manifest]),
   ).rejects.toMatchObject({
     stderr: expect.stringContaining("Unknown release reference #999"),
+  });
+});
+
+it("requires editorial headings in release prose outside code fences", async () => {
+  const f = await fixture();
+  const notes = f.notes.replace(
+    "### Changes\n",
+    "~~~markdown\n### Changes\n~~~\n",
+  );
+  await writeFile(join(f.directory, "CHANGELOG.md"), notes);
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing Changes section"),
   });
 });
