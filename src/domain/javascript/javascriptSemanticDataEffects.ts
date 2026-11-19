@@ -2,6 +2,9 @@ import * as t from "@babel/types";
 import {
   bindingAssignmentMayPrecede,
   bindingInitializersMayPrecede,
+  ambientPathMayObserveAt,
+  bindingMethodMayHaveChanged,
+  opaqueCodeMayChangeGlobalRead,
 } from "./javascriptSemanticEffectLog.js";
 
 import type {
@@ -424,6 +427,27 @@ const collectResponseConsumers = (
       context,
       uniqueRequest?.node,
     );
+    const methodMayHaveChanged =
+      binding !== undefined &&
+      (bindingMethodMayHaveChanged(binding, method, member, context.state, {
+        fresh: soleWrite,
+        inherited: true,
+        definingPrototypeDepth: undefined,
+        isolatedNativeCloses: false,
+        targets: () => true,
+      }) ||
+        ambientPathMayObserveAt(
+          context.state,
+          member,
+          ["global", "Response", "prototype", method],
+          "contents",
+        ) ||
+        opaqueCodeMayChangeGlobalRead(
+          uniqueRequest?.node ?? member,
+          context.state,
+          "Response",
+          member,
+        ));
     output.push({
       requestId: `response:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "response-consumer",
@@ -441,10 +465,15 @@ const collectResponseConsumers = (
       linkedRequestIds: linked
         .map(({ operation }) => operation.requestId)
         .sort(compareUnicodeCodePoints),
-      endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
+      endpoint:
+        soleWrite && !methodMayHaveChanged
+          ? (uniqueRequest?.operation.endpoint ?? null)
+          : null,
       fields: [],
       resolution:
-        uniqueRequest === undefined || otherKinds ? "partial" : "complete",
+        uniqueRequest === undefined || otherKinds || methodMayHaveChanged
+          ? "partial"
+          : "complete",
     });
   });
   return output;
