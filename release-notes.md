@@ -179,6 +179,7 @@
 * **audit:** split ELF linker search lists at every colon ([#12035](https://github.com/morluto/rea/issues/12035)) ([0ba3b60](https://github.com/morluto/rea/commit/0ba3b6049d1e8687a470bd547e29c14ea97d843d))
 * **bridge:** remove unused resource module import on Windows ([#10535](https://github.com/morluto/rea/issues/10535)) ([7005e27](https://github.com/morluto/rea/commit/7005e2780bf2450d6c928a4903db1a8beea6e2c6))
 * **browser:** bound cached responses with zero-padded lengths ([#10237](https://github.com/morluto/rea/issues/10237)) ([0084810](https://github.com/morluto/rea/commit/0084810ef704c6c70e25cdeedcca95d622ffcd16))
+* **browser:** derive body media types from observed headers ([#12159](https://github.com/morluto/rea/issues/12159)) ([261c6d0](https://github.com/morluto/rea/commit/261c6d06d12636fee6bdee9531069e994ac6b244))
 * **browser:** interpret agent link relations once per element ([#10345](https://github.com/morluto/rea/issues/10345)) ([ea101db](https://github.com/morluto/rea/commit/ea101dbe30e1bace122456c05e83f4a50145bc15))
 * **browser:** keep duplicated scenario step ids from being classified as absent ([b2b178a](https://github.com/morluto/rea/commit/b2b178aa364d744c80a4728fab924bbbf76e5214)), closes [#7415](https://github.com/morluto/rea/issues/7415)
 * **browser:** keep the ZIP reader's fixed ceiling in a SAZ import refusal ([#11670](https://github.com/morluto/rea/issues/11670)) ([67b65b3](https://github.com/morluto/rea/commit/67b65b354012ae3356186ca62b2479162f91b982)), closes [#11642](https://github.com/morluto/rea/issues/11642)
@@ -309,6 +310,7 @@
 * **errors:** name rea doctor only for providers it can check ([#10565](https://github.com/morluto/rea/issues/10565)) ([4aefe2d](https://github.com/morluto/rea/commit/4aefe2daec12bbf7e9e4ed7e994d92ac245dea28))
 * **errors:** rethrow internal invariant violations from plist consumers and the native output projection ([#11029](https://github.com/morluto/rea/issues/11029)) ([63b0426](https://github.com/morluto/rea/commit/63b0426e409339a5efbc8ea7bbdea0b4502ec935))
 * **evidence:** derive default authority from subject binding ([#10321](https://github.com/morluto/rea/issues/10321)) ([b99e773](https://github.com/morluto/rea/commit/b99e7737de1d6813e698759e2b024e155e8d1776))
+* **evidence:** identify snapshots across portable file readers ([#12172](https://github.com/morluto/rea/issues/12172)) ([5dc5418](https://github.com/morluto/rea/commit/5dc54183f2af09f1ab6f0ddaf88faacaa6cf3f07))
 * **evidence:** name the noncanonical bundle sections ([3ae21f9](https://github.com/morluto/rea/commit/3ae21f9ff8af38611adc796bd180c917f082ea42))
 * **evidence:** recognize misplaced snapshots across bundle readers ([#12151](https://github.com/morluto/rea/issues/12151)) ([461cedd](https://github.com/morluto/rea/commit/461cedd73c30e65dcb59016e99a1bc682b764a1a))
 * **evidence:** require ESP flash_dump and PE unsigned attribute OIDs ([#11595](https://github.com/morluto/rea/issues/11595)) ([459553b](https://github.com/morluto/rea/commit/459553b901ec4ef27db58e1c933f033d5e6e02a3))
@@ -575,6 +577,7 @@
 * **cli:** load only the registrar a one-shot command needs ([b990eb4](https://github.com/morluto/rea/commit/b990eb496d10ca7d31b98edd2d22a4f58f41c4f5))
 * **doctor:** slim cold CLI/MCP doctor module graphs and run probes concurrently ([cb33fa8](https://github.com/morluto/rea/commit/cb33fa8376a996c958ae9009731bdd2ce1fdeef3))
 * **javascript:** queue binding initializers once per ambient alias query ([#10681](https://github.com/morluto/rea/issues/10681)) ([80af53b](https://github.com/morluto/rea/commit/80af53bbe525dc30ad280781183d21b888b881f6))
+* **javascript:** reuse member syntax across ambient alias queries ([#12174](https://github.com/morluto/rea/issues/12174)) ([e1cb620](https://github.com/morluto/rea/commit/e1cb620eccf04e934b4d5359703aa71fa0068534))
 * **mcp:** advertise large output union alternatives as shared definitions ([#11005](https://github.com/morluto/rea/issues/11005)) ([7181e7f](https://github.com/morluto/rea/commit/7181e7f515e953eb821d61994d67fea0fa648260))
 * **mcp:** build advertised tool schemas once per contract ([#10421](https://github.com/morluto/rea/issues/10421)) ([fcc0a8c](https://github.com/morluto/rea/commit/fcc0a8c4547b78168ed4479aab8c1b5266e223ee))
 * **mcp:** canonicalize the tool catalog once per digest profile ([#11298](https://github.com/morluto/rea/issues/11298)) ([e77793e](https://github.com/morluto/rea/commit/e77793e09a26799f2c101e01a6a24ce7712d36d1))
@@ -1178,6 +1181,7 @@
 * split fast built tests into twelve shards ([add0aa1](https://github.com/morluto/rea/commit/add0aa12934d126573f5a20970b278c468d698b7))
 * trace script modules and built-server consumers in PR test selection, and balance selected shards ([#11516](https://github.com/morluto/rea/issues/11516)) ([062b383](https://github.com/morluto/rea/commit/062b3835f9bead17456d24f0ca103b8e8df17ca3)), closes [#11382](https://github.com/morluto/rea/issues/11382)
 * **windows:** report package verification phase timings ([#12167](https://github.com/morluto/rea/issues/12167)) ([b95a757](https://github.com/morluto/rea/commit/b95a757c336c28cfb1d48f09628dc364938eeb3d))
+* **windows:** reuse built runtime for package verifiers ([#12178](https://github.com/morluto/rea/issues/12178)) ([342471f](https://github.com/morluto/rea/commit/342471f28dc837a935c15cbb64b95ee7e23bb29d))
 * **windows:** validate advertised MCP schemas in the Windows lane ([#10785](https://github.com/morluto/rea/issues/10785)) ([4588157](https://github.com/morluto/rea/commit/45881575a6bf9f050f19c76f310ecd36ffdebd6d))
 
 ---
