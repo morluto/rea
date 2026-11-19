@@ -143,13 +143,15 @@ it.each([true, false])(
 );
 
 it.each([
-  { closeMode: "clean", cancel: true },
-  { closeMode: "retry", cancel: true },
-  { closeMode: "retained", cancel: true },
-  { closeMode: "retained", cancel: false },
+  { closeMode: "clean", cancelAt: 1 },
+  { closeMode: "retry", cancelAt: 1 },
+  { closeMode: "retry", cancelAt: 2 },
+  { closeMode: "retained", cancelAt: 1 },
+  { closeMode: "retained", cancelAt: 2 },
+  { closeMode: "retained", cancelAt: null },
 ])(
-  "preserves the Info.plist descriptor outcome (close=$closeMode, cancelled=$cancel)",
-  async ({ closeMode, cancel }) => {
+  "preserves the Info.plist descriptor outcome (close=$closeMode, cancelAt=$cancelAt)",
+  async ({ closeMode, cancelAt }) => {
     const root = await createTestTempDirectory("rea-bundle-plist-close-");
     const bundle = join(root, "Fixture.app");
     const contents = join(bundle, "Contents");
@@ -173,7 +175,7 @@ it.each([
       .mockImplementation(async function (this: OwnedFileHandle) {
         if (exerciseClose) {
           owners.push(this);
-          if (cancel) controller.abort(reason);
+          if (owners.length === cancelAt) controller.abort(reason);
           if (
             closeMode === "retained" ||
             (closeMode === "retry" && owners.length === 1)
@@ -197,7 +199,7 @@ it.each([
       );
       expect(owners).toHaveLength(closeMode === "clean" ? 1 : 2);
       expect(owners.every((owner) => owner === owners[0])).toBe(true);
-      if (cancel) {
+      if (cancelAt !== null) {
         const primary = result.error.cleanupPrimary ?? result.error;
         expect(primary._tag).toBe("AnalysisCancelledError");
         expect(primary.cause).toBe(reason);

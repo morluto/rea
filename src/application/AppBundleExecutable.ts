@@ -520,8 +520,12 @@ const readLayoutPlist = async (
       resources === undefined
         ? undefined
         : await retryRegularFileCleanup(failure, resources, signal);
-    const outcome = retry?.outcome ?? failure.outcome;
-    const cancellation = regularFileCancellation(failure);
+    const { outcome } = failure;
+    const cancellation =
+      regularFileCancellation(failure) ??
+      (outcome.kind === "completed" && signal?.aborted === true
+        ? { reason: signal.reason }
+        : undefined);
     if (retry !== undefined && retry.failure === undefined) {
       if (cancellation !== undefined)
         throw bundlePlistCancellation(cancellation.reason);
