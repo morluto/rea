@@ -6,6 +6,10 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../../../src/domain/binaryContainer.js";
+import {
+  MAX_LOAD_COMMAND_BYTES,
+  readSliceCommandTable,
+} from "../../../src/domain/apple/machoLoadCommandReader.js";
 import { readMachoLoadCommandTableHeader } from "../../../src/domain/apple/machoLoadCommands.js";
 import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
@@ -47,6 +51,52 @@ const commandImage = (
   }
   return bytes;
 };
+
+it.each([
+  {
+    label: "an oversized declaration outside the slice",
+    tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
+    count: 1,
+    length: 32,
+    status: "malformed",
+    reason: /extend beyond/,
+  },
+  {
+    label: "an impossible count in a backed oversized table",
+    tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
+    count: 0xffffffff,
+    length: 32 + MAX_LOAD_COMMAND_BYTES + 8,
+    status: "malformed",
+    reason: /count.*cannot fit/,
+  },
+  {
+    label: "a plausible count in a backed oversized table",
+    tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
+    count: 1,
+    length: 32 + MAX_LOAD_COMMAND_BYTES + 8,
+    status: "unsupported",
+    reason: /above the .* limit/,
+  },
+])("reports $label before reading its payload", async (fixture) => {
+  const header = commandImage(true, true, []);
+  header.writeUInt32LE(fixture.count, 16);
+  header.writeUInt32LE(fixture.tableBytes, 20);
+  const reads: number[] = [];
+  const result = await readSliceCommandTable(
+    async (offset, size) => {
+      reads.push(offset);
+      return header.subarray(offset, offset + size);
+    },
+    0,
+    fixture.length,
+  );
+  expect(result).toMatchObject({
+    status: fixture.status,
+    reason: expect.stringMatching(fixture.reason),
+    header: { commandCount: fixture.count, commandBytes: fixture.tableBytes },
+  });
+  expect(reads).toEqual([0]);
+});
 
 it.each([
   { label: "undersized", field: 36, value: 4 },
