@@ -1629,6 +1629,18 @@ export function* parsePointerFixupsSteps(
   segments: readonly Segment[],
   baseAddress: bigint,
 ): Generator<void, PointerFixups, void> {
+  // Fixup offsets are relative to the declared segment base. These decoders
+  // currently require the backed bytes to begin at that base.
+  if (
+    (commands.chained !== null ||
+      commands.rebases.length > 0 ||
+      commands.binds.length > 0) &&
+    segments.some(({ declaredAddress }) => declaredAddress !== undefined)
+  )
+    throw unsupportedInput(
+      "macho",
+      "Mach-O pointer fixups with leading segment zero-fill are unsupported",
+    );
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
   const rebases = yield* parseLegacyRebasesSteps(image, commands.rebases);
   const binds = yield* parseLegacyBindsSteps(image, commands.binds);

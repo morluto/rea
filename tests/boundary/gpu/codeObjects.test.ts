@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
@@ -1258,6 +1259,16 @@ it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", asyn
   expect(result).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisUnsupportedTargetError" },
+  });
+});
+it("preserves the PE layout refusal at the GPU provider boundary", async () => {
+  const result = await inspect(pe(0x014c, 4));
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisUnsupportedTargetError",
+      message: expect.stringContaining("overlapping PE header"),
+    },
   });
 });
 it.each(["zlib", "zstd"] as const)(
