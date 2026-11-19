@@ -20,12 +20,12 @@ const VOLUME_ALIGNMENT_BYTES = 16;
 export function admitUefiFlashImage(buffer: Buffer): boolean {
   const region: ScanRegion = imageRegion(buffer, 0, buffer.length);
   const scan = scanFirmwareVolumes(region, PROBE_CANDIDATE_BUDGET);
-  const hit = scan.volumes[0];
-  if (hit === undefined) return false;
-  if (hit.header.absoluteBase % VOLUME_ALIGNMENT_BYTES !== 0) return false;
-  return (
-    hit.header.fileSystemGuid === FFS2_FILE_SYSTEM_GUID ||
-    hit.header.fileSystemGuid === FFS3_FILE_SYSTEM_GUID
+  return scan.volumes.some(
+    ({ header }) =>
+      header.checksumValid &&
+      header.absoluteBase % VOLUME_ALIGNMENT_BYTES === 0 &&
+      (header.fileSystemGuid === FFS2_FILE_SYSTEM_GUID ||
+        header.fileSystemGuid === FFS3_FILE_SYSTEM_GUID),
   );
 }
 

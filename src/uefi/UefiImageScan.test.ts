@@ -11,9 +11,10 @@ import {
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
 import { scanUefiImage, type UefiLzmaDecoder } from "./UefiImageScan.js";
 
-const emptyDecoders = {
-  none: async (): Promise<null> => null,
-};
+const noDecoder: UefiLzmaDecoder = async () => ({
+  ok: false,
+  message: "test decoder unavailable",
+});
 
 const decodeNestedFv = (
   nestedFv: Buffer,
@@ -32,11 +33,10 @@ const decodeNestedFv = (
     });
     return request.payload.equals(marker)
       ? {
-          bytes: nestedFv,
-          sha256: "a1".repeat(32),
-          decoderVersion: "stub-1.0",
+          ok: true,
+          outcome: { bytes: nestedFv, decoderVersion: "stub-1.0" },
         }
-      : null;
+      : { ok: false, message: "unexpected carrier bytes" };
   };
   return { decoder, requests };
 };
@@ -45,7 +45,7 @@ const driverFile = (guid: string, payload: Buffer): Buffer =>
   buildFfsFile({ guid, typeCode: 0x07, payload });
 
 it("maps one volume with UI string, PE payload, checksums and pad classification", async () => {
-  const ui = buildSection(0x15, Buffer.from("BiosModule"));
+  const ui = buildSection(0x15, Buffer.from("BiosModule\0", "utf16le"));
   const pe = buildSection(0x10, Buffer.from([0x4d, 0x5a, 0x90, 0x00]));
   const fileOne = driverFile(
     "21111111-2222-3333-4444-555555555555",
@@ -54,7 +54,8 @@ it("maps one volume with UI string, PE payload, checksums and pad classification
   const fileTwo = buildFfsFile({
     guid: "22111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
-    payload: Buffer.from("integrity"),
+    payload: buildSection(0x19, Buffer.from("integrity")),
+    alignmentExponent: 7,
     fileChecksum: "correct",
   });
   const pad = buildFfsFile({
@@ -66,7 +67,7 @@ it("maps one volume with UI string, PE payload, checksums and pad classification
   const summary = await scanUefiImage(
     fv.buffer,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    noDecoder,
   );
 
   expect(summary.volumes).toHaveLength(1);
@@ -97,7 +98,7 @@ it("recurses into firmware-volume-image sections with parent linkage", async () 
   const nestedInner = buildFfsFile({
     guid: "24111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
-    payload: Buffer.from("inner"),
+    payload: buildSection(0x19, Buffer.from("inner")),
   });
   const nestedFv = buildFv({ files: [nestedInner] });
   const wrapper = driverFile(
@@ -107,11 +108,12 @@ it("recurses into firmware-volume-image sections with parent linkage", async () 
   const image = buildFv({ files: [wrapper] });
   const summary = await scanUefiImage(
     image.buffer,
-    { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    { maxDepth: 3, maxVolumes: 2, maxFiles: 64 },
+    noDecoder,
   );
 
   expect(summary.volumes).toHaveLength(2);
+  expect(summary.budgetExhausted).toBe(false);
   const top = summary.volumes[0];
   const nested = summary.volumes[1];
   expect(nested?.depth).toBe(1);
@@ -128,11 +130,10 @@ it("reinterprets a raw file body that directly carries an embedded firmware volu
   const holeInner = buildFfsFile({
     guid: "25111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
-    payload: Buffer.from("hole"),
+    payload: buildSection(0x19, Buffer.from("hole")),
   });
   const holeFv = buildFv({ files: [holeInner] });
-  // Raw body = full FV (zero vector first): walks as a bogus zero-size
-  // section frame before the embedded-volume probe reinterprets it.
+  // The raw body carries a full FV without a surrounding section header.
   const hole = buildFfsFile({
     guid: "27111111-2222-3333-4444-555555555555",
     typeCode: 0x01,
@@ -142,7 +143,7 @@ it("reinterprets a raw file body that directly carries an embedded firmware volu
   const summary = await scanUefiImage(
     image.buffer,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    noDecoder,
   );
 
   expect(summary.volumes).toHaveLength(2);
@@ -154,10 +155,6 @@ it("reinterprets a raw file body that directly carries an embedded firmware volu
   expect(nested?.parent_offset).toBe(summary.volumes[0]?.offset ?? -1);
   expect(nested?.logical_path.includes("/embedded/FV@")).toBe(true);
   expect(nested?.ffs_files).toHaveLength(1);
-  const note = summary.limitations.find((line) =>
-    line.includes("Raw file body"),
-  );
-  expect(note?.includes("reinterpreted")).toBe(true);
 });
 
 it("keeps an unframed raw body without a confirmed embedded volume untouched", async () => {
@@ -170,26 +167,23 @@ it("keeps an unframed raw body without a confirmed embedded volume untouched", a
   const summary = await scanUefiImage(
     image.buffer,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    noDecoder,
   );
 
   expect(summary.volumes).toHaveLength(1);
   const raw = summary.volumes[0]?.ffs_files[0];
-  expect(raw?.sections).toHaveLength(1);
-  expect(raw?.sections[0]?.type_code).toBe(0);
-  expect(
-    summary.limitations.some((line) => line.includes("reinterpreted")),
-  ).toBe(false);
+  expect(raw?.sections).toHaveLength(0);
+  expect(summary.truncationObserved).toBe(false);
 });
 
 it("decodes LZMA-guided sections through the injected decoder lane", async () => {
   const nestedInner = buildFfsFile({
     guid: "26111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
-    payload: Buffer.from("inner"),
+    payload: buildSection(0x19, Buffer.from("inner")),
   });
   const nestedFv = buildFv({ files: [nestedInner] });
-  const ui = buildSection(0x15, Buffer.from("CompressedMain"));
+  const ui = buildSection(0x15, Buffer.from("CompressedMain\0", "utf16le"));
   const { decoder, requests: decodeRequests } = decodeNestedFv(nestedFv.buffer);
   const compressedCarrier = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
   const wrapper = driverFile(
@@ -224,7 +218,7 @@ it("decodes AMI-zlib guided sections after peeling the AMD header", async () => 
   const nestedInner = buildFfsFile({
     guid: "2b111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
-    payload: Buffer.from("inner"),
+    payload: buildSection(0x19, Buffer.from("inner")),
   });
   const nestedFv = buildFv({ files: [nestedInner] });
   const stream = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
@@ -272,11 +266,11 @@ it("keeps walking when the decoder returns null and records the gap", async () =
   const summary = await scanUefiImage(
     top.buffer,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    noDecoder,
   );
   expect(summary.volumes).toHaveLength(1);
   expect(
-    summary.limitations.some((line) => line.includes("LZMA decode failed")),
+    summary.limitations.some((line) => line.includes("lzma decode failed")),
   ).toBe(true);
 });
 
@@ -284,7 +278,7 @@ it("reports a too-small declared length and an overflowing file as integrity rec
   const undersized = buildFfsFile({
     guid: "28111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
-    payload: Buffer.from("data"),
+    payload: Buffer.alloc(0),
   });
   undersized[20] = 4;
   const oversized = buildFfsFile({
@@ -299,10 +293,10 @@ it("reports a too-small declared length and an overflowing file as integrity rec
   const summary = await scanUefiImage(
     fv.buffer,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    noDecoder,
   );
   const kinds = summary.integrity.map((record) => record.kind);
-  expect(kinds).toContain("size-truncation");
+  expect(kinds.filter((kind) => kind === "size-truncation")).toHaveLength(2);
   expect(summary.volumes[0]?.ffs_files).toHaveLength(2); // the oversized file stays observed
 });
 
@@ -317,7 +311,7 @@ it("records a volume checksum mismatch without dropping the volume", async () =>
   const summary = await scanUefiImage(
     fv.buffer,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    noDecoder,
   );
   expect(summary.volumes).toHaveLength(1);
   expect(
@@ -328,27 +322,36 @@ it("records a volume checksum mismatch without dropping the volume", async () =>
 it("maps a plausible PSP directory and candidates an implausible one", async () => {
   const plausible = Buffer.alloc(0x20 + 2 * 16, 0);
   plausible.write("$PSP", 0, "ascii");
-  plausible[4] = 2; // TotalEntries
-  plausible.writeUInt32LE(0x1000, 0x10 + 4);
-  plausible.writeUInt32LE(0x2000, 0x10 + 8);
+  plausible.writeUInt32LE(0x1f2e3d4c, 4); // checksum
+  plausible.writeUInt32LE(2, 8);
+  plausible.writeUInt32LE(0x2000, 0x10 + 4);
+  plausible.writeBigUInt64LE(0x4000000000001000n, 0x10 + 8);
+  plausible.writeBigUInt64LE(0xb123000000000aabn, 0x20 + 8);
   const bogus = Buffer.alloc(32, 0);
-  bogus.write("$2B", 0, "ascii");
-  bogus[4] = 0xff; // implausible entry count
+  bogus.write("$PL2", 0, "ascii");
+  bogus.writeUInt32LE(0x1ff, 8);
   const image = Buffer.concat([plausible, bogus, Buffer.alloc(0x800, 0xff)]);
   const summary = await scanUefiImage(
     image,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
-    emptyDecoders.none,
+    noDecoder,
   );
   expect(summary.pspTables).toHaveLength(1);
   const table = summary.pspTables[0];
   expect(table?.tableMagic).toBe("$PSP");
   expect(table?.totalEntries).toBe(2);
-  expect(table?.entryStrideBasis).toBe("assumed-16");
+  expect(table?.entryStrideBasis).toBe("psp-16");
   expect(table?.entries[0]).toMatchObject({
     declaredLocation: 0x1000,
+    declaredLocationRaw: "0x4000000000001000",
+    addressMode: 1,
     declaredSize: 0x2000,
     locationBasis: "declared-unverified",
+  });
+  expect(table?.entries[1]).toMatchObject({
+    declaredLocation: null,
+    declaredLocationRaw: "0xb123000000000aab",
+    addressMode: 2,
   });
   expect(
     summary.pspCandidates.some(
@@ -370,8 +373,48 @@ it("marks the scan partial when the FFS file budget is hit", async () => {
   const summary = await scanUefiImage(
     fv.buffer,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 1 },
-    emptyDecoders.none,
+    noDecoder,
   );
   expect(summary.budgetExhausted).toBe(true);
   expect(summary.volumes[0]?.ffs_files).toHaveLength(1);
+});
+
+it("classifies uncovered ranges around volumes and in an image without a volume", async () => {
+  const fv = buildFv({ files: [] }).buffer;
+  const prefix = Buffer.from("vendor metadata");
+  const middle = Buffer.alloc(16, 0xff);
+  const suffix = Buffer.from("vendor footer");
+  const image = Buffer.concat([prefix, fv, middle, fv, suffix]);
+  const limits = { maxDepth: 3, maxVolumes: 2, maxFiles: 8 };
+  const { unknownRegions } = await scanUefiImage(image, limits, noDecoder);
+  expect(unknownRegions.map(({ offset, length }) => [offset, length])).toEqual(
+    expect.arrayContaining([
+      [0, prefix.length],
+      [prefix.length + fv.length, middle.length],
+      [image.length - suffix.length, suffix.length],
+    ]),
+  );
+  expect(
+    (await scanUefiImage(prefix, limits, noDecoder)).unknownRegions,
+  ).toMatchObject([
+    { offset: 0, length: prefix.length, classification: "no-fv-magic" },
+  ]);
+});
+
+it("marks partial when the structural budget ends inside a section chain", async () => {
+  const frames = Buffer.alloc(400_000);
+  for (let offset = 0; offset < frames.length; offset += 4) {
+    frames.writeUInt32LE(0x19000004, offset);
+  }
+  const file = driverFile("22111111-2222-3333-4444-555555555555", frames);
+  const scan = await scanUefiImage(
+    buildFv({ files: [file] }).buffer,
+    { maxDepth: 3, maxVolumes: 4, maxFiles: 4 },
+    noDecoder,
+  );
+  expect(scan.budgetExhausted).toBe(true);
+  expect(
+    scan.limitations.some((line) => line.includes("Structural record limit")),
+  ).toBe(true);
+  expect(scan.volumes[0]?.ffs_files[0]?.sections.length).toBeLessThan(100_000);
 });

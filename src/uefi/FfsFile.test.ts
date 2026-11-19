@@ -4,7 +4,6 @@ import { expect, it } from "vitest";
 import { buildFfsFile } from "../../tests/fixtures/uefiImage.js";
 import { imageRegion } from "./UefiBytes.js";
 import {
-  alignmentFor,
   isErasedFfsHeader,
   parseFfsFileHeader,
   verifyFfsFileChecksum,
@@ -86,11 +85,22 @@ it("verifies the optional file-data checksum", () => {
   }
 });
 
-it("caps data alignment at exponent 7", () => {
-  expect(alignmentFor(0)).toBe(1);
-  expect(alignmentFor(2)).toBe(4);
-  expect(alignmentFor(7)).toBe(128);
-  expect(alignmentFor(9)).toBe(128);
+it.each([
+  [0, 1],
+  [1, 16],
+  [2, 128],
+  [7, 65536],
+])("decodes PI alignment index %i as %i bytes", (index, alignment) => {
+  const image = buildFfsFile({
+    guid: "19111111-2222-3333-4444-555555555555",
+    typeCode: 0x01,
+    payload: Buffer.from("body"),
+    alignmentExponent: index,
+  });
+  expect(
+    parseFfsFileHeader(imageRegion(image, 0, image.length), 0, true)
+      ?.dataAlignment,
+  ).toBe(alignment);
 });
 
 it("recognizes erased header windows per polarity", () => {

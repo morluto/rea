@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import type {
   UefiFfsFileRecord,
   UefiIntegrityRecord,
@@ -14,6 +15,7 @@ import {
 } from "./UefiCodeTables.js";
 import {
   firstFfsFileLocal,
+  nextFfsFileLocal,
   isErasedFfsHeader,
   parseFfsFileHeader,
   verifyFfsFileChecksum,
@@ -22,13 +24,10 @@ import {
 import {
   AMD_ZLIB_HEADER_LENGTH,
   peelAmiZlibPayload,
-  sectionPayloadBuffer,
   sectionPayloadRegion,
   walkSections,
-  type SectionDraft,
 } from "./FfsSections.js";
 import {
-  parseFirmwareVolumeHeader,
   scanFirmwareVolumes,
   type FirmwareVolumeHeader,
 } from "./FirmwareVolume.js";
@@ -37,25 +36,23 @@ import {
   imageRegion,
   isWindowUniform,
   localOffsetOf,
-  sampleUniformity,
   sliceRegion,
-  alignUp,
   type ScanRegion,
 } from "./UefiBytes.js";
 
 /** Successful external LZMA decode handed back to the scan. */
-export interface UefiLzmaDecodeOutcome {
+interface UefiLzmaDecodeOutcome {
   readonly bytes: Buffer;
-  readonly sha256: string;
   readonly decoderVersion: string;
 }
 
 /** One decodable stream submitted to the injected decode lane. */
-export interface UefiLzmaDecodeRequest {
+interface UefiLzmaDecodeRequest {
   readonly payload: Buffer;
   readonly logicalPath: string;
   /** Compression format of payload: zlib-wrapped stream or LZMA (default). */
   readonly format: "lzma" | "zlib";
+  readonly maxOutputBytes: number;
   /** Physical image range of the compressed stream, when inside the image. */
   readonly physicalRange: {
     readonly offset: number;
@@ -64,45 +61,68 @@ export interface UefiLzmaDecodeRequest {
 }
 
 /**
- * Injected LZMA lane: returns null for format, decoder and budget failures;
- * the scan records those as limitations and keeps walking.
+ * The decoder reports recoverable format and output failures as result data.
+ * The scan retains the carrier and diagnostic for extraction.
  */
+export type UefiDecodeResult =
+  | { readonly ok: true; readonly outcome: UefiLzmaDecodeOutcome }
+  | { readonly ok: false; readonly message: string };
+
 export type UefiLzmaDecoder = (
   request: UefiLzmaDecodeRequest,
-) => Promise<UefiLzmaDecodeOutcome | null>;
+) => Promise<UefiDecodeResult>;
 
-export interface UefiScanLimits {
+interface UefiScanLimits {
   readonly maxDepth: number;
   readonly maxVolumes: number;
   readonly maxFiles: number;
 }
 
-export interface PspEntryRecord {
-  readonly type: number | null;
+interface PspEntryRecord {
+  readonly type: number;
   readonly declaredLocation: number | null;
-  readonly declaredSize: number | null;
+  readonly declaredLocationRaw: string;
+  readonly addressMode: number;
+  readonly declaredSize: number;
   readonly imageOffset: number | null;
   readonly sha256: string | null;
   readonly locationBasis: "declared-unverified";
 }
 
-export interface PspTableRecord {
+interface PspTableRecord {
   readonly offset: number;
   readonly length: number;
-  readonly tableMagic: "$PSP" | "$2B" | "unknown";
-  readonly totalEntries: number | null;
+  readonly tableMagic: "$PSP" | "$PL2";
+  readonly totalEntries: number;
   readonly entries: readonly PspEntryRecord[];
-  readonly entryStrideBasis: "header-declared" | "assumed-16" | "unknown";
+  readonly entryStrideBasis: "psp-16";
 }
 
-export interface PspCandidateRecord {
+interface PspCandidateRecord {
   readonly offset: number;
   readonly magic: string;
   readonly reason: string;
 }
 
+/** Payload bytes and the exact window in the stream that supplied them. */
+export interface UefiPayload {
+  readonly bytes: Buffer;
+  readonly sourceStream: string | null;
+  readonly range: { readonly offset: number; readonly length: number };
+}
+
+interface UefiDecodedStream {
+  readonly bytes: Buffer;
+  readonly format: "lzma" | "zlib";
+  readonly decoderVersion: string;
+  readonly carrier: UefiPayload;
+}
+
 export interface UefiImageScanSummary {
   readonly inputSize: number;
+  readonly payloads: ReadonlyMap<string, UefiPayload>;
+  readonly decodedStreams: ReadonlyMap<string, UefiDecodedStream>;
+  readonly decodeGaps: ReadonlyMap<string, string>;
   readonly volumes: readonly UefiVolumeRecord[];
   readonly unknownRegions: readonly UefiUnknownRegion[];
   readonly integrity: readonly UefiIntegrityRecord[];
@@ -134,12 +154,7 @@ const ffsTypeNameFor = (code: number): UefiFfsFileRecord["type_name"] => {
   return (name ?? "unknown") as UefiFfsFileRecord["type_name"];
 };
 
-const alignmentFor = (exponent: number): number =>
-  1 << Math.max(0, Math.min(7, exponent));
-
-const PSP_MAGICS = ["$PSP", "$2B"] as const;
-const PSP_MAXIMUM_ENTRIES = 96;
-const PSP_HEADER_OFFSET_LENGTH = 0x10;
+const PSP_MAGICS = ["$PSP", "$PL2"] as const;
 
 /**
  * Scan one full firmware image: volume discovery, FFS and section mapping,
@@ -152,8 +167,37 @@ export const scanUefiImage = async (
   image: Buffer,
   limits: UefiScanLimits,
   decodeLzma: UefiLzmaDecoder,
+  checkpoint: () => void = () => {},
 ): Promise<UefiImageScanSummary> => {
-  const imageBuffer = image;
+  const payloads = new Map<string, UefiPayload>();
+  const decodedStreams = new Map<string, UefiDecodedStream>();
+  const decodeGaps = new Map<string, string>();
+  let decodedBytes = 0;
+  let recordsRemaining: number = UEFI_FIRMWARE_LIMITS.scanRecords;
+  const reserve = (count = 1): boolean => {
+    checkpoint();
+    if (count > recordsRemaining) {
+      if (recordsRemaining >= 0) {
+        limitations.push(
+          `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached.`,
+        );
+        recordsRemaining = -1;
+      }
+      budgetExhausted = true;
+      return false;
+    }
+    recordsRemaining -= count;
+    return true;
+  };
+  const payloadOf = (
+    region: ScanRegion,
+    start: number,
+    end: number,
+  ): UefiPayload => ({
+    bytes: region.buffer.subarray(start, end),
+    sourceStream: region.sourceStream ?? null,
+    range: { offset: absoluteOffset(region, start), length: end - start },
+  });
   const volumes: VolumeBuilder[] = [];
   const unknownRegions: UefiUnknownRegion[] = [];
   const integrity: UefiIntegrityRecord[] = [];
@@ -171,29 +215,29 @@ export const scanUefiImage = async (
     offset: number,
     length: number,
     detail: string,
+    sourceStream: string | null,
   ): void => {
+    if (!reserve()) return;
     integrity.push({
       kind,
       logical_path: logicalPath,
+      source_stream: sourceStream,
       range: { offset, length },
       detail,
     });
   };
 
   const noteLimitations = (lines: readonly string[]): void => {
-    if (limitations.length >= 512) {
-      budgetExhausted = true;
-      return;
-    }
     for (const line of lines) {
-      if (limitations.length < 512) {
-        limitations.push(line);
-      }
-      if (limitations.length >= 512) {
-        budgetExhausted = true;
-        break;
-      }
+      if (limitations.length >= 512 || !reserve()) break;
+      limitations.push(line);
     }
+  };
+
+  const decodeGap = (path: string, detail: string): null => {
+    decodeGaps.set(path, detail);
+    noteLimitations([detail]);
+    return null;
   };
 
   const classifyLeftover = (
@@ -203,7 +247,7 @@ export const scanUefiImage = async (
     logicalPath: string,
   ): void => {
     const length = absoluteEnd - absoluteStart;
-    if (length <= 0) {
+    if (length <= 0 || !reserve()) {
       return;
     }
     const localStart = Math.max(
@@ -222,11 +266,9 @@ export const scanUefiImage = async (
     } else if (isWindowUniform(region.buffer, localStart, localEnd, 0x00)) {
       classification = "erased-00";
       erasure = "0x00";
-    } else if (sampleUniformity(region.buffer, localStart, localEnd) >= 0.99) {
-      classification = "erased-ff";
-      erasure = "0xff";
     }
     unknownRegions.push({
+      source_stream: region.sourceStream ?? null,
       offset: absoluteStart,
       length,
       sha256: digestOf(region.buffer.subarray(localStart, localEnd)),
@@ -245,6 +287,7 @@ export const scanUefiImage = async (
     depth: number,
     parentOffset: number | null,
     parentLogicalPath: string,
+    classifyNoVolumes = true,
   ): Promise<VolumeBuilder[]> => {
     const localRecords: VolumeBuilder[] = [];
     if (depth > limits.maxDepth) {
@@ -256,35 +299,37 @@ export const scanUefiImage = async (
     }
     const discovered = scanFirmwareVolumes(
       region,
-      Math.max(0, limits.maxVolumes - volumesDiscovered),
+      UEFI_FIRMWARE_LIMITS.scanRecords,
+      {
+        reserve,
+        skipNested: true,
+      },
     );
-    volumesDiscovered += discovered.volumes.length;
-    if (volumesDiscovered >= limits.maxVolumes) {
-      budgetExhausted = true;
-      noteLimitations([
-        `Firmware volume budget ${limits.maxVolumes} reached under ${parentLogicalPath}.`,
-      ]);
-    }
     for (const rejected of discovered.rejected) {
       noteLimitations([
         `_FVH hit under ${parentLogicalPath} at ${hex(rejected.absoluteBase)} not confirmed: ${rejected.reason}.`,
       ]);
+      if (classifyNoVolumes && rejected.reason.includes("truncates-region")) {
+        truncationObserved = true;
+      }
     }
 
-    // Hits inside an already accepted volume are its nested copies living in
-    // file payloads; the child scans rediscover them inside their own region.
-    const accepted: FirmwareVolumeHeader[] = [];
+    let mappedThrough = region.origin;
     for (const { header } of discovered.volumes) {
-      const insideEarlierVolume = accepted.some(
-        (earlier) =>
-          header.absoluteBase >= earlier.absoluteBase &&
-          header.absoluteBase <
-            earlier.absoluteBase + Math.max(1, earlier.declaredLength),
-      );
-      if (insideEarlierVolume) {
-        continue;
+      if (volumesDiscovered >= limits.maxVolumes) {
+        budgetExhausted = true;
+        noteLimitations([
+          `Firmware volume budget ${limits.maxVolumes} reached under ${parentLogicalPath}.`,
+        ]);
+        break;
       }
-      accepted.push(header);
+      volumesDiscovered += 1;
+      classifyLeftover(
+        region,
+        mappedThrough,
+        header.absoluteBase,
+        parentLogicalPath,
+      );
 
       const logicalPath = `${parentLogicalPath}/FV@${hex(header.absoluteBase)}`;
       if (!header.checksumValid) {
@@ -294,6 +339,7 @@ export const scanUefiImage = async (
           header.absoluteBase,
           header.headerLength,
           "Volume header checksum does not sum to zero over HeaderLength bytes.",
+          region.sourceStream ?? null,
         );
       }
       const volumeEnd = Math.min(
@@ -306,6 +352,8 @@ export const scanUefiImage = async (
         volumeEnd - header.absoluteBase,
       );
       const volume: VolumeBuilder = {
+        source_stream: region.sourceStream ?? null,
+        parent_logical_path: parentOffset === null ? null : parentLogicalPath,
         logical_path: logicalPath,
         offset: header.absoluteBase,
         length: Math.max(1, volumeEnd - header.absoluteBase),
@@ -328,12 +376,25 @@ export const scanUefiImage = async (
       volumes.push(volume);
       await walkFiles(volume, header, depth, region, volumeEnd);
       const lastFile = volume.ffs_files[volume.ffs_files.length - 1];
-      const mappedThrough =
+      const filesMappedThrough =
         lastFile == null
           ? volume.offset + volume.header_length
           : lastFile.offset + lastFile.length;
-      classifyLeftover(region, mappedThrough, volumeEnd, logicalPath);
+      classifyLeftover(region, filesMappedThrough, volumeEnd, logicalPath);
+      mappedThrough = volumeEnd;
       localRecords.push(volume);
+    }
+    if (
+      !discovered.exhausted &&
+      localRecords.length === discovered.volumes.length &&
+      (classifyNoVolumes || localRecords.length > 0)
+    ) {
+      classifyLeftover(
+        region,
+        mappedThrough,
+        absoluteOffset(region, region.end),
+        parentLogicalPath,
+      );
     }
     return localRecords;
   };
@@ -352,12 +413,17 @@ export const scanUefiImage = async (
       start: fileAreaStart,
       end: volumeLocalEnd,
       origin: absoluteOffset(parentRegion, fileAreaStart),
+      ...(parentRegion.sourceStream === undefined
+        ? {}
+        : { sourceStream: parentRegion.sourceStream }),
     };
     if (fileArea.end <= fileArea.start) {
       return;
     }
     let cursor = fileArea.start;
     while (cursor + 24 <= fileArea.end) {
+      checkpoint();
+      if (isErasedFfsHeader(fileArea, cursor, header.erasePolarity)) break;
       if (filesDiscovered >= limits.maxFiles) {
         budgetExhausted = true;
         noteLimitations([
@@ -365,27 +431,26 @@ export const scanUefiImage = async (
         ]);
         break;
       }
-      if (isErasedFfsHeader(parentRegion, cursor, header.erasePolarity)) {
-        break;
-      }
-      filesDiscovered += 1;
+      if (!reserve()) break;
       const fileHeader = parseFfsFileHeader(
-        parentRegion,
+        fileArea,
         cursor,
         header.erasePolarity,
       );
       if (fileHeader == null) {
+        truncationObserved = true;
         noteLimitations([
           `FFS header unparseable in ${volume.logical_path} at ${hex(absoluteOffset(parentRegion, cursor))}; file walk ends.`,
         ]);
         break;
       }
+      filesDiscovered += 1;
       for (const implausibility of fileHeader.implausibilities) {
         noteLimitations([
           `FFS header implausibility "${implausibility}" at ${hex(fileHeader.absoluteBase)} in ${volume.logical_path}.`,
         ]);
       }
-      const logicalPath = `${volume.logical_path}/FFS:${fileHeader.nameGuid ?? "unknown"}`;
+      const logicalPath = `${volume.logical_path}/FFS:${fileHeader.nameGuid ?? "unknown"}@${hex(fileHeader.absoluteBase)}`;
       const observedEnd = Math.min(
         fileHeader.localBase + fileHeader.declaredLength,
         fileArea.end,
@@ -394,6 +459,7 @@ export const scanUefiImage = async (
         fileHeader.localBase + fileHeader.declaredLength > fileArea.end;
       const declaredBelowHeader =
         fileHeader.declaredLength < fileHeader.headerLength;
+      if (truncatesArea || declaredBelowHeader) truncationObserved = true;
       if (declaredBelowHeader) {
         noteIntegrity(
           "size-truncation",
@@ -401,6 +467,7 @@ export const scanUefiImage = async (
           fileHeader.absoluteBase,
           Math.max(1, fileHeader.headerLength),
           "FFS declared length is smaller than the header itself.",
+          fileArea.sourceStream ?? null,
         );
       }
       if (truncatesArea && !declaredBelowHeader) {
@@ -410,6 +477,7 @@ export const scanUefiImage = async (
           fileHeader.absoluteBase,
           fileHeader.declaredLength,
           "FFS file declared length exceeds the volume area; walk ends at the volume boundary.",
+          fileArea.sourceStream ?? null,
         );
       }
       if (!fileHeader.headerChecksumValid) {
@@ -419,6 +487,7 @@ export const scanUefiImage = async (
           fileHeader.absoluteBase,
           fileHeader.headerLength,
           "FFS header checksum does not sum to zero with State and File bytes zeroed.",
+          fileArea.sourceStream ?? null,
         );
       }
       const checksum = checksumVerdict(fileHeader, fileArea, observedEnd);
@@ -435,6 +504,7 @@ export const scanUefiImage = async (
             ),
           ),
           "File data checksum differs from the declared IntegrityCheck.File byte.",
+          fileArea.sourceStream ?? null,
         );
       }
       const observedBytes =
@@ -444,105 +514,67 @@ export const scanUefiImage = async (
           observedEnd - fileHeader.localBase,
         ) ?? Buffer.alloc(0);
 
-      const sectionChain =
-        fileHeader.typeCode === 0xf0 || declaredBelowHeader
-          ? {
-              sections: [] as SectionBuilder[],
-              ui_string: null as string | null,
-            }
-          : await walkSectionChain(
-              fileArea,
-              fileHeader,
-              observedEnd,
-              logicalPath,
-              depth,
+      const sections: SectionBuilder[] = [];
+      const bodyStart = fileHeader.localBase + fileHeader.headerLength;
+      let uiString: string | null = null;
+      if (fileHeader.typeCode !== 0xf0 && !declaredBelowHeader) {
+        const sectioned =
+          fileHeader.typeCode >= 0x02 && fileHeader.typeCode <= 0x0f;
+        if (sectioned) {
+          uiString = await walkSectionChain(
+            fileArea,
+            bodyStart,
+            observedEnd,
+            logicalPath,
+            depth,
+            volume.offset,
+            sections,
+          );
+        } else {
+          payloads.set(
+            logicalPath,
+            payloadOf(fileArea, bodyStart, observedEnd),
+          );
+          if (
+            fileHeader.typeCode === 0x01 &&
+            observedEnd - bodyStart >= FV_HEADER_LAYOUT.minimumLength
+          ) {
+            await scanVolumesInRegion(
+              subRegion(fileArea, bodyStart, observedEnd),
+              depth + 1,
               volume.offset,
+              `${logicalPath}/embedded`,
             );
+          }
+        }
+      }
 
       volume.ffs_files.push({
+        source_stream: fileArea.sourceStream ?? null,
         offset: fileHeader.absoluteBase,
         header_length: fileHeader.headerLength,
         length: Math.max(1, observedEnd - fileHeader.localBase),
+        declared_length: fileHeader.declaredLength,
         guid: fileHeader.nameGuid ?? "ffffffff-ffff-ffff-ffff-ffffffffffff",
         type_code: fileHeader.typeCode,
         type_name: ffsTypeNameFor(fileHeader.typeCode),
         attributes: fileHeader.attributes,
-        alignment: String(
-          alignmentFor(fileHeader.alignmentExponent),
-        ) as FileBuilder["alignment"],
+        alignment: String(fileHeader.dataAlignment) as FileBuilder["alignment"],
         state: fileHeader.rawState,
         state_flags: fileHeader.stateFlags as FileBuilder["state_flags"],
         checksum,
-        ui_string: sectionChain.ui_string,
+        ui_string: uiString,
         logical_path: logicalPath,
         volume_offset: volume.offset,
         sha256: digestOf(observedBytes),
-        sections: sectionChain.sections,
+        sections,
       });
 
       if (truncatesArea) {
         break;
       }
-      const fileAlignment = Math.max(
-        8,
-        alignmentFor(fileHeader.alignmentExponent),
-      );
-      const advanceBase = Math.max(
-        fileHeader.localBase + fileHeader.declaredLength,
-        fileHeader.localBase + fileHeader.headerLength,
-      );
-      // FFS alignment is relative to the volume base, not the owning region.
-      cursor =
-        header.localBase +
-        alignUp(advanceBase - header.localBase, fileAlignment);
+      cursor = nextFfsFileLocal(fileHeader, header.localBase);
     }
-  };
-
-  /**
-   * Probe one raw FFS body for an embedded firmware volume (AMI ROM-hole
-   * pattern: the file body is the volume, its zero vector misparses as a
-   * zero-size section frame). Admission stays with scanVolumesInRegion —
-   * alignment, plausibility, checksum and budgets decide; null keeps the
-   * caller on its unframed-body path.
-   */
-  const resolveEmbeddedVolumeInRawBody = async (
-    region: ScanRegion,
-    fileHeader: FfsFileHeader,
-    observedEnd: number,
-    fileLogicalPath: string,
-    depth: number,
-    volumeOffset: number,
-  ): Promise<VolumeBuilder[] | null> => {
-    const bodyStart = fileHeader.localBase + fileHeader.headerLength;
-    const bodyEnd = Math.min(region.end, observedEnd);
-    if (
-      bodyStart < region.start ||
-      bodyStart + FV_HEADER_LAYOUT.minimumLength > bodyEnd
-    ) {
-      return null;
-    }
-    const nested = await scanVolumesInRegion(
-      {
-        buffer: region.buffer,
-        start: bodyStart,
-        end: bodyEnd,
-        origin: absoluteOffset(region, bodyStart),
-      },
-      depth + 1,
-      volumeOffset,
-      `${fileLogicalPath}/embedded`,
-    );
-    if (nested.length === 0) {
-      return null;
-    }
-    noteLimitations([
-      `Raw file body ${fileLogicalPath} reinterpreted: ${nested.length} embedded firmware volume(s) start in the body (${nested
-        .map((entry) => entry.logical_path)
-        .join(
-          ", ",
-        )}); the leading bytes are the volume header, not a section frame.`,
-    ]);
-    return nested;
   };
 
   const checksumVerdict = (
@@ -573,227 +605,237 @@ export const scanUefiImage = async (
 
   const walkSectionChain = async (
     region: ScanRegion,
-    fileHeader: FfsFileHeader,
-    observedEnd: number,
-    fileLogicalPath: string,
+    start: number,
+    end: number,
+    parentLogicalPath: string,
     depth: number,
     volumeOffset: number,
-  ): Promise<{ sections: SectionBuilder[]; ui_string: string | null }> => {
+    records: SectionBuilder[],
+  ): Promise<string | null> => {
     const walked = walkSections(
       region,
-      fileHeader.localBase + fileHeader.headerLength,
-      observedEnd,
+      start,
+      end,
       (code) => SECTION_TYPE_NAME_BY_CODE[code] ?? "unknown",
+      reserve,
     );
-    // A raw file body can carry a firmware volume header directly (AMI ROM
-    // holes): the volume zero vector misparses as a zero-size section frame
-    // and stops the chain. Confirm an embedded volume before keeping that
-    // frame; without one, the observed framing stays untouched.
-    const bogusUnframedOnly =
-      walked.sections.length === 0 ||
-      (walked.sections.length === 1 &&
-        walked.sections[0] != null &&
-        walked.sections[0].declaredLength < walked.sections[0].headerLength);
-    if (fileHeader.typeCode === 0x01 && bogusUnframedOnly) {
-      const embedded = await resolveEmbeddedVolumeInRawBody(
-        region,
-        fileHeader,
-        observedEnd,
-        fileLogicalPath,
-        depth,
-        volumeOffset,
-      );
-      if (embedded != null) {
-        return { sections: [], ui_string: null };
-      }
+    if (
+      !walked.terminated &&
+      recordsRemaining >= 0 &&
+      !walked.sections.some(
+        ({ truncated, malformed }) => truncated || malformed,
+      )
+    ) {
+      truncationObserved = true;
+      noteLimitations([
+        `Section chain under ${parentLogicalPath} ends with incomplete framing.`,
+      ]);
     }
-    if (walked.sections.length === 0) {
-      classifyLeftover(
-        region,
-        fileHeader.absoluteBase + fileHeader.headerLength,
-        absoluteOffset(region, observedEnd),
-        fileLogicalPath,
-      );
-      return { sections: [], ui_string: null };
-    }
-    const records: SectionBuilder[] = [];
     let uiString: string | null = null;
     for (const [index, draft] of walked.sections.entries()) {
-      const sectionLogicalPath = `${fileLogicalPath}/section[${index}]`;
-      const record = draftToRecord(draft, region);
-      if (draft.truncated && draft.typeName !== "unknown") {
-        // Preserve the omission for a real (recognizable) section that declares
-        // more bytes than the file/volume holds; junk frames from raw bodies
-        // have an unknown type and must not masquerade as truncation.
+      checkpoint();
+      const logicalPath = `${parentLogicalPath}/section[${index}]`;
+      const payload =
+        draft.payload === null
+          ? null
+          : payloadOf(region, draft.payload.start, draft.payload.end);
+      if (payload !== null) payloads.set(logicalPath, payload);
+      const compression = draft.compression;
+      const record: SectionBuilder = {
+        logical_path: logicalPath,
+        parent_logical_path: parentLogicalPath,
+        source_stream: region.sourceStream ?? null,
+        offset: draft.absoluteBase,
+        header_length: draft.headerLength,
+        length: draft.observedLength,
+        declared_length: draft.declaredLength,
+        truncated: draft.truncated,
+        malformed: draft.malformed ?? false,
+        type_code: draft.typeCode,
+        type_name: draft.typeName as SectionBuilder["type_name"],
+        sha256: digestOf(payload?.bytes ?? Buffer.alloc(0)),
+        compression:
+          compression.kind === "none"
+            ? compression
+            : {
+                kind: compression.kind,
+                guid: compression.guid,
+                data_offset: compression.dataOffset,
+                attributes: compression.attributes,
+              },
+        sub_volumes: [],
+      };
+      records.push(record);
+      if (draft.truncated || draft.malformed) {
         truncationObserved = true;
         noteLimitations([
-          `Section ${sectionLogicalPath} declares ${draft.declaredLength} bytes but only ${draft.observedLength} are present; payload is truncated.`,
+          `Section ${logicalPath} has ${draft.malformed ? "malformed framing" : "a truncated payload"} (declared ${draft.declaredLength}, observed ${draft.observedLength} bytes).`,
         ]);
+        continue;
       }
-      if (draft.typeCode === 0x15 && uiString == null) {
-        uiString = decodeUiString(sectionPayloadBuffer(region, draft));
-      }
-      if (draft.typeCode === 0x17) {
-        const payload = sectionPayloadRegion(region, draft);
-        if (payload == null) {
+      const payloadRegion = sectionPayloadRegion(region, draft);
+      if (payload === null || payloadRegion === null) continue;
+      if (draft.typeCode === 0x15) {
+        uiString ??= decodeUiString(payload.bytes);
+      } else if (draft.typeCode === 0x17) {
+        const nested = await scanVolumesInRegion(
+          payloadRegion,
+          depth + 1,
+          volumeOffset,
+          logicalPath,
+        );
+        record.sub_volumes = nested.map((entry) => entry.logical_path);
+      } else if (draft.encapsulatesSections) {
+        if (depth >= limits.maxDepth) {
+          budgetExhausted = true;
           noteLimitations([
-            `Firmware-volume-image section is empty: ${sectionLogicalPath}.`,
+            `Section depth limit reached under ${logicalPath}.`,
           ]);
         } else {
-          const nested = await scanVolumesInRegion(
-            payload,
+          const childUi = await walkSectionChain(
+            payloadRegion,
+            payloadRegion.start,
+            payloadRegion.end,
+            logicalPath,
             depth + 1,
             volumeOffset,
-            sectionLogicalPath,
+            records,
           );
-          record.sub_volumes = nested.map((entry) => entry.logical_path);
+          uiString ??= childUi;
         }
       } else if (
-        draft.typeCode === 0x02 &&
-        isDecodableKind(draft.compression.kind)
+        compression.kind === "lzma-custom" ||
+        compression.kind === "ami-zlib"
       ) {
-        await resolveDecodedSection(
-          draft,
-          region,
-          record,
-          sectionLogicalPath,
+        const decoded = await resolveDecodedSection(
+          payload,
+          logicalPath,
           depth,
-          volumeOffset,
+          compression.kind,
         );
-      } else if (draft.typeCode === 0x01) {
+        if (decoded === null) continue;
+        const decodedRegion: ScanRegion = {
+          buffer: decoded.bytes,
+          start: 0,
+          end: decoded.bytes.length,
+          origin: 0,
+          sourceStream: logicalPath,
+        };
+        const nested = await scanVolumesInRegion(
+          decodedRegion,
+          depth + 1,
+          volumeOffset,
+          `${logicalPath}/${decoded.format}`,
+          false,
+        );
+        record.sub_volumes = nested.map((entry) => entry.logical_path);
+        // Decode can yield a complete FV, a section chain or an opaque blob.
+        if (
+          nested.length === 0 &&
+          !budgetExhausted &&
+          isSectionChain(decodedRegion)
+        ) {
+          const childUi = await walkSectionChain(
+            decodedRegion,
+            0,
+            decoded.bytes.length,
+            logicalPath,
+            depth + 1,
+            volumeOffset,
+            records,
+          );
+          uiString ??= childUi;
+        }
+      } else if (compression.kind !== "none") {
         noteLimitations([
-          `Compression section ${sectionLogicalPath} (${draft.compression.kind === "none" ? "unclassified" : "EFI standard"}) stays undecoded; payload retained as section.`,
-        ]);
-      } else if (
-        draft.typeCode === 0x02 &&
-        draft.compression.kind === "unknown-guid"
-      ) {
-        noteLimitations([
-          `GUIDed section ${sectionLogicalPath} has an unknown definition GUID ${draft.compression.guid ?? "unparseable"}; payload retained as section.`,
+          `No decoder is available for ${compression.kind} section ${logicalPath}.`,
         ]);
       }
-      records.push(record);
     }
-    return { sections: records, ui_string: uiString };
+    return uiString;
   };
 
-  const draftToRecord = (
-    draft: SectionDraft,
-    region: ScanRegion,
-  ): SectionBuilder => {
-    const payloadBuffer = sectionPayloadBuffer(region, draft);
-    const compression: SectionBuilder["compression"] =
-      draft.compression.kind === "none"
-        ? { kind: "none" }
-        : {
-            kind: draft.compression.kind,
-            guid: draft.compression.guid,
-            data_offset: draft.compression.dataOffset,
-            attributes: draft.compression.attributes,
-          };
-    return {
-      offset: draft.absoluteBase,
-      header_length: draft.headerLength,
-      length: draft.observedLength,
-      type_code: draft.typeCode,
-      type_name: draft.typeName as SectionBuilder["type_name"],
-      sha256:
-        payloadBuffer == null || payloadBuffer.length === 0
-          ? digestOf(Buffer.alloc(0))
-          : digestOf(payloadBuffer),
-      compression,
-      sub_volumes: [],
-    };
-  };
-
-  /**
-   * Decode one compressed guided section payload and map the section stream
-   * it contains. Decoded offsets are positions inside the decompressed stream,
-   * anchored at the compressed stream's image-absolute start; the physical
-   * owning volume keeps linking through parent_offset and logical paths.
-   * AMI-zlib payloads carry a 0x100-byte AMD section header in front of the
-   * zlib-wrapped stream; decoding covers the stream behind it.
-   */
   const resolveDecodedSection = async (
-    draft: SectionDraft,
-    region: ScanRegion,
-    record: SectionBuilder,
-    sectionLogicalPath: string,
+    payload: UefiPayload,
+    logicalPath: string,
     depth: number,
-    volumeOffset: number,
-  ): Promise<void> => {
-    const payload = sectionPayloadBuffer(region, draft) ?? Buffer.alloc(0);
-    if (payload.length === 0) {
-      return;
-    }
-    if (depth >= limits.maxDepth) {
-      budgetExhausted = true;
-      noteLimitations([
-        `Compressed payload at ${sectionLogicalPath} exceeds depth ${limits.maxDepth}; retained as section.`,
-      ]);
-      return;
-    }
-    const format =
-      draft.compression.kind === "ami-zlib"
-        ? ("zlib" as const)
-        : ("lzma" as const);
-    const dataOffset =
-      draft.compression.kind === "none" ? 0 : draft.compression.dataOffset;
-    let stream = payload;
-    let streamOffset = dataOffset;
-    if (format === "zlib") {
-      const peeled = peelAmiZlibPayload(payload);
-      if (peeled == null) {
-        noteLimitations([
-          `AMI-zlib payload at ${sectionLogicalPath} is shorter than the ${hex(AMD_ZLIB_HEADER_LENGTH)}-byte AMD section header; retained as section.`,
-        ]);
-        return;
-      }
-      if (peeled.declaredCompressedSize !== peeled.stream.length) {
-        noteLimitations([
-          `AMI-zlib payload at ${sectionLogicalPath} declares ${peeled.declaredCompressedSize} compressed bytes for a ${peeled.stream.length}-byte stream; decoding the remaining stream.`,
-        ]);
-      }
-      stream = peeled.stream;
-      streamOffset += AMD_ZLIB_HEADER_LENGTH;
-    }
-    const outcome = await decodeLzma({
-      payload: stream,
-      logicalPath: sectionLogicalPath,
-      format,
-      physicalRange:
-        region.buffer === imageBuffer
-          ? { offset: draft.absoluteBase + streamOffset, length: stream.length }
-          : null,
-    });
-    if (outcome == null) {
-      noteLimitations([
-        `${format === "zlib" ? "zlib" : "LZMA"} decode failed or was unavailable for ${sectionLogicalPath}; payload retained as section.`,
-      ]);
-      return;
-    }
-    const decodedRegion: ScanRegion = {
-      buffer: outcome.bytes,
-      start: 0,
-      end: outcome.bytes.length,
-      origin: draft.absoluteBase + dataOffset,
-    };
-    const nested = await scanVolumesInRegion(
-      decodedRegion,
-      depth + 1,
-      volumeOffset,
-      `${sectionLogicalPath}/${format === "zlib" ? "zlib" : "lzma"}`,
+    kind: "lzma-custom" | "ami-zlib",
+  ): Promise<UefiDecodedStream | null> => {
+    const maxOutputBytes = Math.min(
+      UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
+      UEFI_FIRMWARE_LIMITS.decodedBytes - decodedBytes,
     );
-    record.sub_volumes = nested.map((entry) => entry.logical_path);
+    if (depth >= limits.maxDepth || maxOutputBytes <= 0) {
+      budgetExhausted = true;
+      return decodeGap(
+        logicalPath,
+        `Decode depth or aggregate output limit reached under ${logicalPath}.`,
+      );
+    }
+    const format = kind === "ami-zlib" ? "zlib" : "lzma";
+    let carrier = payload;
+    if (format === "zlib") {
+      const peeled = peelAmiZlibPayload(payload.bytes);
+      if (
+        peeled === null ||
+        peeled.declaredCompressedSize !== peeled.stream.length
+      ) {
+        return decodeGap(
+          logicalPath,
+          `Invalid AMD zlib header or stream length at ${logicalPath}; carrier retained.`,
+        );
+      }
+      carrier = {
+        bytes: peeled.stream,
+        sourceStream: payload.sourceStream,
+        range: {
+          offset: payload.range.offset + AMD_ZLIB_HEADER_LENGTH,
+          length: peeled.stream.length,
+        },
+      };
+    }
+    const decodedResult = await decodeLzma({
+      payload: carrier.bytes,
+      logicalPath,
+      format,
+      physicalRange: carrier.sourceStream === null ? carrier.range : null,
+      maxOutputBytes,
+    });
+    checkpoint();
+    if (!decodedResult.ok) {
+      return decodeGap(
+        logicalPath,
+        `${format} decode failed at ${logicalPath}: ${decodedResult.message}`,
+      );
+    }
+    const outcome = decodedResult.outcome;
+    if (outcome.bytes.length > maxOutputBytes) {
+      return decodeGap(
+        logicalPath,
+        `Decoded output exceeded its byte limit at ${logicalPath}.`,
+      );
+    }
+    decodedBytes += outcome.bytes.length;
+    const decoded = {
+      bytes: outcome.bytes,
+      format,
+      decoderVersion: outcome.decoderVersion,
+      carrier,
+    } as const;
+    decodedStreams.set(logicalPath, decoded);
+    return decoded;
   };
 
   const imageRegion0 = imageRegion(image, 0, image.length);
   await scanVolumesInRegion(imageRegion0, 0, null, "flash");
 
-  scanPspDirectories(image, pspTables, pspCandidates);
+  scanPspDirectories(image, pspTables, pspCandidates, reserve);
 
   return {
     inputSize: image.length,
+    payloads,
+    decodedStreams,
+    decodeGaps,
     volumes,
     unknownRegions,
     integrity,
@@ -805,49 +847,54 @@ export const scanUefiImage = async (
   };
 };
 
-const isDecodableKind = (kind: SectionDraft["compression"]["kind"]): boolean =>
-  kind === "lzma-custom" || kind === "lzmaf86" || kind === "ami-zlib";
+const subRegion = (
+  region: ScanRegion,
+  start: number,
+  end: number,
+): ScanRegion => ({
+  ...region,
+  start,
+  end,
+  origin: absoluteOffset(region, start),
+});
 
-/** Printable-prefixed text from a 0x15 user-interface section payload. */
-const decodeUiString = (payload: Buffer | null): string | null => {
-  if (payload == null || payload.length === 0) {
-    return null;
-  }
-  let text = "";
-  for (const byte of payload) {
-    if (byte === 0x00) {
-      break;
-    }
-    if (byte < 0x20 || byte > 0x7e) {
-      text += "�";
-    } else {
-      text += String.fromCharCode(byte);
-    }
-  }
-  return text.slice(0, 512);
+/** A recognized first frame distinguishes section streams from opaque decoded bytes. */
+const isSectionChain = (region: ScanRegion): boolean => {
+  const typeCode = region.buffer[3];
+  return (
+    typeCode !== undefined && SECTION_TYPE_NAME_BY_CODE[typeCode] !== undefined
+  );
+};
+
+const decodeUiString = (payload: Buffer): string | null => {
+  const limit = Math.min(payload.length - (payload.length % 2), 1024);
+  let end = 0;
+  while (end < limit && payload.readUInt16LE(end) !== 0) end += 2;
+  return end === 0 ? null : payload.toString("utf16le", 0, end);
 };
 
 const scanPspDirectories = (
   image: Buffer,
   tables: PspTableRecord[],
   candidates: PspCandidateRecord[],
+  reserve: (count?: number) => boolean,
 ): void => {
+  const headerLength = 16;
+  const entryLength = 16;
   for (const magic of PSP_MAGICS) {
-    const magicBytes = Buffer.from(magic, "ascii");
     let searchFrom = 0;
-    while (searchFrom >= 0 && searchFrom < image.length - magicBytes.length) {
-      const hit = image.indexOf(magicBytes, searchFrom);
-      if (hit < 0) {
-        break;
-      }
-      searchFrom = hit + 1;
-      const totalEntries = image[hit + 4] ?? 0xff;
-      const tableLength = 0x10 + totalEntries * 16;
-      const plausible =
-        totalEntries > 0 &&
-        totalEntries <= PSP_MAXIMUM_ENTRIES &&
-        hit + tableLength <= image.length;
-      if (!plausible) {
+    while (searchFrom < image.length) {
+      const hit = image.indexOf(magic, searchFrom, "ascii");
+      if (hit < 0 || !reserve()) break;
+      searchFrom = hit + magic.length;
+      const totalEntries =
+        hit + headerLength <= image.length ? image.readUInt32LE(hit + 8) : 0;
+      const tableLength = headerLength + totalEntries * entryLength;
+      if (
+        totalEntries === 0 ||
+        totalEntries > 255 ||
+        hit + tableLength > image.length
+      ) {
         candidates.push({
           offset: hit,
           magic,
@@ -855,17 +902,21 @@ const scanPspDirectories = (
         });
         continue;
       }
+      if (!reserve(totalEntries)) return;
       const entries: PspEntryRecord[] = [];
       for (let index = 0; index < totalEntries; index += 1) {
-        const entryStart = hit + 0x10 + index * 16;
-        if (entryStart + 16 > image.length) {
-          break;
-        }
-        const entryBytes = image.subarray(entryStart, entryStart + 16);
+        const start = hit + headerLength + index * entryLength;
+        const raw = image.readBigUInt64LE(start + 8);
+        const location = raw & ((1n << 62n) - 1n);
         entries.push({
-          type: entryBytes[0] ?? null,
-          declaredLocation: entryBytes.readUInt32LE(4),
-          declaredSize: entryBytes.readUInt32LE(8),
+          type: image.readUInt8(start),
+          declaredLocation:
+            location <= BigInt(Number.MAX_SAFE_INTEGER)
+              ? Number(location)
+              : null,
+          declaredLocationRaw: `0x${raw.toString(16).padStart(16, "0")}`,
+          addressMode: Number(raw >> 62n),
+          declaredSize: image.readUInt32LE(start + 4),
           imageOffset: null,
           sha256: null,
           locationBasis: "declared-unverified",
@@ -877,7 +928,7 @@ const scanPspDirectories = (
         tableMagic: magic,
         totalEntries,
         entries,
-        entryStrideBasis: "assumed-16",
+        entryStrideBasis: "psp-16",
       });
     }
   }

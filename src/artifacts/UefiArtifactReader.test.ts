@@ -2,7 +2,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 import {
   buildFfsFile,
@@ -41,9 +42,12 @@ const collectEntries = async (
   onOmission?: (path: string) => void,
 ): Promise<ArtifactEntry[]> => {
   const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries(undefined, (onOmission === undefined
+  for await (const entry of reader.entries(
+    undefined,
+    onOmission === undefined
       ? {}
-      : { onOmission: ({ path }: { path: string }) => onOmission(path) }))) {
+      : { onOmission: ({ path }: { path: string }) => onOmission(path) },
+  )) {
     entries.push(entry);
   }
   return entries;
@@ -94,6 +98,32 @@ describe("UefiArtifactReader", () => {
     const bytes = await readAll(await reader.open(file));
     expect(bytes).toEqual(image.subarray(0x1048, 0x1048 + 24 + 12));
     await reader.close();
+  });
+
+  it("retries an unconfirmed descriptor close while keeping reader admission closed", async () => {
+    const reader = await openReader(buildReaderImage());
+    await collectEntries(reader);
+
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockRejectedValueOnce(new Error("transient descriptor close failure"));
+    try {
+      await expect(reader.close()).rejects.toMatchObject({
+        cleanup: {
+          reason: expect.stringContaining("transient descriptor close failure"),
+        },
+      });
+      await expect(collectEntries(reader)).rejects.toThrow("reader is closed");
+      await expect(reader.close()).resolves.toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(2);
+      const owner = close.mock.instances[1];
+      if (!(owner instanceof OwnedFileHandle))
+        throw new Error("close lost descriptor ownership");
+      expect(owner.handle.fd).toBe(-1);
+    } finally {
+      close.mockRestore();
+      await reader.close();
+    }
   });
 
   it("refuses entries that were not produced by this reader", async () => {

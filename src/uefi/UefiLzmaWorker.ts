@@ -73,6 +73,25 @@ const main = async (): Promise<void> => {
       .parse(upstreamMetadata).version;
 
     const payload = await readFile(request.payload_path);
+    // .lzma (LZMA-Alone) declares the dictionary before any compressed bytes.
+    // The upstream decoder allocates its window before it writes to our sink.
+    if (payload.length < 13)
+      throw new Error("Incomplete LZMA stream properties.");
+    const dictionaryBytes = payload.readUInt32LE(1);
+    if (dictionaryBytes > UEFI_FIRMWARE_LIMITS.lzmaOutputBytes) {
+      throw new UefiLzmaOutputLimit(
+        "LZMA dictionary exceeds the worker memory budget.",
+      );
+    }
+    const declaredOutput = payload.readBigUInt64LE(5);
+    if (
+      declaredOutput !== 0xffffffffffffffffn &&
+      declaredOutput > BigInt(request.max_output_bytes)
+    ) {
+      throw new UefiLzmaOutputLimit(
+        `Declared LZMA output exceeds ${request.max_output_bytes} bytes.`,
+      );
+    }
     const output = new BoundedLzmaOutput(request.max_output_bytes);
     lzma.decompressFile(payload, output);
     const decoded = output.getBuffer();

@@ -14,6 +14,7 @@ import {
   buildFfsFile,
   buildFv,
   buildImage,
+  buildSection,
 } from "../../tests/fixtures/uefiImage.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
@@ -37,11 +38,13 @@ const PAYLOAD = Buffer.from(
  * the platform volume at 0x1000 carrying two FFS files (one payload, one pad
  * file), and a second volume holding a third file.
  */
+const PE_SECTION = buildSection(0x10, PAYLOAD);
+
 const buildFlashImage = (): Buffer => {
   const payloadFile = buildFfsFile({
     guid: DRIVER_GUID,
     typeCode: 0x07,
-    payload: PAYLOAD,
+    payload: PE_SECTION,
   });
   const padFile = buildFfsFile({
     guid: PAD_GUID,
@@ -144,7 +147,7 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
     hash_status: "verified",
     source_location: {
       offset: payloadFileOffset,
-      length: 24 + PAYLOAD.length,
+      length: 24 + PE_SECTION.length,
     },
   });
   const sourceLocation = driverOccurrence.source_location;
@@ -174,7 +177,7 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
   );
   expect(extractResult.selection).toMatchObject({
     offset: sourceLocation.offset,
-    length: 24 + PAYLOAD.length,
+    length: 24 + PE_SECTION.length,
     target_kind: "ffs-file",
   });
   expect(extractResult.files).toHaveLength(1);
@@ -183,6 +186,8 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
   // The extractor publishes decoded payload with its own original byte range;
   // published bytes must equal exactly that image range.
   const publishedRange = publishedFile.original_file_range;
+  if (publishedRange === null)
+    throw new Error("flash payload lost its source range");
   expect(publishedFile.sha256).toBe(
     sha256(
       image.subarray(

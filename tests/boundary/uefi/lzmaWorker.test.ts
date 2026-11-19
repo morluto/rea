@@ -107,3 +107,17 @@ it("honors the caller's output budget as an output-limit failure", async () => {
   expect(reply.reason).toBe("output-limit");
   await expect(readFile(join(directory, "output.bin"))).rejects.toThrow();
 });
+
+it("checks the declared dictionary before the decoder allocates its window", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-lzma-");
+  const stream = Buffer.from(
+    lzmaPurescript.compressFile(Buffer.from("small firmware payload")),
+  );
+  stream.writeUInt32LE(128 * 1024 * 1024, 1);
+  const reply = await runLzmaWorker(directory, stream, 1024);
+  expect(reply).toMatchObject({
+    ok: false,
+    reason: "output-limit",
+    message: expect.stringContaining("dictionary"),
+  });
+});

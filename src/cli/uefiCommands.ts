@@ -74,6 +74,12 @@ export const registerUefiCommands = (
         sectionOffset: targetOffset.describe(
           "Extract one section at this byte offset",
         ),
+        sourceStream: z
+          .string()
+          .optional()
+          .describe(
+            "Carrier logical path for a decoded offset, or flash for the original image",
+          ),
         maxDepth: extractInput.max_depth,
         maxOutputBytes: extractInput.max_output_bytes,
         maxOutputFiles: extractInput.max_output_files,
@@ -90,6 +96,12 @@ export const registerUefiCommands = (
           options.fileOffset,
           options.sectionOffset,
         ].filter((offset) => offset !== undefined);
+        if (options.sourceStream !== undefined && chosen.length !== 1)
+          context.addIssue({
+            code: "custom",
+            path: ["sourceStream"],
+            message: "sourceStream requires exactly one target offset",
+          });
         if (chosen.length > 1)
           context.addIssue({
             code: "custom",
@@ -98,23 +110,39 @@ export const registerUefiCommands = (
               "volumeOffset, fileOffset and sectionOffset are mutually exclusive",
           });
       }),
-    run: ({ args, options }) =>
-      execute(CLI_COMMANDS.extractUefiFirmware, "extract_uefi_firmware", {
-        path: absoluteCallerPath(args.path),
-        output_directory: absoluteCallerPath(args.outputDirectory),
-        target:
-          options.volumeOffset !== undefined
-            ? { kind: "volume", offset: options.volumeOffset }
-            : options.fileOffset !== undefined
-              ? { kind: "ffs-file", offset: options.fileOffset }
-              : options.sectionOffset !== undefined
-                ? { kind: "section", offset: options.sectionOffset }
-                : { kind: "whole-image" },
-        max_depth: options.maxDepth,
-        max_output_bytes: options.maxOutputBytes,
-        max_output_files: options.maxOutputFiles,
-        include_compressed: options.includeCompressed,
-      }),
+    run: ({ args, options }) => {
+      const source =
+        options.sourceStream === undefined
+          ? {}
+          : {
+              source_stream:
+                options.sourceStream === "flash" ? null : options.sourceStream,
+            };
+      return execute(
+        CLI_COMMANDS.extractUefiFirmware,
+        "extract_uefi_firmware",
+        {
+          path: absoluteCallerPath(args.path),
+          output_directory: absoluteCallerPath(args.outputDirectory),
+          target:
+            options.volumeOffset !== undefined
+              ? { kind: "volume", offset: options.volumeOffset, ...source }
+              : options.fileOffset !== undefined
+                ? { kind: "ffs-file", offset: options.fileOffset, ...source }
+                : options.sectionOffset !== undefined
+                  ? {
+                      kind: "section",
+                      offset: options.sectionOffset,
+                      ...source,
+                    }
+                  : { kind: "whole-image" },
+          max_depth: options.maxDepth,
+          max_output_bytes: options.maxOutputBytes,
+          max_output_files: options.maxOutputFiles,
+          include_compressed: options.includeCompressed,
+        },
+      );
+    },
   });
   cli.command(CLI_COMMANDS.inspectUefiNvram, {
     description:

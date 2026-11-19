@@ -66,14 +66,21 @@ export const sectionedFfsTypeNameSchema = ffsTypeNameSchema.exclude([
 ]);
 const alignmentSchema = z.enum([
   "1",
-  "2",
-  "4",
-  "8",
   "16",
-  "32",
-  "64",
   "128",
-  "unknown",
+  "512",
+  "1024",
+  "4096",
+  "32768",
+  "65536",
+  "131072",
+  "262144",
+  "524288",
+  "1048576",
+  "2097152",
+  "4194304",
+  "8388608",
+  "16777216",
 ]);
 
 /** Section type names retained alongside their numeric codes. */
@@ -108,6 +115,7 @@ export const uefiCompressionSchema = z.union([
       "ami-zlib",
       "tiano",
       "efi-standard",
+      "unknown-compression",
       "crc32-guided",
       "unknown-guid",
     ]),
@@ -117,8 +125,17 @@ export const uefiCompressionSchema = z.union([
   }),
 ]);
 
+/** null denotes the original image. A decoded stream is identified by its carrier. */
+const sourceStream = z.string().nullable();
+
 /** One flat FFS section record; sub volumes stay linked by logical path. */
 export const uefiSectionRecordSchema = z.strictObject({
+  logical_path: z.string(),
+  parent_logical_path: z.string(),
+  source_stream: sourceStream,
+  declared_length: bytes,
+  truncated: z.boolean(),
+  malformed: z.boolean(),
   offset: bytes,
   header_length: bytes,
   length: bytes,
@@ -130,6 +147,8 @@ export const uefiSectionRecordSchema = z.strictObject({
 });
 /** One flat FFS file record inside its owning volume. */
 export const uefiFfsFileRecordSchema = z.strictObject({
+  source_stream: sourceStream,
+  declared_length: bytes,
   offset: bytes,
   header_length: bytes,
   length: bytes,
@@ -186,9 +205,21 @@ export const uefiInputSchemas = {
     target: z
       .discriminatedUnion("kind", [
         z.strictObject({ kind: z.literal("whole-image") }),
-        z.strictObject({ kind: z.literal("volume"), offset: bytes }),
-        z.strictObject({ kind: z.literal("ffs-file"), offset: bytes }),
-        z.strictObject({ kind: z.literal("section"), offset: bytes }),
+        z.strictObject({
+          kind: z.literal("volume"),
+          offset: bytes,
+          source_stream: sourceStream.optional(),
+        }),
+        z.strictObject({
+          kind: z.literal("ffs-file"),
+          offset: bytes,
+          source_stream: sourceStream.optional(),
+        }),
+        z.strictObject({
+          kind: z.literal("section"),
+          offset: bytes,
+          source_stream: sourceStream.optional(),
+        }),
       ])
       .default({ kind: "whole-image" }),
     max_depth: z
@@ -206,16 +237,14 @@ export const uefiInputSchemas = {
       .min(1)
       .max(UEFI_FIRMWARE_LIMITS.maxOutputBytes)
       .default(UEFI_FIRMWARE_LIMITS.defaultMaxOutputBytes)
-      .describe(
-        "Staging file-byte budget, checked during extraction; transient overshoot is possible",
-      ),
+      .describe("Maximum total bytes of published files"),
     max_output_files: z
       .number()
       .int()
       .min(1)
       .max(UEFI_FIRMWARE_LIMITS.maxOutputFiles)
       .default(UEFI_FIRMWARE_LIMITS.defaultMaxOutputFiles)
-      .describe("Staging entry budget, including directories"),
+      .describe("Maximum number of published files"),
     include_compressed: z
       .boolean()
       .default(true)
@@ -294,6 +323,8 @@ const entryBasisSchema = z.enum([
 
 /** One mapped firmware volume with its flat FFS file records. */
 export const uefiVolumeRecordSchema = z.strictObject({
+  source_stream: sourceStream,
+  parent_logical_path: z.string().nullable(),
   logical_path: z.string(),
   offset: bytes,
   length: z.number().int().positive(),
@@ -312,6 +343,7 @@ export const uefiVolumeRecordSchema = z.strictObject({
 });
 /** One undecoded image region; classification stays an observation. */
 export const uefiUnknownRegionSchema = z.strictObject({
+  source_stream: sourceStream,
   offset: bytes,
   length: z.number().int().positive(),
   sha256: digestSchema.nullable(),
@@ -337,6 +369,7 @@ export const uefiIntegrityRecordSchema = z.strictObject({
     "declared-length-overflow",
   ]),
   logical_path: z.string(),
+  source_stream: sourceStream,
   range,
   detail: z.string(),
 });
@@ -376,23 +409,21 @@ export const uefiResultSchemas = {
       z.strictObject({
         offset: bytes,
         length: bytes,
-        table_magic: z.enum(["$PSP", "$2B", "unknown"]),
+        table_magic: z.enum(["$PSP", "$PL2", "unknown"]),
         total_entries: bytes.nullable(),
         entries: z.array(
           z.strictObject({
             type: bytes.nullable(),
             declared_location: bytes.nullable(),
+            declared_location_raw: z.string(),
+            address_mode: z.number().int().min(0).max(3),
             declared_size: bytes.nullable(),
             image_offset: bytes.nullable(),
             sha256: digestSchema.nullable(),
             location_basis: z.literal("declared-unverified"),
           }),
         ),
-        entry_stride_basis: z.enum([
-          "header-declared",
-          "assumed-16",
-          "unknown",
-        ]),
+        entry_stride_basis: z.enum(["header-declared", "psp-16", "unknown"]),
       }),
     ),
     psp_candidates: z.array(
@@ -411,6 +442,7 @@ export const uefiResultSchemas = {
     parser: parserSchema,
     selection: z.strictObject({
       ...range.shape,
+      source_stream: sourceStream,
       target_kind: z.enum(["whole-image", "volume", "ffs-file", "section"]),
     }),
     output_directory: z.string(),
@@ -421,7 +453,9 @@ export const uefiResultSchemas = {
         path: z.string(),
         size: bytes,
         sha256: digestSchema,
-        original_file_range: range,
+        original_file_range: range.nullable(),
+        source_stream: sourceStream,
+        source_range: range,
         runtime_address: z.null(),
         media_type: z.string().nullable(),
         source: z.enum([
@@ -437,8 +471,11 @@ export const uefiResultSchemas = {
     derivations: z.array(
       z.strictObject({
         parent_path: z.string(),
-        child_path: z.string(),
+        child_path: z.string().nullable(),
+        child_stream: z.string(),
         parent_file_range: range.nullable(),
+        parent_stream: sourceStream,
+        parent_stream_range: range,
         handler: z.string(),
       }),
     ),
@@ -453,6 +490,7 @@ export const uefiResultSchemas = {
           "pad-file",
         ]),
         logical_path: z.string(),
+        source_stream: sourceStream,
         range: range.nullable(),
         detail: z.string(),
       }),

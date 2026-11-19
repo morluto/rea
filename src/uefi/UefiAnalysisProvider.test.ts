@@ -5,7 +5,11 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
@@ -21,6 +25,7 @@ import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
 import {
   uefiRequestSchema,
   type UefiExtractResult,
+  type UefiRequest,
   type UefiInspectResult,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
 
@@ -100,9 +105,10 @@ const extractRequest = (
   path: string,
   outputDirectory: string,
   overrides?: {
-    readonly target?:
-      | { readonly kind: "whole-image" }
-      | { readonly kind: "volume"; readonly offset: number };
+    readonly target?: Extract<
+      UefiRequest,
+      { operation: "extract_uefi_firmware" }
+    >["input"]["target"];
     readonly max_output_files?: number;
     readonly include_compressed?: boolean;
   },
@@ -162,6 +168,11 @@ it("extracts whole-image payloads with section provenance and published bytes", 
   expect(rawSection?.size).toBe(MODULE_A.length);
   const rawBytes = await readFile(rawSection?.path ?? "");
   expect(rawBytes.equals(MODULE_A)).toBe(true);
+  const rawBody = result.files.find(
+    (file) => file.source === "uncompressed-payload",
+  );
+  expect(await readFile(rawBody?.path ?? "")).toEqual(RAW_BODY);
+  expect(rawBody?.relative_path).not.toContain(":");
   const padGap = result.extraction_gaps.find((gap) => gap.kind === "pad-file");
   expect(padGap).toBeDefined();
   expect(result.published_bytes).toBe(
@@ -280,24 +291,31 @@ it.skipIf(!lzmaWorkerAvailable)(
   45_000,
 );
 
-it("decodes an AMI-zlib section on the main thread and derives it as decompressed-zlib", async () => {
+const amdZlibSection = (content: Buffer): Buffer => {
+  const stream = deflateSync(content);
+  const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH);
+  amdHeader.writeUInt32LE(stream.length, 0x14);
+  return buildGuidedSection({
+    definitionGuid: GUID_AMD_ZLIB,
+    body: Buffer.concat([amdHeader, stream]),
+  });
+};
+
+it("decodes nested zlib streams and preserves each carrier and PE byte range in scoped extraction", async () => {
+  const pe = Buffer.from("ZLIB-NESTED-PAYLOAD");
+  const ui = buildSection(0x15, Buffer.from("Setup\0", "utf16le"));
+  const innerChain = Buffer.concat([ui, buildSection(0x10, pe)]);
   const nestedInner = buildFfsFile({
     guid: GUID_RAW,
     typeCode: 0x07,
-    payload: buildSection(0x10, Buffer.from("ZLIB-NESTED-PAYLOAD", "utf8")),
+    payload: amdZlibSection(innerChain),
   });
   const decoded = buildFv({ files: [nestedInner] }).buffer;
   const directory = await createTestTempDirectory("rea-uefi-provider-");
-  const stream = deflateSync(decoded);
-  const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH, 0);
-  amdHeader.writeUInt32LE(stream.length, 0x14);
   const driver = buildFfsFile({
     guid: GUID_DRIVER,
     typeCode: 0x07,
-    payload: buildGuidedSection({
-      definitionGuid: GUID_AMD_ZLIB,
-      body: Buffer.concat([amdHeader, stream]),
-    }),
+    payload: amdZlibSection(decoded),
   });
   const volume = buildFv({ files: [driver] });
   const imagePath = join(directory, "zlib-image.fi");
@@ -313,35 +331,73 @@ it("decodes an AMI-zlib section on the main thread and derives it as decompresse
     "/zlib/FV@",
   );
 
-  const executed = expectOk(
+  const nested = inspectResult.firmware_volumes[1];
+  const module = nested?.ffs_files[0];
+  const peSection = module?.sections.find(
+    (section) => section.type_name === "pe32",
+  );
+  expect(module?.ui_string).toBe("Setup");
+  expect(peSection?.offset).toBe(ui.length);
+  if (peSection?.source_stream == null)
+    throw new Error("PE lost its decoded source");
+
+  const ambiguous = await provider.execute(
+    extractRequest(imagePath, join(directory, "ambiguous"), {
+      target: { kind: "volume", offset: 0 },
+    }),
+  );
+  expect(ambiguous.ok).toBe(false);
+  if (!ambiguous.ok) expect(ambiguous.error._tag).toBe("AnalysisInputError");
+
+  const extracted = expectOk(
     await provider.execute(
-      await extractRequest(imagePath, join(directory, "out-zlib")),
+      extractRequest(imagePath, join(directory, "scoped"), {
+        target: {
+          kind: "section",
+          offset: peSection.offset,
+          source_stream: peSection.source_stream,
+        },
+      }),
     ),
+  ).value.result as UefiExtractResult;
+  expect(extracted.files).toHaveLength(1);
+  const leaf = extracted.files[0];
+  expect(await readFile(leaf?.path ?? "")).toEqual(pe);
+  expect(leaf).toMatchObject({
+    original_file_range: null,
+    source_stream: peSection.source_stream,
+    source_range: { offset: ui.length + 4, length: pe.length },
+  });
+  expect(extracted.derivations).toHaveLength(2);
+  const [outer, inner] = extracted.derivations;
+  expect(outer?.parent_file_range?.offset).toBe(
+    72 + 24 + 24 + AMD_ZLIB_HEADER_LENGTH,
   );
-  const result = executed.value.result as UefiExtractResult;
-  const decodedFile = result.files.find(
-    (file) => file.source === "decompressed-zlib",
-  );
-  expect(decodedFile?.size).toBe(decoded.length);
-  expect((await readFile(decodedFile?.path ?? "")).equals(decoded)).toBe(true);
-  // The nested volume's own file is carved out of the decoded stream, not
-  // just available as the monolithic stream blob.
-  const nestedSection = result.files.find(
-    (file) =>
-      file.relative_path.includes("/zlib/FV@") &&
-      file.relative_path.endsWith(".payload.bin"),
-  );
-  expect(nestedSection?.source).toBe("raw-section");
-  expect(nestedSection?.parent_logical_path).toContain("/zlib/FV@");
-  expect(
-    (await readFile(nestedSection?.path ?? "")).equals(
-      Buffer.from("ZLIB-NESTED-PAYLOAD"),
-    ),
-  ).toBe(true);
-  expect(result.derivations).toHaveLength(1);
-  expect(result.derivations[0]?.handler.startsWith("node-zlib@")).toBe(true);
-  expect(result.coverage).toBe("complete");
-  expect(result.extraction_gaps).toHaveLength(0);
+  expect(inner).toMatchObject({
+    parent_file_range: null,
+    parent_stream: outer?.child_stream,
+    parent_stream_range: { offset: 72 + 24 + 24 + AMD_ZLIB_HEADER_LENGTH },
+    child_stream: peSection.source_stream,
+    child_path: null,
+  });
+  expect(extracted.coverage).toBe("complete");
+
+  const wrapper = inspectResult.firmware_volumes[0]?.ffs_files[0];
+  for (const [kind, offset] of [
+    ["volume", 0],
+    ["ffs-file", wrapper?.offset ?? -1],
+  ] as const) {
+    const scoped = expectOk(
+      await provider.execute(
+        extractRequest(imagePath, join(directory, kind), {
+          target: { kind, offset, source_stream: null },
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    const published = scoped.files.find((file) => file.sha256 === sha256(pe));
+    expect(await readFile(published?.path ?? "")).toEqual(pe);
+    expect(scoped.coverage).toBe("complete");
+  }
 });
 
 it("extracts embedded raw-file volume files and targets the nested volume by offset", async () => {
@@ -421,4 +477,194 @@ it("validates requests through the service before execution", async () => {
   expect(rejected.ok).toBe(false);
   if (rejected.ok) return;
   expect(rejected.error._tag).toBe("AnalysisInputError");
+});
+
+it("publishes repeated raw GUIDs under distinct portable paths and exposes unusable sections as gaps", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-provider-");
+  const imagePath = join(directory, "image.bin");
+  const first = buildFfsFile({
+    guid: GUID_RAW,
+    typeCode: 1,
+    payload: RAW_BODY,
+  });
+  const second = buildFfsFile({
+    guid: GUID_RAW,
+    typeCode: 1,
+    payload: Buffer.from("other raw bytes"),
+  });
+  const lzmaf86 = buildGuidedSection({
+    definitionGuid: "d42ae6bd-1352-4bfb-909a-ca72a6eae889",
+    body: Buffer.from("unavailable x86 filter"),
+  });
+  const truncated = Buffer.from([0xff, 0x0f, 0, 0x10, 0xde, 0xad]);
+  const driver = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: Buffer.concat([
+      lzmaf86,
+      Buffer.alloc((4 - (lzmaf86.length % 4)) % 4),
+      truncated,
+    ]),
+  });
+  await writeFile(
+    imagePath,
+    buildFv({ files: [first, second, driver] }).buffer,
+  );
+  const provider = new UefiAnalysisProvider();
+  const result = expectOk(
+    await provider.execute(
+      extractRequest(imagePath, join(directory, "out"), {
+        include_compressed: false,
+      }),
+    ),
+  ).value.result as UefiExtractResult;
+  expect(result.coverage).toBe("partial");
+  expect(result.files).toHaveLength(2);
+  expect(
+    new Set(result.files.map(({ relative_path }) => relative_path)).size,
+  ).toBe(2);
+  expect(
+    await Promise.all(result.files.map(({ path }) => readFile(path))),
+  ).toEqual([RAW_BODY, Buffer.from("other raw bytes")]);
+  expect(result.extraction_gaps).toMatchObject([
+    {
+      kind: "unsupported-compression",
+      detail: expect.stringContaining("lzmaf86"),
+    },
+    { kind: "size-truncated", detail: expect.stringContaining("4095") },
+  ]);
+});
+
+it("rolls back a tree acquired during failed publication setup without publishing", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const provider = new UefiAnalysisProvider();
+  const output = join(directory, "out");
+  const create = SafeOutputTree.create.bind(SafeOutputTree);
+  const creation = vi
+    .spyOn(SafeOutputTree, "create")
+    .mockImplementationOnce(async (path) => {
+      throw new SafeOutputTreeCreationFailure(
+        new Error("setup failed"),
+        await create(path),
+      );
+    });
+  try {
+    const result = await provider.execute(extractRequest(imagePath, output));
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.diagnostics?.reason).toBe("setup failed");
+    expect(existsSync(output)).toBe(false);
+  } finally {
+    creation.mockRestore();
+    await provider.close();
+  }
+});
+
+it("waits for committed output finalization during late cancellation and retries retained cleanup", async () => {
+  const { imagePath, directory } = await writeTestImage({ withGuided: false });
+  const provider = new UefiAnalysisProvider();
+  const output = join(directory, "out");
+  const controller = new AbortController();
+  const committed = createDeferred<void>();
+  const releaseFinalization = createDeferred<void>();
+  const commit = SafeOutputTree.prototype.commit;
+  const committing = vi
+    .spyOn(SafeOutputTree.prototype, "commit")
+    .mockImplementationOnce(async function (this: SafeOutputTree, signal) {
+      await commit.call(this, signal);
+      committed.resolve();
+      await releaseFinalization.promise;
+      throw new Error("commit handle close failed");
+    });
+  const rollback = vi
+    .spyOn(SafeOutputTree.prototype, "rollback")
+    .mockRejectedValueOnce(new Error("close still denied"));
+  try {
+    let settled = false;
+    const executing = provider
+      .execute(extractRequest(imagePath, output), { signal: controller.signal })
+      .finally(() => {
+        settled = true;
+      });
+    await committed.promise;
+    const queued = new AbortController();
+    const queuedWork = provider.execute(inspectRequest(imagePath), {
+      signal: queued.signal,
+    });
+    queued.abort("queued stop");
+    const queuedResult = await queuedWork;
+    expect(queuedResult).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: "queued stop" },
+    });
+    controller.abort("late stop");
+    const closing = provider.close();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseFinalization.resolve();
+    const result = await executing;
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        partialObservation: {
+          kind: "uefi",
+          result: {
+            output_directory: expect.any(String),
+            published_bytes: MODULE_A.length + RAW_BODY.length,
+          },
+        },
+      },
+    });
+    await closing;
+    expect(rollback).toHaveBeenCalledTimes(2);
+    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(false);
+    expect(existsSync(output)).toBe(true);
+  } finally {
+    releaseFinalization.resolve();
+    committing.mockRestore();
+    rollback.mockRestore();
+    await provider.close();
+  }
+});
+
+it("preserves the timeout and failed rollback when the deadline expires before commit", async () => {
+  const { imagePath, directory } = await writeTestImage({ withGuided: false });
+  const provider = new UefiAnalysisProvider();
+  const output = join(directory, "out");
+  const write = SafeOutputTree.prototype.write;
+  let expiredClock: ReturnType<typeof vi.spyOn> | undefined;
+  const writing = vi
+    .spyOn(SafeOutputTree.prototype, "write")
+    .mockImplementationOnce(async function (this: SafeOutputTree, ...args) {
+      const receipt = await write.apply(this, args);
+      const afterDeadline = performance.now() + UEFI_FIRMWARE_LIMITS.timeoutMs;
+      expiredClock = vi
+        .spyOn(performance, "now")
+        .mockReturnValue(afterDeadline);
+      return receipt;
+    });
+  const rollback = vi
+    .spyOn(SafeOutputTree.prototype, "rollback")
+    .mockRejectedValueOnce(new Error("rollback denied"));
+  try {
+    const result = await provider.execute(extractRequest(imagePath, output));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        cleanupIncomplete: true,
+        cleanupPrimary: {
+          _tag: "AnalysisTimeoutError",
+          timeoutMs: UEFI_FIRMWARE_LIMITS.timeoutMs,
+        },
+      },
+    });
+    await provider.close();
+    expect(rollback).toHaveBeenCalledTimes(2);
+    expect(existsSync(output)).toBe(false);
+  } finally {
+    expiredClock?.mockRestore();
+    writing.mockRestore();
+    rollback.mockRestore();
+    await provider.close();
+  }
 });

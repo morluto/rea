@@ -118,10 +118,50 @@ it("records a truncated final section instead of inventing one", () => {
   const last = walked.sections[1];
   expect(last?.typeCode).toBe(0x10);
   expect(last?.truncated).toBe(true);
-  expect(walked.terminated).toBe(true);
+  expect(walked.terminated).toBe(false);
 });
 
 it("returns no sections when the area is shorter than one header", () => {
   const region = imageRegion(Buffer.from([2, 0, 0]), 0, 3);
   expect(walkSections(region, 0, 3, typeNameFor).sections).toHaveLength(0);
 });
+
+it("uses the extended common header for both guided and standard compression fields", () => {
+  const guided = Buffer.from(
+    "ffffff022000000098584eee143959429d6edc7bd79403cf1c00010001020304",
+    "hex",
+  );
+  const standard = Buffer.from("ffffff01110000000a0000000101020304", "hex");
+  for (const [section, expected] of [
+    [guided, { kind: "lzma-custom", dataOffset: 28, attributes: 1 }],
+    [standard, { kind: "efi-standard", dataOffset: 13, attributes: null }],
+  ] as const) {
+    const record = walkSections(
+      imageRegion(section, 0, section.length),
+      0,
+      section.length,
+      typeNameFor,
+    ).sections[0];
+    expect(record?.compression).toMatchObject(expected);
+    expect(record?.payload).toEqual({
+      start: expected.dataOffset,
+      end: section.length,
+    });
+  }
+});
+
+it.each([20, 30])(
+  "rejects a guided payload offset %i outside the observed payload bounds",
+  (offset) => {
+    const section = buildLzmaGuidedSection(Buffer.from([0x11, 0x22]));
+    section.writeUIntLE(40, 0, 3);
+    section.writeUInt16LE(offset, 20);
+    const record = walkSections(
+      imageRegion(section, 0, section.length),
+      0,
+      section.length,
+      typeNameFor,
+    ).sections[0];
+    expect(record).toMatchObject({ malformed: true, payload: null });
+  },
+);

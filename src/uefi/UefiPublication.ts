@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
 import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { uefiFailure } from "./UefiFailures.js";
@@ -28,6 +30,7 @@ export interface UefiPublishedFile {
 export interface UefiPublicationOutcome {
   readonly outputRoot: string;
   readonly files: readonly UefiPublishedFile[];
+  readonly failure?: AnalysisError;
 }
 
 /**
@@ -39,76 +42,69 @@ export const publishUefiFiles = async (context: {
   readonly outputDirectory: string;
   readonly operation: UefiOperation;
   readonly entries: readonly UefiPublicationEntry[];
-  readonly signal?: AbortSignal;
+  readonly signal: AbortSignal;
+  readonly checkpoint: () => void;
+  readonly resources: ArtifactResourceScope;
 }): Promise<UefiPublicationOutcome> => {
   let tree: SafeOutputTree | undefined;
+  const files: UefiPublishedFile[] = [];
   try {
-    tree = await SafeOutputTree.create(context.outputDirectory).catch(
-      (creationCause: unknown) =>
-        creationCause instanceof SafeOutputTreeCreationFailure &&
-        creationCause.tree !== undefined
-          ? creationCause.tree
-          : undefined,
-    );
-    if (tree === undefined) {
-      throw new Error("SafeOutputTree creation produced no tree.");
-    }
-    const files: UefiPublishedFile[] = [];
+    context.checkpoint();
+    tree = await SafeOutputTree.create(context.outputDirectory);
     for (const entry of context.entries) {
-      context.signal?.throwIfAborted();
+      context.checkpoint();
       const sha256 = createHash("sha256").update(entry.bytes).digest("hex");
-      await tree.write(
+      const written = await tree.write(
         entry.relativePath,
         Readable.from([entry.bytes]),
         { sha256, bytes: entry.bytes.length },
         context.signal,
       );
       files.push({
-        relative_path: entry.relativePath,
-        path: join(tree.outputRoot, entry.relativePath),
-        size: entry.bytes.length,
-        sha256,
+        relative_path: written.relativePath,
+        path: join(tree.outputRoot, written.relativePath),
+        size: written.bytesWritten,
+        sha256: written.sha256,
       });
     }
-    context.signal?.throwIfAborted();
+    context.checkpoint();
     await tree.commit(context.signal);
     return { outputRoot: tree.outputRoot, files };
   } catch (cause: unknown) {
-    let rollback: ProviderCleanupError | undefined;
-    if (tree !== undefined) {
-      try {
-        await tree.rollback();
-      } catch (rollbackCause: unknown) {
-        rollback = new ProviderCleanupError(
-          UEFI_PROVIDER_ID,
-          ["output-tree"],
-          {
-            reason:
-              rollbackCause instanceof Error
-                ? rollbackCause.message
-                : String(rollbackCause),
-          },
-          { operation: context.operation },
-        );
-      }
-    }
-    if (context.signal?.aborted) {
-      const cancelled = new AnalysisCancelledError(context.operation);
-      throw rollback === undefined
-        ? cancelled
-        : analysisErrorWithCleanupFailure(
-            cancelled,
-            rollback,
-            context.operation,
-          );
-    }
+    if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
     const primary = uefiFailure(
       cause,
       context.operation,
       context.outputDirectory,
     );
-    throw rollback === undefined
-      ? primary
-      : analysisErrorWithCleanupFailure(primary, rollback, context.operation);
+    if (tree === undefined) throw primary;
+
+    const released = await context.resources.release({
+      kind: "output-tree",
+      resource: tree.outputRoot,
+      tree,
+    });
+    if (released.kind === "released") {
+      primary.resolveCleanup();
+      if (tree.published) return { outputRoot: tree.outputRoot, files };
+      throw primary;
+    }
+    const cleanup = new ProviderCleanupError(
+      UEFI_PROVIDER_ID,
+      [tree.outputRoot],
+      { reason: String(released.cause) },
+      { cause: released.cause, operation: context.operation },
+    );
+    new AnalysisCleanupLeaseGroup(cleanup, [released.lease]);
+    // The exact tree owns pending publication handles and rollback together.
+    if (primary.cleanupIncomplete)
+      new AnalysisCleanupLeaseGroup(primary, [released.lease]);
+    const failure = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      context.operation,
+    ).bindCleanupDependencies([primary, cleanup]);
+    if (tree.published) return { outputRoot: tree.outputRoot, files, failure };
+    throw failure;
   }
 };

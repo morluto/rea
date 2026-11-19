@@ -13,6 +13,66 @@ On Linux, Binwalk and Unblob run as REA-owned processes and require a
 procps-compatible `ps` on REA's `PATH`; see the shared
 [Linux process prerequisite](installation.md#linux-owned-process-prerequisite).
 
+## UEFI flash images and AMI NVRAM
+
+The bundled UEFI tools map PI firmware volumes, FFS files and sections in local
+flash images. They also report plausible AMD PSP directory tables and scan for
+AMI NVAR chains such as `StdDefaults`. They run independently of Binwalk and
+Unblob.
+
+```sh
+rea inspect-uefi-firmware /path/to/flash.bin --json
+rea inspect-uefi-nvram /path/to/flash.bin --json
+rea extract-uefi-firmware /path/to/flash.bin /path/to/new-output \
+  --volume-offset 4096 --source-stream flash --json
+```
+
+Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
+`{"path":"/path/to/flash.bin"}`. To extract a mapped flash-backed volume:
+
+```json
+{
+  "name": "extract_uefi_firmware",
+  "arguments": {
+    "path": "/path/to/flash.bin",
+    "output_directory": "/path/to/new-output",
+    "target": { "kind": "volume", "offset": 4096, "source_stream": null }
+  }
+}
+```
+
+Extraction also accepts `ffs-file`, `section`, and `whole-image` targets.
+Volume, file, and section targets include mapped descendants. A decoded record's
+offset starts at zero in the stream named by `source_stream`. Pass that carrier
+logical path when extracting by offset. For the original image, use MCP
+`source_stream: null` or CLI `--source-stream flash` to disambiguate offsets.
+Files carved directly from the image have an `original_file_range`. Decoded
+files have a null original range and retain their byte range in the named
+stream. Read `derivations` to trace each decoded stream back to its carrier.
+
+LZMA-custom and AMD-zlib can yield nested volumes or section chains. LZMAF86,
+EFI standard compression and other unsupported guided handlers produce
+extraction gaps. Set MCP `include_compressed` to false or pass
+`--no-include-compressed` to omit undecoded carriers. PSP locations remain
+unverified declarations. NVAR results describe byte ranges, names, and hashes
+without interpreting the contents of variables.
+
+UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
+structural records. The nesting depth defaults to 3 for firmware and 2 for
+NVAR. Decoding is limited to 64 MiB per stream and 128 MiB across one operation.
+An admitted operation has a 60-second deadline covering input, parsing,
+decoding, and staging. Owned cleanup can continue past the deadline. Extraction
+defaults to 10,000 files and 256 MiB of published file bytes in a fresh path
+with an existing parent. Review `coverage`, `limitations`, and
+`extraction_gaps` before relying on completeness.
+
+The separate `open_binary` flash admission path requires a signature in the
+first MiB and an aligned, structurally plausible FFS2 or FFS3 volume in the
+bounded scan. Flash admission provides an artifact inventory. For executable
+analysis, pass the returned path of an extracted PE32 payload to
+`open_binary` and choose a provider that supports its format and architecture.
+Runtime addresses remain unknown.
+
 ## Caller-supplied tools
 
 Provide existing tools using absolute executable paths, scoped to your shell:

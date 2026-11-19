@@ -67,9 +67,10 @@ export const COMPRESSION_GUID_BY_DISPLAY: Readonly<
   "fc1bcdb0-7d31-49c8-926a-4795711f9b3c": "crc32-guided",
 };
 
-/** FFS attributes (PI Specification 3.3.1): raw flags, alignment exponent and checksum bit. */
+/** FFS attributes (PI Specification 3.3.1): raw flags, data alignment and checksum bit. */
 export const FFS_ATTRIBUTE_MASKS = {
   largeFile: 0x01,
+  dataAlignment2: 0x02,
   fixed: 0x04,
   dataAlignment: 0x38,
   checksumValid: 0x40,
@@ -117,8 +118,6 @@ export const FFS_HEADER_LAYOUT = {
   length: 24,
   extendedSizeOffset: 24,
   extendedLength: 32,
-  largeFileMarker: 0xffffff,
-  sectionAlignment: 4,
 } as const;
 
 /** Common, compression and guided section header geometry (PI Specification 3.2.4). */
@@ -129,11 +128,9 @@ export const SECTION_LAYOUT = {
   extendedSizeOffset: 4,
   extendedLength: 8,
   largeSectionMarker: 0xffffff,
-  compressionUncompressedLengthOffset: 4,
-  compressionTypeOffset: 8,
-  compressionHeaderLength: 9,
-  guidedSectionDefinitionGuidOffset: 4,
-  guidDataOffsetOffset: 20,
-  guidAttributesOffset: 22,
-  guidedHeaderLength: 24,
+  compressionFieldsLength: 5,
+  compressionTypeFieldOffset: 4,
+  guidedFieldsLength: 20,
+  guidDataOffsetFieldOffset: 16,
+  guidAttributesFieldOffset: 18,
 } as const;

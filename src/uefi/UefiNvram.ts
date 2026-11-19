@@ -1,3 +1,4 @@
+import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 /**
  * AMI NVRAM variable-store cartography for UEFI flash images.
  *
@@ -87,11 +88,12 @@ export interface AmiNvramScan {
 export const probeNvramEntry = (
   image: Buffer,
   offset: number,
+  endOffset = image.length,
 ): ParsedNvramEntry | null => {
-  if (offset < 0 || offset + NVAR_MIN_ENTRY_BYTES > image.length) return null;
+  if (offset < 0 || offset + NVAR_MIN_ENTRY_BYTES > endOffset) return null;
   if (image.readUInt32LE(offset) !== NVAR_MAGIC) return null;
   const totalSize = image.readUInt16LE(offset + 4);
-  if (totalSize < NVAR_MIN_ENTRY_BYTES || offset + totalSize > image.length)
+  if (totalSize < NVAR_MIN_ENTRY_BYTES || offset + totalSize > endOffset)
     return null;
   const attributes = image.readUInt32LE(offset + 6);
   if (
@@ -101,7 +103,10 @@ export const probeNvramEntry = (
     return null;
   const state = image.readUInt8(offset + 10);
   const nameStart = offset + NVAR_HEADER_BYTES;
-  const nameEnd = image.indexOf(0, nameStart);
+  const nameTerminator = image
+    .subarray(nameStart, offset + totalSize)
+    .indexOf(0);
+  const nameEnd = nameTerminator < 0 ? -1 : nameStart + nameTerminator;
   if (nameEnd < 0 || nameEnd >= offset + totalSize) return null;
   for (let i = nameStart; i < nameEnd; i += 1) {
     if (!isPrintableAscii(image.readUInt8(i))) return null;
@@ -133,18 +138,20 @@ const collectChain = (
   parentOffset: number | null,
   maxDepth: number,
   out: AmiNvramVariable[],
-): { lastEnd: number; depthLimited: boolean } => {
+  reserve: () => boolean,
+): { lastEnd: number; depthLimitedAt: number | null } => {
   let cursor = startOffset;
   let lastEnd = startOffset;
-  let depthLimited = false;
+  let depthLimitedAt: number | null = null;
   while (cursor + NVAR_MIN_ENTRY_BYTES <= endOffset) {
-    const entry = probeNvramEntry(image, cursor);
-    if (entry === null || entry.endOffset > endOffset) break;
+    const entry = probeNvramEntry(image, cursor, endOffset);
+    if (entry === null) break;
+    if (!reserve()) break;
     out.push({ ...entry, depth, parentOffset });
     lastEnd = entry.endOffset;
     if (
       entry.dataLength >= NVAR_MIN_ENTRY_BYTES &&
-      probeNvramEntry(image, entry.dataOffset) !== null
+      probeNvramEntry(image, entry.dataOffset, entry.endOffset) !== null
     ) {
       if (depth < maxDepth) {
         const nested = collectChain(
@@ -155,16 +162,17 @@ const collectChain = (
           entry.offset,
           maxDepth,
           out,
+          reserve,
         );
-        depthLimited = depthLimited || nested.depthLimited;
+        depthLimitedAt ??= nested.depthLimitedAt;
       } else {
         // A valid nested chain exists below the depth budget.
-        depthLimited = true;
+        depthLimitedAt ??= entry.offset;
       }
     }
     cursor = entry.endOffset;
   }
-  return { lastEnd, depthLimited };
+  return { lastEnd, depthLimitedAt };
 };
 
 /** Scan a raw image for chained AMI NVRAM variable stores. */
@@ -172,18 +180,37 @@ export const scanAmiNvramStores = (
   image: Buffer,
   maxStores: number,
   maxDepth: number,
+  checkpoint: () => void = () => {},
 ): AmiNvramScan => {
   const stores: AmiNvramStore[] = [];
   const limitations: string[] = [];
-  let depthLimited = false;
+  let depthLimitedAt: number | null = null;
+  let remaining: number = UEFI_FIRMWARE_LIMITS.scanRecords;
+  let recordLimited = false;
+  const reserve = (): boolean => {
+    checkpoint();
+    if (remaining === 0) {
+      recordLimited = true;
+      return false;
+    }
+    remaining -= 1;
+    return true;
+  };
   let searchFrom = 0;
   while (searchFrom + NVAR_MIN_ENTRY_BYTES <= image.length) {
+    checkpoint();
     const firstOffset = image.indexOf(NVAR_BYTES, searchFrom);
     if (firstOffset < 0) break;
     const first = probeNvramEntry(image, firstOffset);
     if (first === null) {
       searchFrom = firstOffset + 1;
       continue;
+    }
+    if (stores.length >= maxStores) {
+      limitations.push(
+        `Stopped after ${maxStores} AMI NVRAM stores; additional stores exist.`,
+      );
+      return { stores, coverage: "partial", limitations };
     }
     const variables: AmiNvramVariable[] = [];
     const walk = collectChain(
@@ -194,25 +221,29 @@ export const scanAmiNvramStores = (
       null,
       maxDepth,
       variables,
+      reserve,
     );
-    depthLimited = depthLimited || walk.depthLimited;
+    depthLimitedAt ??= walk.depthLimitedAt;
     const lastEnd = walk.lastEnd;
     let padding = 0;
     while (
       lastEnd + padding < image.length &&
       image.readUInt8(lastEnd + padding) === 0xff
-    )
+    ) {
+      if (padding % 65536 === 0) checkpoint();
       padding += 1;
-    stores.push({
-      offset: firstOffset,
-      name: first.name,
-      variables,
-      trailingPadding: padding > 0 ? padding : null,
-    });
+    }
+    if (variables.length > 0)
+      stores.push({
+        offset: firstOffset,
+        name: first.name,
+        variables,
+        trailingPadding: padding > 0 ? padding : null,
+      });
     searchFrom = lastEnd;
-    if (stores.length >= maxStores) {
+    if (recordLimited) {
       limitations.push(
-        `Stopped after ${maxStores} AMI NVRAM stores; additional stores may exist.`,
+        `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached in the NVAR chain at 0x${firstOffset.toString(16)}.`,
       );
       return { stores, coverage: "partial", limitations };
     }
@@ -221,13 +252,13 @@ export const scanAmiNvramStores = (
     limitations.push(
       "No AMI NVRAM variable stores (NVAR chains) were found in the image.",
     );
-  if (depthLimited)
+  if (depthLimitedAt !== null)
     limitations.push(
-      `Nested NVAR chains exist below max_depth ${maxDepth}; coverage is partial.`,
+      `Nested NVAR chains exist below max_depth ${maxDepth} (first omitted under variable at 0x${depthLimitedAt.toString(16)}); coverage is partial.`,
     );
   return {
     stores,
-    coverage: depthLimited ? "partial" : "complete",
+    coverage: depthLimitedAt === null ? "complete" : "partial",
     limitations,
   };
 };

@@ -13,7 +13,7 @@ export const UEFI_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_uefi_firmware"),
     kind: "firmware-provider",
     description:
-      "Map the UEFI firmware volumes, FFS files and section chains of a local flash image with the pure-TypeScript rea-uefi parser: incremental SHA-256, aligned _FVH discovery with plausibility checks, volume-relative FFS walking, guided-section compression classification, conservative PSP-directory probing and classification of leftover regions. Reports one flat volume inventory with parent linkage, integrity notes and explicit limitations; nothing is executed and no external tool is required. LZMA-custom and LZMAF86 payloads decode through one bounded owned node worker (pinned lzma-purejs); other compression GUIDs stay recognized-with-gaps and keep their limits explicit.",
+      "Map PI firmware volumes, FFS files, section chains, AMD PSP directory candidates and uncovered ranges in a local flash image. Report integrity observations and coverage limits. LZMA-custom and AMD-zlib streams can contain nested volumes or section chains. Decoded offsets are relative to the stream identified by source_stream. LZMAF86, EFI standard compression and other unsupported handlers remain explicit limitations.",
     inputSchema: uefiInputSchemas.inspect_uefi_firmware,
     outputSchema: evidenceResultOf(uefiResultSchemas.inspect_uefi_firmware),
     examples: [
@@ -28,7 +28,7 @@ export const UEFI_TOOL_CONTRACTS = [
     ...toolContractMetadata("extract_uefi_firmware"),
     kind: "firmware-provider",
     description:
-      "Extract selected UEFI firmware bytes with the rea-uefi parser into an absent output directory: whole-image, one firmware volume, one FFS file or one section. Publishes section payloads, uncompressed file bodies and decoded LZMA-custom streams with their original image ranges, parent logical paths, derivations and SHA-256 digests, while recognized-but-undecodable payloads stay explicit extraction_gaps rows (carriers published only when requested). Staging uses SafeOutputTree semantics: exclusive creation, no executable bits, digest-verified writes, commit or rollback; budgets cap output bytes and files. Select a published PE32 file with open_binary for deep-provider analysis; runtime addresses stay null because they are not statically proven.",
+      "Extract FFS bodies and section payloads from a local UEFI image into an absent directory. A volume, file or section selection includes its descendants. Use source_stream with an offset from a decoded stream or when offsets are ambiguous. Results include SHA-256, source ranges and decode derivations; original_file_range is null for decoded bytes. Unsupported carriers are optional and decoding gaps remain visible. Pass an extracted PE32 file to open_binary for executable analysis.",
     inputSchema: uefiInputSchemas.extract_uefi_firmware,
     outputSchema: evidenceResultOf(uefiResultSchemas.extract_uefi_firmware),
     examples: [

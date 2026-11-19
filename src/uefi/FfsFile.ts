@@ -8,6 +8,8 @@ import {
 import { formatGuidLittleEndian } from "./UefiGuid.js";
 import { FFS_ATTRIBUTE_MASKS, FFS_HEADER_LAYOUT } from "./UefiCodeTables.js";
 
+const FFS_DATA_ALIGNMENT_EXPONENTS = [0, 4, 7, 9, 10, 12, 15, 16] as const;
+
 const STATE_BIT_NAMES: readonly (readonly [number, string])[] = [
   [0x01, "header-construction"],
   [0x02, "header-valid"],
@@ -26,7 +28,7 @@ export interface FfsFileHeader {
   readonly nameGuid: string | null;
   readonly typeCode: number;
   readonly attributes: number;
-  readonly alignmentExponent: number;
+  readonly dataAlignment: number;
   readonly rawState: number;
   readonly normalizedState: number;
   readonly stateFlags: readonly string[];
@@ -68,15 +70,16 @@ export function parseFfsFileHeader(
 
   let headerLength: number = FFS_HEADER_LAYOUT.length;
   let declaredLength = declaredCompact;
-  if (declaredCompact === FFS_HEADER_LAYOUT.largeFileMarker) {
-    if (extended && largeFile) {
-      headerLength = FFS_HEADER_LAYOUT.extendedLength;
-      declaredLength = region.buffer.readUInt32LE(
-        localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
-      );
-    } else {
-      implausibilities.push("large-file-undeclared");
-    }
+  if (largeFile) {
+    if (!extended) return null;
+    headerLength = FFS_HEADER_LAYOUT.extendedLength;
+    const size = region.buffer.readBigUInt64LE(
+      localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
+    );
+    if (size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    declaredLength = Number(size);
+    if (declaredCompact !== 0)
+      implausibilities.push("large-file-compact-size-is-nonzero");
   }
   if (declaredLength < headerLength) {
     implausibilities.push("declared-length-below-header");
@@ -115,7 +118,13 @@ export function parseFfsFileHeader(
     ),
     typeCode: region.buffer[localBase + FFS_HEADER_LAYOUT.typeOffset] ?? 0,
     attributes,
-    alignmentExponent: (attributes & FFS_ATTRIBUTE_MASKS.dataAlignment) >> 3,
+    dataAlignment:
+      2 **
+      ((attributes & FFS_ATTRIBUTE_MASKS.dataAlignment2) !== 0
+        ? 17 + ((attributes & FFS_ATTRIBUTE_MASKS.dataAlignment) >> 3)
+        : (FFS_DATA_ALIGNMENT_EXPONENTS[
+            (attributes & FFS_ATTRIBUTE_MASKS.dataAlignment) >> 3
+          ] ?? 0)),
     rawState,
     normalizedState,
     stateFlags,
@@ -165,15 +174,6 @@ export function verifyFfsFileChecksum(
   return ((total + expected) & 0xff) === 0;
 }
 
-/** Alignment exponent to byte alignment; capped at exponent 7. */
-export function alignmentFor(exponent: number): number {
-  return 1 << Math.max(0, Math.min(7, exponent));
-}
-
-export interface FfsWalkCursor {
-  readonly nextLocal: number;
-}
-
 /** First aligned FFS file position after the volume header (volume-relative). */
 export function firstFfsFileLocal(volume: {
   readonly localBase: number;
@@ -183,8 +183,13 @@ export function firstFfsFileLocal(volume: {
 }
 
 /** Advance to the next 8-aligned FFS position after one file. */
-export function nextFfsFileLocal(header: FfsFileHeader): number {
-  return alignUp(header.localBase + header.declaredLength, 8);
+export function nextFfsFileLocal(
+  header: FfsFileHeader,
+  volumeBase: number,
+): number {
+  const end =
+    header.localBase + Math.max(header.declaredLength, header.headerLength);
+  return volumeBase + alignUp(end - volumeBase, 8);
 }
 
 /** True when the header window is uniform in the volume erase byte. */

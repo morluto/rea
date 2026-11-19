@@ -68,6 +68,7 @@ export class UefiArtifactReader implements ArtifactReader {
   readonly #entries = new Map<string, ArtifactEntry>();
   readonly #ownsSource: boolean;
   #closed = false;
+  #closePromise: Promise<void> | undefined;
 
   constructor(
     private readonly path: string,
@@ -109,13 +110,11 @@ export class UefiArtifactReader implements ArtifactReader {
       imageRegion(image, 0, image.length),
       UEFI_FIRMWARE_LIMITS.maxVolumes,
     );
-    const volumeBudgetExhausted =
-      scan.volumes.length + scan.rejected.length >=
-      UEFI_FIRMWARE_LIMITS.maxVolumes;
+    if (scan.exhausted)
+      options?.onOmission?.({ path: "volume-scan-limit", kind: "unsupported" });
     let filesMapped = 0;
     let fileBudgetExhausted = false;
     for (const hit of scan.volumes) {
-      const mappedAllVolumes = hit === scan.volumes.at(-1);
       const header = hit.header;
       const name = `firmware-volume-${hex(header.absoluteBase)}`;
       const entry: ArtifactEntry = {
@@ -146,8 +145,6 @@ export class UefiArtifactReader implements ArtifactReader {
         this.#entries.set(file.adapterKey, file);
         filesMapped += 1;
         yield file;
-        if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles)
-          fileBudgetExhausted = true;
       }
       if (fileBudgetExhausted)
         options?.onOmission?.({
@@ -155,11 +152,6 @@ export class UefiArtifactReader implements ArtifactReader {
           kind: "unsupported",
         });
       if (fileBudgetExhausted) break;
-      if (volumeBudgetExhausted && mappedAllVolumes)
-        options?.onOmission?.({
-          path: name,
-          kind: "unsupported",
-        });
     }
   }
 
@@ -220,7 +212,7 @@ export class UefiArtifactReader implements ArtifactReader {
         adapterKey: `uefi-ffs:${hex(fileHeader.absoluteBase)}`,
       };
       yield entry;
-      const next = nextFfsFileLocal(fileHeader);
+      const next = nextFfsFileLocal(fileHeader, header.localBase);
       if (next <= local) break;
       local = next;
     }
@@ -334,9 +326,12 @@ export class UefiArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
-    if (this.#closed) return;
     this.#closed = true;
-    await this.#closeSource();
+    this.#closePromise ??= this.#closeSource().catch((cause: unknown) => {
+      this.#closePromise = undefined;
+      throw cause;
+    });
+    return this.#closePromise;
   }
 
   async #closeSource(): Promise<void> {

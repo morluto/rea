@@ -1,8 +1,7 @@
 import { Buffer } from "node:buffer";
 
 /**
- * One bounded read-only window: walker offsets stay local, every published
- * offset is image-absolute through `origin`.
+ * One bounded read-only window into a flash image or decoded stream.
  */
 export interface ScanRegion {
   readonly buffer: Buffer;
@@ -10,8 +9,10 @@ export interface ScanRegion {
   readonly start: number;
   /** Local end inside `buffer` (exclusive). */
   readonly end: number;
-  /** Image-absolute address of `start`; published offsets add the local delta. */
+  /** Source-stream offset of `start`; published offsets add the local delta. */
   readonly origin: number;
+  /** Carrier logical path for decoded bytes. Omitted for the original image. */
+  readonly sourceStream?: string;
 }
 
 /** Build a region over one full-image address range; bounds are clamped. */
@@ -25,7 +26,7 @@ export function imageRegion(
   return { buffer, start: clampedStart, end: clampedEnd, origin: clampedStart };
 }
 
-/** Map a local position inside the region to its image-absolute address. */
+/** Map a local position inside the region to its source-stream offset. */
 export function absoluteOffset(
   region: ScanRegion,
   localOffset: number,
@@ -33,7 +34,7 @@ export function absoluteOffset(
   return region.origin + (localOffset - region.start);
 }
 
-/** Map an image-absolute address back to its local position inside the region. */
+/** Map an source-stream offset back to its local position inside the region. */
 export function localOffsetOf(
   region: ScanRegion,
   absoluteAddress: number,
@@ -41,7 +42,7 @@ export function localOffsetOf(
   return absoluteAddress - region.origin + region.start;
 }
 
-/** Read bytes of one sub-range as a copy; null when outside region bounds. */
+/** Read bytes of one sub-range as a view; null when outside region bounds. */
 export function sliceRegion(
   region: ScanRegion,
   absoluteStart: number,
@@ -84,26 +85,4 @@ export function isWindowUniform(
     }
   }
   return true;
-}
-
-/** Fractional uniformity sample for classifying large regions cheaply. */
-export function sampleUniformity(
-  buffer: Buffer,
-  start: number,
-  end: number,
-): number {
-  const boundedStart = Math.max(0, start);
-  const boundedEnd = Math.min(end, buffer.length);
-  if (boundedStart >= boundedEnd) {
-    return 0;
-  }
-  const span = boundedEnd - boundedStart;
-  const step = Math.max(1, Math.floor(span / 256));
-  let matches = 0;
-  let samples = 0;
-  for (let index = boundedStart; index < boundedEnd; index += step) {
-    matches += buffer[index] === 0xff ? 1 : 0;
-    samples += 1;
-  }
-  return matches / samples;
 }

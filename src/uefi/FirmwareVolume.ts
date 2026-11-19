@@ -44,6 +44,7 @@ export interface FirmwareVolumeHeader {
 export function parseFirmwareVolumeHeader(
   region: ScanRegion,
   localHeaderBase: number,
+  reserve: () => boolean = () => true,
 ): FirmwareVolumeHeader | null {
   const available = region.end - localHeaderBase;
   if (
@@ -119,6 +120,7 @@ export function parseFirmwareVolumeHeader(
       blockMapTerminated = true;
       break;
     }
+    if (!reserve()) return null;
     blockMap.push({ numBlocks, blockLength });
   }
   if (!blockMapTerminated) {
@@ -132,14 +134,9 @@ export function parseFirmwareVolumeHeader(
     implausibilities.push("block-map-exceeds-volume");
   }
 
-  const checksum = region.buffer.readUInt16LE(
-    localHeaderBase + FV_HEADER_LAYOUT.checksumOffset,
-  );
-  const checksumValid = verifyFirmwareVolumeChecksum(
-    region.buffer,
-    localHeaderBase,
-    headerLength,
-  );
+  const checksumValid =
+    localHeaderBase + headerLength <= region.end &&
+    verifyFirmwareVolumeChecksum(region.buffer, localHeaderBase, headerLength);
   const fileSystemGuidRaw = sliceRegion(
     region,
     absoluteOffset(region, localHeaderBase) +
@@ -197,6 +194,7 @@ export interface RejectedFirmwareVolumeHit {
 export interface FirmwareVolumeScanResult {
   readonly volumes: readonly FirmwareVolumeHit[];
   readonly rejected: readonly RejectedFirmwareVolumeHit[];
+  readonly exhausted: boolean;
 }
 
 /**
@@ -206,15 +204,28 @@ export interface FirmwareVolumeScanResult {
  */
 export function scanFirmwareVolumes(
   region: ScanRegion,
-  maxVolumes: number,
+  maxCandidates: number,
+  options: {
+    readonly reserve?: () => boolean;
+    readonly skipNested?: boolean;
+  } = {},
 ): FirmwareVolumeScanResult {
   const volumes: FirmwareVolumeHit[] = [];
   const rejected: RejectedFirmwareVolumeHit[] = [];
   const signatureText = Buffer.from("_FVH", "ascii");
   let searchFrom = region.start;
-  while (volumes.length + rejected.length < maxVolumes) {
-    const hitLocal = region.buffer.indexOf(signatureText, searchFrom);
+  const searchable = region.buffer.subarray(0, region.end);
+  let exhausted = false;
+  while (searchFrom < region.end) {
+    const hitLocal = searchable.indexOf(signatureText, searchFrom);
     if (hitLocal < 0 || hitLocal + 4 > region.end) {
+      break;
+    }
+    if (
+      volumes.length + rejected.length >= maxCandidates ||
+      options.reserve?.() === false
+    ) {
+      exhausted = true;
       break;
     }
     searchFrom = hitLocal + 1;
@@ -230,7 +241,11 @@ export function scanFirmwareVolumes(
       });
       continue;
     }
-    const header = parseFirmwareVolumeHeader(region, headerLocal);
+    const header = parseFirmwareVolumeHeader(
+      region,
+      headerLocal,
+      options.reserve,
+    );
     if (header == null) {
       rejected.push({
         absoluteBase:
@@ -249,8 +264,12 @@ export function scanFirmwareVolumes(
       continue;
     }
     volumes.push({ header });
+    if (options.skipNested) {
+      // Nested search belongs to the accepted volume's file and section walkers.
+      searchFrom = Math.max(searchFrom, headerLocal + header.declaredLength);
+    }
   }
-  return { volumes, rejected };
+  return { volumes, rejected, exhausted };
 }
 
 /** Read the FFS extended header FvName GUID when an ext header pad file exists. */

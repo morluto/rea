@@ -1,9 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { inflateSync } from "node:zlib";
+import { inflate } from "node:zlib";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
@@ -18,6 +23,9 @@ import {
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { digestSchema } from "../domain/digests.js";
 import type { Result } from "../domain/result.js";
@@ -25,23 +33,23 @@ import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import {
   uefiResultSchemas,
   type UefiExtractResult,
-  type UefiFfsFileRecord,
   type UefiInspectResult,
   type UefiNvramInspectResult,
-  type UefiSectionRecord,
-  type UefiVolumeRecord,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import type { UefiRequest } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import { runOwnedCommand } from "../process/OwnedCommand.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../process/OwnedCommand.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type {
   UefiImageScanSummary,
-  UefiLzmaDecodeOutcome,
-  UefiLzmaDecodeRequest,
+  UefiDecodeResult,
+  UefiPayload,
 } from "./UefiImageScan.js";
 import { scanUefiImage } from "./UefiImageScan.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
-import { AMD_ZLIB_HEADER_LENGTH, peelAmiZlibPayload } from "./FfsSections.js";
 import { uefiFailure } from "./UefiFailures.js";
 import {
   publishUefiFiles,
@@ -71,11 +79,7 @@ const lzmaReplySchema = z.discriminatedUnion("ok", [
   }),
 ]);
 
-type UefiLzmaWorkerDecode =
-  | { readonly ok: true; readonly outcome: UefiLzmaDecodeOutcome }
-  | { readonly ok: false; readonly message: string };
-
-const SECTION_TYPE_FIRMWARE_VOLUME_IMAGE = 0x17;
+const inflateBounded = promisify(inflate);
 const FFS_FILE_TYPE_PAD = 0xf0;
 
 const hex = (value: number): string => `0x${value.toString(16)}`;
@@ -85,157 +89,54 @@ const targetInputError = (message: string): AnalysisInputError =>
     { path: ["target"], reason: "invalid_value", message },
   ]);
 
-/** One staged extraction payload plus the metadata the result schema needs. */
-interface PlannedExtraction {
-  readonly entry: UefiPublicationEntry;
-  readonly source: UefiExtractResult["files"][number]["source"];
-  readonly originalFileRange: {
-    readonly offset: number;
-    readonly length: number;
-  };
-  readonly parentLogicalPath: string | null;
-}
+type ExtractInput = Extract<
+  UefiRequest,
+  { operation: "extract_uefi_firmware" }
+>["input"];
+type ExtractedFile = UefiExtractResult["files"][number];
+type ExtractionRange = UefiPayload["range"];
 
-/**
- * Selected FFS files plus an optional only-this-section restriction. Every
- * entry names its owning volume, because extraction carves from that volume's
- * byte context (the flash image, or a decoded stream for nested volumes).
- */
-interface UefiSelection {
-  readonly offset: number;
-  readonly length: number;
-  readonly files: readonly {
-    readonly file: UefiFfsFileRecord;
-    readonly volume: UefiVolumeRecord;
-    readonly sectionOnly: UefiSectionRecord | null;
-  }[];
-}
-
-/**
- * Byte context that a scanned record's offsets resolve against. Offsets are
- * image-absolute for image-backed volumes and anchored at the compressed
- * stream's position inside the parent context for decoded-stream volumes
- * (UefiImageScan records the same anchor). The scan never stores record
- * offsets outside the context it carved them from, so carving is always
- * `record.offset − context.origin` inside `context.buffer`.
- */
-type ResolvedContext =
-  | { readonly kind: "image"; readonly buffer: Buffer }
-  | {
-      readonly kind: "decoded";
-      readonly buffer: Buffer;
-      readonly origin: number;
+/** Offsets are scoped to the scanner's exact stream and may repeat across streams. */
+const selectTarget = (
+  scan: UefiImageScanSummary,
+  target: ExtractInput["target"],
+) => {
+  if (target.kind === "whole-image") {
+    return {
+      offset: 0,
+      length: scan.inputSize,
+      logical_path: "flash",
+      source_stream: null,
     };
-
-const localOffset = (context: ResolvedContext, recordOffset: number): number =>
-  context.kind === "image" ? recordOffset : recordOffset - context.origin;
-
-/**
- * Locate the file record that spawned one nested volume: FFI-section volumes
- * link through their owning section's sub_volumes list, while raw-file
- * embedded volumes (AMI ROM holes) hang directly under the file path. The
- * offset match plus membership prefix guards against accidental collisions
- * between anchored coordinate spaces.
- */
-const owningOf = (
-  scan: UefiImageScanSummary,
-  volume: UefiVolumeRecord,
-): {
-  readonly parent: UefiVolumeRecord;
-  readonly file: UefiFfsFileRecord;
-  readonly section: UefiSectionRecord | null;
-} | null => {
-  if (volume.parent_offset === null) return null;
-  const owns = (file: UefiFfsFileRecord): boolean =>
-    file.sections.some((section) =>
-      section.sub_volumes.includes(volume.logical_path),
-    ) || volume.logical_path.startsWith(`${file.logical_path}/embedded/`);
-  const parent = scan.volumes.find(
-    (candidate) =>
-      candidate.offset === volume.parent_offset &&
-      candidate.ffs_files.some(owns),
-  );
-  const file = parent?.ffs_files.find(owns);
-  if (parent === undefined || file === undefined) return null;
-  return {
-    parent,
-    file,
-    section:
-      file.sections.find((section) =>
-        section.sub_volumes.includes(volume.logical_path),
-      ) ?? null,
-  };
-};
-
-/** Resolve the requested extraction scope against the scanned volume tree. */
-const selectTargets = (
-  scan: UefiImageScanSummary,
-  target:
-    | { readonly kind: "whole-image" }
-    | { readonly kind: "volume"; readonly offset: number }
-    | { readonly kind: "ffs-file"; readonly offset: number }
-    | { readonly kind: "section"; readonly offset: number },
-): UefiSelection => {
-  const fileEntryOf = (
-    file: UefiFfsFileRecord,
-    volume: UefiVolumeRecord,
-    sectionOnly: UefiSectionRecord | null = null,
-  ) => ({ file, volume, sectionOnly });
-  const missing = (subject: string): AnalysisInputError =>
-    targetInputError(
-      `No scanned ${subject} at offset ${hex("offset" in target ? target.offset : 0)}; offsets must match a mapped volume, FFS file or section record.`,
-    );
-  switch (target.kind) {
-    case "whole-image":
-      return {
-        offset: 0,
-        length: scan.inputSize,
-        files: scan.volumes.flatMap((volume) =>
-          volume.ffs_files.map((file) => fileEntryOf(file, volume)),
-        ),
-      };
-    case "volume": {
-      const volume = scan.volumes.find(
-        (candidate) => candidate.offset === target.offset,
-      );
-      if (volume === undefined) throw missing("firmware volume");
-      return {
-        offset: volume.offset,
-        length: volume.length,
-        files: volume.ffs_files.map((file) => fileEntryOf(file, volume)),
-      };
-    }
-    case "ffs-file": {
-      for (const volume of scan.volumes) {
-        const file = volume.ffs_files.find(
-          (candidate) => candidate.offset === target.offset,
-        );
-        if (file !== undefined)
-          return {
-            offset: file.offset,
-            length: file.length,
-            files: [fileEntryOf(file, volume)],
-          };
-      }
-      throw missing("FFS file");
-    }
-    case "section": {
-      for (const volume of scan.volumes) {
-        for (const file of volume.ffs_files) {
-          const section = file.sections.find(
-            (candidate) => candidate.offset === target.offset,
-          );
-          if (section !== undefined)
-            return {
-              offset: section.offset,
-              length: section.length,
-              files: [fileEntryOf(file, volume, section)],
-            };
-        }
-      }
-      throw missing("FFS section");
-    }
   }
+  const matches = (record: {
+    offset: number;
+    source_stream: string | null;
+  }): boolean =>
+    record.offset === target.offset &&
+    (target.source_stream === undefined ||
+      record.source_stream === target.source_stream);
+  const records =
+    target.kind === "volume"
+      ? scan.volumes
+      : target.kind === "ffs-file"
+        ? scan.volumes.flatMap((volume) => volume.ffs_files)
+        : scan.volumes.flatMap((volume) =>
+            volume.ffs_files.flatMap((file) => file.sections),
+          );
+  const selected = records.filter(matches);
+  const record = selected[0];
+  if (record === undefined) {
+    throw targetInputError(
+      `No mapped ${target.kind} at ${hex(target.offset)} in the selected stream.`,
+    );
+  }
+  if (selected.length > 1) {
+    throw targetInputError(
+      `The ${target.kind} offset ${hex(target.offset)} appears in multiple streams. Select one with source_stream: ${selected.map(({ source_stream }) => JSON.stringify(source_stream)).join(", ")}.`,
+    );
+  }
+  return record;
 };
 
 /**
@@ -367,46 +268,41 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const controller = new AbortController();
-    let deadlineExceeded = false;
-    const timer = setTimeout(() => {
-      deadlineExceeded = true;
-      controller.abort(
-        new Error(
-          `UEFI operation exceeded the ${UEFI_FIRMWARE_LIMITS.timeoutMs} ms deadline.`,
-        ),
-      );
-    }, UEFI_FIRMWARE_LIMITS.timeoutMs);
+    const timeoutMs = UEFI_FIRMWARE_LIMITS.timeoutMs;
+    const deadline = performance.now() + timeoutMs;
+    const deadlineReason = new AnalysisTimeoutError(
+      request.operation,
+      timeoutMs,
+    );
+    const expire = () => controller.abort(deadlineReason);
+    const timer = setTimeout(expire, timeoutMs);
     const parent = options?.signal;
-    const onParentAbort = () => controller.abort(parent?.reason);
-    if (parent !== undefined) {
-      if (parent.aborted) controller.abort(parent.reason);
-      else parent.addEventListener("abort", onParentAbort, { once: true });
-    }
+    const onParentAbort = () =>
+      controller.abort(
+        new AnalysisCancelledError(request.operation, {
+          cause: parent?.reason,
+        }),
+      );
+    if (parent?.aborted) onParentAbort();
+    else parent?.addEventListener("abort", onParentAbort, { once: true });
+    const checkpoint = (): void => {
+      if (performance.now() >= deadline) expire();
+      controller.signal.throwIfAborted();
+    };
     try {
-      const result = await this.#executeWithSignal(request, controller.signal);
-      // Reclassify only the deadline-induced cancellation as a timeout, and
-      // keep its cause and cleanup observations; never override a different
-      // primary failure that already explains what went wrong.
-      if (
-        !result.ok &&
-        deadlineExceeded &&
-        result.error instanceof AnalysisCancelledError
-      ) {
-        return {
-          ok: false,
-          error: new AnalysisTimeoutError(
-            request.operation,
-            UEFI_FIRMWARE_LIMITS.timeoutMs,
-            {
-              cause: result.error,
-              ...(result.error.cleanup === undefined
-                ? {}
-                : { cleanup: result.error.cleanup }),
-            },
-          ),
-        };
-      }
-      return result;
+      return {
+        ok: true,
+        value: await this.#executeWithSignal(
+          request,
+          controller.signal,
+          checkpoint,
+        ),
+      };
+    } catch (cause: unknown) {
+      return {
+        ok: false,
+        error: uefiFailure(cause, request.operation, request.input.path),
+      };
     } finally {
       clearTimeout(timer);
       parent?.removeEventListener("abort", onParentAbort);
@@ -416,61 +312,77 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   async #executeWithSignal(
     request: UefiRequest,
     signal: AbortSignal,
-  ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    return this.#resources.run(async () => {
+    checkpoint: () => void,
+  ): Promise<AnalysisExecution> {
+    const finishObservation = (value: AnalysisExecution): AnalysisExecution => {
       try {
-        const snapshot = await readStableArtifact(
-          request.input.path,
-          UEFI_FIRMWARE_LIMITS.inputBytes,
-          signal,
-          undefined,
-          this.#resources,
-        );
-        if (request.operation === "inspect_uefi_nvram") {
-          return {
-            ok: true,
-            value: this.#inspectNvram(request, snapshot.sha256, snapshot.bytes),
-          };
-        }
-        const scan = await scanUefiImage(
-          snapshot.bytes,
-          request.operation === "inspect_uefi_firmware"
-            ? {
-                maxDepth: request.input.max_depth,
-                maxVolumes: request.input.max_volumes,
-                maxFiles: request.input.max_files,
-              }
-            : {
-                maxDepth: request.input.max_depth,
-                maxVolumes: UEFI_FIRMWARE_LIMITS.defaultMaxVolumes,
-                maxFiles: UEFI_FIRMWARE_LIMITS.defaultMaxFiles,
-              },
-          (laneRequest: UefiLzmaDecodeRequest) =>
-            this.#decodeStream(
-              laneRequest.payload,
-              laneRequest.format,
-              signal,
-            ).then((decoded) => (decoded.ok ? decoded.outcome : null)),
-        );
-        return {
-          ok: true,
-          value:
-            request.operation === "inspect_uefi_firmware"
-              ? this.#inspect(request, snapshot.sha256, scan)
-              : await this.#extract(
-                  request,
-                  snapshot.bytes,
-                  snapshot.sha256,
-                  scan,
-                  signal,
-                ),
-        };
+        checkpoint();
+        return value;
       } catch (cause: unknown) {
-        return {
-          ok: false,
-          error: uefiFailure(cause, request.operation, request.input.path),
-        };
+        throw uefiFailure(
+          cause,
+          request.operation,
+          request.input.path,
+        ).retainPartialObservation({
+          kind: "uefi",
+          result: value.result,
+          provenance: jsonValueSchema.parse(value.subject),
+        });
       }
+    };
+    return this.#resources.run(async () => {
+      checkpoint();
+      const snapshot = await readStableArtifact(
+        request.input.path,
+        UEFI_FIRMWARE_LIMITS.inputBytes,
+        signal,
+        undefined,
+        this.#resources,
+      );
+      checkpoint();
+      if (request.operation === "inspect_uefi_nvram") {
+        const value = this.#inspectNvram(
+          request,
+          snapshot.sha256,
+          snapshot.bytes,
+          checkpoint,
+        );
+        return finishObservation(value);
+      }
+      const scan = await scanUefiImage(
+        snapshot.bytes,
+        request.operation === "inspect_uefi_firmware"
+          ? {
+              maxDepth: request.input.max_depth,
+              maxVolumes: request.input.max_volumes,
+              maxFiles: request.input.max_files,
+            }
+          : {
+              maxDepth: request.input.max_depth,
+              maxVolumes: UEFI_FIRMWARE_LIMITS.defaultMaxVolumes,
+              maxFiles: UEFI_FIRMWARE_LIMITS.defaultMaxFiles,
+            },
+        ({ payload, format, maxOutputBytes }) =>
+          this.#decodeStream(
+            request.operation,
+            payload,
+            format,
+            maxOutputBytes,
+            signal,
+          ),
+        checkpoint,
+      );
+      checkpoint();
+      if (request.operation === "extract_uefi_firmware") {
+        return this.#extract(
+          request,
+          snapshot.sha256,
+          scan,
+          signal,
+          checkpoint,
+        );
+      }
+      return finishObservation(this.#inspect(request, snapshot.sha256, scan));
     });
   }
 
@@ -485,7 +397,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         ? ("unknown" as const)
         : firstVolume.offset === 0
           ? ("fv-at-zero" as const)
-          : scan.pspTables.length > 0
+          : scan.pspTables.some((table) => table.offset < firstVolume.offset)
             ? ("amd-psp-first" as const)
             : ("scanned" as const);
     const result: UefiInspectResult =
@@ -506,6 +418,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           entries: table.entries.map((entry) => ({
             type: entry.type,
             declared_location: entry.declaredLocation,
+            declared_location_raw: entry.declaredLocationRaw,
+            address_mode: entry.addressMode,
             declared_size: entry.declaredSize,
             image_offset: entry.imageOffset,
             sha256: entry.sha256,
@@ -541,11 +455,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     request: Extract<UefiRequest, { operation: "inspect_uefi_nvram" }>,
     imageSha256: string,
     image: Buffer,
+    checkpoint: () => void,
   ): AnalysisExecution {
     const scan = scanAmiNvramStores(
       image,
       request.input.max_stores,
       request.input.max_depth,
+      checkpoint,
     );
     const result: UefiNvramInspectResult =
       uefiResultSchemas.inspect_uefi_nvram.parse({
@@ -555,24 +471,27 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         stores: scan.stores.map((store) => ({
           offset: store.offset,
           name: store.name,
-          variables: store.variables.map((variable) => ({
-            offset: variable.offset,
-            name: variable.name,
-            attributes: variable.attributes,
-            state: variable.state,
-            depth: variable.depth,
-            parent_offset: variable.parentOffset,
-            data_offset: variable.dataOffset,
-            data_length: variable.dataLength,
-            data_sha256: createHash("sha256")
-              .update(
-                image.subarray(
-                  variable.dataOffset,
-                  variable.dataOffset + variable.dataLength,
-                ),
-              )
-              .digest("hex"),
-          })),
+          variables: store.variables.map((variable) => {
+            checkpoint();
+            return {
+              offset: variable.offset,
+              name: variable.name,
+              attributes: variable.attributes,
+              state: variable.state,
+              depth: variable.depth,
+              parent_offset: variable.parentOffset,
+              data_offset: variable.dataOffset,
+              data_length: variable.dataLength,
+              data_sha256: createHash("sha256")
+                .update(
+                  image.subarray(
+                    variable.dataOffset,
+                    variable.dataOffset + variable.dataLength,
+                  ),
+                )
+                .digest("hex"),
+            };
+          }),
           trailing_padding: store.trailingPadding,
         })),
         coverage: scan.coverage,
@@ -594,348 +513,216 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
   async #extract(
     request: Extract<UefiRequest, { operation: "extract_uefi_firmware" }>,
-    image: Buffer,
     imageSha256: string,
     scan: UefiImageScanSummary,
-    signal?: AbortSignal,
+    signal: AbortSignal,
+    checkpoint: () => void,
   ): Promise<AnalysisExecution> {
     const input = request.input;
-    const selection = selectTargets(scan, input.target);
+    const selection = selectTarget(scan, input.target);
+    const includes = (path: string) =>
+      path === selection.logical_path ||
+      path.startsWith(`${selection.logical_path}/`);
     const gaps: UefiExtractResult["extraction_gaps"] = [];
     const derivations: UefiExtractResult["derivations"] = [];
-    const plan: PlannedExtraction[] = [];
+    const plan: {
+      readonly entry: UefiPublicationEntry;
+      readonly facts: Omit<
+        ExtractedFile,
+        "path" | "size" | "sha256" | "relative_path"
+      >;
+    }[] = [];
+    const emittedStreams = new Set<string>();
     let stagedBytes = 0;
-    let decodeAttempts = 0;
-    let decodeSuccesses = 0;
-    const carve = (
-      context: ResolvedContext,
-      offset: number,
-      length: number,
-      subject: string,
-    ): Buffer => {
-      const start = localOffset(context, offset);
-      if (
-        offset < 0 ||
-        length < 0 ||
-        start < 0 ||
-        start + length > context.buffer.length
-      ) {
-        throw targetInputError(
-          `Planned ${subject} carve ${hex(offset)}..${hex(offset + length)} leaves the ${context.buffer.length}-byte ${context.kind === "image" ? "flash image" : "decoded stream"}.`,
-        );
-      }
-      return context.buffer.subarray(start, start + length);
-    };
-    const stage = (
-      relativePath: string,
-      bytes: Buffer,
-      source: PlannedExtraction["source"],
-      originalFileRange: PlannedExtraction["originalFileRange"],
-      parentLogicalPath: string | null,
-    ): void => {
-      if (bytes.length === 0) return;
-      if (plan.length >= input.max_output_files) {
-        gaps.push({
-          kind: "size-truncated",
-          logical_path: parentLogicalPath ?? "flash",
-          range: originalFileRange,
-          detail: `max_output_files ${input.max_output_files} reached; ${relativePath} not extracted.`,
-        });
-        return;
-      }
-      if (stagedBytes + bytes.length > input.max_output_bytes) {
-        gaps.push({
-          kind: "size-truncated",
-          logical_path: parentLogicalPath ?? "flash",
-          range: originalFileRange,
-          detail: `max_output_bytes ${input.max_output_bytes} reached; ${relativePath} (${bytes.length} bytes) not extracted.`,
-        });
-        return;
-      }
-      stagedBytes += bytes.length;
-      plan.push({
-        entry: { relativePath, bytes },
-        source,
-        originalFileRange,
-        parentLogicalPath,
-      });
-    };
-    /** Decoded byte context per owning-section locator, so nested volumes and
-     * the owning file's walk share one decode; null marks failed decodes. */
-    const decodedContexts = new Map<string, ResolvedContext | null>();
-    const volumeContexts = new Map<string, ResolvedContext | null>();
 
-    /**
-     * Decode one compressed guided section inside its parent context, stage
-     * the decoded stream, and return the byte context that the stream's
-     * nested volumes carve from. The stream anchor mirrors UefiImageScan: the
-     * decompressed bytes sit behind the compressed payload start (after the
-     * AMI-zlib header when present).
-     */
-    const stageDecodedSection = async (
-      file: UefiFfsFileRecord,
-      section: UefiSectionRecord,
-      parentContext: ResolvedContext,
-    ): Promise<ResolvedContext | null> => {
-      signal?.throwIfAborted();
-      const locator = `${file.logical_path}/section-${hex(section.offset)}`;
-      const cached = decodedContexts.get(locator);
-      if (cached !== undefined) return cached;
-      const compression = section.compression;
-      if (compression.kind === "none") {
-        decodedContexts.set(locator, null);
+    const gap = (
+      kind: UefiExtractResult["extraction_gaps"][number]["kind"],
+      logical_path: string,
+      source_stream: string | null,
+      range: ExtractionRange | null,
+      detail: string,
+    ): void => {
+      gaps.push({ kind, logical_path, source_stream, range, detail });
+    };
+
+    const stage = (
+      logicalPath: string,
+      suffix: string,
+      payload: UefiPayload,
+      source: ExtractedFile["source"],
+      parentLogicalPath: string | null,
+      mediaType: string | null = null,
+    ): string | null => {
+      checkpoint();
+      if (payload.bytes.length === 0) return null;
+      if (
+        plan.length >= input.max_output_files ||
+        stagedBytes + payload.bytes.length > input.max_output_bytes
+      ) {
+        gap(
+          "size-truncated",
+          logicalPath,
+          payload.sourceStream,
+          payload.range,
+          `Output file or byte limit prevented publication of ${logicalPath}.`,
+        );
         return null;
       }
-      const format =
-        compression.kind === "ami-zlib" ? ("zlib" as const) : ("lzma" as const);
-      const compressedOffset = section.offset + compression.data_offset;
-      const compressedLength = section.length - compression.data_offset;
-      const compressedRange = {
-        offset: compressedOffset,
-        length: compressedLength,
-      };
-      let resolved: ResolvedContext | null = null;
-      let carrier: Buffer | null = null;
-      if (compressedLength <= 0) {
-        gaps.push({
-          kind: "unsupported-compression",
-          logical_path: locator,
-          range: null,
-          detail: `${section.compression.kind} section at ${hex(section.offset)} declares no compressed payload to decode.`,
-        });
-      } else {
-        carrier = carve(
-          parentContext,
-          compressedOffset,
-          compressedLength,
-          "compressed section",
-        );
-        let stream: Buffer | null = carrier;
-        if (format === "zlib") {
-          const peeled = peelAmiZlibPayload(carrier);
-          if (peeled == null) {
-            gaps.push({
-              kind: "unsupported-compression",
-              logical_path: locator,
-              range: compressedRange,
-              detail: `AMI-zlib payload at ${hex(compressedOffset)} is shorter than the ${hex(AMD_ZLIB_HEADER_LENGTH)}-byte AMD section header; no stream to decode.`,
-            });
-            stream = null;
-          } else {
-            stream = peeled.stream;
-          }
-        }
-        if (stream != null) {
-          decodeAttempts += 1;
-          const outcome = await this.#decodeStream(stream, format, signal);
-          if (outcome.ok) {
-            decodeSuccesses += 1;
-            stagedDecoded(
-              locator,
-              outcome,
-              compressedRange,
-              file.logical_path,
-              format,
-            );
-            resolved = {
-              kind: "decoded",
-              buffer: outcome.outcome.bytes,
-              origin:
-                localOffset(parentContext, section.offset) +
-                compression.data_offset,
-            };
-          } else {
-            gaps.push({
-              kind: "unsupported-compression",
-              logical_path: locator,
-              range: compressedRange,
-              detail: `${format === "zlib" ? "zlib" : "LZMA"} decode failed: ${outcome.message}`,
-            });
-          }
-        }
-      }
-      if (resolved === null && carrier !== null && input.include_compressed) {
-        stage(
-          `${locator}.compressed.bin`,
-          carrier,
-          "compressed-passthrough",
-          compressedRange,
-          file.logical_path,
-        );
-      }
-      decodedContexts.set(locator, resolved);
-      return resolved;
+      // Logical labels retain ':' and brackets. Output paths use portable
+      // characters and distinguish repeated GUIDs by their observed file offset.
+      const relativePath = `${logicalPath.replaceAll(":", "-").replaceAll("[", "-").replaceAll("]", "")}.${suffix}.bin`;
+      stagedBytes += payload.bytes.length;
+      plan.push({
+        entry: { relativePath, bytes: payload.bytes },
+        facts: {
+          original_file_range:
+            payload.sourceStream === null ? payload.range : null,
+          source_stream: payload.sourceStream,
+          source_range: payload.range,
+          runtime_address: null,
+          media_type: mediaType,
+          source,
+          parent_logical_path: parentLogicalPath,
+        },
+      });
+      return relativePath;
     };
 
-    /** Resolve the byte context of any scanned volume, decoding owning
-     * compressed sections on demand; null volumes keep their files uncarved. */
-    const contextForVolume = async (
-      volume: UefiVolumeRecord,
-    ): Promise<ResolvedContext | null> => {
-      const cached = volumeContexts.get(volume.logical_path);
-      if (cached !== undefined) return cached;
-      let resolved: ResolvedContext | null;
-      if (volume.parent_offset === null) {
-        resolved = { kind: "image", buffer: image };
-      } else {
-        const owner = owningOf(scan, volume);
-        if (owner === null) {
-          gaps.push({
-            kind: "unsupported-compression",
-            logical_path: volume.logical_path,
-            range: { offset: volume.offset, length: volume.length },
-            detail: `Owning file context for ${volume.logical_path} is not resolvable; its files stay uncarved.`,
-          });
-          resolved = null;
-        } else {
-          const parentContext = await contextForVolume(owner.parent);
-          const ownerSection = owner.section;
-          resolved =
-            parentContext === null
-              ? null
-              : ownerSection === null ||
-                  ownerSection.compression.kind === "none"
-                ? parentContext
-                : await stageDecodedSection(
-                    owner.file,
-                    ownerSection,
-                    parentContext,
-                  );
-        }
-      }
-      volumeContexts.set(volume.logical_path, resolved);
-      return resolved;
+    const recordDerivation = (stream: string | null): void => {
+      if (stream === null || emittedStreams.has(stream)) return;
+      const decoded = scan.decodedStreams.get(stream);
+      if (decoded === undefined)
+        throw new Error(`Missing decoded source ${stream}.`);
+      const { carrier, format, decoderVersion } = decoded;
+      recordDerivation(carrier.sourceStream);
+      emittedStreams.add(stream);
+      const child = includes(stream)
+        ? stage(
+            stream,
+            "decoded",
+            {
+              bytes: decoded.bytes,
+              sourceStream: stream,
+              range: { offset: 0, length: decoded.bytes.length },
+            },
+            format === "zlib" ? "decompressed-zlib" : "decompressed-lzma",
+            stream,
+          )
+        : null;
+      derivations.push({
+        parent_path: stream,
+        parent_file_range: carrier.sourceStream === null ? carrier.range : null,
+        parent_stream: carrier.sourceStream,
+        parent_stream_range: carrier.range,
+        child_path: child,
+        child_stream: stream,
+        handler: `${format === "zlib" ? "node-zlib" : "lzma-purejs"}@${decoderVersion}`,
+      });
     };
-    const stagedDecoded = (
-      locator: string,
-      outcome: { ok: true; outcome: UefiLzmaDecodeOutcome },
-      compressedRange: { offset: number; length: number },
-      parentLogicalPath: string | null,
-      format: "lzma" | "zlib" = "lzma",
-    ): void => {
-      const decodedPath = `${locator}.decoded.bin`;
-      const before = stagedBytes;
-      stage(
-        decodedPath,
-        outcome.outcome.bytes,
-        format === "zlib" ? "decompressed-zlib" : "decompressed-lzma",
-        compressedRange,
-        parentLogicalPath,
-      );
-      if (stagedBytes > before) {
-        derivations.push({
-          parent_path: locator,
-          child_path: decodedPath,
-          parent_file_range: compressedRange,
-          handler:
-            format === "zlib"
-              ? `node-zlib@${outcome.outcome.decoderVersion}`
-              : `lzma-purejs@${outcome.outcome.decoderVersion}`,
-        });
-      }
-    };
-    for (const { file, volume, sectionOnly } of selection.files) {
-      signal?.throwIfAborted();
-      const context = await contextForVolume(volume);
-      if (context === null) continue;
-      if (file.type_code === FFS_FILE_TYPE_PAD) {
-        gaps.push({
-          kind: "pad-file",
-          logical_path: file.logical_path,
-          range: { offset: file.offset, length: file.length },
-          detail: `Pad file at ${hex(file.offset)} stays in place; only its extent is reported.`,
-        });
-        continue;
-      }
-      if (file.sections.length === 0) {
-        const bodyRange = {
-          offset: file.offset + file.header_length,
-          length: Math.max(0, file.length - file.header_length),
-        };
-        stage(
-          `${file.logical_path}.body.bin`,
-          carve(context, bodyRange.offset, bodyRange.length, "raw file body"),
-          "uncompressed-payload",
-          bodyRange,
-          null,
-        );
-        continue;
-      }
-      for (const section of sectionOnly === null
-        ? file.sections
-        : [sectionOnly]) {
-        if (
-          section.type_code === SECTION_TYPE_FIRMWARE_VOLUME_IMAGE &&
-          section.sub_volumes.length > 0 &&
-          sectionOnly === null
-        ) {
-          continue;
+
+    for (const volume of scan.volumes) {
+      for (const file of volume.ffs_files) {
+        checkpoint();
+        if (includes(file.logical_path)) {
+          const range = { offset: file.offset, length: file.length };
+          if (file.type_code === FFS_FILE_TYPE_PAD) {
+            gap(
+              "pad-file",
+              file.logical_path,
+              file.source_stream,
+              range,
+              "Pad file extent retained.",
+            );
+            continue;
+          }
+          if (
+            file.declared_length < file.header_length ||
+            file.declared_length > file.length
+          ) {
+            gap(
+              "size-truncated",
+              file.logical_path,
+              file.source_stream,
+              range,
+              `FFS declares ${file.declared_length} bytes; observed ${file.length} bytes with a ${file.header_length}-byte header.`,
+            );
+          } else {
+            const raw = scan.payloads.get(file.logical_path);
+            if (raw !== undefined) {
+              recordDerivation(raw.sourceStream);
+              stage(
+                file.logical_path,
+                "body",
+                raw,
+                "uncompressed-payload",
+                null,
+              );
+            }
+          }
         }
-        if (section.compression.kind === "none") {
-          const payloadRange = {
-            offset: section.offset + section.header_length,
-            length: Math.max(0, section.length - section.header_length),
-          };
-          stage(
-            `${file.logical_path}/section-${hex(section.offset)}.payload.bin`,
-            carve(
-              context,
-              payloadRange.offset,
-              payloadRange.length,
-              "section payload",
-            ),
-            "raw-section",
-            payloadRange,
-            file.logical_path,
-          );
-          continue;
-        }
-        if (
-          section.compression.kind === "lzma-custom" ||
-          section.compression.kind === "lzmaf86" ||
-          section.compression.kind === "ami-zlib"
-        ) {
-          await stageDecodedSection(file, section, context);
-          continue;
-        }
-        const compressedOffset =
-          section.offset + section.compression.data_offset;
-        const compressedLength =
-          section.length - section.compression.data_offset;
-        const locator = `${file.logical_path}/section-${hex(section.offset)}`;
-        gaps.push({
-          kind:
-            section.compression.kind === "unknown-guid"
-              ? "unknown-guid-handler"
-              : "unsupported-compression",
-          logical_path: locator,
-          range:
-            compressedLength > 0
-              ? { offset: compressedOffset, length: compressedLength }
-              : null,
-          detail: `${section.compression.kind} payload at ${hex(compressedOffset)} is recognized but has no decoder; ${input.include_compressed ? "publishing the raw carrier" : "carrier not requested (include_compressed=false)"}.`,
-        });
-        if (input.include_compressed && compressedLength > 0) {
-          stage(
-            `${locator}.compressed.bin`,
-            carve(
-              context,
-              compressedOffset,
-              compressedLength,
-              "compressed section",
-            ),
-            "compressed-passthrough",
-            { offset: compressedOffset, length: compressedLength },
-            file.logical_path,
-          );
+        for (const section of file.sections) {
+          if (!includes(section.logical_path)) continue;
+          checkpoint();
+          const path = section.logical_path;
+          const payload = scan.payloads.get(path);
+          if (section.truncated || section.malformed) {
+            gap(
+              section.truncated ? "size-truncated" : "unparsed-region",
+              path,
+              section.source_stream,
+              { offset: section.offset, length: section.length },
+              `Section framing is ${section.malformed ? "malformed" : "truncated"}; declared ${section.declared_length} bytes, observed ${section.length}.`,
+            );
+          } else if (scan.decodedStreams.has(path)) {
+            recordDerivation(path);
+          } else if (section.compression.kind !== "none") {
+            gap(
+              section.compression.kind === "unknown-guid"
+                ? "unknown-guid-handler"
+                : "unsupported-compression",
+              path,
+              section.source_stream,
+              payload?.range ?? null,
+              scan.decodeGaps.get(path) ??
+                `No decoded payload for ${section.compression.kind}.`,
+            );
+            if (input.include_compressed && payload !== undefined) {
+              recordDerivation(payload.sourceStream);
+              stage(
+                path,
+                "compressed",
+                payload,
+                "compressed-passthrough",
+                section.parent_logical_path,
+              );
+            }
+          } else if (
+            payload !== undefined &&
+            section.sub_volumes.length === 0
+          ) {
+            recordDerivation(payload.sourceStream);
+            stage(
+              path,
+              "payload",
+              payload,
+              "raw-section",
+              section.parent_logical_path,
+              section.type_code === 0x10
+                ? "application/vnd.microsoft.portable-executable"
+                : null,
+            );
+          }
         }
       }
     }
+
     const publication = await publishUefiFiles({
       outputDirectory: input.output_directory,
       operation: request.operation,
-      entries: plan.map((planned) => planned.entry),
-      ...(signal === undefined ? {} : { signal }),
+      entries: plan.map(({ entry }) => entry),
+      resources: this.#resources,
+      signal,
+      checkpoint,
     });
     const result: UefiExtractResult =
       uefiResultSchemas.extract_uefi_firmware.parse({
@@ -943,71 +730,56 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         selection: {
           offset: selection.offset,
           length: selection.length,
+          source_stream: selection.source_stream,
           target_kind: input.target.kind,
         },
         output_directory: publication.outputRoot,
         coverage:
-          gaps.some((gap) => gap.kind !== "pad-file") ||
+          gaps.some(({ kind }) => kind !== "pad-file") ||
           scan.budgetExhausted ||
           scan.truncationObserved
             ? "partial"
             : "complete",
-        files: plan.map((planned, index) => {
-          const published = publication.files[index];
-          if (published === undefined) {
-            throw new Error(
-              `Publication outcome lost ${planned.entry.relativePath}.`,
-            );
-          }
-          return {
-            relative_path: planned.entry.relativePath,
-            path: published.path,
-            size: published.size,
-            sha256: published.sha256,
-            original_file_range: planned.originalFileRange,
-            runtime_address: null,
-            media_type: null,
-            source: planned.source,
-            parent_logical_path: planned.parentLogicalPath,
-          };
-        }),
+        files: publication.files.map((file, index) => ({
+          ...file,
+          ...plan[index]?.facts,
+        })),
         derivations,
         extraction_gaps: gaps,
-        diagnostics: `${scan.volumes.length} volumes mapped, ${selection.files.length} files selected; ${decodeAttempts} decode attempt(s), ${decodeSuccesses} result(s); ${gaps.length} gap(s); staged ${plan.length} file(s), ${stagedBytes} bytes.`,
+        diagnostics: `${scan.volumes.length} volumes mapped; ${derivations.length} stream derivation(s), ${gaps.length} gap(s); published ${plan.length} file(s), ${stagedBytes} bytes.`,
         published_bytes: stagedBytes,
       });
+    if (publication.failure !== undefined) {
+      throw publication.failure.retainPartialObservation({
+        kind: "uefi",
+        result: jsonValueSchema.parse(result),
+        provenance: { path: input.path, sha256: imageSha256 },
+      });
+    }
     return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
-      subject: {
-        path: input.path,
-        sha256: imageSha256,
-        format: "file",
-      },
+      subject: { path: input.path, sha256: imageSha256, format: "file" },
       locations: [{ kind: "artifact-path", path: input.path }],
       limitations: scan.limitations,
     });
   }
 
-  /**
-   * Decode one compressed stream. LZMA variants run in the owned worker;
-   * AMI-zlib streams are zlib-wrapped and decode synchronously on the main
-   * thread through node:zlib, still respecting the shared output budget.
-   */
   async #decodeStream(
+    operation: UefiRequest["operation"],
     payload: Buffer,
     format: "lzma" | "zlib",
-    signal?: AbortSignal,
-  ): Promise<UefiLzmaWorkerDecode> {
-    signal?.throwIfAborted();
+    maxOutputBytes: number,
+    signal: AbortSignal,
+  ): Promise<UefiDecodeResult> {
+    signal.throwIfAborted();
     if (format === "zlib") {
       try {
-        const bytes = inflateSync(payload, {
-          maxOutputLength: UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
+        const bytes = await inflateBounded(payload, {
+          maxOutputLength: maxOutputBytes,
         });
         return {
           ok: true,
           outcome: {
             bytes,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
             decoderVersion: process.versions.zlib ?? "unknown",
           },
         };
@@ -1016,14 +788,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           ok: false,
           message:
             cause instanceof RangeError &&
-            cause.message.includes("output length")
-              ? `output-limit: zlib stream exceeds ${UEFI_FIRMWARE_LIMITS.lzmaOutputBytes} bytes`
+            "code" in cause &&
+            cause.code === "ERR_BUFFER_TOO_LARGE"
+              ? `output-limit: zlib stream exceeds ${maxOutputBytes} bytes`
               : `zlib decode failed: ${cause instanceof Error ? cause.message : String(cause)}`,
         };
       }
     }
     const root = await PrivateRuntimeRoot.create({ prefix: "rea-uefi-lzma-" });
-    try {
+    const decode = async (): Promise<UefiDecodeResult> => {
       const payloadPath = join(root.path, "payload.bin");
       const outputPath = join(root.path, "output.bin");
       const replyPath = join(root.path, "reply.json");
@@ -1035,7 +808,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           payload_path: payloadPath,
           output_path: outputPath,
           reply_path: replyPath,
-          max_output_bytes: UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
+          max_output_bytes: maxOutputBytes,
         }),
         { flag: "wx", mode: 0o600 },
       );
@@ -1058,7 +831,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           timeoutMs: UEFI_FIRMWARE_LIMITS.timeoutMs,
           diagnosticBytes: UEFI_FIRMWARE_LIMITS.diagnosticBytes,
         },
-        signal === undefined ? {} : { signal },
+        { signal },
       );
       const replyFile = await readStableArtifact(
         replyPath,
@@ -1073,19 +846,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (!reply.ok) {
         return { ok: false, message: `${reply.reason}: ${reply.message}` };
       }
-      if (signal?.aborted) {
-        throw new AnalysisCancelledError("extract_uefi_firmware", {
-          cause: signal.reason,
-        });
-      }
+      signal.throwIfAborted();
       const decoded = await readStableArtifact(
         outputPath,
-        UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
+        maxOutputBytes,
         signal,
         undefined,
         this.#resources,
       );
-      if (decoded.sha256 !== reply.output.sha256) {
+      if (
+        decoded.sha256 !== reply.output.sha256 ||
+        decoded.bytes.length !== reply.output.bytes
+      ) {
         return {
           ok: false,
           message: `LZMA worker output digest mismatch (${reply.output.sha256}).`,
@@ -1095,12 +867,82 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         ok: true,
         outcome: {
           bytes: decoded.bytes,
-          sha256: decoded.sha256,
           decoderVersion: reply.lzma_version,
         },
       };
-    } finally {
-      await root.close();
+    };
+
+    let outcome: UefiDecodeResult | undefined;
+    let primary: AnalysisError | undefined;
+    try {
+      outcome = await decode();
+    } catch (cause: unknown) {
+      primary = uefiFailure(cause, operation, root.path);
+      const preparation =
+        cause instanceof OwnedCommandFailure
+          ? cause.preparationFailure
+          : cause instanceof DarwinProcessOwnershipInspectionError
+            ? cause
+            : undefined;
+      if (preparation?.cleanupFailure?.cleanupIncomplete === true) {
+        const failure = preparation.cleanupFailure;
+        const lease = new AnalysisCleanupLease(async () => {
+          if (!failure.cleanupIncomplete) return;
+          if (preparation.cleanupOwner === undefined) throw failure;
+          await preparation.cleanupOwner.close();
+          if (failure.cleanupIncomplete) throw failure;
+        }, failure.cleanupResources);
+        this.#resources.retain({
+          kind: "lease",
+          resource: failure.cleanupResources[0] ?? "worker launch preparation",
+          lease,
+        });
+        new AnalysisCleanupLeaseGroup(failure, [lease]);
+        primary = analysisErrorWithCleanupFailure(
+          primary,
+          failure,
+          operation,
+        ).bindCleanupDependencies([primary, failure]);
+      }
+      if (
+        cause instanceof OwnedCommandFailure &&
+        cause.cleanupOwner !== undefined
+      ) {
+        const owner = cause.cleanupOwner;
+        const lease = new AnalysisCleanupLease(async () => {
+          const stopped = await owner.stop();
+          if (stopped.status === "incomplete") throw new Error(stopped.reason);
+          await root.close();
+        }, cause.resources);
+        this.#resources.retain({ kind: "lease", resource: root.path, lease });
+        new AnalysisCleanupLeaseGroup(primary, [lease]);
+        throw primary;
+      }
     }
+    const released = await this.#resources.release({
+      kind: "private-runtime-root",
+      resource: root.path,
+      root,
+    });
+    if (released.kind === "failed") {
+      const cleanup = new ProviderCleanupError(
+        UEFI_PROVIDER_IDENTITY.id,
+        [root.path],
+        { reason: String(released.cause) },
+        { cause: released.cause, operation },
+      );
+      const failure =
+        primary === undefined
+          ? cleanup
+          : analysisErrorWithCleanupFailure(primary, cleanup, operation);
+      new AnalysisCleanupLeaseGroup(cleanup, [released.lease]);
+      if (primary !== undefined)
+        failure.bindCleanupDependencies([primary, cleanup]);
+      throw failure;
+    }
+    if (primary !== undefined) throw primary;
+    signal.throwIfAborted();
+    if (outcome === undefined) throw new Error("UEFI decoder did not settle.");
+    return outcome;
   }
 }

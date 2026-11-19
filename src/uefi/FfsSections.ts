@@ -15,6 +15,8 @@ export interface SectionDraft {
   /** Bytes actually covered inside the region (clamped on truncation). */
   readonly observedLength: number;
   readonly truncated: boolean;
+  readonly malformed?: boolean;
+  readonly encapsulatesSections?: boolean;
   readonly typeCode: number;
   readonly typeName: string;
   readonly compression:
@@ -25,6 +27,7 @@ export interface SectionDraft {
           | "lzmaf86"
           | "ami-zlib"
           | "tiano"
+          | "unknown-compression"
           | "efi-standard"
           | "crc32-guided"
           | "unknown-guid";
@@ -36,187 +39,107 @@ export interface SectionDraft {
   readonly payload: { readonly start: number; readonly end: number } | null;
 }
 
-/** Section data start for one section type, or null when unknown. */
-function payloadStart(typeCode: number, rawHeaderLength: number): number {
-  if (typeCode === 0x01) {
-    return SECTION_LAYOUT.compressionHeaderLength;
-  }
-  return rawHeaderLength;
-}
-
-/**
- * Walk a flat section chain inside one region. Section records stay raw:
- * compression classification names the handler, nesting is resolved by the
- * orchestrator so recursion is explicit and depth-bounded.
- */
+/** Read one PI section chain, with each child aligned relative to its stream. */
 export function walkSections(
   region: ScanRegion,
   localStart: number,
   localEnd: number,
   typeNameFor: (typeCode: number) => string,
+  reserve: () => boolean = () => true,
 ): { sections: SectionDraft[]; terminated: boolean } {
   const sections: SectionDraft[] = [];
   let cursor = localStart;
-  let stopped = false;
-  while (cursor + SECTION_LAYOUT.commonLength <= localEnd) {
-    const sizeB0 = region.buffer[cursor] ?? 0;
-    const sizeB1 = region.buffer[cursor + 1] ?? 0;
-    const sizeB2 = region.buffer[cursor + 2] ?? 0;
-    const typeCode = region.buffer[cursor + SECTION_LAYOUT.typeOffset] ?? 0xff;
-    const typeName = typeNameFor(typeCode);
-    // Compact u24 size assembled little-endian.
-    const compactSize = sizeB0 | (sizeB1 << 8) | (sizeB2 << 16);
+  while (cursor + SECTION_LAYOUT.commonLength <= localEnd && reserve()) {
+    const compactSize = region.buffer.readUIntLE(cursor, 3);
+    const typeCode = region.buffer.readUInt8(
+      cursor + SECTION_LAYOUT.typeOffset,
+    );
+    const extended = compactSize === SECTION_LAYOUT.largeSectionMarker;
+    const commonLength = extended
+      ? SECTION_LAYOUT.extendedLength
+      : SECTION_LAYOUT.commonLength;
+    if (cursor + commonLength > localEnd) break;
+    const declaredLength = extended
+      ? region.buffer.readUInt32LE(cursor + SECTION_LAYOUT.extendedSizeOffset)
+      : compactSize;
+    const observedLength = Math.min(declaredLength, localEnd - cursor);
+    const truncated = observedLength < declaredLength;
+    let headerLength: number = commonLength;
+    let compression: SectionDraft["compression"] = { kind: "none" };
+    let encapsulatesSections = typeCode === 0x03;
+    let malformed = observedLength < commonLength;
+    const fields = cursor + commonLength;
 
-    let headerLength: number = SECTION_LAYOUT.commonLength;
-    let declaredLength = compactSize;
-    let truncated = compactSize < SECTION_LAYOUT.commonLength;
-    if (compactSize === SECTION_LAYOUT.largeSectionMarker) {
-      if (cursor + SECTION_LAYOUT.extendedLength <= localEnd) {
-        headerLength = SECTION_LAYOUT.extendedLength;
-        declaredLength = region.buffer.readUInt32LE(
-          cursor + SECTION_LAYOUT.extendedSizeOffset,
-        );
-      } else {
-        break;
-      }
-    }
-    if (declaredLength < headerLength) {
-      // Malformed: cannot advance a shorter-than-header section; report and stop.
-      sections.push({
-        absoluteBase: absoluteOffset(region, cursor),
-        localBase: cursor,
-        headerLength,
-        declaredLength,
-        observedLength: Math.max(
-          0,
-          Math.min(localEnd - cursor, declaredLength),
-        ),
-        truncated: true,
-        typeCode,
-        typeName,
-        compression: { kind: "none" },
-        payload: null,
-      });
-      stopped = true;
-      break;
-    }
-
-    // Compression sections (type 0x01) carry a 9-byte header with a compression
-    // type; classify it instead of treating the compressed payload as raw.
     if (typeCode === 0x01) {
-      const effectiveHeaderLength = Math.min(
-        SECTION_LAYOUT.compressionHeaderLength,
-        declaredLength,
-      );
-      const compressionType =
-        cursor + SECTION_LAYOUT.compressionTypeOffset < localEnd
-          ? (region.buffer[cursor + SECTION_LAYOUT.compressionTypeOffset] ?? 0)
-          : 0;
-      const kind = compressionType === 0x01 ? "efi-standard" : "none";
-      const sectionTruncated = cursor + declaredLength > localEnd || truncated;
-      sections.push({
-        absoluteBase: absoluteOffset(region, cursor),
-        localBase: cursor,
-        headerLength: effectiveHeaderLength,
-        declaredLength,
-        observedLength: Math.min(declaredLength, localEnd - cursor),
-        truncated: sectionTruncated,
-        typeCode,
-        typeName,
-        compression:
-          kind === "none"
-            ? { kind: "none" }
-            : {
-                kind,
-                guid: null,
-                dataOffset: effectiveHeaderLength,
-                attributes: null,
-              },
-        payload: {
-          start: cursor + effectiveHeaderLength,
-          end: Math.min(cursor + declaredLength, localEnd),
-        },
-      });
-      if (sectionTruncated) {
-        stopped = true;
-        break;
+      headerLength += SECTION_LAYOUT.compressionFieldsLength;
+      malformed = observedLength < headerLength;
+      if (!malformed) {
+        const compressionType = region.buffer.readUInt8(
+          fields + SECTION_LAYOUT.compressionTypeFieldOffset,
+        );
+        if (compressionType === 0) {
+          encapsulatesSections = true;
+          malformed =
+            region.buffer.readUInt32LE(fields) !==
+            declaredLength - headerLength;
+        } else {
+          compression = {
+            kind:
+              compressionType === 1 ? "efi-standard" : "unknown-compression",
+            guid: null,
+            dataOffset: headerLength,
+            attributes: null,
+          };
+        }
       }
-      cursor = alignUp(cursor + declaredLength, 4);
-      continue;
-    }
-
-    // GUID-defined sections (type 0x02): field offsets follow the parsed common
-    // header size (4-byte compact or 8-byte extended), and the payload offset
-    // must stay inside the declared section length.
-    if (typeCode === 0x02) {
-      const guidedBase = cursor + headerLength;
-      const guidedFieldsEnd = guidedBase + 20;
-      if (guidedFieldsEnd <= localEnd && declaredLength >= headerLength + 20) {
-        const dataOffset = region.buffer.readUInt16LE(guidedBase + 16);
-        const attributes = region.buffer.readUInt16LE(guidedBase + 18);
-        if (dataOffset >= headerLength + 20 && dataOffset <= declaredLength) {
-          const guid = formatGuidLittleEndian(
-            region.buffer.subarray(guidedBase, guidedBase + 16),
-            0,
-          );
-          sections.push({
-            absoluteBase: absoluteOffset(region, cursor),
-            localBase: cursor,
-            headerLength: dataOffset,
-            declaredLength,
-            observedLength: Math.min(declaredLength, localEnd - cursor),
-            truncated: cursor + declaredLength > localEnd,
-            typeCode,
-            typeName,
-            compression: {
-              kind:
-                guid == null
-                  ? "unknown-guid"
-                  : (COMPRESSION_GUID_BY_DISPLAY[guid] ?? "unknown-guid"),
-              guid,
-              dataOffset,
-              attributes,
-            },
-            payload: {
-              start: cursor + dataOffset,
-              end: Math.min(cursor + declaredLength, localEnd),
-            },
-          });
-          cursor = alignUp(cursor + declaredLength, 4);
-          continue;
+    } else if (typeCode === 0x02) {
+      headerLength += SECTION_LAYOUT.guidedFieldsLength;
+      malformed = observedLength < headerLength;
+      if (!malformed) {
+        const dataOffset = region.buffer.readUInt16LE(
+          fields + SECTION_LAYOUT.guidDataOffsetFieldOffset,
+        );
+        malformed = dataOffset < headerLength || dataOffset > observedLength;
+        if (!malformed) {
+          const guid = formatGuidLittleEndian(region.buffer, fields);
+          headerLength = dataOffset;
+          compression = {
+            kind:
+              guid === null
+                ? "unknown-guid"
+                : (COMPRESSION_GUID_BY_DISPLAY[guid] ?? "unknown-guid"),
+            guid,
+            dataOffset,
+            attributes: region.buffer.readUInt16LE(
+              fields + SECTION_LAYOUT.guidAttributesFieldOffset,
+            ),
+          };
         }
       }
     }
 
-    const dataStart =
-      payloadStart(typeCode, headerLength) <= declaredLength
-        ? payloadStart(typeCode, headerLength)
-        : headerLength;
-    if (cursor + declaredLength > localEnd) {
-      truncated = true;
-    }
     sections.push({
       absoluteBase: absoluteOffset(region, cursor),
       localBase: cursor,
       headerLength,
       declaredLength,
-      observedLength: Math.min(declaredLength, localEnd - cursor),
+      observedLength,
       truncated,
+      ...(malformed ? { malformed: true } : {}),
+      ...(encapsulatesSections ? { encapsulatesSections: true } : {}),
       typeCode,
-      typeName,
-      compression: { kind: "none" },
-      payload: {
-        start: cursor + dataStart,
-        end: Math.min(cursor + declaredLength, localEnd),
-      },
+      typeName: typeNameFor(typeCode),
+      compression,
+      payload: malformed
+        ? null
+        : { start: cursor + headerLength, end: cursor + observedLength },
     });
-    if (truncated) {
-      stopped = true;
-      break;
+    if (declaredLength < commonLength || truncated) {
+      return { sections, terminated: false };
     }
-    cursor = alignUp(cursor + declaredLength, 4);
+    cursor = localStart + alignUp(cursor + declaredLength - localStart, 4);
   }
-  return { sections, terminated: stopped || cursor >= localEnd };
+  return { sections, terminated: cursor >= localEnd };
 }
 
 /** Payload window of one section as a sub-region; null when empty. */
@@ -237,6 +160,9 @@ export function sectionPayloadRegion(
     start,
     end,
     origin: absoluteOffset(region, start),
+    ...(region.sourceStream === undefined
+      ? {}
+      : { sourceStream: region.sourceStream }),
   };
 }
 
@@ -258,20 +184,4 @@ export function peelAmiZlibPayload(
     stream: payload.subarray(AMD_ZLIB_HEADER_LENGTH),
     declaredCompressedSize: payload.readUInt32LE(0x14),
   };
-}
-
-/** Read the payload window bytes for decompression workers. */
-export function sectionPayloadBuffer(
-  region: ScanRegion,
-  section: SectionDraft,
-): Buffer | null {
-  if (section.payload == null) {
-    return null;
-  }
-  const start = Math.max(region.start, section.payload.start);
-  const end = Math.min(region.end, section.payload.end);
-  if (start >= end) {
-    return null;
-  }
-  return Buffer.from(region.buffer.subarray(start, end));
 }

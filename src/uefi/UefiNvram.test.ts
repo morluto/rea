@@ -107,3 +107,14 @@ it("reports partial coverage when a nested chain exceeds max_depth", () => {
     ["Mid", 1],
   ]);
 });
+
+it("returns partial NVAR coverage when a single store exhausts the record limit", () => {
+  const record = encodeEntry("A", Buffer.alloc(0), 0);
+  const image = Buffer.alloc(100_001 * record.length);
+  for (let offset = 0; offset < image.length; offset += record.length)
+    record.copy(image, offset);
+  const result = scanAmiNvramStores(image, 1, 1);
+  expect(result.coverage).toBe("partial");
+  expect(result.limitations[0]).toContain("Structural record limit");
+  expect(result.stores[0]?.variables.length).toBe(100_000);
+});
