@@ -731,6 +731,24 @@ describe("comparison body coverage", () => {
 });
 
 describe("scalar sets of mapped ids", () => {
+  it("translates scoped identifier lists", () => {
+    const map = new IdMap();
+    map.learn(101, 1, "/api/books");
+    map.learn(101, 2, "/api/authors");
+    const answer = (body: JsonValue) => ({
+      status: 200,
+      body: { kind: "json" as const, value: body },
+    });
+    expect(
+      compareAnswers(
+        answer({ ids: [101] }),
+        answer({ ids: [2] }),
+        map,
+        { scope: "/api/authors" },
+      ).differences,
+    ).toEqual([]);
+  });
+
   it("differ only in order once live ids are mapped", () => {
     const map = new IdMap();
     map.learn(101, 1);
