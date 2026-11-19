@@ -20,8 +20,14 @@ import {
   validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
@@ -55,10 +61,6 @@ import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 const CPU_TYPE_ARM64 = 0x0100000c;
 const PT_NOTE = 4;
 const PN_XNUM = 0xffff;
-const ELF64_PROGRAM_HEADER_BYTES = 56;
-const ELF32_PROGRAM_HEADER_BYTES = 32;
-const ELF64_SECTION_HEADER_BYTES = 64;
-const ELF32_SECTION_HEADER_BYTES = 40;
 const RT_RCDATA = 10;
 const RESOURCE_NAME = "D3N0L4ND";
 const SECTION_NAME = "d3n0l4nd";
@@ -550,7 +552,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
     walk.damage ??= denoCarrierFailure(detail);
   };
   const little = header.value.byteOrder === "little";
-  const wide = header.value.elfClass === 64;
+  const { elfClass } = header.value;
   const { programs, sections } = raw.value;
   if (programs.count === PN_XNUM)
     damaged("ELF extended program numbering is unsupported");
@@ -566,7 +568,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
           carrier,
           walk,
           programs,
-          wide ? ELF64_PROGRAM_HEADER_BYTES : ELF32_PROGRAM_HEADER_BYTES,
+          elfProgramHeaderWidth(elfClass),
           "program header table",
         );
   const sectionHeaders = sectionTable.ok
@@ -574,7 +576,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
         carrier,
         walk,
         sections,
-        wide ? ELF64_SECTION_HEADER_BYTES : ELF32_SECTION_HEADER_BYTES,
+        elfSectionHeaderWidth(elfClass),
         "section header table",
       )
     : undefined;
