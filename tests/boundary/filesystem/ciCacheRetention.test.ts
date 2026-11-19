@@ -30,6 +30,28 @@ const cache = (
   size_in_bytes: size,
 });
 
+it("keeps restorable generations across cache versions on the same ref", () => {
+  const prefix = "rea-static-v1-Linux-X64-";
+  const olderVersion = "a".repeat(64);
+  const newerVersion = "b".repeat(64);
+  const entries = [olderVersion, newerVersion].flatMap((version, index) =>
+    [1, 2, 3].map((hour) => {
+      const id = index * 3 + hour;
+      return cache(
+        id,
+        `${prefix}${id}`,
+        `2026-10-20T0${id}:00:00Z`,
+        undefined,
+        100,
+        version,
+      );
+    }),
+  );
+  expect(
+    selectPrefixDeletions(entries, { prefix }).map((entry) => entry.id),
+  ).toEqual([1, 4]);
+});
+
 describe("Turbo snapshot retention", () => {
   const prefix = "rea-static-v1-Linux-X64-";
 
@@ -90,27 +112,6 @@ describe("Turbo snapshot retention", () => {
 
     expect(
       selectPrefixDeletions(rows, { prefix }).map((entry) => entry.id),
-    ).toEqual([1, 4]);
-  });
-
-  it("keeps restorable generations across cache versions on the same ref", () => {
-    const olderVersion = "a".repeat(64);
-    const newerVersion = "b".repeat(64);
-    const entries = [olderVersion, newerVersion].flatMap((version, index) =>
-      [1, 2, 3].map((hour) => {
-        const id = index * 3 + hour;
-        return cache(
-          id,
-          `${prefix}${id}`,
-          `2026-10-20T0${id}:00:00Z`,
-          undefined,
-          100,
-          version,
-        );
-      }),
-    );
-    expect(
-      selectPrefixDeletions(entries, { prefix }).map((entry) => entry.id),
     ).toEqual([1, 4]);
   });
 
