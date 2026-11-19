@@ -7,7 +7,8 @@ import {
 } from "@modelcontextprotocol/server";
 
 import type { ClientFeatureAvailability } from "../contracts/toolOutputSchemaPrimitives.js";
-import type { ConnectedClientIdentity } from "../serverIdentity.js";
+import type { ConnectedClientIdentity } from "../process/ServerIdentity.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Initialize-scoped client metadata the SDK keeps for a 2025-era connection. */
 export type McpConnectionClientMetadata = Pick<
@@ -28,7 +29,7 @@ export const mcpClientMetadata = (
   // The SDK deprecates these accessors only in favor of the envelope, which
   // 2025-era requests do not carry; they still return initialize values.
   const value = (key: string, initialized: () => unknown): unknown =>
-    envelope === undefined ? initialized() : mcpEnvelopeValue(envelope, key);
+    envelope === undefined ? initialized() : Reflect.get(envelope, key);
   const client = implementation(
     value(CLIENT_INFO_META_KEY, () => connection.getClientVersion()),
   );
@@ -45,12 +46,6 @@ export const mcpClientMetadata = (
     ...(typeof protocolVersion === "string" ? { protocolVersion } : {}),
   };
 };
-
-/** Read an SDK-defined metadata key from the SDK's currently opaque envelope type. */
-export const mcpEnvelopeValue = (
-  envelope: ServerContext["mcpReq"]["envelope"],
-  key: string,
-): unknown => (envelope === undefined ? undefined : Reflect.get(envelope, key));
 
 const implementation = (value: unknown): ConnectedClientIdentity | undefined =>
   isRecord(value) &&
@@ -75,6 +70,3 @@ const capabilityFeatures = (value: unknown): ClientFeatureAvailability => {
     sampling: capabilities.sampling !== undefined,
   };
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);

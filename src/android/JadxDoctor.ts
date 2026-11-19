@@ -1,25 +1,41 @@
-import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
+import type { HostPlatform } from "../platform/HostPlatform.js";
+import type {
+  RetainedResourceScope,
+  ProviderAvailability,
+} from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+} from "../ports/DoctorProviderInspection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   inspectJadxAvailability,
   JADX_FAILURE_KINDS,
-  projectJadxFailureOutcome,
+  jadxFailureClassification,
   type JadxFailureKind,
 } from "./JadxConfiguration.js";
+import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
+
+/** Client settings consulted by this readiness probe. */
+export const JADX_DOCTOR_SETTINGS = [
+  "REA_JADX_MCP_JAR",
+  "JAVA_HOME",
+  "PATH",
+  "REA_JADX_HEAP_MIB",
+  "REA_JADX_ACTIVE_PROCESSOR_COUNT",
+  "REA_JADX_OPERATION_TIMEOUT_MS",
+] as const;
 
 /** Project the validated JADX configuration into the doctor contract. */
 export const inspectJadxProvider = async (
   environment: Readonly<Record<string, string | undefined>>,
-  resourceOwner: FileCloseResourceOwner,
+  resourceOwner: RetainedResourceScope,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   const configured = environment.REA_JADX_MCP_JAR !== undefined;
   const availability = await inspectJadxAvailability(environment, {
+    host,
     resourceOwner,
     signal,
   });
@@ -93,14 +109,14 @@ const configurationCheck = (
         : {}),
     };
   }
-  // The failure kind is tagged at the configuration boundary; project its
-  // remediation and classification here instead of reinterpreting the
-  // phase/setting evidence. Every failed check keeps a remediation.
+  // Availability carries the configuration boundary's remediation and tags
+  // the failure kind; project its classification here instead of
+  // reinterpreting the phase/setting evidence. Every failed check keeps a
+  // remediation.
   const kind =
     availability.status === "unavailable"
       ? asFailureKind(availability.diagnostics["failure_kind"])
       : null;
-  const outcome = projectJadxFailureOutcome(kind, configured);
   return {
     name: "configuration",
     ok: false,
@@ -109,8 +125,11 @@ const configurationCheck = (
       availability.status === "available"
         ? "Validated JADX configuration reported no JAR path."
         : availability.reason,
-    remediation: outcome.remediation,
-    classification: outcome.classification,
+    remediation:
+      availability.status === "available"
+        ? JADX_JAR_CONFIGURATION_REMEDIATION
+        : availability.remediation,
+    classification: jadxFailureClassification(kind, configured),
     ...(kind === "java_probe" && availability.status === "unavailable"
       ? { details: probeDetails(availability.diagnostics) }
       : kind !== null &&

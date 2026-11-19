@@ -1,6 +1,9 @@
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
+import { IDA_COMPATIBILITY_PROFILES } from "../../../../src/ida/IdaConfiguration.js";
+import { idaCapabilities } from "../../../../src/ida/IdaProviderCapabilities.js";
 import {
   callGraphSession,
   edge,
@@ -28,17 +31,38 @@ const armSession = () =>
     leafRoots: ["0x2000", "0x3000"],
   });
 
-it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", async () => {
+it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier", async () => {
   const { client } = await armSession();
   try {
+    const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false);
+    const callers = declared.find(
+      ({ operation }) => operation === "procedure_callers",
+    );
+    expect(callers).toMatchObject({
+      available: false,
+      reason: expect.any(String),
+    });
+    expect(
+      declared.find(({ operation }) => operation === "procedure_callees"),
+    ).toMatchObject({ available: true });
+    expect(
+      await client.execute("procedure_callers", { procedure: "main" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "procedure_callers",
+        reason: callers?.reason,
+      },
+    });
     const result = await client.execute("analyze_function", {
       procedure: "main",
     });
     if (!result.ok) throw result.error;
     expect(result.value.relationshipCoverage).toMatchObject({
       status: "unknown",
-      reason:
-        "Callers: Upstream xrefs do not establish direct caller relationships.",
+      reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
+
       diagnostics: expect.arrayContaining([
         expect.stringContaining("targets IDA does not recognize as functions"),
       ]),
@@ -55,8 +79,9 @@ it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", a
 it("shows the callee edges of an ARM64 procedure in the call graph", async () => {
   const { client, producer } = await armSession();
   try {
-    const result = await new EnhancedTools(client).execute("get_call_graph", {
-      address: "main",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -112,9 +137,9 @@ it("shows the callee edges of an ARM64 procedure in the call graph", async () =>
 it("reaches an ARM64 callee in a call path", async () => {
   const { client } = await armSession();
   try {
-    const result = await new EnhancedTools(client).execute("trace_call_path", {
-      start: "main",
-      goal: "0x3000",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x3000", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -133,8 +158,9 @@ it("reaches an ARM64 callee in a call path", async () => {
 it("traverses every ARM64 callee in a call path without a goal and records no failure", async () => {
   const { client, producer } = await armSession();
   try {
-    const result = await new EnhancedTools(client).execute("trace_call_path", {
-      start: "main",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -153,16 +179,26 @@ it("traverses every ARM64 callee in a call path without a goal and records no fa
         { source_address: "0x1000", target_address: "0x3000" },
       ],
       failures: [],
+      // The recorded graph is complete; possible undiscovered calls remain unknown.
       truncated: false,
       limitations: expect.arrayContaining([
         "This relationship read does not establish calls to targets IDA does not recognize as functions; imports and other non-function call targets remain unknown.",
       ]),
       residual_unknowns: [],
-      relationship_coverage: {
-        "0x1000": { status: "complete" },
-        "0x2000": { status: "complete" },
-        "0x3000": { status: "complete" },
-      },
+      relationship_coverage: Object.fromEntries(
+        ["0x1000", "0x2000", "0x3000"].map((address) => [
+          address,
+          {
+            status: "complete",
+            discovery: {
+              callees: {
+                status: "unknown",
+                reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+              },
+            },
+          },
+        ]),
+      ),
     });
     expect(
       requestedRoots(producer),
@@ -225,8 +261,9 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
     });
 
     const application = new EnhancedTools(client);
-    const graph = await application.execute("get_call_graph", {
-      address: "main",
+    const graph = await application.executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
     if (!graph.ok) throw graph.error;
     expect(graph.value).toMatchObject({
@@ -243,9 +280,9 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
       },
     });
 
-    const trace = await application.execute("trace_call_path", {
-      start: "main",
-      goal: "0x3000",
+    const trace = await application.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x3000", direction: "forward" },
     });
     if (!trace.ok) throw trace.error;
     expect(trace.value).toMatchObject({
@@ -279,8 +316,9 @@ it("records a failed ARM64 call graph read as the node's error, not as a complet
     callgraphTruncatedOutput: true,
   });
   try {
-    const result = await new EnhancedTools(client).execute("get_call_graph", {
-      address: "main",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -322,8 +360,9 @@ it("preserves an explicit root cap below the edge limit through every relationsh
     expect(direct.value.limitations).toContain(limitation);
     expect(direct.value.result).toEqual(["0x2000"]);
     const application = new EnhancedTools(client);
-    const graph = await application.execute("get_call_graph", {
-      address: "main",
+    const graph = await application.executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
     if (!graph.ok) throw graph.error;
     expect(graph.value).toMatchObject({
@@ -337,14 +376,46 @@ it("preserves an explicit root cap below the edge limit through every relationsh
       },
       limitations: expect.arrayContaining([limitation]),
     });
-    const trace = await application.execute("trace_call_path", {
-      start: "main",
+    const trace = await application.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", direction: "forward" },
     });
     if (!trace.ok) throw trace.error;
     expect(trace.value).toMatchObject({
       truncated: true,
       residual_unknowns: expect.arrayContaining([
         `Call relationships for 0x1000 are limited: ${limitation}`,
+      ]),
+    });
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});
+
+it("does not treat omitted x86 callee truncation as a definite miss", async () => {
+  const { client, producer } = await callGraphSession(
+    {
+      callees: [{ addr: "0x2000", name: "square", type: "internal" }],
+    },
+    "x86_64",
+  );
+  const inner = producer.overrideCall;
+  producer.overrideCall = (name, args) =>
+    name === "callees"
+      ? [{ callees: [{ addr: "0x2000", name: "square", type: "internal" }] }]
+      : inner?.(name, args);
+  try {
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x3000", direction: "forward" },
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      goal_status: "unknown",
+      residual_unknowns: expect.arrayContaining([
+        expect.stringContaining(
+          "Call relationship coverage is unknown for 0x1000:",
+        ),
       ]),
     });
   } finally {

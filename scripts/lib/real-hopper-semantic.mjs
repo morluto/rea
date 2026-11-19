@@ -1,17 +1,6 @@
 import assert from "node:assert/strict";
 
-/**
- * `requireFunctionDossierOracle` is only used inside `verifyRealHopperFixture`,
- * which runs against the real Hopper bridge after `build:cached`. Loading it
- * lazily keeps this module importable from `test:fast` (which docs promise to
- * run "without build" — see docs/testing.md § test scripts) so that mock-only
- * callers such as `requireCurrentDocument` and `resolveFixtureProcedure` do
- * not require `dist/`.
- */
-const loadFunctionDossierOracle = () =>
-  import("../../dist/application/RealHopperAssertions.js").then(
-    (module) => module.requireFunctionDossierOracle,
-  );
+import { requireFunctionDossierOracle } from "./real-hopper-assertions.mjs";
 
 /** Require truthful tri-state permissions from real Hopper memory regions. */
 export const requireTruthfulMemoryRegions = (segments) => {
@@ -99,7 +88,6 @@ export async function verifyRealHopperFixture({
   oracle,
   normalizedResult,
 }) {
-  const requireFunctionDossierOracle = await loadFunctionDossierOracle();
   const main = await resolveFixtureProcedure(
     client,
     options,
@@ -218,13 +206,13 @@ export async function verifyRealHopperFixture({
   );
   return {
     procedures: { main, entry, branch, leaf },
-    entryComments: entryDossier.comments.returned,
-    entryStrings: entryDossier.referenced_strings.returned,
-    entryCallees: entryDossier.callees.returned,
-    branchCallees: branchDossier.callees.returned,
-    branchBlocks: branchDossier.basic_blocks.returned,
-    leafStrings: leafDossier.referenced_strings.returned,
-    leafNames: leafDossier.referenced_names.returned,
+    entryComments: entryDossier.comments.length,
+    entryStrings: entryDossier.referenced_strings.length,
+    entryCallees: entryDossier.callees.length,
+    branchCallees: branchDossier.callees.length,
+    branchBlocks: branchDossier.basic_blocks.length,
+    leafStrings: leafDossier.referenced_strings.length,
+    leafNames: leafDossier.referenced_names.length,
   };
 }
 
@@ -322,7 +310,7 @@ export async function resolveFixtureProcedure(
 }
 
 /** Request the assembly evidence required by the fixture oracle. */
-export const analyzeFixtureProcedure = async (
+const analyzeFixtureProcedure = async (
   client,
   options,
   procedure,
@@ -331,14 +319,19 @@ export const analyzeFixtureProcedure = async (
   const reply = await client.callTool(
     {
       name: "analyze_function",
-      arguments: { procedure: procedure.address },
+      arguments: { procedure: procedure.address, detail: "complete" },
     },
     options,
   );
   const dossier = normalizedResult(reply, "analyze_function");
-  assert.deepEqual(reply.structuredContent.relationship_coverage, {
-    status: "complete",
-  });
+  // Hopper declares caller/callee inventories as incomplete for every operation,
+  // so the fixture oracle must accept that declaration instead of demanding
+  // coverage the provider never claims.
+  const coverage = reply.structuredContent.relationship_coverage;
+  assert.equal(coverage?.status, "unknown");
+  assert.deepEqual(coverage.limited_directions, ["callers", "callees"]);
+  assert.equal(typeof coverage.reason, "string");
+  assert(coverage.reason.length > 0);
   for (const facet of [
     "pseudocode",
     "assembly",
@@ -363,6 +356,9 @@ export const analyzeFixtureProcedure = async (
     ),
     "compare_functions",
   );
+  // Unknown caller and callee discovery leaves the compared call sets as
+  // observations over an inventory whose completeness is unestablished, so the
+  // dimension reports that instead of claiming the calls are unchanged.
   assert.deepEqual(
     Object.fromEntries(
       comparison.dimensions.map(({ dimension, status }) => [dimension, status]),
@@ -372,7 +368,7 @@ export const analyzeFixtureProcedure = async (
       pseudocode: "unchanged",
       assembly: "unchanged",
       comments: "unchanged",
-      calls: "unchanged",
+      calls: "unknown",
       references: "unknown",
       strings_names: "unchanged",
       cfg: "unchanged",

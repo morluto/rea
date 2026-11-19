@@ -1,15 +1,38 @@
 import { cp, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 
-import { exec, execNpm, pathExists } from "./lib/verify-package-core.mjs";
+import {
+  pathExists,
+  runSettledConcurrent,
+} from "./lib/verify-package-core.mjs";
+
+/** Install the separately locked Skills CLI so verification resolves no registry metadata. */
+const lockedSkillsCli = async (commands, root, workspace) => {
+  const tool = join(workspace, "skills-cli");
+  await mkdir(tool, { recursive: true });
+  for (const file of ["package.json", "package-lock.json"])
+    await cp(join(root, "scripts/verify-tools/skills", file), join(tool, file));
+  await commands.execNpm(
+    ["ci", "--prefer-offline", "--ignore-scripts", "--no-audit", "--no-fund"],
+    { cwd: tool, timeout: 120_000 },
+  );
+  const installed = join(tool, "node_modules/skills");
+  const manifest = JSON.parse(
+    await readFile(join(installed, "package.json"), "utf8"),
+  );
+  return {
+    version: manifest.version,
+    entry: join(installed, manifest.bin.skills),
+  };
+};
 
 /** Exercise Skills' default root discovery without ignored build outputs. */
-export async function verifyRepositorySkill({ root, workspace }) {
+export async function verifyRepositorySkill({ root, workspace, commands }) {
   const snapshot = join(workspace, "repository");
   const consumer = join(workspace, "skill-consumer");
   const home = join(workspace, "skill-consumer-home");
   const tracked = (
-    await exec(
+    await commands.exec(
       "git",
       ["ls-files", "--cached", "--format=%(objectmode) %(path)", "-z"],
       { cwd: root },
@@ -17,31 +40,39 @@ export async function verifyRepositorySkill({ root, workspace }) {
   ).stdout
     .split("\0")
     .filter(Boolean);
+  const directories = new Set();
+  const filesToCopy = [];
   for (const entry of tracked) {
     const mode = entry.slice(0, 6);
     const path = entry.slice(7);
     const destination = join(snapshot, path);
     // A GitHub clone without submodule initialization has only these directories.
     if (mode === "160000") {
-      await mkdir(destination, { recursive: true });
+      directories.add(destination);
       continue;
     }
-    await mkdir(dirname(destination), { recursive: true });
-    await cp(join(root, path), destination, { verbatimSymlinks: true });
+    directories.add(dirname(destination));
+    filesToCopy.push({ source: join(root, path), destination });
   }
+  await runSettledConcurrent(
+    [consumer, home, ...directories],
+    32,
+    (directory) => mkdir(directory, { recursive: true }),
+  );
+  await runSettledConcurrent(filesToCopy, 32, ({ source, destination }) =>
+    cp(source, destination, { verbatimSymlinks: true }),
+  );
   if (await pathExists(join(snapshot, "skills")))
     throw new Error("repository skill check must run without generated skills");
-  await mkdir(consumer, { recursive: true });
-  await mkdir(home, { recursive: true });
-  const skillsVersion = "1.7.2";
-  await execNpm(
+  const { version: skillsVersion, entry } = await lockedSkillsCli(
+    commands,
+    root,
+    workspace,
+  );
+  await commands.exec(
+    process.execPath,
     [
-      "exec",
-      "--yes",
-      "--package",
-      `skills@${skillsVersion}`,
-      "--",
-      "skills",
+      entry,
       "add",
       snapshot,
       "--skill",

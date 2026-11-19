@@ -1,7 +1,12 @@
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
 import { Readable } from "node:stream";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
+import {
+  assertAsarReadActive,
+  asarCancellationFailure,
+  asarFailure,
+} from "./AsarFailure.js";
 
 /** Close an ASAR file handle before honoring cancellation of an empty member. */
 export const closeAsarHandle = async (
@@ -9,7 +14,7 @@ export const closeAsarHandle = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   await close();
-  abortIfNeeded(signal);
+  assertAsarReadActive(signal);
 };
 
 /** Validate and contextualize bytes read from one ASAR member source. */
@@ -28,18 +33,15 @@ export const readValidatedAsarEntry = (
       return new ArtifactReaderFailure(
         "integrity",
         `ASAR entry read coverage is incomplete: ${entryPath}`,
+        { integrityCheck: "read-coverage" },
       );
     if (expectedExtent !== undefined && coverage.bytes !== expectedExtent)
       return new ArtifactReaderFailure(
         "integrity",
         `ASAR entry size disagrees with its header: ${entryPath}`,
+        { integrityCheck: "declared-size" },
       );
-    if (signal?.aborted)
-      return new ArtifactReaderFailure(
-        "cancelled",
-        "ASAR operation cancelled",
-        { cause: signal.reason },
-      );
+    if (signal?.aborted) return asarCancellationFailure(signal.reason);
     return undefined;
   };
   const output = Readable.from(
@@ -60,6 +62,7 @@ export const readValidatedAsarEntry = (
             throw new ArtifactReaderFailure(
               "integrity",
               `ASAR entry exceeded its declared size: ${entryPath}`,
+              { integrityCheck: "declared-size" },
             );
           if (coverage.kind === "complete" && signal?.aborted) {
             const failure = completionFailure();
@@ -81,6 +84,9 @@ export const readValidatedAsarEntry = (
       }
     })(),
   );
+  // Cancellation can precede the caller's first read while it prepares output.
+  // Retain the stream error for that consumer without an unhandled error event.
+  output.on("error", () => undefined);
   const onSourceError = (cause: unknown): void => {
     const completedCancellation =
       cause instanceof ArtifactReaderFailure &&
@@ -115,38 +121,3 @@ export const readValidatedAsarEntry = (
   if (signal?.aborted) onAbort();
   return output;
 };
-
-const abortIfNeeded = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new ArtifactReaderFailure("cancelled", "ASAR operation cancelled", {
-      cause: signal.reason,
-    });
-};
-
-const asarFailure = (
-  path: string,
-  operation: string,
-  cause: unknown,
-): ArtifactReaderFailure => {
-  if (cause instanceof ArtifactReaderFailure) return cause;
-  if (isFilesystemFailure(cause))
-    return new ArtifactReaderFailure(
-      "io",
-      `Could not ${operation} ASAR at ${path}: ${cause.message}`,
-      { cause },
-    );
-  return new ArtifactReaderFailure(
-    "format",
-    `Malformed ASAR during ${operation}: ${path}`,
-    { cause },
-  );
-};
-
-const isFilesystemFailure = (
-  cause: unknown,
-): cause is NodeJS.ErrnoException & Error =>
-  cause instanceof Error &&
-  "errno" in cause &&
-  typeof cause.errno === "number" &&
-  "syscall" in cause &&
-  typeof cause.syscall === "string";

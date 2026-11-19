@@ -1,21 +1,23 @@
-import { deflateSync, inflateSync } from "node:zlib";
+import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
+import { inflateSync } from "node:zlib";
 import { z } from "zod";
+import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   cyclicDependencyIndices,
   type RustAuditableMetadata,
   type RustPackage,
 } from "../domain/rust/rustBinary.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
-/** Selected-file admission limit shared with the stable artifact reader. */
-export const RUST_BINARY_INPUT_BYTES = 256 * 1024 * 1024;
-/** Compressed `.dep-v0` section limit. */
-export const RUST_SECTION_BYTES = 1024 * 1024;
-/** Inflated JSON may grow by at most this multiple of the section size. */
+/** Compressed zlib stream limit. */
+const RUST_SECTION_BYTES = 1024 * 1024;
+/** Inflated JSON may grow by at most this multiple of the compressed stream. */
 export const RUST_INFLATE_RATIO = 64;
 /** Absolute inflated JSON limit, applied together with the ratio. */
 export const RUST_UNCOMPRESSED_BYTES = 8 * 1024 * 1024;
-/** Complete normalized report limit. */
-export const RUST_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 const JSON_DEPTH = 32;
 const packageSchema = z.strictObject({
@@ -23,11 +25,12 @@ const packageSchema = z.strictObject({
   version: z.string().min(1),
   source: z.string().min(1),
   kind: z.enum(["runtime", "build"]).optional(),
-  dependencies: z.array(z.number().int().nonnegative()).optional(),
+  dependencies: z.array(z.int().nonnegative()).optional(),
+  features: z.array(z.string().min(1)).optional(),
   root: z.boolean().optional(),
 });
 const documentVersionSchema = z.object({
-  format: z.number().int().nonnegative().max(0xffff_ffff).optional(),
+  format: z.int().nonnegative().max(0xffff_ffff).optional(),
 });
 const documentSchema = documentVersionSchema
   .extend({
@@ -35,17 +38,15 @@ const documentSchema = documentVersionSchema
   })
   .strict();
 
-/** Malformed or unsupported dependency-section bytes. */
-export class RustAuditableFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "RustAuditableFormatFailure";
-  }
-}
+/** The ParseFailure format of `cargo auditable` dependency sections. */
+export const RUST_AUDITABLE_FORMAT = "rust-auditable";
+
+/** Malformed section bytes, keeping the decoder or schema failure that showed it. */
+const malformedSection = (detail: string, cause: unknown) =>
+  new ParseFailureError(
+    { kind: "malformed", format: RUST_AUDITABLE_FORMAT, detail },
+    { cause },
+  );
 
 /** A resource admission limit with explicit semantic units. */
 export type RustAuditableConstraint =
@@ -56,10 +57,6 @@ export type RustAuditableConstraint =
   | {
       readonly resource: "transport";
       readonly reported_limits: { readonly maximum_output_bytes: number };
-    }
-  | {
-      readonly resource: "capacity";
-      readonly reported_limits: { readonly maximum_rustc_hashes: number };
     };
 
 /** Admission refused before retained output or graph expansion. */
@@ -79,13 +76,17 @@ export const readAuditableSection = (
   sectionName: RustAuditableMetadata["section_name"],
   fileOffset: number,
   bytes: Buffer,
+  options: {
+    readonly peFileAlignment?: number | undefined;
+    readonly maxOutputBytes?: number | undefined;
+  } = {},
 ): RustAuditableMetadata => {
   if (bytes.length === 0)
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "Dependency section is empty",
-    );
-  if (bytes.length > RUST_SECTION_BYTES)
+    throw malformedInput(RUST_AUDITABLE_FORMAT, "Dependency section is empty");
+  if (
+    bytes.length > RUST_SECTION_BYTES &&
+    options.peFileAlignment === undefined
+  )
     throw new RustAuditableResourceFailure(
       {
         resource: "memory",
@@ -93,16 +94,19 @@ export const readAuditableSection = (
       },
       "Dependency section exceeds the 1 MiB compressed limit",
     );
-  const inflated = inflateSection(bytes);
-  const document = parseDocument(inflated);
+  const inflated = inflateSection(bytes, options.peFileAlignment);
+  const document = parseDocument(
+    inflated.bytes,
+    options.maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes,
+  );
   const packages = normalizePackages(document.packages);
   const root = rootIndex(packages);
   return {
     section_name: sectionName,
     file_offset: fileOffset,
     section_bytes: bytes.length,
-    compressed_bytes: bytes.length,
-    uncompressed_bytes: inflated.length,
+    compressed_bytes: inflated.compressedBytes,
+    uncompressed_bytes: inflated.bytes.length,
     format_version: document.format ?? null,
     packages,
     root_package_index: root,
@@ -116,136 +120,142 @@ export const readAuditableSection = (
   };
 };
 
-const inflateSection = (bytes: Buffer): Buffer => {
-  const maximum = Math.min(
+const inflateSection = (
+  bytes: Buffer,
+  peFileAlignment: number | undefined,
+): {
+  readonly bytes: Buffer;
+  readonly compressedBytes: number;
+} => {
+  // Keep inflate allocation bounded before consumed input is known. PE storage
+  // can include zero alignment bytes, so the ratio is checked after decoding.
+  const allocationMaximum = Math.min(
     RUST_UNCOMPRESSED_BYTES,
     bytes.length * RUST_INFLATE_RATIO,
   );
+  let result: ReturnType<typeof nodeCodecResult>;
   try {
-    const inflated = inflateSync(bytes, {
-      maxOutputLength: maximum,
-      ...(rejectsTrailingJunk() ? { rejectGarbageAfterEnd: true } : {}),
-    });
-    if (
-      !rejectsTrailingJunk() &&
-      shortestPrefix(bytes, inflated, maximum) !== bytes.length
-    )
-      throw new RustAuditableFormatFailure(
-        "malformed",
+    result = nodeCodecResult(
+      inflateSync(bytes, {
+        info: true,
+        maxOutputLength: allocationMaximum,
+      }),
+    );
+  } catch (cause) {
+    // Only a padded section whose storage-derived allowance is below the fixed
+    // cap is bounded by its storage size; otherwise the fixed cap applies.
+    throw inflateFailure(
+      cause,
+      allocationMaximum,
+      peFileAlignment !== undefined &&
+        peFileAlignment > 0 &&
+        allocationMaximum < RUST_UNCOMPRESSED_BYTES,
+    );
+  }
+  const compressedBytes = result.consumedBytes;
+  if (compressedBytes > RUST_SECTION_BYTES)
+    throw new RustAuditableResourceFailure(
+      {
+        resource: "memory",
+        reported_limits: { maximum_bytes: RUST_SECTION_BYTES },
+      },
+      "Dependency section exceeds the 1 MiB compressed limit",
+    );
+  if (peFileAlignment !== undefined && peFileAlignment > 0) {
+    const padding = bytes.subarray(compressedBytes);
+    const alignedRawSize =
+      Math.ceil(compressedBytes / peFileAlignment) * peFileAlignment;
+    if (bytes.length !== alignedRawSize || padding.some((byte) => byte !== 0))
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
         "Dependency section has bytes after the zlib stream",
       );
-    return inflated;
-  } catch (cause) {
-    if (cause instanceof RustAuditableFormatFailure) throw cause;
-    throw inflateFailure(cause, maximum);
+  } else if (compressedBytes !== bytes.length) {
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
+      "Dependency section has bytes after the zlib stream",
+    );
   }
+  const compressedMaximum = Math.min(
+    RUST_UNCOMPRESSED_BYTES,
+    compressedBytes * RUST_INFLATE_RATIO,
+  );
+  if (result.buffer.length > compressedMaximum)
+    throw new RustAuditableResourceFailure(
+      {
+        resource: "memory",
+        reported_limits: { maximum_bytes: compressedMaximum },
+      },
+      "Inflated dependency JSON exceeds the size limit",
+    );
+  return { bytes: result.buffer, compressedBytes };
 };
 
-let trailingJunkRejected: boolean | undefined;
-
-const rejectsTrailingJunk = (): boolean => {
-  if (trailingJunkRejected !== undefined) return trailingJunkRejected;
-  const trailed = Buffer.concat([
-    deflateSync(Buffer.from("a")),
-    Buffer.from([0]),
-  ]);
-  try {
-    inflateSync(trailed, { rejectGarbageAfterEnd: true });
-    trailingJunkRejected = false;
-  } catch (cause) {
-    trailingJunkRejected =
-      cause instanceof Error &&
-      "code" in cause &&
-      cause.code === "ERR_TRAILING_JUNK_AFTER_STREAM_END";
-  }
-  return trailingJunkRejected;
-};
-
-const shortestPrefix = (
-  input: Buffer,
-  output: Buffer,
+const inflateFailure = (
+  cause: unknown,
   maximum: number,
-): number => {
-  let low = 0;
-  let high = input.length;
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-    if (prefixMatches(input.subarray(0, mid), output, maximum)) high = mid;
-    else low = mid + 1;
-  }
-  return high;
-};
-
-const prefixMatches = (
-  prefix: Buffer,
-  output: Buffer,
-  maximum: number,
-): boolean => {
-  try {
-    return inflateSync(prefix, { maxOutputLength: maximum }).equals(output);
-  } catch {
-    return false;
-  }
-};
-
-const inflateFailure = (cause: unknown, maximum: number): Error => {
+  storageBounded: boolean,
+): Error => {
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
   if (code === "ERR_BUFFER_TOO_LARGE")
     return new RustAuditableResourceFailure(
       { resource: "memory", reported_limits: { maximum_bytes: maximum } },
-      "Inflated dependency JSON exceeds the size limit",
+      // The stream length is unknown until inflate finishes, so a padded PE
+      // section is bounded by its storage size; say so instead of implying the
+      // smaller limit derived from the consumed stream.
+      storageBounded
+        ? `Inflated dependency JSON exceeds the ${String(maximum)}-byte allowance derived from the padded section's storage size; the zlib stream length is unknown until it inflates, so the smaller stream-based limit could not be applied first`
+        : "Inflated dependency JSON exceeds the size limit",
     );
   if (
     code === "ERR_TRAILING_JUNK_AFTER_STREAM_END" ||
     code.startsWith("Z_") ||
     code === "ERR_INVALID_ARG_TYPE"
   )
-    return new RustAuditableFormatFailure(
-      "malformed",
+    return malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency section is not a complete zlib stream",
     );
   return cause instanceof Error ? cause : new Error(String(cause));
 };
 
-const parseDocument = (bytes: Buffer): z.infer<typeof documentSchema> => {
+const parseDocument = (
+  bytes: Buffer,
+  maxOutputBytes: number,
+): z.infer<typeof documentSchema> => {
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch (cause) {
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "Dependency JSON is not valid UTF-8",
-      { cause },
-    );
+    throw malformedSection("Dependency JSON is not valid UTF-8", cause);
   }
   assertDepth(text);
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (cause) {
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "Dependency section JSON is invalid",
-      { cause },
-    );
+  // JSON.parse keeps the last of a repeated field; the format allows one.
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
+        `Dependency JSON contains duplicate field ${JSON.stringify(decoded.duplicate.name)}`,
+      );
+    throw malformedSection("Dependency section JSON is invalid", decoded.cause);
   }
+  const value = decoded.value;
   const version = documentVersionSchema.safeParse(value);
   if (!version.success)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedSection(
       "Dependency JSON does not match the format schema",
-      { cause: version.error },
+      version.error,
     );
-  admitGraphExpansion(value);
+  admitGraphExpansion(value, maxOutputBytes);
   // One malformed package must fail before Zod retains an issue for every field.
   rejectMalformedPackages(value);
   const parsed = documentSchema.safeParse(value);
   if (!parsed.success)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedSection(
       "Dependency JSON does not match the package schema",
-      { cause: parsed.error },
+      parsed.error,
     );
   return parsed.data;
 };
@@ -259,13 +269,14 @@ const MIN_PACKAGE_OUTPUT_BYTES = JSON.stringify({
   source: "a",
   kind: null,
   dependencies: [],
+  features: null,
   root: true,
 }).length;
 const MIN_EDGE_OUTPUT_BYTES = JSON.stringify({
   from_index: 0,
   to_index: 0,
 }).length;
-const admitGraphExpansion = (value: unknown): void => {
+const admitGraphExpansion = (value: unknown, maxOutputBytes: number): void => {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -280,18 +291,36 @@ const admitGraphExpansion = (value: unknown): void => {
   let edges = 0;
   const admit = () => {
     const edgeBytes = edges * MIN_EDGE_OUTPUT_BYTES + Math.max(0, edges - 1);
-    if (minimumBytes + edgeBytes > RUST_OUTPUT_BYTES)
+    if (minimumBytes + edgeBytes > maxOutputBytes)
       throw new RustAuditableResourceFailure(
         {
           resource: "transport",
-          reported_limits: { maximum_output_bytes: RUST_OUTPUT_BYTES },
+          reported_limits: { maximum_output_bytes: maxOutputBytes },
         },
         "Dependency graph exceeds the complete report byte budget before expansion",
       );
   };
+  const currentEdgeBytes = () =>
+    edges * MIN_EDGE_OUTPUT_BYTES + Math.max(0, edges - 1);
   admit();
   for (const pkg of packages) {
     // Shape and index validity remain owned by documentSchema/rootIndex.
+    if (
+      typeof pkg === "object" &&
+      pkg !== null &&
+      "features" in pkg &&
+      Array.isArray(pkg.features) &&
+      pkg.features.every((feature) => typeof feature === "string")
+    ) {
+      const featureBudget =
+        maxOutputBytes - minimumBytes - currentEdgeBytes() + 4;
+      const featureBytes = jsonValueByteLength(
+        pkg.features as string[],
+        featureBudget,
+      );
+      minimumBytes += featureBytes - 4;
+      admit();
+    }
     if (
       typeof pkg !== "object" ||
       pkg === null ||
@@ -312,6 +341,7 @@ const PACKAGE_FIELDS = new Set([
   "source",
   "kind",
   "dependencies",
+  "features",
   "root",
 ]);
 
@@ -325,8 +355,8 @@ const rejectMalformedPackages = (value: unknown): void => {
     return;
   for (const [index, pkg] of value.packages.entries()) {
     if (!packageRecord(pkg))
-      throw new RustAuditableFormatFailure(
-        "malformed",
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
         `Dependency package ${String(index)} does not match the package schema`,
       );
   }
@@ -336,6 +366,7 @@ const packageRecord = (
   pkg: unknown,
 ): pkg is {
   readonly dependencies?: readonly unknown[];
+  readonly features?: readonly unknown[];
 } => {
   if (typeof pkg !== "object" || pkg === null || Array.isArray(pkg))
     return false;
@@ -358,13 +389,19 @@ const packageRecord = (
   if (record.root !== undefined && typeof record.root !== "boolean")
     return false;
   const dependencies = record.dependencies;
-  if (dependencies === undefined) return true;
+  if (
+    dependencies !== undefined &&
+    (!Array.isArray(dependencies) ||
+      !dependencies.every(
+        (entry) =>
+          typeof entry === "number" && Number.isInteger(entry) && entry >= 0,
+      ))
+  )
+    return false;
+  const features = record.features;
   return (
-    Array.isArray(dependencies) &&
-    dependencies.every(
-      (entry) =>
-        typeof entry === "number" && Number.isInteger(entry) && entry >= 0,
-    )
+    features === undefined ||
+    (Array.isArray(features) && features.every(nonEmptyString))
   );
 };
 
@@ -389,8 +426,8 @@ const assertDepth = (text: string): void => {
     if (char === "{" || char === "[") {
       depth += 1;
       if (depth > JSON_DEPTH)
-        throw new RustAuditableFormatFailure(
-          "malformed",
+        throw malformedInput(
+          RUST_AUDITABLE_FORMAT,
           "Dependency JSON nesting exceeds 32 levels",
         );
     } else if ((char === "}" || char === "]") && depth > 0) depth -= 1;
@@ -406,14 +443,15 @@ const normalizePackages = (
     source: pkg.source,
     kind: pkg.kind ?? null,
     dependencies: pkg.dependencies ?? [],
+    features: pkg.features ?? null,
     root: pkg.root ?? false,
   }));
 
 const rootIndex = (packages: readonly RustPackage[]): number | null => {
   const roots = packages.flatMap((pkg, index) => (pkg.root ? [index] : []));
   if (roots.length > 1)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency JSON declares more than one root package",
     );
   for (const [index, pkg] of packages.entries()) {
@@ -421,8 +459,8 @@ const rootIndex = (packages: readonly RustPackage[]): number | null => {
       (target) => target >= packages.length,
     );
     if (outside !== undefined)
-      throw new RustAuditableFormatFailure(
-        "malformed",
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
         `Dependency index ${String(outside)} from package ${String(index)} is outside the package list`,
       );
   }

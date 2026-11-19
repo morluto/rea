@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import { absoluteOffset, alignUp, type ScanRegion } from "./UefiBytes.js";
 import { formatGuidLittleEndian } from "./UefiGuid.js";
@@ -47,20 +48,19 @@ export function walkSections(
   typeNameFor: (typeCode: number) => string,
   reserve: () => boolean = () => true,
 ): { sections: SectionDraft[]; terminated: boolean } {
+  const reader = new BinaryReader(region.buffer, true, "FFS sections");
   const sections: SectionDraft[] = [];
   let cursor = localStart;
   while (cursor + SECTION_LAYOUT.commonLength <= localEnd && reserve()) {
-    const compactSize = region.buffer.readUIntLE(cursor, 3);
-    const typeCode = region.buffer.readUInt8(
-      cursor + SECTION_LAYOUT.typeOffset,
-    );
+    const compactSize = reader.u16(cursor) | (reader.u8(cursor + 2) << 16);
+    const typeCode = reader.u8(cursor + SECTION_LAYOUT.typeOffset);
     const extended = compactSize === SECTION_LAYOUT.largeSectionMarker;
     const commonLength = extended
       ? SECTION_LAYOUT.extendedLength
       : SECTION_LAYOUT.commonLength;
     if (cursor + commonLength > localEnd) break;
     const declaredLength = extended
-      ? region.buffer.readUInt32LE(cursor + SECTION_LAYOUT.extendedSizeOffset)
+      ? reader.u32(cursor + SECTION_LAYOUT.extendedSizeOffset)
       : compactSize;
     // Even an undersized declaration has a common header we already observed.
     const observedLength = Math.max(
@@ -78,14 +78,12 @@ export function walkSections(
       headerLength += SECTION_LAYOUT.compressionFieldsLength;
       malformed = observedLength < headerLength;
       if (!malformed) {
-        const compressionType = region.buffer.readUInt8(
+        const compressionType = reader.u8(
           fields + SECTION_LAYOUT.compressionTypeFieldOffset,
         );
         if (compressionType === 0) {
           encapsulatesSections = true;
-          malformed =
-            region.buffer.readUInt32LE(fields) !==
-            declaredLength - headerLength;
+          malformed = reader.u32(fields) !== declaredLength - headerLength;
         } else {
           compression = {
             kind:
@@ -100,7 +98,7 @@ export function walkSections(
       headerLength += SECTION_LAYOUT.guidedFieldsLength;
       malformed = observedLength < headerLength;
       if (!malformed) {
-        const dataOffset = region.buffer.readUInt16LE(
+        const dataOffset = reader.u16(
           fields + SECTION_LAYOUT.guidDataOffsetFieldOffset,
         );
         malformed = dataOffset < headerLength || dataOffset > observedLength;
@@ -114,7 +112,7 @@ export function walkSections(
                 : (COMPRESSION_GUID_BY_DISPLAY[guid] ?? "unknown-guid"),
             guid,
             dataOffset,
-            attributes: region.buffer.readUInt16LE(
+            attributes: reader.u16(
               fields + SECTION_LAYOUT.guidAttributesFieldOffset,
             ),
           };
@@ -184,8 +182,9 @@ export function peelAmiZlibPayload(
   if (payload.length < AMD_ZLIB_HEADER_LENGTH) {
     return null;
   }
+  const payloadReader = new BinaryReader(payload, true, "AMD zlib section");
   return {
     stream: payload.subarray(AMD_ZLIB_HEADER_LENGTH),
-    declaredCompressedSize: payload.readUInt32LE(0x14),
+    declaredCompressedSize: payloadReader.u32(0x14),
   };
 }

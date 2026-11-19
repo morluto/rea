@@ -1,15 +1,29 @@
-import type { JavaScriptSemanticProjectionCapacity } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { createHash } from "node:crypto";
+import {
+  javaScriptMemberMutationAllowanceFromField,
+  type JavaScriptMemberMutationAllowance,
+} from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import type { JavaScriptSemanticPrecisionInput } from "../../domain/javascript/javascriptSemanticPrecision.js";
+import { fitJavaScriptRouteSourceFacts } from "../../domain/javascript/javascriptRouteResultBudget.js";
+import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import type {
+  JavaScriptSemanticProjectionCapacity,
+  JavaScriptSemanticFileProjection,
+} from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { getHeapStatistics } from "node:v8";
+import {
+  readBoundedControlLines,
+  type BoundedControlLine,
+} from "../../process/BoundedControlLines.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { isHostLimitFailure } from "../../domain/parseFailure.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
-import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import {
   javaScriptTransferByteBudget,
   writeJavaScriptAnalysisTransfer,
@@ -17,11 +31,14 @@ import {
 import { javaScriptWorkerStaticAnalysisSchema } from "./JavaScriptAnalysisWorkerSchemas.js";
 import {
   JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS as DEFAULTS,
+  javaScriptCheckpointCeilingRemediation,
   javaScriptWorkerRequestSchema,
   javaScriptWorkerAdmissionSchema,
   javaScriptWorkerMessageSchema,
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Trusted composition callback; this provider owns framing and temporary I/O. */
 export interface JavaScriptSourceWorkerAnalyzer {
@@ -34,6 +51,10 @@ export interface JavaScriptSourceWorkerAnalyzer {
       ) => Promise<void>;
       readonly checkpoint: (facts: JavaScriptStaticAnalysis) => Promise<number>;
     },
+    packageType: JavaScriptPackageType,
+    purpose: "analysis" | "preload-discovery",
+    precision: JavaScriptSemanticPrecisionInput | undefined,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): Promise<{
     readonly module: JavaScriptModuleSemanticIr;
     readonly projection: JavaScriptSemanticFileProjection;
@@ -59,8 +80,10 @@ export const serveJavaScriptAnalysisWorker = async (
   analyze: JavaScriptSourceWorkerAnalyzer,
 ): Promise<void> => {
   const root = process.cwd();
-  const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  const requests = input[Symbol.asyncIterator]();
+  const requests = readBoundedControlLines(
+    process.stdin.iterator({ destroyOnReturn: false }),
+    DEFAULTS.protocolBytes,
+  );
   await send({
     kind: "ready",
     heap_limit_bytes:
@@ -72,12 +95,14 @@ export const serveJavaScriptAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      const line = next.value;
-      if (Buffer.byteLength(line) > DEFAULTS.protocolBytes)
+      if (!next.value.ok) {
+        if (next.value.error._tag === "ControlLineMalformedUtf8")
+          throw new TypeError("JavaScript worker request is not valid UTF-8");
         throw new RangeError(
           "JavaScript worker request exceeds its byte budget",
         );
-      const raw: unknown = JSON.parse(line);
+      }
+      const raw: unknown = JSON.parse(next.value.value);
       const request = javaScriptWorkerRequestSchema.parse(raw);
       // Function scope releases source AST/IR/results before accepting another job.
       await analyzeJob(root, request, analyze, requests);
@@ -88,7 +113,7 @@ export const serveJavaScriptAnalysisWorker = async (
         global.gc?.();
     }
   } finally {
-    input.close();
+    await requests.return(undefined);
   }
 };
 
@@ -96,14 +121,12 @@ const analyzeJob = async (
   root: string,
   request: ReturnType<typeof javaScriptWorkerRequestSchema.parse>,
   analyze: JavaScriptSourceWorkerAnalyzer,
-  requests: AsyncIterator<string>,
+  requests: AsyncIterator<BoundedControlLine>,
 ): Promise<void> => {
   try {
     let resultBudgetBytes = 0;
     const source = await readFile(join(root, `${request.id}.source`), "utf8");
-    if (
-      createHash("sha256").update(source).digest("hex") !== request.text_sha256
-    )
+    if (sha256Hex(source) !== request.text_sha256)
       throw new TypeError(
         "JavaScript worker source text digest does not match its request",
       );
@@ -116,17 +139,39 @@ const analyzeJob = async (
       {
         phase: async (phase) => send({ kind: "phase", id: request.id, phase }),
         checkpoint: async (facts) => {
-          const value = javaScriptWorkerStaticAnalysisSchema.parse(facts);
+          let value = javaScriptWorkerStaticAnalysisSchema.parse(facts);
+          if (value.routes !== undefined) {
+            const { routes, ...existing } = value;
+            // This is schema-checked, producer-owned JSON. Interface optional
+            // members can only make the size estimate conservative.
+            const available =
+              DEFAULTS.checkpointBytes -
+              jsonValueByteLength(
+                existing as JsonValue,
+                DEFAULTS.checkpointBytes,
+              ) -
+              Buffer.byteLength(',"routes":');
+            const admitted = fitJavaScriptRouteSourceFacts(routes, available);
+            value =
+              admitted === undefined
+                ? existing
+                : { ...existing, routes: admitted };
+          }
           const text = JSON.stringify(value);
           const bytes = Buffer.byteLength(text);
           if (bytes > DEFAULTS.checkpointBytes)
             throw new AnalysisResourceConstraintError(
               "analyze_javascript_application",
               "transport",
-              "JavaScript static checkpoint exceeds its complete-fact byte budget",
+              `JavaScript static checkpoint exceeds its ${String(DEFAULTS.checkpointBytes)}-byte complete-fact ceiling. This release has no runtime override.`,
               {
                 checkpoint_bytes: bytes,
                 checkpoint_limit_bytes: DEFAULTS.checkpointBytes,
+              },
+              {
+                remediationAction: javaScriptCheckpointCeilingRemediation(
+                  DEFAULTS.checkpointBytes,
+                ),
               },
             );
           await writeFile(join(root, `${request.id}.static.json`), text, {
@@ -137,17 +182,22 @@ const analyzeJob = async (
             kind: "static",
             id: request.id,
             bytes,
-            sha256: createHash("sha256").update(text).digest("hex"),
+            sha256: sha256Hex(text),
           });
           const next = await requests.next();
           if (
-            next.done ||
-            Buffer.byteLength(next.value) > DEFAULTS.protocolBytes
+            !next.done &&
+            !next.value.ok &&
+            next.value.error._tag === "ControlLineMalformedUtf8"
           )
+            throw new TypeError(
+              "JavaScript worker admission frame is not valid UTF-8",
+            );
+          if (next.done || !next.value.ok)
             throw new TypeError(
               "JavaScript worker admission frame is missing or oversized",
             );
-          const raw: unknown = JSON.parse(next.value);
+          const raw: unknown = JSON.parse(next.value.value);
           const admission = javaScriptWorkerAdmissionSchema.parse(raw);
           if (admission.id !== request.id)
             throw new TypeError(
@@ -157,6 +207,12 @@ const analyzeJob = async (
           return resultBudgetBytes;
         },
       },
+      request.package_type,
+      request.purpose,
+      request.semantic_precision,
+      javaScriptMemberMutationAllowanceFromField(
+        request.member_mutation_allowance,
+      ),
     );
     await send({ kind: "phase", id: request.id, phase: "transfer" });
     const descriptor =
@@ -170,12 +226,12 @@ const analyzeJob = async (
           );
     await send({ kind: "complete", id: request.id, descriptor });
   } catch (cause: unknown) {
+    const hostLimit = isHostLimitFailure(cause);
     await send({
       kind: "failure",
       id: request.id,
       reason:
-        cause instanceof AnalysisResourceConstraintError ||
-        cause instanceof RangeError
+        cause instanceof AnalysisResourceConstraintError || hostLimit
           ? "resource"
           : cause instanceof TypeError
             ? "output"
@@ -183,7 +239,7 @@ const analyzeJob = async (
       resource:
         cause instanceof AnalysisResourceConstraintError
           ? cause.resource
-          : cause instanceof RangeError
+          : hostLimit
             ? "memory"
             : null,
       limits:
@@ -194,9 +250,7 @@ const analyzeJob = async (
       message:
         cause instanceof AnalysisResourceConstraintError
           ? cause.reason
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
+          : errorMessage(cause),
     });
   }
 };

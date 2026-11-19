@@ -5,11 +5,13 @@ export const SOURCE_TEST_PROJECTS = [
   {
     name: "domain",
     group: "source",
-    include: ["src/{contracts,domain}/**/*.test.ts"],
+    isolate: false,
+    include: ["src/{contracts,domain,kernel,ports}/**/*.test.ts"],
   },
   {
     name: "services",
     group: "source",
+    isolate: false,
     include: ["src/application/**/*.test.ts"],
   },
   {
@@ -17,23 +19,26 @@ export const SOURCE_TEST_PROJECTS = [
     group: "source",
     include: [
       "src/*.test.ts",
-      "src/{apktool,jeb,adb,artifacts,browser,dotnet,electron,evm,firmware,flutter,pcap,ghidra,go,hopper,ida,inspector,javascript,native,process,reference,rust,server,sqlite,uefi,wasm,windows}/**/*.test.ts",
+      "src/{android,apkSignature,apktool,jeb,adb,artifacts,browser,compression,config,cutter,desktop,dotnet,electron,erlang,evm,firmware,flutter,frida,pcap,ghidra,go,gpu,hopper,hopperPaths,ida,inspector,java,javascript,kuna,main,native,nuget,process,providers,python,reference,resources,rust,server,sqlite,uefi,v8,wasm,windows}/**/*.test.ts",
     ],
   },
   {
     name: "composition",
     group: "source",
+    isolate: false,
     include: ["tests/composition/**/*.test.ts"],
   },
   {
     name: "conformance",
     group: "source",
+    isolate: false,
     include: ["tests/conformance/**/*.test.ts"],
     exclude: ["tests/conformance/providers/hopper/realHopperSearch.test.ts"],
   },
   {
     name: "evaluation",
     group: "source",
+    isolate: false,
     include: ["tests/evaluation/**/*.test.ts"],
   },
 ];
@@ -55,6 +60,7 @@ export const BUILT_TEST_PROJECTS = [
   {
     name: "cli-boundary",
     group: "built",
+    isolate: false,
     include: ["tests/boundary/cli/**/*.test.ts"],
   },
   {
@@ -65,6 +71,7 @@ export const BUILT_TEST_PROJECTS = [
   {
     name: "mcp-boundary",
     group: "built",
+    isolate: false,
     include: ["tests/boundary/mcp/**/*.test.ts"],
   },
   {

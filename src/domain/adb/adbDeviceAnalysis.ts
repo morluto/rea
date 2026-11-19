@@ -1,6 +1,19 @@
+import {
+  adbTransportIdentitySchema,
+  adbTransportIdSchema,
+} from "./adbTransportIdentity.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { localPathStringSchema } from "../localPath.js";
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
+import type { EvidenceAuthority } from "../evidence.js";
+
+/**
+ * A device is a service REA attaches to and does not own, so what it reports is
+ * an external observation rather than one bound to a shipped artifact.
+ */
+export const ADB_DEVICE_OBSERVATION_AUTHORITY: EvidenceAuthority =
+  "external-service";
 
 /**
  * Device serials as adb prints them: emulator-5554, USB identifiers, and
@@ -47,10 +60,143 @@ export const ADB_DEVICE_STATES = [
   "detached",
 ] as const;
 export const adbDeviceStateSchema = z.enum(ADB_DEVICE_STATES);
-export type AdbDeviceState = (typeof ADB_DEVICE_STATES)[number];
 
-const keyStringSchema = z.string().min(1).max(256);
-const keyPattern = /^[A-Za-z0-9._\x2d]+$/u;
+const MAX_ADB_KEY_LENGTH = 256;
+const keyStringSchema = z.string().min(1).max(MAX_ADB_KEY_LENGTH);
+const keyCharacter = String.raw`[A-Za-z0-9._\x2d]`;
+const keyPattern = new RegExp(`^${keyCharacter}+$`, "u");
+const activityExtraKeySchema = keyStringSchema
+  .regex(keyPattern, "Extra keys are identifiers")
+  .describe("Extra key");
+const MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH = 2048;
+const activityExtraStringValueSchema = z
+  .string()
+  .max(MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH)
+  .regex(/^[^\x00]*$/u, "Extra values cannot contain NUL");
+const activityExtraNonEmptyValueSchema = activityExtraStringValueSchema.min(1);
+const javaDecimalExtraValuePattern = /^-?\d+$/u;
+/** Check Java int/long range without rounding or changing the caller's text. */
+const javaDecimalExtraValueSchema = (bits: 32 | 64) => {
+  const upperBound = 1n << BigInt(bits - 1);
+  const range = `signed ${String(bits)}-bit`;
+  return z
+    .string()
+    .max(MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH, { abort: true })
+    .regex(javaDecimalExtraValuePattern, {
+      message: "Integer extra values must be signed decimal text",
+      abort: true,
+    })
+    .refine((value) => {
+      const decimal = BigInt(value);
+      return decimal >= -upperBound && decimal < upperBound;
+    }, `Integer extra value is outside the ${range} range`)
+    .describe(`Integer extra value as ${range} decimal text`);
+};
+/** Maximum typed extras admitted for one Android activity request. */
+export const MAX_ADB_ACTIVITY_EXTRAS = 16;
+// Android's `am start --ef` parses this text with Float.valueOf. Keep the
+// caller's spelling intact while admitting Java FloatValue forms.
+const javaFloatValuePattern =
+  /^[\x01-\x20]*(?:\+|-)?(?:NaN|Infinity|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE](?:\+|-)?\d+)?[fFdD]?|0[xX](?:[\da-fA-F]+(?:\.[\da-fA-F]*)?|\.[\da-fA-F]+)[pP](?:\+|-)?\d+[fFdD]?))[\x01-\x20]*$/u;
+const activityExtraBooleanPattern = /^(true|false)$/u;
+const activityExtraSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    key: activityExtraKeySchema,
+    type: z.literal("string").describe("String extra value type"),
+    value: activityExtraStringValueSchema.describe(
+      "String extra value as text; an explicitly empty value is preserved",
+    ),
+  }),
+  z.strictObject({
+    key: activityExtraKeySchema,
+    type: z.literal("boolean").describe("Boolean extra value type"),
+    value: activityExtraNonEmptyValueSchema
+      .regex(
+        activityExtraBooleanPattern,
+        "Boolean extra values must be true or false",
+      )
+      .describe("Boolean extra value as true or false text"),
+  }),
+  z.strictObject({
+    key: activityExtraKeySchema,
+    type: z.literal("int").describe("Integer extra value type"),
+    value: javaDecimalExtraValueSchema(32),
+  }),
+  z.strictObject({
+    key: activityExtraKeySchema,
+    type: z.literal("long").describe("Long extra value type"),
+    value: javaDecimalExtraValueSchema(64),
+  }),
+  z.strictObject({
+    key: activityExtraKeySchema,
+    type: z.literal("float").describe("Float extra value type"),
+    value: activityExtraNonEmptyValueSchema
+      .regex(
+        javaFloatValuePattern,
+        "Float extra value must be valid Java float text",
+      )
+      .describe(
+        "Float extra text parsed by Android am without changing its spelling",
+      ),
+  }),
+]);
+
+const activityExtraCliKey = `${keyCharacter}{1,${MAX_ADB_KEY_LENGTH}}`;
+const patternBody = (pattern: RegExp): string => pattern.source.slice(1, -1);
+const activityExtraCliPattern = (
+  type: z.output<typeof activityExtraSchema>["type"],
+  value: string,
+) =>
+  new RegExp(
+    `^${type}:${activityExtraCliKey}:(?=[^\\x00]{0,${MAX_ADB_ACTIVITY_EXTRA_VALUE_LENGTH}}$)(?:${value})$`,
+    "u",
+  );
+
+/** Admit one CLI token with the same typed value checks as the activity request. */
+export const activityExtraCliEntrySchema = z
+  .union([
+    z.string().regex(activityExtraCliPattern("string", String.raw`[^\x00]*`)),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern(
+          "boolean",
+          patternBody(activityExtraBooleanPattern),
+        ),
+      ),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern(
+          "int",
+          patternBody(javaDecimalExtraValuePattern),
+        ),
+      ),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern(
+          "long",
+          patternBody(javaDecimalExtraValuePattern),
+        ),
+      ),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern("float", patternBody(javaFloatValuePattern)),
+      ),
+  ])
+  .pipe(
+    z.preprocess((entry: string) => {
+      const typeEnd = entry.indexOf(":");
+      const keyEnd = entry.indexOf(":", typeEnd + 1);
+      return {
+        type: entry.slice(0, typeEnd),
+        key: entry.slice(typeEnd + 1, keyEnd),
+        value: entry.slice(keyEnd + 1),
+      };
+    }, activityExtraSchema),
+  );
 
 /**
  * Caller intent for ADB-backed device inspection and acquisition.
@@ -94,7 +240,6 @@ export const adbInputSchemas = {
       "Device serial exactly as `adb devices` reports it",
     ),
     count: z
-      .number()
       .int()
       .min(1)
       .max(10_000)
@@ -105,7 +250,6 @@ export const adbInputSchemas = {
       .default("main")
       .describe("Log buffer to read (logcat -b)"),
     pid: z
-      .number()
       .int()
       .positive()
       .optional()
@@ -276,29 +420,14 @@ export const adbInputSchemas = {
       .min(1)
       .max(512)
       .regex(
-        /^[A-Za-z0-9._\x2d]+(\/[A-Za-z0-9._\x2d]*)?$/u,
+        /^[A-Za-z0-9._\x2d]+\/[A-Za-z0-9._$\x2d]+$/u,
         "Component must be package/activity form",
       )
       .optional()
       .describe("Explicit component to start (-n)"),
     extras: z
-      .array(
-        z.strictObject({
-          key: keyStringSchema
-            .regex(keyPattern, "Extra keys are identifiers")
-            .describe("Extra key"),
-          type: z
-            .enum(["string", "boolean", "int", "long", "float"])
-            .describe("Extra value type"),
-          value: z
-            .string()
-            .min(1)
-            .max(2048)
-            .regex(/^[^\x00]*$/u, "Extra values cannot contain NUL")
-            .describe("Extra value as text, parsed per type"),
-        }),
-      )
-      .max(16)
+      .array(activityExtraSchema)
+      .max(MAX_ADB_ACTIVITY_EXTRAS)
       .default([])
       .describe("Typed intent extras (--es/--ez/--ei/--el/--ef)"),
   }),
@@ -422,6 +551,11 @@ export const adbRequestSchema = z.discriminatedUnion("operation", [
   }),
 ]);
 
+/**
+ * ADB results report known coverage: each operation counts the lines it could
+ * not parse and the items it could not fetch, so it never reports `unknown`.
+ */
+
 const client = z.strictObject({
   binary_path: z.string().min(1),
   path_source: z.enum(["environment", "path"]),
@@ -429,14 +563,14 @@ const client = z.strictObject({
   installed_path: z.string().min(1).nullable(),
 });
 
-const device = z.strictObject({
+export const adbDeviceObservationSchema = z.strictObject({
   serial: z.string().min(1),
   state: adbDeviceStateSchema,
   transport: z.enum(["usb", "tcp", "unknown"]),
   product: z.string().nullable(),
   model: z.string().nullable(),
   device: z.string().nullable(),
-  transport_id: z.number().int().positive().nullable(),
+  transport_identity: adbTransportIdentitySchema,
   /**
    * Inferred device kind with its evidence basis. The serial prefix and the
    * `device:` metadata line are observations; the kind itself is derived.
@@ -445,11 +579,38 @@ const device = z.strictObject({
   kind_basis: z.enum(["emulator_serial_prefix", "usb_transport", "none"]),
 });
 
+export type AdbDeviceObservation = z.output<typeof adbDeviceObservationSchema>;
+
+/** Provider facts before the shared CLI/MCP numeric projection. */
+export const adbDeviceListObservationSchema = z.strictObject({
+  client,
+  devices: z.array(adbDeviceObservationSchema),
+  may_have_started_adb_server: z.boolean(),
+});
+
+const device = adbDeviceObservationSchema
+  .omit({ transport_identity: true })
+  .extend({
+    transport_id: z
+      .int()
+      .positive()
+      .nullable()
+      .describe(
+        "Exact numeric projection when safely representable; otherwise null. transport_id_text retains the full reported identity.",
+      ),
+    transport_id_text: adbTransportIdSchema
+      .nullable()
+      .describe(
+        "Canonical positive unsigned 64-bit transport ID as decimal text; null when invalid or not reported.",
+      ),
+    transport_id_status: z.enum(["reported", "not_reported", "invalid"]),
+  });
+
 const pulledArtifact = z.strictObject({
   device_path: z.string().min(1),
   file_name: z.string().min(1),
   local_path: z.string().min(1),
-  bytes: z.number().int().nonnegative(),
+  bytes: z.int().nonnegative(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   role: z.enum(["base", "split", "unknown"]),
   role_basis: z.literal("file_name"),
@@ -476,6 +637,59 @@ export const adbWindowFocusContextSchema = z.strictObject({
 });
 export type AdbWindowFocusContext = z.infer<typeof adbWindowFocusContextSchema>;
 
+const displayNumericReason = z.enum([
+  "invalid_format",
+  "unsafe_integer",
+  "nonpositive",
+]);
+const displayNumericIssue = z.discriminatedUnion("command", [
+  z.strictObject({
+    command: z.literal("wm size"),
+    field: z.enum(["physical_size", "override_size"]),
+    reason: displayNumericReason,
+    raw_line: z.string().min(1),
+  }),
+  z.strictObject({
+    command: z.literal("wm density"),
+    field: z.enum(["physical_density", "override_density"]),
+    reason: displayNumericReason,
+    raw_line: z.string().min(1),
+  }),
+]);
+
+/** Bounded source diagnostics for display numeric declarations. */
+export const adbDisplayNumericIssuesSchema = z.strictObject({
+  sample: z.array(displayNumericIssue),
+  total: z.int().nonnegative(),
+});
+export type AdbDisplayNumericIssues = z.infer<
+  typeof adbDisplayNumericIssuesSchema
+>;
+
+/** Bounded source diagnostics for Package Manager numeric declarations. */
+export const adbPackageNumericIssuesSchema = z.strictObject({
+  sample: z.array(
+    z.discriminatedUnion("field", [
+      z.strictObject({
+        command: z.literal("dumpsys package"),
+        field: z.literal("user_id"),
+        reason: z.enum(["invalid_format", "unsafe_integer"]),
+        raw_line: z.string().min(1),
+      }),
+      z.strictObject({
+        command: z.literal("dumpsys package"),
+        field: z.literal("version_code"),
+        reason: z.literal("invalid_format"),
+        raw_line: z.string().min(1),
+      }),
+    ]),
+  ),
+  total: z.int().nonnegative(),
+});
+export type AdbPackageNumericIssues = z.infer<
+  typeof adbPackageNumericIssuesSchema
+>;
+
 /** Portable ADB observations with explicit identity and coverage limitations. */
 export const adbResultSchemas = {
   inspect_adb_client: z.strictObject({
@@ -499,9 +713,9 @@ export const adbResultSchemas = {
     client,
     serial: z.string().min(1),
     properties: z.array(
-      z.strictObject({ name: z.string().min(1), value: z.string().min(1) }),
+      z.strictObject({ name: z.string().min(1), value: z.string() }),
     ),
-    property_count: z.number().int().nonnegative(),
+    property_count: z.int().nonnegative(),
     emulator_observed: z.boolean().nullable(),
   }),
   list_adb_packages: z.strictObject({
@@ -516,7 +730,7 @@ export const adbResultSchemas = {
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   pull_adb_package: z.strictObject({
     client,
@@ -525,17 +739,17 @@ export const adbResultSchemas = {
     output_directory: z.string().min(1),
     artifacts: z.array(pulledArtifact),
     failures: z.array(pullFailure),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   read_adb_logcat: z.strictObject({
     client,
     serial: z.string().min(1),
-    count: z.number().int().positive(),
+    count: z.int().positive(),
     buffer: z.enum(["main", "system", "radio", "events", "crash"]),
-    pid: z.number().int().positive().nullable(),
+    pid: z.int().positive().nullable(),
     lines: z.array(z.string()),
-    total_bytes: z.number().int().nonnegative(),
-    coverage: z.enum(["complete", "partial"]),
+    total_bytes: z.int().nonnegative(),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_adb_package: z.strictObject({
     client,
@@ -552,17 +766,18 @@ export const adbResultSchemas = {
     first_install_time: z.string().nullable(),
     last_update_time: z.string().nullable(),
     installer_package_name: z.string().nullable(),
-    user_id: z.number().int().nullable(),
+    user_id: z.int().nonnegative().nullable(),
     pkg_flags: z.string().nullable(),
-    requested_permissions_count: z.number().int().nonnegative().nullable(),
-    coverage: z.enum(["complete", "partial"]),
+    requested_permissions_count: z.int().nonnegative().nullable(),
+    numeric_issues: adbPackageNumericIssuesSchema,
+    coverage: knownCoverageStatusSchema,
   }),
   pull_adb_file: z.strictObject({
     client,
     serial: z.string().min(1),
     device_path: z.string().min(1),
     local_path: z.string().min(1),
-    bytes: z.number().int().nonnegative(),
+    bytes: z.int().nonnegative(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   }),
   push_adb_file: z.strictObject({
@@ -570,7 +785,7 @@ export const adbResultSchemas = {
     serial: z.string().min(1),
     local_path: z.string().min(1),
     device_path: z.string().min(1),
-    bytes: z.number().int().nonnegative(),
+    bytes: z.int().nonnegative(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     device_sha256: z
       .string()
@@ -583,10 +798,10 @@ export const adbResultSchemas = {
     client,
     serial: z.string().min(1),
     local_path: z.string().min(1),
-    bytes: z.number().int().nonnegative(),
+    bytes: z.int().nonnegative(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    width: z.number().int().positive().nullable(),
-    height: z.number().int().positive().nullable(),
+    width: z.int().positive().nullable(),
+    height: z.int().positive().nullable(),
   }),
   list_adb_processes: z.strictObject({
     client,
@@ -595,15 +810,15 @@ export const adbResultSchemas = {
     processes: z.array(
       z.strictObject({
         user: z.string(),
-        pid: z.number().int().nonnegative(),
-        ppid: z.number().int().nullable(),
-        rss: z.number().int().nullable(),
+        pid: z.int().nonnegative(),
+        ppid: z.int().nullable(),
+        rss: z.int().nullable(),
         state: z.string().nullable(),
         name: z.string(),
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   list_adb_directory: z.strictObject({
     client,
@@ -616,13 +831,13 @@ export const adbResultSchemas = {
         permissions: z.string().nullable(),
         owner: z.string().nullable(),
         group: z.string().nullable(),
-        bytes: z.number().int().nullable(),
+        bytes: z.int().nullable(),
         date: z.string().nullable(),
         link_target: z.string().nullable(),
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   list_adb_features: z.strictObject({
     client,
@@ -630,11 +845,11 @@ export const adbResultSchemas = {
     features: z.array(
       z.strictObject({
         name: z.string().min(1),
-        version: z.number().int().nullable(),
+        version: z.int().nullable(),
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   list_adb_services: z.strictObject({
     client,
@@ -646,23 +861,25 @@ export const adbResultSchemas = {
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_adb_display: z.strictObject({
     client,
     serial: z.string().min(1),
     physical_size: z.strictObject({
-      width: z.number().int().positive(),
-      height: z.number().int().positive(),
+      width: z.int().positive(),
+      height: z.int().positive(),
     }),
     override_size: z
       .strictObject({
-        width: z.number().int().positive(),
-        height: z.number().int().positive(),
+        width: z.int().positive(),
+        height: z.int().positive(),
       })
       .nullable(),
-    physical_density: z.number().int().positive().nullable(),
-    override_density: z.number().int().positive().nullable(),
+    physical_density: z.int().positive().nullable(),
+    override_density: z.int().positive().nullable(),
+    numeric_issues: adbDisplayNumericIssuesSchema,
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_adb_window: z.strictObject({
     client,
@@ -686,7 +903,7 @@ export const adbResultSchemas = {
     client,
     serial: z.string().min(1),
     local_path: z.string().min(1),
-    bytes: z.number().int().nonnegative(),
+    bytes: z.int().nonnegative(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     adb_reported_path: z.string().nullable(),
   }),
@@ -701,13 +918,14 @@ export const adbResultSchemas = {
       }),
     ),
     exact_match: z.boolean(),
-    coverage: z.enum(["complete", "partial"]),
+    unparsed_lines: z.array(z.string().min(1)),
+    coverage: knownCoverageStatusSchema,
   }),
   install_adb_package: z.strictObject({
     client,
     serial: z.string().min(1),
     apk_path: z.string().min(1),
-    bytes: z.number().int().nonnegative(),
+    bytes: z.int().nonnegative(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     replace_requested: z.boolean(),
     replaced: z.boolean().nullable(),
@@ -750,6 +968,20 @@ export const adbResultSchemas = {
   }),
 } as const;
 
+/** Completed display facts retained when the required physical size is unreadable. */
+export const adbDisplayPartialObservationSchema = z.strictObject({
+  provider_id: z.literal("adb"),
+  operation: z.literal("inspect_adb_display"),
+  reason: z.enum(["physical_size_absent", "physical_size_malformed"]),
+  result: adbResultSchemas.inspect_adb_display.extend({
+    physical_size: z.null(),
+    coverage: z.literal("partial"),
+  }),
+});
+export type AdbDisplayPartialObservation = z.infer<
+  typeof adbDisplayPartialObservationSchema
+>;
+
 /** Parsed focus facts, before the adapter supplies client and command identity. */
 export type AdbWindowFocusObservation = Omit<
   z.infer<typeof adbResultSchemas.inspect_adb_window>,
@@ -790,6 +1022,7 @@ export type AdbAcquiredFilePartialObservation =
             readonly local_path: string;
             readonly device_path: string;
             readonly digest_status: "unknown";
+            readonly transfer_status?: "unconfirmed";
           }
         | z.infer<typeof adbResultSchemas.pull_adb_file>;
     }

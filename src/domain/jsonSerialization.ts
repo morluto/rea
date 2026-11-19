@@ -1,12 +1,77 @@
+/** Exact UTF-16 code units of a JSON string, including escaping and quotes. */
+export const jsonStringCodeUnits = (value: string): number => {
+  let length = value.length + 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 34 || code === 92) length += 1;
+    else if (code < 32)
+      length +=
+        code === 8 || code === 9 || code === 10 || code === 12 || code === 13
+          ? 1
+          : 5;
+    else if (code >= 0xd800 && code <= 0xdfff) {
+      const next = value.charCodeAt(index + 1);
+      if (code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) index += 1;
+      else length += 5;
+    }
+  }
+  return length;
+};
+
 /** Encode ordinary JSON as bounded string parts without a document-sized allocation. */
 export function* jsonParts(value: unknown, pretty = false): Generator<string> {
   yield* encodeValue(value, pretty, false);
 }
 
+/** Exact UTF-8 bytes of ordinary JSON without allocating the whole document. */
+export const jsonByteLength = (value: unknown): number => {
+  let bytes = 0;
+  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part, "utf8");
+  return bytes;
+};
+
+/** Exact UTF-16 code units of ordinary JSON without allocating the whole document. */
+export const jsonTextCodeUnits = (value: unknown): number => {
+  let length = 0;
+  for (const part of jsonParts(value)) length += part.length;
+  return length;
+};
+
 /** Encode validated JSON with canonical key ordering without allocating the whole document. */
 export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);
 }
+
+/** Compare ordinary JSON text in bounded parts, preserving native key order. */
+export const equalJsonText = (left: unknown, right: unknown): boolean => {
+  const a = jsonParts(left);
+  const b = jsonParts(right);
+  let x = a.next();
+  let y = b.next();
+  let i = 0;
+  let j = 0;
+  try {
+    while (!x.done && !y.done) {
+      const length = Math.min(x.value.length - i, y.value.length - j);
+      if (x.value.slice(i, i + length) !== y.value.slice(j, j + length))
+        return false;
+      i += length;
+      j += length;
+      if (i === x.value.length) {
+        x = a.next();
+        i = 0;
+      }
+      if (j === y.value.length) {
+        y = b.next();
+        j = 0;
+      }
+    }
+    return x.done === true && y.done === true;
+  } finally {
+    a.return(undefined);
+    b.return(undefined);
+  }
+};
 
 /** Buffer JSON parts while preserving complete UTF-16 surrogate pairs. */
 export function* bufferedJsonParts(parts: Iterable<string>): Generator<string> {
@@ -49,9 +114,7 @@ function* encodeString(value: string): Generator<string> {
 /** Encoded text accumulated before it is yielded as one part. */
 const PART_CHARACTERS = 16 * 1024;
 
-const indentation: string[] = [];
-const indent = (depth: number): string =>
-  (indentation[depth] ??= `\n${"  ".repeat(depth)}`);
+const INDENT_SPACES = " ".repeat(PART_CHARACTERS);
 
 interface ContainerFrame {
   readonly value: object;
@@ -161,15 +224,30 @@ function* encodeValue(
     const frame = stack.at(-1);
     if (frame === undefined) break;
     const member = nextMember(frame);
+    if (member !== undefined && frame.written > 0) buffer += ",";
+    if (pretty && (member !== undefined || frame.written > 0)) {
+      if (buffer.length === PART_CHARACTERS) {
+        yield buffer;
+        buffer = "";
+      }
+      buffer += "\n";
+      let spaces = 2 * (frame.depth + (member === undefined ? 0 : 1));
+      // Deep indentation can itself fill several parts. Reuse one whitespace
+      // block so neither the string allocation nor its retention grows with depth.
+      while (buffer.length + spaces >= PART_CHARACTERS) {
+        const available = PART_CHARACTERS - buffer.length;
+        yield buffer + INDENT_SPACES.slice(0, available);
+        buffer = "";
+        spaces -= available;
+      }
+      buffer += INDENT_SPACES.slice(0, spaces);
+    }
     if (member === undefined) {
-      if (pretty && frame.written > 0) buffer += indent(frame.depth);
       buffer += frame.array ? "]" : "}";
       ancestors.delete(frame.value);
       stack.pop();
       continue;
     }
-    if (frame.written > 0) buffer += ",";
-    if (pretty) buffer += indent(frame.depth + 1);
     if (member.key !== undefined) {
       const key = scalarText(member.key);
       if (key !== undefined) buffer += key;

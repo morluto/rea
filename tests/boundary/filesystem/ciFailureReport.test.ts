@@ -6,15 +6,15 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { normalizeWorkflowRun } from "../../../scripts/ci/workflow-run.mjs";
 
 import {
+  classifyFailure,
   readStaticCheckArtifact,
   selectStaticCheckArtifact,
-} from "../../../scripts/ci/artifacts.mjs";
-import {
-  classifyFailure,
-  createGitHubApi,
-  reportCiFailures,
   type CiRun,
   type CiJob,
+} from "../../../scripts/ci/artifacts.mjs";
+import {
+  createGitHubApi,
+  reportCiFailures,
   type FailureReportApi,
 } from "../../../scripts/ci/failure-report.mjs";
 
@@ -40,7 +40,7 @@ const context = (
   turboVersion: "2.11.7",
   platform: "linux",
   architecture: "x64",
-  taskHashes: { "lint:built": taskHash },
+  taskHashes: { lint: taskHash },
 });
 const run = (overrides: Partial<CiRun> = {}) =>
   normalizeWorkflowRun({
@@ -87,6 +87,30 @@ const comparison = (): Parameters<typeof classifyFailure>[0] => ({
   blobs: { "src/example.ts": true },
 });
 
+it("attributes a deep duplication failure when both gates record the same jscpd task", () => {
+  const duplicate = { kind: "jscpd" as const, paths: ["src/a.ts", "src/b.ts"] };
+  const deepContext = (sourceSha: string) => ({
+    ...context(sourceSha),
+    taskHashes: { jscpd: "c".repeat(16) },
+  });
+  expect(
+    classifyFailure({
+      ...comparison(),
+      job: job({ name: "Deep static checks" }),
+      mainJob: job({ name: "Deep static checks" }),
+      diagnostics: [duplicate],
+      mainDiagnostics: [duplicate],
+      context: deepContext(sha("a")),
+      mainContext: deepContext(sha("c")),
+      blobs: { "src/a.ts": true, "src/b.ts": true },
+    }),
+  ).toEqual({
+    classification: "matching-main-diagnostics",
+    reason:
+      "supported_diagnostics_match_failed_task_and_source_on_verified_main_ancestor",
+  });
+});
+
 it("attributes only an identical structured lint failure with matching task, context, ancestry, and source blob", () => {
   const result = classifyFailure(comparison());
   expect(result).toEqual({
@@ -95,6 +119,74 @@ it("attributes only an identical structured lint failure with matching task, con
       "supported_diagnostics_match_failed_task_and_source_on_verified_main_ancestor",
   });
 });
+
+it.each(["context", "mainContext"] as const)(
+  "keeps mixed legacy and canonical lint receipts unknown when %s uses the old task",
+  (side) => {
+    const input = comparison();
+    const receipt = input[side]!;
+    expect(
+      classifyFailure({
+        ...input,
+        [side]: {
+          ...receipt,
+          taskHashes: { "lint:built": "a".repeat(16) },
+        },
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "owning_task_hash_differs",
+    });
+  },
+);
+
+it.each([
+  ...[
+    "nodeVersion",
+    "npmVersion",
+    "turboVersion",
+    "platform",
+    "architecture",
+  ].map((field) => [field, { [field]: "" }] as const),
+  ["optional head hash", { prHeadSha: "bad" }],
+  [
+    "unrelated task hash",
+    { taskHashes: { lint: "a".repeat(16), typecheck: "bad" } },
+  ],
+] as const)(
+  "keeps malformed %s provenance unknown on either side",
+  (_label, invalid) => {
+    for (const side of ["context", "mainContext"] as const) {
+      const input = comparison();
+      expect(
+        classifyFailure({
+          ...input,
+          [side]: { ...input[side], ...invalid },
+        }),
+      ).toEqual({
+        classification: "unknown",
+        reason: "static_task_context_missing_or_invalid",
+      });
+    }
+  },
+);
+
+it.each(["path", "code"] as const)(
+  "keeps applicability unknown when the lint %s is unavailable on both runs",
+  (missing) => {
+    const { [missing]: _omitted, ...retained } = diagnostic;
+    expect(
+      classifyFailure({
+        ...comparison(),
+        diagnostics: [retained],
+        mainDiagnostics: [retained],
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "diagnostic_shape_not_supported",
+    });
+  },
+);
 
 it.each([
   ["task hash", { mainContext: context(sha("c"), "b".repeat(16)) }],
@@ -115,6 +207,10 @@ it.each([
   ["ancestry", { ancestry: { status: "diverged", mergeBaseSha: sha("e") } }],
   ["canceled job", { job: job({ conclusion: "cancelled" }) }],
   ["not a static job", { job: job({ name: "Test shard (1)" }) }],
+  [
+    "deep gate compared with the fast gate",
+    { job: job({ name: "Deep static checks" }) },
+  ],
 ] as const)("does not attribute on mismatched %s", (_label, overrides) => {
   const result = classifyFailure({ ...comparison(), ...overrides });
   expect(result.classification).toBe("unknown");
@@ -411,6 +507,76 @@ it("uses static artifacts only when listing is complete, unique, and tied to thi
       2,
     ),
   ).toBeNull();
+  const deep = { ...artifact, id: 13, name: "static-deep-check-reports" };
+  expect(
+    selectStaticCheckArtifact(
+      { total_count: 2, artifacts: [artifact, deep] },
+      runRecord,
+      1,
+      "static-deep-check-reports",
+    ),
+  ).toBe(deep);
+  expect(
+    selectStaticCheckArtifact(
+      { total_count: 2, artifacts: [artifact, deep] },
+      runRecord,
+      1,
+    ),
+  ).toBe(artifact);
+  expect(
+    selectStaticCheckArtifact(
+      { total_count: 2, artifacts: [deep, deep] },
+      runRecord,
+      1,
+      "static-deep-check-reports",
+    ),
+  ).toBeNull();
+});
+
+it("loads each static gate from its own artifact", async () => {
+  const downloads: string[] = [];
+  const api = createGitHubApi({
+    token: "fixture-token",
+    fetchImpl: async (url) => {
+      downloads.push(String(url));
+      throw new Error("stop-before-download");
+    },
+    apiRequest: async () => ({
+      total_count: 2,
+      artifacts: [
+        {
+          id: 1,
+          name: "static-check-reports",
+          expired: false,
+          workflow_run: { id: 10, head_sha: sha("a") },
+        },
+        {
+          id: 2,
+          name: "static-deep-check-reports",
+          expired: false,
+          workflow_run: { id: 10, head_sha: sha("a") },
+        },
+      ],
+    }),
+  });
+  const runRecord = { id: 10, run_attempt: 1, head_sha: sha("a") };
+  await expect(
+    api.getStaticEvidence("owner/rea", runRecord, {
+      name: "Deep static checks",
+    }),
+  ).rejects.toThrow("stop-before-download");
+  await expect(
+    api.getStaticEvidence("owner/rea", runRecord, { name: "Static checks" }),
+  ).rejects.toThrow("stop-before-download");
+  expect(
+    await api.getStaticEvidence("owner/rea", runRecord, {
+      name: "Test shard (1)",
+    }),
+  ).toBeNull();
+  expect(downloads).toEqual([
+    "https://api.github.com/repos/owner/rea/actions/artifacts/2/zip",
+    "https://api.github.com/repos/owner/rea/actions/artifacts/1/zip",
+  ]);
 });
 
 it("rejects artifact redirects that could send the bearer token to a non-HTTPS host", async () => {

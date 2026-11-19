@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 
 /**
  * One function block in a `kuna decompile-project` `.c` file. The span covers
@@ -50,6 +52,19 @@ interface KeptLine {
   readonly text: string;
 }
 
+/** Decode only the selected source bytes and retain their starting offset. */
+export const decodeKunaProjectText = (
+  bytes: Uint8Array,
+  offset: number,
+): Result<string, KunaDocumentError> => {
+  try {
+    return ok(decodeStrictUtf8(bytes, "preserve"));
+  } catch (cause: unknown) {
+    if (!(cause instanceof TypeError)) throw cause;
+    return err(new KunaDocumentError("invalid_utf8", { byte_offset: offset }));
+  }
+};
+
 /**
  * Stream a file's lines, keeping the text of only the lines whose first
  * `headBytes` bytes `keep` accepts. Every other line is skipped without being
@@ -72,6 +87,13 @@ const scanLines = async (
   let line: Buffer[] | undefined = [];
   let lineBytes = 0;
   let decided = false;
+  const recordLine = (bytes: Buffer): string | undefined => {
+    const decoded = decodeKunaProjectText(bytes, lineStart);
+    if (!decoded.ok)
+      return `the structural line at byte ${String(lineStart)} is not valid UTF-8`;
+    lines.push({ offset: lineStart, text: decoded.value });
+    return undefined;
+  };
   for await (const chunk of chunks) {
     let position = 0;
     while (position < chunk.length) {
@@ -90,11 +112,10 @@ const scanLines = async (
           return err(`the line at byte ${String(lineStart)} is too long`);
       }
       if (newline === -1) break;
-      if (line !== undefined)
-        lines.push({
-          offset: lineStart,
-          text: Buffer.concat(line).toString("utf8"),
-        });
+      if (line !== undefined) {
+        const failure = recordLine(Buffer.concat(line));
+        if (failure !== undefined) return err(failure);
+      }
       position = newline + 1;
       lineStart = offset + position;
       line = [];
@@ -105,8 +126,10 @@ const scanLines = async (
   }
   if (line !== undefined && lineBytes > 0) {
     const head = Buffer.concat(line);
-    if (decided || keep(head.subarray(0, headBytes)))
-      lines.push({ offset: lineStart, text: head.toString("utf8") });
+    if (decided || keep(head.subarray(0, headBytes))) {
+      const failure = recordLine(head);
+      if (failure !== undefined) return err(failure);
+    }
   }
   return ok({ lines, bytes: offset });
 };
@@ -180,7 +203,7 @@ const inventorySchema = z.object({
       name: z.string(),
       address_hex: z.string().regex(/^0x[0-9a-f]+$/u),
       aliases: z.array(z.string()),
-      size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      size: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     }),
   ),
 });

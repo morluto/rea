@@ -170,6 +170,34 @@ describe("headless IDA callee edges on x86 targets", () => {
     }
   });
 
+  it("keeps omitted x86 callee truncation as unknown coverage", async () => {
+    const { client, producer } = await session({ callees: [] }, "x86_64");
+    const inner = producer.overrideCall;
+    producer.overrideCall = (name, args) =>
+      name === "callees"
+        ? [
+            {
+              callees: [{ addr: "0x2000", name: "square", type: "internal" }],
+            },
+          ]
+        : inner?.(name, args);
+    try {
+      const execution = await callees(client);
+
+      expect(execution.result, "observed callees are still returned").toEqual([
+        "0x2000",
+      ]);
+      expect(execution.relationshipCoverage).toMatchObject({
+        status: "unknown",
+        reason: expect.stringMatching(
+          /omitted.*truncation marker.*callees remain unknown/iu,
+        ),
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
   it("keeps an empty x86 callees reply an observed empty list without any limitation", async () => {
     const { client, producer } = await session({ callees: [] }, "x86_64");
     try {
@@ -189,7 +217,7 @@ describe("headless IDA callee edges on x86 targets", () => {
     }
   });
 
-  it("does not use the call graph for the legacy attached profile on an ARM target", async () => {
+  it("does not use the call graph for the native attached profile on an ARM target", async () => {
     const { root, target } = await createIdaTarget("arm64");
     attachedRoots.push(root);
     const producer = new RecordingIdaMcp(target, "attached");
@@ -199,6 +227,7 @@ describe("headless IDA callee edges on x86 targets", () => {
         args: [],
         env: {},
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -210,10 +239,10 @@ describe("headless IDA callee edges on x86 targets", () => {
         procedure: "main",
       });
 
-      expect(result.ok, "the legacy read still works").toBe(true);
+      expect(result.ok, "the native read still works").toBe(true);
       expect(
         producer.calls.some(({ name }) => name === "callgraph"),
-        "the legacy profile has no call graph source",
+        "the native profile reads upstream callees, not the call graph",
       ).toBe(false);
     } finally {
       expect((await client.close()).ok).toBe(true);

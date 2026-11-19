@@ -1,4 +1,3 @@
-import type { Client } from "@modelcontextprotocol/client";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -10,9 +9,14 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type SharedMcpCall } from "../../support/cli/cliFixture.js";
 
 const cases = [
+  {
+    name: "semantic evaluator precision",
+    args: ["--semantic-precision", '{"primitive_candidates":512}'],
+    controls: { semantic_precision: { primitive_candidates: 512 } },
+  },
   {
     name: "both limits",
     args: ["--max-heap-mb", "128", "--analysis-timeout-ms", "30000"],
@@ -35,6 +39,92 @@ const cases = [
   },
 ];
 
+cliTest(
+  "names the server deadline control in CLI timeout recovery",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-cli-timeout-recovery-");
+    await writeFile(join(root, "main.js"), "export const observed = 7;\n");
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--max-heap-mb",
+        "128",
+        "--analysis-timeout-ms",
+        "1",
+        "--format",
+        "json",
+      ],
+      environment: { NODE_OPTIONS: "--max-old-space-size=512" },
+    });
+    expect(response.exitCode).not.toBe(0);
+    expect(response.json).toMatchObject({
+      error: "JavaScript application analysis failed",
+      code: "provider_timeout",
+      message: expect.stringContaining("analysis_timeout_ms"),
+      remediation: {
+        action: expect.stringContaining("Increase analysis_timeout_ms"),
+      },
+      recovery: { kind: "inspect_timeout_state", timeout_ms: 1 },
+      // The worker names the setting's request parameter; the CLI adds the
+      // option that sets it.
+      details: {
+        limit: {
+          setting: "javascript.analysis_timeout_ms",
+          parameter: "analysis_timeout_ms",
+          cli_flag: "--analysis-timeout-ms",
+        },
+      },
+    });
+    expect(
+      JSON.stringify((response.json as { remediation: unknown }).remediation),
+    ).not.toContain("--analysis-timeout-ms");
+  },
+);
+
+cliTest(
+  "records the evaluator budget that limited a source and names its CLI option outside the result",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-cli-precision-control-");
+    await writeFile(
+      join(root, "main.js"),
+      'export const selected = flag ? "left" : "right";\n',
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--semantic-precision",
+        '{"primitive_candidates":1}',
+        "--format",
+        "json",
+        "--full-output",
+      ],
+    });
+    expect(response.exitCode).toBe(0);
+    const envelope = response.json as {
+      readonly data: Evidence;
+      readonly meta: { readonly cli_controls?: Record<string, string> };
+    };
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      envelope.data.normalized_result,
+    );
+    expect(result.semantic_graph.coverage.controls).toContainEqual(
+      expect.objectContaining({
+        control_kind: "parameter",
+        parameter: "semantic_precision.primitive_candidates",
+        effective_value: 1,
+        default_value: 256,
+      }),
+    );
+    expect(envelope.meta.cli_controls).toMatchObject({
+      "semantic_precision.primitive_candidates": "--semantic-precision",
+    });
+    // The result names the contract field; only the envelope names the flag.
+    expect(JSON.stringify(envelope.data)).not.toContain("--semantic-precision");
+  },
+);
+
 cliTest.for(cases)(
   "preserves $name in CLI Evidence without adding ambient defaults",
   async ({ args, controls }, { cli }) => {
@@ -53,6 +143,7 @@ cliTest.for(cases)(
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     expect(evidence.parameters).toEqual({
+      input_path: root,
       format: "auto",
       integrity_policy: "fail",
       ...controls,
@@ -65,14 +156,15 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
   await writeFile(join(root, "main.js"), "export const observed = 7;\n");
   const bundleRoot = await createTestTempDirectory("rea-js-limit-bundle-");
   const path = join(bundleRoot, "evidence.json");
-  const { client } = await connectLocalToolsMcp({
+  const { call } = await connectLocalToolsMcp({
     NODE_OPTIONS: "--max-old-space-size=512",
   });
   const expected = new Map<string, unknown>();
   for (const { controls } of cases) {
-    const response = await client.callTool({
-      name: "analyze_javascript_application",
-      arguments: { input_path: root, ...controls, detail: "summary" },
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      ...controls,
+      detail: "summary",
     });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const { parent_evidence_id } = z
@@ -81,39 +173,34 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
       })
       .parse(response.structuredContent).normalized_result;
     expected.set(parent_evidence_id, {
+      input_path: root,
       format: "auto",
       integrity_policy: "fail",
       ...controls,
     });
   }
   expect(expected.size).toBe(cases.length);
-  const retained = await getBundle(client);
+  const retained = await getBundle(call);
   for (const [evidence_id, parameters] of expected)
     expect(
       retained.records.find((record) => record.evidence_id === evidence_id)
         ?.parameters,
     ).toEqual(parameters);
-  const exported = await client.callTool({
-    name: "export_evidence_bundle",
-    arguments: { path },
-  });
+  const exported = await call("export_evidence_bundle", { path });
   expect(exported.isError).not.toBe(true);
   expect(parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")))).toEqual(
     retained,
   );
-  const closed = await client.callTool({
-    name: "close_binary",
-    arguments: {},
-  });
+  const closed = await call("close_binary", {});
   expect(closed.isError).not.toBe(true);
-  expect((await getBundle(client)).records).toEqual([]);
-  const imported = await client.callTool({
-    name: "import_evidence_bundle",
-    arguments: { path },
-  });
+  expect(await getBundle(call)).toEqual(retained);
+  const reset = await call("reset_investigation", {});
+  expect(reset.isError).not.toBe(true);
+  expect((await getBundle(call)).records).toEqual([]);
+  const imported = await call("import_evidence_bundle", { path });
   expect(imported.isError, JSON.stringify(imported.content)).not.toBe(true);
-  expect(await getBundle(client)).toEqual(retained);
-}, 60_000);
+  expect(await getBundle(call)).toEqual(retained);
+});
 
 cliTest(
   "retains caller limits and applicable file scopes after an actual analysis timeout",
@@ -149,26 +236,31 @@ cliTest(
         ] as const
       ).map(([path, content]) => writeFile(join(root, path), content)),
     );
-    const { client } = await connectLocalToolsMcp({
+    const { client, call } = await connectLocalToolsMcp({
       NODE_OPTIONS: "--max-old-space-size=512",
     });
-    const response = await client.callTool({
-      name: "analyze_javascript_application",
-      arguments: {
-        input_path: root,
-        max_heap_mb: 128,
-        analysis_timeout_ms: 1,
-        source_paths: sourcePaths,
-      },
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      max_heap_mb: 128,
+      analysis_timeout_ms: 1,
+      source_paths: sourcePaths,
     });
     expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "provider_timeout" },
+      error: {
+        code: "provider_timeout",
+        recovery: {
+          kind: "inspect_timeout_state",
+          operation: "analyze_javascript_application",
+          timeout_ms: 1,
+        },
+      },
     });
-    const bundle = await getBundle(client);
+    const bundle = await getBundle(call);
     const partial = bundle.records.find(
       (record) => record.operation === "analyze_javascript_application",
     );
     expect(partial?.parameters).toEqual({
+      input_path: root,
       format: "auto",
       integrity_policy: "fail",
       max_heap_mb: 128,
@@ -197,13 +289,10 @@ cliTest(
       })
       .parse(cliTimeout.json);
     const cliPartial = parseEvidence(cliFailure.details.partial_observation);
-    const control = await client.callTool({
-      name: "analyze_javascript_application",
-      arguments: {
-        input_path: root,
-        max_heap_mb: 128,
-        source_paths: sourcePaths,
-      },
+    const control = await call("analyze_javascript_application", {
+      input_path: root,
+      max_heap_mb: 128,
+      source_paths: sourcePaths,
     });
     expect(control.isError).not.toBe(true);
     const controlEvidence = parseEvidence(control.structuredContent);
@@ -221,14 +310,45 @@ cliTest(
       expectFileAnalysisApplicability(evidence, interrupted);
     await client.ping();
   },
-  60_000,
 );
 
-async function getBundle(client: Client) {
-  const response = await client.callTool({
-    name: "get_evidence_bundle",
-    arguments: { detail: "complete" },
-  });
+cliTest(
+  "keeps partial Evidence when a module package source times out",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-limit-module-timeout-");
+    await Promise.all([
+      writeFile(join(root, "package.json"), '{"type":"module"}'),
+      writeFile(join(root, "a.js"), "export const observed = 7;\n"),
+    ]);
+    // A module package with .js sources runs preload discovery first, which
+    // must leave the timeout to the source pass that retains partial facts.
+    const result = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--analysis-timeout-ms",
+        "1",
+        "--format",
+        "json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    const failure = z
+      .object({
+        code: z.literal("provider_timeout"),
+        details: z.object({ partial_observation: z.unknown() }),
+      })
+      .parse(result.json);
+    const partial = parseEvidence(failure.details.partial_observation);
+    expect(partial.operation).toBe("analyze_javascript_application");
+    expect(partial.limitations).toContainEqual(
+      expect.stringMatching(/^Preload discovery could not read a\.js \(/u),
+    );
+  },
+);
+
+async function getBundle(call: SharedMcpCall) {
+  const response = await call("get_evidence_bundle", { detail: "complete" });
   expect(response.isError).not.toBe(true);
   return parseEvidenceBundle(
     z.object({ result: z.unknown() }).parse(response.structuredContent).result,

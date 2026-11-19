@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { UefiAnalysisPort } from "./UefiAnalysisPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { UefiAnalysisPort } from "../../ports/uefi/UefiAnalysisPort.js";
 import {
   uefiRequestSchema,
   type UefiOperation,

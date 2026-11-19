@@ -15,7 +15,7 @@ export const parseCodeSignature = (
   output: string,
   unsigned: boolean,
   executablePaths: readonly string[] = [],
-): Omit<InspectSignature, "provenance"> => {
+): Omit<InspectSignature, "provenance" | "slices"> => {
   const { identifier, fields } = splitEchoedValues(output, executablePaths);
   const values = new Map<string, string>();
   const authorities: string[] = [];
@@ -33,24 +33,22 @@ export const parseCodeSignature = (
     else if (key === "CDHash") cdhashes.push(value);
     else values.set(key, value);
   }
-  const parsed = inspectSignatureSchema.omit({ provenance: true }).parse({
-    signed: !unsigned,
-    identifier: identifier ?? null,
-    team_identifier: nullableCodeSignValue(values.get("TeamIdentifier")),
-    format: values.get("Format") ?? null,
-    cdhashes,
-    hash_algorithms: splitAlgorithms(values.get("Hash choices")),
-    authorities,
-    designated_requirement: values.get("designated") ?? null,
-    entitlements: null,
-    timestamp: values.get("Timestamp") ?? null,
-    hardened_runtime: parseRuntime(values.get("CodeDirectory")),
-    limitations: unsigned
-      ? ["Artifact is not signed."]
-      : [
-          "Entitlements and designated requirements require separate bounded commands.",
-        ],
-  });
+  const parsed = inspectSignatureSchema
+    .omit({ provenance: true, slices: true })
+    .parse({
+      signed: !unsigned,
+      identifier: identifier ?? null,
+      team_identifier: nullableCodeSignValue(values.get("TeamIdentifier")),
+      format: values.get("Format") ?? null,
+      cdhashes,
+      hash_algorithms: splitAlgorithms(values.get("Hash choices")),
+      authorities,
+      designated_requirement: values.get("designated") ?? null,
+      entitlements: null,
+      timestamp: values.get("Timestamp") ?? null,
+      hardened_runtime: parseRuntime(values.get("CodeDirectory")),
+      limitations: unsigned ? ["Artifact is not signed."] : [],
+    });
   return parsed;
 };
 

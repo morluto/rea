@@ -9,15 +9,15 @@ import {
 } from "./GhidraSessionError.js";
 
 /** Result settled by one queued Ghidra Program request. */
-export type GhidraQueuedRequestResult = Result<JsonValue, GhidraSessionError>;
+type GhidraQueuedRequestResult = Result<JsonValue, GhidraSessionError>;
 /** Socket execution seam used after a request reaches the queue head. */
-export type GhidraRequestExecutor = (
+type GhidraRequestExecutor = (
   method: string,
   parameters: JsonValue,
   options: GhidraRequestOptions,
 ) => Promise<GhidraQueuedRequestResult>;
 /** Stop the provider session when an admitted operation is cancelled. */
-export type GhidraActiveCancellationHandler = () => Promise<
+type GhidraActiveCancellationHandler = () => Promise<
   Result<null, AnalysisError>
 >;
 
@@ -160,7 +160,15 @@ export class GhidraRequestQueue {
         );
       }
       if (cancellation === undefined) return result;
-      const primary = result.ok ? cancellation.failure : result.error;
+      // An observed bridge reply stays primary, but it must carry the session
+      // close so its projection does not promise that the session is usable.
+      const primary = result.ok
+        ? cancellation.failure
+        : result.error.kind === "remote"
+          ? result.error.withConcurrentCancellation({
+              reason: entry.options.signal?.reason,
+            })
+          : result.error;
       const cleanup = await cancellation.cleanup;
       if (cleanup.kind === "rejected")
         return err(

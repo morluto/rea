@@ -5,8 +5,8 @@ import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
-  semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
+import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -15,18 +15,26 @@ export const electronCalleePath = (
   callee: t.Node,
   context: JavaScriptFindingContext,
 ): readonly string[] | undefined => {
-  const members: string[] = [];
-  let root = callee;
-  while (t.isMemberExpression(root) || t.isOptionalMemberExpression(root)) {
-    const member = semanticStaticPropertyName(root.property, root.computed);
-    if (member === "" || !t.isNode(root.object)) return undefined;
-    members.push(member);
-    root = root.object;
-  }
-  const exported = context.electronBindings?.get(root.start ?? -1);
-  return exported === undefined
-    ? undefined
-    : [...exported, ...members.toReversed()];
+  const { root, members } = electronMemberPath(callee);
+  if (!members.every((member): member is string => member !== null))
+    return undefined;
+  const exported =
+    context.electronBindings?.get(root.start ?? -1) ??
+    context.electronCandidateBindings?.get(root.start ?? -1);
+  return exported === undefined ? undefined : [...exported, ...members];
+};
+
+/** Keep the identity uncertainty attached to each derived finding. */
+export const electronCandidateAuthority = (
+  callee: t.Node,
+  context: JavaScriptFindingContext,
+): { readonly loader_authority?: "candidate" } => {
+  const { root } = electronMemberPath(callee);
+  const offset = root.start ?? -1;
+  return context.electronBindings?.has(offset) !== true &&
+    context.electronCandidateBindings?.has(offset) === true
+    ? { loader_authority: "candidate" }
+    : {};
 };
 
 /** Preserve one literal value or the exact inert expression. */
@@ -79,6 +87,12 @@ export function handlerKind(
   return "dynamic-expression";
 }
 
+/**
+ * Nesting bound for dotted contextBridge member paths. Deeper objects count as
+ * one unknown member rather than being enumerated.
+ */
+export const contextBridgeMemberPathDepth = 8;
+
 /** Collect statically visible dotted keys from one literal contextBridge API object. */
 export const collectContextBridgeMembers = (
   node: t.Node | null | undefined,
@@ -117,7 +131,7 @@ const collectMembersAt = (
   prefix: readonly string[],
   state: { members: string[]; unknown: number },
 ): void => {
-  if (prefix.length >= 8) {
+  if (prefix.length >= contextBridgeMemberPathDepth) {
     state.unknown += 1;
     return;
   }

@@ -1,4 +1,5 @@
 import ghidra.app.util.headless.HeadlessScript;
+import ghidra.program.model.listing.Program;
 
 /** Independent readback oracle for the production analyzer-options pre-script. */
 public final class ReaAnalyzerOptionsRegressionProbe extends HeadlessScript {
@@ -15,5 +16,7 @@ public final class ReaAnalyzerOptionsRegressionProbe extends HeadlessScript {
             throw new IllegalStateException("Analyzer option is not disabled: " + name);
         }
         println("REA_ANALYZER_OPTIONS_DISABLED_OK " + name);
+        println("REA_ANALYZER_OPTIONS_REPORT " +
+            currentProgram.getOptions(Program.PROGRAM_INFO).getString("REA disabled analyzers", null));
     }
 }

@@ -1,3 +1,20 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
+import {
+  resolveArtifactReaderLimits,
+  type ArtifactReaderLimitsInput,
+} from "../domain/artifactReaderLimits.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
+import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  withArtifactTargetIdentity,
+  translateArtifactFailure,
+} from "../resources/index.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   createAnalysisExecution,
@@ -7,10 +24,13 @@ import {
   type CapabilityDescriptor,
   type ProviderIdentity,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
-import { inspectBundleKeyedArchive } from "./apple/KeyedArchiveReader.js";
+} from "../ports/AnalysisProvider.js";
+import {
+  inspectBundleKeyedArchive,
+  inspectStandaloneKeyedArchive,
+} from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
@@ -22,32 +42,32 @@ import {
   type ArtifactAnalysisOperation,
 } from "../contracts/artifactToolContracts.js";
 import {
-  isMachOFormat,
+  artifactTargetSelectedPath,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import {
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
-} from "./ArtifactFileOperation.js";
 import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
+import { binaryTargetSelection } from "../domain/targetIdentity.js";
 import { freezeJsonSnapshot } from "../domain/immutableJson.js";
-import { createArtifactInspection } from "../domain/artifactInspection.js";
+import {
+  artifactInspectionSources,
+  createArtifactInspection,
+} from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type {
+  ResolvedAppBundleResourceRoot,
+  BundleResourceRoot,
+} from "../domain/apple/bundleResourceRoot.js";
+import { BUNDLE_ARTIFACT_RESOURCE_OPERATIONS } from "../ports/BundleResourceOperations.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
@@ -57,7 +77,9 @@ export class ArtifactProvider implements AnalysisProvider {
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
-    platform: NodeJS.Platform = process.platform,
+    /** The host whose readers run; tests select another host's rules. */
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
+    private readonly settings?: AnalysisSettingsReader,
   ) {
     this.environment = snapshotEnvironment(environment, platform);
     this.#capabilities = artifactCapabilities(platform);
@@ -73,7 +95,144 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
-    return new ArtifactClient(target, this.environment, this.#platform);
+    return new ArtifactClient(
+      target,
+      this.environment,
+      this.#platform,
+      this.settings,
+    );
+  }
+
+  createBundleResourceClient(
+    root: ResolvedAppBundleResourceRoot,
+  ): AnalysisClient {
+    return new BundleResourceArtifactClient(
+      root,
+      this.environment,
+      this.#platform,
+    );
+  }
+}
+
+/** Project both artifact clients' shutdown through the exact retained cleanup owner. */
+const closeArtifactResources = (
+  resources: ArtifactResourceScope,
+  fallbackResource: string,
+): Promise<Result<null, AnalysisError>> =>
+  resources.close().then(
+    () => ok(null),
+    (cause: unknown) => {
+      const failure =
+        cause instanceof ArtifactReaderFailure ? cause : undefined;
+      const error = new ProviderCleanupError(
+        ARTIFACT_GRAPH_PROVIDER.id,
+        failure?.cleanup?.resources ?? [fallbackResource],
+        {
+          reason: failure?.cleanup?.reason ?? errorMessage(cause),
+        },
+        { cause, operation: "close_binary" },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
+    },
+  );
+
+const serializedResourceRoot = (
+  root: ResolvedAppBundleResourceRoot,
+): BundleResourceRoot => ({
+  caller_path: root.callerPath,
+  canonical_path: root.canonicalPath,
+  info_plist_path: root.infoPlistPath,
+  layout: root.layout,
+  executable_sha256: root.executableSha256,
+});
+
+class BundleResourceArtifactClient implements AnalysisClient {
+  readonly #resourceScope = new ArtifactResourceScope();
+
+  constructor(
+    private readonly root: ResolvedAppBundleResourceRoot,
+    private readonly environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly platform: NodeJS.Platform,
+  ) {}
+
+  async execute(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ) {
+    if (operation === "health")
+      return ok(createAnalysisExecution(null, ARTIFACT_GRAPH_PROVIDER));
+    if (!BUNDLE_ARTIFACT_RESOURCE_OPERATIONS.has(operation))
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          ARTIFACT_GRAPH_PROVIDER.id,
+          operation,
+          "The app resource reader supports only plist, Interface Builder, asset catalog, and keyed archive inspection.",
+        ),
+      );
+    try {
+      const resourceRoot = serializedResourceRoot(this.root);
+      const result =
+        operation === "decode_interface_builder"
+          ? await analyzeInterfaceBuilderBundle({
+              bundlePath: this.root.canonicalPath,
+              targetSha256: null,
+              resourceRoot,
+              resources: this.#resourceScope,
+              limits: interfaceBuilderLimitsSchema.parse(parameters),
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            })
+          : operation === "inspect_keyed_archive"
+            ? await inspectBundleKeyedArchive({
+                bundlePath: this.root.canonicalPath,
+                targetSha256: null,
+                resourceRoot,
+                parameters,
+                platform: this.platform,
+                resources: this.#resourceScope,
+                ...(options?.signal === undefined
+                  ? {}
+                  : { signal: options.signal }),
+              })
+            : operation === "inspect_asset_catalog"
+              ? await analyzeAppleAssetCatalogs({
+                  bundlePath: this.root.canonicalPath,
+                  targetSha256: null,
+                  resourceRoot,
+                  environment: this.environment,
+                  resources: this.#resourceScope,
+                  page: parameters,
+                  ...(options?.signal === undefined
+                    ? {}
+                    : { signal: options.signal }),
+                })
+              : (() => {
+                  throw new AnalysisCapabilityUnavailableError(
+                    ARTIFACT_GRAPH_PROVIDER.id,
+                    operation,
+                    "Property list inspection requires a platform-native reader.",
+                  );
+                })();
+      return ok(
+        createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
+          limitations: "limitations" in result ? result.limitations : [],
+        }),
+      );
+    } catch (cause: unknown) {
+      return err(
+        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+      );
+    }
+  }
+
+  close(): Promise<Result<null, AnalysisError>> {
+    return closeArtifactResources(
+      this.#resourceScope,
+      "app bundle resource reader",
+    );
   }
 }
 
@@ -84,6 +243,7 @@ class ArtifactClient implements AnalysisClient {
     private readonly target: BinaryTarget,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly platform: NodeJS.Platform,
+    private readonly settings?: AnalysisSettingsReader,
   ) {}
 
   async execute(
@@ -102,27 +262,30 @@ class ArtifactClient implements AnalysisClient {
         ),
       );
     try {
+      const targetRefusal = artifactTargetRefusal(operation, this.target);
+      if (targetRefusal !== undefined)
+        throw this.unsupportedTarget(operation, targetRefusal.reason);
       if (operation === "inspect_artifact") {
         const inspected = await this.inspectArtifact(parameters, options);
         return inspected;
       }
       if (operation === "decode_interface_builder") {
-        if (
-          this.target.kind !== "executable" ||
-          this.target.sourcePath === undefined ||
-          !this.target.sourcePath.toLowerCase().endsWith(".app")
-        )
-          throw this.unsupportedTarget(
-            operation,
-            "decode_interface_builder requires an active .app bundle target",
-          );
         const limits = interfaceBuilderLimitsSchema.parse(parameters);
-        const result = await analyzeInterfaceBuilderBundle({
-          bundlePath: this.target.sourcePath,
-          targetSha256: this.target.sha256,
-          limits,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
+        const result = await withArtifactTargetIdentity(
+          this.target,
+          this.#resourceScope,
+          () =>
+            analyzeInterfaceBuilderBundle({
+              bundlePath: this.target.sourcePath ?? this.target.path,
+              targetSha256: this.target.sha256,
+              limits,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            }),
+          options?.signal,
+        );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
@@ -134,52 +297,54 @@ class ArtifactClient implements AnalysisClient {
         );
       }
       if (operation === "inspect_keyed_archive") {
+        // A bundle target reads bundle-relative archives whatever its
+        // executable admitted as; only a plist opened on its own is standalone.
         const standalone =
-          this.target.kind === "artifact" && this.target.format === "plist";
-        if (
-          standalone &&
-          parameters.path !== undefined &&
-          parameters.path !== "." &&
-          parameters.path !== basename(this.target.path)
-        )
-          throw new AnalysisInputError(operation, undefined, [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message:
-                "For an active plist, path must select that archive (omit path or use its basename).",
-              expected: basename(this.target.path),
-            },
-          ]);
-        const bundlePath = standalone
-          ? dirname(this.target.path)
-          : this.target.sourcePath;
-        if (
-          bundlePath === undefined ||
-          (!standalone && !bundlePath.toLowerCase().endsWith(".app"))
-        )
-          throw this.unsupportedTarget(
-            operation,
-            "inspect_keyed_archive requires an active plist or .app bundle",
-          );
-        const result = await inspectBundleKeyedArchive({
-          bundlePath,
-          targetSha256: this.target.sha256,
-          parameters: standalone
-            ? { ...parameters, path: basename(this.target.path) }
-            : parameters,
-          platform: this.platform,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
-        if (standalone && result.archive_sha256 !== this.target.sha256)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Active archive digest changed: expected ${this.target.sha256}, observed ${result.archive_sha256}`,
-          );
+          this.target.bundleInfoPlist === undefined &&
+          this.target.kind === "artifact" &&
+          this.target.format === "plist";
+        const selectedPath = artifactTargetSelectedPath(this.target);
+        const result = standalone
+          ? await inspectStandaloneKeyedArchive({
+              path: this.target.path,
+              selectedPath,
+              targetSha256: this.target.sha256,
+              parameters,
+              platform: this.platform,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            })
+          : await withArtifactTargetIdentity(
+              this.target,
+              this.#resourceScope,
+              () =>
+                inspectBundleKeyedArchive({
+                  bundlePath: this.target.sourcePath ?? this.target.path,
+                  targetSha256: this.target.sha256,
+                  parameters,
+                  platform: this.platform,
+                  resources: this.#resourceScope,
+                  ...(options?.signal === undefined
+                    ? {}
+                    : { signal: options.signal }),
+                }),
+              options?.signal,
+            );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
             locations: [{ kind: "artifact-path", path: result.archive_path }],
+            ...(standalone
+              ? {
+                  subject: {
+                    path: selectedPath,
+                    sha256: result.archive_sha256,
+                    format: "plist" as const,
+                  },
+                }
+              : {}),
           }),
         );
       }
@@ -193,10 +358,30 @@ class ArtifactClient implements AnalysisClient {
         const result = await extractArtifact(
           {
             inputPath: this.target.sourcePath ?? this.target.path,
+            expectedRootSha256:
+              this.target.bundleInfoPlist === undefined
+                ? this.target.sha256
+                : undefined,
+            selectedPath: this.target.artifactSelectedPath,
             inputFormat: this.target.format,
+            espFlashSelection: espFlashSelection(this.target),
             outputRoot: parsed.output_root,
+            ...(parsed.occurrence_ids === undefined
+              ? {}
+              : { occurrenceIds: parsed.occurrence_ids }),
             environment: this.environment,
+            asarHeaderAdmission: runtimeAsarHeaderAdmission(
+              this.environment,
+              this.settings,
+            ),
             integrityPolicy: parsed.integrity_policy,
+            ...(parsed.artifact_limits === undefined
+              ? {}
+              : {
+                  readerLimits: resolveArtifactReaderLimits(
+                    parsed.artifact_limits,
+                  ),
+                }),
             resourceScope: this.#resourceScope,
           },
           options?.signal,
@@ -205,10 +390,7 @@ class ArtifactClient implements AnalysisClient {
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             rawResult: null,
             limitations: result.limitations,
-            subject: subjectFor(
-              this.target.sourcePath ?? this.target.path,
-              result.manifest,
-            ),
+            subject: subjectFor(this.target, result.manifest),
             // Each extracted file's path is already in artifacts.
             locations: [],
           }),
@@ -220,39 +402,20 @@ class ArtifactClient implements AnalysisClient {
         createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
           rawResult: null,
           limitations: result.limitations,
-          subject: subjectFor(
-            this.target.sourcePath ?? this.target.path,
-            result.manifest,
-          ),
+          subject: subjectFor(this.target, result.manifest),
           // Each occurrence's logical path is already in the result.
           locations: [],
         }),
       );
     } catch (cause: unknown) {
-      return err(translateArtifactFailure(operation, cause));
+      return err(
+        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+      );
     }
   }
 
   close(): Promise<Result<null, AnalysisError>> {
-    return this.#resourceScope.close().then(
-      () => ok(null),
-      (cause: unknown) => {
-        const failure =
-          cause instanceof ArtifactReaderFailure ? cause : undefined;
-        const error = new ProviderCleanupError(
-          ARTIFACT_GRAPH_PROVIDER.id,
-          failure?.cleanup?.resources ?? ["artifact resources"],
-          {
-            reason:
-              failure?.cleanup?.reason ??
-              (cause instanceof Error ? cause.message : String(cause)),
-          },
-          { cause, operation: "close_binary" },
-        );
-        bindArtifactFileCleanup(cause, error);
-        return err(error);
-      },
-    );
+    return closeArtifactResources(this.#resourceScope, "artifact resources");
   }
 
   /** The active target's kind is outside this operation's supported targets. */
@@ -271,23 +434,21 @@ class ArtifactClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ) {
-    const bundlePath = this.target.sourcePath;
-    if (
-      this.target.kind !== "executable" ||
-      bundlePath === undefined ||
-      !bundlePath.toLowerCase().endsWith(".app")
-    )
-      throw this.unsupportedTarget(
-        "inspect_asset_catalog",
-        "inspect_asset_catalog requires an active .app bundle target",
-      );
-    const result = await analyzeAppleAssetCatalogs({
-      environment: this.environment,
-      bundlePath,
-      targetSha256: this.target.sha256,
-      page: parameters,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const bundlePath = this.target.sourcePath ?? this.target.path;
+    const result = await withArtifactTargetIdentity(
+      this.target,
+      this.#resourceScope,
+      () =>
+        analyzeAppleAssetCatalogs({
+          environment: this.environment,
+          bundlePath,
+          resources: this.#resourceScope,
+          targetSha256: this.target.sha256,
+          page: parameters,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
+      options?.signal,
+    );
     return ok(
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         limitations: result.limitations,
@@ -303,11 +464,6 @@ class ArtifactClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ) {
-    if (this.target.kind !== "executable" || !isMachOFormat(this.target.format))
-      throw this.unsupportedTarget(
-        "trace_dylib_resolution",
-        "trace_dylib_resolution requires an active Mach-O or .app bundle target",
-      );
     // Only a target opened from an app bundle directory carries its Info.plist;
     // a regular file whose name ends in .app is a standalone image.
     const bundle =
@@ -330,6 +486,18 @@ class ArtifactClient implements AnalysisClient {
           kind: "artifact-path" as const,
           path,
         })),
+        // A universal trace selects its own slices. Thin files retain their
+        // architecture and use the default subject for the open target.
+        ...(this.target.format === "mach-o-universal"
+          ? {
+              subject: {
+                path: this.target.path,
+                sha256: this.target.sha256,
+                format: this.target.format,
+                selection: null,
+              },
+            }
+          : {}),
       }),
     );
   }
@@ -341,6 +509,9 @@ class ArtifactClient implements AnalysisClient {
     const parsed = artifactInventoryInputSchema.parse(parameters);
     const inventoryParameters = {
       integrity_policy: parsed.integrity_policy,
+      ...(parsed.artifact_limits === undefined
+        ? {}
+        : { artifact_limits: parsed.artifact_limits }),
     };
     await options?.progress?.report({
       phase: "inspect_artifact.inventory",
@@ -353,10 +524,7 @@ class ArtifactClient implements AnalysisClient {
     const inventory = freezeJsonSnapshot(
       await this.inventory(inventoryParameters, options),
     );
-    const subject = subjectFor(
-      this.target.sourcePath ?? this.target.path,
-      inventory.manifest,
-    );
+    const subject = subjectFor(this.target, inventory.manifest);
     const inventoryEvidence = createEvidence(subject, ARTIFACT_GRAPH_PROVIDER, {
       operation: "inventory_artifact",
       parameters: inventoryParameters,
@@ -380,6 +548,7 @@ class ArtifactClient implements AnalysisClient {
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         rawResult: null,
         limitations: result.limitations,
+        sourceEvidence: artifactInspectionSources(result),
         subject,
         locations: [],
       }),
@@ -389,17 +558,44 @@ class ArtifactClient implements AnalysisClient {
   private inventory(
     parsed: {
       readonly integrity_policy: "fail" | "record-and-continue";
+      readonly artifact_limits?: ArtifactReaderLimitsInput | undefined;
     },
     options?: ExecutionOptions,
   ) {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
+      expectedRootSha256:
+        this.target.bundleInfoPlist === undefined
+          ? this.target.sha256
+          : undefined,
+      selectedPath: this.target.artifactSelectedPath,
       resourceScope: this.#resourceScope,
       environment: this.environment,
+      asarHeaderAdmission: runtimeAsarHeaderAdmission(
+        this.environment,
+        this.settings,
+      ),
+      espFlashSelection: espFlashSelection(this.target),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
-      integrity: { mode: parsed.integrity_policy },
+      integrity: parsed.integrity_policy,
+      ...(parsed.artifact_limits === undefined
+        ? {}
+        : {
+            readerLimits: resolveArtifactReaderLimits(parsed.artifact_limits),
+          }),
     });
   }
 }
+
+/** Caller inputs of an explicitly selected ESP flash image, for its readers. */
+const espFlashSelection = (
+  target: BinaryTarget,
+): EspFlashSelection | undefined =>
+  target.format === "esp-flash-image" && target.espFlash.selected
+    ? {
+        flashOffset: target.espFlash.flashOffset ?? undefined,
+        partitionTableOffset: target.espFlash.partitionTableOffset ?? undefined,
+      }
+    : undefined;
 
 const isArtifactOperation = (
   operation: AnalysisOperation,
@@ -408,50 +604,27 @@ const isArtifactOperation = (
     operation as (typeof ARTIFACT_ANALYSIS_OPERATIONS)[number],
   );
 
-/** Translate one artifact boundary failure while retaining cleanup evidence. */
-export const translateArtifactFailure = (
-  operation: ArtifactAnalysisOperation,
-  cause: unknown,
-): AnalysisError => {
-  if (cause instanceof ArtifactReaderFailure) {
-    const error = new ArtifactOperationError(
-      operation,
-      cause.reason,
-      cause.details,
-      cause.message,
-      {
-        cause:
-          cause.reason === "cancelled"
-            ? artifactFileCancellationCause(cause)
-            : cause,
-        ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-        ...(cause.partialObservation === undefined
-          ? {}
-          : { partialObservation: cause.partialObservation }),
-      },
-    );
-    bindArtifactFileCleanup(cause, error);
-    return error;
-  }
-  // Caller-selection and unsupported-target failures are already typed; keep
-  // their correction details instead of reducing them to an I/O failure.
-  if (
-    cause instanceof AnalysisInputError ||
-    cause instanceof AnalysisCancelledError ||
-    cause instanceof AnalysisUnsupportedTargetError
-  )
-    return cause;
-  return new ArtifactOperationError(operation, "io");
-};
-
+/**
+ * The inventory root as an Evidence subject. When the root is the open
+ * target's own bytes, it carries the target's selection (ESP flash offsets),
+ * so observations of different selections name different subjects.
+ */
 const subjectFor = (
-  path: string,
+  target: BinaryTarget,
   manifest: {
     readonly root_sha256: string;
     readonly root_format: import("../domain/artifactGraph.js").ArtifactInventoryResult["manifest"]["root_format"];
   },
-) => ({
-  path,
-  sha256: manifest.root_sha256,
-  format: manifest.root_format,
-});
+) => {
+  const selection =
+    manifest.root_sha256 === target.sha256 &&
+    manifest.root_format === target.format
+      ? binaryTargetSelection(target)
+      : null;
+  return {
+    path: artifactTargetSelectedPath(target),
+    sha256: manifest.root_sha256,
+    format: manifest.root_format,
+    ...(selection === null ? {} : { selection }),
+  };
+};

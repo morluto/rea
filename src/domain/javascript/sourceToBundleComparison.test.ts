@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { TraceMap } from "@jridgewell/trace-mapping";
 
 import {
   createJavaScriptApplicationGraph,
@@ -9,6 +8,7 @@ import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { createHistoricalSourceGraph } from "../referenceSourceGraph.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { compareSourceToBundle } from "./sourceToBundleComparison.js";
+import { resolveJavaScriptSourceMapUrl } from "./javascriptSourceMapPaths.js";
 import {
   SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS,
   sourceToBundleComparisonResultSchema,
@@ -172,6 +172,35 @@ describe("historical source to bundle comparison", () => {
     });
     expect(result.coverage.status).toBe("partial");
   });
+});
+
+describe("source to bundle coverage", () => {
+  it.each([
+    ["unknown", "complete"],
+    ["complete", "unknown"],
+    ["complete", "unavailable"],
+    ["partial", "unknown"],
+    ["unknown", "partial"],
+  ] as const)(
+    "keeps coverage unknown when the source inventory is %s and the graph is %s",
+    (inventory, graphCoverage) => {
+      const result = compareSourceToBundle({
+        reference: historicalGraph(inventory, ["src/removed.ts"]),
+        application: {
+          evidenceId: EVIDENCE_ID,
+          rootArtifactSha256: HASH.artifact,
+          graph: applicationGraph(graphCoverage),
+        },
+      });
+
+      expect(result.coverage).toMatchObject({
+        status: "unknown",
+        reference_inventory_state: inventory,
+        application_graph_status: graphCoverage,
+      });
+      expect(result.items[0]).toMatchObject({ status: "unknown" });
+    },
+  );
 });
 
 describe("source to bundle candidate evaluation", () => {
@@ -433,7 +462,7 @@ describe("source to bundle path syntax", () => {
   });
 });
 
-describe("source-map resolver equivalence", () => {
+describe("source-map declaration resolution", () => {
   it.each([
     {
       sourceRoot: "https://cdn.example/src/",
@@ -442,37 +471,57 @@ describe("source-map resolver equivalence", () => {
     },
     {
       sourceRoot: "https://cdn.example/src//",
-      expectedSource: "https://cdn.example/src/a.js",
-      expectedResolution: { kind: "suffix", path: "cdn.example/src/a.js" },
+      expectedSource: "https://cdn.example/src//a.js",
+      expectedResolution: { kind: "suffix", path: "cdn.example/src//a.js" },
     },
     {
       sourceRoot: "webpack://",
+      expectedSource: "webpack://a.js",
+      expectedResolution: {
+        kind: "unresolved",
+        reason: expect.stringMatching(
+          /non-hierarchical URL.*without a file pathname/i,
+        ),
+      },
+    },
+    {
+      sourceRoot: "webpack:///",
       expectedSource: "webpack:///a.js",
       expectedResolution: { kind: "suffix", path: "a.js" },
     },
+    {
+      sourceRoot: "../src/",
+      expectedSource: "file:///artifact/src/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "src/a.js" },
+    },
+    {
+      sourceRoot: "",
+      expectedSource: "file:///artifact/dist/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "dist/a.js" },
+    },
+    {
+      sourceRoot: null,
+      expectedSource: "file:///artifact/dist/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "dist/a.js" },
+    },
   ])(
-    "matches TraceMap for sourceRoot $sourceRoot",
+    "applies ECMA-426 sourceRoot $sourceRoot consistently to URLs and graph facts",
     ({ sourceRoot, expectedSource, expectedResolution }) => {
-      const producerSource = new TraceMap(
-        {
-          version: 3,
-          file: "main.js",
+      expect(
+        resolveJavaScriptSourceMapUrl(
+          "a.js",
           sourceRoot,
-          sources: ["a.js"],
-          names: [],
-          mappings: "",
-        },
-        "file:///artifact/dist/main.js.map",
-      ).resolvedSources[0];
-      const reference = sourceMapReference(
-        "a.js",
-        sourceRoot,
-        "dist/main.js.map",
-      );
-
-      expect(producerSource).toBe(expectedSource);
-      expect(reference.source_root).toBe(sourceRoot);
-      expect(reference.resolution).toEqual(expectedResolution);
+          "file:///artifact/dist/main.js.map",
+        ),
+      ).toBe(expectedSource);
+      expect(
+        sourceMapReference("a.js", sourceRoot, "dist/main.js.map"),
+      ).toEqual({
+        source_name: "a.js",
+        source_root: sourceRoot,
+        map_path: "dist/main.js.map",
+        resolution: expectedResolution,
+      });
     },
   );
 });
@@ -576,7 +625,7 @@ const comparePathToNodes = (
   });
 
 const historicalGraph = (
-  inventoryState: "complete" | "partial",
+  inventoryState: "complete" | "partial" | "unknown",
   paths = [
     "src/duplicated.ts",
     "src/merged-a.ts",
@@ -601,7 +650,7 @@ const historicalGraph = (
         limitations:
           inventoryState === "complete"
             ? []
-            : ["Fixture inventory is partial."],
+            : [`Fixture inventory is ${inventoryState}.`],
       },
       ...paths.map((path) => ({
         path,
@@ -626,10 +675,14 @@ const historicalGraph = (
       caller: "source-to-bundle-test",
     },
     limitations:
-      inventoryState === "complete" ? [] : ["Fixture inventory is partial."],
+      inventoryState === "complete"
+        ? []
+        : [`Fixture inventory is ${inventoryState}.`],
   });
 
-const applicationGraph = (coverage: "complete" | "partial") => {
+const applicationGraph = (
+  coverage: "complete" | "partial" | "unknown" | "unavailable",
+) => {
   const nodes = [
     moduleNode("duplicated-a", {
       path: "bundle-a.js",
@@ -679,14 +732,21 @@ const applicationGraph = (coverage: "complete" | "partial") => {
             omitted_count: 0,
             limits: [],
           }
-        : {
-            status: "partial",
-            truncated: true,
-            omitted_count: 1,
-            limits: [{ name: "fixture", value: 5, unit: "items" }],
-          },
+        : coverage === "partial"
+          ? {
+              status: "partial",
+              truncated: true,
+              omitted_count: 1,
+              limits: [{ name: "fixture", value: 5, unit: "items" }],
+            }
+          : {
+              status: coverage,
+              truncated: false,
+              omitted_count: null,
+              limits: [],
+            },
     limitations:
-      coverage === "complete" ? [] : ["Fixture graph coverage is partial."],
+      coverage === "complete" ? [] : [`Fixture graph coverage is ${coverage}.`],
   });
 };
 

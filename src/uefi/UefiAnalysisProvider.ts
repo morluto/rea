@@ -1,4 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
@@ -6,24 +9,25 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
+  ArtifactResourceScope,
+  readStableArtifact,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+} from "../resources/index.js";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
-} from "../application/AnalysisProvider.js";
-import type { UefiAnalysisPort } from "../application/uefi/UefiAnalysisPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import {
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -41,7 +45,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import {
+  processInspectionFailure,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type {
   UefiImageScanSummary,
@@ -51,17 +58,14 @@ import type {
 } from "./UefiImageScan.js";
 import { scanUefiImage } from "./UefiImageScan.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
-import { uefiFailure } from "./UefiFailures.js";
+import { uefiFailureDialect } from "./UefiFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   publishUefiFiles,
   type UefiPublicationEntry,
 } from "./UefiPublication.js";
 
-export const UEFI_PROVIDER_IDENTITY = {
-  id: "rea-uefi",
-  name: "REA UEFI firmware parser",
-  version: "1.0.0",
-} as const;
+import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 
 /** Mirror of the owned worker's reply contract; parsed before use. */
 const lzmaReplySchema = z.discriminatedUnion("ok", [
@@ -218,7 +222,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   ): Result<AnalysisExecution, AnalysisError> {
     return {
       ok: false,
-      error: new AnalysisCancelledError(request.operation, { cause: reason }),
+      error: cancelledBy(request.operation, carriedReason(reason)),
     };
   }
 
@@ -247,7 +251,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           signal.removeEventListener("abort", onAbort);
           resolve({
             ok: false,
-            error: uefiFailure(cause, request.operation, request.input.path),
+            error: classifyProviderFailure(
+              cause,
+              uefiFailureDialect(request.operation, request.input.path),
+            ),
           });
         },
       );
@@ -280,9 +287,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const parent = options?.signal;
     const onParentAbort = () =>
       controller.abort(
-        new AnalysisCancelledError(request.operation, {
-          cause: parent?.reason,
-        }),
+        cancelledBy(request.operation, carriedReason(parent?.reason)),
       );
     if (parent?.aborted) onParentAbort();
     else parent?.addEventListener("abort", onParentAbort, { once: true });
@@ -302,7 +307,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     } catch (cause: unknown) {
       return {
         ok: false,
-        error: uefiFailure(cause, request.operation, request.input.path),
+        error: classifyProviderFailure(
+          cause,
+          uefiFailureDialect(request.operation, request.input.path),
+        ),
       };
     } finally {
       clearTimeout(timer);
@@ -320,10 +328,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         checkpoint();
         return value;
       } catch (cause: unknown) {
-        throw uefiFailure(
+        throw classifyProviderFailure(
           cause,
-          request.operation,
-          request.input.path,
+          uefiFailureDialect(request.operation, request.input.path),
         ).retainPartialObservation({
           kind: "uefi",
           result: value.result,
@@ -483,14 +490,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               parent_offset: variable.parentOffset,
               data_offset: variable.dataOffset,
               data_length: variable.dataLength,
-              data_sha256: createHash("sha256")
-                .update(
-                  image.subarray(
-                    variable.dataOffset,
-                    variable.dataOffset + variable.dataLength,
-                  ),
-                )
-                .digest("hex"),
+              data_sha256: sha256Hex(
+                image.subarray(
+                  variable.dataOffset,
+                  variable.dataOffset + variable.dataLength,
+                ),
+              ),
             };
           }),
           trailing_padding: store.trailingPadding,
@@ -787,11 +792,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         return {
           ok: false,
           message:
-            cause instanceof RangeError &&
-            "code" in cause &&
-            cause.code === "ERR_BUFFER_TOO_LARGE"
+            hostRangeErrorKind(cause) === "host-capacity"
               ? `output-limit: zlib stream exceeds ${maxOutputBytes} bytes`
-              : `zlib decode failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+              : `zlib decode failed: ${errorMessage(cause)}`,
         };
       }
     }
@@ -909,32 +912,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     try {
       outcome = await decode();
     } catch (cause: unknown) {
-      primary = uefiFailure(cause, operation, root.path);
-      const preparation =
-        cause instanceof OwnedCommandFailure
-          ? cause.preparationFailure
-          : cause instanceof DarwinProcessOwnershipInspectionError
-            ? cause
-            : undefined;
-      if (preparation?.cleanupFailure?.cleanupIncomplete === true) {
-        const failure = preparation.cleanupFailure;
-        const lease = new AnalysisCleanupLease(async () => {
-          if (!failure.cleanupIncomplete) return;
-          if (preparation.cleanupOwner === undefined) throw failure;
-          await preparation.cleanupOwner.close();
-          if (failure.cleanupIncomplete) throw failure;
-        }, failure.cleanupResources);
-        this.#resources.retain({
-          kind: "lease",
-          resource: failure.cleanupResources[0] ?? "worker launch preparation",
-          lease,
-        });
-        new AnalysisCleanupLeaseGroup(failure, [lease]);
-        primary = analysisErrorWithCleanupFailure(
+      primary = classifyProviderFailure(
+        cause,
+        uefiFailureDialect(operation, root.path),
+      );
+      const preparation = processInspectionFailure(cause);
+      if (preparation !== undefined) {
+        primary = retainProcessInspectionCleanup(
+          preparation,
           primary,
-          failure,
+          this.#resources,
           operation,
-        ).bindCleanupDependencies([primary, failure]);
+        );
       }
       if (
         cause instanceof OwnedCommandFailure &&
@@ -946,21 +935,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         throw primary;
       }
     }
-    const cleanup = (cause: unknown): AnalysisError => {
+    const cleanup = (reason: string, cause?: unknown) => {
       const failure = new ProviderCleanupError(
         UEFI_PROVIDER_IDENTITY.id,
         rootLease.cleanupResources ?? [root.path],
-        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { reason },
         { cause, operation },
       );
       new AnalysisCleanupLeaseGroup(failure, [rootLease]);
       return primary === undefined
         ? failure
-        : analysisErrorWithCleanupFailure(
-            primary,
-            failure,
-            operation,
-          ).bindCleanupDependencies([primary, failure]);
+        : analysisErrorWithCleanupDependencies(primary, failure, operation);
     };
     if (files.hasPending) {
       this.#resources.retain(workspace);
@@ -969,7 +954,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       );
     }
     const released = await this.#resources.release(workspace);
-    if (released.kind === "failed") throw cleanup(released.cause);
+    if (released.kind === "failed")
+      throw cleanup(errorMessage(released.cause), released.cause);
     if (primary !== undefined) throw primary;
     signal.throwIfAborted();
     if (outcome === undefined) throw new Error("UEFI decoder did not settle.");

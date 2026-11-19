@@ -7,7 +7,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   assertFirmwareCleanup,
   firmwareFixture,
@@ -73,7 +73,7 @@ it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
         expect(await readFile(file.path, "utf8")).toBe("firmware=true\n");
         expect(extracted.error.cleanupResources).toContain(workspace);
         await access(workspace);
-        const delivered = new ToolResultDelivery(
+        const delivered = createToolResultDelivery(
           STDIO_DEFAULT_MAX_BUFFER_SIZE,
         ).toCallToolResult(extracted, toolContract("extract_firmware"));
         expect(delivered.isError).toBe(true);
@@ -113,7 +113,7 @@ it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
       await fixture.close();
     }
     await assertFirmwareCleanup(fixture.launches);
-    expect(await readFile(fixture.path)).toEqual(sourceBytes);
+    expect(Buffer.compare(await readFile(fixture.path), sourceBytes)).toBe(0);
     for (const output of [fixture.output, join(fixture.root, "second-output")])
       expect(await readFile(join(output, "rootfs/config"), "utf8")).toBe(
         "firmware=true\n",

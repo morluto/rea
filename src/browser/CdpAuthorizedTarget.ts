@@ -1,3 +1,4 @@
+import { selectCdpDiscoveryTarget } from "./CdpDiscoveryTargets.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
@@ -15,12 +16,17 @@ export const authorizeCdpTarget = (
   readonly target: CdpEndpointTarget;
   readonly allowedOrigins: ReadonlySet<string>;
 } => {
-  const target = discovery.targets.find(
-    (candidate) => candidate.id === input.target_id,
+  const target = selectCdpDiscoveryTarget(
+    discovery.targets,
+    input.target_id,
+    operation,
+    discovery.ambiguousTargetIds,
   );
   if (target === undefined)
     throw new BrowserObservationError(operation, "target_not_found", {
       detail: `Target ${input.target_id} was not found at the selected endpoint.`,
+      remediationAction:
+        "Refresh target discovery for that endpoint and retry with a returned target ID.",
     });
   const origin = sanitizeBrowserUrl(target.url).origin;
   if (

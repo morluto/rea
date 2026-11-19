@@ -1,7 +1,7 @@
 import {
   createJavaScriptApplicationEdge,
   createImmutableJavaScriptApplicationGraphSteps,
-  createJavaScriptApplicationNode,
+  mergeJavaScriptApplicationNodes,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
 import type {
@@ -10,6 +10,8 @@ import type {
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationVersionComparisonItem } from "./javascriptApplicationVersionComparisonSchemas.js";
 
@@ -30,22 +32,16 @@ export interface ApplicationChangeGraphProjection {
 export const buildJavaScriptApplicationChangeGraph = (
   input: ChangeGraphInput,
 ): ApplicationChangeGraphProjection => {
-  const allNodes = nodeCandidates(input);
+  const mergedNodes = mergeJavaScriptApplicationNodes(
+    nodeCandidates(input),
+  ).sort((left, right) =>
+    compareUnicodeCodePoints(left.node_id, right.node_id),
+  );
+  const retained = new Set(mergedNodes.map(({ node_id }) => node_id));
   const preferredRoots = uniqueSorted([
     ...input.right.root_node_ids,
     ...input.left.root_node_ids,
-  ]).filter((nodeId) => allNodes.has(nodeId));
-  const orderedNodeIds = uniqueSorted([
-    ...preferredRoots,
-    ...input.items.flatMap(({ left_node_id: left, right_node_id: right }) => [
-      ...(right === null ? [] : [right]),
-      ...(left === null ? [] : [left]),
-    ]),
-  ]);
-  const retained = new Set(orderedNodeIds);
-  const mergedNodes = mergeNodes(
-    orderedNodeIds.flatMap((nodeId) => allNodes.get(nodeId) ?? []),
-  );
+  ]).filter((nodeId) => retained.has(nodeId));
   const sourceEdges = uniqueEdges([
     ...input.left.edges,
     ...input.right.edges,
@@ -88,9 +84,7 @@ export const buildJavaScriptApplicationChangeGraph = (
   return { graph: next.value };
 };
 
-const nodeCandidates = (
-  input: ChangeGraphInput,
-): Map<string, ApplicationNode[]> => {
+const nodeCandidates = (input: ChangeGraphInput): ApplicationNode[] => {
   const required = new Set([
     ...input.left.root_node_ids,
     ...input.right.root_node_ids,
@@ -99,11 +93,9 @@ const nodeCandidates = (
       ...(right === null ? [] : [right]),
     ]),
   ]);
-  const output = new Map<string, ApplicationNode[]>();
-  for (const node of [...input.left.nodes, ...input.right.nodes])
-    if (required.has(node.node_id))
-      output.set(node.node_id, [...(output.get(node.node_id) ?? []), node]);
-  return output;
+  return [...input.left.nodes, ...input.right.nodes].filter((node) =>
+    required.has(node.node_id),
+  );
 };
 
 const changedFromEdge = (
@@ -161,9 +153,6 @@ const comparisonEvidence = (
 ): ApplicationGraphEvidence => {
   const source =
     right?.observations[0]?.evidence ?? left?.observations[0]?.evidence;
-  const complete =
-    input.left.coverage.status === "complete" &&
-    input.right.coverage.status === "complete";
   return {
     authority: "cross-version-comparison",
     state: "inferred",
@@ -184,23 +173,7 @@ const comparisonEvidence = (
       operation: "compare_application_versions",
       executable_sha256: null,
     },
-    coverage: complete
-      ? {
-          status: "complete",
-          truncated: false,
-          omitted_count: 0,
-          limits: sourceCoverageLimits(input),
-        }
-      : {
-          status: "partial",
-          truncated:
-            input.left.coverage.truncated || input.right.coverage.truncated,
-          omitted_count: combineOmittedCounts(
-            input.left.coverage.omitted_count,
-            input.right.coverage.omitted_count,
-          ),
-          limits: sourceCoverageLimits(input),
-        },
+    coverage: changeGraphCoverage(input),
     limitations: [
       "Cross-version pairing is inferred from the stated match basis; changed_from does not prove runtime reachability.",
       ...item.limitations,
@@ -209,17 +182,29 @@ const comparisonEvidence = (
   };
 };
 
+/**
+ * The coverage both source graphs support, for the change graph and each
+ * `changed_from` edge. A source that cannot tell makes it unknown.
+ */
 const changeGraphCoverage = (
   input: ChangeGraphInput,
 ): JavaScriptApplicationGraph["coverage"] => {
-  if (
-    input.left.coverage.status === "complete" &&
-    input.right.coverage.status === "complete"
-  )
+  const joined = joinCoverageStatus([
+    applicationCoverageKnowledge(input.left.coverage.status),
+    applicationCoverageKnowledge(input.right.coverage.status),
+  ]);
+  if (joined === "complete")
     return {
       status: "complete",
       truncated: false,
       omitted_count: 0,
+      limits: sourceCoverageLimits(input),
+    };
+  if (joined === "unknown")
+    return {
+      status: "unknown",
+      truncated: false,
+      omitted_count: null,
       limits: sourceCoverageLimits(input),
     };
   return {
@@ -244,37 +229,6 @@ const sourceCoverageLimits = (input: ChangeGraphInput) =>
 
 const combineOmittedCounts = (left: number | null, right: number | null) =>
   left === null || right === null ? null : left + right;
-
-const mergeNodes = (nodes: readonly ApplicationNode[]): ApplicationNode[] => {
-  const groups = new Map<string, ApplicationNode[]>();
-  for (const node of nodes)
-    groups.set(node.node_id, [...(groups.get(node.node_id) ?? []), node]);
-  const merged = [...groups.values()].map((group) => {
-    const first = group[0];
-    if (first === undefined)
-      throw new TypeError("Empty change-graph node group");
-    const observations = [
-      ...new Map(
-        group
-          .flatMap(({ observations: values }) => values)
-          .map((observation) => [observation.observation_id, observation]),
-      ).values(),
-    ].sort((left, right) =>
-      compareUnicodeCodePoints(left.observation_id, right.observation_id),
-    );
-    return createJavaScriptApplicationNode({
-      kind: first.kind,
-      identity: first.identity,
-      observations: observations.map(
-        ({ observation_id: _id, identifier_strategy: _strategy, ...value }) =>
-          value,
-      ),
-    });
-  });
-  return merged.sort((left, right) =>
-    compareUnicodeCodePoints(left.node_id, right.node_id),
-  );
-};
 
 const uniqueEdges = (edges: readonly ApplicationEdge[]): ApplicationEdge[] =>
   [...new Map(edges.map((edge) => [edge.edge_id, edge])).values()].sort(

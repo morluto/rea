@@ -1,13 +1,23 @@
-/** Decode a producer WAT string to frame objdump's raw display text. */
-export const watString = (form: string, start: number) => {
-  let end = start;
-  while (end < form.length && form[end] !== '"') {
-    if (form[end] === "\\") end++;
-    end++;
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
+
+/** Locate a WAT string's exclusive end without decoding or copying its payload. */
+export const watStringEnd = (form: string, start: number): number => {
+  for (
+    let end = form.indexOf('"', start);
+    end !== -1;
+    end = form.indexOf('"', end + 1)
+  ) {
+    let escapes = end;
+    while (escapes > start && form[escapes - 1] === "\\") escapes--;
+    if ((end - escapes) % 2 === 0) return end + 1;
   }
-  if (end === form.length)
-    throw new Error("Incomplete WABT custom-section name.");
-  const name = form.slice(start, end);
+  throw new WabtAdmissionError("incomplete_string");
+};
+
+/** Decode a producer WAT string only where its bytes are interpreted. */
+export const watString = (form: string, start: number) => {
+  const end = watStringEnd(form, start);
+  const name = form.slice(start, end - 1);
   // Escapes shrink; literal UTF-8 has the same byte extent as its source.
   const bytes = Buffer.alloc(Buffer.byteLength(name, "utf8"));
   let length = 0;
@@ -37,10 +47,11 @@ export const watString = (form: string, start: number) => {
                 : escape === "\\"
                   ? 92
                   : undefined;
-      if (value === undefined) throw new Error("Unsupported WABT name escape.");
+      if (value === undefined)
+        throw new WabtAdmissionError("unsupported_escape");
       bytes[length++] = value;
       index += 2;
     }
   }
-  return { bytes: bytes.subarray(0, length), end: end + 1 };
+  return { bytes: bytes.subarray(0, length), end };
 };

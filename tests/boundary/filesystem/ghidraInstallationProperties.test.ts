@@ -14,12 +14,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import {
-  readGhidraInstallationProperties,
-  MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
-} from "../../../src/ghidra/GhidraInstallationProperties.js";
+import { verifiedGhidraApplicationProperties } from "../../../src/ghidra/GhidraInstallation.fixture.js";
+import { readGhidraInstallationProperties } from "../../../src/ghidra/GhidraInstallationProperties.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 
 const controls = vi.hoisted(() => ({
   file: undefined as ((handle: FileHandle, path: string) => void) | undefined,
@@ -40,7 +41,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const properties = "application.version=12.1.4\napplication.java.min=21\n";
+const properties = verifiedGhidraApplicationProperties;
 
 it("preserves a descriptor read failure instead of reporting absent metadata", async () => {
   const root = await createTestTempDirectory(
@@ -153,11 +154,15 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
   };
   const resources = createInspectionResources();
   try {
-    await expect(
-      readGhidraInstallationProperties(path, {
-        resourceOwner: resources.owner,
-      }),
-    ).rejects.toMatchObject({
+    const failure = await readGhidraInstallationProperties(path, {
+      resourceOwner: resources.owner,
+    }).then(
+      () => {
+        throw new Error("Oversized properties accepted");
+      },
+      (cause) => cause as AnalysisError,
+    );
+    expect(failure).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "file-size",
       retryable: false,
@@ -166,6 +171,18 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
         observed_bytes: String(MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES + 1),
       },
       diagnostics: { path, stage: "installation_properties" },
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "input",
+          limit: MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
+          unit: "bytes",
+        },
+      },
     });
     expect(reads).toBe(0);
   } finally {
@@ -257,10 +274,11 @@ it.each(["read", "capacity", "completed"] as const)(
           diagnostics: {
             completed_properties: {
               bytes: Buffer.byteLength(properties),
-              properties: { providerVersion: "12.1.4" },
+              properties: { providerVersion: SUPPORTED_GHIDRA_VERSION },
             },
           },
         });
+        expect(failure.cause).toBe(reason);
       } else if (outcome === "capacity") {
         expect(projectAnalysisError(failure).code).toBe("resource_constraint");
       } else {

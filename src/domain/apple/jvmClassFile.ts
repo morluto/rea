@@ -1,3 +1,9 @@
+/** Maximum complete class-file buffer retained for FAT/JVM disambiguation. */
+export const MAX_JVM_CLASS_IDENTITY_BYTES = 16 * 1024 * 1024;
+
+export const JVM_CLASS_IDENTITY_LIMIT_REASON =
+  "FAT/JVM identity is unresolved because the class identity scan exceeds the 16 MiB limit";
+
 /** Class-file identity used to disambiguate JVM CAFEBABE from Mach-O FAT. */
 class ClassFileCursor {
   private offset = 0;
@@ -7,8 +13,8 @@ class ClassFileCursor {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
 
-  get atEnd(): boolean {
-    return this.offset === this.bytes.byteLength;
+  get remaining(): number {
+    return this.bytes.byteLength - this.offset;
   }
 
   u1(): number | null {
@@ -38,9 +44,23 @@ class ClassFileCursor {
   }
 
   private has(length: number): boolean {
-    return this.offset <= this.bytes.byteLength - length;
+    return length <= this.remaining;
   }
 }
+
+const readMajorVersion = (cursor: ClassFileCursor): number | null => {
+  if (cursor.u4() !== 0xcafebabe) return null;
+  const minor = cursor.u2();
+  const major = cursor.u2();
+  // JVMS §4.1 permits arbitrary minors through major 55. Later releases
+  // use 0 for ordinary class files and 65535 for preview features.
+  if (minor === null || major === null || major < 45) return null;
+  return major < 56 || minor === 0 || minor === 65535 ? major : null;
+};
+
+/** Establish whether the fixed prefix warrants a complete JVM identity scan. */
+export const hasJvmClassHeader = (bytes: Uint8Array): boolean =>
+  readMajorVersion(new ClassFileCursor(bytes)) !== null;
 
 interface ConstantPool {
   readonly tags: (number | null)[];
@@ -52,6 +72,10 @@ const readConstantPool = (
   cursor: ClassFileCursor,
   count: number,
 ): ConstantPool | null => {
+  // JVMS §4.4: the smallest entries take three bytes. A long or double
+  // consumes two pool slots in nine bytes, so that lower bound still holds.
+  // §4.1 also requires seven u2 fields after the pool, even with no members.
+  if ((count - 1) * 3 + 14 > cursor.remaining) return null;
   const pool: ConstantPool = {
     tags: Array.from({ length: count }, () => null),
     first: Array.from({ length: count }, () => null),
@@ -225,18 +249,10 @@ const readMembers = (cursor: ClassFileCursor, pool: ConstantPool): boolean => {
 /** Validate class-file framing and constant-pool references before FAT parsing. */
 export const isJvmClassFile = (bytes: Uint8Array): boolean => {
   const cursor = new ClassFileCursor(bytes);
-  if (cursor.u4() !== 0xcafebabe) return false;
-  const minor = cursor.u2();
-  const major = cursor.u2();
+  const major = readMajorVersion(cursor);
+  if (major === null) return false;
   const poolCount = cursor.u2();
-  if (
-    minor === null ||
-    major === null ||
-    major < 45 ||
-    poolCount === null ||
-    poolCount === 0
-  )
-    return false;
+  if (poolCount === null || poolCount === 0) return false;
   const pool = readConstantPool(cursor, poolCount);
   if (pool === null || !hasValidPoolReferences(pool, major)) return false;
   if (cursor.u2() === null) return false;
@@ -250,12 +266,19 @@ export const isJvmClassFile = (bytes: Uint8Array): boolean => {
   )
     return false;
   const interfaces = cursor.u2();
-  if (interfaces === null || !cursor.skip(interfaces * 2)) return false;
+  if (interfaces === null) return false;
+  // JVMS 4.1: every interface index must name CONSTANT_Class_info, just
+  // like this_class and nonzero super_class. Framing alone is insufficient
+  // to establish JVM identity when the same magic also identifies FAT.
+  for (let index = 0; index < interfaces; index += 1) {
+    const reference = cursor.u2();
+    if (reference === null || !poolHasTag(pool, reference, 7)) return false;
+  }
   if (!readMembers(cursor, pool) || !readMembers(cursor, pool)) return false;
   const attributes = cursor.u2();
   return (
     attributes !== null &&
     readAttributes(cursor, pool, attributes) &&
-    cursor.atEnd
+    cursor.remaining === 0
   );
 };

@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import { SafeOutputTree } from "../resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
@@ -174,7 +174,7 @@ it("extracts whole-image payloads with section provenance and published bytes", 
   const rawBody = result.files.find(
     (file) => file.source === "uncompressed-payload",
   );
-  expect(await readFile(rawBody?.path ?? "")).toEqual(RAW_BODY);
+  expect((await readFile(rawBody?.path ?? "")).equals(RAW_BODY)).toBe(true);
   expect(rawBody?.relative_path).not.toContain(":");
   const padGap = result.extraction_gaps.find((gap) => gap.kind === "pad-file");
   expect(padGap).toBeDefined();
@@ -346,10 +346,10 @@ it.skipIf(!lzmaWorkerAvailable)(
         "LZMAF86 extraction did not publish its stream and PE payload",
       );
     }
-    expect(await readFile(restored.path)).toEqual(
-      buildSection(0x10, pePayload),
-    );
-    expect(await readFile(payload.path)).toEqual(pePayload);
+    expect(
+      (await readFile(restored.path)).equals(buildSection(0x10, pePayload)),
+    ).toBe(true);
+    expect((await readFile(payload.path)).equals(pePayload)).toBe(true);
     expect(payload).toMatchObject({
       source_stream: restored.source_stream,
       source_range: { offset: 4, length: pePayload.length },
@@ -430,7 +430,7 @@ it("decodes nested zlib streams and preserves each carrier and PE byte range in 
   ).value.result as UefiExtractResult;
   expect(extracted.files).toHaveLength(1);
   const leaf = extracted.files[0];
-  expect(await readFile(leaf?.path ?? "")).toEqual(pe);
+  expect((await readFile(leaf?.path ?? "")).equals(pe)).toBe(true);
   expect(leaf).toMatchObject({
     original_file_range: null,
     source_stream: peSection.source_stream,
@@ -463,7 +463,7 @@ it("decodes nested zlib streams and preserves each carrier and PE byte range in 
       ),
     ).value.result as UefiExtractResult;
     const published = scoped.files.find((file) => file.sha256 === sha256(pe));
-    expect(await readFile(published?.path ?? "")).toEqual(pe);
+    expect((await readFile(published?.path ?? "")).equals(pe)).toBe(true);
     expect(scoped.coverage).toBe("complete");
   }
 });
@@ -618,7 +618,9 @@ it("publishes valid siblings with truthful coverage for a zero declaration and a
   ).value.result as UefiExtractResult;
   expect(result.coverage).toBe("partial");
   expect(result.files).toHaveLength(1);
-  expect(await readFile(result.files[0]?.path ?? "")).toEqual(MODULE_A);
+  expect((await readFile(result.files[0]?.path ?? "")).equals(MODULE_A)).toBe(
+    true,
+  );
   expect(result.extraction_gaps).toMatchObject([
     { kind: "unsupported-compression", range: null },
     {

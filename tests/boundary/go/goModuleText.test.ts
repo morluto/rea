@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-  parseGoModuleBytes,
-  parseGoModuleText,
-} from "../../../src/go/GoModuleText.js";
+import { parseGoModuleBytes } from "../../../src/go/GoModuleText.js";
 
 describe("Go producer module text", () => {
   it("preserves local replacements, empty fields and ordered duplicate build settings", () => {
-    const parsed = parseGoModuleText(
-      "path\texample.invalid/app\nmod\texample.invalid/app\t(devel)\t\ndep\texample.invalid/lib\tv1.2.3\th1:bytes\n=>\t../local lib\t\t\nbuild\tGOOS=linux\nbuild\tGOOS=custom\nbuild\t__proto__=kept\n",
+    const parsed = parseGoModuleBytes(
+      Buffer.from(
+        "path\texample.invalid/app\nmod\texample.invalid/app\t(devel)\t\ndep\texample.invalid/lib\tv1.2.3\th1:bytes\n=>\t../local lib\t\t\nbuild\tGOOS=linux\nbuild\tGOOS=custom\nbuild\t__proto__=kept\n",
+      ),
     );
     expect(parsed).toMatchObject({
       path: "example.invalid/app",
@@ -33,15 +32,15 @@ describe("Go producer module text", () => {
 
   it("decodes Go quoting including byte, octal and Unicode escapes without JSON substitution", () => {
     const text =
-      String.raw`build\t"key=quoted"="\a\v\xC3\xA9\303\251\u263a\U0001F680"`.replace(
+      String.raw`build\t"key=quoted"="literal路𐐷\a\v\xC3\xA9\303\251\u263a\U0001F680 end"`.replace(
         "\\t",
         "\t",
       ) +
       "\n" +
       "build\traw=`a\rb`\n";
-    expect(parseGoModuleText(text)).toMatchObject({
+    expect(parseGoModuleBytes(Buffer.from(text))).toMatchObject({
       settings: [
-        { key: "key=quoted", value: "\x07\x0béé☺🚀" },
+        { key: "key=quoted", value: "literal路𐐷\x07\x0béé☺🚀 end" },
         { key: "raw", value: "ab" },
       ],
       complete: true,
@@ -51,7 +50,7 @@ describe("Go producer module text", () => {
   it("reports unparsed records and malformed escaped bytes while retaining observed fields", () => {
     const text =
       'path\tapp\nmod\tapp\t(devel)\nbuild\tbad="\\xff"\nfuture\tdata\nbuild\tGOARCH=amd64';
-    expect(parseGoModuleText(text)).toMatchObject({
+    expect(parseGoModuleBytes(Buffer.from(text))).toMatchObject({
       path: "app",
       main: { sum: null },
       settings: [],
@@ -65,8 +64,8 @@ describe("Go producer module text", () => {
   });
 
   it("does not attach a replacement after a malformed module declaration", () => {
-    const parsed = parseGoModuleText(
-      "dep\tfirst\tv1\ndep\tmalformed\n=>\tlocal\t\t\n",
+    const parsed = parseGoModuleBytes(
+      Buffer.from("dep\tfirst\tv1\ndep\tmalformed\n=>\tlocal\t\t\n"),
     );
     expect(parsed.dependencies).toEqual([
       { path: "first", version: "v1", sum: null, replacement: null },
@@ -76,8 +75,10 @@ describe("Go producer module text", () => {
 
   it("preserves duplicate singleton declarations as unknown instead of silently overwriting", () => {
     expect(
-      parseGoModuleText(
-        "path\tfirst\npath\tsecond\nmod\tfirst\tv1\nmod\tsecond\tv2\n",
+      parseGoModuleBytes(
+        Buffer.from(
+          "path\tfirst\npath\tsecond\nmod\tfirst\tv1\nmod\tsecond\tv2\n",
+        ),
       ),
     ).toMatchObject({
       path: "first",

@@ -8,12 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/javascript/JavaScriptRuntimeObservationEvidence.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
-import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
+import { publishWebScripts } from "../../../src/application/PublishWebScripts.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
-import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { projectRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
@@ -186,9 +186,9 @@ describe("Inspector script metadata", () => {
         result.value,
         provider.identity(),
       );
-      const projected = projectRuntimeCaptures(
-        parseRuntimeCaptures([evidence]),
-      );
+      const projected = projectRuntimeCaptures([
+        parseRuntimeCapture(evidence, ["runtime_observations", 0]),
+      ]);
       const scriptNode = projected.nodes.find(
         ({ kind }) => kind === "runtime-script-instance",
       );
@@ -215,22 +215,23 @@ describe("Inspector script exclusions", () => {
     const provider = new V8InspectorProvider();
     const result = await provider.observe(input);
     if (!result.ok) throw result.error;
-    const [parsed] = parseRuntimeCaptures([
+    const parsed = parseRuntimeCapture(
       createJavaScriptRuntimeObservationEvidence(
         "observe_javascript_runtime",
         input,
         result.value,
         provider.identity(),
       ),
-    ]);
+      ["runtime_observations", 0],
+    );
     return {
       producer: result.value.scripts.excluded,
       completeness: parsed?.inspection.completeness,
     };
   };
-  const failedToParse = {
+  const invalidFailedToParse = {
     method: "Debugger.scriptFailedToParse",
-    params: { scriptId: "failed-script", url: "", executionContextId: 1 },
+    params: { scriptId: 42, url: "", executionContextId: 1 },
   };
   const missingUrl = {
     method: "Debugger.scriptParsed",
@@ -239,7 +240,7 @@ describe("Inspector script exclusions", () => {
 
   it("keeps invalid protocol scripts out of policy filtering", async () => {
     const { producer, completeness } = await reconcileV8Scripts([
-      failedToParse,
+      invalidFailedToParse,
       missingUrl,
     ]);
     expect(producer).toEqual({
@@ -259,7 +260,7 @@ describe("Inspector script exclusions", () => {
 
   it("reports unsupported and invalid script exclusions separately", async () => {
     const { producer, completeness } = await reconcileV8Scripts([
-      failedToParse,
+      invalidFailedToParse,
       {
         method: "Debugger.scriptParsed",
         params: {

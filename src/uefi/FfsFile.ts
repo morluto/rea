@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import {
   absoluteOffset,
@@ -71,10 +72,12 @@ export function parseFfsFileHeader(
   let headerLength: number = FFS_HEADER_LAYOUT.length;
   let declaredLength = declaredCompact;
   if (largeFile) {
+    const reader = new BinaryReader(region.buffer, true, "FFS file");
     if (!extended) return null;
     headerLength = FFS_HEADER_LAYOUT.extendedLength;
-    const size = region.buffer.readBigUInt64LE(
+    const size = reader.word(
       localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
+      64,
     );
     if (size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
     declaredLength = Number(size);

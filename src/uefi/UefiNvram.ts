@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 /**
  * AMI NVRAM variable-store cartography for UEFI flash images.
@@ -91,17 +92,18 @@ export const probeNvramEntry = (
   endOffset = image.length,
 ): ParsedNvramEntry | null => {
   if (offset < 0 || offset + NVAR_MIN_ENTRY_BYTES > endOffset) return null;
-  if (image.readUInt32LE(offset) !== NVAR_MAGIC) return null;
-  const totalSize = image.readUInt16LE(offset + 4);
+  const reader = new BinaryReader(image, true, "AMI NVAR");
+  if (reader.u32(offset) !== NVAR_MAGIC) return null;
+  const totalSize = reader.u16(offset + 4);
   if (totalSize < NVAR_MIN_ENTRY_BYTES || offset + totalSize > endOffset)
     return null;
-  const attributes = image.readUInt32LE(offset + 6);
+  const attributes = reader.u32(offset + 6);
   if (
     !NVAR_ATTRIBUTE_HIGH_BYTES.has(attributes >>> 24) ||
     (attributes & NVAR_ATTRIBUTE_TAIL) !== NVAR_ATTRIBUTE_TAIL
   )
     return null;
-  const state = image.readUInt8(offset + 10);
+  const state = reader.u8(offset + 10);
   const nameStart = offset + NVAR_HEADER_BYTES;
   const nameTerminator = image
     .subarray(nameStart, offset + totalSize)
@@ -109,7 +111,7 @@ export const probeNvramEntry = (
   const nameEnd = nameTerminator < 0 ? -1 : nameStart + nameTerminator;
   if (nameEnd < 0 || nameEnd >= offset + totalSize) return null;
   for (let i = nameStart; i < nameEnd; i += 1) {
-    if (!isPrintableAscii(image.readUInt8(i))) return null;
+    if (!isPrintableAscii(reader.u8(i))) return null;
   }
   if (nameEnd === nameStart) return null;
   const dataOffset = nameEnd + 1;
@@ -228,7 +230,7 @@ export const scanAmiNvramStores = (
     let padding = 0;
     while (
       lastEnd + padding < image.length &&
-      image.readUInt8(lastEnd + padding) === 0xff
+      image[lastEnd + padding] === 0xff
     ) {
       if (padding % 65536 === 0) checkpoint();
       padding += 1;

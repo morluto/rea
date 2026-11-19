@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
@@ -30,7 +33,11 @@ const expectations =
     ? null
     : JSON.parse(await readFile(options.expectations, "utf8"));
 // This is a shared test parent, not a leased provider-owned Windows runtime.
-const root = await mkdtemp(join(tmpdir(), "rea-flutter-verifier-"));
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-flutter-verifier-",
+  private: false,
+});
+const root = rootFixture.path;
 const resources = new ArtifactResourceScope();
 const entrypoint = resolve("scripts/rea.mjs");
 const environment = Object.fromEntries(
@@ -49,8 +56,21 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 const execute = promisify(execFile);
-let primaryError;
-try {
+// Server shutdown retries retained provider cleanup and settles before the
+// fixture removes the root; snapshots left under it fail the run and keep it.
+rootFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    () => client.close(),
+    () => transport.close(),
+    () => resources.close(),
+  ]);
+  assert.deepEqual(
+    await readdir(root),
+    [],
+    `Provider snapshots remain under ${root}`,
+  );
+});
+await withVerifierFixture(rootFixture, async () => {
   await client.connect(transport);
   const apk = resolve(options.apk);
   const identity = await hashVerifierFile(apk, resources);
@@ -101,6 +121,10 @@ try {
   }
   // The same checks apply to the default selection and each remaining ABI.
   const preferred = await run("inspect_dart_aot", { path: apk });
+  assert.ok(
+    abis.some((abi) => abi.abi === preferred.abi),
+    "Default AOT selection must be one of the identified ABIs",
+  );
   for (const abi of abis) {
     const aot =
       abi.abi === preferred.abi
@@ -190,30 +214,7 @@ try {
     identity,
     "Verification must preserve its input",
   );
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  // Server shutdown retries retained provider cleanup and settles before success.
-  await closeVerifierResources(
-    [
-      async () => {
-        await closeVerifierResources([
-          () => client.close(),
-          () => transport.close(),
-          () => resources.close(),
-        ]);
-        assert.deepEqual(
-          await readdir(root),
-          [],
-          `Provider snapshots remain under ${root}`,
-        );
-        await rm(root, { recursive: true, force: true });
-      },
-    ],
-    primaryError,
-  );
-}
+});
 process.stdout.write(
   "all asserted Flutter CLI/MCP checks passed; unverified facets are reported above\n",
 );
@@ -237,12 +238,14 @@ async function run(operation, input) {
     { name: operation, arguments: input },
     { timeout: 60_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcp = contract.outputSchema.parse(JSON.parse(mcpTextValue(response)));
+  const mcp = requireMcpOutput(response, operation, contract);
   assert.deepEqual(cli.normalized_result, mcp.normalized_result);
   assert.deepEqual(cli.subject, mcp.subject);
   assert.equal(cli.subject.local_path, input.path);
-  assert.equal(cli.subject.digest.sha256, cli.normalized_result.target.sha256);
+  assert.equal(
+    cli.subject.identity.sha256,
+    cli.normalized_result.target.sha256,
+  );
   assert.deepEqual(cli.limitations, mcp.limitations);
   process.stdout.write(
     `[ok] ${operation}${input.abi === undefined ? "" : ` ${input.abi}`}: CLI/MCP Evidence parity\n`,

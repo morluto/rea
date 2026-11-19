@@ -1,8 +1,26 @@
-import { constants } from "node:fs";
-import { access, lstat, realpath } from "node:fs/promises";
+import { javaScriptSemanticPrecisionControls } from "./JavaScriptSemanticPrecisionControls.js";
+import type { JavaScriptMemberMutationAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
+import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
+import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
+import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../../config/asarHeaderAdmission.js";
+import { constants, type Stats } from "node:fs";
+import {
+  buildJavaScriptRouteInventorySteps,
+  type JavaScriptRouteInventory,
+} from "../../domain/javascript/javascriptRouteInventory.js";
+import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -12,31 +30,30 @@ import { createJavaScriptArtifactReader as createReader } from "../../artifacts/
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSourceSelection } from "../../domain/javascript/javascriptSourceSelection.js";
-import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { parseOwnedJavaScriptApplicationAnalysisSteps } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import {
+  parseOwnedJavaScriptApplicationAnalysisSteps,
+  type AnalyzeJavaScriptApplicationInput,
+  type ElectronBoundarySummary,
+} from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactInventoryPartialObservation } from "../../domain/artifactPartialObservation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import {
   isSkippedJavaScriptAnalysis,
   javascriptArtifactAnalysisScopes,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
-import {
-  javascriptArtifactReconstructionInputSchema,
-  type JavaScriptArtifactReconstructionInput,
-} from "./JavaScriptArtifactReconstructionInput.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
-import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
+import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   checkpointJavaScriptAnalysis,
   completeJavaScriptAnalysisSteps,
@@ -44,6 +61,7 @@ import {
 
 /** Application-layer result retaining local diagnostics outside the canonical graph. */
 export interface JavaScriptArtifactReconstructionResult {
+  readonly route_inventory?: JavaScriptRouteInventory;
   readonly input_path: string;
   readonly format: "asar" | "directory";
   readonly root_artifact_sha256: string;
@@ -69,12 +87,16 @@ export interface JavaScriptArtifactReconstructionResult {
   readonly limitations: readonly string[];
 }
 
-/** Reconstruct one local ASAR or extracted directory without executing code. */
+/** Reconstruct a parsed local ASAR/directory request without executing code. */
 export const reconstructJavaScriptArtifact = async (
-  rawInput: unknown,
+  input: AnalyzeJavaScriptApplicationInput,
   scope: ArtifactResourceScope,
+  sourceAnalysis: JavaScriptSourceAnalysisFactory,
   signal?: AbortSignal,
   progress?: ProgressReporter,
+  asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  overrides?: Readonly<Partial<AnalysisSettingValues>>,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Promise<JavaScriptArtifactReconstructionResult> =>
   scope.run(async () => {
     const reportPhase = async (
@@ -89,21 +111,32 @@ export const reconstructJavaScriptArtifact = async (
       });
       await checkpointJavaScriptAnalysis(signal);
     };
-    const input = javascriptArtifactReconstructionInputSchema.parse(rawInput);
     abortIfNeeded(signal);
-    const path = await resolveSelectedInput(input.input_path);
-    const format = await resolveFormat(path, input);
-    const snapshot = await scanCanonicalArtifactInventoryInScope(path, {
-      resourceScope: scope,
-      signal,
-      integrity: { mode: input.integrity_policy },
-    });
+    const selectedPath = absoluteCallerPath(input.input_path);
+    const { path, metadata } = await resolveSelectedInput(selectedPath);
+    const format = resolveFormat(path, metadata, input, selectedPath);
+    const snapshot = await scanCanonicalArtifactInventoryInScope(
+      path,
+      {
+        resourceScope: scope,
+        signal,
+        integrity: input.integrity_policy,
+        asarHeaderAdmission,
+      },
+      undefined,
+      selectedPath,
+    );
     if (snapshot.manifest.root_format !== format)
       throw new ArtifactReaderFailure(
         "format",
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
-    const reader = createReader(path, format);
+    const reader = createReader(
+      path,
+      format,
+      asarHeaderAdmission,
+      selectedPath,
+    );
     const readerOwner = {
       kind: "reader" as const,
       reader,
@@ -127,19 +160,16 @@ export const reconstructJavaScriptArtifact = async (
         scope,
         signal,
         input.source_paths,
+        asarHeaderAdmission,
       );
       // Release acquisition before analysis consumes these owned file facts.
       const earlyCleanup = await scope.release(readerOwner);
       readerOpen = false;
       if (earlyCleanup.kind === "failed")
-        throw ArtifactReaderFailure.withCleanup(
-          earlyCleanup.cause,
-          ArtifactReaderFailure.cleanupObservation(
-            earlyCleanup.cause,
-            readerOwner.resource,
-          ),
-          { kind: "artifact-inventory", inventory: snapshot },
-        );
+        throw scope.cleanupFailure({ kind: "completed" }, [earlyCleanup], {
+          kind: "artifact-inventory",
+          inventory: snapshot,
+        });
       await reportPhase(
         "parse_javascript_sources",
         `Processing ${String(files.files.length - (files.source_selection?.unselected_files ?? 0))} selected application files`,
@@ -158,20 +188,47 @@ export const reconstructJavaScriptArtifact = async (
           ? {}
           : { fileNodes: input.max_semantic_nodes_per_file }),
       });
-      const worker = createJavaScriptSourceAnalysis(
-        {
-          heapMb:
-            input.max_heap_mb ?? JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
-          timeoutMs:
-            input.analysis_timeout_ms ??
-            JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
-        },
+      const heap = selectedAnalysisSetting(
+        input.max_heap_mb,
+        overrides?.["javascript.max_heap_mb"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
+      );
+      const timeout = selectedAnalysisSetting(
+        input.analysis_timeout_ms,
+        overrides?.["javascript.analysis_timeout_ms"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+      );
+      const sourceLimits = {
+        ...(input.semantic_precision === undefined
+          ? {}
+          : { semanticPrecision: input.semantic_precision }),
+        ...(memberMutationAllowance === undefined
+          ? {}
+          : { memberMutationAllowance }),
+        heapMb: heap.value,
+        heapSource: heap.source,
+        timeoutMs: timeout.value,
+        timeoutSource: timeout.source,
+      };
+      const preloads = await discoverJavaScriptPreloadPaths(
+        files,
+        sourceLimits,
+        scope,
+        sourceAnalysis,
+        signal,
+      );
+      const worker = await sourceAnalysis(
+        sourceLimits,
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,
         ).length,
+        { scope },
       );
-      let outcome;
-      let cleanupFailure: AnalysisError | undefined;
+      let outcome!: Awaited<
+        ReturnType<typeof analyzeAndAdoptJavaScriptArtifactFiles>
+      >;
+      let analysisFailure: { readonly cause: unknown } | undefined;
+      let cleanupAttempt: Awaited<ReturnType<ArtifactResourceScope["release"]>>;
       try {
         outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
           files,
@@ -193,35 +250,63 @@ export const reconstructJavaScriptArtifact = async (
             abortIfNeeded(signal);
           },
           signal,
+          async (file, phase) => {
+            abortIfNeeded(signal);
+            await progress?.report({
+              phase: `javascript_worker_${phase}`,
+              completed: 0,
+              total: 1,
+              message: `JavaScript worker ${phase}: ${file.path}`,
+            });
+            abortIfNeeded(signal);
+          },
+          preloads.paths,
+          preloads.limitations,
         );
+      } catch (cause: unknown) {
+        analysisFailure = { cause };
       } finally {
-        try {
-          const cleanup = await scope.release({
-            kind: "javascript-source-analysis",
-            analysis: worker,
-            resource: `JavaScript source analyzer for ${path}`,
-          });
-          if (cleanup.kind === "failed") throw cleanup.cause;
-        } catch (cause: unknown) {
-          if (!(cause instanceof AnalysisError)) throw cause;
-          cleanupFailure = cause;
-        }
+        cleanupAttempt = await scope.release({
+          kind: "javascript-source-analysis",
+          analysis: worker,
+          resource: `JavaScript source analyzer for ${path}`,
+        });
+      }
+      if (analysisFailure !== undefined) {
+        if (cleanupAttempt.kind === "failed")
+          throw scope.cleanupFailure(
+            { kind: "failed", cause: analysisFailure.cause },
+            [cleanupAttempt],
+          );
+        throw analysisFailure.cause;
+      }
+      let cleanupFailure: AnalysisError | undefined;
+      if (cleanupAttempt.kind === "failed") {
+        if (!(cleanupAttempt.cause instanceof AnalysisError))
+          throw cleanupAttempt.cause;
+        cleanupFailure = cleanupAttempt.cause;
       }
       const analysis = outcome.analysis;
-      let interruption = cleanupFailure ?? outcome.interruption;
+      let interruption = outcome.interruption;
       // Source facts are owned now. Finish their projection cooperatively so a
       // later cancellation can retain Evidence instead of discarding those facts.
       const checkpointCompletedAnalysis = async (): Promise<void> => {
         await setImmediate();
         if (interruption == null && signal?.aborted === true)
-          interruption = new ArtifactOperationError(OPERATION, "cancelled");
+          interruption = new ArtifactOperationError(
+            OPERATION,
+            "cancelled",
+            undefined,
+            undefined,
+            { cause: signal.reason },
+          );
       };
       const reportCompletedPhase = async (
         phase: string,
         message: string,
       ): Promise<void> => {
         await checkpointCompletedAnalysis();
-        if (interruption == null)
+        if (interruption == null && cleanupFailure === undefined)
           await progress?.report({ phase, completed: 0, total: 1, message });
         await checkpointCompletedAnalysis();
       };
@@ -238,7 +323,7 @@ export const reconstructJavaScriptArtifact = async (
         "seal_javascript_application_graph",
         "Sealing the validated application graph",
       );
-      const graph = await completeJavaScriptAnalysisSteps(
+      const { graph, electronSummary } = await completeJavaScriptAnalysisSteps(
         applicationGraphSteps,
       );
       await reportCompletedPhase(
@@ -248,6 +333,7 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraphSteps = semanticProjection.finishImmutableSteps(
         snapshot.manifest.root_sha256,
         graph,
+        javaScriptSemanticPrecisionControls(analysis.files),
       );
       await reportCompletedPhase(
         "seal_javascript_semantic_graph",
@@ -256,7 +342,62 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraph =
         await completeJavaScriptAnalysisSteps(semanticGraphSteps);
       await checkpointCompletedAnalysis();
+      const directoryPaths = new Set(
+        snapshot.occurrences
+          .filter(({ entry_kind }) => entry_kind === "directory")
+          .map(({ logical_path }) => logical_path),
+      );
+      const nextAppContext = createJavaScriptNextAppContext(
+        files,
+        analysis.jsonDocuments,
+        directoryPaths,
+        snapshot.coverage,
+      );
       const completed = {
+        route_inventory: await completeJavaScriptAnalysisSteps(
+          buildJavaScriptRouteInventorySteps([
+            ...analysis.files
+              .filter(({ file }) => file.kind === "javascript")
+              .map(({ file, javascript, analysis_failure }) => ({
+                key: file.path,
+                next_app_context: nextAppContext(file),
+                path: file.path,
+                url: null,
+                sha256: file.sha256,
+                container_sha256: file.container_sha256,
+                status:
+                  javascript === null || javascript.parse_status === "failed"
+                    ? ("unavailable" as const)
+                    : javascript.parse_error_count > 0
+                      ? ("partial" as const)
+                      : ("complete" as const),
+                reason: !file.text.included
+                  ? file.text.reason
+                  : (analysis_failure?.reason ??
+                    (javascript === null
+                      ? "Source analysis is unavailable"
+                      : javascript.parse_status === "failed"
+                        ? "Script parsing failed"
+                        : javascript.parse_error_count > 0
+                          ? "Script parsing recovered from errors"
+                          : null)),
+                facts: javascript?.routes ?? null,
+              })),
+            ...files.unavailable_relevant_files
+              .filter((file) => file.kind === "javascript")
+              .map((file) => ({
+                key: file.path,
+                next_app_context: nextAppContext(file),
+                path: file.path,
+                url: null,
+                sha256: file.sha256,
+                container_sha256: file.container_sha256,
+                status: "unavailable" as const,
+                reason: "Inventoried JavaScript source bytes are unavailable",
+                facts: null,
+              })),
+          ]),
+        ),
         input_path: path,
         format,
         root_artifact_sha256: snapshot.manifest.root_sha256,
@@ -268,14 +409,7 @@ export const reconstructJavaScriptArtifact = async (
           : { source_selection: files.source_selection }),
         graph,
         semantic_graph: semanticGraph,
-        electron_summary: summarizeElectronBoundaries(
-          analysis,
-          new Set(
-            snapshot.occurrences
-              .filter(({ entry_kind }) => entry_kind === "directory")
-              .map(({ logical_path }) => logical_path),
-          ),
-        ),
+        electron_summary: electronSummary,
         statistics: {
           relevant_files:
             files.files.length + files.unavailable_relevant_files.length,
@@ -295,7 +429,18 @@ export const reconstructJavaScriptArtifact = async (
         },
         limitations: analysis.limitations,
       };
-      if (interruption !== null && interruption !== undefined) {
+      await checkpointCompletedAnalysis();
+      const failure =
+        cleanupFailure === undefined
+          ? interruption
+          : interruption === null
+            ? cleanupFailure
+            : analysisErrorWithCleanupDependencies(
+                interruption,
+                cleanupFailure,
+                OPERATION,
+              );
+      if (failure !== null) {
         const { electron_summary: summary, ...application } = completed;
         const partial = await completeJavaScriptAnalysisSteps(
           parseOwnedJavaScriptApplicationAnalysisSteps({
@@ -309,7 +454,7 @@ export const reconstructJavaScriptArtifact = async (
             input,
             partial,
           );
-        throw interruption.retainPartialObservation(evidence);
+        throw failure.retainPartialObservation(evidence);
       }
       reconstructionOutcome = { kind: "completed", result: completed };
     } catch (cause: unknown) {
@@ -318,19 +463,13 @@ export const reconstructJavaScriptArtifact = async (
     if (readerOpen) {
       const cleanupAttempt = await scope.release(readerOwner);
       if (cleanupAttempt.kind === "failed") {
-        const cleanup = ArtifactReaderFailure.cleanupObservation(
-          cleanupAttempt.cause,
-          readerOwner.resource,
-        );
         const partialObservation: ArtifactInventoryPartialObservation = {
           kind: "artifact-inventory",
           inventory: snapshot,
         };
-        throw ArtifactReaderFailure.withCleanup(
-          reconstructionOutcome.kind === "failed"
-            ? reconstructionOutcome.cause
-            : cleanupAttempt.cause,
-          cleanup,
+        throw scope.cleanupFailure(
+          reconstructionOutcome,
+          [cleanupAttempt],
           partialObservation,
         );
       }
@@ -343,14 +482,24 @@ export const reconstructJavaScriptArtifact = async (
 const OPERATION = "analyze_javascript_application";
 
 /**
- * Resolve the caller-selected input. A missing or unreadable selection is a
- * caller or host-permission failure, not a damaged artifact.
+ * Resolve the caller-selected input. A missing, looping, overlong, or
+ * unreadable selection is a caller or host-resolution failure, not a damaged
+ * artifact.
  */
-const resolveSelectedInput = async (inputPath: string): Promise<string> => {
+const resolveSelectedInput = async (
+  inputPath: string,
+): Promise<{ readonly path: string; readonly metadata: Stats }> => {
   try {
+    // Native lookup must admit the selected traversal first: Darwin realpath
+    // can collapse file/.. even though that path cannot be opened.
+    const metadata = await stat(inputPath);
     const path = await realpath(inputPath);
-    await access(path, constants.R_OK);
-    return path;
+    // Directory enumeration needs read access; resolving its entries also needs search access.
+    await access(
+      path,
+      metadata.isDirectory() ? constants.R_OK | constants.X_OK : constants.R_OK,
+    );
+    return { path, metadata };
   } catch (cause: unknown) {
     const code =
       cause instanceof Error && "code" in cause ? String(cause.code) : "";
@@ -366,19 +515,39 @@ const resolveSelectedInput = async (inputPath: string): Promise<string> => {
           message: `No file or directory exists at the selected input path (${code}): ${inputPath}`,
         },
       ]);
+    if (code === "ELOOP" || code === "ENAMETOOLONG")
+      throw new AnalysisInputError(OPERATION, { cause }, [
+        {
+          path: ["input_path"],
+          reason: "invalid_value",
+          message: selectedInputResolutionMessage(code, inputPath),
+        },
+      ]);
     throw cause;
   }
 };
 
+const selectedInputResolutionMessage = (
+  code: "ELOOP" | "ENAMETOOLONG",
+  inputPath: string,
+): string =>
+  code === "ENAMETOOLONG"
+    ? `Selected input path exceeds the host path or component length limit (ENAMETOOLONG): ${inputPath}`
+    : `Selected input path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${inputPath}`;
+
 /** The selected input's kind, checked against the caller's requested format. */
-const resolveFormat = async (
+const resolveFormat = (
   path: string,
-  input: JavaScriptArtifactReconstructionInput,
-): Promise<"asar" | "directory"> => {
-  const metadata = await lstat(path);
+  metadata: Stats,
+  input: AnalyzeJavaScriptApplicationInput,
+  selectedPath: string,
+): "asar" | "directory" => {
   const observed = metadata.isDirectory()
     ? "directory"
-    : metadata.isFile() && path.toLowerCase().endsWith(".asar")
+    : metadata.isFile() &&
+        artifactNameForClassification(selectedPath, path)
+          .toLowerCase()
+          .endsWith(".asar")
       ? "asar"
       : undefined;
   if (observed === undefined)
@@ -408,5 +577,6 @@ const abortIfNeeded = (signal?: AbortSignal): void => {
     throw new ArtifactReaderFailure(
       "cancelled",
       "JavaScript artifact reconstruction cancelled",
+      { cause: signal.reason },
     );
 };

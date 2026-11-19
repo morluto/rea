@@ -1,20 +1,24 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  type ArtifactResourceScope,
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
   UefiExtractResult,
   UefiOperation,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import { uefiFailure } from "./UefiFailures.js";
+import { uefiFailureDialect } from "./UefiFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
-const UEFI_PROVIDER_ID = "rea-uefi";
+import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 
 type UefiPublishedFile = UefiExtractResult["files"][number];
 
@@ -59,7 +63,7 @@ export const publishUefiFiles = async (context: {
     tree = await SafeOutputTree.create(context.outputDirectory);
     for (const entry of context.entries) {
       context.checkpoint();
-      const sha256 = createHash("sha256").update(entry.bytes).digest("hex");
+      const sha256 = sha256Hex(entry.bytes);
       const written = await tree.write(
         entry.relativePath,
         Readable.from([entry.bytes]),
@@ -80,38 +84,38 @@ export const publishUefiFiles = async (context: {
     return { result };
   } catch (cause: unknown) {
     if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
-    const primary = uefiFailure(
+    const primary = classifyProviderFailure(
       cause,
-      context.operation,
-      context.outputDirectory,
+      uefiFailureDialect(context.operation, context.outputDirectory),
     );
     if (tree === undefined) throw primary;
 
+    const ownedTree = tree;
+    const lease = new AnalysisCleanupLease(async () => {
+      await ownedTree.rollback();
+    }, [ownedTree.outputRoot]);
+    if (primary.cleanupIncomplete) lease.bindCleanupError(primary);
     const released = await context.resources.release({
-      kind: "output-tree",
-      resource: tree.outputRoot,
-      tree,
+      kind: "lease",
+      resource: ownedTree.outputRoot,
+      lease,
     });
     if (released.kind === "released") {
-      primary.resolveCleanup();
       if (tree.published && result !== undefined) return { result };
       throw primary;
     }
     const cleanup = new ProviderCleanupError(
-      UEFI_PROVIDER_ID,
+      UEFI_PROVIDER_IDENTITY.id,
       [tree.outputRoot],
       { reason: String(released.cause) },
       { cause: released.cause, operation: context.operation },
     );
     new AnalysisCleanupLeaseGroup(cleanup, [released.lease]);
-    // The exact tree owns pending publication handles and rollback together.
-    if (primary.cleanupIncomplete)
-      new AnalysisCleanupLeaseGroup(primary, [released.lease]);
-    const failure = analysisErrorWithCleanupFailure(
+    const failure = analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       context.operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    );
     if (tree.published && result !== undefined) return { result, failure };
     throw failure;
   }

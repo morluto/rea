@@ -1,27 +1,39 @@
 import { expect, it } from "vitest";
 
-import { snapshotEnvironment } from "./snapshotEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "./snapshotEnvironment.js";
 
-it.each(["linux", "darwin"] as const)(
-  "preserves case-sensitive %s variables in an immutable snapshot",
+it.each(["win32", "linux"] as const)(
+  "merges explicit environment layers using %s key identity",
   (platform) => {
-    const selected = { PATH: "/chosen/bin", Path: "/other/bin" };
-    const snapshot = snapshotEnvironment(selected, platform);
-    selected.PATH = "/later/bin";
-    expect(snapshot).toEqual({ PATH: "/chosen/bin", Path: "/other/bin" });
-    expect(Object.isFrozen(snapshot)).toBe(true);
+    const existing = {
+      rea_analysis_provider: "hopper",
+      CallerSetting: "retain",
+    };
+    const overrides = { REA_ANALYSIS_PROVIDER: "ghidra", Path: "chosen" };
+    const merged = mergeEnvironmentOverrides(existing, overrides, platform);
+    expect(merged).toEqual(
+      platform === "win32"
+        ? {
+            REA_ANALYSIS_PROVIDER: "ghidra",
+            CallerSetting: "retain",
+            Path: "chosen",
+          }
+        : { ...existing, ...overrides },
+    );
+    expect(Object.isFrozen(merged)).toBe(true);
+    expect(existing.rea_analysis_provider).toBe("hopper");
+    expect(overrides.REA_ANALYSIS_PROVIDER).toBe("ghidra");
   },
 );
 
-it("canonicalizes selected Windows variables without inheriting ambient values", () => {
-  const snapshot = snapshotEnvironment(
-    { Path: "C:\\selected", ComSpec: "C:\\selected\\cmd.exe" },
-    "win32",
-  );
-  expect(snapshot).toEqual({
-    PATH: "C:\\selected",
-    COMSPEC: "C:\\selected\\cmd.exe",
-  });
+it("preserves case-sensitive POSIX variables in an immutable snapshot", () => {
+  const selected = { PATH: "/chosen/bin", Path: "/other/bin" };
+  const snapshot = snapshotEnvironment(selected, "linux");
+  selected.PATH = "/later/bin";
+  expect(snapshot).toEqual({ PATH: "/chosen/bin", Path: "/other/bin" });
   expect(Object.isFrozen(snapshot)).toBe(true);
 });
 

@@ -1,5 +1,6 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import type {
   UefiFfsFileRecord,
@@ -144,9 +145,6 @@ type SectionBuilder = {
   -readonly [K in keyof UefiSectionRecord]: UefiSectionRecord[K];
 };
 
-const digestOf = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
 /** Table names mirror the contract enum; unlisted codes report "unknown". */
@@ -272,7 +270,7 @@ export const scanUefiImage = async (
       source_stream: region.sourceStream ?? null,
       offset: absoluteStart,
       length,
-      sha256: digestOf(region.buffer.subarray(localStart, localEnd)),
+      sha256: sha256Hex(region.buffer.subarray(localStart, localEnd)),
       classification,
       erasure,
     });
@@ -361,7 +359,7 @@ export const scanUefiImage = async (
         declared_length: header.declaredLength,
         depth,
         parent_offset: parentOffset,
-        sha256: digestOf(observed ?? Buffer.alloc(0)),
+        sha256: sha256Hex(observed ?? Buffer.alloc(0)),
         file_system_guid: header.fileSystemGuid,
         signature: "_FVH",
         header_length: header.headerLength,
@@ -567,7 +565,7 @@ export const scanUefiImage = async (
         ui_string: uiString,
         logical_path: logicalPath,
         volume_offset: volume.offset,
-        sha256: digestOf(observedBytes),
+        sha256: sha256Hex(observedBytes),
         sections,
       });
 
@@ -654,7 +652,7 @@ export const scanUefiImage = async (
         malformed: draft.malformed ?? false,
         type_code: draft.typeCode,
         type_name: draft.typeName as SectionBuilder["type_name"],
-        sha256: digestOf(payload?.bytes ?? Buffer.alloc(0)),
+        sha256: sha256Hex(payload?.bytes ?? Buffer.alloc(0)),
         compression:
           compression.kind === "none"
             ? compression
@@ -870,9 +868,10 @@ const isSectionChain = (region: ScanRegion): boolean => {
 };
 
 const decodeUiString = (payload: Buffer): string | null => {
+  const payloadReader = new BinaryReader(payload, true, "UEFI UI section");
   const limit = Math.min(payload.length - (payload.length % 2), 1024);
   let end = 0;
-  while (end < limit && payload.readUInt16LE(end) !== 0) end += 2;
+  while (end < limit && payloadReader.u16(end) !== 0) end += 2;
   return end === 0 ? null : payload.toString("utf16le", 0, end);
 };
 
@@ -882,6 +881,7 @@ const scanPspDirectories = (
   candidates: PspCandidateRecord[],
   reserve: (count?: number) => boolean,
 ): void => {
+  const reader = new BinaryReader(image, true, "AMD PSP directory");
   const headerLength = 16;
   const entryLength = 16;
   for (const magic of PSP_MAGICS) {
@@ -891,7 +891,7 @@ const scanPspDirectories = (
       if (hit < 0 || !reserve()) break;
       searchFrom = hit + magic.length;
       const totalEntries =
-        hit + headerLength <= image.length ? image.readUInt32LE(hit + 8) : 0;
+        hit + headerLength <= image.length ? reader.u32(hit + 8) : 0;
       const tableLength = headerLength + totalEntries * entryLength;
       if (
         totalEntries === 0 ||
@@ -909,17 +909,17 @@ const scanPspDirectories = (
       const entries: PspEntryRecord[] = [];
       for (let index = 0; index < totalEntries; index += 1) {
         const start = hit + headerLength + index * entryLength;
-        const raw = image.readBigUInt64LE(start + 8);
+        const raw = reader.word(start + 8, 64);
         const location = raw & ((1n << 62n) - 1n);
         entries.push({
-          type: image.readUInt8(start),
+          type: reader.u8(start),
           declaredLocation:
             location <= BigInt(Number.MAX_SAFE_INTEGER)
               ? Number(location)
               : null,
           declaredLocationRaw: `0x${raw.toString(16).padStart(16, "0")}`,
           addressMode: Number(raw >> 62n),
-          declaredSize: image.readUInt32LE(start + 4),
+          declaredSize: reader.u32(start + 4),
           imageOffset: null,
           sha256: null,
           locationBasis: "declared-unverified",

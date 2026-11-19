@@ -1,13 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { javascriptSourceAnalysis } from "../../../src/composition/javascriptSourceAnalysis.js";
 
 import { createPackage } from "@electron/asar";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
+import { analyzeJavaScriptApplicationInputSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("retains a failed nested reader through blocked work and scope cleanup", async () => {
@@ -40,10 +42,14 @@ it("retains a failed nested reader through blocked work and scope cleanup", asyn
     },
   );
 
-  const input = { input_path: bundle };
-  const firstFailure = await reconstructJavaScriptArtifact(input, scope).catch(
-    (cause: unknown) => cause,
-  );
+  const input = analyzeJavaScriptApplicationInputSchema.parse({
+    input_path: bundle,
+  });
+  const firstFailure = await reconstructJavaScriptArtifact(
+    input,
+    scope,
+    javascriptSourceAnalysis,
+  ).catch((cause: unknown) => cause);
   expect(firstFailure).toBeInstanceOf(ArtifactReaderFailure);
   expect(firstFailure).toMatchObject({
     cleanup: {
@@ -56,9 +62,11 @@ it("retains a failed nested reader through blocked work and scope cleanup", asyn
   expect(retainedReader).toBeDefined();
   expect(retainedReader).not.toBe(closedReaders[0]);
 
-  const blockedWork = await reconstructJavaScriptArtifact(input, scope).catch(
-    (cause: unknown) => cause,
-  );
+  const blockedWork = await reconstructJavaScriptArtifact(
+    input,
+    scope,
+    javascriptSourceAnalysis,
+  ).catch((cause: unknown) => cause);
   expect(blockedWork).toMatchObject({
     reason: "unavailable",
     cleanup: {

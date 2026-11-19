@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { createAnalysisProfile } from "./analysisProfile.js";
 import {
@@ -66,8 +67,16 @@ describe("cooperative immutable Evidence", () => {
   it("retains scalar results and unavailable-subject limitations", () => {
     const observation = { operation: "inspect", parameters: {}, result: null };
     expect(
-      finish(createImmutableEvidenceSteps(undefined, provider, observation)),
-    ).toEqual(createEvidence(undefined, provider, observation));
+      finish(
+        createImmutableEvidenceSteps(
+          unknownTarget("not-observed"),
+          provider,
+          observation,
+        ),
+      ),
+    ).toEqual(
+      createEvidence(unknownTarget("not-observed"), provider, observation),
+    );
   });
 
   it("rejects mutable results and mismatched producer profiles", () => {
@@ -99,9 +108,10 @@ describe("cooperative immutable Evidence", () => {
     let nested: JsonValue = 1;
     for (let index = 0; index <= MAX_JSON_DEPTH; index += 1)
       nested = { nested };
+    // Enough members before the over-deep one that validation yields first.
     const result = freezeJsonSnapshot([
-      nested,
       ...Array<JsonValue>(5000).fill(null),
+      nested,
     ]);
     const validation = jsonValueValidationSteps(result);
     expect(validation.next().done).toBe(false);

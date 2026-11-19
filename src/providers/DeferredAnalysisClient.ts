@@ -1,12 +1,15 @@
 import type {
   AnalysisClient,
-  FileCloseResourceOwner,
+  RetainedResourceScope,
   ProviderRuntimeLineageSnapshot,
   ProviderRequestActivitySnapshot,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import {
+  closedAnalysisClientError,
+  ProviderAdapterError,
+} from "../domain/providerAdapterError.js";
 import { err } from "../domain/result.js";
 import { AnalysisClientCreation } from "./AnalysisClientCreation.js";
 
@@ -29,7 +32,7 @@ export class DeferredAnalysisClient implements AnalysisClient {
   constructor(
     loadClient: (
       signal: AbortSignal,
-      resourceOwner: FileCloseResourceOwner,
+      resourceOwner: RetainedResourceScope,
     ) => Promise<AnalysisClient>,
     providerId: string,
   ) {
@@ -46,11 +49,7 @@ export class DeferredAnalysisClient implements AnalysisClient {
       const loaded = await this.#creation.acquire(operation, options?.signal);
       if (!loaded.ok) return loaded;
       if (this.#creation.readyClient !== loaded.value)
-        return err(
-          new ProviderAdapterError(this.#providerId, operation, {
-            diagnostics: { reason: "client_closed" },
-          }),
-        );
+        return err(closedAnalysisClientError(this.#providerId, operation));
       return await loaded.value.execute(operation, parameters, options);
     } catch (cause: unknown) {
       if (cause instanceof AnalysisError) return err(cause);

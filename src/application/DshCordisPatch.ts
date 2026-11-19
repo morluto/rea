@@ -1,22 +1,19 @@
+import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
 import { isMap, isSeq, type Node, type YAMLMap } from "yaml";
-import {
-  parseEnvironment,
-  parseEnvironmentValues,
-} from "../config/environment.js";
+import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
 const LAUNCHER_KEYS = new Set(["serverName", "transport", "command", "args"]);
 const SELECTOR_KEYS = new Set(["id", "name"]);
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  !(value instanceof CordisExpression);
+const isPatchRecord = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) && !(value instanceof CordisExpression);
 
 interface PatchOperation {
   readonly source: unknown;
@@ -134,7 +131,8 @@ export class DshCordisDocument {
             : undefined;
     const config = this.#field("config");
     // Ownership survives malformed config so uninstall can remove the source row.
-    this.config = insertions === 0 ? undefined : isRecord(config) ? config : {};
+    this.config =
+      insertions === 0 ? undefined : isPatchRecord(config) ? config : {};
   }
 
   #map(node: unknown): YAMLMap<unknown, unknown> | undefined {
@@ -183,9 +181,17 @@ export class DshCordisDocument {
 
   /** Validate literals without treating expression source as an environment value. */
   environment(
-    overrides: Readonly<Record<string, string>> = {},
-    validation: "fragment" | "effective" = "effective",
-  ): Result<Readonly<Record<string, string>>, ConfigurationError> {
+    overrides: Readonly<Record<string, string>>,
+    validation: "fragment" | "effective",
+    platform: NodeJS.Platform,
+  ): Result<
+    {
+      readonly values: Readonly<Record<string, string>>;
+      readonly configuration: Environment;
+      readonly unresolvedSettings: ReadonlySet<string>;
+    },
+    ConfigurationError
+  > {
     const config = this.#field("config");
     if (config instanceof CordisExpression)
       return err(
@@ -202,7 +208,7 @@ export class DshCordisDocument {
           },
         ),
       );
-    if (config !== undefined && !isRecord(config))
+    if (config !== undefined && !isPatchRecord(config))
       return err(
         new ConfigurationError("Cordis REA config must be a mapping", {
           settings: [
@@ -214,15 +220,17 @@ export class DshCordisDocument {
         }),
       );
     const raw = this.config?.env;
-    if (raw !== undefined && !isRecord(raw))
+    if (raw !== undefined && !isPatchRecord(raw))
       return err(
         new ConfigurationError("Cordis server environment must be a mapping"),
       );
-    const literals: Record<string, string> = {};
+    const literals: Record<string, string> = Object.create(null);
     const unresolvedSettings = new Set<string>();
-    for (const [key, value] of Object.entries(raw ?? {})) {
+    for (const [key, value] of Object.entries(
+      mergeEnvironmentOverrides<unknown>(raw ?? {}, overrides, platform),
+    )) {
       if (value instanceof CordisExpression) {
-        if (overrides[key] === undefined) unresolvedSettings.add(key);
+        unresolvedSettings.add(key);
         continue;
       }
       if (typeof value !== "string")
@@ -239,34 +247,46 @@ export class DshCordisDocument {
         );
       literals[key] = value;
     }
-    const environment = { ...literals, ...overrides };
-    const validated =
-      validation === "fragment"
-        ? parseEnvironmentValues(environment, unresolvedSettings)
-        : parseEnvironment(environment, unresolvedSettings);
-    return validated.ok ? ok(environment) : validated;
+    const validated = validateRegistrationEnvironment(
+      literals,
+      unresolvedSettings,
+      validation,
+      platform,
+    );
+    return validated.ok
+      ? ok({ values: literals, ...validated.value })
+      : validated;
   }
 
   desired(
     command: readonly string[],
     overrides: Readonly<Record<string, string>>,
+    platform: NodeJS.Platform,
+    toolCallTimeoutMs?: number,
   ): Result<Record<string, unknown>, ConfigurationError> {
     if (this.#editabilityError !== undefined)
       return err(this.#editabilityError);
-    const environment = this.environment(overrides);
+    const environment = this.environment(overrides, "effective", platform);
     if (!environment.ok) return environment;
-    const env = {
-      ...(isRecord(this.config?.env) ? this.config.env : {}),
-      ...overrides,
-    };
+    const env = mergeEnvironmentOverrides<unknown>(
+      isPatchRecord(this.config?.env) ? this.config.env : {},
+      overrides,
+      platform,
+    );
     const desired = { ...this.config, ...dshClientRegistrationEntry(command) };
     delete desired.env;
     if (Object.keys(env).length > 0) desired.env = env;
+    if (
+      toolCallTimeoutMs !== undefined &&
+      dshToolCallTimeout(this.config?.toolCallTimeoutMs) === undefined
+    )
+      desired.toolCallTimeoutMs = toolCallTimeoutMs;
     return ok(desired);
   }
 
   /** Plan every replacement from source snapshots before changing an output tree. */
-  serialize(desired?: Record<string, unknown>): string {
+  serialize(edit?: DshCordisRegistration): string {
+    const desired = edit?.desired;
     if (
       this.#editabilityError !== undefined &&
       (this.#unknownStructure || desired !== undefined)
@@ -303,9 +323,11 @@ export class DshCordisDocument {
       const owned = new Set(op.ownedRows);
       inserted.items = inserted.items.flatMap((entry, index) => {
         if (!owned.has(index)) return [entry];
-        if (carried || desired === undefined) return [];
+        if (carried || edit === undefined) return [];
         carried = true;
-        return [this.#entry(desired, invalidated)] as typeof inserted.items;
+        return [
+          this.#entry(edit.desired, edit.platform, invalidated),
+        ] as typeof inserted.items;
       });
       if (inserted.items.length === 0) copy.delete("insert");
       // An emptied operation keeps caller fields unless it would patch REA's row.
@@ -340,6 +362,7 @@ export class DshCordisDocument {
 
   #entry(
     desired: Record<string, unknown>,
+    platform: NodeJS.Platform,
     invalidated: ReadonlySet<Node>,
   ): YAMLMap<unknown, unknown> {
     const entry = this.#yaml.detach(this.#entryNode, invalidated);
@@ -364,15 +387,38 @@ export class DshCordisDocument {
     // Caller nodes keep their tags and spelling; only literal launcher values change.
     for (const key of LAUNCHER_KEYS)
       this.#yaml.setValue(config, key, desired[key]);
+    if (typeof desired.toolCallTimeoutMs === "number")
+      this.#yaml.setValue(
+        config,
+        "toolCallTimeoutMs",
+        desired.toolCallTimeoutMs,
+      );
     const env = this.#map(this.#yaml.field(sourceConfig, "env"));
     const desiredEnv = desired.env;
-    if (isRecord(desiredEnv)) {
+    if (isPatchRecord(desiredEnv)) {
       const nextEnv =
         env === undefined
           ? this.#yaml.document.createNode({})
           : this.#yaml.detach(env, invalidated);
       if (!isMap(nextEnv))
         throw new ConfigurationError("Cordis environment is not a mapping");
+      for (const pair of [...nextEnv.items]) {
+        const key = this.#yaml.key(pair.key);
+        if (Object.hasOwn(desiredEnv, key)) {
+          this.#yaml.renameKey(nextEnv, pair, key);
+          continue;
+        }
+        // Windows environment names match case-insensitively, so a caller's
+        // spelling of a desired name is kept rather than duplicated.
+        const alias =
+          platform === "win32"
+            ? Object.keys(desiredEnv).find(
+                (name) => name.toUpperCase() === key.toUpperCase(),
+              )
+            : undefined;
+        if (alias === undefined) nextEnv.delete(pair.key);
+        else this.#yaml.renameKey(nextEnv, pair, alias);
+      }
       for (const [key, value] of Object.entries(desiredEnv)) {
         this.#yaml.setValue(nextEnv, key, value);
       }
@@ -383,10 +429,16 @@ export class DshCordisDocument {
   }
 }
 
+/** REA's desired entry and the platform whose environment names it uses. */
+export interface DshCordisRegistration {
+  readonly desired: Record<string, unknown>;
+  readonly platform: NodeJS.Platform;
+}
+
 class DshCordisEdit {
   constructor(
     readonly source: DshCordisDocument,
-    readonly desired?: Record<string, unknown>,
+    readonly registration?: DshCordisRegistration,
   ) {}
 }
 export const dshDocument = (
@@ -405,22 +457,33 @@ export const parseDshCordisDocument = (
     servers: source.config === undefined ? {} : { rea: source.config },
     serversPath: [],
     dialect: "dsh",
+    environmentKey: "env",
     legacyServers: {},
   };
 };
 export const editDshDocument = (
   parsed: ClientConfigurationDocument,
-  desired?: Record<string, unknown>,
+  registration?: DshCordisRegistration,
 ): Record<string, unknown> => ({
-  cordis: new DshCordisEdit(dshDocument(parsed.document), desired),
+  cordis: new DshCordisEdit(dshDocument(parsed.document), registration),
 });
 export const serializeDshDocument = (
   document: Record<string, unknown>,
 ): string => {
   if (!(document.cordis instanceof DshCordisEdit))
     throw new ConfigurationError("Missing Cordis edit plan");
-  return document.cordis.source.serialize(document.cordis.desired);
+  return document.cordis.source.serialize(document.cordis.registration);
 };
+/** Read a positive literal deadline or null for a caller-owned expression of unknown value. */
+export const dshToolCallTimeout = (
+  value: unknown,
+): number | null | undefined => {
+  if (value instanceof CordisExpression) return null;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+};
+
 export const dshClientRegistrationEntry = (
   command: readonly string[],
   environment: Readonly<Record<string, string>> = {},

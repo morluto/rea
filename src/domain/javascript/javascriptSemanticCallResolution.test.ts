@@ -1,7 +1,11 @@
 import * as t from "@babel/types";
 import { expect, it, vi } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  indexJavaScriptBindingsWithReceiversSteps,
+} from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   resolveLocalCallables,
   type LocalCallableResolution,
@@ -36,6 +40,106 @@ const indexed = (source: string) => {
       }),
   };
 };
+
+it("orders exported callable initializers within their enclosing declaration", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    function original() {}
+    export const first = original, second = first;
+    second();
+    export const before = later, later = original;
+    before();
+  `);
+  const original = ir.callables.find(({ name }) => name === "original");
+  if (original === undefined) throw new Error("Missing original callable");
+  expect(ir.callSites[0]).toMatchObject({
+    resolution: "exact",
+    calleeCallableIds: [original.callableId],
+  });
+  expect(ir.callSites[1]).toBeDefined();
+  expect(ir.callSites[1]?.resolution).not.toBe("exact");
+});
+
+it.each([
+  "if(flag)({make}={make:replacement});",
+  "if(flag)[make]=[replacement];",
+  "({make}={make:replacement});",
+  "[make]=[replacement];",
+])("does not prove the old callable after a projected write: %s", (write) => {
+  const analysis = analyzeJavaScriptSemantics(
+    `function original(){}function replacement(){}let make=original;make();${write}make();`,
+  );
+  const original = analysis.callables.find(({ name }) => name === "original");
+  expect(original).toBeDefined();
+  const [before, after] = analysis.callSites;
+  expect(before).toMatchObject({
+    resolution: "exact",
+    calleeCallableIds: [original?.callableId],
+  });
+  expect(after).toBeDefined();
+  expect(after?.resolution).not.toBe("exact");
+  expect(analysis.frontiers).toContainEqual(
+    expect.objectContaining({
+      kind: "dynamic-call",
+      location: after?.calleeLocation,
+    }),
+  );
+});
+
+it.each([
+  "if(flag)({make}={make:replacement});",
+  "if(flag)[make]=[replacement];",
+])(
+  "retains known callable candidates without claiming completeness: %s",
+  (write) => {
+    const context = indexed(
+      `function original(){}function replacement(){}let make=original;${write}make();`,
+    );
+    const last = context.state.program.body.at(-1);
+    if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+      throw new Error("Missing projected call");
+    const original = context.state.callables.find(
+      ({ name }) => name === "original",
+    );
+    expect(original).toBeDefined();
+    expect(context.resolve(last.expression.callee)).toMatchObject({
+      complete: false,
+      callableIds: [original?.callableId],
+    });
+  },
+);
+
+it("retains selected callable keys without admitting an unrelated return", () => {
+  const context = indexed(`
+    const table = { x() { return {}; }, y() { return {}; }, z() { return module; } };
+    const make = flag ? table.x : table.y;
+    make();
+  `);
+  const last = context.state.program.body.at(-1);
+  if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+    throw new Error("Missing selected call");
+  const returns = createSemanticReturnedReferences(context.state)(
+    last.expression.callee,
+  ).references;
+  expect(returns).toHaveLength(2);
+  expect(returns.every(({ node }) => t.isObjectExpression(node))).toBe(true);
+});
+
+it("retains correlations between selected callable path segments", () => {
+  const context = indexed(`
+    const table = { a: { b() { return {}; }, d() { return module; } },
+      c: { d() { return {}; }, b() { return module; } } };
+    const make = flag ? table.a.b : table.c.d;
+    make();
+  `);
+  const last = context.state.program.body.at(-1);
+  if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+    throw new Error("Missing selected call");
+  const returns = createSemanticReturnedReferences(context.state)(
+    last.expression.callee,
+  ).references;
+  expect(returns).toHaveLength(2);
+  expect(returns.every(({ node }) => t.isObjectExpression(node))).toBe(true);
+});
 
 it("bounds shared partial callback alias expansion by AST size", () => {
   const measure = (depth: number) => {
@@ -83,6 +187,73 @@ it("bounds shared partial callback alias expansion by AST size", () => {
   expect(large.referenceReads).toBeLessThan(3 * small.referenceReads);
 });
 
+it("reuses the immutable enclosing-function position across distinct captured reads", () => {
+  const { state } = indexed(
+    `const make=()=>1; ${"0;".repeat(64)} function use(){${"make();".repeat(64)}} use();`,
+  );
+  const binding = [...state.bindingsById.values()].find(
+    (b) => b.name === "make",
+  );
+  const fn = state.program.body.find(
+    (n) => t.isFunctionDeclaration(n) && n.id?.name === "use",
+  );
+  if (binding === undefined || fn === undefined)
+    throw Error("Missing fixture binding");
+  const lookup = vi.spyOn(state.program.body, "indexOf");
+  let reads = 0;
+  try {
+    traverseJavaScriptAst(fn, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+        }
+      },
+    });
+    expect(reads).toBe(64);
+    expect(
+      lookup.mock.calls.filter(([node]) => node === fn).length,
+    ).toBeLessThanOrEqual(1);
+  } finally {
+    lookup.mockRestore();
+  }
+});
+
+it.each([true, false])(
+  "orders a module direct-eval activation with early=%s",
+  (early) => {
+    const { state } = indexed(
+      `export {}; ${early ? "eval('open()');" : ""} const make = () => 1; function open() { return make(); } ${early ? "" : "eval('open()');"} open();`,
+    );
+    const binding = [...state.bindingsById.values()].find(
+      (binding) => binding.name === "make",
+    );
+    if (binding === undefined) throw new Error("Missing make binding");
+    let reads = 0;
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(!early);
+        }
+      },
+    });
+    expect(reads).toBe(1);
+  },
+);
+
 it.each([
   ["if(flag){cb=fallback;cb();}", true],
   ["if(flag)cb=fallback;cb();", false],
@@ -104,7 +275,7 @@ it.each([
         ) {
           reads++;
           expect(
-            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+            semanticBindingAtRead(binding, node.callee, state)
               .hasDefiniteInitializer,
           ).toBe(expected);
         }
@@ -135,6 +306,123 @@ it("does not reuse a later resolved callback at an earlier read", () => {
     callableIds: [],
   });
   expect(context.resolve(after)).toMatchObject({ complete: true });
+});
+
+it("keeps a nested callback read uncertain across a later var initializer", () => {
+  const context = indexed(
+    `function target(){} function read(){cb();} read(); var cb=target;`,
+  );
+  const target = context.state.callables.find(
+    (callable) => callable.name === "target",
+  );
+  let read: t.Identifier | undefined;
+  traverseJavaScriptAst(context.state.program, {
+    enter(node) {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "cb" })
+      )
+        read = node.callee;
+    },
+  });
+  if (target === undefined || read === undefined)
+    throw new Error("Missing target or callback read");
+  expect(context.resolve(read)).toMatchObject({
+    callableIds: [target.callableId],
+    complete: false,
+  });
+});
+
+it("keeps same-activation calls after a var initializer resolved", () => {
+  const context = indexed(`function target(){} var cb=target; cb();`);
+  let read: t.Identifier | undefined;
+  traverseJavaScriptAst(context.state.program, {
+    enter(node) {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "cb" })
+      )
+        read = node.callee;
+    },
+  });
+  if (read === undefined) throw new Error("Missing callback read");
+  expect(context.resolve(read)).toMatchObject({
+    callableIds: [context.state.callables[0]?.callableId],
+    complete: true,
+  });
+});
+
+it("keeps a hoisted function declaration resolved from a nested read", () => {
+  const context = indexed(
+    `function read(){target();} read(); function target(){}`,
+  );
+  const target = context.state.callables.find(
+    (callable) => callable.name === "target",
+  );
+  let read: t.Identifier | undefined;
+  traverseJavaScriptAst(context.state.program, {
+    enter(node) {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "target" })
+      )
+        read = node.callee;
+    },
+  });
+  if (target === undefined || read === undefined)
+    throw new Error("Missing target or nested call");
+  expect(context.resolve(read)).toMatchObject({
+    callableIds: [target.callableId],
+    complete: true,
+  });
+});
+
+it("does not infer hoisting for a conditional function declaration", () => {
+  const context = indexed(
+    `if (flag) { function target(){} } function read(){target();} read();`,
+  );
+  let read: t.Identifier | undefined;
+  traverseJavaScriptAst(context.state.program, {
+    enter(node) {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "target" })
+      )
+        read = node.callee;
+    },
+  });
+  if (read === undefined) throw new Error("Missing conditional function read");
+  expect(context.resolve(read)).toMatchObject({ complete: false });
+});
+
+it("uses class declaration order instead of a stable initializer shortcut", () => {
+  const before = indexed("class Target {} new Target();");
+  const after = indexed("new Target(); class Target {}");
+  const exported = indexed("export class Target {} new Target();");
+  const callTarget = (context: ReturnType<typeof indexed>) => {
+    let read: t.Identifier | undefined;
+    traverseJavaScriptAst(context.state.program, {
+      enter(node) {
+        if (
+          t.isNewExpression(node) &&
+          t.isIdentifier(node.callee, { name: "Target" })
+        )
+          read = node.callee;
+      },
+    });
+    if (read === undefined) throw new Error("Missing class constructor read");
+    return context.resolve(read);
+  };
+  const beforeTarget = before.state.callables.find(
+    (callable) => callable.name === "Target",
+  );
+  if (beforeTarget === undefined) throw new Error("Missing class target");
+  expect(callTarget(before)).toMatchObject({
+    callableIds: [beforeTarget.callableId],
+    complete: true,
+  });
+  expect(callTarget(after)).toMatchObject({ complete: false });
+  expect(callTarget(exported)).toMatchObject({ complete: true });
 });
 
 it.each([false, true])(
@@ -192,7 +480,7 @@ it.each(["||=", "??="])(
         ) {
           reads++;
           expect(
-            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+            semanticBindingAtRead(binding, node.callee, state)
               .hasDefiniteInitializer,
           ).toBe(true);
         }
@@ -266,4 +554,141 @@ it("closes cycles at full-binding reads with bounded lookup growth", () => {
   expect(eight).toBeLessThan(3 * six);
   expect(ten).toBeLessThan(3 * eight);
   expect(twelve).toBeLessThan(3 * ten);
+});
+
+it("resolves calls to preceding exported variable initializers and computed method keys", () => {
+  const context = indexed(`
+    export const pick = () => "target";
+    const obj = { [pick()]() { return 1; } };
+    pick();
+  `);
+  const objStatement = context.state.program.body[1];
+  if (
+    !t.isVariableDeclaration(objStatement) ||
+    !t.isVariableDeclarator(objStatement.declarations[0]) ||
+    !t.isObjectExpression(objStatement.declarations[0].init)
+  )
+    throw new Error("Missing obj declaration");
+  const method = objStatement.declarations[0].init.properties[0];
+  if (!t.isObjectMethod(method) || !t.isCallExpression(method.key))
+    throw new Error("Missing computed key call");
+  const target = context.state.callables.find(
+    (callable) => callable.name === "pick",
+  );
+  if (target === undefined) throw new Error("Missing target");
+  expect(context.resolve(method.key.callee)).toMatchObject({
+    complete: true,
+    callableIds: [target.callableId],
+  });
+
+  const callStatement = context.state.program.body[2];
+  if (
+    !t.isExpressionStatement(callStatement) ||
+    !t.isCallExpression(callStatement.expression)
+  )
+    throw new Error("Missing pick call");
+  expect(context.resolve(callStatement.expression.callee)).toMatchObject({
+    complete: true,
+    callableIds: [target.callableId],
+  });
+});
+
+it("resolves calls in computed method keys before subsequent pattern writes", () => {
+  const analysis = analyzeJavaScriptSemantics(`
+    function original() {}
+    function replacement() {}
+    let make = original;
+    const obj = { [make()]() { return 1; } };
+    if (flag) [make] = [replacement];
+  `);
+  const original = analysis.callables.find(({ name }) => name === "original");
+  expect(original).toBeDefined();
+  expect(analysis.callSites[0]).toMatchObject({
+    resolution: "exact",
+    calleeCallableIds: [original?.callableId],
+  });
+});
+
+it.each([64, 128])(
+  "indexes receiver effects once for %s reads before distinct writes",
+  (count) => {
+    const source = `const object = {}; ${"object.x;".repeat(count)} ${Array.from({ length: count }, (_, i) => `object.p${i}=1;`).join("")} const make=()=>1; function use(){make();} use();`;
+    const file = parseJavaScriptSource(source, "fixture.js");
+    if (file === null) throw Error("Invalid fixture");
+    const steps = indexJavaScriptBindingsWithReceiversSteps(file.program);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    const index = step.value;
+    for (const _ of index.indexMemberMutationFactsSteps()) {
+      void _;
+    }
+    const state = index.bindings;
+    const object = [...state.bindingsById.values()].find(
+      (b) => b.name === "object",
+    );
+    const make = [...state.bindingsById.values()].find(
+      (b) => b.name === "make",
+    );
+    if (object === undefined || make === undefined)
+      throw Error("Missing fixture bindings");
+    let visits = 0;
+    Object.defineProperty(object, "memberWrites", {
+      value: new Proxy(object.memberWrites, {
+        get(target, key, receiver) {
+          if (typeof key === "string" && /^\d+$/.test(key)) visits++;
+          return Reflect.get(target, key, receiver);
+        },
+      }),
+    });
+    let checked = 0;
+    traverseJavaScriptAst(file.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          expect(
+            semanticBindingAtRead(make, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+          checked++;
+        }
+      },
+    });
+    expect(checked).toBe(1);
+    expect(object.memberWrites.length).toBe(count);
+    expect(visits).toBeLessThanOrEqual(count * 2);
+  },
+);
+
+it("indexes one statement body for distinct captured functions", () => {
+  const { state } = indexed(
+    `const make=()=>1; ${Array.from({ length: 128 }, (_, i) => `function use${i}(){make();} use${i}();`).join(" ")}`,
+  );
+  const binding = [...state.bindingsById.values()].find(
+    (b) => b.name === "make",
+  );
+  if (binding === undefined) throw Error("Missing fixture binding");
+  const lookup = vi.spyOn(state.program.body, "indexOf");
+  let reads = 0;
+  try {
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+        }
+      },
+    });
+    expect(reads).toBe(128);
+    expect(lookup.mock.calls.length).toBeLessThanOrEqual(1);
+  } finally {
+    lookup.mockRestore();
+  }
 });

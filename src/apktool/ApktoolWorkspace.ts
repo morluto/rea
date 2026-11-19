@@ -1,26 +1,31 @@
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import {
+  readArtifactFileChunks,
   ArtifactReaderFailure,
   type ArtifactTraversalOptions,
-} from "../artifacts/ArtifactReader.js";
-import { createHash } from "node:crypto";
-import { chmod, open } from "node:fs/promises";
-import { join } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
-import {
+  ArtifactResourceScope,
   assertArtifactReadActive,
+  artifactSelectedPathErrno,
   mapArtifactFileFailure,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+  DirectoryArtifactReader,
+} from "../resources/index.js";
+import { createHash } from "node:crypto";
+import { chmod, open } from "node:fs/promises";
+import { join } from "node:path";
 import {
   AnalysisInputError,
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import {
+  NonRegularFileReadError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /** One decode's descriptors and root; removal follows confirmed child cleanup. */
 export class ApktoolWorkspace {
@@ -62,9 +67,8 @@ export class ApktoolWorkspace {
         path,
         this.#files,
         signal,
-        async (source) => {
+        async ({ handle: source, initial }) => {
           admitted = true;
-          const initial = await source.stat();
           const output = join(this.path, "input.apk");
           const file = await open(output, "wx", 0o600);
           await withArtifactFileHandle(
@@ -87,11 +91,11 @@ export class ApktoolWorkspace {
                   );
                 copied += value.length;
                 if (copied > initial.size)
-                  throw new AnalysisInputError(operation, {
-                    cause: new Error(
-                      `The selected APK changed while being copied: ${path}`,
-                    ),
-                  });
+                  throw new AnalysisArtifactChangedError(
+                    operation,
+                    path,
+                    "APK size exceeded the observed size during snapshot copying",
+                  );
                 hash.update(value);
                 let offset = 0;
                 while (offset < value.length) {
@@ -113,11 +117,11 @@ export class ApktoolWorkspace {
                 copied !== initial.size ||
                 !sameRegularFileState(initial, final)
               )
-                throw new AnalysisInputError(operation, {
-                  cause: new Error(
-                    `The selected APK changed while being copied: ${path}`,
-                  ),
-                });
+                throw new AnalysisArtifactChangedError(
+                  operation,
+                  path,
+                  "APK size or file state changed during snapshot copying",
+                );
               this.#snapshot = {
                 path,
                 bytes: copied,
@@ -131,13 +135,29 @@ export class ApktoolWorkspace {
         "follow",
       );
     } catch (cause) {
-      throw mapArtifactFileFailure(cause, (physical) =>
-        admitted ||
-        (physical instanceof ArtifactReaderFailure &&
-          physical.reason === "cancelled")
-          ? physical
-          : new AnalysisInputError(operation, { cause: physical }),
-      );
+      throw mapArtifactFileFailure(cause, (physical) => {
+        if (admitted) return physical;
+        if (
+          physical instanceof Error &&
+          "code" in physical &&
+          (physical.code === "EACCES" || physical.code === "EPERM")
+        )
+          return new AnalysisAccessDeniedError(operation, path, physical.code, {
+            cause: physical,
+          });
+        if (
+          physical instanceof NonRegularFileReadError ||
+          artifactSelectedPathErrno(physical) !== undefined
+        )
+          return new AnalysisInputError(operation, { cause: physical }, [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: "APK input must resolve to an accessible regular file",
+            },
+          ]);
+        return physical;
+      });
     }
   }
 
@@ -158,10 +178,9 @@ export class ApktoolWorkspace {
         path,
         this.#files,
         signal,
-        async (file) => {
+        async ({ handle: file, initial }) => {
           admitted = true;
-          const initial = await file.stat();
-          const bytes = Buffer.alloc(budget + 1);
+          const bytes = Buffer.alloc(Math.min(initial.size, budget) + 1);
           let length = 0;
           while (length < bytes.length) {
             assertArtifactReadActive(signal);
@@ -183,7 +202,7 @@ export class ApktoolWorkspace {
           const sourceBytes = Math.min(length, budget);
           try {
             return {
-              text: new TextDecoder("utf-8", { fatal: true }).decode(
+              text: strictUtf8Decoder("strip-signature").decode(
                 bytes.subarray(0, sourceBytes),
                 { stream: truncated },
               ),

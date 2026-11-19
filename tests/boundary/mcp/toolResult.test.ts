@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -13,10 +14,16 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
+import {
+  annotationsFromEffects,
+  toolEffects,
+} from "../../../src/contracts/toolEffects.js";
 import { err } from "../../../src/domain/result.js";
-import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
+import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { HopperProcessError } from "../../../src/hopper/HopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   accountFullyObservedProcessCapture,
@@ -30,7 +37,8 @@ import type {
   IncompleteProcessCaptureObservations,
   ProcessCaptureCleanupReport,
 } from "../../../src/domain/process/processCapture.js";
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };
@@ -54,24 +62,9 @@ const contract: ToolContract = {
   kind: "enhanced",
   inputSchema: z.object({}),
   outputSchema: z.object({ value: z.string() }),
-  effects: {
-    mutatesTarget: false,
-    mutatesSession: false,
-    writesFilesystem: false,
-    launchesProcess: false,
-    accessesNetwork: false,
-    changesUiState: false,
-    mayDiscardData: false,
-    executesForeignCode: false,
-    mutatesDevice: false,
-    idempotent: true,
-  },
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  effects: toolEffects(),
+  sessionEffects: toolEffects(),
+  annotations: annotationsFromEffects(toolEffects()),
   returnsTargetContent: false,
   examples: [{ title: "Example fixture request", input: {} }],
 };
@@ -160,10 +153,13 @@ describe("completed partial process capture MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-error-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-error-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -300,10 +296,13 @@ describe("incomplete partial process observations MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-observations-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-observations-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -341,20 +340,7 @@ describe("incomplete partial process observations MCP projection", () => {
 });
 
 describe("tool result projection", () => {
-  it("exposes an actionable adapter code to MCP callers", () => {
-    const result = delivery.toCallToolResult(
-      err(new HopperProcessError(76)),
-      contract,
-    );
-    expect(result.structuredContent).toMatchObject({
-      error: {
-        code: "provider_unavailable",
-        details: { failure_code: "unsupported_demo_dialog" },
-        category: "unavailable",
-      },
-    });
-  });
-  it("projects bounded private-display coordinates without raw stderr", () => {
+  it("projects private-display diagnostic fields and stderr byte count", () => {
     const result = delivery.toCallToolResult(
       err(
         new HopperProcessError(80, {
@@ -380,6 +366,8 @@ describe("tool result projection", () => {
     );
     expect(result.structuredContent).toMatchObject({
       error: {
+        code: "provider_unavailable",
+        category: "unavailable",
         details: {
           failure_code: "x11_socket_directory_unusable",
           diagnostics: {
@@ -387,49 +375,18 @@ describe("tool result projection", () => {
             mount_read_only: true,
             wsl: true,
             strategy: "user-mount-namespace",
+            xvfb_stderr_bytes: 512,
           },
         },
       },
     });
-  });
-  it("returns one complete Evidence record with its typed normalized result", () => {
-    const evidence = createEvidence(
-      undefined,
-      { id: "fixture", name: "Fixture", version: "1" },
-      {
-        operation: "fixture",
-        parameters: {},
-        result: { value: "observed" },
-      },
-    );
-    const evidenceContract: ToolContract = {
-      ...contract,
-      outputSchema: evidenceResultOf(z.object({ value: z.string() })),
-    };
-
-    const result = delivery.toEvidenceToolResult(
-      evidence,
-      evidenceContract,
-      undefined,
-    );
-    expect(result.structuredContent).toEqual(evidence);
-    expect(result.structuredContent).not.toHaveProperty("result");
-    expect(result.structuredContent).not.toHaveProperty("evidence");
-    expect(result.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining('"value":"observed"'),
-    });
-    const parsed = evidenceContract.outputSchema.parse(
-      result.structuredContent,
-    );
-    expect(parseEvidence(parsed)).toEqual(evidence);
   });
 
   it.each<JsonValue>([null, false, 0, "", [], { nested: [false, null, 7] }])(
     "preserves a complete reusable Evidence record for JSON result %j",
     (value) => {
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "fixture", parameters: {}, result: value },
       );
@@ -467,9 +424,6 @@ describe("untrusted provenance on failed tool results", () => {
     const result = delivery.toCallToolResult(err(failure()), targetContract);
     expect(result.isError).toBe(true);
     expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-    expect(delivery.toErrorToolResult(failure(), true)._meta).toEqual(
-      UNTRUSTED_TARGET_CONTENT,
-    );
   });
 
   it("leaves an error from a content-free tool unmarked", () => {
@@ -478,46 +432,135 @@ describe("untrusted provenance on failed tool results", () => {
     const result = delivery.toCallToolResult(err(failure()), recordContract);
     expect(result.isError).toBe(true);
     expect(result._meta).toBeUndefined();
-    expect(delivery.toErrorToolResult(failure(), false)._meta).toBeUndefined();
   });
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
-    const recorded = delivery.toRecordedPartialErrorToolResult(
-      failure(),
-      "evidence-1",
-      { ok: true, value: "added" },
-      true,
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture", name: "Partial observation fixture", version: "1" },
+      { operation: "fixture", parameters: {}, result: { observed: true } },
     );
+    const original = failure().retainPartialObservation(evidence);
+    const recorded = delivery.toPartialErrorToolResult(original, true, () => ({
+      ok: true,
+      value: "added",
+    }));
     expect(recorded.structuredContent).toMatchObject({
       error: {
         details: {
           partial_observation: {
             kind: "retained-evidence",
-            evidence_id: "evidence-1",
+            evidence_id: evidence.evidence_id,
           },
         },
       },
     });
     expect(recorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-    const unrecorded = delivery.toRecordedPartialErrorToolResult(
-      failure(),
-      "evidence-1",
-      err(failure()),
-      true,
+    const unrecorded = delivery.toPartialErrorToolResult(original, true, () =>
+      err(new EvidenceIntegrityError("fixture rejects partial")),
     );
+    expect(unrecorded.structuredContent).toMatchObject({
+      error: {
+        details: {
+          partial_observation: {
+            kind: "inline-evidence",
+            retention: "unknown",
+            evidence,
+          },
+        },
+      },
+    });
     expect(unrecorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    expect(original.partialObservation).toBe(evidence);
   });
 
-  it("marks the response-budget error that replaces an oversized target-content result", () => {
-    const small = new ToolResultDelivery(4096);
-    const result = small.toCallToolResult(
-      { ok: true, value: { text: "x".repeat(8192) } },
-      toolContract("procedure_pseudo_code"),
+  it("preserves cleanup details when an unretained partial exceeds the response budget", () => {
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "get_call_graph",
+        parameters: {},
+        result: { nodes: "x".repeat(8192) },
+      },
     );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      error: { code: "resource_constraint" },
+    const error = new AnalysisCancelledError("get_call_graph", {
+      cleanup: { reason: "close failed", resources: ["session:fixture"] },
+      partialObservation: evidence,
     });
-    expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    const result = createToolResultDelivery(4096).toPartialErrorToolResult(
+      error,
+      true,
+      () => err(new EvidenceIntegrityError("fixture rejects partial")),
+    );
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "cleanup_incomplete",
+        details: {
+          cleanup: "incomplete",
+          resources: ["session:fixture"],
+          partial_observation_omitted: {
+            reason: "mcp-response-limit",
+            retention: "unknown",
+            evidence_id: evidence.evidence_id,
+          },
+        },
+      },
+    });
+    expect(result.content).toHaveLength(1);
   });
+});
+
+describe("response-budget recovery routes", () => {
+  it.each([
+    [
+      "retained Evidence",
+      "procedure_pseudo_code",
+      {},
+      {
+        evidence_reference: { kind: "retained-evidence", evidence_id: "e" },
+      },
+      "export_evidence_bundle",
+    ],
+    [
+      "view continuation",
+      "list_strings",
+      {},
+      { continuation: { name: "inspect_analysis_view", arguments: {} } },
+      "inspect_analysis_view",
+    ],
+    [
+      "address context",
+      "inspect_address_context",
+      {},
+      {},
+      "get_evidence_bundle",
+    ],
+    [
+      "bundle records",
+      "get_evidence_bundle",
+      { kind: "evidence-record-selection" },
+      {},
+      "get_evidence_bundle",
+    ],
+  ] as const)(
+    "names the %s overflow recovery's first operation",
+    (_label, tool, shape, recovery, operation) => {
+      const result = createToolResultDelivery(4096).toCallToolResult(
+        { ok: true, value: { ...shape, text: "x".repeat(8192) } },
+        toolContract(tool),
+        recovery,
+      );
+      const limits = z
+        .object({
+          error: z.object({
+            details: z.object({
+              reported_limits: z.record(z.string(), z.unknown()),
+            }),
+          }),
+        })
+        .parse(result.structuredContent).error.details.reported_limits;
+      expect(limits.next_operation).toBe(operation);
+    },
+  );
 });

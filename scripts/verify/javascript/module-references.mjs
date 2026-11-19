@@ -10,8 +10,8 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { artifactCliEvidence } from "../../lib/artifact-e2e.mjs";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
-import { PrivateRuntimeRoot } from "../../../dist/process/PrivateRuntimeRoot.js";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -82,9 +82,7 @@ const normalize = (rows) =>
     ),
   }));
 let temporary;
-let primaryError;
-let retainTemporary = false;
-try {
+await withVerifierCleanup(async () => {
   await client.connect(transport);
   transport.stderr?.resume();
   const tools = (await client.listTools()).tools;
@@ -267,7 +265,7 @@ try {
   }
   let cliParity = null;
   if (values["cli-parity"]) {
-    temporary = await PrivateRuntimeRoot.create({
+    temporary = await VerifierFixture.open({
       prefix: "rea-module-reference-verifier-",
     });
     const bundlePath = join(temporary.path, "bundle.json");
@@ -313,7 +311,7 @@ try {
   }
   let tokenCosts = null;
   if (values["tokenizer-python"]) {
-    temporary ??= await PrivateRuntimeRoot.create({
+    temporary ??= await VerifierFixture.open({
       prefix: "rea-module-reference-verifier-",
     });
     const input = join(temporary.path, "token-input.json");
@@ -358,9 +356,13 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
       // An incomplete cleanup carries its supervisor and identity resources in
       // the error. Preserve its private files for that owner instead of erasing
       // recovery data while a command may still be using it.
-      retainTemporary =
+      if (
         cause instanceof OwnedCommandFailure &&
-        cause.cleanupOwner !== undefined;
+        cause.cleanupOwner !== undefined
+      )
+        temporary.retain(
+          `Command cleanup is incomplete; retaining its private input/Evidence files at ${temporary.path}.`,
+        );
       throw new Error(
         "Token accounting failed; inspect the owned-command outcome and cleanup status.",
         { cause },
@@ -393,23 +395,4 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
         "First query is after shared artifact analysis; subsequent queries share one MCP session. Legacy item reads are serial; a concurrent legacy baseline is unmeasured. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children.",
     })}\n`,
   );
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      () => client.close(),
-      () => transport.close(),
-      async () => {
-        if (temporary === undefined) return;
-        if (retainTemporary)
-          throw new Error(
-            `Command cleanup is incomplete; retaining its private input/Evidence files at ${temporary.path}.`,
-          );
-        await temporary.close();
-      },
-    ],
-    primaryError,
-  );
-}
+}, [() => client.close(), () => transport.close(), () => temporary?.release()]);

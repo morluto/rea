@@ -2,9 +2,19 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { err, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
+import {
+  DEFAULT_REGEX_MATCHING_DEADLINE,
+  type RegexMatchingDeadline,
+} from "../config/regexMatchingDeadline.js";
+import {
+  DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  type RegexWorkerHeapRequest,
+} from "../config/regexWorkerHeapRequest.js";
 import { matchRegexValues } from "../process/RegexMatcher.js";
 import type { KunaJsonDocumentReader } from "./KunaJsonStream.js";
 import { KUNA_DIAGNOSTIC_BYTES } from "./KunaLimits.js";
@@ -36,6 +46,8 @@ export class KunaQueryWork {
       readonly own: <T>(work: Promise<T>) => Promise<T>;
       readonly runSlots: KunaRunSlots;
     },
+    private readonly deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+    private readonly heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   ) {}
 
   /** Unproven process cleanup retains both leases in the native command owner. */
@@ -44,21 +56,13 @@ export class KunaQueryWork {
   ): Promise<Result<KunaTargetCommandSnapshot, AnalysisError>> {
     const local = await this.#nativeSlots.acquire(request.signal);
     if (local === undefined)
-      return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: request.signal.reason,
-        }),
-      );
+      return err(cancelledBy(request.operation, request.signal));
     let release: (() => void) | undefined;
     try {
       const foreground = await this.lifetime.runSlots.acquire(request.signal);
       if (foreground === undefined) {
         local();
-        return err(
-          new AnalysisCancelledError(request.operation, {
-            cause: request.signal.reason,
-          }),
-        );
+        return err(cancelledBy(request.operation, request.signal));
       }
       release = () => {
         foreground();
@@ -123,15 +127,14 @@ export class KunaQueryWork {
     signal: AbortSignal,
   ): ReturnType<typeof matchRegexValues> {
     const release = await this.#regexSlots.acquire(signal);
-    if (release === undefined)
-      return err(
-        new AnalysisCancelledError(input.operation, { cause: signal.reason }),
-      );
+    if (release === undefined) return err(cancelledBy(input.operation, signal));
     try {
       return await matchRegexValues({
         ...input,
         values: input.values(),
         signal,
+        deadline: input.deadline ?? this.deadline,
+        heapRequest: input.heapRequest ?? this.heapRequest,
       });
     } finally {
       release();
@@ -165,8 +168,22 @@ export class KunaQueryWork {
     // Final departure retains all producer failures, including a typed
     // cancellation with captured facts or incomplete cleanup.
     if (waited.status === "stopped" && !waited.value.ok) return waited.value;
-    return err(
-      new AnalysisCancelledError(operation, { cause: signal?.reason }),
-    );
+    return err(cancelledBy(operation, carriedReason(signal?.reason)));
+  }
+
+  /** Retire abandoned work before retrying, retaining its physical failures. */
+  async retire<T>(
+    pending: KunaPendingQuery<T>,
+    signal: AbortSignal | undefined,
+    operation: string,
+  ): Promise<Result<null, AnalysisError>> {
+    const result = await this.wait(pending, signal, operation);
+    if (
+      !result.ok &&
+      (!(result.error instanceof AnalysisCancelledError) ||
+        result.error.cleanupIncomplete)
+    )
+      return result;
+    return signal?.aborted ? err(cancelledBy(operation, signal)) : ok(null);
   }
 }

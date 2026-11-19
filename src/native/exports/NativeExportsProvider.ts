@@ -1,0 +1,196 @@
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
+  imageFileSizeRemediation,
+  projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
+  readStableArtifact,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { NativeExportsPort } from "../../ports/binaryDiagnostics/NativeExportsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import {
+  MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
+  type InspectNativeExportsInput,
+} from "../../domain/native/nativeExports.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { err, ok } from "../../domain/result.js";
+import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+  binaryResourceAllowance,
+} from "../../domain/binaryContainer.js";
+import {
+  NATIVE_EXPORT_LIMITS,
+  type NativeExportLimit,
+  parseNativeExports,
+} from "../../domain/native/nativeExportParser.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+
+const OPERATION = "inspect_native_exports";
+
+/** Portable export-table reader over one bounded, identity-checked regular file. */
+export class NativeExportsProvider implements NativeExportsPort {
+  readonly identity = NATIVE_EXPORTS_PROVIDER;
+  readonly #resources = new ArtifactResourceScope();
+
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      throw projectArtifactCloseFailure(
+        cause,
+        NATIVE_EXPORTS_PROVIDER.id,
+        OPERATION,
+      );
+    }
+  }
+
+  async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
+    try {
+      return await this.#resources.run(async () => {
+        snapshot = await readStableArtifact(
+          input.path,
+          input.max_file_bytes,
+          options?.signal,
+          undefined,
+          this.#resources,
+        );
+        assertArtifactReadActive(options?.signal);
+        const report = parseNativeExports(snapshot.bytes, {
+          path: input.path,
+          sha256: snapshot.sha256,
+          bytes: snapshot.bytes.length,
+        });
+        assertArtifactReadActive(options?.signal);
+        return ok(report);
+      });
+    } catch (cause) {
+      return err(nativeExportsFailure(cause, input, snapshot));
+    }
+  }
+}
+
+/** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
+const limitRecovery = (
+  limit: NativeExportLimit | null,
+  cause: BinaryResourceFailure,
+): ResourceConstraintRecovery => {
+  const maximum = cause.maximum_bytes;
+  switch (limit) {
+    case "rows":
+      return fixedAllowanceOptions(
+        "The native export inventory allowance",
+        "count",
+        { limit: maximum, unit: "entries" },
+      );
+    case "retained_text":
+      return fixedAllowanceOptions(
+        "The native export retained-text allowance",
+        "bytes",
+        { limit: maximum, unit: "bytes" },
+      );
+    case null:
+      return fixedAllowanceOptions(
+        "The native export structural decoding allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      );
+  }
+};
+
+const nativeExportsFailurePrimary = (
+  facts: ArtifactFilePrimaryFacts,
+  input: InspectNativeExportsInput,
+): AnalysisError => {
+  const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  if (cause instanceof BinaryResourceFailure)
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...limitRecovery(
+        binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
+        cause,
+      ),
+    });
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
+    if (cause.reason === "limit")
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "file-size",
+        cause.message,
+        { max_file_bytes: input.max_file_bytes },
+        {
+          cause,
+          retryable: false,
+          remediationAction: imageFileSizeRemediation(
+            input.max_file_bytes,
+            MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
+          ),
+        },
+      );
+    if (cause.reason === "path" || cause.reason === "format")
+      return stableArtifactInputFailure(cause, OPERATION);
+  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
+  return new ProviderAdapterError(NATIVE_EXPORTS_PROVIDER.id, OPERATION, {
+    cause,
+    diagnostics: {
+      path: input.path,
+      reason: errorMessage(cause),
+    },
+  });
+};
+
+const nativeExportsFailure = (
+  cause: unknown,
+  input: InspectNativeExportsInput,
+  snapshot?: StableArtifactSnapshot,
+): AnalysisError => {
+  const primary = nativeExportsFailurePrimary(
+    artifactFilePrimaryFacts(cause),
+    input,
+  );
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
+    NATIVE_EXPORTS_PROVIDER.id,
+    OPERATION,
+    snapshot,
+  );
+};

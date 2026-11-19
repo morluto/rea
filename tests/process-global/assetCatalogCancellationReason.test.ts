@@ -1,0 +1,122 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+
+import { expect, it, vi } from "vitest";
+
+const state = vi.hoisted(() => ({
+  controller: undefined as AbortController | undefined,
+  reason: undefined as unknown,
+}));
+
+vi.mock("../../src/process/OwnedCommand.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/process/OwnedCommand.js")>();
+  return {
+    ...actual,
+    runOwnedCommand: vi.fn(async () => {
+      state.controller?.abort(state.reason);
+      throw new actual.OwnedCommandFailure(
+        "cancelled",
+        "Command cancelled.",
+        null,
+        null,
+        { cancellation: { reason: state.reason } },
+      );
+    }),
+  };
+});
+
+import { runOwnedCommand } from "../../src/process/OwnedCommand.js";
+import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
+import { analyzeAppleAssetCatalogs } from "../../src/artifacts/apple/AppleAssetCatalogAnalysis.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../src/resources/index.js";
+
+const createBundle = async (): Promise<string> => {
+  const bundle = await createTestTempDirectory(
+    "rea-asset-catalog-cancellation-",
+  );
+  await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+  await writeFile(
+    join(bundle, "Contents", "Resources", "Assets.car"),
+    "inert catalog fixture",
+  );
+  return bundle;
+};
+
+const analyze = (bundle: string, signal: AbortSignal) =>
+  analyzeAppleAssetCatalogs({
+    bundlePath: bundle,
+    targetSha256: null,
+    environment: {},
+    signal,
+    analyzeInterfaceBuilder: (async () => ({
+      graph: { nodes: [], truncated: false },
+    })) as never,
+    // Select the macOS catalog gate on any host; assetutil itself is mocked.
+    platform: "darwin",
+  });
+
+it("retains the caller reason when assetutil observes cancellation", async () => {
+  vi.mocked(runOwnedCommand).mockClear();
+  const bundle = await createBundle();
+  const reason = { requested: "stop asset catalog" };
+  const controller = new AbortController();
+  state.controller = controller;
+  state.reason = reason;
+  try {
+    const failure: unknown = await analyze(bundle, controller.signal).catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
+      throw new Error("Expected asset catalog cancellation");
+    expect(runOwnedCommand).toHaveBeenCalledTimes(1);
+    expect(failure.cause).toBe(reason);
+  } finally {
+    await rm(bundle, { recursive: true, force: true });
+  }
+});
+
+it("retains the caller reason when the catalog digest is cancelled", async () => {
+  vi.mocked(runOwnedCommand).mockClear();
+  const bundle = await createBundle();
+  const reason = { requested: "stop during catalog digest" };
+  const controller = new AbortController();
+  state.controller = controller;
+  state.reason = reason;
+  let readEntered = false;
+  const open = vi
+    .spyOn(DirectoryArtifactReader.prototype, "open")
+    .mockImplementationOnce(
+      async () =>
+        new Readable({
+          read() {
+            readEntered = true;
+            this.push(Buffer.from("inert catalog fixture"));
+            controller.abort(reason);
+            this.push(null);
+          },
+        }),
+    );
+  try {
+    const failure: unknown = await analyze(bundle, controller.signal).catch(
+      (cause: unknown) => cause,
+    );
+    expect(readEntered).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+    expect(controller.signal.reason).toBe(reason);
+    expect(runOwnedCommand).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(failure instanceof ArtifactReaderFailure))
+      throw new Error("Expected asset catalog digest cancellation");
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.cancellation?.reason).toBe(reason);
+  } finally {
+    open.mockRestore();
+    await rm(bundle, { recursive: true, force: true });
+  }
+});

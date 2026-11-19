@@ -205,7 +205,7 @@ export const projectElectronActiveCapture = (
       "Process metrics are an Electron API snapshot and do not prove hostile-local-user isolation.",
       ...(hookSnapshot.dropped > 0
         ? [
-            `The active hook retained ${hookSnapshot.retained} of ${hookSnapshot.observed} observed events within a ${hookSnapshot.retention_budget_bytes}-byte retained-data budget; ${hookSnapshot.dropped} events were dropped (${hookSnapshot.dropped_ipc} IPC, ${hookSnapshot.dropped_runtime} runtime).`,
+            `The active hook retained ${hookSnapshot.retained} of ${hookSnapshot.observed} observed events within a ${hookSnapshot.retention_budget_bytes}-byte (${String(hookSnapshot.retention_budget_bytes / (1024 * 1024))} MiB) retained-data budget; ${hookSnapshot.dropped} events were dropped (${hookSnapshot.dropped_ipc} IPC, ${hookSnapshot.dropped_runtime} runtime). This release has no runtime override.`,
           ]
         : []),
       "External shell opens, external navigation, permission grants, downloads, popup windows, updater relaunches, and OS integration are blocked and recorded by the active hook; other application filesystem and network behavior is not sandboxed by this provider.",

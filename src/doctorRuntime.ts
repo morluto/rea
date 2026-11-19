@@ -1,72 +1,501 @@
+import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
 import {
   systemDoctorHost,
-  type DoctorCheck,
   type DoctorHost,
+  type RetainedProviderRequestBudgetResolver,
 } from "./application/Doctor.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "./ports/DoctorProviderInspection.js";
 import { fileURLToPath } from "node:url";
-import { inspectJadxProvider } from "./android/JadxDoctor.js";
-import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
-import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
-import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
+import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
+import {
+  JADX_DOCTOR_SETTINGS,
+  inspectJadxProvider,
+} from "./android/JadxDoctor.js";
+import {
+  GHIDRA_DOCTOR_SETTINGS,
+  inspectSystemGhidraProvider,
+} from "./ghidra/GhidraDoctor.js";
+import {
+  IDA_DOCTOR_SETTINGS,
+  inspectIdaRegistration,
+} from "./ida/IdaDoctor.js";
+import {
+  KUNA_DOCTOR_SETTINGS,
+  inspectKunaProvider,
+} from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
-import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
-import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "./domain/providerCleanupError.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+} from "./resources/index.js";
+import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
+import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
+import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
+import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "./process/snapshotEnvironment.js";
+import { resolveSupportedClients } from "./application/SupportedClients.js";
+import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
 } from "./application/LinuxHopperPython.js";
+import { settleConcurrent } from "./application/settleConcurrent.js";
+
+/**
+ * A selected client's own environment, when its registration records one.
+ * Provider checks read the terminal by default; a caller that asked about one
+ * client wants the values that client passes to the server it starts.
+ */
+interface SelectedRegistrationEnvironment {
+  /** The terminal a selected client inherits, overlaid by its registration. */
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  /** Names the client records as expressions this process cannot evaluate. */
+  readonly unresolved: ReadonlySet<string>;
+  /** The registration could not be read or its effective settings resolved. */
+  readonly unknown?: boolean;
+}
+
+const selectedRegistrationEnvironment = async (
+  clients: readonly string[],
+  processEnvironment: Readonly<NodeJS.ProcessEnv>,
+  resourceScope: RetainedResourceScope,
+  signal: AbortSignal,
+  platform: NodeJS.Platform,
+): Promise<SelectedRegistrationEnvironment | undefined> => {
+  const [selected] = clients;
+  // Only an unambiguous selection can stand for the terminal's environment.
+  if (selected === undefined || clients.length !== 1) return undefined;
+  signal.throwIfAborted();
+  const home = homeDirectoryFromEnvironment(processEnvironment, platform);
+  const client = (
+    await resolveSupportedClients(home, platform, processEnvironment)
+  ).find(({ name }) => name === selected);
+  if (client === undefined || client.format === "unsupported")
+    return { environment: {}, unresolved: new Set(), unknown: true };
+  const registered = await readSelectedRegistration(
+    client,
+    resourceScope,
+    platform,
+  );
+  if (registered === undefined) return undefined;
+  if ("unknown" in registered)
+    return { environment: {}, unresolved: new Set(), unknown: true };
+  return {
+    environment: registered.values,
+    unresolved: registered.unresolvedSettings,
+  };
+};
+
+/**
+ * Fold a selected registration and the terminal it inherits into the canonical
+ * names a provider check reads: the registration's recorded values win, names
+ * it records as unreadable expressions are dropped, and everything else
+ * survives from the terminal.
+ *
+ * Windows treats setting names case-insensitively, so a registration recording
+ * `ghidra_install_dir` must override the terminal's `GHIDRA_INSTALL_DIR`
+ * rather than sit beside it, and a dropped expression must be found under
+ * either spelling. `snapshotEnvironment` performs that fold;
+ * `mergeEnvironmentOverrides` alone keeps the winning layer's spelling.
+ */
+export const selectedProviderSettings = (
+  selected: SelectedRegistrationEnvironment | undefined,
+  terminal: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): Readonly<Record<string, string | undefined>> => {
+  if (selected === undefined) return terminal;
+  const settings: Record<string, string | undefined> = {
+    ...snapshotEnvironment(
+      mergeEnvironmentOverrides(terminal, selected.environment, platform),
+      platform,
+    ),
+  };
+  for (const name of Object.keys(
+    snapshotEnvironment(
+      Object.fromEntries(
+        [...selected.unresolved].map((entry): [string, string] => [entry, ""]),
+      ),
+      platform,
+    ),
+  ))
+    delete settings[name];
+  return settings;
+};
+
+type SelectedRegistration = {
+  readonly values: Readonly<Record<string, string>>;
+  readonly unresolvedSettings: ReadonlySet<string>;
+};
+
+/** Read the selected client's registration, or report it as unreadable. */
+const readSelectedRegistration = async (
+  client: Parameters<typeof readEffectiveClientRegistrationConfiguration>[0],
+  resourceScope: RetainedResourceScope,
+  platform: NodeJS.Platform,
+): Promise<SelectedRegistration | { readonly unknown: true } | undefined> => {
+  // A failed close is a retained owner, not a read outcome: transfer it to the
+  // caller's scope so `close()` retries it instead of losing it.
+  const configuration = await resourceScope
+    .run(() =>
+      readEffectiveClientRegistrationConfiguration(client, undefined, platform),
+    )
+    .catch((cause: unknown) => {
+      if (cause instanceof RegularFileCleanupFailure) {
+        resourceScope.retain(cause.owner, cause.path);
+        return undefined;
+      }
+      throw cause;
+    });
+  // A registration this process cannot read says nothing about the values the
+  // client passes on; the terminal is not those values.
+  if (configuration === undefined) return { unknown: true };
+  if (!configuration.ok) {
+    const cleanup = configuration.error.cleanupFailure;
+    if (cleanup !== undefined)
+      resourceScope.retain(cleanup.owner, cleanup.path);
+    return { unknown: true };
+  }
+  if (configuration.value.document === undefined) return undefined;
+  const details = clientRegistrationEnvironmentDetails(
+    configuration.value.document,
+    client,
+    platform,
+    {},
+    "effective",
+  );
+  return details.ok
+    ? {
+        values: details.value.values,
+        unresolvedSettings: details.value.unresolvedSettings,
+      }
+    : { unknown: true };
+};
+
+/** Registration settings read by each provider's readiness probe. */
+const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
+  ghidra: GHIDRA_DOCTOR_SETTINGS,
+  ida: IDA_DOCTOR_SETTINGS,
+  jadx: JADX_DOCTOR_SETTINGS,
+  kuna: KUNA_DOCTOR_SETTINGS,
+};
+
+/**
+ * Whether a setting an unresolved expression removed is one this probe actually
+ * reads for the configuration the client supplied. A literal `JAVA_HOME` and
+ * jar path make JADX never consult `PATH`, so failing that probe closed would
+ * report `unknown` for a provider that has everything it needs.
+ */
+export const settingAffectsProbe = (
+  id: string,
+  name: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+): boolean => {
+  const read = (key: string) =>
+    environment[platform === "win32" ? key.toUpperCase() : key];
+  switch (id) {
+    case "jadx":
+      // Java comes from JAVA_HOME when it is explicit; only then is PATH unused.
+      return name !== "PATH" || read("JAVA_HOME") === undefined;
+    case "ghidra":
+      // An existing project changes admission only on Windows, which cannot
+      // open one. Both the install directory and the JDK fall back to PATH.
+      if (name === "REA_GHIDRA_PROJECT_PATH") return platform === "win32";
+      return (
+        name !== "PATH" ||
+        read("GHIDRA_INSTALL_DIR") === undefined ||
+        read("JAVA_HOME") === undefined
+      );
+    case "kuna": {
+      // Only cache-location defaults are decided by REA_KUNA_CACHE_DIR. An
+      // unresolved command, job or timeout setting still leaves the probe's
+      // answer unknown, so those keep reporting unknown.
+      if (
+        name !== "HOME" &&
+        name !== "USERPROFILE" &&
+        name !== "XDG_CACHE_HOME"
+      )
+        return true;
+      // A literal cache directory decides the root on its own.
+      if (read("REA_KUNA_CACHE_DIR") !== undefined) return false;
+      if (name === "XDG_CACHE_HOME") return platform !== "darwin";
+      if (
+        name === "USERPROFILE" &&
+        platform !== "win32" &&
+        (read("HOME")?.length ?? 0) > 0
+      )
+        return false;
+      return true;
+    }
+    default:
+      return true;
+  }
+};
+
+const unresolvedProvider = (
+  id: string,
+  selected: SelectedRegistrationEnvironment | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+): DoctorProviderInspection | undefined => {
+  if (selected === undefined) return undefined;
+  const normalize = (key: string) =>
+    platform === "win32" ? key.toUpperCase() : key;
+  const read = new Set((PROVIDER_SETTINGS[id] ?? []).map(normalize));
+  const unresolved = [...selected.unresolved].filter(
+    (name) =>
+      read.has(normalize(name)) &&
+      settingAffectsProbe(id, normalize(name), environment, platform),
+  );
+  if (selected.unknown !== true && unresolved.length === 0) return undefined;
+  const configurationKeys: Readonly<Record<string, string>> = {
+    ghidra: "GHIDRA_INSTALL_DIR",
+    ida: "REA_IDA_MCP_CONFIG",
+    jadx: "REA_JADX_MCP_JAR",
+    kuna: "REA_KUNA_COMMAND",
+  };
+  const configurationKey = configurationKeys[id];
+  const unknownConfiguration =
+    selected.unknown === true ||
+    configurationKey === undefined ||
+    unresolved.some((name) => normalize(name) === normalize(configurationKey));
+  const configuration =
+    configurationKey === undefined ? undefined : environment[configurationKey];
+  const configured = unknownConfiguration
+    ? null
+    : id === "kuna"
+      ? configuration !== undefined && configuration.length > 0
+      : configuration !== undefined;
+  return {
+    id,
+    configured,
+    available: null,
+    providerVersion: null,
+    registrationEnvironment: {},
+    checks: [
+      {
+        name: "configuration",
+        ok: false,
+        code: "registration_environment_unknown",
+        classification: "unknown",
+        detail:
+          selected.unknown === true
+            ? "The selected client's registration could not be read or resolved."
+            : `The selected client's registration has unresolved settings: ${unresolved.join(", ")}.`,
+        remediation:
+          "Inspect the selected client's registration on the host and rerun doctor.",
+      },
+    ],
+  };
+};
+
+const withProbeResourceScope = <T>(
+  parent: RetainedResourceScope,
+  label: string,
+  operation: (scope: RetainedResourceScope) => Promise<T>,
+): Promise<T> =>
+  parent.run(async () => {
+    const child = new ArtifactResourceScope();
+    const scope: RetainedResourceScope = {
+      retain: (owner, resource) =>
+        child.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+      run: (work) => child.run(work),
+    };
+    try {
+      return await operation(scope);
+    } finally {
+      if (child.hasPending) parent.retain(child, label);
+      else await child.close();
+    }
+  });
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   signal?: AbortSignal,
+  /** The host diagnosed; tests select another host's client layout. */
+  host: HostPlatform = HOST_PLATFORM,
 ): DoctorHost => {
-  const selectedJebEndpoint = environment.REA_JEB_MCP_URL;
-  const selectedJebRegistrationEnvironment: Readonly<Record<string, string>> =
-    selectedJebEndpoint !== undefined &&
-    selectedJebEndpoint.length > 0 &&
-    parseJebMcpEndpoint(selectedJebEndpoint).ok
-      ? { REA_JEB_MCP_URL: selectedJebEndpoint }
-      : {};
+  const { platform } = host;
+  const registrationReads = new WeakMap<
+    RetainedResourceScope,
+    Map<string, ReturnType<typeof readIdaConfiguration>>
+  >();
+  const readRegistration = (
+    path: string,
+    resourceScope: RetainedResourceScope,
+    inspectionSignal: AbortSignal,
+  ) => {
+    let byPath = registrationReads.get(resourceScope);
+    if (byPath === undefined) {
+      byPath = new Map();
+      registrationReads.set(resourceScope, byPath);
+    }
+    let registration = byPath.get(path);
+    if (registration === undefined) {
+      registration = withProbeResourceScope(resourceScope, path, (probeScope) =>
+        readIdaConfiguration(path, {
+          resourceScope: probeScope,
+          signal: inspectionSignal,
+        }),
+      );
+      byPath.set(path, registration);
+    }
+    return registration;
+  };
   return systemDoctorHost({
     environment,
+    platform,
+    architecture: host.architecture,
     ...(signal === undefined ? {} : { signal }),
-    providerRegistrationEnvironment: () => selectedJebRegistrationEnvironment,
-    resolveProviderRequestBudget: (
-      analysisProvider,
-      registrationEnvironment,
+    resolveProviderRequestBudget: Object.assign(
+      async (
+        analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
+        registrationEnvironment: Parameters<RetainedProviderRequestBudgetResolver>[1],
+        resourceScope: Parameters<RetainedProviderRequestBudgetResolver>[2],
+        inspectionSignal: Parameters<RetainedProviderRequestBudgetResolver>[3],
+      ) => {
+        if (analysisProvider !== "ida" && analysisProvider !== "auto")
+          return ok(undefined);
+        const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
+        if (path === undefined) return ok(undefined);
+        const registration = await readRegistration(
+          path,
+          resourceScope,
+          inspectionSignal,
+        );
+        if (registration.ok) return ok(registration.value.timeoutMs);
+        // An invalid IDA registration cannot be selected automatically. Keep it
+        // out of recommendations for another available provider, but surface the
+        // parser-owned error when IDA itself was explicitly selected.
+        return analysisProvider === "ida" ? registration : ok(undefined);
+      },
+      // The only environment setting this resolver reads; an unresolved
+      // expression for it blocks budget derivation.
+      { budgetSettings: new Set(["REA_IDA_MCP_CONFIG"]) },
+    ),
+    providerInspections: async (
+      resourceScope: RetainedResourceScope,
+      inspectionSignal: AbortSignal,
+      clients: readonly string[],
     ) => {
-      if (analysisProvider !== "ida" && analysisProvider !== "auto")
-        return ok(undefined);
-      const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
-      if (path === undefined) return ok(undefined);
-      const registration = readIdaConfiguration(path);
-      if (registration.ok) return ok(registration.value.timeoutMs);
-      // An invalid IDA registration cannot be selected automatically. Keep it
-      // out of recommendations for another available provider, but surface the
-      // parser-owned error when IDA itself was explicitly selected.
-      return analysisProvider === "ida" ? registration : ok(undefined);
+      const selected = await withProbeResourceScope(
+        resourceScope,
+        "selected-registration",
+        (probeScope) =>
+          selectedRegistrationEnvironment(
+            clients,
+            environment,
+            probeScope,
+            inspectionSignal,
+            platform,
+          ),
+      );
+      const inspectionEnvironment = selectedProviderSettings(
+        selected,
+        environment,
+        platform,
+      );
+      const ghidraUnresolved = unresolvedProvider(
+        "ghidra",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const idaUnresolved = unresolvedProvider(
+        "ida",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const jadxUnresolved = unresolvedProvider(
+        "jadx",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const kunaUnresolved = unresolvedProvider(
+        "kuna",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      return await settleConcurrent([
+        ghidraUnresolved !== undefined
+          ? Promise.resolve(ghidraUnresolved)
+          : withProbeResourceScope(
+              resourceScope,
+              "ghidra-doctor",
+              (probeScope) =>
+                inspectSystemGhidraProvider(
+                  inspectionEnvironment,
+                  probeScope,
+                  inspectionSignal,
+                ),
+            ),
+        idaUnresolved !== undefined
+          ? Promise.resolve(idaUnresolved)
+          : withProbeResourceScope(resourceScope, "ida-doctor", (probeScope) =>
+              inspectIdaRegistration(
+                inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                probeScope,
+                inspectionSignal,
+                inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
+                  ? undefined
+                  : readRegistration(
+                      inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                      resourceScope,
+                      inspectionSignal,
+                    ),
+              ),
+            ),
+        jadxUnresolved !== undefined
+          ? Promise.resolve(jadxUnresolved)
+          : withProbeResourceScope(resourceScope, "jadx-doctor", (probeScope) =>
+              inspectJadxProvider(
+                inspectionEnvironment,
+                probeScope,
+                host,
+                inspectionSignal,
+              ),
+            ),
+        kunaUnresolved !== undefined
+          ? Promise.resolve(kunaUnresolved)
+          : withProbeResourceScope(resourceScope, "kuna-doctor", (probeScope) =>
+              inspectKunaProvider(inspectionEnvironment, platform, {
+                resourceScope: probeScope,
+                signal: inspectionSignal,
+              }),
+            ),
+      ]);
     },
-    providerInspections: async (fileCloseResources, inspectionSignal) => [
-      await inspectSystemGhidraProvider(
-        environment,
-        fileCloseResources,
-        inspectionSignal,
+    desktopBuildFacts: readDesktopBuildFacts,
+    linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
+      withProbeResourceScope(
+        resourceScope,
+        "hopper-demo-runtime",
+        (probeScope) =>
+          inspectLinuxHopperDemoRuntime(
+            environment,
+            probeScope,
+            inspectionSignal,
+          ),
       ),
-      inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
-      await inspectJadxProvider(
-        environment,
-        fileCloseResources,
-        inspectionSignal,
-      ),
-      await inspectKunaProvider(environment, process.platform, {
-        fileCloseResources,
-      }),
-    ],
-    linuxDemoRuntimeCheck: () =>
-      inspectLinuxHopperDemoRuntime(environment, signal),
   });
 };
 
@@ -76,12 +505,52 @@ const HOPPER_DEMO_HELPER_PATH = fileURLToPath(
 
 const inspectLinuxHopperDemoRuntime = async (
   environment: Readonly<NodeJS.ProcessEnv>,
+  resourceScope: RetainedResourceScope,
   signal?: AbortSignal,
 ): Promise<DoctorCheck> => {
   const selection = await selectLinuxPrivateDisplayStrategy({
     helperPath: HOPPER_DEMO_HELPER_PATH,
     environment,
+    ...(signal === undefined ? {} : { signal }),
   });
+  if (!selection.ok && selection.cleanup !== undefined) {
+    const { lease, reason } = selection.cleanup;
+    resourceScope.retain(
+      {
+        close: () => lease.release(),
+        get cleanupResources() {
+          return lease.cleanupResources;
+        },
+      },
+      "hopper-private-display-probe",
+    );
+    const cleanup = {
+      reason,
+      resources: [
+        ...(lease.cleanupResources ?? ["hopper-private-display-probe"]),
+      ],
+    };
+    const diagnostics = {
+      hopper_demo_runtime: { private_display: { ...selection.diagnostic } },
+    };
+    const failure =
+      signal?.aborted === true
+        ? cancelledBy("doctor", signal, { cleanup, diagnostics })
+        : new ProviderCleanupError(
+            "hopper",
+            cleanup.resources,
+            { reason, ...diagnostics },
+            { operation: "doctor" },
+          );
+    new AnalysisCleanupLeaseGroup(failure, [lease]);
+    throw failure;
+  }
+  if (signal?.aborted === true)
+    throw cancelledBy("doctor", signal, {
+      diagnostics: {
+        hopper_demo_runtime: { private_display: { ...selection.diagnostic } },
+      },
+    });
   const python = await inspectLinuxHopperPythonRuntime(environment, signal);
   const pythonFailure = !python.ok
     ? python.error
@@ -115,8 +584,7 @@ const inspectLinuxHopperDemoRuntime = async (
     embedded_python: pythonDiagnostic,
   };
   if (!python.ok && python.error.reason === "cancelled")
-    throw new AnalysisCancelledError("doctor", {
-      cause: python.error.cause,
+    throw cancelledBy("doctor", carriedReason(python.error.cause), {
       diagnostics: { hopper_demo_runtime: details },
     });
   if (selection.ok && pythonFailure === undefined)

@@ -1,14 +1,69 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
-import { expect, it, onTestFinished } from "vitest";
+import type { DeviceManager } from "frida";
+import { afterAll, expect, it, onTestFinished } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
-import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
+import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
+import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const UNOBSERVED = unknownTarget("not-observed");
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
+it("retains the remote address, but not authentication, in discovery failures", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("unexpected binary provider");
+  });
+  const bindings = {
+    addRemoteDevice: async () => {
+      throw new Error("connection refused: synthetic-secret-token");
+    },
+  } as unknown as DeviceManager;
+  const provider = new FridaInstrumentationManager({ deviceManager: bindings });
+  const server = createServer(
+    { kind: "session", session },
+    { fridaInstrumentation: provider },
+  );
+  const client = await connectFridaTestClient(
+    server,
+    session,
+    "frida-discovery-failure",
+  );
+  const result = await client.callTool({
+    name: "list_frida_processes",
+    arguments: {
+      remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+    },
+  });
+  expect(result.isError).toBe(true);
+  const first = result.content[0];
+  if (first?.type !== "text") throw new Error("Expected text failure");
+  expect(JSON.parse(first.text)).toMatchObject({
+    error: {
+      code: "capability_unavailable",
+      details: { diagnostics: { remote_address: "127.0.0.1:27042" } },
+    },
+  });
+  expect(JSON.stringify(result)).not.toContain("synthetic-secret-token");
+});
 
 const createFridaTestProvider = (
   overrides: Partial<FridaInstrumentationPort> = {},
@@ -27,7 +82,14 @@ const createFridaTestProvider = (
   async listProcesses() {
     return {
       ok: true,
-      value: { deviceId: "remote-device", processes: [], cleanupError: null },
+      value: {
+        deviceId: "remote-device",
+        processes: [
+          { pid: 0, name: "idle", identifier: null },
+          { pid: 10, name: "target", identifier: "example.target" },
+        ],
+        cleanupError: "earlier endpoint cleanup diagnostic",
+      },
     };
   },
   async startSession(input) {
@@ -83,6 +145,176 @@ const createFridaTestProvider = (
   ...overrides,
 });
 
+const connectFridaTestClient = async (
+  server: ReturnType<typeof createServer>,
+  session: ReturnType<typeof createTestBinarySession>,
+  name: string,
+): Promise<Client> => {
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return client;
+};
+
+it("delivers Frida status summaries with complete retained Evidence for both truncation states", async () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const messages = [
+    {
+      type: "send",
+      payload: { token: "caller-selected-nonsecret", rows: [1, 2] },
+    },
+  ];
+  let reads = 0;
+  let statusTruncated = false;
+  const session = createTestBinarySession(() => {
+    throw new Error("No binary provider");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      fridaInstrumentation: createFridaTestProvider({
+        status(sessionId) {
+          reads++;
+          return {
+            sessionId,
+            deviceId: "local",
+            target: "fixture",
+            pid: 10,
+            mode: "attach",
+            state: "running",
+            targetResumeObserved: false,
+            scripts: [],
+            messages,
+            messagesTruncated: statusTruncated,
+          };
+        },
+      }),
+    },
+  );
+  const client = await connectFridaTestClient(
+    server,
+    session,
+    "frida-status-summary",
+  );
+  const tools = (await client.listTools()).tools;
+  const tool = tools.find((t) => t.name === "frida_session_status");
+  if (tool === undefined) throw new Error("Missing Frida status schema");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    tool.name,
+  );
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  for (const truncated of [false, true]) {
+    statusTruncated = truncated;
+    const readsBefore = reads;
+    const complete = await client.callTool({
+      name: tool.name,
+      arguments: { session_id: id },
+    });
+    expect(complete.isError).not.toBe(true);
+    const parent = parseEvidence(
+      toolContract("frida_session_status").outputSchema.parse(
+        complete.structuredContent,
+      ),
+    );
+    expect(
+      fridaSessionStatusSchema.parse(parent.normalized_result).messages,
+    ).toEqual(messages);
+    const explicit = await client.callTool({
+      name: tool.name,
+      arguments: { session_id: id, detail: "complete" },
+    });
+    expect(explicit.structuredContent).toEqual(parent);
+    const summary = await client.callTool(
+      { name: tool.name, arguments: { session_id: id, detail: "summary" } },
+      { toolDefinition: withCanonicalOutputSchema(tool) },
+    );
+    expect(summary.isError).not.toBe(true);
+    const evidence = toolContract("frida_session_status").outputSchema.parse(
+      summary.structuredContent,
+    );
+    const view = fridaSessionStatusSummaryViewResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(view).toMatchObject({
+      parent_evidence_id: parent.evidence_id,
+      source_provider: parent.provider,
+      source_parameters: parent.parameters,
+      artifact: null,
+      summary: {
+        session_id: id,
+        state: "running",
+        scripts: [],
+        messages_retained: 1,
+        messages_truncated: truncated,
+      },
+    });
+    expect(evidence.authority).toBe("external-service");
+    expect(JSON.stringify(view)).not.toContain("caller-selected-nonsecret");
+    const retained = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "summary" },
+      },
+    });
+    expect(retained.structuredContent).toEqual(evidence);
+    expect(reads - readsBefore).toBe(3);
+    const discovered = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {
+        detail: "summary",
+        filters: { evidence_id: parent.evidence_id },
+      },
+    });
+    expect(discovered.isError).not.toBe(true);
+    const discovery = evidenceBundleSummarySchema.parse(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        discovered.structuredContent,
+      ).result,
+    );
+    expect(discovery.matching_records).toBe(1);
+    expect(discovery.records.map((record) => record.evidence_id)).toEqual([
+      parent.evidence_id,
+    ]);
+    expect(JSON.stringify(discovered.structuredContent)).not.toContain(
+      "caller-selected-nonsecret",
+    );
+    const bundle = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(bundle.isError).not.toBe(true);
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(parent);
+    expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
+    // Inline/file projection validates the owning result and exact source selection.
+    const malformed = createEvidence(UNOBSERVED, parent.provider ?? undefined, {
+      operation: parent.operation,
+      parameters: { session_id: "00000000-0000-4000-8000-000000000099" },
+      result: parent.normalized_result,
+    });
+    const rejected = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "inline", evidence: malformed },
+        view: { kind: "summary" },
+      },
+    });
+    expect(rejected.isError).toBe(true);
+  }
+});
+
 const expectFridaToolsAvailable = async (client: Client) => {
   const inventory = await client.callTool({
     name: "binary_session",
@@ -112,6 +344,70 @@ const expectFridaToolsAvailable = async (client: Client) => {
   );
 };
 
+const expectFridaProcessDiscovery = async (client: Client) => {
+  const processes = await client.callTool({
+    name: "list_frida_processes",
+    arguments: { device_id: "remote-device" },
+  });
+  expect(processes.isError).not.toBe(true);
+  expect(
+    toolContract("list_frida_processes").outputSchema.parse(
+      processes.structuredContent,
+    ),
+  ).toEqual({
+    device_id: "remote-device",
+    processes: [
+      { pid: 0, name: "idle", identifier: null },
+      { pid: 10, name: "target", identifier: "example.target" },
+    ],
+    cleanup_error: "earlier endpoint cleanup diagnostic",
+  });
+};
+
+const expectFridaSelectorGuidance = async (
+  client: Client,
+  tools: Awaited<ReturnType<Client["listTools"]>>["tools"],
+) => {
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const processTool = tools.find(
+    (tool) => tool.name === "list_frida_processes",
+  );
+  if (processTool === undefined) throw new Error("Missing Frida process tool");
+  // Compact input guidance is part of the tool description.
+  expect(processTool.description).toMatch(
+    /exactly one of device_id or remote/u,
+  );
+  expect(ajv.validateSchema(processTool.inputSchema)).toBe(true);
+  for (const args of [
+    { device_id: "local" },
+    { remote: { address: "127.0.0.1:27042" } },
+  ]) {
+    expect(ajv.validate(processTool.inputSchema, args)).toBe(true);
+    expect(
+      (await client.callTool({ name: "list_frida_processes", arguments: args }))
+        .isError,
+    ).not.toBe(true);
+  }
+  // Runtime refinements enforce the choice that advertisement describes.
+  for (const { args, reason } of [
+    { args: {}, reason: "Select a device_id or a remote endpoint" },
+    {
+      args: { device_id: "local", remote: { address: "127.0.0.1:27042" } },
+      reason: "Choose either device_id or remote, not both",
+    },
+  ]) {
+    const rejected = await client.callTool({
+      name: "list_frida_processes",
+      arguments: args,
+    });
+    expect(rejected.isError).toBe(true);
+    expect(rejected.content).toContainEqual({
+      type: "text",
+      text: expect.stringContaining(reason),
+    });
+  }
+};
+
 it("advertises Frida MCP schemas and keeps remote credentials out of results", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
@@ -122,47 +418,49 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
       fridaInstrumentation: createFridaTestProvider(),
     },
   );
-  const client = new Client({ name: "frida-contract", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFridaTestClient(
+    server,
+    session,
+    "frida-contract",
+  );
 
   const tools = (await client.listTools()).tools;
   const advertised = tools.find((tool) => tool.name === "list_frida_devices");
-  if (
-    advertised?.inputSchema === undefined ||
-    advertised.outputSchema === undefined
-  )
-    throw new Error("Missing advertised Frida schemas");
+  if (advertised === undefined)
+    throw new Error("Missing advertised Frida definition");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  const response = await client.callTool({
-    name: "list_frida_devices",
-    arguments: {
-      remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+  const response = await client.callTool(
+    {
+      name: "list_frida_devices",
+      arguments: {
+        remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+      },
     },
-  });
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
+  );
   expect(response.isError).not.toBe(true);
   expect(JSON.stringify(response.structuredContent)).not.toContain(
     "synthetic-secret-token",
   );
-  expect(ajv.validate(outputSchema, response.structuredContent)).toBe(true);
+  expect(
+    toolContract("list_frida_devices").outputSchema.parse(
+      response.structuredContent,
+    ),
+  ).toEqual({
+    devices: [{ device_id: "remote-device", name: "target", type: "remote" }],
+    cleanup_error: null,
+  });
   expect(toolContract("start_frida_session").effects.mutatesTarget).toBe(true);
 
-  const processes = await client.callTool({
-    name: "list_frida_processes",
-    arguments: { device_id: "remote-device" },
-  });
-  expect(processes.isError).not.toBe(true);
+  await expectFridaSelectorGuidance(client, tools);
+
+  await expectFridaProcessDiscovery(client);
 
   const started = await client.callTool({
     name: "start_frida_session",
@@ -252,10 +550,10 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
   const oneShotContract = tools.find(
     (tool) => tool.name === "instrument_with_frida",
   );
-  if (oneShotContract?.outputSchema === undefined)
-    throw new Error("Missing one-shot Frida output schema");
+  if (oneShotContract === undefined)
+    throw new Error("Missing one-shot Frida definition");
   const validateOneShot = ajv.compile(
-    oneShotContract.outputSchema as AnySchema,
+    canonicalOutputSchema(oneShotContract.name) as AnySchema,
   );
   expect(validateOneShot(oneShot.structuredContent)).toBe(true);
 
@@ -275,7 +573,10 @@ it("reports Frida tools as unavailable after the optional binding fails to load"
     { kind: "session", session },
     { fridaInstrumentation: provider },
   );
-  const client = new Client({ name: "frida-optional-binding", version: "1" });
+  const client = new Client(
+    { name: "frida-optional-binding", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -319,22 +620,14 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
   });
-  let finishLoad: (() => void) | undefined;
-  const loadGate = new Promise<void>((resolve) => {
-    finishLoad = resolve;
-  });
-  let markLoadStarted: (() => void) | undefined;
-  const loadStarted = new Promise<void>((resolve) => {
-    markLoadStarted = resolve;
-  });
+  const scriptLoad = phaseGate();
   let markSessionClosed: (() => void) | undefined;
   const sessionClosed = new Promise<void>((resolve) => {
     markSessionClosed = resolve;
   });
   const provider = createFridaTestProvider({
     async loadScript() {
-      markLoadStarted?.();
-      await loadGate;
+      await scriptLoad.hold();
       return {
         ok: true,
         value: {
@@ -370,10 +663,13 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     { kind: "session", session },
     { fridaInstrumentation: provider },
   );
-  const client = new Client({ name: "frida-cancellation", version: "1" });
+  const client = new Client(
+    { name: "frida-cancellation", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const controller = new AbortController();
   onTestFinished(async () => {
-    finishLoad?.();
+    scriptLoad.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -397,9 +693,9 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     },
     { signal: controller.signal },
   );
-  await loadStarted;
+  await scriptLoad.reached(call, "Frida script load");
   controller.abort(new Error("cancel Frida observation"));
-  finishLoad?.();
+  scriptLoad.release();
   await expect(call).rejects.toThrow("cancel Frida observation");
   await sessionClosed;
   await client.ping();
@@ -408,8 +704,17 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     name: "get_evidence_bundle",
     arguments: {},
   });
-  expect(JSON.stringify(bundle.structuredContent)).toContain("cancel-observed");
-  expect(JSON.stringify(bundle.structuredContent)).toContain(
-    "instrument_with_frida",
+  expect(bundle.isError).not.toBe(true);
+  expect(parseMcpEvidenceBundle(bundle).records).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        operation: "instrument_with_frida",
+        normalized_result: expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ payload: "cancel-observed" }),
+          ]),
+        }),
+      }),
+    ]),
   );
 });

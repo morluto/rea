@@ -6,18 +6,21 @@ import {
 import type { CapturedResource } from "./CdpCaptureDocuments.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import type { CapturedScript } from "./CdpCaptureEventTypes.js";
-import {
-  requiredScriptSource,
-  sourceExcluded,
-  sourceResult,
-} from "./CdpCaptureValues.js";
+import { sourceExcluded } from "./CdpCaptureValues.js";
+import { capturePassiveCdpScriptSource } from "./CdpScriptSourceCapture.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
+import { CdpScriptSourceBudget } from "./CdpScriptSourceBudget.js";
 
 export interface CapturedScripts {
   readonly inventory: WebPageInspection["scripts"];
   readonly sourceMapRequests: readonly WebSourceMapRequest[];
+}
+
+export interface CapturedScriptSnapshot extends CapturedScripts {
+  readonly scriptIds: ReadonlySet<string>;
 }
 
 export interface CaptureScriptsOptions {
@@ -44,45 +47,77 @@ type ScriptDraftItem = Omit<
 
 export const captureScripts = async (
   options: CaptureScriptsOptions,
-): Promise<CapturedScripts> => {
+): Promise<CapturedScriptSnapshot> => {
   const { context, events, rawResources, resources, frameIds } = options;
   let state: ScriptDraftState | undefined;
   const drafts: {
     readonly item: ScriptDraftItem;
     readonly sourceMapRawUrl: string | null;
   }[] = [];
-  for (const script of events.scripts.values()) {
-    state ??= {
-      context,
-      events,
-      frameIds,
-      reconcileResource: createCapturedWebScriptReconciler(
-        rawResources,
-        resources,
-      ),
-    };
-    drafts.push(await buildScriptDraft(script, state));
+  const scripts = new Map(events.scripts);
+  const commandTimeoutMs = selectedCdpCommandTimeoutMs(
+    context.input.command_timeout_ms,
+  );
+  const sourceBudget =
+    context.input.include_script_sources && scripts.size > 0
+      ? new CdpScriptSourceBudget(context.signal, commandTimeoutMs)
+      : undefined;
+  try {
+    for (const script of scripts.values()) {
+      state ??= {
+        context,
+        events,
+        frameIds,
+        reconcileResource: createCapturedWebScriptReconciler(
+          rawResources,
+          resources,
+        ),
+      };
+      const source =
+        sourceBudget === undefined
+          ? sourceExcluded("source capture was not selected")
+          : await capturePassiveCdpScriptSource({
+              connection: context.connection,
+              sessionId: context.sessionId,
+              signal: context.signal,
+              operation: context.operation,
+              scriptId: script.scriptId,
+              sourceBudget,
+              completeness: events.completeness,
+            });
+      drafts.push(buildScriptDraft(script, state, source));
+    }
+  } finally {
+    sourceBudget?.dispose();
   }
   if (!context.input.include_script_sources)
-    events.completeness.exclude(
-      "script_sources",
-      "not_approved",
-      events.scripts.size,
-    );
-  return keyAndBuildInventory(drafts, events.scripts.size);
+    events.completeness.exclude("script_sources", "not_approved", scripts.size);
+  return {
+    ...keyAndBuildInventory(drafts, scripts.size),
+    scriptIds: new Set(scripts.keys()),
+  };
 };
 
-const buildScriptDraft = async (
+/** Settle once after the last CDP read, before normalizing completeness. */
+export const finalizeScriptInventory = (
+  snapshot: CapturedScriptSnapshot,
+  events: CdpCaptureEvents,
+): WebPageInspection["scripts"] => {
+  let lateCount = 0;
+  for (const scriptId of events.scripts.keys())
+    if (!snapshot.scriptIds.has(scriptId)) lateCount += 1;
+  if (lateCount > 0) events.completeness.drop("scripts", lateCount);
+  return { ...snapshot.inventory, total: snapshot.inventory.total + lateCount };
+};
+
+const buildScriptDraft = (
   script: CapturedScript,
   state: ScriptDraftState,
-): Promise<{
+  source: WebPageInspection["scripts"]["items"][number]["source"],
+): {
   readonly item: ScriptDraftItem;
   readonly sourceMapRawUrl: string | null;
-}> => {
-  let source: WebPageInspection["scripts"]["items"][number]["source"] = state
-    .context.input.include_script_sources
-    ? await captureScriptSource(script, state)
-    : sourceExcluded("source capture was not selected");
+} => {
   const inventoryScript = {
     frame_id: state.events.frameForScript(script, state.frameIds),
     url: script.url,
@@ -104,23 +139,6 @@ const buildScriptDraft = async (
     },
     sourceMapRawUrl: script.sourceMapRawUrl,
   };
-};
-
-const captureScriptSource = async (
-  script: CapturedScript,
-  state: ScriptDraftState,
-): Promise<WebPageInspection["scripts"]["items"][number]["source"]> => {
-  const { context } = state;
-  const content = requiredScriptSource(
-    await context.connection.send(
-      "Debugger.getScriptSource",
-      { scriptId: script.scriptId },
-      context.sessionId,
-      context.signal,
-    ),
-    context.operation,
-  );
-  return sourceResult(content);
 };
 
 const keyAndBuildInventory = (

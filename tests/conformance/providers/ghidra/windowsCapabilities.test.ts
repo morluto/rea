@@ -4,8 +4,7 @@ import {
   probeWindowsCapabilities,
   systemNoFollowOpenCapability,
   type WindowsCapabilityDependencies,
-} from "../../../../src/application/WindowsCapabilities.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../../../../src/process/WindowsAuthority.js";
+} from "../../../../scripts/lib/windows-capabilities.mjs";
 
 const dependencies = (
   overrides: Partial<WindowsCapabilityDependencies> = {},
@@ -15,7 +14,7 @@ const dependencies = (
   nativeCapabilities: () => ({
     job_object_process_ownership: {
       available: false,
-      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      reason: "Authored Job Object authority unavailable diagnostic",
       proof: "not-proven",
       code: "runtime_missing",
       failureStage: "artifact",
@@ -23,7 +22,7 @@ const dependencies = (
     },
     private_runtime_dacl: {
       available: false,
-      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      reason: "Authored private DACL authority unavailable diagnostic",
       proof: "not-proven",
       code: "runtime_missing",
       failureStage: "artifact",
@@ -31,7 +30,7 @@ const dependencies = (
     },
     reparse_safe_path_admission: {
       available: false,
-      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      reason: "Authored reparse admission authority unavailable diagnostic",
       proof: "not-proven",
       code: "runtime_missing",
       failureStage: "artifact",
@@ -98,7 +97,7 @@ describe("Windows host capability report", () => {
       security: {
         job_object_process_ownership: {
           available: false,
-          reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+          reason: "Authored Job Object authority unavailable diagnostic",
           proof: "not-proven",
           code: "runtime_missing",
           failureStage: "artifact",
@@ -106,7 +105,7 @@ describe("Windows host capability report", () => {
         },
         private_runtime_dacl: {
           available: false,
-          reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+          reason: "Authored private DACL authority unavailable diagnostic",
           proof: "not-proven",
           code: "runtime_missing",
           failureStage: "artifact",
@@ -114,7 +113,7 @@ describe("Windows host capability report", () => {
         },
         reparse_safe_path_admission: {
           available: false,
-          reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+          reason: "Authored reparse admission authority unavailable diagnostic",
           proof: "not-proven",
           code: "runtime_missing",
           failureStage: "artifact",

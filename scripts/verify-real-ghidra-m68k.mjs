@@ -1,14 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -16,8 +9,12 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-m68k.mjs");
@@ -54,7 +51,18 @@ assert.equal(
   "7679358409efee4c5c2465f9a47158c4d49e0415ba12b3170898440db7ea0bc9",
 );
 await mkdir(join(root, "build"), { recursive: true });
-const workspace = await mkdtemp(join(root, "build", "rea-m68k-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-m68k-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+  parent: join(root, "build"),
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const path = join(workspace, "image.bin");
@@ -254,6 +262,9 @@ try {
   };
 } catch (cause) {
   if (stderr) process.stderr.write(stderr);
+  workspaceFixture.retain(
+    `m68k verification failed; retained workspace: ${workspace}`,
+  );
   throw cause;
 } finally {
   try {
@@ -262,16 +273,20 @@ try {
     await transport.close();
   }
 }
-assert.deepEqual(
-  await readdir(runtime),
-  [],
-  `Runtime resources survived server shutdown; retained workspace: ${workspace}`,
-);
+const survivors = await readdir(runtime);
+if (survivors.length > 0)
+  throw retainWorkspace(
+    `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+  );
 const verifierRun = await completeVerifierRun(run);
-assert.equal(verifierRun.process_lineage.status, "verified");
-assert.deepEqual(verifierRun.process_lineage.descendants, []);
-// Keep the workspace for diagnosis unless verification and cleanup both pass.
-await rm(workspace, { recursive: true, force: true });
+if (
+  verifierRun.process_lineage.status !== "verified" ||
+  verifierRun.process_lineage.descendants.length !== 0
+)
+  throw retainWorkspace(
+    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
+  );
+await workspaceFixture.release();
 process.stdout.write(
   JSON.stringify({ verifier_run: verifierRun, ...report }) + "\n",
 );
@@ -281,16 +296,15 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   if (["open_binary", "binary_session", "close_binary"].includes(name))
     return requireMcpOperationResult(result, name);
-  return result.structuredContent;
+  return requireMcpOutput(result, name);
 }
 
 function evidence(value) {
   const result = parseEvidence(value);
-  assert.equal(result.subject.digest.sha256, sha256);
-  assert.equal(result.subject.architecture, "m68k");
-  assert.equal(result.subject.format, "raw-binary");
+  assert.equal(result.subject.identity.sha256, sha256);
+  assert.equal(result.subject.identity.architecture, "m68k");
+  assert.equal(result.subject.identity.format, "raw-binary");
   return result;
 }

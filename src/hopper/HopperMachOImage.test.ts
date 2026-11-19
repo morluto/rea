@@ -1,15 +1,30 @@
+import { requirePermissionDenial } from "../../tests/fixtures/permissionDenial.js";
 import { createHash } from "node:crypto";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
+import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
+import { hopperImageCopyFileSystem } from "../../tests/fixtures/hopperImageCopyFileSystem.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   prepareHopperMachOImage,
-  resolveHopperMachOImage,
+  resolveHopperMachOImage as resolveHopperMachOImageWithOwner,
 } from "./HopperMachOImage.js";
+import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 
 const CPU_TYPES = { x86_64: 0x01000007, arm64: 0x0100000c } as const;
 const FAT32_ALIGNMENT = 12;
@@ -81,10 +96,12 @@ const writeFixture = async (
   return path;
 };
 
+/** A universal target whose admission selected FAT entry `admittedIndex`. */
 const fat32Target = (
   path: string,
   fixture: Fat32Fixture,
   architecture: "arm64" | "x86_64",
+  admittedIndex = 0,
 ) => ({
   path,
   sha256: createHash("sha256").update(fixture.container).digest("hex"),
@@ -92,7 +109,10 @@ const fat32Target = (
   format: "mach-o-universal" as const,
   architecture,
   availableArchitectures: ["x86_64", "arm64"] as const,
-  universalSlice: { offset: fixture.sliceOffsets[0]!, size: FAT32_SLICE_SIZE },
+  universalSlice: {
+    offset: fixture.sliceOffsets[admittedIndex]!,
+    size: FAT32_SLICE_SIZE,
+  },
 });
 
 const requireResolved = (
@@ -105,9 +125,59 @@ const requireResolved = (
   return result.value;
 };
 
-it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+let inspectionResources = createInspectionResources();
+afterEach(async () => {
+  await inspectionResources.close();
+  inspectionResources = createInspectionResources();
+});
+
+const resolveHopperMachOImage = (
+  target: Parameters<typeof resolveHopperMachOImageWithOwner>[0],
+) =>
+  resolveHopperMachOImageWithOwner(target, {
+    resourceScope: inspectionResources.owner,
+  });
+
+it("retains Hopper FAT selection across short header, table and slice reads", async () => {
+  const root = await createTestTempDirectory("rea-hopper-short-reads-");
+  const fixture = buildFat32Container([
+    { cpuType: CPU_TYPES.arm64, cpuSubtype: 0, little: true },
+  ]);
+  const path = await writeFixture(root, "fat", fixture);
+  const target = fat32Target(path, fixture, "arm64");
+  const expected = await resolveHopperMachOImage(target);
+  expect(expected.ok).toBe(true);
+  let shortReads = 0;
+  const handles: FileHandle[] = [];
+  const actual = await resolveHopperMachOImageWithOwner(target, {
+    resourceScope: inspectionResources.owner,
+    fileSystem: {
+      open: (async (...args: Parameters<typeof open>) => {
+        const handle = await open(...args);
+        handles.push(handle);
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation((async (
+          ...readArgs: unknown[]
+        ) => {
+          if (typeof readArgs[2] === "number" && readArgs[2] > 3) {
+            readArgs[2] = 3;
+            shortReads += 1;
+          }
+          return Reflect.apply(read, handle, readArgs);
+        }) as typeof handle.read);
+        return handle;
+      }) as typeof open,
+    },
+  });
+  expect(actual).toEqual(expected);
+  expect(shortReads).toBeGreaterThan(5);
+  expect(handles.every((handle) => handle.fd === -1)).toBe(true);
+});
+
+it.skipIf(process.platform === "win32")(
   "reports a FAT64 source that became unreadable as a host read denial",
-  async () => {
+  async (context) => {
+    await requirePermissionDenial(context, "file-read");
     const directory = await createTestTempDirectory("rea-hopper-fat64-");
     const path = join(directory, "universal");
     await writeFile(path, Buffer.alloc(64));
@@ -152,11 +222,11 @@ it("rejects an ELF target before attempting FAT source preparation", async () =>
   expect(result.error).toMatchObject({
     _tag: "BinaryTargetError",
     path,
-    reason: "Hopper FAT image preparation requires a Mach-O target",
+    reason: "Hopper image preparation requires a Mach-O target",
   });
 });
 
-it("selects the plain-arm64-decodable arm64e slice from an Apple-style FAT32 container", async () => {
+it("reads the admitted arm64e slice of an Apple-style FAT32 container", async () => {
   const directory = await createTestTempDirectory("rea-hopper-fat32-arm64e-");
   // /bin/* system binaries: x86_64, arm64e (cpusubtype 2), arm64e.x1 (subtype 12).
   const fixture = buildFat32Container([
@@ -166,7 +236,7 @@ it("selects the plain-arm64-decodable arm64e slice from an Apple-style FAT32 con
   ]);
   const path = await writeFixture(directory, "system.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64", 1)),
   );
   expect(result).toMatchObject({
     method: "fat32_thin_slice",
@@ -178,80 +248,43 @@ it("selects the plain-arm64-decodable arm64e slice from an Apple-style FAT32 con
   });
 });
 
-it("ranks capability-bearing arm64 subtypes by base and retains raw identity", async () => {
-  const directory = await createTestTempDirectory(
-    "rea-hopper-fat32-capabilities-",
-  );
-  const fixture = buildFat32Container([
-    {
-      cpuType: CPU_TYPES.arm64,
-      cpuSubtype: ARM64E_X1_WITH_CAPABILITIES,
-    },
-    {
-      cpuType: CPU_TYPES.arm64,
-      cpuSubtype: ARM64E_WITH_CAPABILITIES,
-    },
-  ]);
-  const path = await writeFixture(directory, "system.fat", fixture);
-  const selected = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
-  );
-  expect(selected).toMatchObject({
-    source_offset: fixture.sliceOffsets[1],
-    cpu_subtype: ARM64E_WITH_CAPABILITIES,
-  });
-});
-
-it("fails closed when capability variants share the preferred arm64e base", async () => {
-  const directory = await createTestTempDirectory(
-    "rea-hopper-fat32-capability-ambiguity-",
-  );
-  const fixture = buildFat32Container([
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: 0x80000002 },
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: 0x81000002 },
-  ]);
-  const path = await writeFixture(directory, "ambiguous.fat", fixture);
-  const result = await resolveHopperMachOImage(
-    fat32Target(path, fixture, "arm64"),
-  );
-  if (result.ok || result.error._tag !== "BinaryTargetError")
-    throw new Error(
-      "Expected ambiguous FAT selection to return a BinaryTargetError",
+// Target admission owns slice choice (src/domain/binaryTarget.ts). Hopper
+// must analyze the slice the session's Evidence names, never rank again.
+it.each([
+  {
+    layout: "arm64, arm64e",
+    slices: [0, ARM64E],
+    admitted: 1,
+  },
+  {
+    layout: "arm64e, arm64e.x1 with capability bits",
+    slices: [ARM64E_X1_WITH_CAPABILITIES, ARM64E_WITH_CAPABILITIES],
+    admitted: 1,
+  },
+  {
+    layout: "two arm64e capability variants",
+    slices: [0x80000002, 0x81000002],
+    admitted: 0,
+  },
+])(
+  "reads the admitted slice of $layout instead of choosing one",
+  async ({ slices, admitted }) => {
+    const directory = await createTestTempDirectory("rea-hopper-admitted-");
+    const fixture = buildFat32Container(
+      slices.map((cpuSubtype) => ({ cpuType: CPU_TYPES.arm64, cpuSubtype })),
     );
-  expect(result.error.reason).toContain("selection for arm64 is ambiguous");
-});
-
-it("prefers cpusubtype 2 over 12 regardless of FAT32 table order", async () => {
-  const directory = await createTestTempDirectory("rea-hopper-fat32-order-");
-  const fixture = buildFat32Container([
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E_X1 },
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E },
-  ]);
-  const path = await writeFixture(directory, "reordered.fat", fixture);
-  const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
-  );
-  expect(result).toMatchObject({
-    cpu_subtype: ARM64E,
-    source_offset: fixture.sliceOffsets[1],
-  });
-});
-
-it("prefers a plain arm64 slice over arm64e in a FAT32 container", async () => {
-  const directory = await createTestTempDirectory("rea-hopper-fat32-plain-");
-  const fixture = buildFat32Container([
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: 0 },
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E },
-  ]);
-  const path = await writeFixture(directory, "plain.fat", fixture);
-  const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
-  );
-  expect(result).toMatchObject({
-    cpu_subtype: 0,
-    source_offset: fixture.sliceOffsets[0],
-  });
-});
+    const path = await writeFixture(directory, "admitted.fat", fixture);
+    const result = requireResolved(
+      await resolveHopperMachOImage(
+        fat32Target(path, fixture, "arm64", admitted),
+      ),
+    );
+    expect(result).toMatchObject({
+      source_offset: fixture.sliceOffsets[admitted],
+      cpu_subtype: slices[admitted],
+    });
+  },
+);
 
 it("keeps a lone arm64e.x1 FAT32 slice selectable to preserve today's open behavior", async () => {
   const directory = await createTestTempDirectory("rea-hopper-fat32-lone-");
@@ -265,20 +298,40 @@ it("keeps a lone arm64e.x1 FAT32 slice selectable to preserve today's open behav
   expect(result).toMatchObject({ cpu_subtype: ARM64E_X1 });
 });
 
-it("still fails closed when two arm64e.x1 FAT32 slices compete", async () => {
-  const directory = await createTestTempDirectory("rea-hopper-fat32-ambig-");
+it.each([
+  {
+    case: "a range the FAT table does not declare",
+    edit: (target: ReturnType<typeof fat32Target>) => ({
+      ...target,
+      universalSlice: {
+        offset: target.universalSlice.offset,
+        size: FAT32_SLICE_SIZE - 1,
+      },
+    }),
+    reason: /admitted arm64 slice .* is not declared by the FAT table/u,
+  },
+  {
+    case: "a slice of another architecture",
+    edit: (target: ReturnType<typeof fat32Target>) => ({
+      ...target,
+      architecture: "x86_64" as const,
+    }),
+    reason: /admitted slice at file offset \d+ is not x86_64/u,
+  },
+])("refuses $case", async ({ edit, reason }) => {
+  const directory = await createTestTempDirectory("rea-hopper-fat32-refuse-");
   const fixture = buildFat32Container([
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E_X1 },
-    { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E_X1 },
+    { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E },
   ]);
-  const path = await writeFixture(directory, "ambiguous.fat", fixture);
+  const path = await writeFixture(directory, "refused.fat", fixture);
   const result = await resolveHopperMachOImage(
-    fat32Target(path, fixture, "arm64"),
+    edit(fat32Target(path, fixture, "arm64")),
   );
-  if (result.ok) throw new Error("Ambiguous FAT32 selection succeeded");
+  if (result.ok) throw new Error("A non-admitted FAT slice was read");
+  expect(result.error).toBeInstanceOf(BinaryTargetError);
   expect(
     projectAnalysisError(result.error).details?.reason ?? result.error,
-  ).toMatch(/selection.*ambiguous/u);
+  ).toMatch(reason);
 });
 
 it("selects the single x86_64 slice of a FAT32 container for an x86_64 target", async () => {
@@ -289,7 +342,7 @@ it("selects the single x86_64 slice of a FAT32 container for an x86_64 target", 
   ]);
   const path = await writeFixture(directory, "universal.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "x86_64")),
+    await resolveHopperMachOImage(fat32Target(path, fixture, "x86_64", 1)),
   );
   expect(result).toMatchObject({
     cpu_type: CPU_TYPES.x86_64,
@@ -310,7 +363,7 @@ it("parses a little-endian FAT32 table without tying it to slice byte order", as
   );
   const path = await writeFixture(directory, "little.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64", 1)),
   );
   expect(result).toMatchObject({
     method: "fat32_thin_slice",
@@ -343,7 +396,7 @@ it("copies exactly the selected FAT32 slice bytes and verifies the source", asyn
     { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E_X1 },
   ]);
   const path = await writeFixture(directory, "system.fat", fixture);
-  const target = fat32Target(path, fixture, "arm64");
+  const target = fat32Target(path, fixture, "arm64", 1);
   const resolved = requireResolved(await resolveHopperMachOImage(target));
   const destination = join(directory, "image.macho");
   const prepared = await prepareHopperMachOImage(
@@ -351,6 +404,7 @@ it("copies exactly the selected FAT32 slice bytes and verifies the source", asyn
     target.sha256,
     resolved,
     destination,
+    { resourceScope: new ArtifactResourceScope() },
   );
   if (!prepared.ok) throw new Error(prepared.error.userMessage);
   const arm64eOffset = fixture.sliceOffsets[1]!;
@@ -358,7 +412,201 @@ it("copies exactly the selected FAT32 slice bytes and verifies the source", asyn
     arm64eOffset,
     arm64eOffset + FAT32_SLICE_SIZE,
   );
-  expect(await readFile(destination)).toEqual(copied);
+  expect(Buffer.compare(await readFile(destination), copied)).toBe(0);
+});
+
+it("retains the caller reason when a FAT copy is cancelled after its final write", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-fat-cancel-");
+  const fixture = buildFat32Container([
+    { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E },
+  ]);
+  const path = await writeFixture(directory, "system.fat", fixture);
+  const target = fat32Target(path, fixture, "arm64");
+  const image = requireResolved(await resolveHopperMachOImage(target));
+  const destination = join(directory, "image.macho");
+  const controller = new AbortController();
+  const reason = { request: "cancel-after-fat-write" };
+  const prepared = await prepareHopperMachOImage(
+    path,
+    target.sha256,
+    image,
+    destination,
+    {
+      resourceScope: new ArtifactResourceScope(),
+      signal: controller.signal,
+      fileSystem: hopperImageCopyFileSystem(
+        destination,
+        async (copiedBytes) => {
+          expect(copiedBytes).toBe(FAT32_SLICE_SIZE);
+          controller.abort(reason);
+        },
+      ),
+    },
+  );
+
+  if (prepared.ok) throw new Error("Cancelled FAT copy was accepted");
+  expect(prepared.error._tag).toBe("HopperCancelledError");
+  expect(prepared.error.cause).toBe(reason);
+  // The private session directory remains the owner of partial output.
+  expect(
+    Buffer.compare(
+      await readFile(destination),
+      fixture.container.subarray(
+        fixture.sliceOffsets[0],
+        fixture.sliceOffsets[0]! + FAT32_SLICE_SIZE,
+      ),
+    ),
+  ).toBe(0);
+});
+
+it("retains a failed prepared-image close through launcher cleanup and blocks another launch", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-copy-close-");
+  const bytes = thinFixture();
+  const path = join(directory, "source.macho");
+  await writeFile(path, bytes);
+  const target = thinTarget(path, bytes);
+  const image = requireResolved(await resolveHopperMachOImage(target));
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const firstCloseFailure = new Error("first close attempt failed");
+  const retryCloseFailure = new Error("cleanup retry failed");
+  let allowClose = false;
+  let sourceCloseAttempts = 0;
+  const imageFileSystem = {
+    open: async (...arguments_: Parameters<typeof actualFs.open>) => {
+      const handle = await actualFs.open(...arguments_);
+      if (arguments_[0] !== path) return handle;
+      const sourceClose = async (): Promise<void> => {
+        sourceCloseAttempts += 1;
+        if (!allowClose && sourceCloseAttempts === 1) throw firstCloseFailure;
+        if (!allowClose) throw retryCloseFailure;
+        await handle.close();
+      };
+      return new Proxy(handle, {
+        get(targetHandle, property) {
+          if (property === "close") return sourceClose;
+          const value = Reflect.get(targetHandle, property, targetHandle);
+          return typeof value === "function" ? value.bind(targetHandle) : value;
+        },
+      });
+    },
+  };
+
+  const sessionDirectory = join(directory, "session");
+  await mkdir(sessionDirectory);
+  const launcher = new HopperApplicationLauncher(
+    {
+      environment: {},
+      launcherPath: join(directory, "hopper"),
+      targetPath: path,
+      targetKind: "executable",
+      loaderArgs: ["-l", "Mach-O", "--aarch64"],
+      bridgeScriptPath: join(directory, "bridge.py"),
+      preparedImage: { image, sourceSha256: target.sha256 },
+      launchMode: "native",
+    },
+    { platform: "linux", imageFileSystem },
+  );
+  const initial = await launcher.launch({
+    directory: sessionDirectory,
+    socketPath: join(sessionDirectory, "bridge.sock"),
+    token: "fixture-token",
+    runId: "fixture-run-1",
+  });
+  if (initial.ok) throw new Error("A copy with failed close was accepted");
+  expect(initial.error._tag).toBe("HopperStartError");
+  expect(initial.error.cause).toBe(firstCloseFailure);
+  expect(initial.error.cleanupIncomplete).toBe(true);
+  expect(initial.error.cleanupResources).toEqual([
+    `hopper-image-source:${path}`,
+  ]);
+  const blocked = await launcher.launch({
+    directory: sessionDirectory,
+    socketPath: join(sessionDirectory, "bridge.sock"),
+    token: "fixture-token",
+    runId: "fixture-run-2",
+  });
+  if (blocked.ok) throw new Error("A launch bypassed retained file cleanup");
+  expect(blocked.error.cleanupIncomplete).toBe(true);
+  expect(blocked.error.cleanupResources).toEqual([
+    `hopper-image-source:${path}`,
+  ]);
+  expect(sourceCloseAttempts).toBe(3);
+
+  const cleanupPending = await launcher.cleanup();
+  expect(cleanupPending.ok).toBe(false);
+  if (cleanupPending.ok)
+    throw new Error("Cleanup without release was reported successful");
+  expect(cleanupPending.error.cleanupIncomplete).toBe(true);
+  expect(cleanupPending.error.cleanupResources).toEqual([
+    `hopper-image-source:${path}`,
+  ]);
+  expect(sourceCloseAttempts).toBe(4);
+
+  allowClose = true;
+  await expect(launcher.cleanup()).resolves.toEqual({ ok: true, value: null });
+  expect(initial.error.cleanupIncomplete).toBe(false);
+  expect(blocked.error.cleanupIncomplete).toBe(false);
+  expect(cleanupPending.error.cleanupIncomplete).toBe(false);
+  expect(
+    Buffer.compare(
+      await readFile(join(sessionDirectory, "image.macho")),
+      bytes,
+    ),
+  ).toBe(0);
+});
+
+it("observes caller cancellation that arrives during final source-handle cleanup", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-hopper-copy-close-cancel-",
+  );
+  const bytes = thinFixture();
+  const path = join(directory, "source.macho");
+  await writeFile(path, bytes);
+  const target = thinTarget(path, bytes);
+  const image = requireResolved(await resolveHopperMachOImage(target));
+  const controller = new AbortController();
+  const reason = { request: "cancel-during-final-close" };
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const fileSystem = {
+    open: async (...arguments_: Parameters<typeof actualFs.open>) => {
+      const handle = await actualFs.open(...arguments_);
+      if (arguments_[0] !== path) return handle;
+      const closeHandle = handle.close.bind(handle);
+      Object.defineProperty(handle, "close", {
+        configurable: true,
+        value: async (): Promise<void> => {
+          controller.abort(reason);
+          await closeHandle();
+        },
+      });
+      return handle;
+    },
+  };
+
+  const prepared = await prepareHopperMachOImage(
+    path,
+    target.sha256,
+    image,
+    join(directory, "image.macho"),
+    {
+      resourceScope: new ArtifactResourceScope(),
+      signal: controller.signal,
+      fileSystem,
+    },
+  );
+
+  if (prepared.ok) throw new Error("Finalization cancellation was ignored");
+  expect(prepared.error._tag).toBe("HopperCancelledError");
+  expect(prepared.error.cause).toBe(reason);
+  expect(
+    Buffer.compare(await readFile(join(directory, "image.macho")), bytes),
+  ).toBe(0);
 });
 
 it("rejects FAT32 preparation when the source table changed after resolution", async () => {
@@ -379,8 +627,208 @@ it("rejects FAT32 preparation when the source table changed after resolution", a
     target.sha256,
     resolved,
     destination,
+    { resourceScope: new ArtifactResourceScope() },
   );
   if (prepared.ok)
     throw new Error("A mutated FAT32 source passed verification");
   expect(prepared.error.userMessage).toMatch(/no longer agrees/u);
 });
+
+const thinFixture = (): Buffer => {
+  const image = Buffer.alloc(64, 0x5a);
+  image.writeUInt32BE(0xfeedfacf, 0);
+  image.writeUInt32BE(CPU_TYPES.arm64, 4);
+  image.writeUInt32BE(ARM64E_WITH_CAPABILITIES, 8);
+  return image;
+};
+
+const thinTarget = (path: string, bytes: Buffer) => ({
+  path,
+  sha256: createHash("sha256").update(bytes).digest("hex"),
+  kind: "executable" as const,
+  format: "mach-o" as const,
+  architecture: "arm64" as const,
+  availableArchitectures: ["arm64"] as const,
+});
+
+it("copies an admitted thin Mach-O through the owned verified-image path", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-thin-copy-");
+  const bytes = thinFixture();
+  const path = join(directory, "source.macho");
+  await writeFile(path, bytes);
+  const target = thinTarget(path, bytes);
+  const image = requireResolved(await resolveHopperMachOImage(target));
+  expect(image).toEqual({
+    method: "thin_verified_copy",
+    byte_length: bytes.length,
+    cpu_type: CPU_TYPES.arm64,
+    cpu_subtype: ARM64E_WITH_CAPABILITIES,
+  });
+
+  const destination = join(directory, "private", "image.macho");
+  await mkdir(join(directory, "private"));
+  const prepared = await prepareHopperMachOImage(
+    path,
+    target.sha256,
+    image,
+    destination,
+    { resourceScope: new ArtifactResourceScope() },
+  );
+  if (!prepared.ok) throw new Error(prepared.error.userMessage);
+  expect(prepared.value).toBe(destination);
+  expect(Buffer.compare(await readFile(destination), bytes)).toBe(0);
+  expect(target.path).toBe(path);
+});
+
+it("does not launch a thin selection when its admitted source changes before copy", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-thin-race-");
+  const bytes = thinFixture();
+  const path = join(directory, "source.macho");
+  await writeFile(path, bytes);
+  const target = thinTarget(path, bytes);
+  const image = requireResolved(await resolveHopperMachOImage(target));
+  const changed = Buffer.from(bytes);
+  changed.writeUInt8(
+    changed.readUInt8(changed.length - 1) ^ 1,
+    changed.length - 1,
+  );
+  await writeFile(path, changed);
+
+  const sessionDirectory = join(directory, "session");
+  await mkdir(sessionDirectory);
+  const launcher = new HopperApplicationLauncher(
+    {
+      environment: process.env,
+      launcherPath: join(directory, "hopper"),
+      targetPath: path,
+      targetKind: "executable",
+      loaderArgs: ["-l", "Mach-O", "--aarch64"],
+      bridgeScriptPath: join(directory, "bridge.py"),
+      preparedImage: { image, sourceSha256: target.sha256 },
+      launchMode: "native",
+    },
+    { platform: "linux" },
+  );
+  const launched = await launcher.launch({
+    directory: sessionDirectory,
+    socketPath: join(sessionDirectory, "bridge.sock"),
+    token: "fixture-token",
+    runId: "fixture-run",
+  });
+  if (launched.ok) throw new Error("Changed source reached Hopper launch");
+  expect(launched.error.userMessage).toContain(
+    "no longer agrees with its admitted digest, size, or selected header",
+  );
+  await expect(
+    access(join(sessionDirectory, "bootstrap.py")),
+  ).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  // The session directory remains the cleanup owner for partial private output.
+  await expect(readdir(sessionDirectory)).resolves.toContain("image.macho");
+});
+
+it("keeps caller cancellation primary after verified thin-image preparation", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-thin-cancel-");
+  const bytes = thinFixture();
+  const path = join(directory, "source.macho");
+  await writeFile(path, bytes);
+  const target = thinTarget(path, bytes);
+  const image = requireResolved(await resolveHopperMachOImage(target));
+  const controller = new AbortController();
+  controller.abort(new Error("caller cancellation"));
+  const prepared = await prepareHopperMachOImage(
+    path,
+    target.sha256,
+    image,
+    join(directory, "image.macho"),
+    { resourceScope: new ArtifactResourceScope(), signal: controller.signal },
+  );
+  expect(prepared).toMatchObject({
+    ok: false,
+    error: { _tag: "HopperCancelledError" },
+  });
+});
+
+it("retains an owned partial thin image and exact cancellation reason after a write", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-thin-partial-");
+  const bytes = Buffer.alloc(2 * 1024 * 1024, 0x5a);
+  bytes.writeUInt32BE(0xfeedfacf, 0);
+  bytes.writeUInt32BE(CPU_TYPES.arm64, 4);
+  bytes.writeUInt32BE(ARM64E_WITH_CAPABILITIES, 8);
+  const path = join(directory, "source.macho");
+  await writeFile(path, bytes);
+  const target = thinTarget(path, bytes);
+  const image = requireResolved(await resolveHopperMachOImage(target));
+  const sessionDirectory = join(directory, "session");
+  await mkdir(sessionDirectory);
+  const destination = join(sessionDirectory, "image.macho");
+  const controller = new AbortController();
+  const reason = { owner: "caller", request: 44 };
+  let releaseWrite: (() => void) | undefined;
+  let announceWrite: ((copiedBytes: number) => void) | undefined;
+  const writeGate = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  const firstWrite = new Promise<number>((resolve) => {
+    announceWrite = resolve;
+  });
+  const preparing = prepareHopperMachOImage(
+    path,
+    target.sha256,
+    image,
+    destination,
+    {
+      resourceScope: new ArtifactResourceScope(),
+      signal: controller.signal,
+      fileSystem: hopperImageCopyFileSystem(
+        destination,
+        async (copiedBytes) => {
+          announceWrite?.(copiedBytes);
+          await writeGate;
+        },
+      ),
+    },
+  );
+
+  const copiedBytes = await firstWrite;
+  const partial = await readFile(destination);
+  expect(partial.byteLength).toBe(copiedBytes);
+  expect(copiedBytes).toBeGreaterThan(0);
+  expect(copiedBytes).toBeLessThan(bytes.length);
+  controller.abort(reason);
+  const finishWrite = releaseWrite;
+  if (finishWrite === undefined)
+    throw new Error("Copy barrier was not created");
+  finishWrite();
+
+  const prepared = await preparing;
+  if (prepared.ok) throw new Error("Cancelled partial copy was accepted");
+  expect(prepared.error._tag).toBe("HopperCancelledError");
+  expect(prepared.error.cause).toBe(reason);
+  expect(Buffer.compare(await readFile(destination), partial)).toBe(0);
+  await expect(access(destination)).resolves.toBeUndefined();
+});
+
+it.each([0, 129])(
+  "keeps Hopper FAT count admission explicit for count %i",
+  async (count) => {
+    const directory = await createTestTempDirectory("rea-hopper-fat-count-");
+    const fixture = buildFat32Container([
+      { cpuType: CPU_TYPES.arm64, cpuSubtype: 0 },
+    ]);
+    fixture.container.writeUInt32BE(count, 4);
+    const path = await writeFixture(directory, "counts.fat", fixture);
+    const result = await resolveHopperMachOImage(
+      fat32Target(path, fixture, "arm64"),
+    );
+    if (result.ok) throw new Error("Invalid FAT count was admitted");
+    expect(result.error).toMatchObject({
+      _tag: "BinaryTargetError",
+      path,
+      reason: expect.stringMatching(
+        /FAT architecture table.*truncated.*128 entries/i,
+      ),
+    });
+  },
+);

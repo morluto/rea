@@ -1,40 +1,56 @@
-import { z } from "incur";
-import { createRustBinaryService } from "../composition/rust.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { Logger } from "pino";
+
+import { createRustBinaryService } from "../composition/rust.js";
+import { RUST_TOOL_CONTRACTS } from "../contracts/rust/rustToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import {
+  deliverWithService,
+  registerContractCommand,
+} from "./contractCommand.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Resolve caller paths and inspect embedded Rust dependencies through the shared workflow. */
 export const registerRustCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectRustBinary, {
-    description:
-      "Inspect an embedded cargo-auditable Rust dependency list without target execution",
-    args: z.object({
-      path: z.string().describe("Local ELF, PE or thin Mach-O image"),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) => {
-        const service = createRustBinaryService();
-        return logCliCommand(logger, CLI_COMMANDS.inspectRustBinary, () =>
-          finishAnalysisCommand(
-            () =>
-              service.inspect(
-                { path: absoluteCallerPath(args.path) },
-                { signal },
-              ),
-            service,
-            "rust-auditable",
-            "inspect_rust_binary",
-            signal,
-          ),
-        );
-      }),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(RUST_TOOL_CONTRACTS, "inspect_rust_binary"),
+    {
+      description:
+        "Inspect an embedded cargo-auditable Rust dependency list without target execution",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      evidenceDelivery: true,
+      viewDelivery: {
+        invalidJson: "view must be a JSON package or edge selection",
+        kind: "rust",
+        viewSelectsSummary: true,
+      },
+      fields: {
+        path: {
+          description:
+            "Local ELF, PE, thin or universal Mach-O, or WebAssembly core-module image",
+        },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+        architecture: {
+          description:
+            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+        },
+        detail: {
+          description:
+            "Default complete; a view selects compact delivery with --evidence_output",
+        },
+        view: {
+          description:
+            "JSON package or edge selection; retains complete Evidence with --evidence_output",
+        },
+      },
+    },
+    deliverWithService(createRustBinaryService, "rust-auditable"),
+  );
 };

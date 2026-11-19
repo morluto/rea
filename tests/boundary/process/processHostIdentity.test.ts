@@ -1,6 +1,7 @@
+import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import { expect, it } from "vitest";
 
-import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import {
   createRunManifest,
   observeLaunchedExecutable,
@@ -9,7 +10,7 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
 it("uses one selected host identity for manifest and settlement", async () => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: process.cwd(),
     events: [],
@@ -26,15 +27,17 @@ it("uses one selected host identity for manifest and settlement", async () => {
     new Date(0),
     new Date(1),
     observeLaunchedExecutable(scenario.executable, selectedExecutable),
+    { state: "withheld-by-caller" },
     selectedHost,
   );
-  const settlement = await observeSettlement(
-    "run",
-    [],
-    0,
-    () => undefined,
-    selectedHost.platform,
-  );
+  const settlement = await observeSettlement({
+    runId: "run",
+    processGroupIds: [],
+    settleMs: 0,
+    recordEvent: () => undefined,
+    platform: selectedHost.platform,
+    ownershipEvidence: new ProcessOwnershipEvidenceOwner(),
+  });
 
   expect(manifest).toMatchObject(selectedHost);
   expect(settlement).toEqual({ state: "unverifiable", elapsed_ms: 0 });

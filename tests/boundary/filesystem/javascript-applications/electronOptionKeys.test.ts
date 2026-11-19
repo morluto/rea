@@ -45,8 +45,10 @@ describe("Electron option keys in reconstructed application graphs", () => {
       expect(result.electron_summary.preload_entrypoints).toBe(0);
       expect(result.electron_summary.explicit_web_preferences).toBe(0);
 
-      // The independent property:preload heuristic can still discover the nested
-      // literal. It must not carry a BrowserWindow-specific observation or edge.
+      // A nested literal cannot bypass the unresolved options owner.
+      expect(
+        result.graph.nodes.filter(({ kind }) => kind === "electron-preload"),
+      ).toEqual([]);
       expect(windowPreloadNodes(result)).toEqual([]);
       expect(
         result.graph.edges.filter(
@@ -110,22 +112,6 @@ describe("Electron option keys in reconstructed application graphs", () => {
     },
   );
 
-  it("keeps a computed serviceName unknown in the utility-process observation", async () => {
-    const result = await reconstructSource(`
-      const serviceName = "env";
-      utilityProcess.fork("./worker.js", [], { [serviceName]: "wrong-name" });
-    `);
-    const utilities = result.graph.nodes.filter(
-      ({ kind }) => kind === "electron-utility",
-    );
-    expect(utilities).toHaveLength(1);
-    expect(utilities[0]?.observations[0]).toMatchObject({
-      label: "./worker.js",
-      properties: { service_name: null, module_path: "./worker.js" },
-      evidence: { coverage: { status: "partial" } },
-    });
-  });
-
   it.each([
     ["-0", { status: "dynamic", value: null, expression: "-0" }],
     ["-0.0", { status: "dynamic", value: null, expression: "-0.0" }],
@@ -145,6 +131,67 @@ describe("Electron option keys in reconstructed application graphs", () => {
       expect(window?.observations[0]?.properties.web_preferences).toEqual([
         { name: "zoomFactor", value },
       ]);
+    },
+  );
+});
+
+describe("Electron utility-process options in reconstructed application graphs", () => {
+  // Electron's fork(modulePath[, args][, options]) treats a non-array object in
+  // the args slot as the options and then ignores the third argument.
+  it.each([
+    ["second-slot options", `{ serviceName: "gpu" }`, "gpu", "complete"],
+    ["explicit argv", `[], { serviceName: "gpu" }`, "gpu", "complete"],
+    ["undefined argv", `undefined, { serviceName: "gpu" }`, "gpu", "complete"],
+    ["null argv", `null, { serviceName: "gpu" }`, "gpu", "complete"],
+    ["void argv", `void 0, { serviceName: "gpu" }`, "gpu", "complete"],
+    ["const argv", `argv, { serviceName: "gpu" }`, "gpu", "complete"],
+    ["wrapped options", `({ serviceName: "gpu" })`, "gpu", "complete"],
+    [
+      "ignored third",
+      `{ serviceName: "gpu" }, { serviceName: "x" }`,
+      "gpu",
+      "complete",
+    ],
+    ["omitted options", "", null, "complete"],
+    ["options without name", `{ stdio: "pipe" }`, null, "complete"],
+    ["nullish options", `[], null`, null, "complete"],
+    ["nullish name", `{ serviceName: undefined }`, null, "complete"],
+    ["identifier options", "options", null, "partial"],
+    ["spread arguments", "...forkArguments", null, "partial"],
+    ["spread options", "[], ...forkArguments", null, "partial"],
+    ["unproven argv", `makeArgv(), { serviceName: "x" }`, null, "partial"],
+    ["computed key", `{ [key]: "x" }`, null, "partial"],
+    ["computed key after argv", `[], { [key]: "x" }`, null, "partial"],
+    [
+      "shadowed undefined argv",
+      `undefined, { serviceName: "x" }`,
+      null,
+      "partial",
+      "function launch(undefined) { %s }",
+    ],
+  ] as const)(
+    "selects utility-process options from %s",
+    async (_, args, serviceName, coverage, scope: string = "%s") => {
+      const call = `utilityProcess.fork("./worker.js"${args === "" ? "" : `, ${args}`});`;
+      const result = await reconstructSource(`
+      const argv = ["--gpu"];
+      const key = "serviceName";
+      ${scope.replace("%s", call)}
+    `);
+      const utilities = result.graph.nodes.filter(
+        ({ kind }) => kind === "electron-utility",
+      );
+      expect(utilities).toHaveLength(1);
+      // Observation order follows content identity, so select by operation.
+      const fork = utilities[0]?.observations.find(
+        ({ evidence }) =>
+          evidence.extractor.operation === "observe-utility-process-fork",
+      );
+      expect(fork).toMatchObject({
+        label: serviceName ?? "./worker.js",
+        properties: { service_name: serviceName, module_path: "./worker.js" },
+        evidence: { confidence: "exact", coverage: { status: coverage } },
+      });
     },
   );
 });

@@ -1,18 +1,38 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createEvidence } from "../dist/domain/evidence.js";
-import { json, run } from "./lib/verify-package-core.mjs";
+import { createEvidence } from "#dist/domain/evidence.js";
+import {
+  createEvidenceBundle,
+  serializeEvidenceBundle,
+} from "#dist/domain/evidenceBundle.js";
+import { unknownTarget } from "#dist/domain/targetIdentity.js";
 
-/** Round-trip historical reference import and evidence bundles. */
+/**
+ * Round-trip historical reference import and evidence bundles.
+ * @param {{
+ *   readonly commands: {
+ *     run(
+ *       command: string,
+ *       arguments_: readonly string[],
+ *       environment?: NodeJS.ProcessEnv,
+ *     ): Promise<string>;
+ *   };
+ *   readonly cli: string;
+ *   readonly evidenceRoot: string;
+ *   readonly referenceRoot: string;
+ *   readonly environment: NodeJS.ProcessEnv;
+ * }} options
+ */
 export async function verifyPackageEvidence({
+  commands,
   cli,
   evidenceRoot,
   referenceRoot,
   environment,
 }) {
-  const referenceImport = json(
-    await run(
+  const referenceImport = JSON.parse(
+    await commands.run(
       cli,
       ["import-reference-source", referenceRoot, "--json"],
       environment,
@@ -25,12 +45,9 @@ export async function verifyPackageEvidence({
     JSON.stringify(referenceImport).includes("PACKAGE_SECRET_SENTINEL")
   )
     throw new Error("packaged historical reference import CLI failed");
-  const { createEvidenceBundle, serializeEvidenceBundle } = await import(
-    new URL("../dist/domain/evidenceBundle.js", import.meta.url)
-  );
   const sourceBundle = createEvidenceBundle([
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "package", name: "Package verifier", version: "1" },
       { operation: "health", parameters: {}, result: true },
     ),
@@ -38,22 +55,22 @@ export async function verifyPackageEvidence({
   const sourceBundlePath = join(evidenceRoot, "source.json");
   const canonicalBundlePath = join(evidenceRoot, "canonical.json");
   await writeFile(sourceBundlePath, serializeEvidenceBundle(sourceBundle));
-  const importedBundle = json(
-    await run(
+  const importedBundle = JSON.parse(
+    await commands.run(
       cli,
       ["evidence-import", sourceBundlePath, "--json"],
       environment,
     ),
   );
-  const exportedBundle = json(
-    await run(
+  const exportedBundle = JSON.parse(
+    await commands.run(
       cli,
       ["evidence-export", sourceBundlePath, canonicalBundlePath, "--json"],
       environment,
     ),
   );
-  const comparedBundle = json(
-    await run(
+  const comparedBundle = JSON.parse(
+    await commands.run(
       cli,
       ["compare", sourceBundlePath, canonicalBundlePath, "--json"],
       environment,

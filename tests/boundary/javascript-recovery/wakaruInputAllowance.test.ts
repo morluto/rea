@@ -15,8 +15,14 @@ vi.mock(
     return {
       ...actual,
       resolveWakaruCommand: async () => ({
-        command: "/unused/wakaru",
-        limiter: "/unused/prlimit",
+        command: {
+          invocationPath: "/unused/wakaru",
+          resolvedPath: "/unused/wakaru",
+        },
+        limiter: {
+          invocationPath: "/unused/prlimit",
+          resolvedPath: "/unused/prlimit",
+        },
         sha256: "a".repeat(64),
         bytes: 1,
       }),

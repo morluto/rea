@@ -11,11 +11,15 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const openArchive = async (archive: string): Promise<Client> => {
   const session = createTestBinarySession(new ArtifactProvider(process.env));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "asar-unpacked-extraction", version: "1" });
+  const client = new Client(
+    { name: "asar-unpacked-extraction", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -68,7 +72,9 @@ it("extracts a rewritten unpacked companion only when the caller records the mis
   onTestFinished(() =>
     rm(result.output_root, { recursive: true, force: true }),
   );
-  expect(await readFile(join(result.output_root, addon))).toEqual(stripped);
+  expect(
+    Buffer.compare(await readFile(join(result.output_root, addon)), stripped),
+  ).toBe(0);
   expect(result.integrity_contradictions).toEqual([
     { logical_path: addon, trust: "observed-untrusted" },
   ]);

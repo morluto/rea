@@ -3,14 +3,19 @@
 This lane extends native ELF analysis to 32-bit big-endian PowerPC; it does
 not execute PowerPC code. It is the first milestone of
 [#1741](https://github.com/morluto/rea/issues/1741). GameCube/Wii DOL
-executables, PPC64 and other PowerPC variants are separate follow-ups.
+executables are covered by [GameCube DOL analysis](ghidra-dol.md). PPC64 and other
+PowerPC variants remain separate follow-ups.
 
 ## Admission boundary
 
-ELF `EM_PPC` (20) is retained as the provider-neutral `powerpc` family. The
-target also retains class, byte order, `e_type` and raw `e_flags`. Recognition
-does not mean every provider or PowerPC variant is supported. `EM_PPC64` (21)
-is not recognized as this family.
+ELF `EM_PPC` (20) is retained as the provider-neutral `powerpc` family, and so
+is `EM_PPC64` (21) when the header is ELF64. An ELF32 header that claims
+`EM_PPC64` stays unrecognized. The target also retains class, byte order,
+`e_type` and raw `e_flags`; for `EM_PPC64` the low two bits of `e_flags` declare
+the ELFv1 or ELFv2 ABI. Recognition does not mean every provider or PowerPC
+variant is supported: no provider lane admits `EM_PPC64` yet. Static ELF readers
+are unchanged: they report the machine as `ppc64` and their Evidence subject
+carries no family for it.
 
 The Ghidra lane admits ELF32 `ET_EXEC`, big endian. ELF64, little-endian,
 relocatable and shared objects are refused with a specific unsupported
@@ -27,7 +32,7 @@ replaces the classic floating-point unit, so it misinterprets ordinary
 
 The lane therefore imports with `PowerPC:BE:32:default` and compiler spec
 `default`, commits that choice in the analysis profile as
-`language_selection: "provider-pinned-v1"`, and checks the language Ghidra
+`language_selection: "provider-pinned"`, and checks the language Ghidra
 reports after import. A different language set through
 `REA_GHIDRA_LANGUAGE_ID` (and optionally `REA_GHIDRA_COMPILER_SPEC_ID`)
 replaces the lane default and is admitted against the installed language

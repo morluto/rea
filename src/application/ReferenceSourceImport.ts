@@ -1,14 +1,17 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   createHistoricalSourceGraph,
+  historicalSourceInventoryHasPartialFacts,
   historicalSourceLanguages,
   historicalSourceManifests,
   historicalSourceParseFailureKey,
+  historicalSourceRelationshipKey,
   type HistoricalSourceGraph,
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { readReferenceSource } from "../reference/ReferenceSourceReader.js";
 import type {
@@ -37,18 +40,13 @@ const failure = (
 });
 
 const cancelled = (
+  signal: AbortSignal | undefined,
   partial?: ReferenceSourceRead,
 ): ReferenceSourceImportError => ({
   ...failure("cancelled", "Reference source import cancelled"),
+  ...(signal?.aborted === true ? { cause: signal.reason } : {}),
   ...(partial === undefined ? {} : { partial }),
 });
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
-
-const relationshipKey = (
-  relationship: HistoricalSourceGraphInput["relationships"][number],
-): string =>
-  `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}`;
 
 const deduplicateRelationships = (
   relationships: HistoricalSourceGraphInput["relationships"],
@@ -56,7 +54,7 @@ const deduplicateRelationships = (
   const seen = new Set<string>();
   const result: HistoricalSourceGraphInput["relationships"] = [];
   for (const relationship of relationships) {
-    const key = relationshipKey(relationship);
+    const key = historicalSourceRelationshipKey(relationship);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(relationship);
@@ -93,37 +91,6 @@ const buildProvenance = (
   caller: options.caller,
 });
 
-const deriveInventoryState = (
-  input: Pick<
-    HistoricalSourceGraphInput,
-    | "entries"
-    | "relationships"
-    | "parse_failures"
-    | "exclusions"
-    | "limitations"
-  >,
-): "complete" | "partial" | "unknown" => {
-  if (input.limitations.length > 0) return "partial";
-  if (input.exclusions.length > 0) return "partial";
-  if (input.parse_failures.length > 0) return "partial";
-  const partialEntry = input.entries.some(
-    (entry) =>
-      entry.limitations.length > 0 ||
-      (entry.kind === "file" && entry.content_state !== "hashed") ||
-      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
-      (entry.kind === "symlink" && entry.target_state !== "internal") ||
-      entry.kind === "unknown",
-  );
-  if (partialEntry) return "partial";
-  const partialRelationship = input.relationships.some(
-    ({ parse_state, resolution }) =>
-      parse_state !== "parsed" ||
-      ["unresolved", "unknown"].includes(resolution),
-  );
-  if (partialRelationship) return "partial";
-  return "complete";
-};
-
 const sortExclusions = (
   exclusions: HistoricalSourceGraphInput["exclusions"],
 ): HistoricalSourceGraphInput["exclusions"] =>
@@ -153,7 +120,7 @@ const createShouldExclude =
         : kind === "unknown"
           ? [path, `${path}/`]
           : [path];
-    const firstMatch = (matcher: typeof secrets) => {
+    const firstMatch = (matcher: Pick<typeof secrets, "test">) => {
       const results = patternPaths.map((patternPath) =>
         matcher.test(patternPath),
       );
@@ -202,11 +169,11 @@ export const importReferenceSource = async (
   options: ReferenceSourceImportOptions,
   resources: ArtifactResourceScope,
 ): Promise<Result<HistoricalSourceGraph, ReferenceSourceImportError>> => {
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
   const prepared = await prepareReferenceSourceImport(options, resources);
   if (!prepared.ok) return prepared;
   const { ignored, root, secrets } = prepared.value;
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
 
   const exclusions: HistoricalSourceGraphInput["exclusions"] = [];
   const shouldExclude = createShouldExclude(exclusions, secrets, ignored);
@@ -215,6 +182,7 @@ export const importReferenceSource = async (
     readReferenceSource(root, resources, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       shouldExclude,
+      beforeDirectory: prepared.value.beforeDirectory,
     }),
     readReferenceSourceVcs(root, resources, options.signal),
   ]);
@@ -234,19 +202,19 @@ export const importReferenceSource = async (
 
   const vcs = vcsResult.value;
 
-  if (isAborted(options.signal)) return err(cancelled(readResult.value));
+  if (isAborted(options.signal))
+    return err(cancelled(options.signal, readResult.value));
 
   const read = readResult.value;
-  const filePaths = new Set(
-    read.entries
-      .filter((entry) => entry.status === "read" && entry.kind === "file")
-      .map((entry) => entry.path),
-  );
-
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, filePaths, options.signal);
+    parseReferenceSourceEntries(
+      read,
+      exclusions,
+      options.signal,
+      options.memberMutationAllowance,
+    );
 
-  if (isAborted(options.signal)) return err(cancelled(read));
+  if (isAborted(options.signal)) return err(cancelled(options.signal, read));
 
   const uniqueRelationships = deduplicateRelationships(relationships);
   const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);
@@ -261,16 +229,21 @@ export const importReferenceSource = async (
     schema: "HistoricalSourceGraph",
     authority: "historical-reference",
     root_alias: "$REFERENCE_ROOT",
-    inventory_state: deriveInventoryState({
+    inventory_state: historicalSourceInventoryHasPartialFacts({
       entries: sortedEntries,
       relationships: uniqueRelationships,
       parse_failures: uniqueFailures,
       exclusions: sortedExclusions,
       limitations: sortedLimitations,
-    }),
+    })
+      ? "partial"
+      : "complete",
     entries: sortedEntries,
     relationships: uniqueRelationships.sort((left, right) =>
-      compareUnicodeCodePoints(relationshipKey(left), relationshipKey(right)),
+      compareUnicodeCodePoints(
+        historicalSourceRelationshipKey(left),
+        historicalSourceRelationshipKey(right),
+      ),
     ),
     parse_failures: uniqueFailures,
     exclusions: sortedExclusions,
@@ -294,30 +267,43 @@ export const importReferenceSource = async (
 };
 
 const combineReadFailures = (
-  primary: ReferenceSourceReaderError,
-  other: ReferenceSourceReaderError | undefined,
+  inventory: ReferenceSourceReaderError,
+  metadata: ReferenceSourceReaderError | undefined,
   partial: ReferenceSourceRead | undefined,
 ): ReferenceSourceImportError => {
-  const code =
-    primary.code === "cancelled" || other?.code === "cancelled"
-      ? "cancelled"
-      : primary.code;
+  const primary =
+    inventory.code === "cancelled" &&
+    metadata !== undefined &&
+    metadata.code !== "cancelled"
+      ? metadata
+      : inventory;
+  const other = primary === inventory ? metadata : inventory;
   const cleanup = mergeCleanup(primary.cleanup, other?.cleanup);
   const message =
-    other === undefined
+    other === undefined || other.code === "cancelled"
       ? primary.message
-      : `${primary.message}; additional reference metadata failure: ${other.message}`;
+      : `${primary.message}; additional reference failure: ${other.message}`;
   const cause =
-    other === undefined
+    other === undefined || other.code === "cancelled"
       ? primary.cause
       : new AggregateError(
           [primary, other],
           "Reference source inventory and metadata both failed",
           { cause: primary },
         );
+  const secondaryCancellation =
+    primary.secondaryCancellation ??
+    other?.secondaryCancellation ??
+    (other?.code === "cancelled" && primary.code !== "cancelled"
+      ? { cause: other.cause }
+      : undefined);
   return {
-    ...failure(code, message),
+    ...failure(primary.code, message),
+    ...(primary.remediationAction === undefined
+      ? {}
+      : { remediationAction: primary.remediationAction }),
     ...(cleanup === undefined ? {} : { cleanup }),
+    ...(secondaryCancellation === undefined ? {} : { secondaryCancellation }),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),
   };

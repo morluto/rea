@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -8,10 +8,29 @@ const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 16 * 1024 * 1024;
 const TIMEOUT_MS = 30_000;
 const OUTPUT_DIRECTORY = join(".cache", "ci-job-timings");
+// The jobs API returns display names, without the action reference. Tests
+// check these exceptions against the CI and Release workflow definitions.
 const STEP_COSTS = [
   { key: "npmCi", pattern: /\bnpm ci\b/iu },
-  { key: "artifactUpload", pattern: /upload.*artifact/iu },
-  { key: "artifactDownload", pattern: /download.*artifact/iu },
+  {
+    key: "artifactUpload",
+    pattern: /upload.*artifact/iu,
+    names: new Set([
+      "Upload complete static diagnostics",
+      "Upload complete deep static diagnostics",
+      "Retain available reverse tools diagnostics",
+      "Publish successful timing history",
+      "Retain the exact qualified release package",
+    ]),
+  },
+  {
+    key: "artifactDownload",
+    pattern: /download.*artifact/iu,
+    names: new Set([
+      "Download previous timing report",
+      "Download the original qualified package",
+    ]),
+  },
 ];
 
 /** Fetch and summarize one workflow attempt without turning telemetry into a gate. */
@@ -221,7 +240,9 @@ function normalizeStep(step) {
     typeof step.name !== "string"
   )
     throw new Error("GitHub jobs API contains a malformed job step");
-  const cost = STEP_COSTS.find(({ pattern }) => pattern.test(step.name));
+  const cost = STEP_COSTS.find(
+    ({ pattern, names }) => names?.has(step.name) || pattern.test(step.name),
+  );
   return {
     name: step.name,
     costKey: cost?.key ?? null,

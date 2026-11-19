@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import {
   absoluteOffset,
@@ -54,26 +55,28 @@ export function parseFirmwareVolumeHeader(
   ) {
     return null;
   }
-  const signature = region.buffer.readUInt32LE(
+  const reader = new BinaryReader(region.buffer, true, "UEFI firmware volume");
+  const signature = reader.u32(
     localHeaderBase + FV_HEADER_LAYOUT.signatureOffset,
   );
   if (signature !== FVH_SIGNATURE) {
     return null;
   }
   const absoluteBase = absoluteOffset(region, localHeaderBase);
-  const headerLength = region.buffer.readUInt16LE(
+  const headerLength = reader.u16(
     localHeaderBase + FV_HEADER_LAYOUT.headerLengthOffset,
   );
-  const attributes = region.buffer.readUInt32LE(
+  const attributes = reader.u32(
     localHeaderBase + FV_HEADER_LAYOUT.attributesOffset,
   );
   const revision =
     region.buffer[localHeaderBase + FV_HEADER_LAYOUT.revisionOffset] ?? 0;
-  const extHeaderRaw = region.buffer.readUInt16LE(
+  const extHeaderRaw = reader.u16(
     localHeaderBase + FV_HEADER_LAYOUT.extHeaderOffsetOffset,
   );
-  const declaredLengthValue = region.buffer.readBigUInt64LE(
+  const declaredLengthValue = reader.word(
     localHeaderBase + FV_HEADER_LAYOUT.fvLengthOffset,
+    64,
   );
   const declaredLength = Number(declaredLengthValue);
   const implausibilities: string[] = [];
@@ -114,8 +117,8 @@ export function parseFirmwareVolumeHeader(
       implausibilities.push("block-map-truncation");
       break;
     }
-    const numBlocks = region.buffer.readUInt32LE(entryLocal);
-    const blockLength = region.buffer.readUInt32LE(entryLocal + 4);
+    const numBlocks = reader.u32(entryLocal);
+    const blockLength = reader.u32(entryLocal + 4);
     if (numBlocks === 0 && blockLength === 0) {
       blockMapTerminated = true;
       break;
@@ -174,9 +177,10 @@ function verifyFirmwareVolumeChecksum(
   ) {
     return false;
   }
+  const checksumReader = new BinaryReader(buffer, true, "UEFI firmware volume");
   let total = 0;
   for (let offset = 0; offset < headerLength; offset += 2) {
-    total = (total + buffer.readUInt16LE(localHeaderBase + offset)) & 0xffff;
+    total = (total + checksumReader.u16(localHeaderBase + offset)) & 0xffff;
   }
   return total === 0;
 }

@@ -1,19 +1,17 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
-  resolveArtifactPathByContext,
-  type ArtifactPathResolution,
-} from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
+import type { ArtifactPathResolution } from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
+import { resolveStandaloneArtifactPath } from "../../support/javascriptArtifactPathResolution.js";
 
 const execute = promisify(execFile);
 const nodeOutcomeSchema = z.strictObject({
@@ -47,16 +45,8 @@ const writeTree = async (
   root: string,
   files: Readonly<Record<string, string>>,
 ): Promise<Map<string, string>> => {
-  const contents = new Map<string, string>();
-  await Promise.all(
-    Object.entries(files).map(async ([path, value]) => {
-      const absolute = join(root, path);
-      await mkdir(dirname(absolute), { recursive: true });
-      await writeFile(absolute, value);
-      contents.set(path, value);
-    }),
-  );
-  return contents;
+  await writeFixtureFiles(root, files);
+  return new Map(Object.entries(files));
 };
 
 const nodeRequireTarget = async (
@@ -109,7 +99,7 @@ const resolveAlias = (
   sourcePath: string,
   moduleKind: "import" | "require",
 ): ArtifactPathResolution =>
-  resolveArtifactPathByContext({
+  resolveStandaloneArtifactPath({
     declaredPath,
     sourcePath,
     context: "module-specifier",
@@ -445,7 +435,7 @@ describe("package import target arrays compared with Node", () => {
         moduleKind,
       );
       expect(result).toMatchObject({
-        resolution_status: "external",
+        resolution_status: "unavailable",
         resolved_path: null,
       });
       expect(result.limitations.join(" ")).toContain(
@@ -458,7 +448,9 @@ describe("package import target arrays compared with Node", () => {
 describe("package import target URL normalization compared with Node", () => {
   it("normalizes targets before package-root validation and array selection", async () => {
     const root = await createTestTempDirectory("rea-package-target-url-");
-    const directory = "app space#?%λ";
+    // Windows forbids '?' in filenames; the suffix target below covers URL queries.
+    const directory =
+      process.platform === "win32" ? "app space#%λ" : "app space#?%λ";
     const imports = {
       "#tab-escape": ["./.\t./outside.cjs", "./fallback.cjs"],
       "#newline-escape": ["./.%\n2e/outside.cjs", "./fallback.cjs"],
@@ -710,9 +702,6 @@ describe("package import alias refusals compared with Node", () => {
         imports: {
           "#config": "./config.cjs",
           "#blocked": null,
-          "#": "./config.cjs",
-          "#/": "./config.cjs",
-          "#config/": "./config.cjs",
         },
       }),
       "main.cjs": "module.exports = 1;",

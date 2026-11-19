@@ -1,4 +1,8 @@
-import { createHash } from "node:crypto";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import { Budget } from "../domain/budget.js";
+import { decodeLimit, parseFailureFromCause } from "../domain/parseFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -18,8 +22,6 @@ const requestSchema = z.strictObject({
     .max(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes),
 });
 
-class UefiLzmaOutputLimit extends Error {}
-
 /**
  * Output sink that enforces the byte budget while the decoder writes, instead
  * of after the whole stream has expanded in memory. It grows on demand up to
@@ -27,30 +29,33 @@ class UefiLzmaOutputLimit extends Error {}
  */
 class BoundedLzmaOutput {
   #buffer: Buffer;
-  #pos = 0;
+  readonly #budget: Budget;
 
   constructor(readonly limit: number) {
+    this.#budget = new Budget(limit);
     this.#buffer = Buffer.allocUnsafe(Math.min(limit, 0x10000));
   }
 
   writeByte(byte: number): void {
-    if (this.#pos >= this.limit) {
-      throw new UefiLzmaOutputLimit(
+    const position = this.#budget.used;
+    if (!this.#budget.tryCharge(1))
+      throw decodeLimit(
+        "LZMA",
         `Decompressed output exceeds the ${this.limit} byte budget.`,
+        { name: "output_bytes", maximum: this.limit, required: position + 1 },
       );
-    }
-    if (this.#pos >= this.#buffer.length) {
+    if (position >= this.#buffer.length) {
       const next = Buffer.allocUnsafe(
         Math.min(this.limit, this.#buffer.length * 2),
       );
-      this.#buffer.copy(next, 0, 0, this.#pos);
+      this.#buffer.copy(next, 0, 0, position);
       this.#buffer = next;
     }
-    this.#buffer[this.#pos++] = byte;
+    this.#buffer[position] = byte;
   }
 
   getBuffer(): Buffer {
-    return this.#buffer.subarray(0, this.#pos);
+    return this.#buffer.subarray(0, this.#budget.used);
   }
 }
 
@@ -79,21 +84,34 @@ const main = async (): Promise<void> => {
     // The upstream decoder allocates its window before it writes to our sink.
     if (payload.length < 13)
       throw new Error("Incomplete LZMA stream properties.");
-    const dictionaryBytes = payload.readUInt32LE(1);
+    const reader = new BinaryReader(payload, true, "LZMA-Alone");
+    const dictionaryBytes = reader.u32(1);
     if (dictionaryBytes > UEFI_FIRMWARE_LIMITS.lzmaOutputBytes) {
-      throw new UefiLzmaOutputLimit(
+      throw decodeLimit(
+        "LZMA",
         "LZMA dictionary exceeds the worker memory budget.",
+        {
+          name: "dictionary_bytes",
+          maximum: UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
+          required: dictionaryBytes,
+        },
       );
     }
-    const declaredOutputSize = payload.readBigUInt64LE(5);
+    const declaredOutputSize = reader.word(5, 64);
     const declaredOutput =
       declaredOutputSize === 0xffffffffffffffffn ? null : declaredOutputSize;
     if (
       declaredOutput !== null &&
       declaredOutput > BigInt(request.max_output_bytes)
     ) {
-      throw new UefiLzmaOutputLimit(
+      throw decodeLimit(
+        "LZMA",
         `Declared LZMA output exceeds ${request.max_output_bytes} bytes.`,
+        {
+          name: "output_bytes",
+          maximum: request.max_output_bytes,
+          required: declaredOutput,
+        },
       );
     }
     const output = new BoundedLzmaOutput(request.max_output_bytes);
@@ -110,16 +128,16 @@ const main = async (): Promise<void> => {
       ok: true,
       lzma_version: decoderVersion,
       output: {
-        sha256: createHash("sha256").update(decoded).digest("hex"),
+        sha256: sha256Hex(decoded),
         bytes: decoded.length,
       },
     };
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     reply = {
       ok: false,
       reason:
-        cause instanceof UefiLzmaOutputLimit
+        parseFailureFromCause(cause)?.kind === "limit"
           ? "output-limit"
           : message.includes("properties")
             ? "format"

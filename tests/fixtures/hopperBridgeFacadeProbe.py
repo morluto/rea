@@ -108,11 +108,13 @@ class FakeBlock:
 
     def getSuccessorCount(self):
         return 0
-def load_bridge(path):
+def load_bridge(path, namespace_updates=None):
     namespace = {
         "__file__": path,
         "__name__": "rea_hopper_bridge",
     }
+    if namespace_updates:
+        namespace.update(namespace_updates)
     source = Path(path).read_text(encoding="utf-8")
     exec(compile(source, path, "exec"), namespace)
     return namespace
@@ -160,7 +162,7 @@ def main():
 
     bridge["REA_TARGET_PATH"] = "/tmp/rea-hopper-facade-fixture"
     bridge["REA_OWNS_PROCESS_LIFETIME"] = False
-    bridge["_configure_hopper_api"](FakeDocumentProvider)
+    bridge["Document"] = FakeDocumentProvider
     bridge["_bind_session_document"]()
     current = bridge["_dispatch"]("current_document", {})
     current_address = bridge["_dispatch"]("current_address", {})

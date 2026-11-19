@@ -1,45 +1,133 @@
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
+import { captureBudgets } from "./CaptureBudgets.js";
+import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+  ArtifactReaderFailure,
+  stableArtifactInputRecovery,
+  readerIntegrityFailure,
+  bindArtifactFileCleanup,
+  artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
+  artifactSelectedPathErrno,
+} from "../../resources/index.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCleanupDependencies,
+} from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
-  WEB_NETWORK_CAPTURE_LIMITS,
+  selectedWebNetworkCaptureTimeoutMs,
+  webNetworkCaptureBudgetFacts,
+  webNetworkCaptureBudgetRecovery,
+  webNetworkCaptureTimeoutRecovery,
   type InspectWebNetworkCaptureInput,
 } from "../../domain/webNetworkCapture.js";
-import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  NODE_CAPTURE_HEAP_LIMITS,
-  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
-} from "./CaptureRelease.js";
+  captureDecoderHeapContinuingRecovery,
+  captureDecoderHeapRecovery,
+  DEFAULT_CAPTURE_DECODER_HEAP,
+  type CaptureDecoderHeap,
+} from "../../config/captureDecoderHeap.js";
+import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import { providerOutcomeOf } from "../../process/ProviderOutcome.js";
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../../process/RuntimeExhaustion.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
+import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
+import {
+  CAPTURE_FORMAT,
+  CAPTURE_LIMITS,
+  type CaptureFormatError,
+} from "./CaptureFormatError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 const OPERATION = "inspect_web_network_capture";
+
+/** A refused protobuf body decode; a limit names the budget that owns it. */
+export const protobufCaptureFailure = (
+  input: InspectWebNetworkCaptureInput,
+  cause: CaptureFormatError,
+): AnalysisError => {
+  const { limit } = cause;
+  if (limit === undefined || !isParseLimit(cause, CAPTURE_FORMAT))
+    return new AnalysisInputError(OPERATION, { cause }, [
+      {
+        path: ["protobuf"],
+        reason: "invalid_format",
+        message: cause.message,
+      },
+    ]);
+  const { parameter, expected } = CAPTURE_LIMITS[limit.name];
+  return parseLimitConstraint(OPERATION, "capacity", cause, {
+    legacyMaximumKey: expected,
+    retryable: false,
+    ...(parameter === null
+      ? {}
+      : {
+          remediationAction: webNetworkCaptureBudgetRecovery(
+            input,
+            parameter,
+            limit.maximum,
+          ),
+        }),
+  });
+};
 
 /** Reason for a decoder whose owned process tree reached its Job Object commit limit. */
 export const CAPTURE_PROCESS_MEMORY_LIMIT_REASON =
   "The capture decoder reached its Windows Job Object memory limit";
 
-/** Preserve the origin and typed cause of a historical capture failure. */
+/**
+ * Preserve the origin and typed cause of a historical capture failure.
+ * `cleanupLease` is the decoder's lease on `rawCause`'s retained process
+ * owner; its confirmed release resolves the cleanup this failure reports.
+ */
 export const historicalCaptureFailure = (
   input: InspectWebNetworkCaptureInput,
-  cause: unknown,
-  phase: "capture-read" | "decoder",
+  rawCause: unknown,
+  phase: "capture-read" | "descriptor-read" | "decoder",
   options?: ExecutionOptions,
+  heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
+  cleanupLease?: AnalysisCleanupLease,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof OwnedCommandFailure) {
-    if (cause.cleanupFailure !== null)
-      return new ProviderCleanupError(
+  const { cause, origin } = artifactFilePrimaryFacts(rawCause);
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
+  const descriptorRead = phase === "descriptor-read";
+  const sourcePath = descriptorRead
+    ? (input.protobuf?.schema?.descriptor_set_path ?? input.capture_path)
+    : input.capture_path;
+  const inputPath = descriptorRead
+    ? ["protobuf", "schema", "descriptor_set_path"]
+    : ["capture_path"];
+  const sourceLabel = descriptorRead ? "descriptor set" : "capture";
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof OwnedCommandFailure
+  ) {
+    if (cause.cleanupFailure !== null) {
+      const cleanup = new ProviderCleanupError(
         input.format,
         cause.resources,
         {
@@ -56,12 +144,47 @@ export const historicalCaptureFailure = (
         },
         { operation: OPERATION, cause },
       );
+      if (cleanupLease !== undefined)
+        new AnalysisCleanupLeaseGroup(cleanup, [cleanupLease]);
+      return cause.cause instanceof OwnedCommandFailure
+        ? analysisErrorWithCleanupFailure(
+            historicalCaptureFailure(input, cause.cause, phase, options, heap),
+            cleanup,
+            OPERATION,
+          )
+        : cleanup;
+    }
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION);
-    if (cause.reason === "timeout")
+      return cancelledBy(
+        OPERATION,
+        carriedReason(
+          cause.cancellation === undefined
+            ? options?.signal?.aborted === true
+              ? options.signal.reason
+              : undefined
+            : cause.cancellation.reason,
+        ),
+      );
+    if (cause.reason === "timeout") {
+      const timeoutMs = selectedWebNetworkCaptureTimeoutMs(
+        input.capture_timeout_ms,
+      );
       return new AnalysisTimeoutError(
         OPERATION,
-        WEB_NETWORK_CAPTURE_LIMITS.timeoutMs,
+        timeoutMs,
+        webNetworkCaptureTimeoutRecovery(timeoutMs),
+      );
+    }
+    // The supervisor observed V8's heap report as output streamed, so a
+    // retention budget or a stack trace that overflowed it cannot hide it.
+    const outcome = providerOutcomeOf(cause);
+    if (phase === "decoder" && outcome.kind === "runtime-exhausted")
+      return captureMemoryFailure(
+        input,
+        `The ${input.format} decoder exhausted its ${String(heap.oldGenerationMiB)} MiB V8 old-generation heap (source ${heap.source})`,
+        cause,
+        heap,
+        outcome.exhaustion,
       );
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(OPERATION, cause.message);
@@ -76,108 +199,132 @@ export const historicalCaptureFailure = (
         input,
         CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
         cause,
-      );
-    if (
-      phase === "decoder" &&
-      input.format !== "mitmproxy" &&
-      cause.reason === "process" &&
-      (cause.snapshot?.signal === "SIGABRT" ||
-        (cause.snapshot?.signal === null && cause.snapshot.exitCode === 134)) &&
-      /FATAL ERROR:[^\r\n]*heap out of memory/u.test(cause.snapshot.stderr.text)
-    )
-      return captureMemoryFailure(
-        input,
-        `The ${input.format} decoder exhausted its fixed V8 heap`,
-        cause,
+        heap,
       );
   }
-  if (options?.signal?.aborted)
-    return new AnalysisCancelledError(OPERATION, {
-      cause: options.signal.reason,
-    });
   if (
-    phase === "capture-read" &&
+    phase !== "decoder" &&
+    origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.capture_path,
-      cause.message,
-      { cause },
-    );
+    return readerIntegrityFailure(OPERATION, sourcePath, cause);
   if (
-    phase === "capture-read" &&
+    origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
+  if (
+    phase === "decoder" &&
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "limit"
+  )
+    return new AnalysisOutputError(OPERATION, cause.message, {
+      cause,
+      remediationAction: webNetworkCaptureBudgetRecovery(
+        input,
+        "max_reply_bytes",
+      ),
+      diagnostics: {
+        boundary: "historical-capture-reply",
+        maximum_reply_bytes: captureBudgets().outputBytes,
+        budget: webNetworkCaptureBudgetFacts(input, "max_reply_bytes"),
+      },
     });
   if (
-    phase === "capture-read" &&
+    phase !== "decoder" &&
+    origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     (cause.reason === "limit" ||
       cause.reason === "format" ||
       cause.reason === "path")
   )
-    return new AnalysisInputError(OPERATION, { cause }, [
+    return new AnalysisInputError(
+      OPERATION,
       {
-        path: ["capture_path"],
-        reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
-        message:
-          cause.reason === "limit"
-            ? `${cause.message}. Select a capture within the ${WEB_NETWORK_CAPTURE_LIMITS.inputBytes}-byte input budget.`
-            : cause.message,
+        cause,
         ...(cause.reason === "limit"
           ? {
-              expected: {
-                maximum_capture_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+              diagnostics: {
+                budget: webNetworkCaptureBudgetFacts(input, "max_input_bytes"),
               },
+              remediationAction: webNetworkCaptureBudgetRecovery(
+                input,
+                "max_input_bytes",
+              ),
             }
-          : {}),
+          : stableArtifactInputRecovery(cause)),
       },
-    ]);
+      [
+        {
+          path: inputPath,
+          reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
+          message:
+            cause.reason === "limit"
+              ? `${cause.message}. Increase max_input_bytes above ${String(captureBudgets().inputBytes)} on the next call without restarting REA, or select a smaller complete ${sourceLabel}. Reply, worker heap and capture_timeout_ms controls remain separate.`
+              : cause.message,
+          ...(cause.reason === "limit"
+            ? {
+                expected: {
+                  [descriptorRead
+                    ? "maximum_descriptor_set_bytes"
+                    : "maximum_capture_bytes"]: captureBudgets().inputBytes,
+                },
+              }
+            : {}),
+        },
+      ],
+    );
   if (
-    phase === "capture-read" &&
+    phase !== "decoder" &&
     cause instanceof Error &&
     "code" in cause &&
     (cause.code === "EACCES" || cause.code === "EPERM")
   )
-    return new AnalysisAccessDeniedError(
-      OPERATION,
-      input.capture_path,
-      cause.code,
-      { cause },
-    );
-  if (
-    phase === "capture-read" &&
-    cause instanceof Error &&
-    "code" in cause &&
-    ["ENOENT", "ENOTDIR"].includes(String(cause.code))
-  )
+    return new AnalysisAccessDeniedError(OPERATION, sourcePath, cause.code, {
+      cause,
+    });
+  const selectedPathErrno =
+    phase === "decoder" ? undefined : artifactSelectedPathErrno(cause);
+  if (selectedPathErrno !== undefined)
     return new AnalysisInputError(OPERATION, { cause }, [
       {
-        path: ["capture_path"],
+        path: inputPath,
         reason: "invalid_value",
-        message: `Selected capture could not be read (${String(cause.code)}): ${input.capture_path}.`,
+        message: `Selected ${sourceLabel} could not be read (${selectedPathErrno}): ${sourcePath}.`,
       },
     ]);
+  if (
+    // Stable source reads report owned cancellation with ArtifactReaderFailure.
+    // Bare syscall rejections remain physical even when they equal the abort reason.
+    phase === "decoder" &&
+    origin === "owned-or-classified" &&
+    isAbortOf(cause, options?.signal)
+  )
+    return cancelledBy(OPERATION, options.signal);
   return new ProviderAdapterError(input.format, OPERATION, {
     cause,
     diagnostics: {
       phase,
       capture_path: input.capture_path,
-      reason: cause instanceof Error ? cause.message : String(cause),
-      ...(cause instanceof ArtifactReaderFailure
+      ...(descriptorRead
+        ? { source_path: sourcePath, input_path: inputPath }
+        : {}),
+      reason: errorMessage(cause),
+      ...(origin === "owned-or-classified" &&
+      cause instanceof ArtifactReaderFailure
         ? { failure_kind: cause.reason }
         : {}),
-      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
+      ...(origin === "owned-or-classified" &&
+      cause instanceof OwnedCommandFailure &&
+      cause.snapshot !== null
         ? {
-            exit_code: cause.snapshot.exitCode ?? null,
-            signal: cause.snapshot.signal ?? null,
-            stdout: cause.snapshot.stdout.text,
-            stderr: cause.snapshot.stderr.text,
+            ...capturedProviderOutput(cause.snapshot),
             diagnostic_truncated: cause.snapshot.diagnosticTruncated ?? false,
           }
         : {}),
@@ -190,8 +337,16 @@ export const captureMemoryFailure = (
   input: InspectWebNetworkCaptureInput,
   reason: string,
   cause?: unknown,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
+  heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
+  /** The runtime's own report, which may lie beyond the retained output. */
+  exhaustion?: RuntimeExhaustion,
+): AnalysisResourceConstraintError => {
+  const processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
+    heap.oldGenerationMiB,
+  );
+  const recovery = captureDecoderHeapRecovery(heap);
+  const continuingRecovery = captureDecoderHeapContinuingRecovery(heap);
+  return new AnalysisResourceConstraintError(
     OPERATION,
     "memory",
     `${reason}: ${input.capture_path}. No complete capture result is available.`,
@@ -199,18 +354,18 @@ export const captureMemoryFailure = (
       boundary: "historical-capture-decoder",
       capture_path: input.capture_path,
       format: input.format,
-      maximum_input_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
-      maximum_reply_bytes: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+      maximum_input_bytes: captureBudgets().inputBytes,
+      maximum_reply_bytes: captureBudgets().outputBytes,
       ...(input.format !== "mitmproxy" && NODE_CAPTURE_HEAP_ENFORCED
         ? {
-            old_generation_heap_mib: NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB,
-            semi_space_heap_mib: NODE_CAPTURE_HEAP_LIMITS.semiSpaceMiB,
+            old_generation_heap_mib: heap.oldGenerationMiB,
+            old_generation_heap_source: heap.source,
+            semi_space_heap_mib: CAPTURE_DECODER_SEMI_SPACE_MIB,
           }
         : {}),
-      ...(input.format !== "mitmproxy" &&
-      NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null
+      ...(input.format !== "mitmproxy" && processMemoryLimitBytes !== null
         ? {
-            process_memory_limit_bytes: NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+            process_memory_limit_bytes: processMemoryLimitBytes,
           }
         : {}),
       ...(cause instanceof OwnedCommandFailure
@@ -222,15 +377,68 @@ export const captureMemoryFailure = (
     },
     {
       cause,
-      remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage.${input.format !== "mitmproxy" && NODE_CAPTURE_HEAP_ENFORCED ? ` REA's Node capture old-generation heap is fixed at ${NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB} MiB; inherited NODE_OPTIONS cannot raise it.` : ""}${input.format !== "mitmproxy" && NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null ? ` REA's Node capture decoder process commit limit is fixed at ${String(NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes.` : ""}`,
+      ...(exhaustion === undefined
+        ? {}
+        : {
+            diagnostics: {
+              runtime_exhaustion_report: runtimeExhaustionReport(exhaustion),
+            },
+          }),
+      ...(input.format !== "mitmproxy" &&
+      (NODE_CAPTURE_HEAP_ENFORCED || processMemoryLimitBytes !== null)
+        ? {
+            limit: analysisSettingLimit(
+              "capture.decoder_old_generation_mib",
+              heap.oldGenerationMiB,
+              heap.source,
+            ),
+          }
+        : {}),
+      remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage.${input.format !== "mitmproxy" ? ` ${recovery}` : ""}${input.format !== "mitmproxy" && processMemoryLimitBytes !== null ? ` The Windows Job Object commit limit for this decoder is ${String(processMemoryLimitBytes)} bytes, ${String(heap.oldGenerationMiB)} MiB plus a 512 MiB Bun reserve.` : ""}`,
+      ...(input.format === "mitmproxy"
+        ? {}
+        : {
+            continuingCallerGuidance: {
+              remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage. ${continuingRecovery}${processMemoryLimitBytes !== null ? ` The Windows Job Object commit limit for this decoder is ${String(processMemoryLimitBytes)} bytes, ${String(heap.oldGenerationMiB)} MiB plus a 512 MiB Bun reserve.` : ""}`,
+            },
+          }),
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
-            capturedOutput: {
-              stdout: cause.snapshot.stdout.text,
-              stderr: cause.snapshot.stderr.text,
-              truncated: cause.snapshot.diagnosticTruncated ?? false,
-            },
+            capturedOutput: capturedProviderOutput(cause.snapshot),
           }
         : {}),
     },
   );
+};
+
+/** Preserve the exact file owner when capture or descriptor acquisition needs cleanup. */
+export const withCaptureReaderCleanup = (
+  primary: AnalysisError,
+  cause: unknown,
+): AnalysisError => {
+  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
+    return primary;
+  const cleanup = new ProviderCleanupError(
+    "web-network-capture",
+    cause.cleanup.resources,
+    { reason: cause.cleanup.reason },
+    { operation: OPERATION, cause },
+  );
+  bindArtifactFileCleanup(cause, cleanup);
+  if (
+    cause.reason === "unavailable" &&
+    primary instanceof ProviderAdapterError &&
+    primary.cause === cause
+  ) {
+    if (primary.partialObservation !== undefined)
+      cleanup.retainPartialObservation(primary.partialObservation);
+    return cleanup;
+  }
+  const composed = analysisErrorWithCleanupDependencies(
+    primary,
+    cleanup,
+    OPERATION,
+  );
+  bindArtifactFileCleanup(cause, composed);
+  return composed;
+};

@@ -1,0 +1,57 @@
+import { expect, it } from "vitest";
+import {
+  elfNoteTypeName,
+  elfObjectTypeName,
+  inspectElfNotesInputSchema,
+  elfNotesSchema,
+} from "./elfNotes.js";
+
+it("maps ELF object, GNU, CORE, Android and FDO note types without inventing unknown names", () => {
+  expect(elfObjectTypeName(1)).toBe("relocatable");
+  expect(elfObjectTypeName(2)).toBe("executable");
+  expect(elfObjectTypeName(3)).toBe("shared");
+  expect(elfObjectTypeName(4)).toBe("core");
+  expect(elfObjectTypeName(99)).toBe("unknown");
+  expect(elfNoteTypeName("GNU", 1, true)).toBe("gnu_abi_tag");
+  expect(elfNoteTypeName("GNU", 3, true)).toBe("gnu_build_id");
+  expect(elfNoteTypeName("GNU", 99, true)).toBe("unknown");
+  expect(elfNoteTypeName("CORE", 3, true)).toBe("core_prpsinfo");
+  expect(elfNoteTypeName("CORE", 1, true)).toBe("unknown");
+  expect(elfNoteTypeName("Android", 1, true)).toBe("android_ident");
+  expect(elfNoteTypeName("Android", 2, true)).toBe("unknown");
+  expect(elfNoteTypeName("CORE", 3, false)).toBe("unknown");
+  expect(elfNoteTypeName("FDO", 0xcafe1a7e, false)).toBe(
+    "fdo_packaging_metadata",
+  );
+  expect(elfNoteTypeName("FDO", 0x407c0c0a, false)).toBe("fdo_dlopen_metadata");
+  expect(elfNoteTypeName("FDO", 1, false)).toBe("unknown");
+});
+
+it("rejects extra caller arguments and admits an empty note inventory", () => {
+  expect(
+    inspectElfNotesInputSchema.safeParse({
+      path: "/artifacts/app",
+      extra: true,
+    }).success,
+  ).toBe(false);
+  const report = elfNotesSchema.parse({
+    artifact: {
+      path: "/artifacts/app",
+      sha256: "a".repeat(64),
+      bytes: 512,
+    },
+    format: "elf64",
+    byte_order: "little",
+    machine: 62,
+    type: 3,
+    type_name: "shared",
+    tables: [],
+    entries: [],
+    coverage: { status: "complete", examined_tables: 0, examined_entries: 0 },
+    limitations: [
+      "No PT_NOTE program header or SHT_NOTE section was declared.",
+    ],
+  });
+  expect(report.tables).toEqual([]);
+  expect(report.entries).toEqual([]);
+});

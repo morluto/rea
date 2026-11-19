@@ -9,19 +9,16 @@ import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type SnapshotMode =
   | "valid"
   | "omitted-node"
   | "changed-node"
-  | "missing-nodes"
-  | "null-nodes"
   | "missing-documents"
   | "invalid-documents"
   | "empty-documents"
-  | "invalid-document"
   | "mixed-documents"
   | "missing-strings";
 
@@ -29,26 +26,38 @@ const snapshot = (origin: string, mode: SnapshotMode) => {
   const document = {
     documentURL: 0,
     nodes: {
-      nodeType: [9, 1],
-      nodeName: [1, mode === "changed-node" ? 6 : 3],
-      nodeValue: [2, 2],
-      parentIndex: [-1, 0],
-      attributes: [[], mode === "omitted-node" ? null : [4, 5]],
+      nodeType: [9, 1, 1],
+      nodeName: [1, 7, mode === "changed-node" ? 6 : 3],
+      nodeValue: [2, 2, 2],
+      parentIndex: [-1, 0, 1],
+      attributes: [[], [], mode === "omitted-node" ? null : [4, 5]],
     },
   };
   let documents: unknown = [document];
-  if (mode === "missing-nodes") documents = [{ documentURL: 0 }];
-  if (mode === "null-nodes") documents = [{ documentURL: 0, nodes: null }];
   if (mode === "missing-documents") documents = undefined;
   if (mode === "invalid-documents") documents = {};
   if (mode === "empty-documents") documents = [];
-  if (mode === "invalid-document") documents = [null];
-  if (mode === "mixed-documents") documents = [document, null];
+  if (mode === "mixed-documents")
+    documents = [
+      document,
+      null,
+      { documentURL: 0 },
+      { documentURL: 0, nodes: null },
+    ];
   return {
     strings:
       mode === "missing-strings"
         ? undefined
-        : [origin + "/app", "#document", "", "A", "href", "/target", "SPAN"],
+        : [
+            origin + "/app",
+            "#document",
+            "",
+            "A",
+            "href",
+            "/target",
+            "SPAN",
+            "HTML",
+          ],
     documents,
   };
 };
@@ -111,7 +120,7 @@ const startBrowser = async () => {
     if (!result.ok) throw result.error;
     return result.value;
   };
-  return { state, inspect };
+  return { state, inspect, origin: browser.allowedOrigin };
 };
 
 const compare = (before: WebPageInspection, after: WebPageInspection) =>
@@ -122,145 +131,188 @@ const compare = (before: WebPageInspection, after: WebPageInspection) =>
     }),
   );
 
-describe("DOM protocol omissions at the production capture boundary", () => {
-  it.each([
-    "missing-nodes",
-    "null-nodes",
+const unknownDimension = { status: "unknown", total_changes: 0, changes: [] };
+
+const documentExclusions = (capture: WebPageInspection) =>
+  capture.completeness.excluded.filter(
+    ({ section }) => section === "dom" || section === "metadata",
+  );
+
+it("reports unknown document coverage for an unreadable snapshot", async () => {
+  const { state, inspect } = await startBrowser();
+  for (const mode of [
     "missing-documents",
     "invalid-documents",
     "empty-documents",
-    "invalid-document",
-    "mixed-documents",
     "missing-strings",
-  ] as const)("retains unknown coverage for %s", async (mode) => {
-    const { state, inspect } = await startBrowser();
+  ] as const) {
     state.mode = mode;
     const capture = await inspect();
-    for (const section of ["dom", "metadata"])
-      expect(capture.completeness.unavailable_sections).toContain(section);
-    if (mode === "mixed-documents") {
-      expect(capture.dom.nodes.map(({ node_name }) => node_name)).toEqual([
-        "#document",
-        "A",
-      ]);
-      expect(capture.metadata.dom_urls).toHaveLength(1);
-    }
-    const comparison = compare(capture, capture);
-    expect(comparison.dimensions.dom_structure.status).toBe("unknown");
-    expect(comparison.dimensions.metadata.status).toBe("unknown");
-  });
+    expect(capture.dom, mode).toMatchObject({ total_nodes: 0, nodes: [] });
+    expect(capture.metadata.dom_urls, mode).toEqual([]);
+    expect(capture.completeness.unavailable_sections, mode).toEqual(
+      expect.arrayContaining(["dom", "metadata"]),
+    );
+    expect(documentExclusions(capture), mode).toEqual([
+      { section: "dom", reason: "invalid_protocol_value", count: null },
+      { section: "metadata", reason: "invalid_protocol_value", count: null },
+    ]);
+    expect(capture.accessibility.total_nodes, mode).toBeGreaterThan(0);
+  }
+});
 
-  it("does not turn a rejected node and its URL into a page change", async () => {
-    const { state, inspect } = await startBrowser();
-    const valid = await inspect();
-    state.mode = "omitted-node";
-    const partial = await inspect();
-    expect(partial.dom.total_nodes).toBe(2);
-    expect(partial.dom.nodes).toHaveLength(1);
-    for (const [before, after] of [
-      [valid, partial],
-      [partial, valid],
-    ]) {
-      if (before === undefined || after === undefined)
-        throw new Error("Missing pair");
-      const comparison = compare(before, after);
-      expect(comparison.dimensions.dom_structure.status).toBe("unknown");
-      expect(comparison.dimensions.metadata.status).toBe("unknown");
-      expect(comparison.overall_status).toBe("unknown");
-    }
+it("retains valid document evidence beside malformed siblings without proving equality", async () => {
+  const { state, inspect, origin } = await startBrowser();
+  state.mode = "mixed-documents";
+  const capture = await inspect();
+  expect(capture.dom.total_nodes).toBe(3);
+  expect(capture.dom.nodes.map(({ node_name }) => node_name)).toEqual([
+    "#document",
+    "HTML",
+    "A",
+  ]);
+  expect(capture.metadata.dom_urls.map(({ url }) => url)).toEqual([
+    `${origin}/target`,
+  ]);
+  expect(capture.completeness.unavailable_sections).toEqual(
+    expect.arrayContaining(["dom", "metadata"]),
+  );
+  expect(documentExclusions(capture)).toEqual([
+    { section: "dom", reason: "invalid_protocol_value", count: 3 },
+    { section: "metadata", reason: "invalid_protocol_value", count: 3 },
+  ]);
+  expect(compare(capture, capture).dimensions).toMatchObject({
+    dom_structure: unknownDimension,
+    metadata: unknownDimension,
   });
 });
 
-describe("complete frame and DOM comparison", () => {
-  it.each([undefined, null, 17, ""])(
-    "keeps missing or invalid child parent evidence unknown (%#)",
-    async (parent) => {
-      const { state, inspect } = await startBrowser();
-      const before = await inspect();
-      state.parentOverride = { value: parent };
-      const after = await inspect();
-      expect(after.frames).toHaveLength(3);
-      expect(after.completeness.unavailable_sections).toContain("frames");
-      expect(compare(before, after).dimensions.dom_structure.status).toBe(
-        "unknown",
-      );
-      expect(compare(after, after).dimensions.dom_structure.status).toBe(
-        "unknown",
-      );
-    },
-  );
-  it("retains a complete observed node change", async () => {
-    const { state, inspect } = await startBrowser();
-    const before = await inspect();
-    expect(compare(before, before).dimensions.dom_structure.status).toBe(
-      "unchanged",
-    );
-    state.mode = "changed-node";
+it("keeps frame ancestry unknown when a retained child has no readable parent", async () => {
+  const { state, inspect } = await startBrowser();
+  const before = await inspect();
+  for (const parent of [undefined, null, 17, ""]) {
+    state.parentOverride = { value: parent };
+    const after = await inspect();
+    const label = String(parent);
     expect(
-      compare(before, await inspect()).dimensions.dom_structure.status,
-    ).toBe("changed");
+      after.frames.map(({ frame_id, parent_frame_id }) => [
+        frame_id,
+        parent_frame_id,
+      ]),
+      label,
+    ).toEqual([
+      ["main", null],
+      ["a", "main"],
+      ["b", null],
+    ]);
+    expect(after.completeness.unavailable_sections, label).toContain("frames");
+    expect(after.completeness.excluded, label).toContainEqual({
+      section: "frames",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    expect(
+      compare(before, after).dimensions.dom_structure,
+      label,
+    ).toMatchObject(unknownDimension);
+    expect(compare(after, after).dimensions.dom_structure, label).toMatchObject(
+      unknownDimension,
+    );
+  }
+});
+
+it("compares document changes and frame ancestry independently of volatile frame IDs", async () => {
+  const { state, inspect } = await startBrowser();
+  const before = await inspect();
+  state.renamed = true;
+  expect(
+    compare(before, await inspect()).dimensions.dom_structure,
+  ).toMatchObject({
+    status: "unchanged",
+    total_changes: 0,
+    changes: [],
   });
 
-  it("compares frame ancestry independently of volatile IDs", async () => {
-    const { state, inspect } = await startBrowser();
-    const before = await inspect();
-    state.renamed = true;
-    expect(
-      compare(before, await inspect()).dimensions.dom_structure.status,
-    ).toBe("unchanged");
-    state.nested = true;
-    const nested = await inspect();
-    expect(nested.frames[2]?.parent_frame_id).toBe("new-a");
-    expect(compare(before, nested).dimensions.dom_structure.status).toBe(
-      "changed",
-    );
+  state.mode = "changed-node";
+  expect(
+    compare(before, await inspect()).dimensions.dom_structure,
+  ).toMatchObject({
+    status: "changed",
+    total_changes: 1,
+    changes: [{ identity: "document", change: "modified" }],
   });
 
-  it("retains proven frame changes when DOM node evidence is incomplete", async () => {
-    const { state, inspect } = await startBrowser();
-    const before = await inspect();
-    state.mode = "omitted-node";
-    state.nested = true;
-    const comparison = compare(before, await inspect());
-    expect(comparison.dimensions.dom_structure.status).toBe("changed");
-    expect(comparison.dimensions.metadata.status).toBe("unknown");
+  state.mode = "valid";
+  state.nested = true;
+  const nested = await inspect();
+  expect(
+    nested.frames.find(({ frame_id }) => frame_id === "new-b")?.parent_frame_id,
+  ).toBe("new-a");
+  expect(compare(before, nested).dimensions.dom_structure).toMatchObject({
+    status: "changed",
+    total_changes: 1,
+    changes: [{ identity: "frames", change: "modified" }],
   });
 });
 
 describe("DOM evidence through the public CLI", () => {
-  it("preserves omissions and independently proven frame changes", async () => {
-    const { state, inspect } = await startBrowser();
-    const root = await createTestTempDirectory("rea-dom-comparison-");
-    const before = join(root, "before.json");
-    const after = join(root, "after.json");
-    await writeFile(before, JSON.stringify({ inspection: await inspect() }));
-    state.mode = "omitted-node";
-    for (const nested of [false, true]) {
-      state.nested = nested;
-      await writeFile(after, JSON.stringify({ inspection: await inspect() }));
-      expect(
-        await runCliJson(["compare-web-captures", before, after, "--json"]),
-      ).toMatchObject({
-        operation: "compare_web_captures",
-        normalized_result: {
-          overall_status: nested ? "changed" : "unknown",
-          dimensions: {
-            dom_structure: { status: nested ? "changed" : "unknown" },
-            metadata: { status: "unknown" },
+  cliTest(
+    "preserves omissions and independently proven frame changes",
+    async ({ cli }) => {
+      const { state, inspect } = await startBrowser();
+      const root = await createTestTempDirectory("rea-dom-comparison-");
+      const before = join(root, "before.json");
+      const after = join(root, "after.json");
+      const baseline = await inspect();
+      await writeFile(before, JSON.stringify({ inspection: baseline }));
+      state.mode = "omitted-node";
+      for (const nested of [false, true]) {
+        state.nested = nested;
+        const partial = await inspect();
+        expect(partial.dom, `nested=${nested}`).toMatchObject({
+          total_nodes: 3,
+          nodes: [
+            expect.objectContaining({ node_name: "#document" }),
+            expect.objectContaining({ node_name: "HTML" }),
+          ],
+        });
+        expect(partial.metadata.dom_urls).toEqual([]);
+        expect(documentExclusions(partial)).toEqual([
+          { section: "dom", reason: "invalid_protocol_value", count: 1 },
+          { section: "metadata", reason: "invalid_protocol_value", count: 1 },
+        ]);
+        if (!nested) {
+          const reverse = compare(partial, baseline);
+          expect(reverse.overall_status).toBe("unknown");
+          expect(reverse.dimensions).toMatchObject({
+            dom_structure: unknownDimension,
+            metadata: unknownDimension,
+          });
+        }
+        await writeFile(after, JSON.stringify({ inspection: partial }));
+        const cliResult = await cli.run({
+          arguments: ["compare-web-captures", before, after, "--json"],
+          environment: process.env,
+        });
+        expect(cliResult.exitCode).toBe(0);
+        expect(cliResult.signal).toBeNull();
+        expect(cliResult.json).toMatchObject({
+          operation: "compare_web_captures",
+          normalized_result: {
+            overall_status: nested ? "changed" : "unknown",
+            dimensions: {
+              dom_structure: nested
+                ? {
+                    status: "changed",
+                    total_changes: 1,
+                    changes: [{ identity: "frames", change: "modified" }],
+                  }
+                : unknownDimension,
+              metadata: unknownDimension,
+            },
           },
-        },
-      });
-    }
-    state.mode = "missing-nodes";
-    await writeFile(after, JSON.stringify({ inspection: await inspect() }));
-    expect(
-      await runCliJson(["compare-web-captures", after, after, "--json"]),
-    ).toMatchObject({
-      operation: "compare_web_captures",
-      normalized_result: {
-        overall_status: "unknown",
-        dimensions: { dom_structure: { status: "unknown" } },
-      },
-    });
-  });
+        });
+      }
+    },
+  );
 });

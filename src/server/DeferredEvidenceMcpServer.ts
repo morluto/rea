@@ -1,0 +1,379 @@
+import type {
+  RegisteredTool,
+  RegisteredPrompt,
+  StandardSchemaWithJSON,
+  ToolCallback,
+  PromptCallback,
+} from "@modelcontextprotocol/server";
+import type { PromptCompletionSource } from "./promptCompletion.js";
+import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
+import {
+  EvidenceMcpServerCore,
+  currentMcpRequestSignal,
+  type StandardToolRegistration,
+} from "./EvidenceMcpServerCore.js";
+import { promptArgumentsSchema } from "./promptArguments.js";
+import { SERVER_START_FAILED } from "../main/messages.js";
+import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
+import { serverInstructions } from "./serverInstructions.js";
+
+type ToolConfig = StandardToolRegistration;
+type InputCallback = ToolCallback<StandardSchemaWithJSON>;
+interface DeferredTool {
+  readonly registered: RegisteredTool;
+  readonly input: Record<string, unknown>;
+  readonly output: Record<string, unknown> | undefined;
+  callback?: InputCallback;
+}
+interface DeferredPrompt {
+  readonly registered: RegisteredPrompt;
+  callback?: PromptCallback<StandardSchemaWithJSON>;
+}
+
+/** Borrow the build-owned wire projection while retaining the canonical parser. */
+const recordedProjection = (
+  schema: StandardSchemaWithJSON,
+  projection: Record<string, unknown>,
+): StandardSchemaWithJSON => ({
+  "~standard": {
+    ...schema["~standard"],
+    jsonSchema: { input: () => projection, output: () => projection },
+  },
+});
+
+/** One SDK server, with async canonical validation installed on first use. */
+export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
+  private readonly tools = new Map<string, DeferredTool>();
+  private readonly prompts = new Map<string, DeferredPrompt>();
+  private loading: Promise<void> | undefined;
+  private closing = false;
+  private closeAttempt: Promise<void> | undefined;
+  private protocolClosed = false;
+  private runtimeClosed = false;
+  private runtimeCleanup: (() => Promise<void>) | undefined;
+  private partialClose: (() => Promise<void>) | undefined;
+  private materializing = false;
+  private readonly protocolClose = () => super.close();
+  private readonly canAdvertise: (tool: string) => boolean;
+
+  constructor(
+    catalog: RecordedMcpCatalog,
+    delivery: ToolResultDelivery,
+    private readonly initialize: (
+      server: DeferredEvidenceMcpServer,
+    ) => Promise<void>,
+    options: {
+      readonly maximumInputElements?: number | undefined;
+      // Recorded tools carry their presented schemas. The selected presentation
+      // still applies to transport discovery, which is not recorded.
+      readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+      readonly identity?: RecordedMcpCatalog["identity"] | undefined;
+      readonly toolFamilies?: ReadonlySet<string> | undefined;
+    } = {},
+  ) {
+    const families = options.toolFamilies;
+    const advertisesTool = (tool: string) =>
+      isToolFamilyAdvertised(families, catalog.toolFamilies[tool]);
+    super(
+      catalog.info,
+      {
+        // For a scoped connection the SDK advertises the capabilities of the
+        // admitted registrations, including whether there are any prompts.
+        capabilities: families === undefined ? catalog.capabilities : {},
+        instructions:
+          families === undefined
+            ? catalog.instructions
+            : serverInstructions(true, advertisesTool),
+        ...(options.maximumInputElements === undefined
+          ? {}
+          : { maxToolInputElements: options.maximumInputElements }),
+      },
+      undefined,
+      delivery,
+      options.compactPresentation,
+      // Recorded tools carry complete output schemas; the default `off`
+      // profile omits them from listings while the runtime still validates
+      // structured results.
+      "off",
+      // Scoped digests belong to the canonical runtime, which attaches them
+      // before serving any tool or prompt that can report an identity.
+      families === undefined
+        ? (options.identity ?? catalog.identity)
+        : undefined,
+      families,
+    );
+    this.canAdvertise = advertisesTool;
+    for (const name of catalog.evidenceReferenceAlternatives)
+      this.registerEvidenceReferenceAlternative(name);
+    for (const tool of catalog.tools) {
+      const { name, inputSchema, outputSchema, ...metadata } = tool;
+      let binding: DeferredTool;
+      const input: StandardSchemaWithJSON = {
+        "~standard": {
+          version: 1,
+          vendor: "rea",
+          jsonSchema: { input: () => inputSchema, output: () => inputSchema },
+          validate: async (value) => {
+            await this.ensureRuntime();
+            const canonical = binding.registered.inputSchema;
+            if (canonical === undefined || canonical === input)
+              throw new Error(SERVER_START_FAILED);
+            return canonical["~standard"].validate(value);
+          },
+        },
+      };
+      const output: StandardSchemaWithJSON | undefined =
+        outputSchema === undefined
+          ? undefined
+          : {
+              "~standard": {
+                version: 1,
+                vendor: "rea",
+                jsonSchema: {
+                  input: () => outputSchema,
+                  output: () => outputSchema,
+                },
+                validate: async (value) => {
+                  await this.ensureRuntime();
+                  const canonical = binding.registered.outputSchema;
+                  if (canonical === undefined || canonical === output)
+                    throw new Error(SERVER_START_FAILED);
+                  return canonical["~standard"].validate(value);
+                },
+              },
+            };
+      const registered = super.bindTool(
+        name,
+        {
+          ...metadata,
+          inputSchema: input,
+          ...(output === undefined ? {} : { outputSchema: output }),
+        } as StandardToolRegistration,
+        (async (args, ctx) => {
+          await this.ensureRuntime();
+          ctx.mcpReq.signal.throwIfAborted();
+          if (binding.callback === undefined)
+            throw new Error(SERVER_START_FAILED);
+          return binding.callback(args, ctx);
+        }) as InputCallback,
+      );
+      if (!advertisesTool(name)) registered.disable();
+      binding = { registered, input: inputSchema, output: outputSchema };
+      this.tools.set(name, binding);
+    }
+    const completion = {
+      complete: async (
+        ...args: Parameters<
+          NonNullable<typeof this.promptCompletion>["complete"]
+        >
+      ) => {
+        await this.ensureRuntime();
+        currentMcpRequestSignal()?.throwIfAborted();
+        if (this.promptCompletion === undefined)
+          throw new Error(SERVER_START_FAILED);
+        return this.promptCompletion.complete(...args);
+      },
+    };
+    for (const prompt of catalog.prompts) {
+      const { name, parameters, title, description } = prompt;
+      if (families !== undefined) {
+        const required = catalog.promptRequirements[name];
+        if (required === undefined) throw new Error(SERVER_START_FAILED);
+        if (!required.every(advertisesTool)) continue;
+      }
+      let binding: DeferredPrompt;
+      const argsSchema = promptArgumentsSchema(
+        { arguments: parameters },
+        completion,
+      );
+      const registered = super.registerCanonicalPrompt(
+        name,
+        {
+          ...(title === undefined ? {} : { title }),
+          ...(description === undefined ? {} : { description }),
+          argsSchema,
+        },
+        async (args, ctx) => {
+          await this.ensureRuntime();
+          ctx.mcpReq.signal.throwIfAborted();
+          if (binding.callback === undefined)
+            throw new Error(SERVER_START_FAILED);
+          return binding.callback(args, ctx);
+        },
+      );
+      binding = { registered };
+      this.prompts.set(name, binding);
+    }
+  }
+
+  override advertisesTool(name: string): boolean {
+    return this.canAdvertise(name);
+  }
+
+  ensureRuntime(): Promise<void> {
+    if (this.closing)
+      return Promise.reject(new Error("MCP connection is closed"));
+    this.loading ??= Promise.resolve()
+      .then(() => this.initialize(this))
+      .catch(() => {
+        throw new Error(SERVER_START_FAILED);
+      });
+    return this.loading;
+  }
+
+  /** Register an awaitable cleanup capability before runtime startup can fail. */
+  ownRuntimeCleanup(close: () => Promise<void>): void {
+    this.runtimeCleanup = close;
+  }
+
+  /** Canonical composition may wrap close; retain that exact cleanup capability. */
+  materialize(build: () => void): void {
+    const ownedClose = this.close.bind(this);
+    this.materializing = true;
+    this.close = this.protocolClose;
+    try {
+      build();
+      if (this.tools.size !== 0 || this.prompts.size !== 0)
+        throw new Error("MCP catalog does not match runtime registrations");
+    } finally {
+      this.partialClose = this.close.bind(this);
+      this.close = ownedClose;
+      this.materializing = false;
+    }
+  }
+
+  closePartialRuntime(): Promise<void> {
+    return this.partialClose?.() ?? Promise.resolve();
+  }
+
+  /**
+   * Recorded tools already list their presented description; keep it rather
+   * than project every canonical input schema when the runtime materializes.
+   */
+  protected override describeTool(
+    name: string,
+    advertised: () => string | undefined,
+  ): { description?: string } {
+    const recorded = this.tools.get(name)?.registered.description;
+    if (this.materializing && recorded !== undefined)
+      return { description: recorded };
+    return super.describeTool(name, advertised);
+  }
+
+  protected override bindTool(
+    name: string,
+    config: ToolConfig,
+    callback: ToolCallback<StandardSchemaWithJSON | undefined>,
+  ): RegisteredTool {
+    const binding = this.tools.get(name);
+    if (
+      !this.materializing ||
+      binding === undefined ||
+      config.inputSchema === undefined ||
+      (config.outputSchema === undefined) !== (binding.output === undefined)
+    )
+      throw new Error("Unexpected MCP runtime registration");
+    const canonical = callback as InputCallback;
+    const guarded: InputCallback = async (args, ctx) => {
+      ctx.mcpReq.signal.throwIfAborted();
+      await this.ensureRuntime();
+      ctx.mcpReq.signal.throwIfAborted();
+      return canonical(args, ctx);
+    };
+    binding.callback = guarded;
+    const { inputSchema: _input, outputSchema: _output, ...metadata } = config;
+    binding.registered.update({
+      ...metadata,
+      paramsSchema: recordedProjection(config.inputSchema, binding.input),
+      ...(config.outputSchema === undefined || binding.output === undefined
+        ? {}
+        : {
+            outputSchema: recordedProjection(
+              config.outputSchema,
+              binding.output,
+            ),
+          }),
+      callback: guarded,
+    });
+    this.tools.delete(name);
+    return binding.registered;
+  }
+
+  override registerCanonicalPrompt<Args extends StandardSchemaWithJSON>(
+    name: string,
+    config: { title?: string; description?: string; argsSchema: Args },
+    callback: PromptCallback<Args>,
+  ): RegisteredPrompt {
+    const binding = this.prompts.get(name);
+    if (!this.materializing || binding === undefined)
+      throw new Error("Unexpected MCP runtime prompt");
+    const canonical = callback as PromptCallback<StandardSchemaWithJSON>;
+    binding.callback = async (args, ctx) => {
+      ctx.mcpReq.signal.throwIfAborted();
+      await this.ensureRuntime();
+      ctx.mcpReq.signal.throwIfAborted();
+      return canonical(args, ctx);
+    };
+    binding.registered.update<StandardSchemaWithJSON>({
+      ...config,
+      callback: binding.callback,
+    });
+    this.prompts.delete(name);
+    return binding.registered;
+  }
+
+  override bindPromptCompletion(
+    completion: PromptCompletionSource,
+  ): PromptCompletionSource {
+    return super.bindPromptCompletion({
+      complete: async (...args) => {
+        await this.ensureRuntime();
+        currentMcpRequestSignal()?.throwIfAborted();
+        return completion.complete(...args);
+      },
+    });
+  }
+
+  override sendToolListChanged(): void {
+    if (!this.materializing) super.sendToolListChanged();
+  }
+  override sendPromptListChanged(): void {
+    if (!this.materializing) super.sendPromptListChanged();
+  }
+
+  override close(): Promise<void> {
+    this.closing = true;
+    this.closeAttempt ??= Promise.resolve()
+      .then(() => this.finishClose())
+      .catch((cause) => {
+        this.closeAttempt = undefined;
+        throw cause;
+      });
+    return this.closeAttempt;
+  }
+
+  private async finishClose(): Promise<void> {
+    const errors: unknown[] = [];
+    if (!this.protocolClosed) {
+      try {
+        await this.protocolClose();
+        this.protocolClosed = true;
+      } catch (cause) {
+        errors.push(cause);
+      }
+    }
+    await this.loading?.catch(() => undefined);
+    if (!this.runtimeClosed && this.runtimeCleanup !== undefined) {
+      try {
+        await this.runtimeCleanup();
+        this.runtimeClosed = true;
+      } catch (cause) {
+        errors.push(cause);
+      }
+    }
+    if (errors.length > 0)
+      throw new AggregateError(errors, "MCP runtime cleanup failed");
+  }
+}

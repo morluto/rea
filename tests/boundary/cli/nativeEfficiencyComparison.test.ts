@@ -12,7 +12,7 @@ const execute = promisify(execFile);
 // A recording port checks the experimental producer/consumer representation.
 // Real provider verification remains in the separate native experiment receipts.
 const generate = `
-import {measureNativeEntry} from './experiments/analysis-efficiency/native-entry.mjs';
+import {measureNativeEntry} from './tests/support/analysis-efficiency/native-entry.mjs';
 const sha='0'.repeat(64);
 const duplicate=process.argv[1]==='duplicate';
 const stale=process.argv[1]==='stale-dos';
@@ -28,7 +28,7 @@ const build=async digit=>{
     if(name==='open_binary'||name==='close_binary')return {};
     if(name==='inspect_native_load_image')return {evidence_id:'ev_'+digit.repeat(63)+'6',normalized_result:{status:'verified',target_sha256:stale?'f'.repeat(64):sha,entry:{linear_address:'0x1000'}}};
     if(name==='resolve_containing_procedure')return {evidence_id:'ev_'+digit.repeat(63)+'7',normalized_result:{found:true}};
-    if(name==='analyze_function')return {evidence_id:parent,subject:{digest:{sha256:sha}},normalized_result:dossier};
+    if(name==='analyze_function')return {evidence_id:parent,subject:{identity:{sha256:sha}},normalized_result:dossier};
     const id='ev_'+digit.repeat(63)+(collision==='containing-collision'?7:collision==='load-collision'?6:duplicate?1:++ordinal);
     if(args.view.kind==='summary')return {evidence_id:id};
     const facet=args.view.facet;
@@ -162,7 +162,7 @@ it.each([
       events.map((value) => JSON.stringify(value)).join("\n"),
     );
     const command = execute("python3", [
-      resolve("experiments/analysis-efficiency/review-model.py"),
+      resolve("tests/support/analysis-efficiency/review-model.py"),
       "--domain",
       "native",
       "--trial",
@@ -292,7 +292,7 @@ it.each(["references", "item", "coverage", "limitations", "unknowns"])(
     }
     const output = join(root, "comparison.json");
     const command = execute(process.execPath, [
-      resolve("experiments/analysis-efficiency/compare.mjs"),
+      resolve("tests/support/analysis-efficiency/compare.mjs"),
       "--left",
       left,
       "--right",

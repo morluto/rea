@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { expect, it, vi } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 
@@ -122,4 +122,64 @@ it("bounds returned-reference expansion across a React-shaped switch mesh", () =
   expect(large.result.references).toEqual([]);
   expect(small.reads).toBeGreaterThan(0);
   expect(large.reads).toBeLessThan(4 * small.reads);
+});
+
+it.each([
+  ["{make:()=>module}", "{...box}", "box.make"],
+  ["[()=>module]", "[...box]", "box[0]"],
+])(
+  "converges repeated copy boundaries without dropping callable results: %s",
+  (initial, replacement, target) => {
+    const state = indexed(
+      `let box=${initial};while(flag)box=${replacement};${target}();`,
+    );
+    let callee: t.Node | undefined;
+    t.traverseFast(state.program, (node) => {
+      if (t.isCallExpression(node)) callee = node.callee;
+    });
+    if (callee === undefined) throw new Error("Missing copied call");
+    const lookups = state.scopes.map((scope) =>
+      vi.spyOn(scope.bindings, "get"),
+    );
+    try {
+      const result = createSemanticReturnedReferences(state)(callee);
+      expect(result.references).toContainEqual({
+        node: expect.objectContaining({ type: "Identifier", name: "module" }),
+        projection: [],
+      });
+      expect(
+        lookups.reduce((count, lookup) => count + lookup.mock.calls.length, 0),
+      ).toBeLessThan(100);
+    } finally {
+      for (const lookup of lookups) lookup.mockRestore();
+    }
+  },
+);
+
+it("discloses getter-result widening when selecting returned callable targets", () => {
+  const parsed = parseJavaScriptSource(
+    "const box={get item(){return {make:()=>result}}};box.item.make();",
+  );
+  if (parsed === null) throw new Error("Expected getter fixture");
+  const steps = indexJavaScriptBindingsSteps(parsed.program, {
+    getter_expansions: 1,
+  });
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  let call: t.CallExpression | undefined;
+  t.traverseFast(parsed.program, (node) => {
+    if (t.isCallExpression(node)) call = node;
+  });
+  if (call === undefined)
+    throw new Error("Expected getter-produced callable invocation");
+  const result = createSemanticReturnedReferences(step.value)(
+    call.callee,
+    call,
+  );
+  expect(result.precision).toBe("widened");
+  expect(result.references).toContainEqual({
+    node: expect.objectContaining({ type: "Identifier", name: "result" }),
+    projection: [],
+  });
+  expect(step.value.returnedReferenceWidenings.has(call.callee)).toBe(true);
 });

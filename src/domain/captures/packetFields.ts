@@ -1,13 +1,19 @@
 import { z } from "zod";
 import { packetCaptureSchema } from "./packetCapture.js";
+import { boundedProducerLimitsSchema } from "../producerResourceLimits.js";
 
 export const inspectPacketFieldsInputSchema = z.strictObject({
+  producer_limits: boundedProducerLimitsSchema
+    .unwrap()
+    .omit({ input_bytes: true })
+    .optional()
+    .describe(
+      "Per-call producer budgets; defaults match packet capture except output_bytes defaults to 32 MiB for the complete field glossary. No capture input is read. Tighter inherited OS limits still win; no restart. Does not raise the separate parsed-record budget.",
+    ),
   kind: z
     .enum(["protocols", "fields"])
     .default("protocols")
-    .describe(
-      "Return protocol registrations or field definitions; defaults to protocols",
-    ),
+    .describe("Return protocol registrations or field definitions"),
   protocol: z
     .string()
     .min(1)
@@ -30,7 +36,7 @@ export const inspectPacketFieldsInputSchema = z.strictObject({
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
     .default(0)
-    .describe("Number of matching records to skip; defaults to 0"),
+    .describe("Number of matching records to skip"),
   limit: z
     .number()
     .int()

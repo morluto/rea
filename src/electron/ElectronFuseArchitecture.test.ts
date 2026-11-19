@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,7 +73,7 @@ it("keeps a truncated COFF header unknown without refusing a recognized PE conta
   expect(result).toMatchObject({
     ok: true,
     value: {
-      subject: { architecture: null },
+      subject: { identity: { architecture: null } },
       normalized_result: {
         slices: [{ architecture: null, sentinel_count: 0 }],
       },
@@ -97,8 +98,8 @@ const assertArchitecture = async (
     new ElectronFuseProvider(),
   ).inspect({ path });
   if (!result.ok) throw result.error;
-  expect(result.value.subject?.architecture).toBe(architecture);
-  expect(result.value.subject?.digest.sha256).toBe(
+  expect(fileIdentity(result.value.subject).architecture).toBe(architecture);
+  expect(fileIdentity(result.value.subject).sha256).toBe(
     createHash("sha256").update(image.bytes).digest("hex"),
   );
   expect(result.value.normalized_result).toMatchObject({
@@ -114,5 +115,5 @@ const assertArchitecture = async (
   expect(
     report.slices[0]?.sentinels[0]?.fuses.map((fuse) => fuse.raw_byte),
   ).toEqual(OBSIDIAN_FUSE_BYTES);
-  expect(await readFile(path)).toEqual(image.bytes);
+  expect(Buffer.compare(await readFile(path), image.bytes)).toBe(0);
 };

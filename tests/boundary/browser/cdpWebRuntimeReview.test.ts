@@ -2,7 +2,12 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
 import { inspectWebEventListenersInputSchema } from "../../../src/domain/webEventListeners.js";
-import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
+import {
+  negativeColumnScript,
+  negativeColumnScriptUrl,
+  startNegativeColumnBrowser,
+  startRuntimeBrowser,
+} from "../../fixtures/webRuntime.js";
 
 describe("runtime document identity across same-document URL changes", () => {
   it.each(["execution", "listeners"] as const)(
@@ -216,4 +221,91 @@ describe("runtime collector failure and uncertain source metadata", () => {
       ),
     ).toBe(false);
   });
+});
+
+it("keeps negative columns Chrome reports for an inline script and its first-line callsites", async () => {
+  const browser = await startNegativeColumnBrowser();
+  onTestFinished(() => browser.close());
+  const scriptUrl = negativeColumnScriptUrl(browser.endpoint);
+  const result = await new CdpWebRuntimeProvider().observeExecution(
+    observeWebExecutionInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 30,
+    }),
+    {
+      progress: {
+        report: async (update) => {
+          if (update.completed !== 1) return;
+          for (const [requestId, initiator] of [
+            [
+              "script-request",
+              {
+                type: "script",
+                stack: {
+                  callFrames: [
+                    {
+                      scriptId: negativeColumnScript.scriptId,
+                      url: scriptUrl,
+                      functionName: "",
+                      lineNumber: 21,
+                      columnNumber: -40,
+                    },
+                  ],
+                },
+              },
+            ],
+            [
+              "parser-request",
+              {
+                type: "parser",
+                url: scriptUrl,
+                lineNumber: 21,
+                columnNumber: -30,
+              },
+            ],
+          ] as const)
+            browser.emitEvent({
+              method: "Network.requestWillBeSent",
+              sessionId: "session-1",
+              params: {
+                requestId,
+                frameId: "runtime-main",
+                timestamp: 12,
+                request: {
+                  url: `${browser.endpoint}/${requestId}`,
+                  method: "GET",
+                },
+                initiator,
+              },
+            });
+        },
+      },
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.requests.map(({ callsites }) =>
+      callsites.map(({ script_id, line_number, column_number }) => ({
+        script_id,
+        line_number,
+        column_number,
+      })),
+    ),
+  ).toEqual([
+    [
+      {
+        script_id: negativeColumnScript.scriptId,
+        line_number: 21,
+        column_number: -40,
+      },
+    ],
+    [{ script_id: "", line_number: 21, column_number: -30 }],
+  ]);
+  expect(result.value.sources).toContainEqual(
+    expect.objectContaining({
+      script_id: negativeColumnScript.scriptId,
+      resource_start: { line_number: 21, column_number: -60 },
+    }),
+  );
 });

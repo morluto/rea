@@ -26,12 +26,10 @@ it.each([
     );
     try {
       await expect
-        .poll(
-          async () =>
-            (await fakeKunaCalls(fixture.kuna)).some(
-              ({ argv }) => argv[0] === "strings",
-            ),
-          { timeout: 5000 },
+        .poll(async () =>
+          (await fakeKunaCalls(fixture.kuna)).some(
+            ({ argv }) => argv[0] === "strings",
+          ),
         )
         .toBe(true);
       caller.abort(reason);
@@ -70,12 +68,10 @@ it.each(["peer", "last"] as const)(
         : undefined;
     try {
       await expect
-        .poll(
-          async () =>
-            (await fakeKunaCalls(fixture.kuna)).some(
-              ({ argv }) => argv[0] === "decompile",
-            ),
-          { timeout: 5000 },
+        .poll(async () =>
+          (await fakeKunaCalls(fixture.kuna)).some(
+            ({ argv }) => argv[0] === "decompile",
+          ),
         )
         .toBe(true);
       caller.abort(reason);
@@ -146,7 +142,6 @@ it("keeps cancellation output and primary reason while exact command cleanup is 
       client.close(),
       client.close(),
     ]);
-    expect(rootFailure.ok).toBe(false);
     if (rootFailure.ok) throw new Error("Expected workspace cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([workspace.path]);

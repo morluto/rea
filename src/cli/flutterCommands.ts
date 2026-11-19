@@ -1,27 +1,20 @@
-import { z } from "incur";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import { createFlutterBuildAnalysisProvider } from "../composition/flutter.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
+import { FLUTTER_TOOL_CONTRACTS } from "../contracts/flutter/flutterToolContracts.js";
 import type { FlutterOperation } from "../domain/flutter/flutterBuildAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
+import { contractNamed } from "./contractCliDescription.js";
+import {
+  registerContractCommand,
+  type ContractCommandContext,
+} from "./contractCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-
-/** One flutter command: CLI shape and the request it produces. */
-interface FlutterCommandSpec {
-  readonly command: string;
-  readonly description: string;
-  readonly argumentSchema: z.ZodObject<z.ZodRawShape>;
-  readonly optionSchema?: z.ZodObject<z.ZodRawShape>;
-  readonly operation: FlutterOperation;
-  readonly toInput: (
-    arguments_: Record<string, unknown>,
-    options: Record<string, unknown>,
-  ) => unknown;
-}
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 
 /** Expose the same explicit Flutter requests through one-shot CLI commands. */
 export const registerFlutterCommands = (
@@ -29,65 +22,62 @@ export const registerFlutterCommands = (
   logger: Logger,
   provider: FlutterBuildAnalysisPort = createFlutterBuildAnalysisProvider(),
 ): void => {
-  const specs: readonly FlutterCommandSpec[] = [
+  /**
+   * Run one operation on the APK the caller selected, recording that spelling
+   * in Evidence, including a result completed before cleanup failed. The
+   * contract admits a relative path, resolved by the provider from the working
+   * directory, so the CLI passes it on as spelled.
+   */
+  const run =
+    (operation: FlutterOperation) =>
+    (input: { readonly path: string }, { signal }: ContractCommandContext) =>
+      finishAnalysisCommand(
+        bindCliEvidenceCallerPath(input.path, () =>
+          new FlutterBuildAnalysisService(provider).execute(operation, input, {
+            signal,
+          }),
+        ),
+        { close: () => provider.close() },
+        "flutter",
+        operation,
+        signal,
+        undefined,
+        {
+          recoverCompletedObservation: (observation) => {
+            // Only authenticated Evidence is recovered; otherwise the error stands.
+            const parsed = recognizeEvidence(observation);
+            return parsed.ok && parsed.value !== undefined
+              ? withEvidenceCallerInputPath(parsed.value, input.path)
+              : undefined;
+          },
+        },
+      ).then(projectCliAnalysisResult);
+
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(FLUTTER_TOOL_CONTRACTS, "identify_flutter_build"),
     {
-      command: CLI_COMMANDS.identifyFlutterBuild,
       description:
         "Identify a Flutter build's Dart snapshot hash and engine facts by pure APK parsing",
-      argumentSchema: z.object({
-        path: z.string().min(1).describe("Local APK file to inspect"),
-      }),
-      operation: "identify_flutter_build",
-      toInput: (arguments_) => arguments_,
+      positionals: ["path"],
     },
+    run("identify_flutter_build"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(FLUTTER_TOOL_CONTRACTS, "inspect_dart_aot"),
     {
-      command: CLI_COMMANDS.inspectDartAot,
       description:
         "Inspect one ABI's Dart AOT snapshot: sections, headers, and the string pool",
-      argumentSchema: z.object({
-        path: z
-          .string()
-          .min(1)
-          .describe("Local APK carrying a Flutter payload"),
-      }),
-      optionSchema: z.object({
-        abi: z
-          .string()
-          .min(2)
-          .max(16)
-          .optional()
-          .describe("ABI under lib/ to inspect; defaults to the preferred one"),
-      }),
-      operation: "inspect_dart_aot",
-      toInput: (arguments_, options) => ({
-        path: arguments_.path,
-        ...(options.abi === undefined ? {} : { abi: options.abi }),
-      }),
+      positionals: ["path"],
+      jsonText: ["pool_policy"],
+      omit: {
+        detail:
+          "The CLI returns complete Evidence; a summary needs a session that retains it for inspect_analysis_view",
+      },
     },
-  ];
-  for (const spec of specs) {
-    cli.command(spec.command, {
-      description: spec.description,
-      ...(spec.optionSchema === undefined
-        ? { args: spec.argumentSchema }
-        : { args: spec.argumentSchema, options: spec.optionSchema }),
-      run: ({ args, options }) =>
-        withCommandCancellation((signal) =>
-          logCliCommand(logger, spec.command, () =>
-            finishAnalysisCommand(
-              () =>
-                new FlutterBuildAnalysisService(provider).execute(
-                  spec.operation,
-                  spec.toInput(args, options ?? {}),
-                  { signal },
-                ),
-              { close: () => provider.close() },
-              "flutter",
-              spec.operation,
-              signal,
-            ),
-          ),
-        ),
-    });
-  }
+    run("inspect_dart_aot"),
+  );
 };

@@ -1,20 +1,37 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
-import type { BrowserContext, CDPSession, Page } from "playwright-core";
+import {
+  registeredCdpEvent,
+  type CdpEventPayload,
+  type CdpRegisteredEvent,
+} from "./protocol/CdpEvents.js";
+import type { BrowserContext, Page } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
+import {
+  admitCdpReply,
+  CdpMalformedReply,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
+import {
+  newPlaywrightCdpSession,
+  type PlaywrightCdpSession,
+} from "./PlaywrightCdpSession.js";
+import {
+  releaseLateScenarioCommand,
+  scenarioCommandPending,
+  scenarioCommandTimeoutMs,
+  withScenarioCommandDeadline,
+} from "./ScenarioCommandDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
-const breakpointResponse = z.object({ breakpointId: z.string() });
-const scriptIdentifierResponse = z.object({ identifier: z.string() });
-const storageKeyResponse = z.object({ storageKey: z.string() });
-const targetInfoResponse = z.object({
-  targetInfo: z.object({ targetId: z.string() }),
-});
 type StorageEventMethod =
   | "Runtime.executionContextCreated"
   | "Runtime.executionContextDestroyed"
@@ -24,7 +41,7 @@ type StorageEventMethod =
   | "Target.attachedToTarget"
   | "Target.detachedFromTarget"
   | "Target.receivedMessageFromTarget";
-const STORAGE_EVENT_METHODS = new Set<string>([
+const STORAGE_EVENT_METHODS = [
   "Runtime.executionContextCreated",
   "Runtime.executionContextDestroyed",
   "Runtime.executionContextsCleared",
@@ -33,16 +50,15 @@ const STORAGE_EVENT_METHODS = new Set<string>([
   "Target.attachedToTarget",
   "Target.detachedFromTarget",
   "Target.receivedMessageFromTarget",
-]);
-const attachedTargetEvent = z.object({
-  sessionId: z.string(),
-  targetInfo: z.object({ type: z.string(), targetId: z.string() }),
-});
-const targetSessionEvent = z.object({ sessionId: z.string() });
-const nestedMessageEvent = z.object({
-  sessionId: z.string(),
-  message: z.string(),
-});
+] as const satisfies readonly StorageEventMethod[];
+type StorageEvent = Extract<CdpRegisteredEvent, { method: StorageEventMethod }>;
+const isStorageEvent = (
+  event: CdpRegisteredEvent | undefined,
+): event is StorageEvent =>
+  event !== undefined &&
+  (STORAGE_EVENT_METHODS as readonly string[]).includes(event.method);
+
+/** The nested transport's envelope: a command reply or an event message. */
 const nestedProtocolMessage = z.object({
   id: z.number().optional(),
   method: z.string().optional(),
@@ -50,30 +66,42 @@ const nestedProtocolMessage = z.object({
   result: z.unknown().optional(),
   error: z.object({ message: z.string() }).optional(),
 });
-const executionContextEvent = z.object({
-  context: z.object({
-    id: z.number(),
-    origin: z.string(),
-    name: z.string(),
-    auxData: z.object({ frameId: z.string().optional() }).optional(),
-  }),
-});
-const scriptParsedEvent = z.object({
-  scriptId: z.string(),
-  executionContextId: z.number(),
-  url: z.string(),
-});
-const pausedEvent = z.object({
-  callFrames: z.array(
-    z.object({
-      callFrameId: z.string(),
-      location: z.object({ scriptId: z.string() }),
-    }),
-  ),
-});
-const evaluationResponse = z.object({
-  exceptionDetails: z.unknown().optional(),
-});
+type PausedCallFrames = Extract<
+  CdpEventPayload<"Debugger.paused">,
+  { success: true }
+>["data"];
+
+/** Private seeding needs every identity member a registered payload may leave unknown. */
+const required = <T>(value: T | undefined, method: string): T => {
+  if (value === undefined)
+    throw new TypeError(`${method} declared a malformed payload.`);
+  return value;
+};
+
+interface StorageContext {
+  readonly id: number;
+  readonly origin: string;
+  readonly name: string;
+  readonly frameId: string | undefined;
+}
+
+const storageContext = (
+  facts: CdpEventPayload<"Runtime.executionContextCreated">["facts"],
+): StorageContext => {
+  const method = "Runtime.executionContextCreated";
+  // A supplied frame claim must be a string; the empty spelling stays as reported.
+  if (
+    facts.frameClaim.state === "invalid" &&
+    facts.frameClaim.frameId === undefined
+  )
+    required(undefined, method);
+  return {
+    id: required(facts.id, method),
+    origin: required(facts.origin, method),
+    name: required(facts.name, method),
+    frameId: facts.frameClaim.frameId,
+  };
+};
 const STORAGE_CLEANUP_TIMEOUT_MS = 1_000;
 
 type StorageSeed = {
@@ -84,14 +112,13 @@ type StorageSeed = {
 interface StorageTarget {
   readonly parentId: string | undefined;
   readonly topLevelTargetId: string;
-  readonly send: (
-    method: string,
-    params?: Record<string, unknown>,
-  ) => Promise<unknown>;
-  readonly contexts: Map<
-    number,
-    z.infer<typeof executionContextEvent>["context"]
-  >;
+  /** Replies of registered commands are admitted by their result schemas. */
+  readonly send: <M extends CdpCommand>(
+    method: M,
+    params?: CdpCommandParams<M>,
+    timeoutMs?: number,
+  ) => Promise<CdpCommandResult<M>>;
+  readonly contexts: Map<number, StorageContext>;
   readonly scripts: Map<string, number>;
   ready: Promise<void>;
   waitingForDebugger: boolean;
@@ -119,15 +146,13 @@ export class PlaywrightScenarioStorage {
   readonly #targets = new Map<string, StorageTarget>();
   readonly #replies = new Map<number, PendingReply>();
   readonly #sourceUrl = `rea-storage-${randomUUID()}`;
-  readonly #listeners: {
-    readonly method: StorageEventMethod;
-    readonly listener: (params: unknown) => void;
-  }[] = [];
+  readonly #unsubscribers: (() => void)[] = [];
   #sequence = 0;
   #generation = 0;
   #closed = false;
   #cleanupCompleted = false;
   #loadingStopped = false;
+  #popupSeedCoverageUnknown = false;
   #failure: BrowserObservationError | undefined;
   #closePromise: Promise<PlaywrightScenarioStorageCleanup> | undefined;
   #detachPromise: Promise<void> | undefined;
@@ -136,8 +161,10 @@ export class PlaywrightScenarioStorage {
   #removeListeners: () => void = () => undefined;
 
   private constructor(
-    private readonly cdp: CDPSession,
+    private readonly cdp: PlaywrightCdpSession,
     private readonly signal: AbortSignal | undefined,
+    private readonly commandTimeoutMs: number,
+    private readonly ownsContext: boolean,
   ) {}
 
   static async create(
@@ -154,11 +181,22 @@ export class PlaywrightScenarioStorage {
     )
       return undefined;
 
-    const connection = context.newCDPSession(page);
-    let cdp: CDPSession;
+    const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
+    const connection = newPlaywrightCdpSession(
+      context,
+      page,
+      "capture_browser_scenario",
+    );
+    let cdp: PlaywrightCdpSession;
     try {
       cdp = await withPlaywrightExecutionBoundary(
-        () => connection,
+        () =>
+          withScenarioCommandDeadline(
+            () => connection,
+            commandTimeoutMs,
+            "command",
+            "Target.attachToTarget",
+          ),
         undefined,
         signal,
       );
@@ -166,7 +204,7 @@ export class PlaywrightScenarioStorage {
       if (signal?.aborted === true) {
         let detached = false;
         const lateCleanup = async (): Promise<void> => {
-          let session: CDPSession;
+          let session: PlaywrightCdpSession;
           try {
             session = await connection;
           } catch {
@@ -185,10 +223,25 @@ export class PlaywrightScenarioStorage {
           () => cleanup.release(),
           STORAGE_CLEANUP_TIMEOUT_MS,
         ).catch(() => undefined);
+      } else if (scenarioCommandPending(cause) !== undefined) {
+        const cleanup = new AnalysisCleanupLease(
+          () => releaseLateScenarioCommand(cause),
+          ["browser_storage_transport"],
+        );
+        retainCleanup?.(cleanup);
+        void withPlaywrightExecutionBoundary(
+          () => cleanup.release(),
+          STORAGE_CLEANUP_TIMEOUT_MS,
+        ).catch(() => undefined);
       }
       throw cause;
     }
-    const owner = new PlaywrightScenarioStorage(cdp, signal);
+    const owner = new PlaywrightScenarioStorage(
+      cdp,
+      signal,
+      commandTimeoutMs,
+      scenario.browser.mode === "launch",
+    );
     owner.addSeeds(scenario.storage.local_storage, "local", secrets);
     owner.addSeeds(scenario.storage.session_storage, "session", secrets);
     return owner;
@@ -208,15 +261,23 @@ export class PlaywrightScenarioStorage {
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
-    const rootInfo = targetInfoResponse.parse(
-      await this.cdp.send("Target.getTargetInfo"),
+    const rootInfo = await withScenarioCommandDeadline(
+      () => this.cdp.send("Target.getTargetInfo"),
+      this.commandTimeoutMs,
+      "command",
+      "Target.getTargetInfo",
     );
     if (this.#closed) return;
     const root = this.createTarget(
       undefined,
       rootInfo.targetInfo.targetId,
-      (method, params) =>
-        this.cdp.send(method as Parameters<CDPSession["send"]>[0], params),
+      (method, params, timeoutMs = this.commandTimeoutMs) =>
+        withScenarioCommandDeadline(
+          () => this.cdp.send(method, params),
+          timeoutMs,
+          "command",
+          method,
+        ),
     );
     this.#targets.set("", root);
     this.listen(page, context);
@@ -248,26 +309,32 @@ export class PlaywrightScenarioStorage {
     page.on("close", detached);
     context.on("close", detached);
     browser?.on("disconnected", detached);
+    // Discovery is later than the first popup script. It cannot establish
+    // that root-session instrumentation controlled this top-level context.
+    const popup = (opened: Page): void => {
+      if (opened !== page) this.#popupSeedCoverageUnknown = true;
+    };
+    if (this.ownsContext) context.on("page", popup);
+    else page.on("popup", popup);
     this.#removeListeners = () => {
       page.off("close", detached);
       context.off("close", detached);
       browser?.off("disconnected", detached);
+      if (this.ownsContext) context.off("page", popup);
+      else page.off("popup", popup);
     };
-    for (const method of [
-      "Runtime.executionContextCreated",
-      "Runtime.executionContextDestroyed",
-      "Runtime.executionContextsCleared",
-      "Debugger.scriptParsed",
-      "Debugger.paused",
-      "Target.attachedToTarget",
-      "Target.detachedFromTarget",
-      "Target.receivedMessageFromTarget",
-    ] as const) {
-      const listener = (params: unknown): void =>
-        this.event("", method, params);
-      this.#listeners.push({ method, listener });
-      this.cdp.on(method, listener);
-    }
+    for (const method of STORAGE_EVENT_METHODS)
+      this.#unsubscribers.push(
+        this.cdp.on(method, (event) => this.event("", event)),
+      );
+  }
+
+  limitations(): readonly string[] {
+    return this.#popupSeedCoverageUnknown
+      ? [
+          "Declared non-cookie storage seeds were controlled for the selected page's instrumented frames; initialization before the first script is unknown for discovered popup top-level contexts.",
+        ]
+      : [];
   }
 
   private createTarget(
@@ -294,19 +361,15 @@ export class PlaywrightScenarioStorage {
     if (this.#closed) return;
     await target.send("Debugger.enable");
     if (this.#closed) return;
-    breakpointResponse.parse(
-      await target.send("Debugger.setBreakpointByUrl", {
-        url: this.#sourceUrl,
-        lineNumber: 1,
-      }),
-    );
+    await target.send("Debugger.setBreakpointByUrl", {
+      url: this.#sourceUrl,
+      lineNumber: 1,
+    });
     if (this.#closed) return;
-    scriptIdentifierResponse.parse(
-      await target.send("Page.addScriptToEvaluateOnNewDocument", {
-        worldName: this.#sourceUrl,
-        source: `(() => {\n  void 0;\n})()\n//# sourceURL=${this.#sourceUrl}`,
-      }),
-    );
+    await target.send("Page.addScriptToEvaluateOnNewDocument", {
+      worldName: this.#sourceUrl,
+      source: `(() => {\n  void 0;\n})()\n//# sourceURL=${this.#sourceUrl}`,
+    });
     if (this.#closed) return;
     await target.send("Target.setAutoAttach", {
       autoAttach: true,
@@ -315,11 +378,11 @@ export class PlaywrightScenarioStorage {
     });
   }
 
-  private sendObserved(
+  private sendObserved<M extends CdpCommand>(
     target: StorageTarget,
-    method: string,
-    params?: Record<string, unknown>,
-  ): Promise<unknown> {
+    method: M,
+    params?: CdpCommandParams<M>,
+  ): Promise<CdpCommandResult<M>> {
     return withPlaywrightExecutionBoundary(
       () => target.send(method, params),
       undefined,
@@ -327,108 +390,137 @@ export class PlaywrightScenarioStorage {
     );
   }
 
-  private event(
-    sessionId: string,
-    method: StorageEventMethod,
-    params: unknown,
-  ): void {
+  private event(sessionId: string, event: StorageEvent): void {
     if (this.#closed) return;
     const target = this.#targets.get(sessionId);
     if (target === undefined) return;
     try {
-      if (method === "Runtime.executionContextCreated") {
-        const { context } = executionContextEvent.parse(params);
-        if (context.name === this.#sourceUrl)
-          target.contexts.set(context.id, context);
-      } else if (method === "Runtime.executionContextDestroyed") {
-        const { executionContextId } = z
-          .object({ executionContextId: z.number() })
-          .parse(params);
-        target.contexts.delete(executionContextId);
-      } else if (method === "Runtime.executionContextsCleared") {
-        target.contexts.clear();
-        target.scripts.clear();
-      } else if (method === "Debugger.scriptParsed") {
-        const script = scriptParsedEvent.parse(params);
-        if (script.url === this.#sourceUrl)
-          target.scripts.set(script.scriptId, script.executionContextId);
-      } else if (method === "Debugger.paused") {
-        const pause = pausedEvent.parse(params);
-        const frame = pause.callFrames[0];
-        // CDP resume is target-wide, so identify our private seed frame before
-        // doing any work that will resume the paused target.
-        if (frame === undefined || !target.scripts.has(frame.location.scriptId))
-          return;
-        this.#generation += 1;
-        this.#work = this.#work
-          .then(() => this.seed(target, pause))
-          .catch((cause: unknown) => {
-            if (sessionId === "" || this.#targets.get(sessionId) === target)
-              this.fail(cause);
+      switch (event.method) {
+        case "Runtime.executionContextCreated": {
+          const context = storageContext(event.payload.facts);
+          if (context.name === this.#sourceUrl)
+            target.contexts.set(context.id, context);
+          break;
+        }
+        case "Runtime.executionContextDestroyed":
+          target.contexts.delete(required(event.payload.id, event.method));
+          break;
+        case "Runtime.executionContextsCleared":
+          target.contexts.clear();
+          target.scripts.clear();
+          break;
+        case "Debugger.scriptParsed": {
+          const { facts } = event.payload;
+          const scriptId = required(facts.scriptId, event.method);
+          const url = required(facts.url, event.method);
+          const contextId = required(facts.contextId, event.method);
+          if (url === this.#sourceUrl) target.scripts.set(scriptId, contextId);
+          break;
+        }
+        case "Debugger.paused": {
+          if (!event.payload.success) throw event.payload.error;
+          const pause = event.payload.data;
+          const frame = pause.callFrames[0];
+          // CDP resume is target-wide, so identify our private seed frame before
+          // doing any work that will resume the paused target.
+          if (
+            frame === undefined ||
+            !target.scripts.has(frame.location.scriptId)
+          )
+            return;
+          this.#generation += 1;
+          this.#work = this.#work
+            .then(() => this.seed(target, pause))
+            .catch((cause: unknown) => {
+              if (sessionId === "" || this.#targets.get(sessionId) === target)
+                this.fail(cause);
+            });
+          break;
+        }
+        case "Target.attachedToTarget":
+          this.#generation += 1;
+          this.attach(sessionId, {
+            sessionId: required(event.payload.sessionId, event.method),
+            targetId: required(event.payload.targetId, event.method),
+            targetType: required(event.payload.targetType, event.method),
           });
-      } else if (method === "Target.attachedToTarget") {
-        this.#generation += 1;
-        this.attach(sessionId, attachedTargetEvent.parse(params));
-      } else if (method === "Target.detachedFromTarget") {
-        this.#generation += 1;
-        this.targetDetached(targetSessionEvent.parse(params).sessionId);
-      } else if (method === "Target.receivedMessageFromTarget") {
-        this.nestedMessage(nestedMessageEvent.parse(params));
+          break;
+        case "Target.detachedFromTarget":
+          this.#generation += 1;
+          this.targetDetached(required(event.payload.sessionId, event.method));
+          break;
+        case "Target.receivedMessageFromTarget":
+          this.nestedMessage(
+            required(event.payload.sessionId, event.method),
+            required(event.payload.message, event.method),
+          );
+          break;
       }
     } catch (cause: unknown) {
       this.fail(cause);
     }
   }
 
-  private nestedMessage(event: z.infer<typeof nestedMessageEvent>): void {
-    const reply = nestedProtocolMessage.parse(JSON.parse(event.message));
+  private nestedMessage(sessionId: string, message: string): void {
+    const reply = nestedProtocolMessage.parse(JSON.parse(message));
     if (reply.id !== undefined) {
       const waiter = this.#replies.get(reply.id);
-      if (waiter?.sessionId !== event.sessionId) return;
+      if (waiter?.sessionId !== sessionId) return;
       this.#replies.delete(reply.id);
       if (reply.error !== undefined)
         waiter.reject(new Error(reply.error.message));
       else waiter.resolve(reply.result);
       return;
     }
-    if (reply.method !== undefined && STORAGE_EVENT_METHODS.has(reply.method))
-      this.event(
-        event.sessionId,
-        reply.method as StorageEventMethod,
-        reply.params,
-      );
+    if (reply.method === undefined) return;
+    // A child session's events are admitted by the same registered schemas.
+    const registered = registeredCdpEvent(reply.method, reply.params);
+    if (isStorageEvent(registered)) this.event(sessionId, registered);
   }
 
   private fail(cause: unknown): void {
     this.#generation += 1;
-    this.#failure ??= new BrowserObservationError(
-      "capture_browser_scenario",
-      "protocol_error",
-      { cause },
-    );
+    // A child command deadline is already the caller-facing failure. Storing
+    // it keeps the command name, selected deadline, and recovery advice.
+    this.#failure ??=
+      cause instanceof CdpMalformedReply ||
+      (cause instanceof BrowserObservationError && cause.reason === "timeout")
+        ? cause
+        : new BrowserObservationError(
+            "capture_browser_scenario",
+            "protocol_error",
+            { cause },
+          );
   }
 
   private async seedPausedFrame(
     target: StorageTarget,
-    frame: z.infer<typeof pausedEvent>["callFrames"][number],
+    frame: PausedCallFrames["callFrames"][number],
   ): Promise<void> {
     const contextId = target.scripts.get(frame.location.scriptId);
     const context =
       contextId === undefined ? undefined : target.contexts.get(contextId);
-    const seed =
-      context === undefined ? undefined : this.#seeds.get(context.origin);
-    if (
-      this.#closed ||
-      seed === undefined ||
-      context?.auxData?.frameId === undefined
-    )
-      return;
+    if (this.#closed) return;
+    const frameId = context?.frameId;
+    if (context === undefined || frameId === undefined)
+      throw new Error(
+        "The private storage seed frame has no execution context or frame identity.",
+      );
+    // Some Chrome builds leave an isolated world's origin empty. The frame's
+    // security origin is authoritative; neither its URL nor its opaque storage
+    // key establishes the document principal (for example, inherited origins).
+    const origin =
+      context.origin === ""
+        ? await this.frameOrigin(target, frameId)
+        : context.origin;
+    const seed = this.#seeds.get(origin);
+    if (seed === undefined) return;
 
-    const storageKey = storageKeyResponse.parse(
-      await this.sendObserved(target, "Storage.getStorageKey", {
-        frameId: context.auxData.frameId,
-      }),
-    ).storageKey;
+    const { storageKey } = await this.sendObserved(
+      target,
+      "Storage.getStorageKey",
+      { frameId },
+    );
     const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
     const local =
       this.#initializedLocal.has(storageKey) || seed.local.length === 0
@@ -444,12 +536,14 @@ export class PlaywrightScenarioStorage {
       "<",
       "\\u003c",
     );
-    const response = evaluationResponse.parse(
-      await this.sendObserved(target, "Debugger.evaluateOnCallFrame", {
+    const response = await this.sendObserved(
+      target,
+      "Debugger.evaluateOnCallFrame",
+      {
         callFrameId: frame.callFrameId,
         expression: `(() => { const seed = ${payload}; for (const [name, value] of seed.local) localStorage.setItem(name, value); for (const [name, value] of seed.session) sessionStorage.setItem(name, value); })()`,
         returnByValue: true,
-      }),
+      },
     );
     if (response.exceptionDetails !== undefined)
       throw new BrowserObservationError(
@@ -461,9 +555,23 @@ export class PlaywrightScenarioStorage {
     if (session.length > 0) this.#initializedSession.add(sessionKey);
   }
 
+  private async frameOrigin(
+    target: StorageTarget,
+    frameId: string,
+  ): Promise<string> {
+    const tree = await this.sendObserved(target, "Page.getFrameTree");
+    const origin = tree.frames.find(
+      (frame) => frame.facts.frameId === frameId,
+    )?.securityOrigin;
+    if (origin !== undefined && origin !== "") return origin;
+    throw new Error(
+      "The browser did not establish the private storage seed frame's security origin.",
+    );
+  }
+
   private async seed(
     target: StorageTarget,
-    pause: z.infer<typeof pausedEvent>,
+    pause: PausedCallFrames,
   ): Promise<void> {
     const frame = pause.callFrames[0];
     if (frame === undefined) return;
@@ -479,7 +587,8 @@ export class PlaywrightScenarioStorage {
     let resumeFailure: unknown;
     try {
       await withPlaywrightExecutionBoundary(
-        () => target.send("Debugger.resume"),
+        () =>
+          target.send("Debugger.resume", undefined, STORAGE_CLEANUP_TIMEOUT_MS),
         STORAGE_CLEANUP_TIMEOUT_MS,
       );
     } catch (cause: unknown) {
@@ -498,28 +607,53 @@ export class PlaywrightScenarioStorage {
 
   private attach(
     parentId: string,
-    event: z.infer<typeof attachedTargetEvent>,
+    event: {
+      readonly sessionId: string;
+      readonly targetId: string;
+      readonly targetType: string;
+    },
   ): void {
     const parent = this.#targets.get(parentId);
     if (parent === undefined) return;
-    const { sessionId, targetInfo } = event;
+    const { sessionId, targetType } = event;
     const target = this.createTarget(
       parentId,
-      event.targetInfo.type === "iframe"
-        ? parent.topLevelTargetId
-        : event.targetInfo.targetId,
-      async (method, params = {}) => {
+      targetType === "iframe" ? parent.topLevelTargetId : event.targetId,
+      async (method, params, timeoutMs = this.commandTimeoutMs) => {
         const id = ++this.#sequence;
-        const reply = new Promise<unknown>((resolve, reject) =>
-          this.#replies.set(id, { sessionId, resolve, reject }),
-        );
+        let rejectReply: ((error: Error) => void) | undefined;
+        const reply = new Promise<unknown>((resolve, reject) => {
+          rejectReply = reject;
+          this.#replies.set(id, { sessionId, resolve, reject });
+        });
         try {
-          const sent = parent.send("Target.sendMessageToTarget", {
-            sessionId,
-            message: JSON.stringify({ id, method, params }),
-          });
-          const [, result] = await Promise.all([sent, reply]);
-          return result;
+          const sent = parent.send(
+            "Target.sendMessageToTarget",
+            {
+              sessionId,
+              message: JSON.stringify({ id, method, params: params ?? {} }),
+            },
+            timeoutMs,
+          );
+          // Delivery through the root session and the nested reply share one deadline.
+          const [, result] = await withScenarioCommandDeadline(
+            () => Promise.all([sent, reply]),
+            timeoutMs,
+            "command",
+            method,
+          );
+          return admitCdpReply(method, result, "capture_browser_scenario");
+        } catch (cause: unknown) {
+          rejectReply?.(
+            cause instanceof Error
+              ? cause
+              : new BrowserObservationError(
+                  "capture_browser_scenario",
+                  "protocol_error",
+                  { cause },
+                ),
+          );
+          throw cause;
         } finally {
           this.#replies.delete(id);
         }
@@ -529,10 +663,7 @@ export class PlaywrightScenarioStorage {
     this.#targets.set(sessionId, target);
     target.ready = (async () => {
       try {
-        if (
-          !this.#closed &&
-          (targetInfo.type === "iframe" || targetInfo.type === "page")
-        )
+        if (!this.#closed && (targetType === "iframe" || targetType === "page"))
           await this.initializeTarget(target);
       } catch (cause: unknown) {
         if (
@@ -545,7 +676,12 @@ export class PlaywrightScenarioStorage {
       if (this.#targets.get(sessionId) !== target) return;
       try {
         await withPlaywrightExecutionBoundary(
-          () => target.send("Runtime.runIfWaitingForDebugger"),
+          () =>
+            target.send(
+              "Runtime.runIfWaitingForDebugger",
+              undefined,
+              STORAGE_CLEANUP_TIMEOUT_MS,
+            ),
           STORAGE_CLEANUP_TIMEOUT_MS,
         );
         target.waitingForDebugger = false;
@@ -610,7 +746,7 @@ export class PlaywrightScenarioStorage {
         {
           cause,
           cleanup: {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             resources: ["browser_transport", "browser_storage_bootstrap"],
           },
         },
@@ -633,7 +769,7 @@ export class PlaywrightScenarioStorage {
         const root = this.#targets.get("");
         if (root !== undefined) {
           await withPlaywrightExecutionBoundary(
-            () => root.send("Page.stopLoading"),
+            () => this.cdp.send("Page.stopLoading"),
             STORAGE_CLEANUP_TIMEOUT_MS,
           );
           this.#loadingStopped = true;
@@ -676,8 +812,7 @@ export class PlaywrightScenarioStorage {
       STORAGE_CLEANUP_TIMEOUT_MS,
     );
 
-    for (const { method, listener } of this.#listeners)
-      this.cdp.off(method, listener);
+    for (const unsubscribe of this.#unsubscribers.splice(0)) unsubscribe();
     this.#removeListeners();
     for (const reply of this.#replies.values())
       reply.reject(

@@ -9,12 +9,28 @@ on:
         required: false
         type: string
         default: ""
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted callers pass it.
+        required: false
 
 permissions:
   contents: read
 
 env:
   HUSKY: "0"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Writes when remote_cache_write is set, or on the default branch
+  # for push, schedule, and manual dispatch. Open pull requests stay empty-token
+  # and use the local cache only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
   NODE_OPTIONS: --max-old-space-size=768
 
 jobs:
@@ -40,7 +56,8 @@ jobs:
         run: |
           capture_tool_root="${RUNNER_TEMP}/rea-mitmproxy-12.2.3"
           mkdir -p "${capture_tool_root}"
-          curl --fail --location --retry 3 --max-time 180 \
+          # This immutable GET may reset mid-body; retry it before checksum verification.
+          curl --fail --location --retry 3 --retry-all-errors --max-time 180 \
             https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz \
             --output "${capture_tool_root}/mitmproxy.tar.gz"
           echo '2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5  mitmproxy.tar.gz' \

@@ -2,11 +2,20 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { win32 } from "node:path";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import {
+  decodeLimit,
+  malformedInput,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import { Utf8NdjsonLineBuffer } from "../process/Utf8NdjsonLineBuffer.js";
 
 /** Match the native owner's ordinary spelling only for extended local drive paths. */
 const localDrivePath = (path: string): string =>
@@ -21,6 +30,42 @@ const readySchema = z.strictObject({
   fileId: z.string().regex(/^[a-f0-9]{32}$/u),
   privateDacl: z.literal(true),
 });
+
+const GUARDIAN_READINESS_BYTES = 4096;
+
+const readGuardianReadiness = async (stdout: Readable): Promise<string> => {
+  const format = "android-workspace-guardian";
+  // The guardian's byte limit includes the LF that completes the record.
+  const frames = new Utf8NdjsonLineBuffer(() => GUARDIAN_READINESS_BYTES - 1);
+  for await (const chunk of stdout.iterator({ destroyOnReturn: false })) {
+    if (!Buffer.isBuffer(chunk))
+      throw invariantViolation(
+        "Android workspace guardian stdout did not provide bytes",
+      );
+    for (const line of frames.pushRaw(chunk)) {
+      if (line.ok) return line.value;
+      if (line.error.failure.kind === "limit")
+        throw decodeLimit(
+          format,
+          "Android workspace guardian readiness exceeded 4 KiB",
+          {
+            name: "guardian-readiness-bytes",
+            maximum: GUARDIAN_READINESS_BYTES,
+          },
+          { cause: line.error },
+        );
+      throw malformedInput(
+        format,
+        "Android workspace guardian readiness is not valid UTF-8",
+        { cause: line.error },
+      );
+    }
+  }
+  throw truncatedInput(
+    format,
+    "Android workspace guardian stdout ended before readiness",
+  );
+};
 
 /** The Android provider needs a path and a cleanup owner, regardless of host. */
 export interface JadxWorkspaceRoot {
@@ -105,8 +150,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
       },
     });
     let diagnostics = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      diagnostics = (diagnostics + chunk.toString()).slice(-8192);
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      diagnostics = (diagnostics + chunk).slice(-8192);
     });
     const exit = new Promise<GuardianExit>((resolve) => {
       child.once("error", (error: Error) =>
@@ -114,21 +160,10 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
       );
       child.once("close", (code, signal) => resolve({ code, signal }));
     });
-    const ready = new Promise<string>((resolve, reject) => {
-      let frame = "";
-      child.stdout.on("data", (chunk: Buffer) => {
-        frame += chunk.toString();
-        if (frame.length > 4096) {
-          reject(
-            new Error("Android workspace guardian readiness exceeded 4 KiB"),
-          );
-          return;
-        }
-        const end = frame.indexOf("\n");
-        if (end !== -1) resolve(frame.slice(0, end));
-      });
-      child.stdout.once("error", reject);
-    });
+    // The readiness iterator observes errors during startup. Keep the pipe's
+    // error handler after readiness, while child exit owns lifetime failure.
+    child.stdout.on("error", () => undefined);
+    const ready = readGuardianReadiness(child.stdout);
     try {
       const line = await boundedWait(
         Promise.race([
@@ -142,7 +177,8 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
         15000,
         "Android workspace guardian startup timed out",
       );
-      const observation = readySchema.parse(JSON.parse(line));
+      const decoded = parseJsonWithDuplicatePolicy(line, "reject");
+      const observation = readySchema.parse(decoded.ok ? decoded.value : null);
       if (
         win32.dirname(localDrivePath(observation.path)).toLowerCase() !==
           localDrivePath(win32.resolve(parent)).toLowerCase() ||
@@ -218,7 +254,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
 }
 
 /** POSIX retains its in-process root; Windows keeps a detached native owner. */
-export const createJadxWorkspaceRoot = (): Promise<JadxWorkspaceRoot> =>
-  process.platform === "win32"
+export const createJadxWorkspaceRoot = (
+  platform: NodeJS.Platform,
+): Promise<JadxWorkspaceRoot> =>
+  platform === "win32"
     ? WindowsJadxWorkspaceRoot.create()
     : PrivateRuntimeRoot.create({ prefix: "rea-android-" });

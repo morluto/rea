@@ -26,13 +26,14 @@ export type BrowserObservationFailureReason =
   | "target_not_allowed"
   | "service_worker_blocked"
   | "target_changed"
+  | "target_session_detached"
   | "protocol_error"
   | "disconnected"
   | "payload_limit"
   | "window_not_found"
   | "window_metadata_missing"
   | "process_ownership_unavailable"
+  | "application_already_running"
   | "cleanup_failed"
   | "cancelled"
-  | "timeout"
-  | "secret_unavailable";
+  | "timeout";

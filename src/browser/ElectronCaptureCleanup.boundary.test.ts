@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   spawnOwnedProviderProcess,
@@ -37,9 +37,12 @@ it.skipIf(process.platform === "win32")(
       await once(spawned.process.stdout!, "data");
       const lineage = await observeOwnedProcessLineage(spawned.ownership);
       expect(lineage.status).toBe("verified");
+      const evidenceOwner = spawned.ownership.evidenceOwner;
+      if (evidenceOwner === undefined)
+        throw new Error("owned spawn omitted persistent ownership evidence");
       const owner = new ElectronCaptureCleanup(
         { close },
-        spawned.ownership,
+        { ...spawned.ownership, evidenceOwner },
         lineage,
       );
       expect(await owner.release(scope)).toMatchObject({

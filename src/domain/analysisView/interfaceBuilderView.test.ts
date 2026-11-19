@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vitest";
-
 import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+  changedEvidenceSubject,
+  UNKNOWN_EVIDENCE_SUBJECT,
+} from "../../../tests/fixtures/evidenceSubject.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
+
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const target = "a".repeat(64);
+const resourceRoot = {
+  caller_path: "/Applications/Keyless.app",
+  canonical_path: "/Applications/Keyless.app",
+  info_plist_path: "/Applications/Keyless.app/Info.plist",
+  layout: "root" as const,
+  executable_sha256: null,
+};
 const evidence = (artifact_path: string) => [
   {
     kind: "interface_builder_resource" as const,
@@ -68,24 +80,138 @@ const report = (truncated = false) => ({
   },
   limitations: ["Recognized archive fields only."],
 });
+const resourceReport = () => {
+  const decoded = report();
+  return {
+    ...decoded,
+    target_sha256: null,
+    resource_root: resourceRoot,
+    graph: { ...decoded.graph, target_sha256: null },
+  };
+};
 const parent = (
   normalizedResult: unknown = report(),
   sha256 = target,
 ): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "decode_interface_builder",
   normalizedResult,
-  subject: {
+  subject: evidenceSubject({
     name: "Fixture",
-    digest: { sha256 },
+    sha256,
     format: "mach-o",
     architecture: "arm64",
-    local_path: "/Applications/Fixture.app/Contents/MacOS/Fixture",
-  },
+    path: "/Applications/Fixture.app/Contents/MacOS/Fixture",
+  }),
   limitations: [],
 });
 
+describe("Interface Builder immutable interpretation", () => {
+  it("checks the current subject even after admitting the sealed graph", () => {
+    const source = {
+      ...parent(freezeJsonSnapshot(report())),
+      sealedResult: true,
+    };
+    expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+    const changed = {
+      ...source,
+      subject: changedEvidenceSubject(source.subject!, {
+        sha256: "d".repeat(64),
+      }),
+    };
+    const rejected = projectAnalysisView(changed, { kind: "summary" });
+    if (rejected.ok) throw new Error("expected a subject refusal");
+    expect(rejected.error).toMatchObject({
+      issues: [{ path: ["source", "subject"] }],
+    });
+  });
+
+  it("revalidates mutable and shallow-frozen imports despite a claimed seal", () => {
+    const mutable = report();
+    const source = { ...parent(mutable), sealedResult: true };
+    expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+    Object.freeze(mutable);
+    mutable.graph.nodes[0]!.name = "";
+    expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(false);
+    mutable.graph.nodes[0]!.name = "corrected";
+    const corrected = projectAnalysisView(source, {
+      kind: "interface-builder",
+      collection: "nodes",
+      offset: 0,
+      limit: 1,
+    });
+    if (!corrected.ok) throw corrected.error;
+    expect(corrected.value).toMatchObject({ items: [{ name: "corrected" }] });
+  });
+
+  it("counts matching rows once, preserves their order, and exhausts empty or late pages", () => {
+    const decoded = report(true);
+    decoded.graph.nodes.splice(1, 0, node("other:middle", "control", second));
+    decoded.graph.nodes[0]!.evidence.push(...evidence(main));
+    const source = {
+      ...parent(freezeJsonSnapshot(decoded)),
+      sealedResult: true,
+    };
+    for (const offset of [0, 1, 2, 20]) {
+      const result = projectAnalysisView(source, {
+        kind: "interface-builder",
+        collection: "nodes",
+        document: main,
+        offset,
+        limit: 1,
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value).toMatchObject({
+        items: offset < 2 ? [decoded.graph.nodes[offset === 0 ? 0 : 2]] : [],
+        source_truncated: true,
+        coverage: { total: 2, exhausted: offset >= 1 },
+      });
+    }
+    const empty = projectAnalysisView(source, {
+      kind: "interface-builder",
+      collection: "edges",
+      document: second,
+      offset: 0,
+      limit: 1,
+    });
+    if (!empty.ok) throw empty.error;
+    expect(empty.value).toMatchObject({
+      items: [],
+      source_truncated: true,
+      coverage: { total: 0, exhausted: true },
+    });
+  });
+});
+
 describe("Interface Builder analysis views", () => {
+  it("keeps resource-root provenance in both summary and detail views without a subject", () => {
+    const source: AnalysisViewParent = {
+      ...parent(resourceReport()),
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
+    };
+    const summary = projectAnalysisView(source, { kind: "summary" });
+    const detail = projectAnalysisView(source, {
+      kind: "interface-builder",
+      collection: "documents",
+      offset: 0,
+      limit: 64,
+    });
+    if (!summary.ok) throw summary.error;
+    if (!detail.ok) throw detail.error;
+
+    expect(analysisViewResultSchema.parse(summary.value)).toMatchObject({
+      artifact: { path: resourceRoot.canonical_path, sha256: null },
+      resource_root: resourceRoot,
+      summary: { target_sha256: null },
+    });
+    expect(analysisViewResultSchema.parse(detail.value)).toMatchObject({
+      artifact: { path: resourceRoot.canonical_path, sha256: null },
+      resource_root: resourceRoot,
+      items: report().documents,
+    });
+  });
+
   it("summarizes documents and graph counts without rows", () => {
     const projected = projectAnalysisView(parent(), { kind: "summary" });
     if (!projected.ok) throw projected.error;

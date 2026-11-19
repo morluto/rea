@@ -1,3 +1,5 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
+
 /** Timeout and cancellation projections for one correlated operation. */
 export type PendingOperationOptions<Value> = {
   readonly signal?: AbortSignal;
@@ -36,7 +38,7 @@ export class PendingOperations<Key, Value> {
   /** Register one unique operation key and await its reply or cancellation. */
   wait(key: Key, options: PendingOperationOptions<Value>): Promise<Value> {
     if (this.#pending.has(key))
-      throw new Error("Pending operation key is already registered");
+      throw new ProcessAdmissionError("duplicate_key");
     if (options.signal?.aborted === true)
       return Promise.resolve(options.cancelledValue());
 

@@ -1,6 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
   <title id="title">REA — Find out how software works.</title>
   <desc id="desc">Reverse engineering with your coding agent. REA connects your agent to analysis tools and returns evidence.</desc>
+  <style>
+@media (prefers-color-scheme: dark){
+[fill="#ffffff"]{fill:#181825}
+[fill="#f0f5fa"]{fill:#313244}
+[fill="#20252b"]{fill:#cdd6f4}
+[fill="#5b6570"]{fill:#a6adc8}
+[fill="#294f82"]{fill:#89b4fa}
+[stroke="#dce2e8"]{stroke:#45475a}
+[stroke="#5b6570"]{stroke:#a6adc8}
+[stroke="#294f82"]{stroke:#89b4fa}
+}
+  </style>
   <rect width="1200" height="630" fill="#ffffff"/>
   <g font-family="DejaVu Sans, sans-serif" fill="#20252b">
     <text x="72" y="110" font-size="44" font-weight="700">REA</text>

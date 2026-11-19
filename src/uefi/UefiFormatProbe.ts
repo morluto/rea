@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
 import { imageRegion, type ScanRegion } from "./UefiBytes.js";
 import { scanFirmwareVolumes } from "./FirmwareVolume.js";
@@ -42,7 +42,7 @@ export async function probeUefiFlashImage(
 ): Promise<boolean> {
   const throwIfCancelled = (): void => {
     if (signal?.aborted === true)
-      throw new AnalysisCancelledError("resolve_binary_target");
+      throw cancelledBy("resolve_binary_target", signal);
   };
   const { size } = await handle.stat();
   const window = Buffer.allocUnsafe(

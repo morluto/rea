@@ -1,13 +1,12 @@
-import type { z } from "zod";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { WebExecution } from "../../domain/webExecution.js";
 import type { WebRuntimeSource } from "../../domain/webRuntime.js";
-import type { preciseCoverageSchema } from "./CdpRuntimeProtocol.js";
+import type { CdpCommandResult } from "../protocol/CdpCommands.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 
 /** Validate source-range bounds against exact retained UTF-16 text without flattening nested counts. */
 export const normalizePreciseCoverage = (
-  parsed: z.infer<typeof preciseCoverageSchema>,
+  parsed: CdpCommandResult<"Profiler.takePreciseCoverage">,
   sources: CdpRuntimeSources,
   retained: readonly WebRuntimeSource[],
 ): {

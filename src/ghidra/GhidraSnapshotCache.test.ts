@@ -1,17 +1,19 @@
-import { ok as javaProbeOk } from "../domain/result.js";
+import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../tests/fixtures/binarySession.js";
 import { parseConfig } from "../config/parseConfig.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
-import { err, ok } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
+import type { ProducerIdentity } from "../filesystem/ProducerIdentity.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 
@@ -26,11 +28,12 @@ const TARGET: BinaryTarget = {
 
 // Exercise the real provider descriptors, profile, input/output projection and
 // session cache; only the installed Ghidra process is replaced at its seam.
-const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
+const fixture = (version = "12.2", coverage?: RelationshipCoverage) => {
   const config = parseConfig({ GHIDRA_INSTALL_DIR: "/opt/ghidra" });
   if (!config.ok) throw config.error;
   const calls: string[] = [];
   let name = "original";
+  let decompilerFailed = false;
   let cancelStarted: (() => void) | undefined;
   const cancellationReady = new Promise<void>((resolve) => {
     cancelStarted = resolve;
@@ -43,15 +46,15 @@ const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
       platform: "linux",
       architecture: "x64",
       readText: () =>
-        `application.version=${version}\napplication.java.min=21\n`,
+        `application.version=${version}\napplication.java.min=25\n`,
       executable: () => true,
       probeJava: () =>
         javaProbeOk<GhidraJavaObservation>({
           osArch: "amd64",
           osName: "Linux",
-          version: "21.0.11",
-          major: 21,
-          home: "/usr/lib/jvm/jdk-21",
+          version: "25.0.1",
+          major: 25,
+          home: "/usr/lib/jvm/jdk-25",
           bits: 64,
           runtime: "jdk",
         }),
@@ -104,6 +107,16 @@ const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
         const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
         dossier.procedure.name = name;
         dossier.pseudocode = `void ${name}() {}`;
+        if (decompilerFailed) {
+          dossier.pseudocode = "";
+          dossier.facet_availability = {
+            ...dossier.facet_availability,
+            pseudocode: {
+              available: false,
+              reason: "Injected backend failure",
+            },
+          };
+        }
         if (operation === "annotate_native_function")
           return ok({
             annotations: {
@@ -127,6 +140,9 @@ const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
             ? {
                 value,
                 limitations: [],
+                ...(operation === "analyze_function" && decompilerFailed
+                  ? { cache_policy: "live" }
+                  : {}),
                 ...(operation === "analyze_function" && coverage !== undefined
                   ? { relationship_coverage: coverage }
                   : {}),
@@ -140,6 +156,9 @@ const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
   return {
     calls,
     cancellationReady,
+    setDecompilerFailed: (failed: boolean) => {
+      decompilerFailed = failed;
+    },
     session: createTestBinarySession(provider),
   };
 };
@@ -150,7 +169,86 @@ const open = async (session: ReturnType<typeof fixture>["session"]) => {
   expect((await session.openResolvedTarget(preview.value)).ok).toBe(true);
 };
 
+/**
+ * Windows must admit the native source with a live operation before it may
+ * replay an imported query. Use a different query so the imported entry is
+ * still the one under test.
+ */
+const admitWindowsNativeSource = async (
+  replay: ReturnType<typeof fixture>,
+  operation: AnalysisOperation,
+): Promise<AnalysisOperation | undefined> => {
+  if (process.platform !== "win32") return undefined;
+  const admission =
+    operation === "read_binary_inventory_summary"
+      ? {
+          operation: "analyze_function" as const,
+          parameters: { procedure: "0xlive" },
+        }
+      : {
+          operation: "read_binary_inventory_summary" as const,
+          parameters: {},
+        };
+  const admitted = await replay.session.execute(
+    admission.operation,
+    admission.parameters,
+  );
+  if (!admitted.ok) throw admitted.error;
+  expect(replay.calls).toEqual([admission.operation]);
+  return admission.operation;
+};
+
 describe("Ghidra relationship coverage replay", () => {
+  it("retains degraded Evidence without replaying transient failures after recovery or import", async () => {
+    const initial = fixture();
+    await open(initial.session);
+    initial.setDecompilerFailed(true);
+    const parameters = { procedure: "0x1000" };
+    const degraded = await initial.session.execute(
+      "analyze_function",
+      parameters,
+    );
+    if (!degraded.ok) throw degraded.error;
+    const snapshot = initial.session.exportAnalysisSnapshot();
+    if (!snapshot.ok) throw snapshot.error;
+    expect(snapshot.value.entries).toEqual([]);
+    expect(snapshot.value.evidence_bundle.records).toHaveLength(1);
+
+    initial.setDecompilerFailed(false);
+    const recovered = await initial.session.execute(
+      "analyze_function",
+      parameters,
+    );
+    if (!recovered.ok) throw recovered.error;
+    expect(
+      functionDossierSchema.parse(recovered.value.result).pseudocode,
+    ).not.toBe("");
+    expect(
+      (await initial.session.execute("analyze_function", parameters)).ok,
+    ).toBe(true);
+    expect(initial.calls).toEqual([
+      "analyze_function",
+      "analyze_function",
+      "analyze_function",
+    ]);
+    await initial.session.close();
+
+    const replay = fixture();
+    expect(replay.session.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
+    await open(replay.session);
+    const imported = await replay.session.execute(
+      "analyze_function",
+      parameters,
+    );
+    if (!imported.ok) throw imported.error;
+    expect(
+      functionDossierSchema.parse(imported.value.result).pseudocode,
+    ).not.toBe("");
+    expect(replay.calls).toEqual(["analyze_function"]);
+    expect(replay.session.exportEvidenceBundle().records).toHaveLength(2);
+    await replay.session.close();
+  });
+
   it.each([
     undefined,
     { status: "complete", diagnostics: ["Resolved static references only."] },
@@ -162,9 +260,9 @@ describe("Ghidra relationship coverage replay", () => {
       limited_directions: ["callers"],
     },
   ] satisfies (RelationshipCoverage | undefined)[])(
-    "preserves relationship coverage %j through live execution, cache and snapshot replay",
+    "preserves relationship coverage %j as historical Evidence while reobserving new calls",
     async (coverage) => {
-      const initial = fixture("12.1.4", coverage);
+      const initial = fixture("12.2", coverage);
       await open(initial.session);
       const parameters = { procedure: "0x1000" };
       for (let i = 0; i < 2; i++) {
@@ -175,24 +273,42 @@ describe("Ghidra relationship coverage replay", () => {
         if (!execution.ok) throw execution.error;
         expect(execution.value.relationshipCoverage).toEqual(coverage);
       }
-      expect(initial.calls).toEqual(["analyze_function"]);
+      expect(initial.calls).toEqual(["analyze_function", "analyze_function"]);
       const snapshot = initial.session.exportAnalysisSnapshot();
       if (!snapshot.ok) throw snapshot.error;
+      expect(snapshot.value.entries).toEqual([]);
+      expect(
+        snapshot.value.evidence_bundle.records[0]?.relationship_coverage,
+      ).toEqual(coverage ?? null);
       await initial.session.close();
-      const replay = fixture();
+      const liveCoverage: RelationshipCoverage = {
+        status: "unknown",
+        reason: "Current observation after import",
+      };
+      const replay = fixture("12.2", liveCoverage);
       expect(replay.session.importAnalysisSnapshot(snapshot.value).ok).toBe(
         true,
       );
       await open(replay.session);
+      const admittedOperation = await admitWindowsNativeSource(
+        replay,
+        "analyze_function",
+      );
       const execution = await replay.session.execute(
         "analyze_function",
         parameters,
       );
       if (!execution.ok) throw execution.error;
       expect(execution.value.relationshipCoverage ?? undefined).toEqual(
-        coverage,
+        liveCoverage,
       );
-      expect(replay.calls).toEqual([]);
+      expect(execution.value.limitations.join(" ")).not.toContain(
+        "local REA analysis snapshot",
+      );
+      expect(replay.calls).toEqual([
+        ...(admittedOperation === undefined ? [] : [admittedOperation]),
+        "analyze_function",
+      ]);
       await replay.session.close();
     },
   );
@@ -201,50 +317,31 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
-      parameter: "function_boundary_observations",
-      current: "ghidra-function-boundary-limitations-v4",
-      legacy: "ghidra-function-boundary-limitations-v3",
+      change: "an edited bridge script",
+      producer: (current: ProducerIdentity) => ({
+        ...current,
+        sources_sha256: "0".repeat(64),
+      }),
     },
     {
-      parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
-      legacy: "exact-address-incoming-v1",
+      change: "another REA release",
+      producer: (current: ProducerIdentity) => ({
+        ...current,
+        rea_version: "0.0.0-earlier",
+      }),
     },
-    {
-      parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
-      legacy: undefined,
-    },
-    {
-      parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
-      legacy: "resolved-call-reference-diagnostics-v1",
-    },
-    {
-      parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
-      legacy: "decoded-call-target-coverage-v2",
-    },
-    {
-      parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
-      legacy: "decoded-call-target-coverage-v3",
-    },
-    {
-      parameter: "call_relationship_coverage",
-      current: "function-body-call-coverage-v5",
-      legacy: "function-body-call-coverage-v4",
-    },
+    { change: "no producer identity", producer: () => undefined },
   ])(
-    "refuses snapshots with outdated $parameter semantics",
-    async ({ parameter, current, legacy: prior }) => {
+    "refuses snapshots from $change without a revision marker",
+    async ({ producer }) => {
       const initial = fixture();
       await open(initial.session);
       const snapshot = initial.session.exportAnalysisSnapshot();
       if (!snapshot.ok) throw snapshot.error;
       await initial.session.close();
       const profile = snapshot.value.binding.analysis_profile;
-      expect(profile.parameters[parameter]).toBe(current);
+      expect(profile.parameters.producer).toEqual(ghidraProducerIdentity());
+      const prior = producer(ghidraProducerIdentity());
       const legacy = {
         ...snapshot.value,
         binding: {
@@ -252,10 +349,10 @@ describe("Ghidra snapshot profile admission", () => {
           analysis_profile: createAnalysisProfile(profile.provider, {
             ...Object.fromEntries(
               Object.entries(profile.parameters).filter(
-                ([key]) => key !== parameter,
+                ([key]) => key !== "producer",
               ),
             ),
-            ...(prior === undefined ? {} : { [parameter]: prior }),
+            ...(prior === undefined ? {} : { producer: prior }),
           }),
         },
       };
@@ -275,7 +372,6 @@ describe("Ghidra snapshot profile admission", () => {
 describe("Ghidra snapshot cache", () => {
   it.each([
     { operation: "read_binary_inventory_summary", parameters: {} },
-    { operation: "analyze_function", parameters: { procedure: "0x1000" } },
     {
       operation: "procedure_pseudo_code",
       parameters: { procedure: "0x1000", document: "fixture" },
@@ -304,7 +400,7 @@ describe("Ghidra snapshot cache", () => {
       if (!snapshot.ok) throw snapshot.error;
       expect(snapshot.value.entries).toHaveLength(1);
       expect(snapshot.value.binding.analysis_profile.provider.version).toBe(
-        "12.1.4",
+        "12.2",
       );
       await initial.session.close();
 
@@ -313,14 +409,28 @@ describe("Ghidra snapshot cache", () => {
         true,
       );
       await open(replay.session);
+      const admittedOperation = await admitWindowsNativeSource(
+        replay,
+        operation,
+      );
       const imported = await replay.session.execute(operation, parameters);
+      expect(imported).toMatchObject({
+        ok: true,
+        value: {
+          limitations: expect.arrayContaining([
+            expect.stringContaining("local REA analysis snapshot"),
+          ]),
+        },
+      });
       expect(imported.ok && imported.value.result).toEqual(
         first.ok && first.value.result,
       );
-      expect(replay.calls).toEqual([]);
+      expect(replay.calls).toEqual(
+        admittedOperation === undefined ? [] : [admittedOperation],
+      );
       await replay.session.close();
 
-      const changed = fixture("12.1.5");
+      const changed = fixture("12.3");
       expect(changed.session.importAnalysisSnapshot(snapshot.value).ok).toBe(
         true,
       );

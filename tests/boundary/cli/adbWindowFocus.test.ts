@@ -39,6 +39,7 @@ for (const { serial, section, focused, missing } of [
       await writeFile(
         binary,
         `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-fixture\\nInstalled as %s\\n' "$0"
   exit 0
@@ -76,10 +77,10 @@ exit 1
       );
       const args = { serial };
       expect(schemas.ajv.validate(schemas.inputSchema, args)).toBe(true);
-      const response = await harness.client.callTool({
-        name: schemas.name,
-        arguments: args,
-      });
+      const response = await harness.client.callTool(
+        { name: schemas.name, arguments: args },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(response.isError).not.toBe(true);
       expect(
         schemas.ajv.validate(schemas.outputSchema, response.structuredContent),

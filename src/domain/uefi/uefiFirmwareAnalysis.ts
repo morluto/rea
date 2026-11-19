@@ -1,3 +1,4 @@
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { isAbsolute } from "node:path";
 import type { JsonValue } from "../jsonValue.js";
@@ -435,7 +436,7 @@ export const uefiResultSchemas = {
     ),
     unknown_regions: z.array(uefiUnknownRegionSchema),
     integrity: z.array(uefiIntegrityRecordSchema),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     limitations: z.array(z.string()),
   }),
   extract_uefi_firmware: z.strictObject({
@@ -447,7 +448,7 @@ export const uefiResultSchemas = {
       target_kind: z.enum(["whole-image", "volume", "ffs-file", "section"]),
     }),
     output_directory: z.string(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     files: z.array(
       z.strictObject({
         relative_path: z.string(),
@@ -505,7 +506,7 @@ export const uefiResultSchemas = {
     input_size: bytes,
     image_sha256: digestSchema,
     stores: z.array(uefiNvramStoreRecordSchema),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     limitations: z.array(z.string()),
   }),
 } as const;

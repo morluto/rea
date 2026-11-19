@@ -66,12 +66,14 @@ describe("reference import native entry failure details", () => {
             "Owned permission fixture did not produce a read failure",
           );
         expect(failure.message).toContain("EACCES");
+        expect(failure.localDiagnostic).toContain(path);
         const imported = await importTree(root);
         if (!imported.ok) throw new Error(imported.error.message);
         const entry = imported.value.entries.find(
           (item) => item.path === failure.path,
         );
         expect(entry?.limitations.join(" ")).toContain(failure.message);
+        expect(entry?.local_diagnostics).toEqual([failure.localDiagnostic]);
       } finally {
         await chmod(path, 0o600);
       }

@@ -2,7 +2,7 @@ import { rm, stat, type FileHandle } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { captureProcessScenario } from "../../src/process/capture/ProcessHarness.js";
-import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../src/domain/process/processCapture.fixture.js";
 
 const control = vi.hoisted(() => ({
@@ -49,12 +49,17 @@ vi.mock("node:fs/promises", async (load) => {
       control.handle = handle;
       const nativeStat = handle.stat.bind(handle);
       const nativeClose = handle.close.bind(handle);
-      const nativeStream = handle.createReadStream.bind(handle);
-      handle.createReadStream = (options) => {
-        const stream = nativeStream(options);
-        stream.once("end", () => (control.sampled = true));
-        return stream;
-      };
+      const nativeRead = handle.read.bind(handle);
+      handle.read = (async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number | bigint | null,
+      ) => {
+        const result = await nativeRead(buffer, offset, length, position);
+        if (result.bytesRead === 0) control.sampled = true;
+        return result;
+      }) as typeof handle.read;
       handle.stat = (async (...parameters: Parameters<typeof handle.stat>) => {
         const metadata = await nativeStat(...parameters);
         if (control.sampled && control.stage === "final-stat")
@@ -95,7 +100,7 @@ it.each(["none", "before", "open", "final-stat", "close"] as const)(
     if (stage === "before") controller.abort(reason);
     const removed: string[] = [];
     const result = await captureProcessScenario(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: process.execPath,
         arguments: ["--eval", "process.exit(0)"],
         working_directory: process.cwd(),
@@ -115,9 +120,6 @@ it.each(["none", "before", "open", "final-stat", "close"] as const)(
         cleanupProcessGroup: async () => {
           throw new Error("No process should have been acquired");
         },
-        verifyTokenOwnedProcesses: async () => {
-          throw new Error("No process should have been acquired");
-        },
         removeTemporaryRoot: async (path) => {
           await rm(path, { recursive: true });
           removed.push(path);
@@ -125,7 +127,6 @@ it.each(["none", "before", "open", "final-stat", "close"] as const)(
       },
     );
     expect(control.launches).toBe(stage === "none" ? 1 : 0);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected sentinel failure or cancellation");
     if (stage === "none")
       expect(String(result.error.cause)).toContain("PTY launch sentinel");

@@ -4,8 +4,12 @@ import { inspectSqliteDatabaseInputSchema } from "../domain/sqlite/sqliteDatabas
 import { inspectSqliteDatabaseSnapshot } from "./SqliteDatabaseInspection.js";
 import {
   SQLITE_DATABASE_LIMITS,
+  SqliteColumnEvaluationFailure,
+  SqliteColumnLimitFailure,
   SqliteInspectionFailure,
+  sqlitePrimaryResultCode,
 } from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
@@ -29,20 +33,36 @@ const main = async (): Promise<void> => {
       ),
     };
   } catch (cause: unknown) {
-    const code =
-      cause instanceof Error && "errcode" in cause ? cause.errcode : undefined;
-    reply = {
-      ok: false,
-      reason:
-        cause instanceof SqliteInspectionFailure
-          ? cause.reason
-          : code === 7
-            ? "memory"
-            : code === 18
-              ? "output-limit"
-              : "format",
-      message: cause instanceof Error ? cause.message : String(cause),
-    };
+    const code = sqlitePrimaryResultCode(cause);
+    const message = errorMessage(cause);
+    reply =
+      cause instanceof SqliteColumnEvaluationFailure
+        ? {
+            ok: false,
+            reason: cause.reason,
+            message,
+            readable_columns: cause.readableColumns,
+          }
+        : cause instanceof SqliteColumnLimitFailure
+          ? {
+              ok: false,
+              reason: cause.reason,
+              message,
+              selected_columns: cause.selectedColumns,
+              engine_column_limit: cause.engineColumnLimit,
+            }
+          : {
+              ok: false,
+              reason:
+                cause instanceof SqliteInspectionFailure
+                  ? cause.reason
+                  : code === 7
+                    ? "memory"
+                    : code === 18
+                      ? "output-limit"
+                      : "format",
+              message,
+            };
   }
   let encoded = JSON.stringify(reply);
   if (Buffer.byteLength(encoded) > SQLITE_DATABASE_LIMITS.outputBytes)

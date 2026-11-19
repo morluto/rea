@@ -14,19 +14,19 @@ export const qlogViewContextSchema = qlogCaptureFactsSchema.omit({
   traces: true,
 });
 export const qlogSummarySchema = qlogViewContextSchema.extend({
-  trace_count: z.number().int().nonnegative(),
-  retained_stream_count: z.number().int().nonnegative(),
-  loss_declaration_count: z.number().int().nonnegative(),
-  incomplete_fact_record_count: z.number().int().nonnegative(),
+  trace_count: z.int().nonnegative(),
+  retained_stream_count: z.int().nonnegative(),
+  loss_declaration_count: z.int().nonnegative(),
+  incomplete_fact_record_count: z.int().nonnegative(),
 });
 
 /** Select retained trace facts without copying event inventories or every contribution. */
 const pageRequestShape = {
   kind: z.literal("qlog"),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 };
-const traceSelectorShape = { trace_index: z.number().int().nonnegative() };
+const traceSelectorShape = { trace_index: z.int().nonnegative() };
 const streamSelectorShape = {
   ...traceSelectorShape,
   stream_id: streamSchema.shape.stream_id,
@@ -74,9 +74,9 @@ const traceSummarySchema = traceSchema
     incomplete_fact_records: true,
   })
   .extend({
-    stream_count: z.number().int().nonnegative(),
-    loss_declaration_count: z.number().int().nonnegative(),
-    incomplete_fact_record_count: z.number().int().nonnegative(),
+    stream_count: z.int().nonnegative(),
+    loss_declaration_count: z.int().nonnegative(),
+    incomplete_fact_record_count: z.int().nonnegative(),
   });
 const streamSummarySchema = streamSchema
   .omit({
@@ -85,9 +85,9 @@ const streamSummarySchema = streamSchema
     reported_final_sizes: true,
   })
   .extend({
-    contribution_count: z.number().int().nonnegative(),
-    covered_range_count: z.number().int().nonnegative(),
-    reported_final_size_count: z.number().int().nonnegative(),
+    contribution_count: z.int().nonnegative(),
+    covered_range_count: z.int().nonnegative(),
+    reported_final_size_count: z.int().nonnegative(),
   });
 /** Each page advertises exactly the retained item contract for its facet. */
 export const qlogViewPageSchema = z.discriminatedUnion("facet", [

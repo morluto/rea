@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 
 /** UEFI GUIDs are 16 raw bytes rendered as 8-4-4-4-12 hex digits. */
@@ -16,9 +17,10 @@ export function formatGuidLittleEndian(
   if (offset < 0 || offset + GUID_LENGTH > buffer.length) {
     return null;
   }
-  const data1 = buffer.readUInt32LE(offset);
-  const data2 = buffer.readUInt16LE(offset + 4);
-  const data3 = buffer.readUInt16LE(offset + 6);
+  const reader = new BinaryReader(buffer, true, "UEFI GUID");
+  const data1 = reader.u32(offset);
+  const data2 = reader.u16(offset + 4);
+  const data3 = reader.u16(offset + 6);
   const tail = buffer.subarray(offset + 8, offset + GUID_LENGTH);
   const word = (value: number, digits: number): string =>
     value.toString(16).padStart(digits, "0");

@@ -73,6 +73,23 @@ describe("JavaScript semantic analysis: runtime boundaries 1", () => {
     ]);
   });
 
+  it("keeps an overflowing timer delay unknown in a complete semantic result", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function greet() { return "hello"; }
+      setTimeout(() => greet(), 1e999);
+    `);
+
+    expect(ir.timerOperations).toEqual([
+      expect.objectContaining({
+        kind: "schedule",
+        method: "setTimeout",
+        delayMilliseconds: null,
+        resolution: "complete",
+      }),
+    ]);
+    expect(ir.callables.some(({ name }) => name === "greet")).toBe(true);
+  });
+
   it("does not treat shadowed timer globals as Node timers", () => {
     const ir = analyzeJavaScriptSemantics(`
       function run(setTimeout, clearTimeout) {
@@ -198,6 +215,64 @@ describe("JavaScript semantic analysis: event dispatch data", () => {
       ["ready", "complete"],
       ["ready", "complete"],
       ["ready", "complete"],
+    ]);
+  });
+});
+
+describe("JavaScript semantic analysis: replaced built-in globals", () => {
+  it.each([
+    ["setTimeout", "setTimeout = local; setTimeout(work, 1);", "timer"],
+    [
+      "globalThis.setTimeout",
+      "globalThis.setTimeout = local; setTimeout(work, 1);",
+      "timer",
+    ],
+    ["fetch", "fetch = local; fetch('https://example.test');", "request"],
+    [
+      "WebSocket",
+      "WebSocket = local; new WebSocket('wss://example.test');",
+      "request",
+    ],
+    // A replaced JSON.parse keeps only the generic, partial `.parse` candidate.
+    ["JSON.parse", "JSON.parse = local; JSON.parse('null');", "boundary"],
+    ["JSON", "JSON = { parse: local }; JSON.parse('null');", "boundary"],
+    ["String", "String = local; String(value);", "boundary"],
+  ] as const)(
+    "does not admit built-in effects after a visible %s replacement",
+    (_name, source, family) => {
+      const ir = analyzeJavaScriptSemantics(source);
+      const operations = {
+        timer: ir.timerOperations,
+        request: ir.requestOperations,
+        boundary: ir.boundaryOperations,
+      };
+      expect(
+        operations[family].filter(
+          ({ resolution }) => resolution === "complete",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("keeps built-in effects for unmodified globals beside unrelated writes", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      JSON.stringify = local; other.setTimeout = local;
+      setTimeout(work, 1);
+      fetch('https://example.test');
+      new WebSocket('wss://example.test');
+      JSON.parse('null');
+      String(value);
+    `);
+    expect(ir.timerOperations).toMatchObject([
+      { method: "setTimeout", resolution: "complete" },
+    ]);
+    expect(ir.requestOperations.map(({ method }) => method)).toEqual([
+      "fetch",
+      "WebSocket",
+    ]);
+    expect(ir.boundaryOperations).toMatchObject([
+      { method: "JSON.parse", resolution: "complete" },
+      { method: "String", resolution: "complete" },
     ]);
   });
 });

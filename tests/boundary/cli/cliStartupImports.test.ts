@@ -1,19 +1,23 @@
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const execute = promisify(execFile);
 const MARKER = "REA_TEST_RESOLVED ";
 // Dependencies and composition modules used by one command family; startup
 // must not resolve them just to register the complete command catalog.
 const DEFERRED_IMPORTS = [
+  {
+    name: "guided-workflows",
+    path: "/dist/application/GuidedWorkflowAccess.js",
+  },
   {
     name: "direct-analysis",
     path: "/dist/application/DirectAnalysis.js",
@@ -52,11 +56,11 @@ const DEFERRED_IMPORTS = [
   },
   {
     name: "catalog-identity",
-    path: "/dist/catalogIdentity.js",
+    path: "/dist/contracts/catalog/catalogIdentity.js",
   },
   {
     name: "server-identity",
-    path: "/dist/serverIdentity.js",
+    path: "/dist/process/ServerIdentity.js",
   },
   {
     name: "tool-contracts",
@@ -114,6 +118,18 @@ const DEFERRED_IMPORTS = [
     name: "reconstruction-obligation-ledger",
     path: "/dist/application/ReconstructionObligationLedgerService.js",
   },
+  {
+    name: "environment-source",
+    path: "/dist/application/environment/environmentSource.js",
+  },
+  {
+    name: "environment-export",
+    path: "/dist/application/environment/environmentExport.js",
+  },
+  {
+    name: "environment-server",
+    path: "/dist/server/environment/serveEnvironment.js",
+  },
 ] as const;
 // Report each resolved deferred package on stderr without changing resolution.
 const RESOLUTION_HOOK = `data:text/javascript,${encodeURIComponent(`
@@ -145,10 +161,16 @@ const resolvedMarkers = (stderr: string): ReadonlySet<string> =>
 const resolvedPackages = async (
   arguments_: readonly string[],
 ): Promise<ReadonlySet<string>> => {
-  const { stderr } = await execute(
-    process.execPath,
-    [`--import=${RESOLUTION_HOOK}`, ...arguments_],
-    { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024 },
+  const commands = await createVerifierCommands();
+  onTestFinished(() => commands.close());
+  const { stderr } = await withVerifierCleanup(
+    () =>
+      commands.exec(
+        process.execPath,
+        [`--import=${RESOLUTION_HOOK}`, ...arguments_],
+        { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024, timeout: 15_000 },
+      ),
+    [() => commands.close()],
   );
   return resolvedMarkers(stderr);
 };
@@ -161,6 +183,20 @@ const evaluate = (source: string): readonly string[] => [
 
 describe("CLI startup imports", () => {
   it("detects each deferred package when its command code loads", async () => {
+    await expect(
+      resolvedPackages(
+        evaluate(
+          'await import("./dist/application/environment/environmentSource.js");',
+        ),
+      ),
+    ).resolves.toContain("environment-source");
+    await expect(
+      resolvedPackages(
+        evaluate(
+          'await import("./dist/application/environment/environmentExport.js");',
+        ),
+      ),
+    ).resolves.toContain("environment-export");
     const missingBrowser = join(
       await createTestTempDirectory("rea-startup-browser-"),
       "missing-browser",
@@ -181,7 +217,7 @@ describe("CLI startup imports", () => {
     await expect(
       resolvedPackages(
         evaluate(
-          `const { readReferenceSourceVcs } = await import("./dist/application/ReferenceSourceVcsAdapter.js"); const { ArtifactResourceScope } = await import("./dist/artifacts/ArtifactResourceScope.js"); const resources = new ArtifactResourceScope(); try { await readReferenceSourceVcs(${JSON.stringify(source)}, resources); } finally { await resources.close(); }`,
+          `const { readReferenceSourceVcs } = await import("./dist/application/ReferenceSourceVcsAdapter.js"); const { ArtifactResourceScope } = await import("./dist/resources/ArtifactResourceScope.js"); const resources = new ArtifactResourceScope(); try { await readReferenceSourceVcs(${JSON.stringify(source)}, resources); } finally { await resources.close(); }`,
         ),
       ),
     ).resolves.toContain("isomorphic-git");
@@ -191,6 +227,25 @@ describe("CLI startup imports", () => {
     await expect(
       resolvedPackages(["scripts/rea.mjs", "--help"]),
     ).resolves.toEqual(new Set());
+    await expect(
+      resolvedPackages(evaluate('await import("./dist/cli.js");')),
+    ).resolves.toEqual(new Set());
+  });
+
+  it("renders guidance without loading the tool catalog or provider composition", async () => {
+    await expect(
+      resolvedPackages([
+        "scripts/rea.mjs",
+        "guided-workflows",
+        "--action",
+        "render",
+        "--workflow-id",
+        "investigate_feature",
+        "--arguments-json",
+        JSON.stringify({ feature: "offline search" }),
+        "--json",
+      ]),
+    ).resolves.toEqual(new Set(["guided-workflows"]));
   });
 
   it("does not load native provider composition for JavaScript application analysis", async () => {
@@ -235,19 +290,26 @@ describe("CLI startup imports", () => {
 });
 
 describe("MCP startup imports", () => {
-  it("does not load command-specific dependencies to initialize and list tools", async () => {
+  it("initializes and lists tools over stdio with HTTP-only environment settings present", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [`--import=${RESOLUTION_HOOK}`, "scripts/rea.mjs", "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        MCP_HOST: " ",
+        MCP_PORT: "not-a-port",
+      },
       stderr: "pipe",
     });
     let stderr = "";
     transport.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
-    const client = new Client({ name: "rea-startup-imports", version: "1" });
+    const client = new Client(
+      { name: "rea-startup-imports", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
@@ -258,6 +320,7 @@ describe("MCP startup imports", () => {
       await client.close();
     }
     const resolved = resolvedMarkers(stderr);
+    expect(stderr).not.toContain("MCP transport listening");
     expect(resolved).not.toContain("playwright-core");
     expect(resolved).not.toContain("isomorphic-git");
   });

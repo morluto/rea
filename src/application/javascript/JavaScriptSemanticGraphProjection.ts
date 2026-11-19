@@ -1,3 +1,8 @@
+import {
+  compareJavaScriptSourcePoints,
+  javascriptSourceRangeContains,
+  javascriptSourceRangeKey,
+} from "../../domain/javascript/javascriptSourceCoordinates.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
@@ -12,6 +17,7 @@ interface SourceInterval {
 interface CallableInterval extends SourceInterval {
   readonly callableId: string;
   readonly priority: string;
+  readonly computedKeyRange: JavaScriptSourceRange | null;
 }
 
 interface SourceIntervalTree<Interval extends SourceInterval> {
@@ -35,12 +41,13 @@ export const createSemanticCallableOwnerLookup = (
     .map((callable, order): CallableInterval => ({
       callableId: callable.callableId,
       range: callable.location,
+      computedKeyRange: callable.computedKeyLocation,
       order,
       priority: positionKey(callable.location),
     }))
     .sort(
       (left, right) =>
-        pointCompare(left.range.start, right.range.start) ||
+        compareJavaScriptSourcePoints(left.range.start, right.range.start) ||
         left.order - right.order,
     );
   const tree = buildSourceIntervalTree(entries, 0, entries.length);
@@ -54,12 +61,17 @@ export const createSemanticCallableOwnerLookup = (
       const current = pending.pop();
       if (
         current === undefined ||
-        pointCompare(current.minimumStart, location.start) > 0 ||
-        pointCompare(current.maximumEnd, location.end) < 0
+        compareJavaScriptSourcePoints(current.minimumStart, location.start) >
+          0 ||
+        compareJavaScriptSourcePoints(current.maximumEnd, location.end) < 0
       )
         continue;
       const candidate = current.entry;
-      if (contains(candidate.range, location)) {
+      if (
+        javascriptSourceRangeContains(candidate.range, location) &&
+        (candidate.computedKeyRange === null ||
+          !javascriptSourceRangeContains(candidate.computedKeyRange, location))
+      ) {
         const node = nodes.get(candidate.callableId);
         const rank =
           best === undefined
@@ -93,9 +105,15 @@ const buildSourceIntervalTree = <Interval extends SourceInterval>(
   let minimumEnd = entry.range.end;
   let maximumEnd = entry.range.end;
   for (const child of [left, right]) {
-    if (child !== null && pointCompare(child.minimumEnd, minimumEnd) < 0)
+    if (
+      child !== null &&
+      compareJavaScriptSourcePoints(child.minimumEnd, minimumEnd) < 0
+    )
       minimumEnd = child.minimumEnd;
-    if (child !== null && pointCompare(child.maximumEnd, maximumEnd) > 0)
+    if (
+      child !== null &&
+      compareJavaScriptSourcePoints(child.maximumEnd, maximumEnd) > 0
+    )
       maximumEnd = child.maximumEnd;
   }
   return {
@@ -120,7 +138,7 @@ export const createSemanticNodeRangeLookup = (
     })
     .sort(
       (left, right) =>
-        pointCompare(left.range.start, right.range.start) ||
+        compareJavaScriptSourcePoints(left.range.start, right.range.start) ||
         left.order - right.order,
     );
   const tree = buildSourceIntervalTree(entries, 0, entries.length);
@@ -132,11 +150,12 @@ export const createSemanticNodeRangeLookup = (
       const current = pending.pop();
       if (
         current === undefined ||
-        pointCompare(current.maximumStart, range.start) < 0 ||
-        pointCompare(current.minimumEnd, range.end) > 0
+        compareJavaScriptSourcePoints(current.maximumStart, range.start) < 0 ||
+        compareJavaScriptSourcePoints(current.minimumEnd, range.end) > 0
       )
         continue;
-      if (contains(range, current.entry.range)) matches.push(current.entry);
+      if (javascriptSourceRangeContains(range, current.entry.range))
+        matches.push(current.entry);
       if (current.left !== null) pending.push(current.left);
       if (current.right !== null) pending.push(current.right);
     }
@@ -155,17 +174,14 @@ export const createSemanticCallSiteLookup = (
 ) => JavaScriptSemanticGraphNode | undefined) => {
   const identifiers = new Map<string, string>();
   for (const call of ir.callSites) {
-    const key = rangeKey(call.location);
+    const key = javascriptSourceRangeKey(call.location);
     if (!identifiers.has(key)) identifiers.set(key, call.callSiteId);
   }
   return (range) => {
-    const identifier = identifiers.get(rangeKey(range));
+    const identifier = identifiers.get(javascriptSourceRangeKey(range));
     return identifier === undefined ? undefined : nodes.get(identifier);
   };
 };
-
-const rangeKey = (range: JavaScriptSourceRange): string =>
-  `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`;
 
 /** Report extractor support without treating missing families as absence. */
 export const semanticFamilyStatus = (
@@ -190,18 +206,6 @@ export const semanticFamilyStatus = (
     return "unsupported";
   return "partial";
 };
-
-const contains = (
-  outer: JavaScriptSourceRange,
-  inner: JavaScriptSourceRange,
-): boolean =>
-  pointCompare(outer.start, inner.start) <= 0 &&
-  pointCompare(outer.end, inner.end) >= 0;
-
-const pointCompare = (
-  left: JavaScriptSourceRange["start"],
-  right: JavaScriptSourceRange["start"],
-): number => left.line - right.line || left.column - right.column;
 
 const positionKey = (range: JavaScriptSourceRange): string =>
   `${String(range.start.line).padStart(12, "0")}:${String(range.start.column).padStart(12, "0")}`;

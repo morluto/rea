@@ -360,6 +360,7 @@ cliTest(
       const source = factorySource(scenario);
       const directory = join(root, scenario.name);
       await mkdir(directory);
+      await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       await writeFile(join(directory, "main.js"), source);
       const runtime = [false, true].map((flag) =>
         runtimeChannels(source, flag),
@@ -378,7 +379,12 @@ cliTest(
         input_path: directory,
         format: "directory",
       });
-      expect(response.isError, scenario.name).not.toBe(true);
+      expect(
+        response.isError,
+        response.isError
+          ? `${scenario.name}: ${JSON.stringify(response.content)}`
+          : scenario.name,
+      ).not.toBe(true);
       const evidence = contract.outputSchema.parse(response.structuredContent);
       verifyApplication(
         javascriptApplicationAnalysisResultSchema.parse(
@@ -411,7 +417,6 @@ cliTest(
       }
     }
   },
-  120_000,
 );
 
 cliTest(
@@ -450,6 +455,7 @@ cliTest(
       expect(channels.length, name).toBe(expected);
       const directory = join(root, name);
       await mkdir(directory);
+      await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       await writeFile(join(directory, "main.js"), source);
       const response = await call("analyze_javascript_application", {
         input_path: directory,
@@ -493,5 +499,4 @@ cliTest(
       );
     }
   },
-  30_000,
 );

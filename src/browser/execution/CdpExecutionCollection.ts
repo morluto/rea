@@ -1,6 +1,6 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { cdpTargetEventMatches } from "../CdpTargetEvents.js";
+import { onCdpTargetEvent } from "../CdpTargetEvents.js";
 import { CdpExecutionWindow } from "./CdpExecutionWindow.js";
 import { CdpRuntimeRequests } from "./CdpRuntimeRequests.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
@@ -17,31 +17,34 @@ export class CdpExecutionCollection {
     this.window = new CdpExecutionWindow(session);
     this.requests = new CdpRuntimeRequests(sources);
     this.#unsubscribers = [
-      session.transport.connection.onEvent((event) => {
-        if (!cdpTargetEventMatches(event, session.transport.sessionId)) return;
-        try {
-          if (
-            this.#metadataOpen &&
-            (this.window.reason === undefined ||
-              this.window.reason === "window_elapsed")
-          )
-            sources.ingest(event);
-          else if (this.window.reason === "window_elapsed")
-            sources.verifyKnownIdentity(event);
-          if (this.window.active) this.requests.ingest(event);
-          sources.check();
-          this.requests.check();
-        } catch (cause: unknown) {
-          this.window.fail(
-            cause instanceof AnalysisError
-              ? cause
-              : new AnalysisOutputError(session.operation, String(cause)),
-          );
-        }
-        this.window.ingest(event);
-      }),
-      session.transport.connection.onDisconnect(() =>
-        this.window.end("target_terminated"),
+      onCdpTargetEvent(
+        session.transport.connection,
+        session.transport.sessionId,
+        (event) => {
+          try {
+            if (
+              this.#metadataOpen &&
+              (this.window.reason === undefined ||
+                this.window.reason === "window_elapsed")
+            )
+              sources.ingest(event);
+            else if (this.window.reason === "window_elapsed")
+              sources.verifyKnownIdentity(event);
+            if (this.window.active) this.requests.ingest(event);
+            sources.check();
+            this.requests.check();
+          } catch (cause: unknown) {
+            this.window.fail(
+              cause instanceof AnalysisError
+                ? cause
+                : new AnalysisOutputError(session.operation, String(cause)),
+            );
+          }
+          this.window.ingest(event);
+        },
+      ),
+      session.transport.connection.onDisconnect((error) =>
+        this.window.fail(error),
       ),
       session.transport.connection.onProtocolFailure((error) =>
         this.window.fail(error),

@@ -1,7 +1,13 @@
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { z } from "zod";
 
 import type { objcPropertySchema } from "../domain/native/objcSwiftMetadata.js";
-import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
+import {
+  issue,
+  type DecodeIssue,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type ObjcProperty = z.infer<typeof objcPropertySchema>;
 
@@ -13,18 +19,9 @@ export interface ObjcPropertyReaders {
 }
 
 /**
- * Parse an `@property` attribute string such as `T@"NSString",C,N,V_name`.
- * Each comma-separated token is one attribute; `T` is the type encoding.
- */
-export const parsePropertyAttributes = (
-  name: string,
-  attributes: string,
-): ObjcProperty => decodePropertyAttributes(name, attributes).property;
-
-/**
- * Decode one attribute string. A quoted class name that never closes leaves
- * the string incomplete: later attributes may be inside the unfinished type,
- * so a missing `N` or `R` does not establish the Objective-C defaults.
+ * Decode one attribute string. An unfinished quoted or templated type leaves
+ * later attributes ambiguous, so a missing `N` or `R` does not establish the
+ * Objective-C defaults.
  */
 const decodePropertyAttributes = (
   name: string,
@@ -68,8 +65,8 @@ const decodePropertyAttributes = (
 };
 
 /**
- * Split on commas that are outside a quoted class name in the type encoding,
- * and report whether every quote closed.
+ * Split on separators outside quoted names and C++ template arguments in the
+ * type attribute, and report whether those constructs are complete.
  */
 const splitAttributes = (
   attributes: string,
@@ -77,9 +74,19 @@ const splitAttributes = (
   const tokens: string[] = [];
   let current = "";
   let quoted = false;
+  let templateDepth = 0;
   for (const character of attributes) {
     if (character === '"') quoted = !quoted;
-    if (character === "," && !quoted) {
+    const inTypeAttribute = current.startsWith("T");
+    if (!quoted && inTypeAttribute && character === "<") templateDepth += 1;
+    else if (
+      !quoted &&
+      inTypeAttribute &&
+      character === ">" &&
+      templateDepth > 0
+    )
+      templateDepth -= 1;
+    if (character === "," && !quoted && templateDepth === 0) {
       tokens.push(current);
       current = "";
     } else current += character;
@@ -87,7 +94,7 @@ const splitAttributes = (
   tokens.push(current);
   return {
     tokens: tokens.filter((token) => token.length > 0),
-    complete: !quoted,
+    complete: !quoted && templateDepth === 0,
   };
 };
 
@@ -107,6 +114,7 @@ export const readObjcPropertyList = (
   read: ObjcPropertyReaders,
   list: bigint,
   admit: () => boolean,
+  onTruncated?: () => void,
 ): {
   readonly properties: ObjcProperty[];
   readonly issues: PropertyListIssue[];
@@ -117,16 +125,21 @@ export const readObjcPropertyList = (
   const entrySize = read.u32(list) & ~3;
   const count = read.u32(list + 4n);
   if (entrySize !== 16)
-    throw new TypeError(
+    throw unsupportedInput(
+      "macho",
       `Unsupported Objective-C property entry size ${entrySize}`,
     );
   for (let index = 0; index < count; index++) {
-    if (!admit()) break;
+    if (!admit()) {
+      onTruncated?.();
+      break;
+    }
     const entry = list + 8n + BigInt(index * entrySize);
     const location = `0x${entry.toString(16)}`;
     try {
       const name = read.string(read.pointer(entry));
-      if (name.length === 0) throw new TypeError("the property name is empty");
+      if (name.length === 0)
+        throw malformedInput("macho", "the property name is empty");
       const decoded = decodePropertyAttributes(
         name,
         read.string(read.pointer(entry + 8n)),
@@ -135,13 +148,14 @@ export const readObjcPropertyList = (
       if (!decoded.complete)
         issues.push({
           code: "property_attributes_incomplete",
-          message: `property ${name} has an unterminated quoted class name in its type attribute, so atomicity and unestablished read-only state are unknown`,
+          message: `property ${name} has an incomplete quoted name or template argument in its type attribute, so atomicity and unestablished read-only state are unknown`,
           location,
         });
     } catch (cause: unknown) {
+      if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
       issues.push({
         code: "property_decode_failed",
-        message: `property ${String(index)} could not be decoded: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `property ${String(index)} could not be decoded: ${errorMessage(cause)}`,
         location,
       });
     }
@@ -149,22 +163,26 @@ export const readObjcPropertyList = (
   return { properties, issues };
 };
 
-/** Decode a property list, recording a failure for `owner` instead of throwing. */
+/** Own the property-list pointer field and list, retaining the declaring owner on failure. */
 export const readObjcPropertiesOf = (
   read: ObjcPropertyReaders,
-  list: bigint,
+  field: bigint,
   context: {
     readonly owner: string;
     readonly admit: () => boolean;
     readonly issues: DecodeIssue[];
-    readonly location?: string;
+    readonly onTruncated?: () => void;
   },
 ): ObjcProperty[] => {
+  let location = `0x${field.toString(16)}`;
   try {
+    const list = read.pointer(field);
+    location = `0x${list.toString(16)}`;
     const { properties, issues } = readObjcPropertyList(
       read,
       list,
       context.admit,
+      context.onTruncated,
     );
     for (const item of issues)
       context.issues.push(
@@ -177,12 +195,13 @@ export const readObjcPropertiesOf = (
       );
     return properties;
   } catch (cause: unknown) {
+    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
     context.issues.push(
       issue(
         "objc_properties_categories",
         "property_decode_failed",
-        `${context.owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        context.location,
+        `${context.owner}: ${errorMessage(cause)}`,
+        location,
       ),
     );
     return [];

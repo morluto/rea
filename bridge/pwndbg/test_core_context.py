@@ -14,7 +14,7 @@ BRIDGE = Path(__file__).with_name("core_context.py")
 
 
 class CoreContextTests(unittest.TestCase):
-    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian"):
+    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian", objfile="recorded-executable", output_bytes=16384):
         commands, reads, queries = [], [], []
         state = {"executable": None, "symbols": None, "connection": None}
         gdb = types.ModuleType("gdb")
@@ -50,7 +50,7 @@ class CoreContextTests(unittest.TestCase):
         def maps():
             self.assertIsNone(state["executable"], "Helper executable must be discarded before mapping queries")
             queries.append("maps")
-            return [types.SimpleNamespace(start=4096, end=8192, offset=0, flags=5, objfile="recorded-executable")]
+            return [types.SimpleNamespace(start=4096, end=8192, offset=0, flags=5, objfile=objfile)]
 
         pwndbg.aglib.vmmap.get = maps
         modules = {module.__name__: module for module in [
@@ -63,7 +63,7 @@ class CoreContextTests(unittest.TestCase):
             plugin.write_text("")
             request = stage / "request.json"
             reply = stage / "reply.json"
-            request.write_text(json.dumps({"gdbinit": str(plugin), "architecture": architecture, "snapshot_path": str(root / "object.snapshot"), "reply_path": str(reply)}))
+            request.write_text(json.dumps({"gdbinit": str(plugin), "architecture": architecture, "snapshot_path": str(root / "object.snapshot"), "reply_path": str(reply), "producer_limits": {"output_bytes": output_bytes}}))
             with patch.dict(sys.modules, modules), patch.dict(os.environ, REA_CORE_CONTEXT_REQUEST=str(request)):
                 runpy.run_path(str(BRIDGE))
             result = json.loads(reply.read_text())
@@ -103,6 +103,16 @@ class CoreContextTests(unittest.TestCase):
         self.assertNotIn("core-file ../object.snapshot", commands)
         self.assertEqual(reads, [])
         self.assertEqual(queries, [])
+
+    def test_selected_output_limit_reports_recovery_and_accepts_more_headroom(self):
+        result, _, reads, queries = self.inspect(objfile="m" * 2048, output_bytes=1024)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "output-limit")
+        self.assertIn("producer_limits.output_bytes=1024", result["message"])
+        self.assertEqual(reads, [])
+        self.assertEqual(queries, ["maps"])
+        recovered, _, _, _ = self.inspect(objfile="m" * 2048, output_bytes=4096)
+        self.assertTrue(recovered["ok"], recovered)
 
     def test_wrong_connection_or_remaining_symbols_never_queries_mappings(self):
         for options in [{"connection": "native"}, {"symbols": "unexpected-symbols"}]:

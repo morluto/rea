@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { semanticWriteTargets } from "./javascriptAstValues.js";
 
 /** Declaration syntax that establishes no runtime value, regardless of export form. */
 export const isErasedJavaScriptDeclaration = (node: t.Node): boolean =>
@@ -15,6 +16,10 @@ export const isErasedJavaScriptDeclaration = (node: t.Node): boolean =>
 export const isUnmodeledJavaScriptRuntimeScope = (node: t.Node): boolean =>
   t.isTSModuleDeclaration(node) || t.isTSEnumDeclaration(node);
 
+/** Compiler options determine whether an inline type-only declaration retains a side effect. */
+export const TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION =
+  "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.";
+
 /** Whether TypeScript explicitly erases this entire import declaration. */
 export const isTypeOnlyImportDeclaration = (
   node: t.ImportDeclaration,
@@ -26,10 +31,19 @@ export const isTypeOnlyExportDeclaration = (
 ): boolean =>
   node.exportKind === "type" ||
   (t.isExportNamedDeclaration(node) &&
-    node.declaration !== null &&
-    (t.isTSInterfaceDeclaration(node.declaration) ||
-      t.isTSTypeAliasDeclaration(node.declaration) ||
-      t.isTSDeclareFunction(node.declaration)));
+    node.declaration != null &&
+    isErasedJavaScriptDeclaration(node.declaration));
+
+/** Runtime static module source, shared by source and captured-script consumers. */
+export const semanticStaticModuleSource = (
+  node: t.Node,
+): t.StringLiteral | null => {
+  if (t.isImportDeclaration(node))
+    return isTypeOnlyImportDeclaration(node) ? null : node.source;
+  if (t.isExportAllDeclaration(node) || t.isExportNamedDeclaration(node))
+    return isTypeOnlyExportDeclaration(node) ? null : (node.source ?? null);
+  return null;
+};
 
 /**
  * Runtime external-module target for a value import-equals declaration;
@@ -51,6 +65,37 @@ export const isTypeOnlyImportSpecifier = (node: t.ImportSpecifier): boolean =>
 /** Whether this exported binding is explicitly type-only. */
 export const isTypeOnlyExportSpecifier = (node: t.ExportSpecifier): boolean =>
   node.exportKind === "type";
+
+/** Runtime values published by a local ESM export; source re-exports have no local value. */
+export const semanticRuntimeExportValueSources = (
+  node: t.Node,
+): readonly t.Node[] => {
+  if (t.isExportDefaultDeclaration(node))
+    return isErasedJavaScriptDeclaration(node.declaration)
+      ? []
+      : [node.declaration];
+  if (
+    !t.isExportNamedDeclaration(node) ||
+    node.source != null ||
+    isTypeOnlyExportDeclaration(node)
+  )
+    return [];
+  const values: t.Node[] = [];
+  if (t.isVariableDeclaration(node.declaration))
+    for (const declaration of node.declaration.declarations)
+      for (const target of semanticWriteTargets(declaration.id))
+        values.push(target);
+  else if (
+    (t.isFunctionDeclaration(node.declaration) ||
+      t.isClassDeclaration(node.declaration)) &&
+    node.declaration.id != null
+  )
+    values.push(node.declaration.id);
+  for (const specifier of node.specifiers)
+    if (t.isExportSpecifier(specifier) && !isTypeOnlyExportSpecifier(specifier))
+      values.push(specifier.local);
+  return values;
+};
 
 /** A regular import whose bindings are all erased but may retain side effects. */
 export const hasOnlyInlineTypeImportSpecifiers = (

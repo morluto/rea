@@ -10,10 +10,10 @@ import {
   requireAddressArray,
   requireFunctionDossier,
   requirePseudocode,
-} from "../dist/application/RealHopperAssertions.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";
+} from "./lib/real-hopper-assertions.mjs";
+import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderMetadata.js";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
-import { REA_WORKFLOW_PROVIDER } from "../dist/application/InvestigationProviders.js";
+import { REA_WORKFLOW_PROVIDER } from "../dist/domain/investigationProviders.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 import { verifyHopperStringObjects } from "./lib/real-hopper-search.mjs";
 import {
@@ -62,10 +62,9 @@ const parseServerArgs = (encoded) => {
 };
 
 const runtimeParent = process.platform === "darwin" ? "/tmp" : tmpdir();
-const sessionsBefore = await snapshotHopperRuntime(
-  runtimeParent,
-  HOPPER_TARGET_LEASE_DIRECTORY,
-);
+const sessionsBefore = (
+  await snapshotHopperRuntime(runtimeParent, HOPPER_TARGET_LEASE_DIRECTORY)
+).paths;
 const ownedProcessIds = new Set();
 const textValue = mcpTextValue;
 
@@ -203,7 +202,7 @@ const verifyCurrentTarget = async (client, options) => {
       await client.callTool(
         {
           name: "analyze_function",
-          arguments: { procedure: firstAddress },
+          arguments: { procedure: firstAddress, detail: "complete" },
         },
         options,
       ),
@@ -557,11 +556,8 @@ try {
 
 await new Promise((resolve) => setTimeout(resolve, 500));
 const sessionsAfter = [
-  ...(await snapshotHopperRuntime(
-    runtimeParent,
-    HOPPER_TARGET_LEASE_DIRECTORY,
-    ownedProcessIds,
-  )),
+  ...(await snapshotHopperRuntime(runtimeParent, HOPPER_TARGET_LEASE_DIRECTORY))
+    .paths,
 ]
   .filter((path) => !sessionsBefore.has(path))
   .sort();
@@ -573,7 +569,7 @@ if (sessionsAfter.length > 0) {
     retainedRuntimePaths: sessionsAfter,
   });
   throw new Error(
-    `The MCP runtime retained Hopper resources: ${sessionsAfter.join(", ")}`,
+    `Hopper resources remain or have unresolved ownership: ${sessionsAfter.join(", ")}`,
   );
 }
 if (summary === undefined)

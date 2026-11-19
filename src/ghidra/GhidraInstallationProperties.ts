@@ -1,21 +1,28 @@
-import { createHash } from "node:crypto";
-import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
-  ArtifactFileCancelled,
+  artifactFileCompletion,
+  mapArtifactFileFailure,
   ArtifactFileCleanupFailure,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  RegularFileCapacityError,
+  readStableFileBytes,
+} from "../filesystem/readStableFileBytes.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { fixedProducerInputAllowance } from "../domain/fixedAllowanceRemediation.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
-import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
 import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Metadata admission budget, not a Java Properties format limit. */
-export const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 export interface GhidraInstallationFileOptions {
-  readonly resourceOwner: FileCloseResourceOwner;
+  readonly resourceOwner: RetainedResourceScope;
   readonly signal?: AbortSignal;
 }
 
@@ -36,7 +43,7 @@ export const readGhidraInstallationProperties = async (
             ),
         },
         options.signal,
-        async (file) =>
+        async ({ handle: file }) =>
           (
             await readStableFileBytes(
               file,
@@ -54,7 +61,7 @@ export const readGhidraInstallationProperties = async (
       ),
     );
   } catch (cause: unknown) {
-    const physical = artifactFilePrimaryFailure(cause);
+    const { cause: physical } = artifactFilePrimaryFacts(cause);
     if (
       !(cause instanceof ArtifactFileCleanupFailure) &&
       physical instanceof Error &&
@@ -64,13 +71,7 @@ export const readGhidraInstallationProperties = async (
       (physical.code === "ENOENT" || physical.code === "ENOTDIR")
     )
       return undefined;
-    const completed =
-      cause instanceof ArtifactFileCancelled
-        ? cause.fileCancellation.outcome.value
-        : cause instanceof ArtifactFileCleanupFailure &&
-            cause.fileCleanupFailure.outcome.kind === "completed"
-          ? cause.fileCleanupFailure.outcome.value
-          : undefined;
+    const completed = artifactFileCompletion(cause)?.value;
     const diagnostics = {
       path,
       stage: "installation_properties",
@@ -82,15 +83,37 @@ export const readGhidraInstallationProperties = async (
         : {
             completed_properties: {
               bytes: Buffer.byteLength(completed, "latin1"),
-              sha256: createHash("sha256")
-                .update(completed, "latin1")
-                .digest("hex"),
+              sha256: sha256Hex(completed, "latin1"),
               properties: jsonValueSchema.parse(
                 ghidraApplicationProperties(completed),
               ),
             },
           }),
     };
-    throw ghidraFileFailure(cause, "ghidra:installation", diagnostics);
+    const qualified = mapArtifactFileFailure(cause, (primary) =>
+      primary instanceof RegularFileCapacityError
+        ? new AnalysisResourceConstraintError(
+            "ghidra:installation",
+            "file-size",
+            primary.message,
+            {
+              maximum_bytes: primary.maximumBytes,
+              observed_bytes: primary.observedBytes.toString(),
+            },
+            {
+              cause: primary,
+              diagnostics,
+              ...fixedProducerInputAllowance(
+                MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
+                "The Ghidra installation-properties read allowance",
+              ),
+            },
+          )
+        : primary,
+    );
+    throw classifyProviderFailure(
+      qualified,
+      ghidraFileDialect("ghidra:installation", diagnostics),
+    );
   }
 };

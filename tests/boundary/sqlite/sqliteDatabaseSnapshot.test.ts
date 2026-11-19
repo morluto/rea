@@ -8,13 +8,15 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import type { StableArtifactFileSystem } from "../../../src/artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import type { StableArtifactFileSystem } from "../../../src/resources/readStableArtifact.js";
 import { captureSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseSnapshot.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
-import { sqliteDatabaseFailure } from "../../../src/sqlite/SqliteDatabaseFailures.js";
+import { sqliteDatabaseDialect } from "../../../src/sqlite/SqliteDatabaseFailures.js";
 import {
   createSqliteDatabaseFixture,
   SQLITE_NATIVE_LIMITS_AVAILABLE,
@@ -67,7 +69,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["PERSIST", "TRUNCATE"])(
       table: "records",
     });
     expect(result.rows).toMatchObject({ returned_rows: 4, truncated: false });
-    expect(await readFile(journalPath)).toEqual(before);
+    expect(Buffer.compare(await readFile(journalPath), before)).toBe(0);
     const afterStat = await lstat(journalPath, { bigint: true });
     expect([
       afterStat.ino,
@@ -112,7 +114,10 @@ it.runIf(process.platform !== "win32").each([
       throw new Error("A disappearing source must be rejected");
     } catch (cause) {
       expect(
-        sqliteDatabaseFailure(cause, database.path, "artifact-read"),
+        classifyProviderFailure(
+          cause,
+          sqliteDatabaseDialect(database.path, "artifact-read"),
+        ),
       ).toMatchObject({ _tag: "AnalysisArtifactChangedError" });
       expect(cause).toMatchObject({
         message: expect.stringContaining(selectedPath),
@@ -181,8 +186,8 @@ it("refuses an active journal even before SQLite writes its magic header", async
       reason: "format",
       message: expect.stringContaining("recovery"),
     });
-    expect(await readFile(database.path)).toEqual(original);
-    expect(await readFile(journalPath)).toEqual(journal);
+    expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
+    expect(Buffer.compare(await readFile(journalPath), journal)).toBe(0);
   } finally {
     writer.exec("ROLLBACK");
     writer.close();
@@ -202,6 +207,20 @@ it.runIf(process.platform !== "win32")(
     const empty = await workspace.write("empty-journal", "");
     await symlink(empty, `${database.path}-journal`);
     await expect(capture()).rejects.toMatchObject({ reason: "path" });
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "does not offer a resolved-file retry for a derived WAL symlink",
+  async () => {
+    const { database, workspace, capture } = await fixture(true);
+    const target = workspace.path("wal-target");
+    await rename(database.walPath, target);
+    await symlink(target, database.walPath);
+    await expect(capture()).rejects.toMatchObject({
+      operationCause: { reason: "path", resolvedPath: undefined },
+      completedMembers: [{ role: "database", path: database.path }],
+    });
   },
 );
 
@@ -227,7 +246,8 @@ it.each(["activate", "replace", "remove"])(
       },
     };
     await expect(capture(fileSystem)).rejects.toMatchObject({
-      reason: "integrity",
+      _tag: "SqliteSnapshotAcquisitionFailure",
+      operationCause: { reason: "integrity" },
     });
   },
 );
@@ -252,7 +272,8 @@ it("refuses an activated journal even when filesystem metadata cannot distinguis
     },
   };
   await expect(capture(fileSystem)).rejects.toMatchObject({
-    reason: "integrity",
+    _tag: "SqliteSnapshotAcquisitionFailure",
+    operationCause: { reason: "integrity" },
   });
 });
 
@@ -276,10 +297,21 @@ it("rejects a database changed after its copy but before WAL acquisition", async
     },
   };
   await expect(capture(fileSystem)).rejects.toMatchObject({
-    reason: "integrity",
+    _tag: "SqliteSnapshotAcquisitionFailure",
+    operationCause: { reason: "integrity" },
+    completedMembers: expect.arrayContaining([
+      {
+        role: "database",
+        path: database.path,
+        sha256: createHash("sha256").update(initial).digest("hex"),
+        bytes: initial.length,
+      },
+    ]),
   });
   expect(changed).toBe(true);
-  expect(await readFile(`${root}/database.snapshot`)).toEqual(initial);
+  expect(
+    Buffer.compare(await readFile(`${root}/database.snapshot`), initial),
+  ).toBe(0);
 });
 
 it.each(["-wal", "-journal"] as const)(
@@ -301,7 +333,8 @@ it.each(["-wal", "-journal"] as const)(
       },
     };
     await expect(capture(fileSystem)).rejects.toMatchObject({
-      reason: "integrity",
+      _tag: "SqliteSnapshotAcquisitionFailure",
+      operationCause: { reason: "integrity" },
     });
     expect(created).toBe(true);
   },

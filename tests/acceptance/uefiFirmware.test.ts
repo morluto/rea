@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
@@ -64,6 +64,29 @@ const buildFlashImage = (): Buffer => {
   });
   // An erased lead-in keeps the first volume away from offset 0.
   return Buffer.concat([Buffer.alloc(0x1000, 0xff), body]);
+};
+
+const extractFlashFileViaCli = async (
+  root: string,
+  imageName: string,
+  offset: number,
+) => {
+  const cliExtraction = await execute(
+    process.execPath,
+    [
+      cli,
+      "extract-uefi-firmware",
+      imageName,
+      "cli-extracted",
+      "--file-offset",
+      String(offset),
+      "--source-stream",
+      "flash",
+      "--json",
+    ],
+    { cwd: root },
+  );
+  return parseEvidence(JSON.parse(cliExtraction.stdout));
 };
 
 it("maps a flash image end to end through CLI inspection and MCP session inventory", async () => {
@@ -200,6 +223,23 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
   expect(createHash("sha256").update(published).digest("hex")).toBe(
     publishedFile.sha256,
   );
+
+  const cliExtractionEvidence = await extractFlashFileViaCli(
+    root,
+    basename(imagePath),
+    sourceLocation.offset,
+  );
+  expect(cliExtractionEvidence).toMatchObject({
+    caller_input_path: basename(imagePath),
+    caller_input_paths: { output_directory: "cli-extracted" },
+  });
+  const cliExtracted = uefiResultSchemas.extract_uefi_firmware.parse(
+    cliExtractionEvidence.normalized_result,
+  );
+  expect(cliExtracted.selection).toEqual(extractResult.selection);
+  expect(cliExtracted.files.map((file) => file.sha256)).toEqual([
+    publishedFile.sha256,
+  ]);
 });
 
 it("never admits prose carrying a `_FVH` string as the flash image format", async () => {
