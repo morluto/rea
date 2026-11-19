@@ -446,7 +446,8 @@ windows = json.loads(${JSON.stringify(table)})
 if sys.argv[1:3] == ["-root", "_NET_CLIENT_LIST"]:
     print("_NET_CLIENT_LIST(WINDOW): window id # " + ", ".join(windows))
 else:
-    print(windows[sys.argv[2]])
+    window = sys.argv[2].lower()
+    print(next((props for xid, props in windows.items() if xid.lower() == window), ""))
 `,
   );
   await chmod(join(bin, "xprop"), 0o755);
@@ -499,6 +500,56 @@ it("holds readiness until a window of the app's class that the taskbar lists is 
     taskbarWindow(await fakeXprop({ "0x4": typedSplash }), "varicad"),
   ).toBe("False");
 });
+
+it.each([
+  [
+    "canonicalizes a hexadecimal window id",
+    { "0xA00007": 'WM_CLASS(STRING) = "editor", "ModelEditor"' },
+    "ModelEditor",
+    "True",
+  ],
+  [
+    "decodes an escaped class",
+    { "0x1": String.raw`WM_CLASS(STRING) = "editor", "Model\042Editor"` },
+    'Model"Editor',
+    "True",
+  ],
+  [
+    "requires the class field",
+    { "0x1": 'WM_CLASS(STRING) = "ModelEditor", "OtherApp"' },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "finds no class property",
+    { "0x1": "WM_CLASS: not found." },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "cannot decode the class property",
+    { "0x1": String.raw`WM_CLASS(STRING) = "editor", "Model\qEditor"` },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "observes a differently cased class",
+    { "0x1": 'WM_CLASS(STRING) = "editor", "modeleditor"' },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "reads splash markers from their own properties",
+    { "0x1": 'WM_CLASS(STRING) = "editor", "_NET_WM_STATE_SKIP_TASKBAR"' },
+    "_NET_WM_STATE_SKIP_TASKBAR",
+    "True",
+  ],
+])(
+  "interprets X11 readiness when xprop %s",
+  async (_, windows, class_, ready) => {
+    expect(taskbarWindow(await fakeXprop(windows), class_)).toBe(ready);
+  },
+);
 
 /** The exported module's JSON verdict for each text, with only its standard library imports: its view or its error. */
 const pythonJson = (texts: readonly string[]) => {

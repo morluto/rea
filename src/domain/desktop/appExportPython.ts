@@ -13,6 +13,7 @@ import {
   KEYFILE_ENTRY_LINE,
   PYTHON_ECMASCRIPT_TRIM_CHARACTERS,
 } from "./desktopTextSyntax.js";
+import { PYTHON_X11_PROPERTIES } from "./x11Windows.js";
 
 /** The generated module's imports. */
 /** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
@@ -123,8 +124,7 @@ def _respelled_utf16(data: bytes, home: Path) -> bytes:
     return mark + _respelled(text, home).encode(codec) if SEED_HOME in text else data
 
 
-#: What marks a window as not yet the app's own: skipping the taskbar, as splash screens and dialogs do, or a splash type.
-SPLASH_MARKS = ("_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_WINDOW_TYPE_SPLASH")
+${PYTHON_X11_PROPERTIES}
 
 
 def _taskbar_window(window_class: str) -> bool:
@@ -134,10 +134,14 @@ def _taskbar_window(window_class: str) -> bool:
         done = subprocess.run(["xprop", *args], capture_output=True, text=True)
         return done.stdout if done.returncode == 0 else ""
 
-    for window in re.findall(r"0x[0-9a-f]+", xprop("-root", "_NET_CLIENT_LIST").partition("#")[2]):
-        props = xprop("-id", window, "WM_CLASS", "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE")
-        classes = re.findall(r'"((?:[^"\\]|\\.)*)"', props.partition("WM_CLASS")[2].split("\n", 1)[0])
-        if window_class in classes and not any(mark in props for mark in SPLASH_MARKS):
+    root = _x11_properties(xprop("-root", "_NET_CLIENT_LIST"))
+    for window in _x11_client_ids(root):
+        props = _x11_properties(xprop("-id", window, "WM_CLASS", "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE"))
+        if _x11_window_class(props) != window_class:
+            continue
+        states = [atom.strip(ECMASCRIPT_TRIM_CHARACTERS) for atom in props.get("_NET_WM_STATE", "").split(",")]
+        types = [atom.strip(ECMASCRIPT_TRIM_CHARACTERS) for atom in props.get("_NET_WM_WINDOW_TYPE", "").split(",")]
+        if "_NET_WM_STATE_SKIP_TASKBAR" not in states and "_NET_WM_WINDOW_TYPE_SPLASH" not in types:
             return True
     return False
 
