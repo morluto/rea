@@ -128,6 +128,27 @@ const windowsCacheUser = () => {
 };
 
 /**
+ * Windows PowerShell environment for SID ACL observers. Drop a caller's
+ * PSModulePath so pwsh module paths cannot break Windows PowerShell.
+ */
+const windowsPowerShellEnvironment = () =>
+  Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => name.toLowerCase() !== "psmodulepath",
+    ),
+  );
+
+/** Bound a hung powershell.exe ACL observer (cold start on a starved host). */
+const WINDOWS_PRIVATE_ACL_OBSERVER_TIMEOUT_MS = 60_000;
+
+/**
+ * SYSTEM well-known SID. Matches native verifyPrivate / PrivateRuntimeRoot:
+ * private objects allow only the current user and SYSTEM — never Administrators
+ * or display-name trustees.
+ */
+const WINDOWS_SYSTEM_SID = "S-1-5-18";
+
+/**
  * Apply a user+SYSTEM protected DACL matching native PrivateRuntimeRoot.
  * Call only after lstat rejected symlinks/junctions — icacls follows links.
  */
@@ -152,35 +173,81 @@ const applyWindowsPrivateAcl = (path, kind) => {
 };
 
 /**
- * Confirm icacls reports only the current user and SYSTEM. Foreign well-known
- * principals (Everyone, Users, Authenticated Users) mean the warm-cache path
- * must not trust the entry — mode 0o700 does not establish a Windows DACL.
+ * Confirm owner and every access ACE by SID, matching native verifyPrivate.
+ * Display-name icacls text cannot prove ownership or exclude foreign writers;
+ * unresolved identity stays unknown and refuses the warm cache (fail closed).
+ * Reads only SecurityIdentifier forms — never Get-Acl / NTAccount translation.
  */
 const inspectWindowsPrivateAcl = (path, kind) => {
-  const user = windowsCacheUser();
-  const result = spawnSync("icacls", [path], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const detail = (result.stderr || result.stdout || "").trim();
+  const fileKind = kind === "entry" || kind === "ready";
+  // Keep account-name resolution out of the observer: DirectorySecurity /
+  // FileSecurity + GetOwner/GetAccessRules with SecurityIdentifier only.
+  const observer = `
+$ErrorActionPreference = 'Stop'
+$p = $env:REA_PLUGIN_CACHE_ACL_PATH
+if ([string]::IsNullOrEmpty($p)) { throw 'cache path is unresolved' }
+$sid = [Security.Principal.SecurityIdentifier]
+$sections = [Security.AccessControl.AccessControlSections]'Access, Owner'
+$security = if ($env:REA_PLUGIN_CACHE_ACL_FILE -eq '1') {
+  [Security.AccessControl.FileSecurity]::new($p, $sections)
+} else {
+  [Security.AccessControl.DirectorySecurity]::new($p, $sections)
+}
+$user = [Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($user -eq $null -or $user -isnot $sid) { throw 'current user SID is unresolved' }
+$owner = $security.GetOwner($sid)
+if ($owner -isnot $sid) { throw 'ACL owner observation must stay in SID form' }
+if ($owner.Value -ne $user.Value) { throw 'owner is not the current user' }
+if (-not $security.AreAccessRulesProtected) { throw 'private DACL must be protected' }
+$rules = $security.GetAccessRules($true, $true, $sid)
+if ($rules.Count -ne 2) { throw 'private DACL contains unexpected trustees' }
+$sawUser = $false
+$sawSystem = $false
+foreach ($rule in $rules) {
+  $trustee = $rule.IdentityReference
+  if ($trustee -isnot $sid) { throw 'ACL rule observation must stay in SID form' }
+  if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
+    throw 'private DACL contains unsupported ACE type'
+  }
+  if ($trustee.Value -eq $user.Value) { $sawUser = $true; continue }
+  if ($trustee.Value -eq '${WINDOWS_SYSTEM_SID}') { $sawSystem = $true; continue }
+  throw 'private DACL permits an unrelated principal'
+}
+if (-not ($sawUser -and $sawSystem)) {
+  throw 'private DACL must allow only current user and SYSTEM'
+}
+`;
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", observer],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: WINDOWS_PRIVATE_ACL_OBSERVER_TIMEOUT_MS,
+      env: {
+        ...windowsPowerShellEnvironment(),
+        REA_PLUGIN_CACHE_ACL_PATH: path,
+        REA_PLUGIN_CACHE_ACL_FILE: fileKind ? "1" : "0",
+      },
+    },
+  );
+  if (result.error) {
     throw new Error(
-      `executable cache ${kind} DACL could not be read${detail ? `: ${detail}` : ""}`,
+      `executable cache ${kind} ownership cannot be verified: ${result.error.message}`,
     );
   }
-  const output = result.stdout ?? "";
-  if (
-    /(?:^|\\)(?:Everyone|Users|Authenticated Users)\s*:/imu.test(output) ||
-    /\bBUILTIN\\Users\s*:/iu.test(output) ||
-    /\bNT AUTHORITY\\Authenticated Users\s*:/iu.test(output)
-  )
-    throw new Error(`executable cache ${kind} is not private to this user`);
-  const normalized = output.toLowerCase();
-  if (!normalized.includes(user.toLowerCase()))
-    throw new Error(`executable cache ${kind} is not owned by this user`);
-  if (!/system\s*:/iu.test(output))
-    throw new Error(`executable cache ${kind} is not private to this user`);
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    const ownership =
+      /owner is not the current user/iu.test(detail) ||
+      /current user SID is unresolved/iu.test(detail) ||
+      /ACL owner observation must stay in SID form/iu.test(detail);
+    throw new Error(
+      ownership
+        ? `executable cache ${kind} is not owned by this user${detail ? `: ${detail}` : ""}`
+        : `executable cache ${kind} is not private to this user${detail ? `: ${detail}` : ""}`,
+    );
+  }
 };
 
 const verifyWindowsOwnedCachePath = (path, kind) => {

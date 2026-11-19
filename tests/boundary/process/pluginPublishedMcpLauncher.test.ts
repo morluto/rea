@@ -1311,6 +1311,93 @@ it.skipIf(uid === undefined)(
   },
 );
 
+it("verifies Windows cache privacy by SID rather than account display names", async () => {
+  const source = await readFile(launcher, "utf8");
+  const inspect = source.match(
+    /const inspectWindowsPrivateAcl =[\s\S]*?\n\};\n\nconst verifyWindowsOwnedCachePath/u,
+  )?.[0];
+  expect(inspect).toBeDefined();
+  // Mirrors native verifyPrivate / privateRuntimeAclObserver: owner and every
+  // ACE trustee are compared as SecurityIdentifier values, including SYSTEM.
+  expect(source).toMatch(/const WINDOWS_SYSTEM_SID = "S-1-5-18";/u);
+  expect(inspect).toMatch(/SecurityIdentifier/u);
+  expect(inspect).toMatch(/GetOwner\(\$sid\)/u);
+  expect(inspect).toMatch(/GetAccessRules\(\$true, \$true, \$sid\)/u);
+  expect(inspect).toMatch(/WINDOWS_SYSTEM_SID/u);
+  expect(inspect).toMatch(/WindowsIdentity\]::GetCurrent\(\)\.User/u);
+  expect(inspect).not.toMatch(/Get-Acl|\.Access\b|NTAccount|\.Translate\b/u);
+  // Display-name Everyone/Users matching and USERNAME substring checks do not
+  // prove ownership or exclude a foreign named writer.
+  expect(inspect).not.toMatch(/Everyone\|Users\|Authenticated Users/u);
+  expect(inspect).not.toMatch(/icacls/u);
+  expect(inspect).not.toMatch(/windowsCacheUser|USERNAME/u);
+});
+
+it.skipIf(process.platform !== "win32")(
+  "refuses a Windows warm cache whose entry grants a foreign SID write access",
+  async () => {
+    const version = "6.8.0-published-foreign-sid";
+    const temp = await createLauncherTemp();
+    const entry = await seedPublishedRuntime(
+      version,
+      `process.stdout.write("should-not-run");`,
+      temp.temporaryRoot,
+    );
+    const user = process.env.USERNAME?.trim();
+    expect(user).toBeTruthy();
+    // Establish the same user+SYSTEM private DACL applyWindowsPrivateAcl uses,
+    // then add LOCAL SERVICE (S-1-5-19) — a named foreign writer the old
+    // Everyone/Users display-name check would still accept.
+    for (const target of [
+      cacheRootFor(temp.temporaryRoot),
+      installPrefix(version, temp.temporaryRoot),
+      entry,
+      join(installPrefix(version, temp.temporaryRoot), READY_MARKER),
+    ]) {
+      const isFile = target === entry || target.endsWith(READY_MARKER);
+      const grant = isFile
+        ? [`${user}:F`, "SYSTEM:F"]
+        : [`${user}:(OI)(CI)F`, "SYSTEM:(OI)(CI)F"];
+      const applied = spawnSync(
+        "icacls",
+        [
+          target,
+          "/inheritance:r",
+          "/grant:r",
+          grant[0]!,
+          "/grant:r",
+          grant[1]!,
+        ],
+        { encoding: "utf8", windowsHide: true },
+      );
+      expect(applied.status, applied.stderr || applied.stdout).toBe(0);
+    }
+    const foreign = spawnSync(
+      "icacls",
+      [entry, "/grant", "NT AUTHORITY\\LOCAL SERVICE:F"],
+      { encoding: "utf8", windowsHide: true },
+    );
+    expect(foreign.status, foreign.stderr || foreign.stdout).toBe(0);
+    const missingBin = await createTestTempDirectory(
+      "rea-published-foreign-sid-bin-",
+    );
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...temp.env,
+      PATH: missingBin,
+    };
+    delete env.npm_execpath;
+    const { child, closed } = start([version], env);
+    child.stdin.end();
+    const result = await closed;
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toMatch(
+      /refused an untrusted executable cache: executable cache entry is not private to this user/u,
+    );
+  },
+);
+
 it("refuses a symlinked cache root without changing the target mode", async () => {
   const version = "6.8.0-published-symlink-root";
   const workspace = await createTestTempDirectory(
