@@ -19,6 +19,7 @@ import {
   decodeElfGnuZlibSection,
   type ElfCompressedSectionResult,
 } from "../../domain/native/elfCompressedSection.js";
+import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
 import { readMachoImage } from "../../domain/apple/machoImage.js";
 import {
   readElfDirectoryFromBuffer,
@@ -259,6 +260,11 @@ const admitDecoded = (
         : decoded.requiredBytes + BigInt(budget.used);
     throw new DwarfSectionAllowanceFailure(name, demanded, budget.allowance);
   }
+  if (decoded.state === "work_limit")
+    throw new ZstandardFrameAllowanceError(
+      { maxFrames: decoded.value, source: decoded.source },
+      decoded.offset,
+    );
   if (decoded.state === "malformed") {
     // The owner charges the larger of declared output and compressed input
     // read on failure. Rejected headers never inflate and charge 0.

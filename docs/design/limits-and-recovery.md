@@ -176,21 +176,22 @@ checks all happen before publishing the replacement snapshot; a rejected batch
 cannot partially apply. Clients coordinating writes can supply
 `expected_revision`; without it, valid updates apply to the current state.
 
-| Runtime setting                                                                                                 | Application point                                                               |
-| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `asar.max_header_bytes`                                                                                         | Next archive operation, including full JavaScript application analysis          |
-| `asar.max_listing_bytes`                                                                                        | Next expanded ASAR listing, independently of packed header bytes                |
-| `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`                                                        | Next provider startup attempt                                                   |
-| `ghidra.decompile_timeout_seconds`                                                                              | Next operation on the existing Ghidra Program; `null` means unbounded           |
-| `ghidra.decompile_max_payload_mib`                                                                              | Next native decompile; `null` preserves the selected provider's payload default |
-| `ghidra.value_flow_max_operations`, `ghidra.value_flow_max_inputs_per_operation`, `ghidra.value_flow_max_edges` | Next function value-flow projection on the existing Program                     |
-| `jadx.operation_timeout_ms`                                                                                     | Next JADX operation                                                             |
-| `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                  |
-| `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                      |
-| `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
-| `javascript.member_mutation_alias_states`                                                                       | Next JavaScript application, web bundle or reference-source analysis            |
-| `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
-| `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
+| Runtime setting                                                                                                 | Application point                                                                            |
+| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `asar.max_header_bytes`                                                                                         | Next archive operation, including full JavaScript application analysis                       |
+| `asar.max_listing_bytes`                                                                                        | Next expanded ASAR listing, independently of packed header bytes                             |
+| `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`                                                        | Next provider startup attempt                                                                |
+| `ghidra.decompile_timeout_seconds`                                                                              | Next operation on the existing Ghidra Program; `null` means unbounded                        |
+| `ghidra.decompile_max_payload_mib`                                                                              | Next native decompile; `null` preserves the selected provider's payload default              |
+| `ghidra.value_flow_max_operations`, `ghidra.value_flow_max_inputs_per_operation`, `ghidra.value_flow_max_edges` | Next function value-flow projection on the existing Program                                  |
+| `jadx.operation_timeout_ms`                                                                                     | Next JADX operation                                                                          |
+| `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                               |
+| `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                                   |
+| `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                                 |
+| `javascript.member_mutation_alias_states`                                                                       | Next JavaScript application, web bundle or reference-source analysis                         |
+| `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                                          |
+| `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                                        |
+| `zstd.max_frames`                                                                                               | Next exact Zstandard decode for an ELF section, OTA `REPLACE_ZSTD` operation, or GPU payload |
 
 ### Precedence and lifetime
 

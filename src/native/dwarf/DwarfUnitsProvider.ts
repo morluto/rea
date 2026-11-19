@@ -17,6 +17,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { DWARF_UNITS_PROVIDER } from "../../domain/investigationProviders.js";
@@ -250,6 +251,17 @@ const dwarfUnitsFailurePrimary = (
   input: InspectDwarfUnitsInput,
 ) => {
   const { cause, origin } = facts;
+  if (cause instanceof ZstandardFrameAllowanceError)
+    return parseLimitConstraint(OPERATION, "cpu", cause, {
+      retryable: false,
+      reportedLimitContext: {
+        setting: cause.setting,
+        value: cause.value,
+        source: cause.source,
+        minimum: cause.minimum,
+        maximum: cause.maximum,
+      },
+    });
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
   if (cause instanceof DwarfSectionAllowanceFailure)

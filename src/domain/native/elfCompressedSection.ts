@@ -1,6 +1,15 @@
 import { BinaryReader } from "../binaryContainer.js";
-import { constants, inflateSync, zstdDecompressSync } from "node:zlib";
+import { inflateSync } from "node:zlib";
 import { nodeCodecResult } from "../../kernel/nodeCodecResult.js";
+import {
+  decodeZstandardFrames,
+  ZSTANDARD_WINDOW_LOG_MAX,
+  type ZstandardFrameFailure,
+} from "../compression/zstandardExactFrame.js";
+import {
+  zstandardWorkLimitFacts,
+  type ZstandardFrameSource,
+} from "../compression/zstandardFrameAllowance.js";
 
 const SHF_COMPRESSED = 0x800n;
 const ELFCOMPRESS_ZLIB = 1;
@@ -20,6 +29,22 @@ export type ElfCompressedSectionResult =
       readonly state: "malformed";
       readonly message: string;
       /** Larger of declared output and compressed input read; 0 when no attempt started. */
+      readonly inflatedBytes: number;
+      /** Present when the shared Zstandard framer classified the payload. */
+      readonly reason?: ZstandardFrameFailure["reason"];
+      readonly offset?: number;
+      readonly code?: string;
+    }
+  | {
+      readonly state: "work_limit";
+      readonly reason: "work_limit";
+      readonly setting: "zstd.max_frames";
+      readonly value: number;
+      readonly source: ZstandardFrameSource;
+      readonly minimum: number;
+      readonly maximum: number;
+      readonly offset: number;
+      /** Larger of declared output and compressed input read. */
       readonly inflatedBytes: number;
     }
   | {
@@ -141,6 +166,39 @@ export const decodeElfGnuZlibSection = (
   return inflateDeclared(bytes.subarray(12), declaredSize, "zlib", subject);
 };
 
+const zstdSectionFailure = (
+  result: ZstandardFrameFailure,
+  subject: string,
+  inflatedBytes: number,
+): ElfCompressedSectionResult => {
+  if (result.reason === "work_limit")
+    return {
+      state: "work_limit",
+      ...zstandardWorkLimitFacts({
+        maxFrames: result.value ?? 0,
+        source: result.source ?? "default",
+      }),
+      offset: result.offset,
+      inflatedBytes,
+    };
+  if (result.reason === "output_limit")
+    return {
+      state: "malformed",
+      reason: "output_limit",
+      offset: result.offset,
+      message: `${subject} size is inconsistent`,
+      inflatedBytes,
+    };
+  return {
+    state: "malformed",
+    reason: result.reason,
+    offset: result.offset,
+    ...(result.code === undefined ? {} : { code: result.code }),
+    message: `${subject} could not be decompressed: ${result.detail ?? result.code ?? result.reason}`,
+    inflatedBytes,
+  };
+};
+
 const inflateDeclared = (
   payload: Buffer,
   declaredSize: bigint,
@@ -153,11 +211,13 @@ const inflateDeclared = (
   try {
     const maxOutputLength = Math.max(1, expected);
     if (compression === "zstd") {
-      decoded = zstdDecompressSync(payload, {
+      const result = decodeZstandardFrames(payload, {
         maxOutputLength,
         // Retain Zstandard's default maximum decoder window of 128 MiB.
-        params: { [constants.ZSTD_d_windowLogMax]: 27 },
+        windowLogMax: ZSTANDARD_WINDOW_LOG_MAX,
       });
+      if (!result.ok) return zstdSectionFailure(result, subject, inflatedBytes);
+      decoded = result.bytes;
     } else {
       const result = nodeCodecResult(
         inflateSync(payload, { info: true, maxOutputLength }),

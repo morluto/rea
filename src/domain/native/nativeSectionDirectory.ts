@@ -27,6 +27,7 @@ import {
   type ElfDynamicSegment,
 } from "../binaryContainer.js";
 import { decodeElfSectionNameTable } from "./elfSectionNameTable.js";
+import { ZstandardFrameAllowanceError } from "../compression/zstandardFrameAllowance.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
@@ -242,6 +243,11 @@ export function* readElfSectionDirectory(
         Math.max(0, STRUCTURE_BYTES - rawNames.length),
       );
       if (decoded.state === "malformed") return reject(decoded.message);
+      if (decoded.state === "work_limit")
+        throw new ZstandardFrameAllowanceError(
+          { maxFrames: decoded.value, source: decoded.source },
+          decoded.offset,
+        );
       if (decoded.state === "limit")
         throw new BinaryResourceFailure(
           "structure",

@@ -37,6 +37,7 @@ import {
   decodeElfSectionNameTable,
   readElfSectionNameTableHeader,
 } from "../../domain/native/elfSectionNameTable.js";
+import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { decodeFdoNote, type FdoDecodeBudget } from "./ElfFdoNote.js";
 
@@ -879,6 +880,11 @@ export const parseElfNotes = (
       input.max_file_bytes - bytes.length,
     );
     if (decoded.state === "malformed") return fail(decoded.message);
+    if (decoded.state === "work_limit")
+      throw new ZstandardFrameAllowanceError(
+        { maxFrames: decoded.value, source: decoded.source },
+        decoded.offset,
+      );
     if (decoded.state === "limit")
       throw sectionNameBudgetFailure(
         BigInt(bytes.length) + decoded.requiredBytes,

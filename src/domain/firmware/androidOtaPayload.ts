@@ -1,11 +1,17 @@
-import { zstdDecompressSync } from "node:zlib";
+import {
+  decodeZstandardFrames,
+  type ZstandardFrameFailure,
+} from "../compression/zstandardExactFrame.js";
+import {
+  zstandardWorkLimitFacts,
+  type ZstandardFrameSource,
+} from "../compression/zstandardFrameAllowance.js";
 
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import {
   decodeLimit,
-  hostRangeErrorKind,
   malformedInput,
   ParseFailureError,
   truncatedInput,
@@ -136,6 +142,17 @@ export type AndroidOtaPayloadReconstructError =
   | {
       readonly _tag: "AndroidOtaPayloadBlobTruncated";
       readonly message: string;
+    }
+  | {
+      readonly _tag: "ZstandardFrameWorkRefusal";
+      readonly reason: "work_limit";
+      readonly setting: "zstd.max_frames";
+      readonly value: number;
+      readonly source: ZstandardFrameSource;
+      readonly minimum: number;
+      readonly maximum: number;
+      readonly offset: number;
+      readonly message: string;
     };
 
 const ANDROID_OTA_FORMAT = "android-ota-payload";
@@ -165,6 +182,21 @@ const capacity = (
     `Android OTA payload ${name} exceeds the fixed ${String(maximum)}-${unit} ceiling`,
     { name: `Android OTA payload ${name}`, maximum },
   );
+
+const zstdWorkRefusal = (
+  decoded: ZstandardFrameFailure,
+): AndroidOtaPayloadReconstructError => {
+  const facts = zstandardWorkLimitFacts({
+    maxFrames: decoded.value ?? 0,
+    source: decoded.source ?? "default",
+  });
+  return {
+    _tag: "ZstandardFrameWorkRefusal",
+    ...facts,
+    offset: decoded.offset,
+    message: `${facts.setting} is ${String(facts.value)} (source ${facts.source}, range ${String(facts.minimum)}..${String(facts.maximum)})`,
+  };
+};
 
 const androidOtaUnsupportedVersion = (version: bigint): string =>
   `Android OTA payload major version ${String(version)} is unsupported; this reader supports version 2 only`;
@@ -1466,17 +1498,23 @@ export const reconstructAndroidOtaPartition = (
           1,
           Math.min(dstBytes.value, ANDROID_OTA_MAX_EXTRACT_BYTES),
         );
-        try {
-          payload = zstdDecompressSync(raw, { maxOutputLength });
-        } catch (cause: unknown) {
+        const decoded = decodeZstandardFrames(raw, { maxOutputLength });
+        if (!decoded.ok) {
+          if (decoded.reason === "work_limit")
+            return err(zstdWorkRefusal(decoded));
+          if (decoded.reason === "output_limit")
+            return err(
+              capacity("REPLACE_ZSTD decoded output", maxOutputLength, "byte"),
+            );
           return err(
-            hostRangeErrorKind(cause) === "host-capacity"
-              ? capacity("REPLACE_ZSTD decoded output", maxOutputLength, "byte")
-              : malformed(
-                  "REPLACE_ZSTD operation payload is not a valid Zstandard frame",
-                ),
+            malformedInput(
+              ANDROID_OTA_FORMAT,
+              "REPLACE_ZSTD operation payload is not a valid Zstandard frame",
+              { offset: decoded.offset, field: decoded.reason },
+            ),
           );
         }
+        payload = decoded.bytes;
       }
       const written = writeExtents(
         image,

@@ -342,6 +342,11 @@ const reconstructFailure = (
       cause: failure,
       integrityCheck: "declared-digest",
     });
+  if (failure._tag === "ZstandardFrameWorkRefusal")
+    return new ArtifactReaderFailure("limit", failure.message, {
+      cause: failure,
+      boundary: "capacity",
+    });
   return parseFailure(failure);
 };
 

@@ -60,6 +60,9 @@ import {
   MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
+  DEFAULT_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+  MAXIMUM_ZSTD_MAX_FRAMES,
 } from "./analysisResourceLimits.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
@@ -603,6 +606,21 @@ export const ANALYSIS_SETTINGS = {
     provider: "rea-artifact-graph",
     relatedProviders: ["jadx"],
     operations: windowsChangeTimeOperations,
+  },
+  "zstd.max_frames": {
+    updateMode: "runtime",
+    environment: "REA_ZSTD_MAX_FRAMES",
+    defaultValue: DEFAULT_ZSTD_MAX_FRAMES,
+    minimum: MINIMUM_ZSTD_MAX_FRAMES,
+    maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    operations: [
+      "inspect_binary_layout",
+      "inspect_artifact",
+      "extract_artifact",
+    ],
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 export const analysisSettingIds = Object.keys(

@@ -1,5 +1,10 @@
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../analysisResourceLimits.js";
 import {
   decodeElfCompressedSection,
   decodeElfGnuZlibSection,
@@ -187,6 +192,62 @@ describe("ELF compressed section payloads", () => {
       message: "ELF .zdebug_info section is not a GNU ZLIB compressed section",
       inflatedBytes: 0,
     });
+  });
+});
+
+const zstdFrame = (byte: number): Buffer =>
+  Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+
+it("accepts a Zstandard skippable suffix and rejects a trailing byte", () => {
+  const payload = zstdCompressSync(plain);
+  const skip = Buffer.alloc(8);
+  skip.writeUInt32LE(0x184d2a50, 0);
+  const decode = (body: Buffer) =>
+    decodeElfCompressedSection(
+      Buffer.concat([chdr(64, true, 2, plain.length), body]),
+      0x800n,
+      64,
+      true,
+      1024,
+      "ELF sample section",
+    );
+  expect(decode(payload)).toMatchObject({ state: "available" });
+  expect(decode(Buffer.concat([payload, skip]))).toMatchObject({
+    state: "available",
+    compression: "zstd",
+  });
+  expect(decode(Buffer.concat([payload, Buffer.of(0)]))).toMatchObject({
+    state: "malformed",
+    reason: "trailing_bytes",
+  });
+});
+
+it("refuses a Zstandard section that exceeds zstd.max_frames", () => {
+  const body = Buffer.concat([zstdFrame(0x61), zstdFrame(0x62)]);
+  const bytes = Buffer.concat([chdr(64, true, 2, 2), body]);
+  const decode = () =>
+    decodeElfCompressedSection(
+      bytes,
+      0x800n,
+      64,
+      true,
+      1024,
+      "ELF sample section",
+    );
+  expect(decode()).toMatchObject({ state: "available" });
+  expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 1 } },
+      decode,
+    ),
+  ).toMatchObject({
+    state: "work_limit",
+    reason: "work_limit",
+    setting: "zstd.max_frames",
+    value: 1,
+    source: "runtime",
+    minimum: MINIMUM_ZSTD_MAX_FRAMES,
+    maximum: MAXIMUM_ZSTD_MAX_FRAMES,
   });
 });
 
