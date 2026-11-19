@@ -196,14 +196,17 @@ export const readAndroidMapping = async (
   }
   const mapping = parseProguardMapping(text, ANDROID_MAPPING_LIMITS);
   if (!mapping.ok) {
-    if (mapping.error.kind === "capacity")
+    if (mapping.error.kind === "capacity") {
+      const { cause, line } = mapping.error;
+      const { detail, limit } = cause.failure;
       return err(
         new AnalysisResourceConstraintError(
           operation,
-          mapping.error.resource === "index" ? "memory" : "transport",
-          `The mapping exceeds its ${mapping.error.resource} admission budget.`,
-          { limit_bytes: mapping.error.limit_bytes, line: mapping.error.line },
+          limit.name === "projection" ? "transport" : "memory",
+          detail,
+          { limit_bytes: limit.maximum, line },
           {
+            cause,
             retryable: false,
             diagnostics: { mapping_path: path, mapping_sha256: file.sha256 },
             remediationAction:
@@ -211,6 +214,7 @@ export const readAndroidMapping = async (
           },
         ),
       );
+    }
     return malformed(`Mapping file has no R8/ProGuard class records: ${path}`);
   }
   return ok({ file, mapping: mapping.value });
