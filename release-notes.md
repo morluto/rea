@@ -555,6 +555,7 @@
 * **cli:** find recorded controls without reparsing whole union branches ([#11607](https://github.com/morluto/rea/issues/11607)) ([482165d](https://github.com/morluto/rea/commit/482165d7ceec9fb2eff6d798d6c7ff4d2fbdae65))
 * **cli:** load only the registrar a one-shot command needs ([b990eb4](https://github.com/morluto/rea/commit/b990eb496d10ca7d31b98edd2d22a4f58f41c4f5))
 * **doctor:** slim cold CLI/MCP doctor module graphs and run probes concurrently ([cb33fa8](https://github.com/morluto/rea/commit/cb33fa8376a996c958ae9009731bdd2ce1fdeef3))
+* **javascript:** queue binding initializers once per ambient alias query ([#10681](https://github.com/morluto/rea/issues/10681)) ([80af53b](https://github.com/morluto/rea/commit/80af53bbe525dc30ad280781183d21b888b881f6))
 * **mcp:** advertise large output union alternatives as shared definitions ([#11005](https://github.com/morluto/rea/issues/11005)) ([7181e7f](https://github.com/morluto/rea/commit/7181e7f515e953eb821d61994d67fea0fa648260))
 * **mcp:** build advertised tool schemas once per contract ([#10421](https://github.com/morluto/rea/issues/10421)) ([fcc0a8c](https://github.com/morluto/rea/commit/fcc0a8c4547b78168ed4479aab8c1b5266e223ee))
 * **mcp:** canonicalize the tool catalog once per digest profile ([#11298](https://github.com/morluto/rea/issues/11298)) ([e77793e](https://github.com/morluto/rea/commit/e77793e09a26799f2c101e01a6a24ce7712d36d1))
