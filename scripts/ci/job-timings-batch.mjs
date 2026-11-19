@@ -18,6 +18,12 @@ const LOOKBACK_MS = 24 * 60 * 60 * 1_000;
 const MAX_RUNS_PER_WORKFLOW = 100;
 const MAX_DEFAULT_BRANCH_FAILURES = 5;
 const TIME_BUDGET_MS = 240_000;
+const TIME_BUDGET_TRUNCATION_CODES = new Set([
+  "time-budget-while-listing",
+  "time-budget-before-collection",
+  "time-budget-unattempted",
+  "time-budget",
+]);
 
 /** Collect a bounded recent sample of completed CI and Release attempts. */
 export async function collectJobTimingsBatch({
@@ -65,7 +71,12 @@ export async function collectJobTimingsBatch({
   let ciListingCapped = false;
   for (const workflow of WORKFLOWS) {
     if (budgetExpired()) {
-      manifest.truncation.push("Time budget reached while listing workflows.");
+      manifest.truncation.push(
+        truncation(
+          "time-budget-while-listing",
+          "Time budget reached while listing workflows.",
+        ),
+      );
       break;
     }
     try {
@@ -82,7 +93,10 @@ export async function collectJobTimingsBatch({
       if (response.workflow_runs.length >= MAX_RUNS_PER_WORKFLOW) {
         if (workflow.id === "ci.yml") ciListingCapped = true;
         manifest.truncation.push(
-          `${workflow.name} run listing reached the 100-run first-page limit.`,
+          truncation(
+            "workflow-page-limit",
+            `${workflow.name} run listing reached the 100-run first-page limit.`,
+          ),
         );
       }
       for (const run of response.workflow_runs.slice(
@@ -145,7 +159,10 @@ export async function collectJobTimingsBatch({
       manifest.coverage.runsListed += response.workflow_runs.length;
       if (response.total_count > MAX_DEFAULT_BRANCH_FAILURES)
         manifest.truncation.push(
-          "Default-branch CI failures exceeded the supplemental sample limit.",
+          truncation(
+            "default-branch-failure-sample-limit",
+            "Default-branch CI failures exceeded the supplemental sample limit.",
+          ),
         );
       const failures = [];
       for (const run of response.workflow_runs.slice(
@@ -192,7 +209,10 @@ export async function collectJobTimingsBatch({
   for (const run of selected) {
     if (budgetExpired()) {
       manifest.truncation.push(
-        "Time budget reached before all selected runs were collected.",
+        truncation(
+          "time-budget-before-collection",
+          "Time budget reached before all selected runs were collected.",
+        ),
       );
       break;
     }
@@ -238,9 +258,16 @@ export async function collectJobTimingsBatch({
   }
   if (budgetExpired() && manifest.runs.length < manifest.coverage.selectedRuns)
     manifest.truncation.push(
-      "Time budget reached; selected runs remain unattempted.",
+      truncation(
+        "time-budget-unattempted",
+        "Time budget reached; selected runs remain unattempted.",
+      ),
     );
   return await writeManifest(outputDirectory, manifest, started, now, env);
+}
+
+function truncation(code, message) {
+  return { code, message };
 }
 
 function timingRun(run, workflow) {
@@ -288,9 +315,11 @@ async function writeManifest(outputDirectory, manifest, started, now, env) {
   manifest.elapsedMs = Math.max(0, now() - started);
   if (
     manifest.elapsedMs >= TIME_BUDGET_MS &&
-    !manifest.truncation.some((item) => item.includes("Time budget"))
+    !manifest.truncation.some((entry) =>
+      TIME_BUDGET_TRUNCATION_CODES.has(entry.code),
+    )
   )
-    manifest.truncation.push("Time budget reached.");
+    manifest.truncation.push(truncation("time-budget", "Time budget reached."));
   await mkdir(outputDirectory, { recursive: true });
   const manifestPath = join(outputDirectory, "batch-manifest.json");
   await writeFile(
@@ -321,7 +350,7 @@ async function appendBatchSummary(summaryPath, manifest, manifestPath) {
         ]
       : []),
     `Manifest: \`${manifestPath}\`.`,
-    ...manifest.truncation.map((message) => `- Truncated: ${message}`),
+    ...manifest.truncation.map((entry) => `- Truncated: ${entry.message}`),
     ...manifest.errors.map(
       ({ scope, message }) => `- Error (${scope}): ${message}`,
     ),

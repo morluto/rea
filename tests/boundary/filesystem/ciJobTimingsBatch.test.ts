@@ -160,35 +160,9 @@ it("collects failed default-branch pushes before a saturated PR sample", async (
     },
   ]);
 
-  await executeWorkflowFixture(
-    process.execPath,
-    [
-      "--input-type=module",
-      "-e",
-      `
-    const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(batchScript).href)});
-    let clock = Date.now();
-    await collectJobTimingsBatch({
-      repository: "example/rea",
-      defaultBranch: "main",
-      outputDirectory: process.env.CI_JOB_TIMINGS_DIRECTORY,
-      now: () => clock,
-      collect: async ({ runId }) => {
-        if (runId === "201") clock += 240001;
-        return { rawPath: "jobs.json", reportPath: "report.json" };
-      },
-    });
-  `,
-    ],
-    { cwd: fixture.directory, env: fixtureEnvironment(fixture) },
-  );
+  await collectDefaultBranchSample(fixture, { advanceAfterRunId: "201" });
 
-  const manifest = JSON.parse(
-    await readFile(
-      join(fixture.outputDirectory, "batch-manifest.json"),
-      "utf8",
-    ),
-  );
+  const manifest = await readBatchManifest(fixture);
   expect(manifest.coverage).toMatchObject({
     selectedRuns: 101,
     collectedRuns: 2,
@@ -197,13 +171,117 @@ it("collects failed default-branch pushes before a saturated PR sample", async (
     { id: 200, status: "collected", headBranch: "main", event: "push" },
     { id: 201, status: "collected", headBranch: "main", event: "push" },
   ]);
-  expect(manifest.truncation).toContain(
-    "Default-branch CI failures exceeded the supplemental sample limit.",
+  expect(manifest.selection.defaultBranchFailureSample).toEqual({
+    branch: "main",
+    event: "push",
+    conclusion: "failure",
+    limit: 5,
+  });
+  expect(manifest.truncation).toContainEqual(
+    expect.objectContaining({ code: "default-branch-failure-sample-limit" }),
   );
   expect(manifest.errors).toEqual([]);
   const calls = JSON.parse(await readFile(fixture.calls, "utf8"));
-  expect(calls[2][1]).toContain("status=failure&event=push&branch=main");
-  expect(calls[2][1]).toContain("per_page=5");
+  expect(ghApiRequest(calls[2])).toEqual({
+    path: "repos/example/rea/actions/workflows/ci.yml/runs",
+    params: {
+      status: "failure",
+      event: "push",
+      branch: "main",
+      created: `>=${manifest.selection.createdAfter}`,
+      per_page: "5",
+    },
+  });
+});
+
+it("records a failed supplemental failure query and still collects the original CI and Release selections", async () => {
+  const createdAt = new Date().toISOString();
+  const fixture = await createFixture([
+    saturatedCompletedRuns(createdAt),
+    { workflow_runs: [completedRun(500, createdAt)] },
+    { error: true },
+  ]);
+
+  await collectDefaultBranchSample(fixture);
+
+  const manifest = await readBatchManifest(fixture);
+  expect(manifest.errors).toEqual([
+    expect.objectContaining({ scope: "workflow:CI default-branch failures" }),
+  ]);
+  expect(manifest.errors[0]).not.toHaveProperty("runId");
+  expect(manifest.coverage).toMatchObject({
+    workflowsQueried: ["CI", "Release"],
+    selectedRuns: 101,
+    collectedRuns: 101,
+  });
+  expect(manifest.runs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
+      expect.objectContaining({
+        id: 500,
+        workflow: "Release",
+        status: "collected",
+      }),
+    ]),
+  );
+  expect(manifest.truncation).not.toContainEqual(
+    expect.objectContaining({ code: "default-branch-failure-sample-limit" }),
+  );
+});
+
+it("rejects supplemental records on the wrong branch or before the lookback and still collects the original selections", async () => {
+  const createdAt = new Date().toISOString();
+  const staleAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const fixture = await createFixture([
+    saturatedCompletedRuns(createdAt),
+    { workflow_runs: [completedRun(500, createdAt)] },
+    {
+      total_count: 2,
+      workflow_runs: [
+        completedRun(300, createdAt, {
+          event: "push",
+          head_branch: "feature",
+          conclusion: "failure",
+        }),
+        completedRun(301, staleAt, {
+          event: "push",
+          head_branch: "main",
+          conclusion: "failure",
+        }),
+      ],
+    },
+  ]);
+
+  await collectDefaultBranchSample(fixture);
+
+  const manifest = await readBatchManifest(fixture);
+  expect(manifest.errors).toEqual([
+    expect.objectContaining({
+      scope: "workflow:CI default-branch failures",
+      runId: 300,
+    }),
+    expect.objectContaining({
+      scope: "workflow:CI default-branch failures",
+      runId: 301,
+    }),
+  ]);
+  expect(manifest.coverage).toMatchObject({
+    workflowsQueried: ["CI", "Release"],
+    selectedRuns: 101,
+    collectedRuns: 101,
+  });
+  expect(manifest.runs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
+      expect.objectContaining({
+        id: 500,
+        workflow: "Release",
+        status: "collected",
+      }),
+    ]),
+  );
+  expect(manifest.runs.map((run: { id: number }) => run.id)).not.toContain(300);
+  expect(manifest.runs.map((run: { id: number }) => run.id)).not.toContain(301);
 });
 
 it("records listing and per-run errors without claiming complete coverage", async () => {
@@ -287,8 +365,95 @@ it("retains a partial manifest when its collection budget is exhausted", async (
   });
   expect(manifest.runs).toHaveLength(1);
   expect(manifest.runs[0]).toMatchObject({ status: "error" });
-  expect(manifest.truncation.join(" ")).toContain("Time budget");
+  expect(
+    manifest.truncation.map((entry: { code: string }) => entry.code),
+  ).toEqual(["time-budget-before-collection", "time-budget-unattempted"]);
 });
+
+function completedRun(
+  id: number,
+  createdAt: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id,
+    run_attempt: 1,
+    status: "completed",
+    event: "pull_request",
+    conclusion: "success",
+    created_at: createdAt,
+    ...overrides,
+  };
+}
+
+function saturatedCompletedRuns(createdAt: string) {
+  return {
+    workflow_runs: Array.from({ length: 100 }, (_, index) =>
+      completedRun(index + 1, createdAt),
+    ),
+  };
+}
+
+async function readBatchManifest(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+) {
+  return JSON.parse(
+    await readFile(
+      join(fixture.outputDirectory, "batch-manifest.json"),
+      "utf8",
+    ),
+  );
+}
+
+async function collectDefaultBranchSample(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  options?: { advanceAfterRunId?: string },
+) {
+  const advance = options?.advanceAfterRunId;
+  await executeWorkflowFixture(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(batchScript).href)});
+    let clock = Date.now();
+    await collectJobTimingsBatch({
+      repository: "example/rea",
+      defaultBranch: "main",
+      outputDirectory: process.env.CI_JOB_TIMINGS_DIRECTORY,
+      now: () => clock,
+      collect: async ({ runId }) => {
+        ${
+          advance === undefined
+            ? ""
+            : `if (runId === ${JSON.stringify(advance)}) clock += 240001;`
+        }
+        return { rawPath: "jobs.json", reportPath: "report.json" };
+      },
+    });
+  `,
+    ],
+    { cwd: fixture.directory, env: fixtureEnvironment(fixture) },
+  );
+}
+
+function ghApiRequest(call: unknown): {
+  path: string;
+  params: Record<string, string>;
+} {
+  expect(call).toEqual(["api", expect.any(String)]);
+  const endpoint = (call as [string, string])[1];
+  const separator = endpoint.indexOf("?");
+  return {
+    path: separator === -1 ? endpoint : endpoint.slice(0, separator),
+    params: Object.fromEntries(
+      new URLSearchParams(
+        separator === -1 ? "" : endpoint.slice(separator + 1),
+      ),
+    ),
+  };
+}
 
 function completedJobs(
   name: string,
