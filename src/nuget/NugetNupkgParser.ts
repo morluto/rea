@@ -216,6 +216,9 @@ interface OpcManifestTarget {
 const targetLabel = (display: string | null): string =>
   display === null ? "[URL withheld]" : JSON.stringify(display);
 
+const OPC_RELATIONSHIP_NAMESPACE =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+
 const NUGET_MANIFEST_RELATIONSHIP =
   "http://schemas.microsoft.com/packaging/2010/07/manifest";
 
@@ -236,14 +239,19 @@ const opcManifestTargets = (
     return [];
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "Relationships") {
+  if (
+    !isElement(root) ||
+    root.localName !== "Relationships" ||
+    root.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE
+  ) {
     limitations.push(
-      "OPC relationships root is not Relationships; the .nuspec was selected by ZIP name when possible.",
+      "OPC relationships root is not Relationships in the OPC namespace; the .nuspec was selected by ZIP name when possible.",
     );
     return [];
   }
   const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of childrenNamed(root, "Relationship")) {
+    if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
     const type = attribute(relationship, "Type");
     if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
     const target = attribute(relationship, "Target");

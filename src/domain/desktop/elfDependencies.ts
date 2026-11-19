@@ -224,6 +224,8 @@ const dynamicTags = (
         ? walked.error.error
         : `Duplicate dynamic tag 0x${walked.error.tag.toString(16)}`,
     );
+  if (walked.value.trailingBytes !== 0)
+    return err("ELF PT_DYNAMIC size is not a whole number of entries");
   return walked.value.terminatorOffset === null
     ? err("ELF dynamic table has no DT_NULL terminator")
     : ok(found);

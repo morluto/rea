@@ -181,7 +181,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-nupkg-provenance-");
     const path = join(root, "pkg.nupkg");
     const nuspec = `<package><metadata><id>Credentials.Package</id><version>1</version><repository type="git" url="HTTPS://user:password@Example.invalid/a/../b?token=visible#hash" /></metadata></package>`;
-    const rels = `<Relationships><Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" TargetMode="External" Target="https://user:password@feed.invalid/package?token=visible" /><Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="//user:password@feed.invalid/missing.nuspec?token=visible" /></Relationships>`;
+    const rels = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" TargetMode="External" Target="https://user:password@feed.invalid/package?token=visible" /><Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="//user:password@feed.invalid/missing.nuspec?token=visible" /></Relationships>`;
     await writeFile(
       path,
       await nugetNupkgFixture({

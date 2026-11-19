@@ -772,7 +772,14 @@ export const readElfDependenciesSteps = function* (
         ? `Duplicate dynamic tag ${hex(walked.error.tag)}`
         : walked.error.error,
     );
-  if (walked.value.terminatorOffset === null)
+  const { terminatorOffset, trailingBytes } = walked.value;
+  if (trailingBytes !== 0)
+    issues.push({
+      code: "malformed_entry",
+      location: hex(dynamic.offset + dynamic.bytes - trailingBytes),
+      message: "ELF PT_DYNAMIC size is not a whole number of entries",
+    });
+  else if (terminatorOffset === null)
     issues.push({
       code: "malformed_entry",
       location: hex(dynamic.offset),

@@ -1,5 +1,8 @@
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
-import { readElfDynamicEntry } from "../elfDynamicEntry.js";
+import {
+  admitElfDynamicDirectory,
+  readElfDynamicEntry,
+} from "../elfDynamicEntry.js";
 import {
   decodeElfRelocationInfo,
   ELF_ANDROID_PACKED_RELOCATION_TABLES,
@@ -493,25 +496,21 @@ function* dynamicTags(
   const declaration = input.dynamicSegments[0];
   if (declaration === undefined)
     return { values: new Map(), ambiguous: new Set() };
-  const width = input.bits / 4;
-  if (declaration.size > 16n * 1024n * 1024n)
+  const table = admitElfDynamicDirectory(bytes.length, declaration, input.bits);
+  if (!table.ok) {
+    if (table.error.kind === "malformed") return malformed(table.error.message);
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
-      "ELF dynamic directory exceeds the 16 MiB structural allowance",
-      16 * 1024 * 1024,
+      table.error.message,
+      table.error.maximum,
       "bytes",
     );
-  if (
-    declaration.size % BigInt(width) !== 0n ||
-    declaration.offset > BigInt(bytes.length) ||
-    declaration.size > BigInt(bytes.length) - declaration.offset
-  )
-    malformed("PT_DYNAMIC is truncated or outside the file");
+  }
+  const { offset: start, size, width } = table.value;
   const tags = new Map<bigint, bigint>();
   const redeclared = new Set<bigint>();
   let relrFamily: "standard" | "android" | undefined;
-  const start = Number(declaration.offset),
-    end = start + Number(declaration.size);
+  const end = start + size;
   for (let at = start; at < end; at += width) {
     if ((at - start) % 65_536 === 0) yield;
     const parsed = readElfDynamicEntry(
