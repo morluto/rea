@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { toolContract, TOOL_CONTRACTS } from "./toolContracts.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "./fridaToolContracts.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
+import { resolve } from "node:path";
+
+/** The contract admits only an absolute script file; the CLI resolves a relative one first. */
+const script = resolve("script.js");
 
 const contract = (name: string) => {
   const found = TOOL_CONTRACTS.find((candidate) => candidate.name === name);
@@ -52,7 +56,7 @@ describe("Frida tool contracts", () => {
       load.safeParse({
         session_id: "00000000-0000-4000-8000-000000000001",
         source_kind: "file",
-        path: "script.js",
+        path: script,
       }).success,
     ).toBe(true);
     for (const input of [
@@ -64,7 +68,7 @@ describe("Frida tool contracts", () => {
         session_id: "00000000-0000-4000-8000-000000000001",
         source_kind: "inline",
         source: "",
-        path: "script.js",
+        path: script,
       },
       {
         session_id: "00000000-0000-4000-8000-000000000001",
@@ -86,7 +90,7 @@ describe("Frida tool contracts", () => {
         mode: "spawn",
         program: "app",
         source_kind: "file",
-        path: "script.js",
+        path: script,
       }).success,
     ).toBe(true);
     for (const input of [
@@ -94,7 +98,7 @@ describe("Frida tool contracts", () => {
         mode: "attach",
         pid: 7,
         source_kind: "file",
-        path: "script.js",
+        path: script,
         source: "",
       },
       { mode: "spawn", program: "app", source_kind: "inline" },

@@ -32,6 +32,7 @@ import {
   jsonResult,
   resources,
 } from "./enhancedToolsHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -274,7 +275,10 @@ const openSession = async (port: AnalysisOperationPort) => {
     }),
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "value-trace-cleanup", version: "1" });
+  const client = new Client(
+    { name: "value-trace-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

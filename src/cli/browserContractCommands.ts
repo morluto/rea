@@ -1,4 +1,4 @@
-import type { z } from "incur";
+import type { z } from "zod";
 
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";

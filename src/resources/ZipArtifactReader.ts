@@ -5,6 +5,7 @@ import {
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
+  type ArtifactFixedLimit,
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
@@ -64,7 +65,16 @@ const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
 const ZIP_ZSTANDARD_WINDOW_ALLOWANCE = `${String(2 ** (ZIP_ZSTANDARD_WINDOW_LOG_MAX - 20))} MiB`;
 
 /** A frame above the window cap is a deliberate resource refusal, not damage. */
-const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt, and this limit cannot be raised at runtime. Recompress the member with a window of at most ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE}, or decompress it with a tool that admits larger windows, then retry.`;
+const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt.`;
+
+/** The fixed method-93 decoder window ceiling, with the request change that fits it. */
+export const ZIP_ZSTANDARD_WINDOW_CEILING: ArtifactFixedLimit = {
+  name: "The ZIP Zstandard decoder window allowance",
+  kind: "parser",
+  limit: 2 ** ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+  unit: "bytes",
+  narrowing: `Recompress the member with a window of at most ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE}, or decompress it with a tool that admits larger windows, then retry.`,
+};
 
 /** Keep zip.js's framing, CRC, size checks and backpressure for method 93. */
 class ZipZstandardDecompressionStream {
@@ -411,7 +421,7 @@ export class ZipArtifactReader implements ArtifactReader {
 }
 
 /** Coverage of a central-directory listing, given the member region's byte account. */
-const zipListingCoverage = (
+export const zipListingCoverage = (
   account: ZipMemberRegionAccount | undefined,
 ): ArtifactReaderTraversal => {
   if (account === undefined)
@@ -431,6 +441,11 @@ const zipListingCoverage = (
       ? []
       : [
           `${String(account.unlocatedHeaders)} ZIP central directory record(s) point at no local file header; the bytes they claim were not accounted for.`,
+        ]),
+    ...(account.unverifiedExtents === 0
+      ? []
+      : [
+          `${String(account.unverifiedExtents)} ZIP central directory record(s) have payload extents that conflict with or cannot be established from their local headers or required data descriptors; those claims were not used to establish complete coverage.`,
         ]),
   ];
   return {
@@ -471,14 +486,14 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
-      ...legacyNameLimitations(entry),
+      ...zipEntryNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
   };
 };
 
 /** Preserve source bytes when an unflagged legacy name may use another code page. */
-const legacyNameLimitations = (entry: Entry): readonly string[] => {
+export const zipEntryNameLimitations = (entry: Entry): readonly string[] => {
   if (entry.filenameUTF8 || entry.extraFieldUnicodePath?.valid === true)
     return [];
   const bytes = entry.rawFilename;
@@ -610,7 +625,7 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "format" | "unavailable"> =
   ]);
 
 /** Type a zip.js archive fault so consumers do not report it as file I/O. */
-const typedZipFailure = (
+export const typedZipFailure = (
   cause: unknown,
   compressionMethod?: number,
 ): unknown => {
@@ -632,6 +647,7 @@ const typedZipFailure = (
     return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
       cause,
       boundary: "memory",
+      fixedAllowance: ZIP_ZSTANDARD_WINDOW_CEILING,
     });
   const invalidZstandard =
     compressionMethod === 93 &&

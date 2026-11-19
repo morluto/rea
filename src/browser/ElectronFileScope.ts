@@ -30,7 +30,7 @@ import {
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"

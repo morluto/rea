@@ -16,6 +16,7 @@ import {
   parseXmlDocument,
 } from "../xmlDocument.js";
 import { expatXmlName } from "./expatXmlNames.js";
+import { decodeStateUtf16 } from "./stateTextEncoding.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Formats the state view reads into JSON. */
@@ -89,8 +90,11 @@ const isKeyfile = (text: string): boolean => {
   return group;
 };
 
-/** Decode bytes as UTF-8 text, or undefined for binary content. */
+/** Decode UTF-8 and BOM-marked UTF-16, or return undefined for binary content. */
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
+  const utf16 = decodeStateUtf16(bytes);
+  if (utf16 !== undefined)
+    return utf16.text.includes("\0") ? undefined : utf16.text;
   if (bytes.subarray(0, 8192).includes(0)) return undefined;
   try {
     return decodeStrictUtf8(bytes, "strip-signature");
@@ -566,7 +570,7 @@ export const xmlView = (
 /** Formats read from a file's bytes alone, without a tool or worker. */
 export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";
 
-/** Whether a format is one of the text formats, read as UTF-8. */
+/** Whether a format is one of the text formats. */
 export const isTextualFormat = (
   format: string | null,
 ): format is TextualStateFormat =>

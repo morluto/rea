@@ -6,7 +6,7 @@ import { analysisErrorJsonSchema } from "../../../src/contracts/errorSchemas.js"
 import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { UnknownRegistryError } from "../../../src/domain/unknownRegistryError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";

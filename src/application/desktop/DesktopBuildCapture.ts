@@ -26,13 +26,13 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import {
-  controller,
-  type Answer,
-  type ControlledComputer,
-} from "../../desktop/BuildComputerController.js";
+import { controller } from "../../desktop/BuildComputerController.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../../ports/BuildComputerControl.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
@@ -394,10 +394,13 @@ export class DesktopBuildCapture {
         readonly package_lists: number;
         readonly package_lists_error: string | null;
       },
-      { readonly failure: AnalysisError; readonly answer?: Answer }
+      {
+        readonly failure: AnalysisError;
+        readonly answer?: BuildControllerAnswer;
+      }
     >
   > {
-    let answer: Answer;
+    let answer: BuildControllerAnswer;
     try {
       answer = await controller(
         this.computer,

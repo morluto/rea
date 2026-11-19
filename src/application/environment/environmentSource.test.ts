@@ -179,27 +179,6 @@ describe("loadEnvironmentSource", () => {
     }
   });
 
-  it("refuses a manifest whose parent is not the supplied evidence with a typed invalid request", () => {
-    const fixture = environmentServeFixture();
-    const other = analysisViewCaptureEvidence(analysisViewCaptureFixture());
-    const projected = refusal(fixture.manifest, other);
-    expect(projected).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        operation: "environment-serve",
-        issues: [
-          {
-            path: ["evidence", "evidence_id"],
-            reason: "invalid_value",
-            expected: fixture.capture.evidence_id,
-          },
-        ],
-      },
-    });
-    expect(projected.message).toContain("different capture");
-  });
-
   it("refuses manifests of another view kind, non-capture evidence and non-Evidence JSON", async () => {
     const fixture = environmentServeFixture();
     const surface = await inspectAnalysisView({

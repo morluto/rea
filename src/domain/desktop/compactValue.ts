@@ -1,7 +1,7 @@
 import { ellipsisExcerpt } from "../excerpt.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isXmlElement } from "./viewPointer.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** An element's attributes; none for a value that holds none. */
 export const attributesOf = (element: Record<string, JsonValue>) => {

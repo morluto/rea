@@ -206,8 +206,13 @@ scanned by event (`event 4 response /token` names
 content event, including a response whose request began before the browser was
 attached and a transaction no record represents, and each transaction URL's
 query once. Bodies larger than 4 MiB of UTF-8 text are not
-scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
-event pointers, including base64 bodies whose decoded scan was cut. An empty name
+scanned. A retained HAR base64 body must match its declared source text and
+representation before replay or state extraction; HAR's admitted ASCII whitespace
+differences do not change source identity. A mismatched or missing retained source
+is not promoted and is counted as unscanned, while its original Evidence is retained.
+`credential-scan-incomplete` counts these unavailable sources and oversized
+bodies, listing up to 20 record or event pointers, including base64 bodies whose
+decoded scan was cut. An empty name
 warning does not establish that these bodies were checked. A browser scenario's
 saved values (`save` and `save_response`) named like credentials but not marked
 `secret: true` are recorded unredacted; `credential-named-saved-values` lists up

@@ -268,9 +268,15 @@ const inspectMappingLayout = (
   let segments = 0;
   let components = 0;
   let inSegment = false;
+  let afterComma = false;
   let continued = false;
   let digits = 0;
-  const finish = (): void => {
+  const finish = (requiresSegment: boolean): void => {
+    if (requiresSegment && !inSegment)
+      throw malformedInput(
+        SOURCE_MAP_FORMAT,
+        "Source-map mappings contain an empty mapping segment.",
+      );
     if (continued)
       throw malformedInput(
         SOURCE_MAP_FORMAT,
@@ -286,7 +292,9 @@ const inspectMappingLayout = (
   for (const character of mappings) {
     if ((index++ & 0x3fff) === 0) check?.();
     if (character === "," || character === ";") {
-      finish();
+      const isComma = character === ",";
+      finish(isComma || afterComma);
+      afterComma = isComma;
       inSegment = false;
       components = 0;
       if (character === ";") lines += 1;
@@ -317,7 +325,7 @@ const inspectMappingLayout = (
           : limits.decodedRows,
       );
   }
-  finish();
+  finish(afterComma);
   return { lines, segments };
 };
 

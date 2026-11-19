@@ -19,10 +19,8 @@ import {
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import {
-  AGENTENV_PROVIDER,
-  type ComputerRelease,
-} from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../../domain/desktop/computerRelease.js";
 import {
   AbortedWait,
   waitForAbortable,

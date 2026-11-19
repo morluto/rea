@@ -19,7 +19,7 @@ import {
   type JsonValue,
 } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 import { readOutput, reportedFailure, runRea } from "./DesktopBuildCommands.js";
 
 const STOP = "stop_build_capture";

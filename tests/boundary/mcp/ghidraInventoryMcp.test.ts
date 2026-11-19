@@ -25,6 +25,7 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { createServer } from "../../../src/server/createServer.js";
 import { waitForExit } from "../../support/process/processFixture.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("delivers a complete Ghidra inventory within the existing MCP response budget", async () => {
   const items = Array.from({ length: 30_000 }, (_, index) => ({
@@ -293,7 +294,10 @@ it("searches bytes through MCP and the socket bridge with pagination and skipped
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "byte-search", version: "1" });
+  const client = new Client(
+    { name: "byte-search", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

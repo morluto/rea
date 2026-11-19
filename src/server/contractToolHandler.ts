@@ -6,10 +6,6 @@ import type { Logger } from "pino";
 import type { z } from "zod";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
-import {
-  optionalProviderUnavailable,
-  type OptionalProviderLoadFailure,
-} from "../ports/OptionalObservationProviders.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import type {
   AnalysisOperationPort,
@@ -27,9 +23,11 @@ import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { err, type Result } from "../domain/result.js";
+import { isRecord } from "../kernel/isRecord.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import type { ToolResultEncoding } from "./toolResultEncoding.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
@@ -38,10 +36,7 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
 import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
-import {
-  reportOperationEnd,
-  reportOperationStart,
-} from "./operationProgress.js";
+import { createOperationProgress } from "./operationProgress.js";
 import {
   deliverApplicationExecution,
   type ApplicationExecutionRecords,
@@ -79,26 +74,22 @@ export const deliverEvidenceResult = (
   );
 };
 
-/**
- * Bind one service-backed handler to its exact named contract through the
- * shared log/execute/record/deliver workflow.
- */
-export const createContractToolHandler =
-  <TOperation extends string>(
-    server: EvidenceMcpServer,
-    service: ContractToolService<TOperation>,
-    logger: Logger,
-    recordEvidence?: EvidenceWriter["recordEvidence"],
-    withAdmittedAnalysis?: WithAdmittedAnalysis,
-  ) =>
-  (contract: ToolContract<TOperation>) =>
-    createEvidenceToolHandler(
-      server,
-      (input, options) => service.execute(contract.name, input, options),
-      logger,
-      recordEvidence,
-      withAdmittedAnalysis,
-    )(contract);
+/** Input admission owns whether inspection receives defaults or caller selections. */
+export type RetainedSummaryOperation<Input> =
+  | {
+      readonly admission: "sdk";
+      readonly summary: (
+        input: Omit<Input, "detail" | "view">,
+        options: ExecutionOptions,
+      ) => Promise<Result<Evidence, AnalysisError>>;
+    }
+  | {
+      readonly admission: "application";
+      readonly summary: (
+        input: unknown,
+        options: ExecutionOptions,
+      ) => Promise<Result<Evidence, AnalysisError>>;
+    };
 
 /** Validate delivery selection before inspection and retain its complete source for summaries. */
 export const createRetainedSummaryToolHandler = <
@@ -112,10 +103,7 @@ export const createRetainedSummaryToolHandler = <
 >(
   server: EvidenceMcpServer,
   contract: ToolContract<Name, InputSchema>,
-  inspect: (
-    input: Omit<z.output<InputSchema>, "detail" | "view">,
-    options: ExecutionOptions,
-  ) => Promise<Result<Evidence, AnalysisError>>,
+  operation: RetainedSummaryOperation<z.output<InputSchema>>,
   logger: Logger,
   retention: AnalysisViewRetention,
   withAdmittedAnalysis?: WithAdmittedAnalysis,
@@ -138,7 +126,18 @@ export const createRetainedSummaryToolHandler = <
         const ready = requireAnalysisViewRetention(contract.name, retention);
         if (!ready.ok) return ready;
       }
-      const inspected = await inspect(input, options);
+      const inspected = await (operation.admission === "sdk"
+        ? operation.summary(input, options)
+        : operation.summary(
+            isRecord(rawInput)
+              ? Object.fromEntries(
+                  Object.entries(rawInput).filter(
+                    ([field]) => field !== "detail" && field !== "view",
+                  ),
+                )
+              : rawInput,
+            options,
+          ));
       return detail === "summary" && inspected.ok
         ? projectRetainedAnalysis(
             inspected.value,
@@ -171,12 +170,26 @@ export const createEvidenceToolHandler =
   ) =>
   <TOperation extends string>(contract: ToolContract<TOperation>) =>
   (input: unknown, context: ServerContext) =>
-    runEvidenceToolOperation(
-      { server, logger, recordEvidence, withAdmittedAnalysis, viewSource },
-      contract,
-      undefined,
-      { input, context },
-      operation,
+    runAdmittedToolOperation(
+      server,
+      withAdmittedAnalysis,
+      contract.name,
+      context.mcpReq.signal,
+      async () => {
+        const result = await logToolExecution(logger, contract.name, () =>
+          operation(input, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+          }),
+        );
+        return deliverEvidenceResult(
+          server,
+          result,
+          contract,
+          recordEvidence,
+          viewSource?.(input),
+        );
+      },
     );
 
 /** The MCP request a value-returning workflow runs for. */
@@ -188,19 +201,80 @@ export interface ValueToolRequest {
 }
 
 /**
+ * A value that commits a record, with the receipt an overflowing response
+ * names so the caller still learns what was committed.
+ */
+export class CommittedValue {
+  constructor(
+    readonly value: JsonValue,
+    readonly receipt: Readonly<Record<string, JsonValue>>,
+  ) {}
+}
+
+/**
+ * Smaller forms of a value, offered in order when the complete value does not
+ * fit the response budget. Each keeps the contract's result shape.
+ */
+export type ValueAlternatives = (
+  failure: Extract<ToolResultEncoding, { readonly ok: false }>,
+  budgetBytes: number,
+) => Iterable<JsonValue>;
+
+/** A value delivered complete when it fits, or as its first fitting alternative. */
+export class ReducibleValue {
+  constructor(
+    readonly value: JsonValue,
+    readonly alternatives: ValueAlternatives,
+  ) {}
+}
+
+/**
+ * A value followed by content blocks an upstream tool returned (a build
+ * computer's screenshot, say), delivered unchanged after REA's JSON.
+ */
+export class ForwardedValue {
+  constructor(
+    readonly value: JsonValue,
+    readonly content: readonly Readonly<Record<string, JsonValue>>[],
+  ) {}
+}
+
+/**
+ * A failure delivered with facts its operation observed alongside the error
+ * (an open's selection at failure, say), added to the error's details.
+ */
+export class DetailedFailure {
+  constructor(
+    readonly error: AnalysisError,
+    readonly details: Readonly<Record<string, JsonValue>>,
+  ) {}
+}
+
+/** What a value workflow returns. */
+export type ValueOutcome = Result<
+  JsonValue | CommittedValue | ReducibleValue | ForwardedValue,
+  AnalysisError | DetailedFailure
+>;
+
+/**
  * Bind a named workflow returning a plain JSON value to shared logging and
- * delivery. It records no Evidence; it runs under analysis admission only
- * when one is supplied.
+ * delivery. A success records no Evidence; a failure's partial Evidence (a
+ * cancelled session's cleanup record, say) is delivered through the session
+ * writer like any other. It runs under analysis admission only when one is
+ * supplied, and then receives the analysis that admission grants.
  */
 export const createValueToolHandler =
   (
     server: EvidenceMcpServer,
     operation: (
       input: unknown,
-      request: ValueToolRequest,
-    ) => Promise<Result<JsonValue, AnalysisError>>,
+      request: ValueToolRequest & {
+        readonly analysis?: AnalysisOperationPort;
+      },
+    ) => Promise<ValueOutcome>,
     logger: Logger,
     withAdmittedAnalysis?: WithAdmittedAnalysis,
+    recordEvidence?: EvidenceWriter["recordEvidence"],
   ) =>
   (contract: ToolContract) =>
   async (input: unknown, context: ServerContext): Promise<CallToolResult> =>
@@ -209,17 +283,49 @@ export const createValueToolHandler =
       withAdmittedAnalysis,
       contract.name,
       context.mcpReq.signal,
-      async () =>
-        server.delivery.toCallToolResult(
-          await logToolExecution(logger, contract.name, () =>
-            operation(input, {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-              context,
-            }),
-          ),
-          contract,
-        ),
+      async (analysis) => {
+        const result = await logToolExecution(logger, contract.name, () =>
+          operation(input, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+            context,
+            ...(analysis === undefined ? {} : { analysis }),
+          }),
+        );
+        if (!result.ok)
+          return result.error instanceof DetailedFailure
+            ? server.delivery.toDetailedErrorToolResult(
+                result.error.error,
+                result.error.details,
+                contract.returnsTargetContent,
+              )
+            : server.delivery.toPartialErrorToolResult(
+                result.error,
+                contract.returnsTargetContent,
+                recordEvidence,
+              );
+        const { value } = result;
+        return value instanceof CommittedValue
+          ? server.delivery.toCallToolResult(
+              ok(value.value),
+              contract,
+              value.receipt,
+            )
+          : value instanceof ReducibleValue
+            ? server.delivery.toCallToolResult(
+                ok(value.value),
+                contract,
+                {},
+                value.alternatives,
+              )
+            : value instanceof ForwardedValue
+              ? server.delivery.toForwardedToolResult(
+                  ok(value.value),
+                  contract,
+                  value.content,
+                )
+              : server.delivery.toCallToolResult(ok(value), contract);
+      },
     );
 
 /** What a derivation may read before it runs. */
@@ -372,62 +478,28 @@ export const createApplicationToolHandler =
       },
     );
 
-/** One owner for optional-provider admission, execution, recording and delivery. */
-export const runEvidenceToolOperation = async <Input>(
-  options: {
-    readonly server: EvidenceMcpServer;
-    readonly logger: Logger;
-    readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
-    readonly withAdmittedAnalysis?: WithAdmittedAnalysis | undefined;
-    /** The source a view's overflow recovery may name again, when it has one. */
-    readonly viewSource?: ((input: Input) => JsonValue | undefined) | undefined;
-  },
-  contract: ToolContract,
-  loadFailure: OptionalProviderLoadFailure | undefined,
-  request: { readonly input: Input; readonly context: ServerContext },
-  execute: (
-    input: Input,
-    options: {
-      readonly signal: AbortSignal;
-      readonly progress: ProgressReporter;
-    },
-  ) => Promise<Result<Evidence, AnalysisError>>,
-): Promise<CallToolResult> => {
-  const { input, context } = request;
-  if (loadFailure !== undefined)
-    return options.server.delivery.toCallToolResult(
-      err(optionalProviderUnavailable(loadFailure, contract.name)),
-      contract,
-    );
-  return runAdmittedToolOperation(
-    options.server,
-    options.withAdmittedAnalysis,
-    contract.name,
-    context.mcpReq.signal,
-    async () => {
-      const result = await logToolExecution(options.logger, contract.name, () =>
-        execute(input, {
-          signal: context.mcpReq.signal,
-          progress: mcpProgressReporter(context),
-        }),
-      );
-      return deliverEvidenceResult(
-        options.server,
-        result,
-        contract,
-        options.recordEvidence,
-        options.viewSource?.(input),
-      );
-    },
-  );
-};
+/**
+ * A provider-backed workflow's Evidence and, when the workflow already
+ * recorded it in the session, that record's result: delivery reuses it
+ * rather than recording (and re-validating) the Evidence again.
+ */
+export interface AnalysisWorkflowOutcome {
+  readonly evidence: Evidence;
+  readonly recorded?: Result<unknown, AnalysisError>;
+}
 
 /** A provider-backed workflow run on the analysis its admission grants. */
 export type AnalysisWorkflow = (
   input: unknown,
   analysis: AnalysisOperationPort,
   request: ApplicationWorkflowRequest,
-) => Promise<Result<Evidence, AnalysisError>>;
+) => Promise<Result<AnalysisWorkflowOutcome, AnalysisError>>;
+
+/** Delivery controls and the owner of this complete workflow's terminal progress. */
+export interface AnalysisWorkflowOptions {
+  readonly detail?: "delivery" | undefined;
+  readonly completionProgress?: "workflow" | undefined;
+}
 
 /**
  * Run a provider-backed workflow on the analysis that admission grants for
@@ -444,16 +516,17 @@ export const createAnalysisToolHandler =
     logger: Logger,
     retention: AnalysisViewRetention,
     withAdmittedAnalysis: WithAdmittedAnalysis,
-    selectsDetail: boolean,
+    options: AnalysisWorkflowOptions,
   ) =>
   (contract: ToolContract) =>
   async (
     rawInput: unknown,
     context: ServerContext,
   ): Promise<CallToolResult> => {
-    const { detail, input } = selectsDetail
-      ? deliveryDetail(rawInput)
-      : { detail: undefined, input: rawInput };
+    const { detail, input } =
+      options.detail === "delivery"
+        ? deliveryDetail(rawInput)
+        : { detail: undefined, input: rawInput };
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(contract.name, retention);
       if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
@@ -463,27 +536,41 @@ export const createAnalysisToolHandler =
       contract.name,
       signal,
       async (analysis) => {
-        const progress = mcpProgressReporter(context);
-        await reportOperationStart(progress, contract.name);
+        const progress = createOperationProgress(
+          mcpProgressReporter(context),
+          contract.name,
+          options.completionProgress,
+        );
+        await progress.start();
         const analyzed = await logToolExecution(logger, contract.name, () =>
           analyze(input, analysis, { signal, progress }),
         );
-        const delivered =
-          detail === "summary" && analyzed.ok
-            ? summarizeRetainedAnalysis(analyzed.value, retention)
-            : analyzed;
-        const response = deliverEvidenceResult(
-          server,
-          delivered,
-          contract,
-          retention.recordEvidence,
-        );
-        await reportOperationEnd(
-          progress,
-          contract.name,
-          response.isError !== true,
-        );
-        return response;
+        const response =
+          !analyzed.ok || detail === "summary"
+            ? deliverEvidenceResult(
+                server,
+                analyzed.ok
+                  ? summarizeRetainedAnalysis(
+                      analyzed.value.evidence,
+                      retention,
+                    )
+                  : analyzed,
+                contract,
+                retention.recordEvidence,
+              )
+            : analyzed.value.recorded === undefined
+              ? deliverEvidenceResult(
+                  server,
+                  ok(analyzed.value.evidence),
+                  contract,
+                  retention.recordEvidence,
+                )
+              : server.delivery.toEvidenceToolResult(
+                  analyzed.value.evidence,
+                  contract,
+                  analyzed.value.recorded,
+                );
+        return progress.complete(response);
       },
     );
     return admitted.ok

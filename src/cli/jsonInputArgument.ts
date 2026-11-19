@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 
 import { jsonDocumentText } from "../domain/schemaConstraints.js";
 
@@ -59,7 +59,7 @@ export const jsonInputContentSchema = (
   return type === "unknown" || type === "any" ? {} : undefined;
 };
 
-/** Keep the positional string and attach the document contract Incur can see. */
+/** Keep the positional string and attach the document contract the CLI advertises. */
 export const jsonInputArgument = (
   description: string,
   schema: z.ZodType,

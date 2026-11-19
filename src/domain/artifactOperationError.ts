@@ -7,6 +7,8 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
+import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
+import type { ParseFailureKind } from "./parseFailure.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
@@ -63,6 +65,8 @@ export class ArtifactOperationError extends AnalysisError {
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly boundary: ArtifactLimitBoundary | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  /** For a `limit` reason, the release-fixed allowance that refused the input. */
+  readonly fixedAllowance: FixedAllowance | undefined;
   /** For an `integrity` reason, the check the producing reader named. */
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
@@ -74,15 +78,20 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_pe_resources"
       | "inspect_pe_certificates"
       | "inspect_elf_notes"
+      | "inspect_dwarf_units"
+      | "inspect_elf_debug_link"
       | "inspect_elf_unwind_ranges"
       | "inspect_devicetree"
       | "inspect_ntfs_journal"
       | "inspect_api_contract"
       | "inspect_playwright_trace"
       | "inspect_kernel_module"
+      | "inspect_elf_dependencies"
       | "inspect_kernel_build_config"
       | "inspect_erlang_beam"
+      | "inspect_nuget_nupkg"
       | "inspect_v8_code_cache"
+      | "inspect_maven_gradle_metadata"
       | "extract_artifact"
       | "decode_interface_builder"
       | "inspect_asset_catalog"
@@ -93,10 +102,10 @@ export class ArtifactOperationError extends AnalysisError {
       | "trace_web_source_location"
       | "analyze_javascript_application",
     readonly reason:
+      | ParseFailureKind
       | "cancelled"
       | "format"
       | "integrity"
-      | "limit"
       | "path"
       | "unavailable"
       | "io",
@@ -109,6 +118,7 @@ export class ArtifactOperationError extends AnalysisError {
       readonly admission?: ArtifactAdmissionLimit;
       readonly boundary?: ArtifactLimitBoundary;
       readonly readerLimit?: ArtifactReaderLimitFact;
+      readonly fixedAllowance?: FixedAllowance;
       readonly integrityCheck?: ArtifactIntegrityCheck;
     },
   ) {
@@ -121,6 +131,7 @@ export class ArtifactOperationError extends AnalysisError {
     this.admission = options?.admission;
     this.boundary = options?.boundary;
     this.readerLimit = options?.readerLimit;
+    this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
     this.remediationAction = options?.remediationAction;
     this.userMessage =

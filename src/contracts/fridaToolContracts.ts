@@ -4,7 +4,10 @@ import {
 } from "../domain/fridaCapturePolicy.js";
 import { z } from "zod";
 
-import { localPathStringSchema } from "../domain/localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
@@ -183,7 +186,9 @@ export const FRIDA_TOOL_CONTRACTS = [
         session_id: sessionId,
         source_kind: z.enum(["inline", "file"]),
         source: z.string().optional(),
-        path: localPathStringSchema.optional(),
+        path: absoluteLocalPathStringSchema
+          .describe("Absolute local JavaScript source file to load")
+          .optional(),
       })
       .refine(
         (value) =>
@@ -332,7 +337,9 @@ export const FRIDA_TOOL_CONTRACTS = [
         argv: z.array(z.string()).optional(),
         source_kind: z.enum(["inline", "file"]),
         source: z.string().optional(),
-        path: localPathStringSchema.optional(),
+        path: absoluteLocalPathStringSchema
+          .describe("Absolute local JavaScript source file to load")
+          .optional(),
         duration_ms: z.int().min(0).max(60_000).default(1_000),
       })
       .refine(

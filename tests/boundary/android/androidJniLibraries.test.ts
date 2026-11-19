@@ -25,6 +25,11 @@ import {
 } from "../../../src/domain/android/androidJniBindings.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../fixtures/zipZstandard.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
 import {
   ArtifactReaderFailure,
@@ -215,6 +220,24 @@ it("retains a malformed selected library's exact carrier identity and digest", a
     message: expect.any(String),
   });
   expect(source.resources.hasPending).toBe(false);
+});
+
+it("keeps the ZIP decoder window's recompression advice in the library failure", async () => {
+  const directory = await createTestTempDirectory("rea-android-jni-zstd-");
+  const snapshot = join(directory, "window.apk");
+  // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+  const { content, compressed } = zstandardWindowFrameFixture(0x90);
+  const bytes = zstandardZipFixture(content, { compressed, name: LIBRARY });
+  await writeFile(snapshot, bytes);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(async () => {
+    await resources.close();
+  });
+  const result = await read({ snapshot, apkSha256: digest(bytes), resources });
+  expect(result.libraries[0]?.failure).toMatchObject({
+    kind: "limit",
+    message: expect.stringContaining(ZIP_ZSTANDARD_WINDOW_CEILING.narrowing!),
+  });
 });
 
 it("preserves declared capacity metadata without presenting unread bytes as verified", async () => {

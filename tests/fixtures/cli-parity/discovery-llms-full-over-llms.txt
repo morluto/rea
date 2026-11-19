@@ -1,0 +1,23 @@
+$ rea inspect-byte-entropy --llms --llms-full
+exit: 0
+--- stdout
+# rea inspect-byte-entropy
+
+Inspect file-wide and block byte entropy without executing the file
+
+## Arguments
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path` | `string` | yes | Local file |
+
+## Options
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--block-size` | `unknown` | `4096` | Power-of-two block size from 256 to 65536 bytes |
+| `--offset` | `unknown` | `0` | Window start as a decimal file byte offset |
+| `--length` | `unknown` |  | Window length in bytes; omit to extend through EOF |
+<end>
+--- stderr
+<end>

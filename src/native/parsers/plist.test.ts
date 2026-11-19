@@ -92,11 +92,16 @@ it.each([
         expect(failure).toMatchObject({
           code: "resource_constraint",
           retryable: false,
-          details: { reported_limits: { maximum_nesting_depth: maximum } },
+          details: {
+            reported_limits: { boundary: "plist-nesting-depth", maximum },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native plist nesting allowance",
+              limit: maximum,
+              unit: "levels",
+            },
+          },
         });
-        expect(failure.remediation.action).toContain(
-          `${maximum}-level native plist nesting allowance (no runtime override)`,
-        );
       } else {
         if (!parsed.ok) throw parsed.error;
         expect(() =>

@@ -29,44 +29,47 @@ const RECORDED: readonly TimedCaptureRow[] = [
 ];
 
 describe("browser probe request-body admission", () => {
-  it("refuses a browser bulk delete probe without selected request bodies", () => {
-    const fixture = environmentStateServeFixture(
-      timedCaptureEvidence(RECORDED),
-    );
-    const report = compareEnvironment({
-      source: environmentServeSource(fixture),
-      captureValue: fixture.capture,
-      probes: [
-        {
-          label: "bulk-delete-without-body",
-          value: scenarioCaptureEvidence(
-            scenarioCaptureFixture(
-              [
+  it.each([200, undefined])(
+    "refuses a browser bulk delete without selected request bodies (response status %s)",
+    (status) => {
+      const fixture = environmentStateServeFixture(
+        timedCaptureEvidence(RECORDED),
+      );
+      const report = compareEnvironment({
+        source: environmentServeSource(fixture),
+        captureValue: fixture.capture,
+        probes: [
+          {
+            label: "bulk-delete-without-body",
+            value: scenarioCaptureEvidence(
+              scenarioCaptureFixture(
+                [
+                  {
+                    method: "DELETE",
+                    url: "/api/books",
+                    ...(status === undefined ? {} : { status }),
+                    mediaType: "application/json",
+                    body: '[{"id":1}]',
+                  },
+                ],
                 {
-                  method: "DELETE",
-                  url: "/api/books",
-                  status: 200,
-                  mediaType: "application/json",
-                  body: '[{"id":1}]',
+                  request_body: false,
+                  response_body: true,
+                  header_values: false,
                 },
-              ],
-              {
-                request_body: false,
-                response_body: true,
-                header_values: false,
-              },
+              ),
             ),
-          ),
-        },
-      ],
-      operation: "environment-compare",
-    });
-    expect(report.ok).toBe(false);
-    if (report.ok) return;
-    expect(JSON.stringify(report.error)).toContain(
-      "capture.network.request_body",
-    );
-  });
+          },
+        ],
+        operation: "environment-compare",
+      });
+      expect(report.ok).toBe(false);
+      if (report.ok) return;
+      expect(JSON.stringify(report.error)).toContain(
+        "capture.network.request_body",
+      );
+    },
+  );
 
   it("compares a browser bulk delete when request bodies were selected", () => {
     const fixture = environmentStateServeFixture(

@@ -6,6 +6,7 @@ import { browserOriginSchema } from "./browserObservation.js";
 import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
+  type WebBundleCallSite,
 } from "./webBundleAnalysis.js";
 import {
   createWebBundleAnalysisAccumulator,
@@ -60,6 +61,17 @@ export const buildCapturedWebBundleAnalysis = (
     > => result.status === "unavailable",
   );
   const accumulator = mergeScriptResults(orderedResults);
+  const semanticUnknowns = orderedResults.flatMap((result) =>
+    result.status !== "analyzed" || result.semantic_limits === undefined
+      ? []
+      : result.semantic_limits.map(({ reason, limit }) => ({
+          dimension: "javascript_analysis",
+          reason,
+          limit,
+          remediation: `Increase ${limit.parameter} on the next analysis call.`,
+          affected_script_keys: [result.script_key],
+        })),
+  );
   const attemptedScripts = orderedResults.filter(
     (result) =>
       !(result.status === "unavailable" && result.reason === "not_started"),
@@ -86,6 +98,7 @@ export const buildCapturedWebBundleAnalysis = (
   const sourceMapIncomplete =
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
   const partial =
+    semanticUnknowns.length > 0 ||
     accumulator.failedScripts.length > 0 ||
     accumulator.recoveredScripts.length > 0 ||
     accumulator.widenedScripts.length > 0 ||
@@ -172,11 +185,13 @@ export const buildCapturedWebBundleAnalysis = (
     },
     inferences: accumulator.inferences,
     unknowns: buildUnknowns({
+      semanticUnknowns,
       unavailable,
       unavailableSourceReasons,
       failedScripts: accumulator.failedScripts,
       recoveredScripts: accumulator.recoveredScripts,
       widenedScripts: accumulator.widenedScripts,
+      unresolvedEndpoints: accumulator.unresolvedEndpoints,
       unavailableAnalyses,
       sourceMaps,
       omittedScripts,
@@ -220,6 +235,10 @@ const mergeScriptResults = (
     appendAll(accumulator.edges, result.observations.edges);
     appendAll(accumulator.routes, result.observations.routes);
     appendAll(accumulator.endpoints, result.observations.endpoints);
+    appendAll(
+      accumulator.unresolvedEndpoints,
+      result.observations.unresolved_endpoints,
+    );
     appendAll(accumulator.webMcp, result.observations.webmcp_declarations);
     appendAll(accumulator.inferences, result.inferences);
   }
@@ -261,11 +280,13 @@ const chunkNode = (script: IncludedScript) => {
 };
 
 interface UnknownsInput {
+  readonly semanticUnknowns: WebBundleAnalysis["unknowns"];
   readonly unavailable: string[];
   readonly unavailableSourceReasons: readonly string[];
   readonly failedScripts: readonly string[];
   readonly recoveredScripts: readonly string[];
   readonly widenedScripts: readonly string[];
+  readonly unresolvedEndpoints: readonly WebBundleCallSite[];
   readonly unavailableAnalyses: readonly Extract<
     WebBundleScriptAnalysis,
     { readonly status: "unavailable" }
@@ -277,6 +298,7 @@ interface UnknownsInput {
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...input.semanticUnknowns,
   ...(input.omittedScripts === undefined
     ? []
     : [
@@ -340,6 +362,23 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
             : { refused_phase: refusedPhase }),
         }),
       )),
+  ...(input.unresolvedEndpoints.length === 0
+    ? []
+    : [
+        {
+          dimension: "endpoints" as const,
+          reason:
+            "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+          affected_script_keys: [
+            ...new Set(
+              input.unresolvedEndpoints.map(
+                ({ location }) => location.script_key,
+              ),
+            ),
+          ],
+          call_sites: [...input.unresolvedEndpoints],
+        },
+      ]),
   ...(input.widenedScripts.length === 0
     ? []
     : [

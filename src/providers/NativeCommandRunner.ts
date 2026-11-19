@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionFailure } from "./OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -26,6 +27,7 @@ import {
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 
 /**
  * Failure diagnostics keep only an excerpt of each stream. Successful
@@ -447,12 +449,11 @@ export const resolveXcrunTool = async (
     const cancellation =
       signal?.aborted === true ? { reason: signal.reason } : undefined;
     const observedCancellation =
-      signal?.aborted === true &&
-      cause instanceof Error &&
-      cause.cause === signal.reason &&
-      ((cause instanceof ArtifactReaderFailure &&
-        cause.reason === "cancelled") ||
-        ("code" in cause && cause.code === "ABORT_ERR"));
+      isAbortOf(cause, signal) ||
+      (signal?.aborted === true &&
+        cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled" &&
+        cause.cause === signal.reason);
     return err(
       new NativeCommandFailure(
         tool,
@@ -593,14 +594,17 @@ const processFailureReason = (
 
 const processCaptureFromSnapshot = (
   snapshot: ProviderProcessSnapshot,
-): ProcessCapture => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdoutBytes: snapshot.stdout.bytes,
-  stderrBytes: snapshot.stderr.bytes,
-  exitCode: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-});
+): ProcessCapture => {
+  const captured = capturedProviderOutput(snapshot);
+  return {
+    stdout: captured.stdout,
+    stderr: captured.stderr,
+    stdoutBytes: snapshot.stdout.bytes,
+    stderrBytes: snapshot.stderr.bytes,
+    exitCode: captured.exit_code ?? null,
+    signal: captured.signal ?? null,
+  };
+};
 
 const hashFile = (path: string, signal?: AbortSignal): Promise<string> =>
   new Promise((resolve, reject) => {

@@ -33,6 +33,7 @@ import {
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("reports the exhausted native export allowance through MCP", async () => {
   const root = await createTestTempDirectory("rea-native-export-mcp-limits-");
@@ -40,7 +41,10 @@ it("reports the exhausted native export allowance through MCP", async () => {
     throw new Error("deep provider must not start");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-export-limits", version: "1" });
+  const client = new Client(
+    { name: "native-export-limits", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -55,6 +59,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "byte-limit.dll",
       bytes: peRepeatedExportNamesImage(0x3000),
+      boundary: "retained_text",
       maximum: 16777216,
       expected: "fixed byte allowance",
       excluded: "fixed count",
@@ -62,6 +67,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "count-limit.dll",
       bytes: peStoredExportTableImage(0x40001),
+      boundary: "rows",
       maximum: 262144,
       expected: "fixed count",
       excluded: "fixed byte allowance",
@@ -79,7 +85,10 @@ it("reports the exhausted native export allowance through MCP", async () => {
       code: "resource_constraint",
       retryable: false,
       details: {
-        reported_limits: { boundary: "structure", maximum: fixture.maximum },
+        reported_limits: {
+          boundary: fixture.boundary,
+          maximum: fixture.maximum,
+        },
       },
     });
     expect(error.remediation.action).toContain(fixture.expected);
@@ -107,10 +116,13 @@ it.each(["inspect_native_exports", "inspect_byte_entropy"] as const)(
         : { nativeExports: service },
       { logger: silentLogger },
     );
-    const client = new Client({
-      name: "exports-preflight-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "exports-preflight-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -198,7 +210,10 @@ it.each([false, true])(
         withAdmittedAnalysis: admission,
       },
     );
-    const client = new Client({ name: "entropy-cleanup-client", version: "1" });
+    const client = new Client(
+      { name: "entropy-cleanup-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       failClose = false;
       try {
@@ -294,7 +309,10 @@ it("records inline layout with compact schemas and canonical path checks", async
     { kind: "session", session },
     { binaryLayout: service },
   );
-  const client = new Client({ name: "binary-layout-contract", version: "1" });
+  const client = new Client(
+    { name: "binary-layout-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -371,7 +389,10 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     throw new Error("No provider needed");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "entropy-contract", version: "1" });
+  const client = new Client(
+    { name: "entropy-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -438,7 +459,10 @@ it("records a portable export inventory through MCP without a binary target", as
     throw new Error("deep provider must not start");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-exports-contract", version: "1" });
+  const client = new Client(
+    { name: "native-exports-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

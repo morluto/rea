@@ -82,24 +82,15 @@ export const allKeyed = <T, K extends TableKey>(
   keyed.entries.flatMap((entry) => (entry.key === key ? [entry.value] : []));
 
 /**
- * The first or last declaration of a key, for a format whose own consumer
- * defines that precedence. `precedence` states that rule, so a choice among
- * repeats is never inherited from `find` or `Map.set`.
+ * The first declaration of a key, for a format whose consumer defines that
+ * precedence. Callers must state the format's rule.
  */
-const precedenceKeyed =
-  (pick: "first" | "last") =>
-  <T, K extends TableKey>(
-    keyed: Keyed<T, K>,
-    key: K,
-    precedence: string,
-  ): T | undefined => {
-    if (precedence.trim() === "")
-      throw new TypeError("A keyed precedence must state its format rule");
-    const matches = allKeyed(keyed, key);
-    return pick === "first" ? matches[0] : matches.at(-1);
-  };
-
-/** The first declaration of a key; see {@link precedenceKeyed}. */
-export const firstKeyed = precedenceKeyed("first");
-/** The last declaration of a key; see {@link precedenceKeyed}. */
-export const lastKeyed = precedenceKeyed("last");
+export const firstKeyed = <T, K extends TableKey>(
+  keyed: Keyed<T, K>,
+  key: K,
+  precedence: string,
+): T | undefined => {
+  if (precedence.trim() === "")
+    throw new TypeError("A keyed precedence must state its format rule");
+  return keyed.entries.find((entry) => entry.key === key)?.value;
+};

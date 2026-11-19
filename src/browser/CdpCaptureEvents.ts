@@ -191,6 +191,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       case "Runtime.executionContextsCleared":
         this.executionContextFrames.clear();
         return;
+      default:
+        return;
     }
   }
 
