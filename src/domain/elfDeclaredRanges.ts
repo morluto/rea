@@ -1,8 +1,12 @@
 import { readElfSectionHeader } from "./elfSectionHeader.js";
-import { readElfProgramHeader } from "./elfProgramHeader.js";
+import { readElfProgramHeader, PT_INTERP } from "./elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "./elfRawTableDeclarations.js";
 import { readElfFixedHeader, type ElfFixedHeader } from "./elfFixedHeader.js";
 import { err, ok, type Result } from "./result.js";
+
+export interface ElfDeclaredRangeFacts {
+  readonly hasInterpreter: boolean;
+}
 
 /** Positional source requests; the caller owns the descriptor and cancellation. */
 export interface ElfDeclarationRead {
@@ -203,7 +207,12 @@ function* inspectTableRanges(
   table: ElfDeclaredTable,
   header: ElfFixedHeader,
   fileSize: number,
-): Generator<ElfDeclarationRead, Result<null, string>, Buffer> {
+): Generator<
+  ElfDeclarationRead,
+  Result<{ readonly hasInterpreter: boolean }, string>,
+  Buffer
+> {
+  let hasInterpreter = false;
   const perRead = Math.max(1, Math.floor((64 * 1024) / table.width));
   for (let index = 0; index < table.count; index += perRead) {
     const count = Math.min(perRead, table.count - index);
@@ -240,19 +249,29 @@ function* inspectTableRanges(
         fileSize,
       );
       if (failure !== undefined) return err(failure);
+      if (kind === "program" && facts.type === PT_INTERP) {
+        // The declared range must fit at least one pathname byte and its NUL.
+        if (length < 2n) return err("invalid ELF PT_INTERP file size");
+        hasInterpreter = true;
+      }
     }
   }
-  return ok(null);
+  return ok({ hasInterpreter });
 }
 
 /** Physical extent admission, independent of section names, CPU lanes and decoder budgets. */
 export function* validateElfDeclaredRanges(
   prefix: Buffer,
   fileSize: number,
-): Generator<ElfDeclarationRead, Result<null, string>, Buffer> {
+): Generator<
+  ElfDeclarationRead,
+  Result<ElfDeclaredRangeFacts, string>,
+  Buffer
+> {
   const declarations = yield* readElfTableDeclarations(prefix, fileSize);
   if (!declarations.ok) return declarations;
   const { header, programs, sections } = declarations.value;
+  let hasInterpreter = false;
   for (const [kind, table] of [
     ["program", programs],
     ["section", sections],
@@ -260,6 +279,9 @@ export function* validateElfDeclaredRanges(
     if (table.count === 0) continue;
     const inspected = yield* inspectTableRanges(kind, table, header, fileSize);
     if (!inspected.ok) return inspected;
+    if (kind === "program") {
+      hasInterpreter = inspected.value.hasInterpreter;
+    }
   }
-  return ok(null);
+  return ok({ hasInterpreter });
 }

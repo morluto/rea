@@ -42,7 +42,7 @@ naming a folder under the working directory. The entry's `Exec` line is
 expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
 entry's `Path` or the home directory. When the line starts with
-`env NAME=value`, the program is found on the `PATH` those assignments set,
+`env NAME=value` or `env -- NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
 in, and their XDG folders name the state directories. Otherwise the program is
 looked up on the host's `PATH` in the order the launch searches it, and one
@@ -278,19 +278,55 @@ at all for an archive package, whose export does not use it. REA reads
 DT_NEEDED from the resolved executable and from each library it finds, and
 looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
-has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
-normalized), and then in the `ldconfig -p` cache entries for the executable's
-machine. Each candidate's ELF machine, class and byte order must match the
+has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded), and then in the
+`ldconfig -p` cache entries for the executable's
+machine. Dynamic library names and search paths preserve their original UTF-8
+filesystem bytes, including a leading BOM. ELF strings that cannot be
+represented exactly as UTF-8 paths leave the walk incomplete with a reason.
+`$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
+to the object declaring that dependency before full-path lookup and request
+deduplication; the same spelling in two libraries can name two different files.
+Lookup paths retain directory symlinks and subsequent `..` components until the
+filesystem resolves them. The selected leaf name and its physical target are
+queried for package ownership, keeping the original alias-qualified lookup
+filename separate from canonical identity and trying its owner first. Distinct
+ownership spellings participate in request identity even when they select the
+same leaf. All observed owners of that leaf are retained; an unowned query
+spelling does not create a warning when another spelling identifies its owner.
+Distinct required links are retained even when they reach one physical object;
+that object's dependencies are walked once through its first load path, which
+supplies its own `$ORIGIN`. Link targets retain every ownership-qualified
+spelling even when another route reaches the same physical link. Within one
+inventory, repeated exact absolute lookup spellings reuse successful path
+observations; unresolved probes remain retryable and later inventories observe
+the filesystem afresh. Cancellation is checked between lookup metadata reads
+and link-target traversals. An in-flight operating-system request is awaited.
+Hard I/O failures keep their original error; expected refusals check cancellation
+before becoming unresolved. Intermediate file and directory symlink entries
+needed to reach a library are retained separately from the physical object.
+This includes directory links reached through file-link targets and links to
+objects inside the application's folder. The exact
+usr-merge links supplied by the Ubuntu 24.04 computer base (`/bin`, `/sbin`,
+`/lib`, and amd64 `/lib64` to their `/usr` counterparts) need no extra package;
+packages merely registering those shared directories are not inferred as
+library dependencies. Other link targets retain their own ownership. External
+intermediate links need their own package owner. For the selected leaf, the
+physical target is an ownership fallback when the leaf has no known owner.
+A library is app-contained only when its required leaf and physical target are
+inside the application's folder and its required lookup aliases are captured
+there as well.
+A combination with another dollar expression that REA does not expand remains
+unresolved with a reason, rather than selecting a literal token-named file.
+Each candidate's ELF machine, class and byte order must match the
 needing image before it is selected or its dependencies are walked. A foreign
 search-path candidate is skipped in favor of later directories or the cache; a
 cache architecture flag alone does not establish compatibility. If a candidate's
 identity cannot be read, that lookup stays unresolved, without selecting its
 package or guessing that a later candidate would load. A compatible identity
 remains available if a later header or dependency-table check fails; its package
-is retained with an incompleteness reason. REA asks `dpkg-query -S` for each
-selected library's package. Libraries in the executable's own folder belong to
-the application: they are walked but not
-listed, and neither is the application's own package. One batched
+is retained with an incompleteness reason. REA asks `dpkg-query -S` for the
+packages supplying external libraries and their required links. The inventory
+lists each unowned path once and omits the application's own package. One batched
 `apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
 recorded vendor repository with a verified key offers, in any component its
 sources entry lists, since the export declares them all; the rest, such as

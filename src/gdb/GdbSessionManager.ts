@@ -21,6 +21,7 @@ import {
   type GdbMiValue,
 } from "./GdbMiRecord.js";
 import {
+  GDB_OBSERVATION_AUTHORITY,
   GDB_PROVIDER_IDENTITY,
   gdbReportedVersion,
   type GdbProviderIdentity,
@@ -419,13 +420,17 @@ const createGdbSessionEvidence = (
   },
 ): Evidence => {
   const { provenance, unobservedReason } = session.launchFile;
+  const withAuthority = {
+    ...observation,
+    authority: observation.authority ?? GDB_OBSERVATION_AUTHORITY,
+  };
   return createEvidence(
     gdbSessionSubject(session),
     session.provider,
     provenance === undefined
-      ? observation
+      ? withAuthority
       : {
-          ...observation,
+          ...withAuthority,
           parameters: {
             ...observation.parameters,
             launch_provenance: { ...provenance },

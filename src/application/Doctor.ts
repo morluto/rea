@@ -653,6 +653,22 @@ const launcherInstallation = async (
     : posix.dirname(resolved);
 };
 
+/**
+ * A provider request budget resolver with its retained resource scope and
+ * cancellation signal, as an outer adapter supplies it. The declared read
+ * set travels with it into the 2-parameter registration derivation.
+ */
+export interface RetainedProviderRequestBudgetResolver {
+  (
+    provider: Parameters<ProviderRequestBudgetResolver>[0],
+    environment: Parameters<ProviderRequestBudgetResolver>[1],
+    resources: RetainedResourceScope,
+    signal: AbortSignal,
+  ): ReturnType<ProviderRequestBudgetResolver>;
+  /** Environment settings this resolver may read; see the base contract. */
+  readonly budgetSettings?: ReadonlySet<string>;
+}
+
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
   readonly signal?: AbortSignal;
@@ -665,12 +681,7 @@ export interface SystemDoctorHostOptions {
     signal: AbortSignal,
     clients: readonly string[],
   ) => Promise<readonly DoctorProviderInspection[]>;
-  readonly resolveProviderRequestBudget?: (
-    provider: Parameters<ProviderRequestBudgetResolver>[0],
-    environment: Parameters<ProviderRequestBudgetResolver>[1],
-    resources: RetainedResourceScope,
-    signal: AbortSignal,
-  ) => ReturnType<ProviderRequestBudgetResolver>;
+  readonly resolveProviderRequestBudget?: RetainedProviderRequestBudgetResolver;
   readonly linuxDemoRuntimeCheck?: (
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
@@ -773,16 +784,27 @@ export const systemDoctorHost = (
   const resolveProviderRequestBudget =
     options.resolveProviderRequestBudget === undefined
       ? undefined
-      : (
-          provider: Parameters<ProviderRequestBudgetResolver>[0],
-          environment: Parameters<ProviderRequestBudgetResolver>[1],
-        ) =>
-          options.resolveProviderRequestBudget!(
-            provider,
-            environment,
-            resourceScope,
-            inspectionSignal,
-          );
+      : Object.assign(
+          (
+            provider: Parameters<ProviderRequestBudgetResolver>[0],
+            environment: Parameters<ProviderRequestBudgetResolver>[1],
+          ) =>
+            options.resolveProviderRequestBudget!(
+              provider,
+              environment,
+              resourceScope,
+              inspectionSignal,
+            ),
+          // Carry the declared read set through the 2-parameter adaptation,
+          // so the budget gate stays fail-closed only for settings this
+          // resolver may actually read.
+          options.resolveProviderRequestBudget.budgetSettings === undefined
+            ? {}
+            : {
+                budgetSettings:
+                  options.resolveProviderRequestBudget.budgetSettings,
+              },
+        );
   const host: DoctorHost = {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     platform,

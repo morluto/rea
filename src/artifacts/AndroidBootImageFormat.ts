@@ -1131,6 +1131,15 @@ const rejectVbmetaOverlap = (
       );
 };
 
+/** The partition-tail footer can start anywhere after the declared boot bytes. */
+export const avbFooterOffset = (
+  fileSize: number,
+  dataEnd: number,
+): number | null => {
+  const offset = fileSize - AVB_FOOTER_SIZE;
+  return offset >= dataEnd ? offset : null;
+};
+
 const readAvbFooter = (input: {
   readonly fileSize: number;
   readonly dataEnd: number;
@@ -1148,21 +1157,19 @@ const readAvbFooter = (input: {
       `image is truncated: components end at byte ${input.dataEnd} but the file is ${input.fileSize} bytes`,
       { offset: input.fileSize, field: "components" },
     );
-  // A footer follows the page-aligned image. A file that ends inside the
-  // final page padding has no room for one.
-  const trailing = input.fileSize - input.imageEnd;
-  if (trailing <= 0) return absentFooter();
-  if (trailing < AVB_FOOTER_SIZE)
-    return absentFooter([
-      `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`,
-    ]);
-  const tail = input.tail;
-  if (tail === null || tail.length !== AVB_FOOTER_SIZE)
+  const { tail } = input;
+  const offset = avbFooterOffset(input.fileSize, input.dataEnd);
+  if (offset !== null && (tail === null || tail.length !== AVB_FOOTER_SIZE))
     return formatError("AVB footer bytes were not supplied");
-  if (!tail.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES))
+  if (offset === null || !tail?.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES)) {
+    const trailing = input.fileSize - input.imageEnd;
+    if (trailing <= 0) return absentFooter();
     return absentFooter([
-      `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
+      trailing < AVB_FOOTER_SIZE
+        ? `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`
+        : `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
     ]);
+  }
   const originalImageSize = u64be(tail, 12, "AVB original image size");
   const vbmetaOffset = u64be(tail, 20, "AVB vbmeta offset");
   const vbmetaSize = u64be(tail, 28, "AVB vbmeta size");
@@ -1194,7 +1201,7 @@ const readAvbFooter = (input: {
 
 /**
  * Report an AVB footer when the last 64 bytes start with AVBf and sit past
- * the page-aligned image. Sizes are recorded; the footer is not verified.
+ * the actual boot components. Sizes are recorded; the footer is not verified.
  */
 export const inspectAvbFooter = (input: {
   readonly fileSize: number;

@@ -6,15 +6,15 @@ export const PYTHON_POINTER = String.raw`def _is_element(value) -> bool:
             and isinstance(value.get("children"), list))
 
 
-def _element_text(element, attribute=None) -> str:
+def _element_text(element, attribute=None, omit_stamps=False) -> str:
     """An element's text as XPath's string() reads it from what the view keeps: every text node among its children
     and its descendants', in document order. With attribute, the values of that attribute on it and its descendants
-    instead, in document order, and no text node."""
+    instead, in document order, and no text node. With omit_stamps, skip text nodes recognized as save times."""
     parts, pending = [], [element]
     while pending:
         node = pending.pop()
         if isinstance(node, str):
-            if attribute is None:
+            if attribute is None and (not omit_stamps or not _is_saved_time(node)):
                 parts.append(node)
         elif _is_element(node):
             if attribute is not None and isinstance(node["attributes"].get(attribute), str):
@@ -59,11 +59,7 @@ def _is_saved_time(text: str) -> bool:
 
 def _text_without_stamps(node) -> str:
     """An element's text with save-time leaves removed, matching the selector that named it."""
-    if isinstance(node, str):
-        return "" if _is_saved_time(node) else node
-    if not _is_element(node):
-        return ""
-    return "".join(_text_without_stamps(child) for child in node["children"])
+    return _element_text(node, omit_stamps=True)
 
 
 def _condition_text(child) -> str:

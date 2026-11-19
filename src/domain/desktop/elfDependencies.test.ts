@@ -121,6 +121,71 @@ describe("readElfDependencies", () => {
   });
 });
 
+describe("ELF filesystem string admission", () => {
+  it.each(["libé.so", "lib选择.so", "\uFEFFlib.so", "lib\uFFFD.so"])(
+    "preserves the filesystem bytes of needed library %s",
+    async (name) => {
+      expect(await dependencies(elfImage({ needed: [name] }))).toMatchObject({
+        ok: true,
+        value: { needed: [name] },
+      });
+    },
+  );
+
+  it.each(["rpath", "runpath"] as const)(
+    "preserves UTF-8 filesystem directories and a leading BOM in %s",
+    async (tag) => {
+      const paths = ["\uFEFF应用", "$ORIGIN/../库"];
+      expect(
+        await dependencies(elfImage({ [tag]: paths.join(":") })),
+      ).toMatchObject({ ok: true, value: { [tag]: paths } });
+    },
+  );
+
+  it.each(["needed", "rpath", "runpath"] as const)(
+    "leaves non-UTF-8 %s filesystem identities unresolved",
+    async (tag) => {
+      const image = elfImage(
+        tag === "needed" ? { needed: ["libX.so"] } : { [tag]: "libX.so" },
+      );
+      image[image.indexOf(Buffer.from("libX.so")) + 3] = 0xff;
+      expect(await dependencies(image)).toMatchObject({
+        ok: false,
+        error: {
+          kind: "unreadable",
+          identity: { machine: 183, bits: 64, byte_order: "little" },
+          reason: expect.stringContaining("filesystem identity is unresolved"),
+        },
+      });
+    },
+  );
+
+  it("charges UTF-8 source bytes including the terminator before decoding", async () => {
+    const name = "libé.so";
+    const image = elfImage({ needed: [name] });
+    const bytes = Buffer.byteLength(name) + 1;
+    expect(
+      await readElfDependencies(
+        readImage(image),
+        image.length,
+        desktopLibraryPolicy({ string_bytes: bytes - 1 }),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining("library-policy.string_bytes="),
+      },
+    });
+    expect(
+      await readElfDependencies(
+        readImage(image),
+        image.length,
+        desktopLibraryPolicy({ string_bytes: bytes }),
+      ),
+    ).toMatchObject({ ok: true, value: { needed: [name] } });
+  });
+});
+
 describe("ELF dependency identity and failures", () => {
   it.each(["size", "version"])(
     "retains decoded identity when fixed-header %s admission fails",

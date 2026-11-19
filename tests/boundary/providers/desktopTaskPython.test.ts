@@ -17,6 +17,7 @@ import {
   CHECK_VIEWS,
 } from "../../../src/domain/desktop/appTaskChecks.fixture.js";
 import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
+import { desktopViewPolicy } from "../../../src/domain/desktop/desktopViewPolicy.js";
 import {
   draftOf,
   statePath,
@@ -103,8 +104,10 @@ async def get_data(url, **_):
     reads.append(clock[0])
     clock[0] += durations[len(reads) - 1] if len(reads) <= len(durations) else READ_S
     views = views_at(clock[0])
+    file_contents = scenario.get("file_contents") or {}
     files = [types.SimpleNamespace(kind="file", metadata={"urn:agentenv:data-objects/v1": {"path": path}},
-                                   file=types.SimpleNamespace(bytes=base64.b64encode(json.dumps(view).encode()).decode()))
+                                   file=types.SimpleNamespace(bytes=base64.b64encode(
+                                       (file_contents[path] if path in file_contents else json.dumps(view)).encode()).decode()))
              for path, view in views.items()]
     return types.SimpleNamespace(parts=[*files, types.SimpleNamespace(kind="data", data={"state": views})])
 
@@ -201,6 +204,7 @@ const runVerifier = async (
     readonly readers?: readonly DesktopTaskReader[];
     readonly answers?: Readonly<Record<string, unknown>>;
     readonly retryAnswers?: Readonly<Record<string, unknown>>;
+    readonly fileContents?: Readonly<Record<string, string>>;
     readonly exec?: boolean;
     readonly cleanupFailures?: number;
     readonly retry?: boolean;
@@ -234,24 +238,31 @@ const runVerifier = async (
       "notes",
     ),
   );
+  // Node writes the JSON input as UTF-8; isolated Python must decode it the
+  // same way even when the host's default pipe encoding differs.
   return JSON.parse(
-    execFileSync("python3", ["-I", "-B", "-c", DRIVER, folder, verifier], {
-      input: JSON.stringify({
-        saves,
-        durations,
-        answers: computer.answers,
-        retry_answers: computer.retryAnswers,
-        exec: computer.exec ?? true,
-        cleanup_failures: computer.cleanupFailures,
-        retry: computer.retry,
-        cancel_cleanup: computer.cancelCleanup,
-        reload_verifier: computer.reloadVerifier,
-        concurrent: computer.concurrent,
-        parallel_retry: computer.parallelRetry,
-        report_failure: computer.reportFailure,
-      }),
-      encoding: "utf8",
-    }),
+    execFileSync(
+      "python3",
+      ["-I", "-B", "-X", "utf8", "-c", DRIVER, folder, verifier],
+      {
+        input: JSON.stringify({
+          saves,
+          durations,
+          answers: computer.answers,
+          retry_answers: computer.retryAnswers,
+          file_contents: computer.fileContents,
+          exec: computer.exec ?? true,
+          cleanup_failures: computer.cleanupFailures,
+          retry: computer.retry,
+          cancel_cleanup: computer.cancelCleanup,
+          reload_verifier: computer.reloadVerifier,
+          concurrent: computer.concurrent,
+          parallel_retry: computer.parallelRetry,
+          report_failure: computer.reportFailure,
+        }),
+        encoding: "utf8",
+      },
+    ),
   ) as VerifierOutput;
 };
 
@@ -369,6 +380,42 @@ it.each([
     ).toBe(expected);
     const output = await runVerifier(checks, [[0, views]], [], { exec: false });
     expect(output.results.map(({ result }) => result)).toEqual([expected]);
+  },
+);
+
+it.each([64, 350, 490])(
+  "grades nested XML selector text at depth %i like REA",
+  async (depth) => {
+    const file = "Documents/deep.xml";
+    const xml =
+      "<root><record><name>ma" +
+      "<n>".repeat(depth) +
+      "rke" +
+      "</n>".repeat(depth) +
+      "r<saved>2026-11-13T10:00:00Z</saved></name></record></root>";
+    const view = xmlView(xml, desktopViewPolicy({ xml_depth: 494 }));
+    if (view === undefined) throw new Error("Expected XML fixture");
+    expect(view).toMatchObject({ truncated: false });
+    const views = {
+      [file]: { format: "xml" as const, view, truncated: false },
+    };
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "deep",
+        kind: "value_equals",
+        file,
+        pointer: "/root/children/[>name=marker]/name",
+        value: "record",
+      },
+    ];
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(true);
+    const output = await runVerifier(checks, [[0, views]], [], {
+      exec: false,
+      fileContents: { [file]: xml },
+    });
+    expect(output.results.map(({ result }) => result)).toEqual([true]);
   },
 );
 

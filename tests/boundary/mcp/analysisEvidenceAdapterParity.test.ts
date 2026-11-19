@@ -43,8 +43,7 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
  *
  * KNOWN_DIFFERENCES records how main differs today. The W2 invoke path
  * removes them; when a change removes one, delete its entry. An entry never
- * grows. The CLI-only `caller_input_path` is the declared exception: it is
- * checked to carry the caller's spelling, then left out of the comparison.
+ * grows. Both adapters must retain the exact caller-selected spelling.
  *
  * Simulated providers return the smallest result each contract admits, so
  * this checks adapter composition, not real provider behavior.
@@ -276,37 +275,36 @@ const isObject = (
 ): value is Readonly<Record<string, JsonValue>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const evidenceOutcome = (value: unknown, target: string): Outcome => {
+  if (!isObject(value)) throw new Error("Expected an Evidence response object");
+  expect(value.caller_input_path).toBe(target);
+  expect(value.caller_input_paths).toBeUndefined();
+  return { outcome: "evidence", evidence: value };
+};
+
 const cliOutcome = (
   served: { readonly stdout: string; readonly exitCode: number },
   target: string,
 ): Outcome => {
   const value = parseJson(served.stdout);
-  if (served.exitCode !== 0) return { outcome: "failure", failure: value };
-  if (!isObject(value)) throw new Error(`CLI printed ${served.stdout}`);
-  // The CLI keeps the caller's spelling; MCP selected the target on open.
-  const {
-    caller_input_path: callerInputPath,
-    caller_input_paths: callerInputPaths,
-    ...evidence
-  } = value;
-  expect(callerInputPath).toBe(target);
-  expect(callerInputPaths).toBeUndefined();
-  return { outcome: "evidence", evidence };
+  return served.exitCode !== 0
+    ? { outcome: "failure", failure: value }
+    : evidenceOutcome(value, target);
 };
 
-const mcpOutcome = (called: {
-  readonly isError?: unknown;
-  readonly structuredContent?: unknown;
-  readonly content?: unknown;
-}): Outcome => {
+const mcpOutcome = (
+  called: {
+    readonly isError?: unknown;
+    readonly structuredContent?: unknown;
+    readonly content?: unknown;
+  },
+  target: string,
+): Outcome => {
+  if (called.isError !== true)
+    return evidenceOutcome(called.structuredContent, target);
   const [first] = Array.isArray(called.content) ? called.content : [];
   const text =
     isObject(first) && typeof first.text === "string" ? first.text : "";
-  if (called.isError !== true)
-    return {
-      outcome: "evidence",
-      evidence: called.structuredContent as JsonValue,
-    };
   const value = parseJson(text);
   return {
     outcome: "failure",
@@ -349,7 +347,7 @@ mcpTest.for(
   async ([name, { contract, description }], { mcp }) => {
     const directory = await createTestTempDirectory("rea-adapter-parity-");
     await writeFile(join(directory, "fixture"), minimalMachoImage(64));
-    // A non-canonical spelling shows whose path each adapter records.
+    // Both adapters select the same file through the same noncanonical spelling.
     const target = `${directory}/./fixture`;
     const input = callInput(contract, description, directory, target);
     const cliResult = cliOutcome(
@@ -377,6 +375,7 @@ mcpTest.for(
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
     const mcpResult = mcpOutcome(
       await client.callTool({ name, arguments: input }),
+      target,
     );
     const found = differences(
       cliResult as unknown as JsonValue,

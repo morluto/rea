@@ -24,6 +24,7 @@ import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCle
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
+import { ghidraProfileComImport } from "./GhidraComImport.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
@@ -120,7 +121,10 @@ import {
   ghidraRiscvLimitations,
 } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
-import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
+import {
+  ghidraKnownProviderDefectLimitations,
+  unverifiedGhidraBuildLimitation,
+} from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
@@ -355,6 +359,13 @@ export const createGhidraProviderClient = (input: {
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return prerequisites;
   const committedProfile = prerequisites.value.profile;
+  const comImport =
+    target.format === "dos-com"
+      ? ghidraProfileComImport(committedProfile.parameters)
+      : undefined;
+  if (comImport?.ok === false)
+    return err(ghidraProfileConflict("open_binary", comImport.error));
+  const comSelection = comImport?.value;
   const checkpoint = ghidraCheckpointSelectionSchema
     .optional()
     .safeParse(committedProfile.parameters.owned_checkpoint);
@@ -666,7 +677,9 @@ export const createGhidraProviderClient = (input: {
         ? {}
         : { riscvCallingConvention }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
-      ...(target.format === "dos-com" ? { dosCom: true } : {}),
+      ...(comSelection === undefined
+        ? {}
+        : { dosCom: { loader: comSelection.loader } }),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
         ? {}
         : {
@@ -861,6 +874,9 @@ export const createGhidraProviderClient = (input: {
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
+  const knownDefectLimitations = ghidraKnownProviderDefectLimitations(
+    prerequisites.value.providerVersion,
+  );
   const sessionLimitations = (): readonly string[] => {
     const restored = client.checkpointRestore?.();
     return [
@@ -883,6 +899,7 @@ export const createGhidraProviderClient = (input: {
       ...disabledAnalyzerLimitations,
       ...pdbLimitations,
       ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
+      ...knownDefectLimitations,
     ];
   };
   const nativeAotOwner =
@@ -973,6 +990,7 @@ export const createGhidraProviderClient = (input: {
       measured: observed,
       client,
       languageOverride: importLanguage,
+      comSelection,
       mapSessionError: (failure) =>
         projectSessionError(
           operation,

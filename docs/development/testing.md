@@ -195,11 +195,11 @@ Its reason argument is required: an aborted `AbortSignal`, an earlier
 `AnalysisCancelledError`, a `carriedReason(...)` recovered from an inner
 failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
 architecture guard rejects a direct `new AnalysisCancelledError(` outside that
-module. Files that still construct one directly are listed with their counts in
-`scripts/verify/baselines/analysis-cancelled-constructor.json`; a file may not
-exceed its count, and after removing copies run
-`node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
-Each counted guard keeps its baseline in its own
+module. No file is allowed one, so this guard has no baseline file; a guard
+without one allows zero copies. Other counted guards still list the files that
+keep copies, with their counts; a file may not exceed its count, and after
+removing copies run `node scripts/verify/architecture-guards.mjs --shrink-baselines`
+to lower it. Each counted guard keeps its baseline in its own
 `scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
 changes to different guards never edit the same file. Resolve a conflict in one
 of these files by keeping both sides' entries (the higher count where they
@@ -862,6 +862,12 @@ For changes to resource acquisition, readiness, cancellation, or cleanup, select
 the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
+
+To assert that a POSIX process or process group has stopped, use
+`processHasStopped` or `processGroupHasStopped` from
+`tests/support/process/observePosixProcess.ts`, not signal 0. Signal 0 still
+reaches a zombie, and an orphan stays one wherever PID 1 does not reap it, as in
+a container started without an init process.
 
 | Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

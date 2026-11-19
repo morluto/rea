@@ -1497,6 +1497,9 @@ or temporary-storage refusal. SIGINT/SIGTERM remain owned through staging,
 delivery and cleanup: pending I/O settles before further writes stop and the
 stage is removed.
 A document can exceed the runtime's string limit when each encoded line fits.
+Staging limits the encoded text kept in memory. The TOON encoder still
+normalizes the input tree before yielding lines, so working memory also
+depends on the size of the input and the longest encoded line.
 Token counting and token windows still require a complete formatted string.
 Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
