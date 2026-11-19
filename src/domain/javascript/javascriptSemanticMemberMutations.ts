@@ -79,7 +79,7 @@ import {
   type JavaScriptExecution,
 } from "./javascriptSemanticExecutionPoints.js";
 import {
-  semanticArrayPatternCloseMayInvoke,
+  semanticArrayPatternCloseSelection,
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
@@ -2101,15 +2101,19 @@ export function* collectSemanticMemberMutationsSteps(
       );
       if (knownArray && reference.iterationOnly) {
         const pattern = reference.arrayPattern;
-        if (
-          pattern !== undefined &&
-          semanticArrayPatternCloseMayInvoke(pattern, state)
-        )
-          // The hook receives the native iterator. It can advance it and
-          // expose yielded references without receiving the array itself.
+        const selection =
+          pattern === undefined
+            ? undefined
+            : semanticArrayPatternCloseSelection(
+                pattern,
+                mutation,
+                slot.value,
+                state,
+              );
+        if (pattern !== undefined && selection !== undefined)
           markValue(
             node,
-            [...projection, null],
+            [...projection, selection],
             reference.bindings,
             "escape",
             semanticScopeExitEffect(pattern, mutation),

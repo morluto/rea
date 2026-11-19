@@ -1240,3 +1240,141 @@ it.each([
     ),
   ).toMatchObject({ resolution });
 });
+
+const closeNextObject =
+  "Object.getPrototypeOf([].values()).return=function(){const next=this.next().value;if(next)delete next.mode;return {}};";
+it.each([
+  [
+    "unconsumed suffix",
+    'const items=[{mode:"first"},{mode:"second"}];',
+    "const [used]=items;",
+    "resolved",
+    "candidate",
+  ],
+  [
+    "shared element identity",
+    'const value={mode:"shared"};const items=[value,value];',
+    "const [used]=items;",
+    "candidate",
+    "candidate",
+  ],
+  [
+    "all slots consumed",
+    'const items=[{mode:"first"},{mode:"second"}];',
+    "const [used,alsoUsed]=items;",
+    "resolved",
+    "resolved",
+  ],
+  [
+    "native exhaustion observed",
+    'const items=[{mode:"first"},{mode:"second"}];',
+    "const [used,alsoUsed,done]=items;",
+    "resolved",
+    "resolved",
+  ],
+  [
+    "earlier default",
+    'const items=[undefined,{mode:"second"}];',
+    'const [used=(items.push({mode:"added"}),0)]=items;',
+    "candidate",
+    "candidate",
+  ],
+] as const)(
+  "bounds native close exposure for %s",
+  (_name, setup, pattern, first, second) => {
+    const graph = graphForJavaScript(`
+    ${setup}
+    ${closeNextObject}
+    ${pattern}
+    const {0:{mode:first},1:{mode:second}}=items;
+  `);
+    for (const [name, resolution] of [
+      ["first", first],
+      ["second", second],
+    ]) {
+      const binding = graph.nodes.find(
+        (n) => n.kind === "binding" && n.label === name,
+      );
+      expect(
+        graph.relations.find(
+          (r) =>
+            r.relation === "destructures" &&
+            r.target_node_id === binding?.node_id,
+        ),
+      ).toMatchObject({ resolution });
+    }
+  },
+);
+
+it.each([
+  [
+    "earlier declarator",
+    "const {1:{mode:selected}}=items,[used]=items;",
+    "resolved",
+  ],
+  [
+    "later declarator",
+    "const [used]=items,{1:{mode:selected}}=items;",
+    "candidate",
+  ],
+  [
+    "earlier assignment",
+    "let selected,used; (({1:{mode:selected}}=items),[used]=items);",
+    "resolved",
+  ],
+  [
+    "later assignment",
+    "let selected,used; ([used]=items,({1:{mode:selected}}=items));",
+    "candidate",
+  ],
+] as const)(
+  "orders a native close relative to an %s",
+  (_name, pattern, resolution) => {
+    const graph = graphForJavaScript(`
+    const items=[0,{mode:"inherited"}]; ${closeNextObject}
+    ${pattern}
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === binding?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  [
+    "after close",
+    "items:[used], missing=(Object.getPrototypeOf([].values()).return=hook)",
+    "resolved",
+  ],
+  [
+    "before close",
+    "missing=(Object.getPrototypeOf([].values()).return=hook), items:[used]",
+    "candidate",
+  ],
+] as const)(
+  "keeps a hook assigned by a default %s in order",
+  (_name, prefix, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0,{mode:"initial"}]};
+    function hook(){const next=this.next().value;if(next)delete next.mode;return {};}
+    const {${prefix}, items:{1:{mode:selected}}}=box;
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === binding?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);

@@ -8,12 +8,12 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const iteratorCloseSource = `
-    const box = { label: "ready", items: [0, { mode: "old" }] };
+    const box = { label: "ready", items: [{ mode: "kept" }, { mode: "old" }] };
     Object.getPrototypeOf([].values()).return = function () {
       delete this.next().value.mode;
       return {};
     };
-    const { label: beforeClose, items: [first], items: { 1: { mode: afterClose } } } = box;
+    const { label: beforeClose, items: [first], items: { 0: { mode: consumed }, 1: { mode: afterClose } } } = box;
   `;
 
 cliTest(
@@ -90,6 +90,7 @@ cliTest(
       ["arrayObject", ["0", "mode"]],
       ["selected", ["0"], "candidate"],
       ["beforeClose", ["label"]],
+      ["consumed", ["items", "0", "mode"]],
       ["afterClose", ["items", "1", "mode"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
@@ -129,6 +130,7 @@ cliTest(
       "arrayObject",
       "selected",
       "beforeClose",
+      "consumed",
       "afterClose",
     ]) {
       const binding = graph.nodes.find(

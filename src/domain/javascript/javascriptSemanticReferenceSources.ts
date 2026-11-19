@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import {
   semanticArrayIndex,
+  type JavaScriptSemanticPropertySelection,
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -61,15 +62,45 @@ const arrayIteratorReturnPaths = [
   ["global", "Object", "prototype", "return"],
 ] as const;
 
-/** A finite pattern may finish with a live iterator and look up its return hook. */
-export const semanticArrayPatternCloseMayInvoke = (
+/** References a possible native close hook can still obtain by advancing its iterator. */
+export const semanticArrayPatternCloseSelection = (
   pattern: t.ArrayPattern,
+  owner: t.Node | undefined,
+  array: Extract<JavaScriptSemanticValue, { status: "array" }>,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  !t.isRestElement(pattern.elements.at(-1)) &&
-  arrayIteratorReturnPaths.some((path) =>
-    ambientPathMayObserveAt(state, pattern, path, "contents"),
-  );
+): JavaScriptSemanticPropertySelection | undefined => {
+  if (
+    t.isRestElement(pattern.elements.at(-1)) ||
+    !arrayIteratorReturnPaths.some((path) =>
+      ambientPathMayObserveAt(state, pattern, path, "contents"),
+    )
+  )
+    return undefined;
+  const declaration =
+    owner === undefined ? undefined : state.parentsByNode.get(owner);
+  let consumed = 0;
+  if (
+    t.isVariableDeclarator(owner) &&
+    t.isVariableDeclaration(declaration) &&
+    (declaration.kind === "const" || declaration.kind === "let")
+  ) {
+    for (const element of pattern.elements) {
+      const slot = array.items[consumed];
+      if (
+        (element !== null && !t.isIdentifier(element)) ||
+        slot?.name !== String(consumed) ||
+        slot.presence !== "present"
+      )
+        break;
+      consumed += 1;
+    }
+  }
+  // A dense prefix of own reads and lexical bindings cannot run user code.
+  // If it covers the complete array, even a live iterator has no value left.
+  return !array.unknownItems && consumed === array.items.length
+    ? undefined
+    : { excludedKeys: [], startIndex: consumed };
+};
 
 /** Invocation spreads use the same native-iteration proof at their source read. */
 export const semanticKnownArrayIterationAt = (
