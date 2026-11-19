@@ -7,20 +7,21 @@ import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  ArtifactFileSource,
+} from "../resources/index.js";
+import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type {
   ArtifactFormatMetadata,
   WxapkgMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   readWxapkgFileTable,
   readWxapkgHeader,
@@ -97,6 +98,7 @@ export class WxapkgArtifactReader implements ArtifactReader {
           "wxapkg package is V1MMWX-encrypted; member identities and contents remain unknown.",
         ],
       });
+      this.#assertOpen(signal);
       return;
     }
     let index = 0;
@@ -107,17 +109,18 @@ export class WxapkgArtifactReader implements ArtifactReader {
     }
     // A close while paused at yield must not turn a cleared map into completion.
     this.#assertOpen(signal);
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const state = this.#entries.get(entry.adapterKey);
-      if (state === undefined || !sameArtifactEntry(entry, state.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "wxapkg entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        state?.entry,
+        "wxapkg entry does not match its owning inventory",
+      );
       // Every logical open spends the work budget, including empty members
       // whose streams perform only the carrier checks below.
       this.#reserveMemberRead();
@@ -131,46 +134,17 @@ export class WxapkgArtifactReader implements ArtifactReader {
           { boundary: "capacity" },
         );
       const controller = new AbortController();
-      const output = Readable.from(
+      const output = ownAsyncArtifactStream(
         this.#memberChunks(handle, state, controller.signal),
+        controller,
         {
-          objectMode: false,
+          scope: this.#scope,
+          streams: this.#streams,
+          signal,
+          label: "wxapkg",
           highWaterMark: CHUNK_BYTES,
         },
       );
-      const onAbort = (): void => {
-        controller.abort(signal?.reason);
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "wxapkg member read cancelled",
-            { cause: signal?.reason },
-          ),
-        );
-      };
-      output.on("error", () => undefined);
-      this.#streams.set(output, controller);
-      const completion = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          signal?.removeEventListener("abort", onAbort);
-          this.#streams.delete(output);
-          resolve();
-        });
-      });
-      // Readable.from waits for its async iterator to retire before close. Keep
-      // that whole lifetime owned, including a suspended positional read.
-      void this.#scope
-        .run(() => completion)
-        .catch((cause: unknown) => {
-          controller.abort(cause);
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("wxapkg stream ownership failed", { cause }),
-          );
-        });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted === true) onAbort();
       return output;
     });
   }
@@ -316,9 +290,13 @@ export class WxapkgArtifactReader implements ArtifactReader {
   #reserveMemberRead(): void {
     if (this.#remainingReadOperations <= 0)
       throw artifactFixedLimitFailure(
-        "wxapkg directory-and-chunk I/O work",
-        this.#admittedReadOperations,
-        "operations",
+        {
+          name: "The wxapkg directory-and-chunk I/O work allowance",
+          kind: "parser",
+          limit: this.#admittedReadOperations,
+          unit: "operations",
+        },
+        `The wxapkg members need more than ${String(this.#admittedReadOperations)} directory-and-chunk read operations.`,
       );
     this.#remainingReadOperations--;
   }

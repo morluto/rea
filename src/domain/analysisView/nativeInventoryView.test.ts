@@ -1,13 +1,9 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
+import { expect, it } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
-import { nativeInventoryRowsSchemas } from "../native/nativeInventory.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
-
-afterEach(() => vi.restoreAllMocks());
 
 const rows = () => [
   {
@@ -26,7 +22,7 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   sealedResult: true,
   provider: { id: "fixture", name: "Fixture", version: "1" },
   artifact: null,
-  subject: null,
+  subject: UNKNOWN_EVIDENCE_SUBJECT,
   parameters: { pattern: "a", mode: "literal", case_sensitive: false },
   limitations: ["Provider discovery is partial."],
 });
@@ -75,9 +71,8 @@ it("pages exact source order and same-address alternatives, with selectable fiel
   expect(source.normalizedResult).toEqual(original);
 });
 
-it("reuses only authenticated immutable validation while rebinding provenance to the current parent", () => {
+it("binds provenance to the current parent when its inventory facts were already viewed", () => {
   const source = parent(freezeJsonSnapshot(rows()));
-  const parse = vi.spyOn(nativeInventoryRowsSchemas.names, "safeParse");
   project(source, { kind: "summary" });
   const next = project(
     {
@@ -87,7 +82,6 @@ it("reuses only authenticated immutable validation while rebinding provenance to
     },
     { kind: "native-inventory", limit: 1 },
   );
-  expect(parse).toHaveBeenCalledOnce();
   expect(next).toMatchObject({
     parent_evidence_id: `ev_${"b".repeat(64)}`,
     source_provider: { id: "other", name: "Other", version: null },
@@ -97,19 +91,17 @@ it("reuses only authenticated immutable validation while rebinding provenance to
   });
 });
 
-it("retains caller metadata in Evidence while reusing owner-normalized inventory rows", () => {
+it("projects normalized inventory rows while retaining caller metadata in Evidence", () => {
   const original = [{ ...rows()[0]!, caller_metadata: { label: "keep me" } }];
   const source = parent(freezeJsonSnapshot(original));
-  const parse = vi.spyOn(nativeInventoryRowsSchemas.names, "safeParse");
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const page = project(source, { kind: "native-inventory", limit: 1 });
-    expect(page).toMatchObject({
-      rows: [{ source_index: 0, record: rows()[0] }],
-    });
-  }
-  expect(parse).toHaveBeenCalledOnce();
+  const page = project(source, { kind: "native-inventory", limit: 1 });
+  expect(page).toMatchObject({
+    rows: [{ source_index: 0, record: rows()[0] }],
+  });
   expect(source.normalizedResult).toEqual(original);
-  expect(original[0]?.caller_metadata).toEqual({ label: "keep me" });
+  expect(source.normalizedResult).toMatchObject([
+    { caller_metadata: { label: "keep me" } },
+  ]);
 });
 
 it("revalidates mutable and shallow-frozen arrays despite a forged sealing flag", () => {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeProvider.js";
 import { DevicetreeService } from "../../../src/application/binaryDiagnostics/DevicetreeService.js";
-import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

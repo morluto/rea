@@ -34,9 +34,11 @@ const CHILD_PROGRAM = `
     if (process.platform === 'win32') await writeFile(join(bin, runner + '.cmd'), '@"' + process.execPath + '" "' + witness + '"\\r\\n');
     else await writeFile(join(bin, runner), '#!' + process.execPath + '\\nrequire(' + JSON.stringify(witness) + ');\\n', { mode: 0o700 });
   }
-  const { createCli, closeCliResources } = await import(${JSON.stringify(new URL("./cli.ts", import.meta.url).href)});
+  const { createCliShell } = await import(${JSON.stringify(new URL("./cli/cliShell.ts", import.meta.url).href)});
+  const { closeCliResources } = await import(${JSON.stringify(new URL("./cli/cliResources.ts", import.meta.url).href)});
+  await import(${JSON.stringify(new URL("./cli/mcpRegistration.ts", import.meta.url).href)});
   const { resolveMcpRegistrationClients } = await import(${JSON.stringify(new URL("./application/McpRegistrationCatalog.ts", import.meta.url).href)});
-  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("./artifacts/ArtifactResourceScope.ts", import.meta.url).href)});
+  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("./resources/ArtifactResourceScope.ts", import.meta.url).href)});
   const preflightResources = new ArtifactResourceScope();
   const { parse: parseToml } = await import(${JSON.stringify(pathToFileURL(require.resolve("smol-toml")).href)});
   const { parse: parseYaml } = await import(${JSON.stringify(pathToFileURL(require.resolve("yaml")).href)});
@@ -46,9 +48,18 @@ const CHILD_PROGRAM = `
     for (const key of ['HOME','USERPROFILE','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_CACHE_HOME','XDG_STATE_HOME','APPDATA','LOCALAPPDATA']) inside(home, environment[key]);
     return environment;
   };
+  const clis = new WeakMap();
+  const cliFor = (environment) => {
+    let cli = clis.get(environment);
+    if (!cli) {
+      cli = createCliShell({ selectedEnvironment: environment, registrations: [] });
+      clis.set(environment, cli);
+    }
+    return cli;
+  };
   const serve = async (environment, arguments_) => {
     let output = '', exitCode = 0;
-    await createCli(environment).serve(arguments_, { stdout(text) { output += text; }, exit(code) { exitCode = code; } });
+    await cliFor(environment).serve(arguments_, { stdout(text) { output += text; }, exit(code) { exitCode = code; } });
     const document = JSON.parse(output);
     if (Array.isArray(document.clients)) for (const client of document.clients) { inside(environment.HOME, client.config_path); if (client.backup_path) inside(environment.HOME, client.backup_path); }
     return { exitCode, document };

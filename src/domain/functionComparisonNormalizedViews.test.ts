@@ -16,6 +16,7 @@ import {
 import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { createEvidence, type Evidence } from "./evidence.js";
+import { unknownTarget } from "./targetIdentity.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import { findChangedBehavior } from "./changedBehavior.js";
 import { verifyReconstruction } from "./reconstructionVerification.js";
@@ -73,7 +74,7 @@ const observe = (
 
 const capture = (digit: string): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       predicateType: "rea.process-capture",
@@ -1342,7 +1343,7 @@ const comparisonEvidence = (
   includeNormalizedViews: boolean,
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-function-comparison",
       name: "REA function comparison",
@@ -1479,7 +1480,7 @@ describe("normalized view static/runtime consumer", () => {
   it("selects a normalized view for a static/runtime hypothesis", () => {
     const staticEvidence = comparisonEvidence(editedLeft, editedRight, true);
     const runtime = createEvidence(
-      undefined,
+      unknownTarget("derived-from-linked-evidence"),
       {
         id: "rea-process",
         name: "REA deterministic process harness",
@@ -1590,7 +1591,7 @@ describe("normalized view static/runtime consumer", () => {
         : item,
     );
     const unclosedComparison = createEvidence(
-      undefined,
+      unknownTarget("derived-from-linked-evidence"),
       staticEvidence.provider,
       {
         predicateType: "rea.function-comparison",
@@ -1678,7 +1679,7 @@ describe("normalized view opt-in integrity", () => {
         addressRelocationText("0x4116f0"),
       );
       const mismatched = createEvidence(
-        undefined,
+        unknownTarget("derived-from-linked-evidence"),
         {
           id: "rea-function-comparison",
           name: "REA function comparison",
@@ -1913,7 +1914,7 @@ describe("normalized view source citations", () => {
     });
     const [first, second] = result.normalized_views!.views;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("derived-from-linked-evidence"),
       {
         id: "rea-function-comparison",
         name: "REA function comparison",

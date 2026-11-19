@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const CONTENT = "module.exports = 'owned';\n";
@@ -158,20 +158,12 @@ describe("ASAR reader cleanup", () => {
   it("closes a member handle adopted while reader shutdown is queued", async () => {
     const { archive } = await createArchive();
     let pauseMemberOpen = false;
-    let memberOpenReached!: () => void;
-    let releaseMemberOpen!: () => void;
-    const memberOpenStarted = new Promise<void>((resolve) => {
-      memberOpenReached = resolve;
-    });
-    const memberOpenGate = new Promise<void>((resolve) => {
-      releaseMemberOpen = resolve;
-    });
+    const memberOpen = phaseGate();
     const { reader, opened } = createTrackedReader(archive, {
       beforeAdoption: async (path) => {
         if (pauseMemberOpen && path.includes("rea-asar-snapshot-")) {
           pauseMemberOpen = false;
-          memberOpenReached();
-          await memberOpenGate;
+          await memberOpen.hold();
         }
       },
     });
@@ -182,9 +174,9 @@ describe("ASAR reader cleanup", () => {
       const entry = await packedMember(reader);
       pauseMemberOpen = true;
       opening = reader.open(entry);
-      await awaitAcknowledgement(memberOpenStarted, opening, "member open");
+      await memberOpen.reached(opening, "member open");
       closing = reader.close();
-      releaseMemberOpen();
+      memberOpen.release();
       const output = await opening;
       const memberHandle = latestHandle(opened);
       const root = dirname(memberHandle.path);
@@ -194,7 +186,7 @@ describe("ASAR reader cleanup", () => {
       expect(output.destroyed).toBe(true);
       await expectSnapshotRemoved(memberHandle.fd, root);
     }, [
-      releaseMemberOpen,
+      memberOpen.release,
       async () => {
         await opening;
       },

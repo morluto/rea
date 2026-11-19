@@ -50,6 +50,7 @@ export function readComparisonResult(
     const parsed = readEvidencePayload(
       processCaptureComparisonSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!parsed.ok) return parsed;
     return ok({ operation, evidence, result: parsed.value });
@@ -58,6 +59,7 @@ export function readComparisonResult(
     const parsed = readEvidencePayload(
       functionComparisonResultSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!parsed.ok) return parsed;
     const optIn = validateNormalizedViewOptIn(evidence, parsed.value);
@@ -66,11 +68,10 @@ export function readComparisonResult(
       try {
         const { left, right } = comparisonSourceEvidenceSides(evidence);
         const sourceId = left[0];
+        // optional-fact-default: the opt-in check above admits absent views only when none were requested.
+        const views = parsed.value.normalized_views?.views ?? [];
         // Normalized views project the same source, so they share its invariants.
-        const conclusions = [
-          ...parsed.value.dimensions,
-          ...(parsed.value.normalized_views?.views ?? []),
-        ];
+        const conclusions = [...parsed.value.dimensions, ...views];
         const sameSource =
           left.length === 1 &&
           right.length === 1 &&
@@ -89,9 +90,7 @@ export function readComparisonResult(
               (dimension.status === "unchanged" &&
                 dimension.left_digest !== dimension.right_digest),
           ) ||
-          (parsed.value.normalized_views?.views ?? []).some(
-            (view) => !sameProjectedFacts(view),
-          );
+          views.some((view) => !sameProjectedFacts(view));
         if (!sameSource || impossibleChange)
           return err(
             new EvidenceIntegrityError(
@@ -115,12 +114,14 @@ export function readComparisonResult(
   const parsed = readEvidencePayload(
     artifactComparisonResultSchema,
     evidence.normalized_result,
+    { within: ["normalized_result"] },
   );
   if (!parsed.ok) return parsed;
-  const links = validateFindingLinks(
-    evidence,
-    parsed.value.changes.flatMap(({ evidence_links }) => evidence_links),
-  );
+  const links = validateFindingLinks(evidence, [
+    ...parsed.value.changes.flatMap(({ evidence_links }) => evidence_links),
+    // optional-fact-default: only retained IDs are links to validate.
+    ...(parsed.value.integrity_mismatch_evidence_ids ?? []),
+  ]);
   if (!links.ok) return links;
   return ok({ operation, evidence, result: parsed.value });
 }
@@ -164,6 +165,7 @@ const validateNormalizedViewSources = (
   evidence: Evidence,
   result: FunctionComparisonResult,
 ): Result<void, EvidenceIntegrityError> => {
+  // optional-fact-default: the opt-in check admits absent views only when none were requested.
   const views = result.normalized_views?.views ?? [];
   if (views.length === 0) return ok(undefined);
   try {

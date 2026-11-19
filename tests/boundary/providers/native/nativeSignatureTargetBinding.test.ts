@@ -22,7 +22,7 @@ import {
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,
@@ -31,7 +31,7 @@ import {
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -95,10 +95,11 @@ const registerSignatureObservationCases = () => {
       signed: true,
       identifier: "com.example.fixture",
       designated_requirement: "identifier com.example.fixture",
-      limitations: expect.arrayContaining([
-        "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined.",
-        expect.stringContaining("Partial signature coverage:"),
-      ]),
+      slices: {
+        architectures: target.availableArchitectures,
+        checked: target.availableArchitectures,
+        unsigned: [],
+      },
     });
   });
 
@@ -263,7 +264,7 @@ it.each([
     const { path, target } = await fixture();
     const replay = new NativeFixtureRunner();
     const unsigned: NativeCommandRunner = {
-      async run(tool, args, options) {
+      async run(tool, args) {
         const diagnostic = `${args.at(-1)}: code object is not signed at all\n`;
         const capture = await new NativeFixtureRunner(
           { codesign: diagnostic },

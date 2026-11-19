@@ -1,14 +1,18 @@
+import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { decodeLz4Block } from "../gpu/Lz4Block.js";
+import { decodeLz4Block } from "../compression/Lz4Block.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+} from "../domain/binaryContainer.js";
 import { setImmediate } from "node:timers/promises";
 import {
+  hasUnityFsHeader,
   readUnityFsHeaderFacts,
   UNITYFS_COMPRESSION_LZ4,
   UNITYFS_COMPRESSION_LZ4HC,
@@ -17,10 +21,10 @@ import {
   UNITYFS_FLAG_COMPRESSION_MASK,
   UNITYFS_FORMAT_VERSION_MAX,
   UNITYFS_FORMAT_VERSION_MIN,
-  UNITYFS_HEADER_STRING_MAX,
-  UNITYFS_SIGNATURE,
+  UNITYFS_HEADER_PREFIX_BYTES,
   unityFsLayoutFlags,
 } from "../domain/unityfsFormat.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /** Per-decode resource limits, not format limits. Plain blocks are streamed. */
 const MAX_BLOCK_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
@@ -38,18 +42,7 @@ const directoryLimit = (): ArtifactReaderFailure =>
     { boundary: "memory" },
   );
 
-/** Reserve buffers, JS rows and escaped path projections before constructing them. */
-class UnityFsDirectoryBudget {
-  #remaining = DIRECTORY_BUDGET_BYTES;
-  reserve(bytes: number): void {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
-      throw directoryLimit();
-    this.#remaining -= bytes;
-  }
-}
-/** Signature, version, two bounded strings and the fixed tail; reads are bounded. */
-const HEADER_PREFIX_MAX = 8 + 4 + UNITYFS_HEADER_STRING_MAX * 2 + 20;
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 export interface UnityFsHeader {
   readonly formatVersion: number;
@@ -117,12 +110,11 @@ export const readUnityFsHeader = async (
   const prefix = await readArtifactFileBytes(
     handle,
     0,
-    Math.min(size, HEADER_PREFIX_MAX),
+    Math.min(size, UNITYFS_HEADER_PREFIX_BYTES),
     size,
     signal,
   );
-  if (prefix.length < 20 || !prefix.subarray(0, 8).equals(UNITYFS_SIGNATURE))
-    return undefined;
+  if (prefix.length < 20 || !hasUnityFsHeader(prefix)) return undefined;
   const facts = readUnityFsHeaderFacts(prefix);
   if (facts === undefined)
     throw unityFsFormatFailure("header is truncated or exceeds its bounds");
@@ -236,7 +228,12 @@ export const decodeUnityFsLz4 = async (
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   try {
-    return await decodeLz4Block(encoded, expected, signal);
+    return await decodeLz4Block(
+      encoded,
+      expected,
+      MAX_BLOCK_UNCOMPRESSED_BYTES,
+      signal,
+    );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof BinaryResourceFailure)
@@ -257,7 +254,7 @@ export const decodeUnityFsLz4 = async (
 
 const parseBlocks = async (
   table: Buffer,
-  budget: UnityFsDirectoryBudget,
+  budget: Budget,
   signal?: AbortSignal,
 ): Promise<UnityFsBlock[]> => {
   if (table.length < 24)
@@ -266,7 +263,7 @@ const parseBlocks = async (
   if (20 + blockCount * 10 + 4 > table.length)
     throw unityFsFormatFailure("declared block count exceeds the table");
   // Includes array slots, numeric fields and the retained lookup representation.
-  budget.reserve(blockCount * 256);
+  budget.charge(blockCount * 256, directoryLimit);
   const blocks: UnityFsBlock[] = [];
   let cursor = 20;
   let compressedStart = 0;
@@ -326,7 +323,7 @@ const parseBlocks = async (
 const parseNodes = async (
   table: Buffer,
   blocks: readonly UnityFsBlock[],
-  budget: UnityFsDirectoryBudget,
+  budget: Budget,
   signal?: AbortSignal,
 ): Promise<UnityFsNode[]> => {
   let cursor = 20 + blocks.length * 10;
@@ -337,7 +334,7 @@ const parseNodes = async (
   if (cursor + nodeCount * 21 > table.length)
     throw unityFsFormatFailure("declared node count exceeds the table");
   // Covers parsed rows plus the reader's owned entries/map; paths are charged separately.
-  budget.reserve(nodeCount * 512);
+  budget.charge(nodeCount * 512, directoryLimit);
   const streamSize =
     blocks.length === 0
       ? 0
@@ -356,7 +353,7 @@ const parseNodes = async (
     const nameEnd = table.indexOf(0, cursor);
     if (nameEnd === -1) throw unityFsFormatFailure("node path is unterminated");
     // UTF-16 plus repeated JSON-escaped source/canonical path projections.
-    budget.reserve((nameEnd - cursor) * 24);
+    budget.charge((nameEnd - cursor) * 24, directoryLimit);
     let path: string;
     try {
       path = UTF8.decode(table.subarray(cursor, nameEnd));
@@ -427,10 +424,10 @@ export const readUnityFsBlocksInfo = async (
     header.uncompressedBlocksInfoSize > MAX_TABLE_BYTES
   )
     throw directoryLimit();
-  const budget = new UnityFsDirectoryBudget();
-  budget.reserve(header.compressedBlocksInfoSize);
+  const budget = new Budget(DIRECTORY_BUDGET_BYTES);
+  budget.charge(header.compressedBlocksInfoSize, directoryLimit);
   if (header.compression !== UNITYFS_COMPRESSION_NONE)
-    budget.reserve(header.uncompressedBlocksInfoSize);
+    budget.charge(header.uncompressedBlocksInfoSize, directoryLimit);
   const compressed = await readArtifactFileBytes(
     handle,
     layout.blocksInfoOffset,

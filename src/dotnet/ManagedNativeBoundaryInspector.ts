@@ -1,4 +1,4 @@
-import { admitManagedProjection } from "./ManagedDecodeBudget.js";
+import { admitManagedProjection } from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedNativeBoundaryInspectionSchema,
@@ -8,23 +8,23 @@ import {
 import {
   readManagedMetadataInventory,
   readManagedResourceDirectory,
-} from "./ManagedMetadataInventory.js";
+} from "../domain/managed/managedMetadataInventory.js";
 import {
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   readManagedPeLayout,
   type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
+} from "../domain/managed/managedPeReader.js";
 import {
   appendManagedParseIssues,
   ManagedReaderFailure,
   managedMetadataFailureStatus,
   type ManagedMetadataHeaderFacts,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import {
   buildNativeBoundaryInspection,
   cliNative,

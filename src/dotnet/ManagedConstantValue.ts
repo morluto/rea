@@ -1,5 +1,5 @@
 import type { ManagedFieldConstant } from "../domain/managed/managedFieldConstant.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
+import { managedFailure } from "../domain/managed/managedReaderFailure.js";
 
 type Scalar = ManagedFieldConstant["value"];
 type ScalarReader = (bytes: Buffer, scope: string, offset: number) => Scalar;

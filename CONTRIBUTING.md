@@ -23,6 +23,16 @@ Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
+It also checks each top-level `src/` unit against its layer in
+[`scripts/lib/module-layers.mjs`](scripts/lib/module-layers.mjs) (a new
+directory must declare one) and against the counted outward, mutual,
+cross-provider and past-entry imports in
+`scripts/lib/module-layers.baseline.json`. Application, composition and the
+adapters import a provider through the entry files it declares in that table
+([decision](docs/adr/architecture/provider-entry-files.md)); a new entry file
+widens the provider's public surface. The baseline may only shrink: a
+change that removes such imports lowers it with
+`node scripts/verify-module-boundaries.mjs --shrink-layer-baseline`.
 
 Before retiring an alias or facade, trace runtime registration, dynamic imports,
 JavaScript verifiers, subprocess scripts, and packaged entrypoints as well as
@@ -114,21 +124,11 @@ it or require another human sign-off. Keep the PR description and affected
 validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
-The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. PRs authored by
-@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
-the declaration; their human ownership, review, and evidence responsibilities
-above still apply. The check identifies authors by GitHub account ID. It checks
-that the declaration is filled, not whether the code or evidence is correct.
-Existing PRs can copy the **Author readiness** section from the current template.
-Open PRs must have distinct head commits because GitHub shares commit statuses.
-
-Maintainers enable merge enforcement after the workflow is merged: run
-`gh workflow run pr-readiness.yml -f pull_request_number=NUMBER` for existing
-open PRs, then add `PR readiness` from GitHub Actions to the branch's required
-status checks alongside its existing checks. Deploy the workflow to each
-protected target branch before requiring it there. The workflow reads PR
-metadata using trusted default-branch code and writes only a commit status.
+Maintainers review the **Author readiness** declaration in the PR body. PRs
+authored by @morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or
+@vincentkoc are exempt from the declaration. Their human ownership, review,
+and evidence responsibilities above still apply. Existing PRs can copy the
+**Author readiness** section from the current template.
 
 When an open PR may overlap another open change or a recently landed fix, note
 the related PR, issue, or commit in the description or a comment as soon as the
@@ -273,6 +273,12 @@ and version provenance, update license notices when needed, and report which
 verification was actually repeated. The lab requirements describe a recorded
 environment; a dependency update does not verify the revised environment.
 
+Commits that only move files or rewrite import paths are listed in
+`.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame`
+attributes lines to the change that wrote them. Move files with `git mv` and
+keep such a commit free of other edits.
+
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
 
@@ -402,8 +408,8 @@ installs that bundle with Skills 1.7.2 using default repository-root discovery
 and checks every installed file, alongside the packaged setup checks.
 CI validates generated outputs and retains them as artifacts; do not commit
 them. Reviewed source metadata, including
-`src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json`, remains
-tracked and checked for freshness.
+`src/generatedPackageMetadata.ts`, `docs/error-contract.schema.json` and
+`docs/user-visible-errors.csv`, remains tracked and checked for freshness.
 
 The packaged skill contains instructions and inventory metadata, not runtime
 schema hashes. Its conformance commitment covers that exact bundle and portable

@@ -1,5 +1,7 @@
 import { err, ok, type Result } from "./result.js";
 
+export const PE_SIZE_OF_HEADERS_OFFSET = 60;
+
 /** Raw data-directory words; entry 4 names file bytes, while resource entry 2 names an RVA. */
 export interface PeDataDirectory {
   readonly address: number;
@@ -82,7 +84,7 @@ export const readPeOptionalHeaderFixedFields = (
   // SizeOfHeaders ends at byte 64. DllCharacteristics, at offset 70, is only
   // present when the declared header covers that word. NativeAOT and other
   // mapping-field consumers admit a 64-byte header.
-  if (bytes.byteLength < 64)
+  if (bytes.byteLength < PE_SIZE_OF_HEADERS_OFFSET + 4)
     return err({
       kind: "malformed",
       reason: "truncated-fixed-fields",
@@ -98,7 +100,7 @@ export const readPeOptionalHeaderFixedFields = (
     sectionAlignment: view.getUint32(32, true),
     fileAlignment: view.getUint32(36, true),
     sizeOfImage: view.getUint32(56, true),
-    sizeOfHeaders: view.getUint32(60, true),
+    sizeOfHeaders: view.getUint32(PE_SIZE_OF_HEADERS_OFFSET, true),
     dllCharacteristics:
       bytes.byteLength >= 72 ? view.getUint16(70, true) : null,
     directoryOffset,

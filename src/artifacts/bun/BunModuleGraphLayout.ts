@@ -1,3 +1,5 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import { Budget } from "../../domain/budget.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -6,15 +8,22 @@ import {
   readMachoLoadCommandTableHeader,
   MachoLoadCommandCursor,
 } from "../../domain/apple/machoLoadCommands.js";
+import {
+  machoSectionBacking,
+  readMachoSectionHeader,
+} from "../../domain/apple/machoSectionHeader.js";
+import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
 import type { FileHandle } from "node:fs/promises";
 
 import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  artifactReaderLimitFailure,
+} from "../../resources/index.js";
 
 /** Exact trailer written by Bun's standalone module graph serializer. */
 const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
@@ -29,10 +38,6 @@ export const BUN_RECORD_BYTES_1_3_3 = 36;
 export const BUN_RECORD_BYTES_1_3_9 = 52;
 
 const MAX_PE_SECTIONS = 96;
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
-const SEGMENT_64_HEADER_BYTES = 72;
-const SEGMENT_32_HEADER_BYTES = 56;
 const SECTION_64_BYTES = 80;
 const SECTION_32_BYTES = 68;
 
@@ -114,11 +119,14 @@ interface BunProbeSource {
 interface SectionWindow {
   readonly carrier: Exclude<BunCarrier, "appended-trailer">;
   readonly fileOffset: number;
-  readonly declaredSize: number;
   readonly available: number;
   /** The declared section extent ends past EOF. */
   readonly truncated: boolean;
+  /** The Mach-O table could not be fully framed after this section was located. */
+  readonly loadCommandsFailure?: string;
 }
+
+type SectionClaim = SectionWindow | { readonly failure: ArtifactReaderFailure };
 
 /**
  * Locate at most one graph claim with bounded reads of headers, length
@@ -133,7 +141,7 @@ export const probeBunStandaloneGraph = async (
 ): Promise<BunStandaloneProbe> => {
   abortIfNeeded(signal);
   const source = { handle, fileSize, signal, limits };
-  let claims: readonly SectionWindow[];
+  let claims: readonly SectionClaim[];
   try {
     claims = [
       ...(await machOClaims(source, 0, fileSize)),
@@ -148,7 +156,10 @@ export const probeBunStandaloneGraph = async (
   const real: BunStandaloneProbe[] = [];
   for (const claim of claims) {
     abortIfNeeded(signal);
-    const evaluated = await evaluateSection(source, claim);
+    const evaluated =
+      "failure" in claim
+        ? presentFailure(claim.failure)
+        : await evaluateSection(source, claim);
     if (evaluated.status === "present") {
       if (real.length > 0)
         return presentFailure(
@@ -211,15 +222,26 @@ const METADATA_CACHE_ENTRIES = 1024;
 /** Exact-range caching avoids page amplification from file-controlled pointers. */
 class BunGraphRangeReader implements BunGraphData {
   readonly #ranges = new Map<string, Buffer>();
-  #retainedBytes = 0;
-  #readBytes = 0;
+  readonly #retained = new Budget(METADATA_CACHE_BYTES);
+  readonly #read: Budget;
   constructor(
     private readonly handle: FileHandle,
     private readonly start: number,
     readonly length: number,
     private readonly signal: AbortSignal | undefined,
-    private readonly maximumReadBytes: number,
-  ) {}
+    maximumReadBytes: number,
+  ) {
+    this.#read = new Budget(maximumReadBytes);
+  }
+
+  /** Drop the least recently used range and return its retained size. */
+  readonly #evictOldest = (): number | undefined => {
+    const oldest = this.#ranges.keys().next();
+    if (oldest.done === true) return undefined;
+    const bytes = this.#ranges.get(oldest.value)?.length ?? 0;
+    this.#ranges.delete(oldest.value);
+    return bytes;
+  };
 
   async read(offset: number, length: number): Promise<Buffer> {
     abortIfNeeded(this.signal);
@@ -240,15 +262,15 @@ class BunGraphRangeReader implements BunGraphData {
       this.#ranges.set(key, existing);
       return Buffer.from(existing);
     }
-    if (length > this.maximumReadBytes - this.#readBytes)
-      throw artifactReaderLimitFailure(
-        "artifact_limits.bun.metadata_read_bytes",
-        this.maximumReadBytes,
-        "bytes",
-        this.#readBytes + length,
-      );
     // Charge physical work before allocation or I/O, including uncached large names.
-    this.#readBytes += length;
+    this.#read.charge(length, () =>
+      artifactReaderLimitFailure(
+        "artifact_limits.bun.metadata_read_bytes",
+        this.#read.maximum,
+        "bytes",
+        this.#read.used + length,
+      ),
+    );
     const bytes = await readExact(
       this.handle,
       this.start + offset,
@@ -256,16 +278,10 @@ class BunGraphRangeReader implements BunGraphData {
       this.signal,
     );
     if (length > METADATA_CACHE_BYTES) return bytes;
-    while (
-      this.#ranges.size >= METADATA_CACHE_ENTRIES ||
-      this.#retainedBytes + length > METADATA_CACHE_BYTES
-    ) {
-      const oldest = this.#ranges.keys().next().value!;
-      this.#retainedBytes -= this.#ranges.get(oldest)!.length;
-      this.#ranges.delete(oldest);
-    }
+    while (this.#ranges.size >= METADATA_CACHE_ENTRIES)
+      this.#retained.refund(this.#evictOldest() ?? 0);
+    if (!this.#retained.chargeEvicting(length, this.#evictOldest)) return bytes;
     this.#ranges.set(key, bytes);
-    this.#retainedBytes += length;
     return Buffer.from(bytes);
   }
 }
@@ -373,6 +389,10 @@ const evaluateSection = async (
   );
   const failure = suffixFailure(suffix, length, limits);
   if (failure !== undefined) return presentFailure(failure);
+  if (claim.loadCommandsFailure !== undefined)
+    return presentFailure(
+      bunFormatFailure(`Mach-O load commands: ${claim.loadCommandsFailure}`),
+    );
   return {
     status: "present",
     claim: { carrier: claim.carrier, payloadOffset, payloadLength: length },
@@ -466,7 +486,7 @@ const machOClaims = async (
   source: BunProbeSource,
   imageOffset: number,
   imageLimit: number,
-): Promise<readonly SectionWindow[]> => {
+): Promise<readonly SectionClaim[]> => {
   const { handle, fileSize, signal, limits } = source;
   if (imageOffset < 0 || imageOffset >= fileSize) return [];
   const header = await tryRead(handle, imageOffset, 12, fileSize, signal);
@@ -505,25 +525,36 @@ const machOClaims = async (
     signal,
   );
   if (commands === null || commands.length !== sizeofcmds) return [];
-  const claims: SectionWindow[] = [];
+  const claims: SectionClaim[] = [];
   const cursor = new MachoLoadCommandCursor(table);
+  let framingFailure: string | undefined;
   while (cursor.nextOffset !== null) {
     abortIfNeeded(signal);
     const read = cursor.read(commands.subarray(cursor.nextOffset));
-    if (!read.ok) break;
+    if (!read.ok) {
+      framingFailure = read.error;
+      break;
+    }
     const { command: cmd, offset, size } = read.value;
-    if (cmd === LC_SEGMENT_64 || cmd === LC_SEGMENT)
-      claims.push(
-        ...segmentClaims(
-          commands.subarray(offset, offset + size),
-          littleEndian,
-          cmd === LC_SEGMENT_64,
-          imageOffset,
-          Math.min(fileSize, imageOffset + imageLimit),
-        ),
-      );
+    if (cmd === LC.SEGMENT_64 || cmd === LC.SEGMENT)
+      for (const claim of segmentClaims(
+        commands.subarray(offset, offset + size),
+        littleEndian,
+        cmd === LC.SEGMENT_64,
+        imageOffset,
+        Math.min(fileSize, imageOffset + imageLimit),
+      ))
+        claims.push(claim);
   }
-  return claims;
+  const complete = cursor.finish();
+  if (!complete.ok) framingFailure ??= complete.error;
+  return framingFailure === undefined
+    ? claims
+    : claims.map((claim) =>
+        "failure" in claim
+          ? claim
+          : { ...claim, loadCommandsFailure: framingFailure },
+      );
 };
 
 const segmentClaims = (
@@ -532,34 +563,44 @@ const segmentClaims = (
   wide: boolean,
   imageOffset: number,
   fileSize: number,
-): readonly SectionWindow[] => {
-  const headerBytes = wide ? SEGMENT_64_HEADER_BYTES : SEGMENT_32_HEADER_BYTES;
+): readonly SectionClaim[] => {
+  const parsedSegment = readMachoSegmentHeader(command, wide, littleEndian);
+  if (!parsedSegment.ok) return [];
+  const segment = parsedSegment.value;
+  const { headerSize, sectionCount } = segment;
   const sectionBytes = wide ? SECTION_64_BYTES : SECTION_32_BYTES;
-  if (command.length < headerBytes) return [];
-  const nsects = readU32(command, wide ? 64 : 48, littleEndian);
-  if (headerBytes + nsects * sectionBytes > command.length) return [];
-  const claims: SectionWindow[] = [];
-  for (let index = 0; index < nsects; index += 1) {
-    const start = headerBytes + index * sectionBytes;
-    const section = command.subarray(start, start + sectionBytes);
-    if (!exactName(section.subarray(0, 16), "__bun")) continue;
-    if (!exactName(section.subarray(16, 32), "__BUN")) continue;
-    const size = wide
-      ? readBoundedU64(section, 40, littleEndian)
-      : readU32(section, 36, littleEndian);
-    const offset = readU32(section, wide ? 48 : 40, littleEndian);
-    if (size === undefined) {
+  if (headerSize + sectionCount * sectionBytes > command.length) return [];
+  const claims: SectionClaim[] = [];
+  for (let index = 0; index < sectionCount; index += 1) {
+    const start = headerSize + index * sectionBytes;
+    const bytes = command.subarray(start, start + sectionBytes);
+    if (!exactName(bytes.subarray(0, 16), "__bun")) continue;
+    if (!exactName(bytes.subarray(16, 32), "__BUN")) continue;
+    const parsedSection = readMachoSectionHeader(bytes, wide, littleEndian);
+    if (!parsedSection.ok) continue;
+    const section = parsedSection.value;
+    const { issue } = machoSectionBacking(section, segment);
+    if (issue !== null) {
       claims.push({
-        carrier: "mach-o-section",
-        fileOffset: imageOffset + offset,
-        declaredSize: Number.MAX_SAFE_INTEGER,
-        available: 0,
-        truncated: false,
+        failure: bunFormatFailure(`Mach-O __bun section ${issue}`),
+      });
+      continue;
+    }
+    if (section.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      claims.push({
+        failure: bunFormatFailure(
+          "Mach-O __bun section size is not a safe integer",
+        ),
       });
       continue;
     }
     claims.push(
-      windowFor("mach-o-section", imageOffset + offset, size, fileSize),
+      windowFor(
+        "mach-o-section",
+        imageOffset + section.offset,
+        Number(section.size),
+        fileSize,
+      ),
     );
   }
   return claims;
@@ -568,7 +609,7 @@ const segmentClaims = (
 const fatClaims = async (
   source: BunProbeSource,
   prefix: Buffer,
-): Promise<readonly SectionWindow[]> => {
+): Promise<readonly SectionClaim[]> => {
   const { handle, fileSize, signal } = source;
   let parsed = readFatContainerHeader(prefix, fileSize);
   if (parsed.state === "needs-data") {
@@ -583,11 +624,12 @@ const fatClaims = async (
     parsed = readFatContainerHeader(table, fileSize);
   }
   if (parsed.state !== "parsed") return [];
-  const claims: SectionWindow[] = [];
+  const claims: SectionClaim[] = [];
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    claims.push(...(await machOClaims(source, slice.offset, slice.size)));
+    for (const claim of await machOClaims(source, slice.offset, slice.size))
+      claims.push(claim);
   }
   return claims;
 };
@@ -759,7 +801,6 @@ const windowFor = (
     return {
       carrier,
       fileOffset,
-      declaredSize,
       available: 0,
       truncated: false,
     };
@@ -767,7 +808,6 @@ const windowFor = (
   return {
     carrier,
     fileOffset,
-    declaredSize,
     available: Math.min(declaredSize, room),
     truncated: declaredSize > room,
   };

@@ -105,7 +105,7 @@ it("keeps each target's alternate setting and name on its elements", () => {
       targets: [
         {
           alternateSetting: 0,
-          name: "Internal Flash",
+          name: Uint8Array.from([0x4f, 0xe9, 0, 0x58]),
           elements: [
             { address: 0x0800_0000, data: [1, 2, 3, 4] },
             { address: 0x0800_4000, data: [5, 6] },
@@ -117,7 +117,6 @@ it("keeps each target's alternate setting and name on its elements", () => {
         },
         {
           alternateSetting: 2,
-          name: Uint8Array.from([0x4f, 0xe9, 0, 0x58]),
           elements: [{ address: 0x1fff_7800, data: [] }],
         },
       ],
@@ -133,8 +132,8 @@ it("keeps each target's alternate setting and name on its elements", () => {
       [...element.bytes],
     ]),
   ).toEqual([
-    [0, 0, "Internal Flash", 0, 0x0800_0000, [1, 2, 3, 4]],
-    [0, 0, "Internal Flash", 1, 0x0800_4000, [5, 6]],
+    [0, 0, "Oé", 0, 0x0800_0000, [1, 2, 3, 4]],
+    [0, 0, "Oé", 1, 0x0800_4000, [5, 6]],
     [1, 1, null, 0, 0x1fff_c000, [0xaa, 0x55]],
   ]);
   expect(decoded.metadata).toMatchObject({
@@ -143,19 +142,6 @@ it("keeps each target's alternate setting and name on its elements", () => {
     empty_element_count: 1,
     data_bytes: 8,
   });
-  // A named target's field is read to its first NUL, one character per byte.
-  const named = image(
-    dfuseFile({
-      targets: [
-        {
-          alternateSetting: 3,
-          name: Uint8Array.from([0x4f, 0xe9, 0, 0x58]),
-          elements: [{ address: 0, data: [1] }],
-        },
-      ],
-    }),
-  );
-  expect(named.elements[0]?.targetName).toBe("Oé");
 });
 
 it("reports a suffix CRC mismatch as facts without refusing the file", () => {

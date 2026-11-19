@@ -1,3 +1,6 @@
+import { advertiseToolInput } from "../../contracts/advertisedTool.js";
+import { formattedEllipsisExcerpt } from "../../domain/excerpt.js";
+import { jsonPointerTokens } from "../../domain/jsonPointer.js";
 import {
   ownMember,
   isObject,
@@ -5,7 +8,6 @@ import {
   isSafeHttpMethod,
   listItems,
   locateList,
-  pointerTokens,
   type JsonObject,
 } from "../../domain/analysisView/environmentStateRules.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -65,6 +67,35 @@ export interface EnvironmentToolDefinition {
   readonly tool: EnvironmentManifestTool;
 }
 
+/** What MCP clients and the card receive for one served tool. */
+export interface AdvertisedEnvironmentTool {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+}
+
+/**
+ * The served tool in the portable advertised dialect. A served catalog bounds
+ * its own size, so argument descriptions stay; calls are still checked
+ * against the recorded `inputSchema`.
+ */
+export const advertisedEnvironmentTool = ({
+  name,
+  description,
+  inputSchema,
+}: EnvironmentToolDefinition): AdvertisedEnvironmentTool => {
+  const advertised = advertiseToolInput(
+    description,
+    inputSchema as unknown as Record<string, unknown>,
+    "annotated",
+  );
+  return {
+    name,
+    description: advertised.description ?? description,
+    inputSchema: advertised.inputSchema,
+  };
+};
+
 const environmentToolAnnotations = ({
   method,
   path_template: path,
@@ -112,12 +143,7 @@ const describeText = (
       low = mid + 1;
     } else high = mid - 1;
   }
-  // A lone surrogate is not a character. Step off a high surrogate so the prefix stays whole.
-  if (best > 0 && best < text.length) {
-    const unit = text.charCodeAt(best - 1);
-    if (unit >= 0xd8_00 && unit <= 0xdb_ff) best -= 1;
-  }
-  return `${show(text.slice(0, best))}… (${label} display truncated; full value in ${holder})`;
+  return `${formattedEllipsisExcerpt(text, best, show)} (${label} display truncated; full value in ${holder})`;
 };
 
 /** Sample whole values before joining; keep full lists in the Evidence that owns them. */
@@ -170,7 +196,7 @@ const describeJson = (value: JsonValue): string => {
   const pointer = locateList(value, undefined);
   const items = pointer === undefined ? [] : (listItems(value, pointer) ?? []);
   if (pointer !== undefined && items.length > 0) {
-    const [member] = pointerTokens(pointer);
+    const [member] = jsonPointerTokens(pointer);
     return member === undefined
       ? `a JSON array of objects ${withFields(items)}`
       : `a JSON object whose ${describeText(member, "member", "capture Evidence", JSON.stringify)} lists objects ${withFields(items)}`;
@@ -231,7 +257,7 @@ const toolDescription = (
   `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; ${describeResponses(tool, source.exchanges)}; ${describe?.(tool) ?? answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
 
 /** Captured argument names longer than this are advertised under a short alias; the manifest keeps the name. */
-export const MAX_ARGUMENT_NAME_CHARS = 64;
+const MAX_ARGUMENT_NAME_CHARS = 64;
 
 const bodyDescription = (tool: EnvironmentManifestTool): string => {
   const properties = tool.body_shape?.properties;
@@ -377,7 +403,7 @@ function* environmentToolProperties(
 }
 
 /** Serialization reservation calibrated with 1500 fields and eight concurrent SDK discovery requests. */
-export const ENVIRONMENT_CATALOG_LIMIT_BYTES = 1024 * 1024;
+const ENVIRONMENT_CATALOG_LIMIT_BYTES = 1024 * 1024;
 const EMPTY_PROPERTY_BYTES =
   JSON.stringify({ type: "string", description: "" }).length + 4;
 const EMPTY_TOOL_BYTES = JSON.stringify({
@@ -530,10 +556,10 @@ export const environmentToolDefinitions = (
 export const REA_STATE_FORMAT = "rea-state/v1";
 
 /** The data-plane methods an environment served from a state answers. */
-export const STATE_OPERATIONS = ["data/reset", "data/add", "data/get"] as const;
+const STATE_OPERATIONS = ["data/reset", "data/add", "data/get"] as const;
 
 /** The intake declaration a state-served card carries: what `data/add` loads and `data/get` returns. */
-export const STATE_INTAKE_EXTENSION = {
+const STATE_INTAKE_EXTENSION = {
   uri: "urn:agentenv:intake/v1",
   description: `data/add replaces the whole environment state with one ${REA_STATE_FORMAT} document; data/get returns the current state in the same format.`,
   params: {
@@ -560,10 +586,7 @@ export interface EnvironmentCard {
   readonly capabilities: {
     /** Null for a replay environment; the intake declaration when served from a state. */
     readonly extensions: null | readonly [typeof STATE_INTAKE_EXTENSION];
-    readonly tools: readonly Pick<
-      EnvironmentToolDefinition,
-      "name" | "description" | "inputSchema"
-    >[];
+    readonly tools: readonly AdvertisedEnvironmentTool[];
     readonly operations: readonly [] | typeof STATE_OPERATIONS;
   };
   readonly children_environments: null;
@@ -582,11 +605,7 @@ export const environmentCard = (
   additionalInterfaces: [{ url: "/mcp", transport: "mcp" }],
   capabilities: {
     extensions: dataPlane === "state" ? [STATE_INTAKE_EXTENSION] : null,
-    tools: tools.map(({ name: toolName, description, inputSchema }) => ({
-      name: toolName,
-      description,
-      inputSchema,
-    })),
+    tools: tools.map(advertisedEnvironmentTool),
     operations: dataPlane === "state" ? STATE_OPERATIONS : [],
   },
   children_environments: null,

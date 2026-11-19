@@ -301,10 +301,9 @@ export const normalizedViews = (
         );
       const delta = changes.reduce(
         (summary, change) => ({
-          added_lines:
-            summary.added_lines + (change.added ? (change.count ?? 0) : 0),
+          added_lines: summary.added_lines + (change.added ? change.count : 0),
           removed_lines:
-            summary.removed_lines + (change.removed ? (change.count ?? 0) : 0),
+            summary.removed_lines + (change.removed ? change.count : 0),
           hunks: summary.hunks + (change.added || change.removed ? 1 : 0),
         }),
         { added_lines: 0, removed_lines: 0, hunks: 0 },

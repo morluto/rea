@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
@@ -291,7 +292,7 @@ const issueSchema = z.strictObject({
 });
 
 const coverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   reason: z.string().min(1).nullable(),
   examined_id_list_items: uint,
   examined_extra_data_blocks: uint,

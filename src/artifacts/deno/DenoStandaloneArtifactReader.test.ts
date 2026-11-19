@@ -5,24 +5,26 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
-import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
+import {
+  elfNote,
+  elfNoteFixture,
+  withElf64DirectSectionCount,
+} from "../../native/elf/ElfNotes.fixture.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
 } from "../../domain/native/elfNotes.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactPathRegistry } from "../ArtifactPaths.js";
+import { ArtifactPathRegistry } from "../../resources/ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
-import {
-  locateDenoStandalone,
-  MAX_DENO_INTEL_TRAILER_SENTINELS,
-} from "./DenoStandaloneLocation.js";
+import { locateDenoStandalone } from "./DenoStandaloneLocation.js";
 import {
   buildDenoSection,
   DENO_FIXTURE_SECTION_MAGIC,
@@ -34,8 +36,10 @@ import {
   denoUniversal,
   machOWithSegment,
 } from "./DenoStandalone.fixture.js";
-import { MAX_DENO_PATH_COMPONENT_BYTES } from "./DenoVirtualFs.js";
+
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
+
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 
 it("keeps a confirmed Deno inventory when another pack recognizer is limited", async () => {
   const original = denoElf();
@@ -945,6 +949,29 @@ it("fails closed when a SUI note sits beside extended section numbering", async 
   });
 });
 
+it("records a reserved direct section count beside an independently confirmed program note", async () => {
+  const bytes = withElf64DirectSectionCount(denoElf(), 0xff00);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("reserved direct section count"),
+    },
+  });
+});
+
+it("does not confirm a Deno carrier from a section note in a malformed table", async () => {
+  const bytes = withElf64DirectSectionCount(
+    gnuElf("section", suiNote()),
+    0xff00,
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
 it("reaches a SUI section note past an unreadable program table", async () => {
   const bytes = patched(gnuElf("both", suiNote()), (image) => {
     image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_PHOFF);
@@ -1071,7 +1098,7 @@ it("rejects packed Intel sentinels without rereading a chunk per sentinel", asyn
 it("leaves an x64 Mach-O absent when sentinels pass the allowance", async () => {
   const packed = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS + 1),
+    rejectedIntelSentinels(65),
   ]);
   let readBytes = 0;
   const probe = await locateDenoStandalone(
@@ -1307,7 +1334,7 @@ it("accepts side-by-side Intel trailers with identical bytes", async () => {
 it("refuses a confirmed Intel trailer when the allowance ends the outer search", async () => {
   const bytes = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS),
+    rejectedIntelSentinels(64),
     intelTrailerRecord(buildDenoSection()),
   ]);
   await expect(
@@ -1317,6 +1344,30 @@ it("refuses a confirmed Intel trailer when the allowance ends the outer search",
     failure: {
       reason: "limit",
       boundary: "capacity",
+    },
+  });
+});
+
+it("locates a PE resource past a distant DOS stub using positional reads", async () => {
+  const section = buildDenoSection();
+  const { bytes: image } = peResourceFixture(
+    true,
+    [{ type: 10, name: "D3N0L4ND", language: 0, payload: section }],
+    65536,
+    4,
+    0x20080,
+  );
+  const handle = bytesHandle(image, (length) => {
+    if (length > 512) throw new Error("Read exceeded the header record bounds");
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      carrier: "pe",
+      embedding: "pe-resource",
+      length: section.length,
     },
   });
 });
@@ -1342,6 +1393,23 @@ it("locates a small D3N0L4ND resource in a PE larger than 512 MiB", async () => 
   });
 });
 
+it("keeps a PE resource read failure when the caller aborts with that same error", async () => {
+  const image = denoPe([buildDenoSection()]);
+  const controller = new AbortController();
+  const failure = Object.assign(new Error("PE resource read failed"), {
+    code: "EIO",
+  });
+  const handle = bytesHandle(image, (length) => {
+    if (length === 16) {
+      controller.abort(failure);
+      throw failure;
+    }
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length, controller.signal),
+  ).rejects.toBe(failure);
+});
+
 it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_RCDATA branch", async () => {
   const fixture = peResourceFixture(
     true,
@@ -1363,7 +1431,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1388,7 +1456,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside a non-directory R
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1401,7 +1469,7 @@ it("fails closed when a D3N0L4ND payload is not file-backed", async () => {
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1844,14 +1912,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
     const observed = await open(path, "r");
     const prototype = Object.getPrototypeOf(observed) as FileHandle;
     const read = prototype.read;
-    let enter!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const artifactRead = phaseGate();
     let firstRead = true;
     const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
       this: FileHandle,
@@ -1860,8 +1921,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
       const result = await read.apply(this, args);
       if (firstRead) {
         firstRead = false;
-        enter();
-        await gate;
+        await artifactRead.hold();
         if (scenario === "physical failure") throw physicalFailure;
       }
       return result;
@@ -1876,7 +1936,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         (cause: unknown) => cause,
       );
       pending.push(failure);
-      await entered;
+      await artifactRead.reached(first, "Deno artifact read");
       const concurrent =
         scenario === "independent caller"
           ? collect(reader.entries())
@@ -1886,7 +1946,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         void concurrent.catch(() => undefined);
       }
       controller.abort(reason);
-      release();
+      artifactRead.release();
       const rejected = await failure;
       if (scenario === "physical failure")
         expect(rejected).toMatchObject({ reason: "io" });
@@ -1900,7 +1960,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         "source",
       );
     } finally {
-      release();
+      artifactRead.release();
       await Promise.allSettled(pending);
       spy.mockRestore();
       await observed.close();

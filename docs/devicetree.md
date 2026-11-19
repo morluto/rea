@@ -41,7 +41,7 @@ MCP `detail: summary` retains complete Evidence in the session. Follow its
 
 ```json
 {
-  "source": { "kind": "retained-evidence", "evidence_id": "ev:<digest>" },
+  "source": { "kind": "retained-evidence", "evidence_id": "ev_<digest>" },
   "view": {
     "kind": "devicetree",
     "collection": "properties",
@@ -68,6 +68,11 @@ collection and parent Evidence; property indices are scoped to their node.
 
 Decoded names, paths, values and row overhead share a fixed 32 MiB representation
 allowance, charged before expansion. It has no runtime override.
+
+A parser budget refusal names the allowance in `details.reported_limits.boundary`
+and its effective bound in `details.reported_limits.maximum`. For example,
+`--max-nodes 1` reports `{ "boundary": "max_nodes", "maximum": 1 }` if the
+blob contains more than one node.
 
 The reservation count also uses `max_properties`. CLI flags use kebab case,
 for example `--max-nodes 16384`. View pages contain at most 256 rows.
