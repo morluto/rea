@@ -7,7 +7,9 @@ import {
   ZIP64_LOCATOR,
   ZIP_EOCD_BYTES,
   readZip64DirectoryRecord,
+  readZip64Locator,
   zip64EndUsesSingleVolume,
+  zip64LocatorUsesSingleVolume,
   zipEndOfCentralDirectoryCandidates,
   zipEndUsesSingleVolume,
 } from "../zipEndOfCentralDirectory.js";
@@ -50,22 +52,23 @@ const directoryEnd = (reader: BinaryReader) => {
           entries: BigInt(totalEntries),
         }
       : undefined;
-  const locator = end - ZIP64_LOCATOR.bytes;
+  const locatorOffset = end - ZIP64_LOCATOR.bytes;
   // Like Python's zipfile, follow a locator whether or not the classic record defers to it.
-  if (locator < 0 || reader.u32(locator) !== ZIP64_LOCATOR.signature)
-    return classic;
-  const declared = reader.word(locator + ZIP64_LOCATOR.recordOffset, 64);
-  const fallback = locator - ZIP64_END.fixedBytes;
+  const locator = readZip64Locator(reader, locatorOffset);
+  if (locator === undefined) return classic;
+  const declared = locator.recordOffset;
+  const fallback = locatorOffset - ZIP64_END.fixedBytes;
   // Keep the fixed-record fallback for archives with an unadjusted prepended offset.
   for (const at of [
     declared <= BigInt(fallback) ? Number(declared) : -1,
     fallback,
   ]) {
-    const record = readZip64DirectoryRecord(reader, at, locator);
-    if (!record.ok || record.value.end !== locator) continue;
+    const record = readZip64DirectoryRecord(reader, at, locatorOffset);
+    if (!record.ok || record.value.end !== locatorOffset) continue;
     if (
       !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
-      !zip64EndUsesSingleVolume(reader, locator, at) ||
+      !zip64LocatorUsesSingleVolume(locator) ||
+      !zip64EndUsesSingleVolume(record.value) ||
       record.value.entriesOnDisk !== record.value.totalEntries
     )
       return undefined;
@@ -252,7 +255,7 @@ export const boundedDirectoryTail = (directory: ZipDirectory): Uint8Array => {
       BigInt(offset) + BigInt(size),
       true,
     );
-    locator.setUint32(16, 1, true);
+    locator.setUint32(ZIP64_LOCATOR.totalDisksOffset, 1, true);
   }
   const end = new DataView(tail.buffer, size + wideBytes, ZIP_EOCD_BYTES);
   end.setUint32(0, 0x06054b50, true);

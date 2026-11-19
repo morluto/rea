@@ -1,7 +1,9 @@
 import { BinaryReader } from "../binaryContainer.js";
 import {
   readZip64DirectoryRecord,
+  readZip64Locator,
   zip64EndUsesSingleVolume,
+  zip64LocatorUsesSingleVolume,
   zipEndOfCentralDirectoryCandidates,
   zipEndUsesSingleVolume,
   ZIP_CLASSIC_DIRECTORY_LIMITS,
@@ -166,8 +168,9 @@ const centralDirectoryOffset = (
     "zip",
   );
   // Zip64: a locator precedes the EOCD, pointing at the Zip64 EOCD record.
-  const locator = eocdOffset - ZIP64_LOCATOR.bytes;
-  if (locator < 0 || reader.u32(locator) !== ZIP64_LOCATOR.signature) {
+  const locatorOffset = eocdOffset - ZIP64_LOCATOR.bytes;
+  const locator = readZip64Locator(reader, locatorOffset);
+  if (locator === undefined) {
     // Exactly 65,535 entries saturates the count without Zip64; that archive
     // is still described completely by its 32-bit EOCD fields.
     if (
@@ -183,26 +186,24 @@ const centralDirectoryOffset = (
   }
   // APPNOTE 6.3.10 §4.3.15 makes the record offset relative to its disk.
   // A selected file cannot resolve another disk's offset as a local span.
-  const recordDisk = reader.u32(locator + 4);
-  const totalDisks = reader.u32(locator + 16);
+  const { disk: recordDisk, totalDisks, recordOffset: offsetOnDisk } = locator;
   if (totalDisks === 0)
     return err({
       kind: "malformed-zip",
-      offset: locator + 16,
+      offset: locatorOffset + ZIP64_LOCATOR.totalDisksOffset,
       detail: "Zip64 locator declares zero disks",
     });
   if (recordDisk >= totalDisks)
     return err({
       kind: "malformed-zip",
-      offset: locator + 4,
+      offset: locatorOffset + ZIP64_LOCATOR.diskOffset,
       detail: "Zip64 EOCD disk is outside the declared disk count",
     });
-  if (totalDisks > 1)
+  if (!zip64LocatorUsesSingleVolume(locator))
     return err({
       kind: "zip64-unsupported",
       detail: "multi-disk Zip64 archives are not supported",
     });
-  const offsetOnDisk = reader.word(locator + ZIP64_LOCATOR.recordOffset, 64);
   const maximumExact = BigInt(Number.MAX_SAFE_INTEGER);
   if (offsetOnDisk > maximumExact)
     return err({
@@ -210,13 +211,13 @@ const centralDirectoryOffset = (
       detail: "Zip64 EOCD offset exceeds safe range",
     });
   const recordOffset = Number(offsetOnDisk);
-  const record = readZip64DirectoryRecord(reader, recordOffset, locator);
+  const record = readZip64DirectoryRecord(reader, recordOffset, locatorOffset);
   if (!record.ok) {
     switch (record.error) {
       case "fixed-fields":
         return err({
           kind: "malformed-zip",
-          offset: locator + ZIP64_LOCATOR.recordOffset,
+          offset: locatorOffset + ZIP64_LOCATOR.recordOffset,
           detail: "Zip64 EOCD record extends beyond its locator",
         });
       case "signature":
@@ -235,13 +236,20 @@ const centralDirectoryOffset = (
   }
   if (
     !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
-    !zip64EndUsesSingleVolume(reader, locator, recordOffset)
+    !zip64EndUsesSingleVolume(record.value)
   )
     return err({
       kind: "zip64-unsupported",
       detail: "Zip64 end records do not describe the selected single disk",
     });
-  const { directoryOffset, directorySize, totalEntries } = record.value;
+  const { directoryOffset, directorySize, entriesOnDisk, totalEntries } =
+    record.value;
+  if (entriesOnDisk !== totalEntries)
+    return err({
+      kind: "malformed-zip",
+      offset: recordOffset + ZIP64_END.entriesOnDiskOffset,
+      detail: "single-disk Zip64 entry counts disagree",
+    });
   if (
     directoryOffset > maximumExact ||
     directorySize > maximumExact ||
