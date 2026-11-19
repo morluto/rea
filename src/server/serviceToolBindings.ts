@@ -146,12 +146,15 @@ import type { FridaInstrumentationService } from "../application/frida/FridaInst
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import type { Radare2SessionManager } from "../radare2/Radare2SessionManager.js";
 import {
+  resolveRadare2CommandRequest,
   resolveRizinCommandRequest,
   type ReverseEngineeringService,
 } from "../application/reverse/ReverseEngineeringService.js";
 import {
   GDB_SESSION_TOOLS,
+  RADARE2_SESSION_TOOLS,
   RIZIN_DEBUG_SESSION_TOOLS,
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
@@ -224,7 +227,14 @@ import {
 } from "../application/process/ProcessSessionCapture.js";
 import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import type { ResidualUnknown } from "../domain/residualUnknown.js";
-import { cancelledBy } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import {
   evidenceBundleExportReceipt,
   readImmutableEvidenceBundle,
@@ -310,7 +320,20 @@ export interface RizinDebugToolOptions {
 export interface ReverseEngineeringToolOptions {
   readonly service: Pick<
     ReverseEngineeringService,
-    "inspectWithObjdump" | "executeRizinCommandValidated" | "retryCleanup"
+    | "inspectWithObjdump"
+    | "executeRizinCommandValidated"
+    | "executeRadare2CommandValidated"
+    | "compareWithRadiff2"
+    | "retryCleanup"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** Persistent Radare2 sessions a manager owns and the session they may change. */
+export interface Radare2SessionToolOptions {
+  readonly manager: Pick<
+    Radare2SessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
   >;
   readonly session: ExternalMutationAdmission | undefined;
 }
@@ -328,6 +351,19 @@ const prepareRizinCommand =
     if (!cleanup.ok) return cleanup;
     return ok((signal) =>
       service.executeRizinCommandValidated(request.value, { signal }),
+    );
+  };
+
+/** Validate a Radare2 request the same way a Rizin command is validated. */
+const prepareRadare2Command =
+  (service: ReverseEngineeringToolOptions["service"]) =>
+  async (input: unknown): Promise<Result<EvidenceCommand, AnalysisError>> => {
+    const request = resolveRadare2CommandRequest(input);
+    if (!request.ok) return request;
+    const cleanup = await service.retryCleanup("execute_radare2_command");
+    if (!cleanup.ok) return cleanup;
+    return ok((signal) =>
+      service.executeRadare2CommandValidated(request.value, { signal }),
     );
   };
 
@@ -1447,6 +1483,19 @@ const SERVICE_TOOL_BINDINGS = {
         prepare: prepareRizinCommand(service),
       },
     },
+    execute_radare2_command: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        retryCleanup: () => service.retryCleanup("execute_radare2_command"),
+        prepare: prepareRadare2Command(service),
+      },
+    },
+    compare_with_radiff2: {
+      admission: "sdk",
+      run: (input, options) => service.compareWithRadiff2(input, options),
+    },
   })) satisfies Bind<ReverseEngineeringToolOptions>,
   // Rizin debugger sessions may change the bound artifact; each command
   // runs under external-mutation admission and keeps a failed cleanup owned.
@@ -1520,6 +1569,115 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<RizinDebugToolOptions>,
+  // Radare2 sessions may change the bound artifact through commands and
+  // plugins; each operation keeps a failed cleanup owned and retryable.
+  radare2: (({ manager, session }) => {
+    const retryCleanup = () => manager.retryCleanupFailures();
+    return {
+      start_radare2_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "value",
+          retryCleanup,
+          run: async (input, signal) => {
+            const started = await manager.start({ path: input.path }, signal);
+            if (!started.ok) return started;
+            const initialCommands = input.initial_commands ?? [];
+            for (const initialCommand of initialCommands) {
+              const executed = await manager.execute(
+                started.value.session_id,
+                initialCommand,
+                signal,
+              );
+              if (
+                executed.ok &&
+                !executed.value.result.command_error &&
+                executed.value.result.completion_status === "complete"
+              )
+                continue;
+              const closed = await manager
+                .close(started.value.session_id)
+                .catch(() => undefined);
+              if (!executed.ok) {
+                return closed !== undefined && !closed.ok
+                  ? err(
+                      analysisErrorWithCleanupDependencies(
+                        executed.error,
+                        closed.error,
+                        "start_radare2_session",
+                      ),
+                    )
+                  : executed;
+              }
+              const failure = new AnalysisOutputError(
+                "start_radare2_session",
+                executed.value.result.completion_status === "unknown"
+                  ? `An initial Radare2 command could not complete (output or frame limit reached): ${initialCommand}`
+                  : `An initial Radare2 command reported an error: ${executed.value.result.command_logs.map((log) => log.message).join("; ") || executed.value.result.command}`,
+                { partialObservation: executed.value.evidence },
+              );
+              return closed === undefined || closed.ok
+                ? err(failure)
+                : err(
+                    // A failed close keeps the engine owned; binding the
+                    // manager-retained failure lets a verified retry clear
+                    // this wrapper's cleanup status too.
+                    analysisErrorWithCleanupDependencies(
+                      failure,
+                      closed.error,
+                      "start_radare2_session",
+                    ),
+                  );
+            }
+            return ok({
+              value: started.value,
+              retained: { session_id: started.value.session_id },
+            });
+          },
+        },
+      },
+      radare2_command: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "evidence",
+          retryCleanup,
+          run: async (input, signal) => {
+            const executed = await manager.execute(
+              input.session_id,
+              input.command,
+              signal,
+            );
+            return executed.ok ? ok(executed.value.evidence) : executed;
+          },
+        },
+      },
+      radare2_session_status: {
+        admission: "sdk",
+        value: async (input) => {
+          const status = manager.status(input.session_id);
+          return status === undefined
+            ? err(
+                unknownDebuggerSessionError(
+                  RADARE2_SESSION_TOOLS,
+                  "radare2_session_status",
+                ),
+              )
+            : ok({ ...status, recent_output: [...status.recent_output] });
+        },
+      },
+      close_radare2_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "owned-cleanup",
+          resource: (input) => input.session_id,
+          run: (input) => manager.close(input.session_id),
+        },
+      },
+    };
+  }) satisfies Bind<Radare2SessionToolOptions>,
   // Starting GDB may load a selected file without running it, outside mutation admission; a console
   // command may change the bound artifact and runs under external-mutation
   // admission, keeping a failed cleanup owned for the next retry.

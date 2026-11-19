@@ -136,7 +136,9 @@ describe("MCP doctor help boundary", () => {
       }
     },
   );
+});
 
+describe("MCP doctor help boundary: option placement", () => {
   workspaceCliTest(
     "treats help consumed as --format value as an invalid format, not help",
     async ({ cli }) => {

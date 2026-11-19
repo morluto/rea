@@ -1,12 +1,13 @@
 import { spawnFailure } from "../support/process/spawnFailure.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../src/domain/result.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
@@ -44,6 +45,28 @@ it("uses provider profiles supplied through the application port", async () => {
           arguments: ["--injected", path],
           repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Injected Rizin", version: null },
+        }),
+      radare2: () =>
+        ok({
+          executable: "injected-radare2",
+          arguments: ["--injected", path],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.radare2",
+            name: "Injected Radare2",
+            version: null,
+          },
+        }),
+      radiff2: () =>
+        ok({
+          executable: "injected-radiff2",
+          arguments: ["--injected", path],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.radiff2",
+            name: "Injected radiff2",
+            version: null,
+          },
         }),
     },
     runOwned: run,
@@ -97,6 +120,28 @@ it("does not reintroduce ambient variables absent from the captured provider env
           repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Captured Rizin", version: null },
         }),
+      radare2: () =>
+        ok({
+          executable: "captured-radare2",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.radare2",
+            name: "Captured Radare2",
+            version: null,
+          },
+        }),
+      radiff2: () =>
+        ok({
+          executable: "captured-radiff2",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: {
+            id: "test.radiff2",
+            name: "Captured radiff2",
+            version: null,
+          },
+        }),
     },
     runOwned: run,
   });
@@ -139,6 +184,20 @@ it("projects missing and non-file objdump targets with actionable path reasons",
           arguments: [path],
           repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
+        }),
+      radare2: ({ path }) =>
+        ok({
+          executable: "unused-radare2",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.radare2", name: "Test Radare2", version: null },
+        }),
+      radiff2: () =>
+        ok({
+          executable: "unused-radiff2",
+          arguments: [missing],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.radiff2", name: "Test radiff2", version: null },
         }),
     },
     runOwned: run,
@@ -218,6 +277,20 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
           repair: fixtureCommandRepair,
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
+      radare2: () =>
+        ok({
+          executable: "unused-radare2",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.radare2", name: "Test Radare2", version: null },
+        }),
+      radiff2: () =>
+        ok({
+          executable: "unused-radiff2",
+          arguments: [path],
+          repair: fixtureCommandRepair,
+          identity: { id: "test.radiff2", name: "Test radiff2", version: null },
+        }),
     },
     runOwned: run,
   });
@@ -288,6 +361,28 @@ it.each([
             repair: fixtureCommandRepair,
             identity: { id: "test.rizin", name: "Test Rizin", version: null },
           }),
+        radare2: () =>
+          ok({
+            executable: "unused-radare2",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: {
+              id: "test.radare2",
+              name: "Test Radare2",
+              version: null,
+            },
+          }),
+        radiff2: () =>
+          ok({
+            executable: "unused-radiff2",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: {
+              id: "test.radiff2",
+              name: "Test radiff2",
+              version: null,
+            },
+          }),
       },
       runOwned: run,
     });
@@ -347,7 +442,28 @@ it.each([
         signal === undefined ? {} : { signal },
       ),
     command: "rizin",
-    reason: { lookup_failure: "invalid_pathext", pathext_entry: "C:\\bad" },
+  },
+  {
+    operation: "execute_radare2_command",
+    environment: { PATH: "", REA_R2_COMMAND: "rea-missing-r2" },
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.executeRadare2Command(
+        { path: "artifact", command: "iI" },
+        signal === undefined ? {} : { signal },
+      ),
+    command: "rea-missing-r2",
+    reason: { lookup_failure: "not_found" },
+  },
+  {
+    operation: "compare_with_radiff2",
+    environment: { PATH: "", REA_RADIFF2_COMMAND: "rea-missing-radiff2" },
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.compareWithRadiff2(
+        { path_a: "a", path_b: "b", operation: "bytes" },
+        signal === undefined ? {} : { signal },
+      ),
+    command: "rea-missing-radiff2",
+    reason: { lookup_failure: "not_found" },
   },
 ])(
   "refuses $operation on Windows when the bare command is not found on PATH, launching nothing",
@@ -400,7 +516,12 @@ it("reports a launch refusal with the repair the command port names", async () =
     identity: { id: "test.fixture", name: "Fixture", version: null },
   };
   const service = new ReverseEngineeringService({
-    commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+    commands: {
+      objdump: () => ok(profile),
+      rizin: () => ok(profile),
+      radare2: () => ok(profile),
+      radiff2: () => ok(profile),
+    },
     runOwned: async (spawn) => {
       throw spawnFailure("ENOENT", spawn.command);
     },
@@ -426,4 +547,100 @@ it("reports a launch refusal with the repair the command port names", async () =
   } finally {
     await service.close();
   }
+});
+
+it("builds the default radare2 provider profile", () => {
+  const port = createReverseEngineeringCommandPort({}, "linux");
+  const profile = port.radare2({ path: "a", command: "iI" });
+  expect(profile.ok).toBe(true);
+  if (!profile.ok) throw new Error("expected a resolved profile");
+  expect(profile.value.executable).toBe("radare2");
+  expect(profile.value.arguments).toEqual([
+    "-N",
+    "-q",
+    "-e",
+    "scr.color=0",
+    "-e",
+    "scr.utf8=0",
+    "-c",
+    "iI",
+    resolve("a"),
+  ]);
+  expect(profile.value.identity).toEqual({
+    id: "radare2",
+    name: "Radare2",
+    version: null,
+  });
+  expect(profile.value.environmentOverrides).toBeUndefined();
+});
+
+it("resolves the radare2 executable from REA_R2_COMMAND", () => {
+  const port = createReverseEngineeringCommandPort(
+    { REA_R2_COMMAND: "/selected/r2" },
+    "linux",
+  );
+  const selected = port.radare2({ path: "a", command: "ij" });
+  expect(selected.ok && selected.value.executable).toBe("/selected/r2");
+});
+
+it("keeps the radare2 profile free of environment overrides", () => {
+  const port = createReverseEngineeringCommandPort(
+    { PATH: "/selected/bin" },
+    "linux",
+  );
+  const profile = port.radare2({ path: "a", command: "ij" });
+  expect(profile.ok && profile.value.environmentOverrides).toBeUndefined();
+});
+
+it("exposes execute_radare2_command with the same authority as the rizin tool", () => {
+  const contract = (name: string) =>
+    REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+      (candidate) => candidate.name === name,
+    );
+  expect(contract("execute_radare2_command")).toBeDefined();
+  expect(contract("execute_radare2_command")?.effects).toEqual(
+    contract("execute_rizin_command")?.effects,
+  );
+});
+
+it("builds the radiff2 provider profile for function and byte diffs", () => {
+  const port = createReverseEngineeringCommandPort({}, "linux");
+  const functions = port.radiff2({
+    path_a: "a",
+    path_b: "b",
+    operation: "functions",
+  });
+  expect(functions.ok).toBe(true);
+  if (!functions.ok) throw new Error("expected a resolved profile");
+  expect(functions.value.executable).toBe("radiff2");
+  expect(functions.value.arguments).toEqual([
+    "-Cj",
+    "-A",
+    resolve("a"),
+    resolve("b"),
+  ]);
+  expect(functions.value.identity).toEqual({
+    id: "radiff2",
+    name: "radiff2",
+    version: null,
+  });
+  const bytes = port.radiff2({ path_a: "a", path_b: "b", operation: "bytes" });
+  expect(bytes.ok && bytes.value.arguments).toEqual([
+    "-A",
+    resolve("a"),
+    resolve("b"),
+  ]);
+});
+
+it("resolves the radiff2 executable from REA_RADIFF2_COMMAND", () => {
+  const port = createReverseEngineeringCommandPort(
+    { REA_RADIFF2_COMMAND: "/selected/radiff2" },
+    "linux",
+  );
+  const selected = port.radiff2({
+    path_a: "a",
+    path_b: "b",
+    operation: "bytes",
+  });
+  expect(selected.ok && selected.value.executable).toBe("/selected/radiff2");
 });

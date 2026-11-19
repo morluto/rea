@@ -141,6 +141,13 @@ export const RIZIN_DEBUG_SESSION_TOOLS = {
   close: "close_rizin_debug_session",
 } as const satisfies DebuggerSessionTools;
 
+export const RADARE2_SESSION_TOOLS = {
+  providerId: "radare2",
+  name: "Radare2",
+  start: "start_radare2_session",
+  close: "close_radare2_session",
+} as const satisfies DebuggerSessionTools;
+
 export const GDB_SESSION_TOOLS = {
   providerId: "gdb",
   name: "GDB",
