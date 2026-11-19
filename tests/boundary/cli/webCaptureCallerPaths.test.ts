@@ -1,7 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   protobufCaptureDescriptor,
@@ -79,23 +79,13 @@ cliTest(
       descriptor_set_path: "./capture.pb",
     });
     expect(JSON.stringify(summaryExcluded.json)).not.toContain("capture.har");
-    const applicationSummary = parseEvidence(
-      (
-        (await publishCliAnalysisEvidence(
-          { ok: true, value: safe },
-          {
-            operation: safe.operation,
-            signal: new AbortController().signal,
-            detail: "summary",
-            evidenceOutput: join(cwd, "application-evidence.json"),
-          },
-        )) as { summary: unknown }
-      ).summary,
-    );
-    expect(applicationSummary.caller_input_path).toBeUndefined();
-    expect(applicationSummary.caller_input_paths).toEqual({
-      descriptor_set_path: "./capture.pb",
-    });
+    const published = await readFile(join(cwd, "safe-evidence.json"), "utf8");
+    expect(published).not.toContain("capture.har");
+    const { records } = parseEvidenceBundle(JSON.parse(published));
+    expect(records).toHaveLength(1);
+    const [parent] = records;
+    expect(parent).toEqual(safe);
+    expect(summary.evidence_links).toEqual([parent!.evidence_id]);
     const descriptorExcluded = await cli.run({
       cwd,
       arguments: [...args, "--sensitive-value", "capture.pb"],

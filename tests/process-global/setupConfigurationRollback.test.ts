@@ -156,7 +156,7 @@ import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { systemUninstallHost } from "../../src/application/Uninstall.js";
 import { ConfigurationError } from "../../src/domain/configurationErrors.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 const ownReadHandle = async (path: string) => {
   const owner = new OwnedFileHandle(await open(path, "r"));

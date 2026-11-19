@@ -21,7 +21,7 @@ export const readFieldDefinitionRow = (
   return {
     token: metadataToken(4, row),
     rowOffset: cursor.start,
-    flags: cursor.readUInt16(),
+    flags: cursor.u16(),
     nameIndex: cursor.readIndex(layout.stringIndexSize),
     signatureIndex: cursor.readIndex(layout.blobIndexSize),
   };

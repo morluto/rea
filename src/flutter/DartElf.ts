@@ -13,8 +13,9 @@ import {
 } from "../domain/elfHashSymbolCount.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
-import { readElfSymbol } from "../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../domain/elfSymbol.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
+import { validateElfSectionTableFields } from "../domain/elfDeclaredRanges.js";
 import { Buffer } from "node:buffer";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { createElfLoadMap } from "./ElfLoadMap.js";
@@ -116,6 +117,8 @@ export const readElfHeader = (
     return { failure: { reason: "unsupported ELF type" } };
   const raw = readElfRawTableDeclarations(bytes, fixedHeader.value);
   if (!raw.ok) return { failure: { reason: raw.error.message } };
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return { failure: { reason: sectionTable.error } };
   const { programs, sections } = raw.value;
   const e_shoff =
     sections.offset <= BigInt(Number.MAX_SAFE_INTEGER)
@@ -213,7 +216,7 @@ export const readElfSymbols = async (
     e_phnum,
   } = parsed.header;
   const reader = new BoundedReader(bytes);
-  const entrySize = is64 ? 24 : 16;
+  const entrySize = elfSymbolSize(is64 ? 64 : 32);
   const segments: { vaddr: number; offset: number; filesz: number }[] = [];
   let dynamicSegment: { offset: number; filesz: number } | null = null;
   for (let index = 0; index < e_phnum; index += 1) {

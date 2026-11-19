@@ -93,8 +93,8 @@ export const transferablePublicKeys = (
 
 /**
  * What to keep of a key file whose key verified a release: the file as it is
- * when it holds one key, or else only the transferable key with the
- * verifying primary fingerprint, so the bundle trusts no other key.
+ * when it holds one key block, or else every transferable version with the
+ * verifying primary fingerprint, so the bundle trusts no other primary key.
  */
 export const verifyingKey = (
   file: Buffer,
@@ -111,10 +111,15 @@ export const verifyingKey = (
     return err("REA could not split the key file into OpenPGP keys");
   if (keys.length === 1)
     return ok({ bytes: file, format: armored ? "armored" : "binary" });
-  const key = keys.find((each) => each.fingerprint === primaryFingerprint);
-  return key === undefined
+  const matching = keys.filter(
+    (each) => each.fingerprint === primaryFingerprint,
+  );
+  return matching.length === 0
     ? err(
         `the key file holds ${String(keys.length)} keys and REA found none with the verifying fingerprint ${primaryFingerprint}`,
       )
-    : ok({ bytes: Buffer.from(key.bytes), format: "binary" });
+    : ok({
+        bytes: Buffer.concat(matching.map((key) => key.bytes)),
+        format: "binary",
+      });
 };

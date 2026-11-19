@@ -17,7 +17,12 @@
  * names decoded.
  */
 import { boundedList } from "../boundedList.js";
+import { BinaryReader } from "../binaryContainer.js";
 import { type Result, err, ok } from "../result.js";
+import {
+  ZIP_CENTRAL_HEADER,
+  readZipCentralExtent,
+} from "../zip/zipCentralHeader.js";
 import {
   canonicalNameHash,
   compareCanonicalNames,
@@ -35,9 +40,6 @@ import {
   startsWithV1MetaInfPrefix,
   v1SignatureFileNameForBlock,
 } from "./apkV1MetadataName.js";
-
-const CD_SIGNATURE = 0x02014b50;
-const CD_FIXED_SIZE = 46;
 
 export type ApkCentralDirectoryError =
   | {
@@ -263,7 +265,6 @@ export const centralDirectoryV1SignatureEntries = (
   totalEntries: number,
   apksigRecords: number = totalEntries,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = centralDirectoryOffset + centralDirectorySize;
   if (
     !Number.isSafeInteger(end) ||
@@ -276,39 +277,43 @@ export const centralDirectoryV1SignatureEntries = (
       offset: centralDirectoryOffset,
       detail: "declared central-directory extent is outside the file",
     });
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
   // A record takes at least its fixed bytes, so the walk fails before a
   // declared count past this capacity is reached.
   const capacity = Math.min(
     totalEntries,
-    Math.max(0, Math.floor((end - centralDirectoryOffset) / CD_FIXED_SIZE)),
+    Math.max(
+      0,
+      Math.floor((end - centralDirectoryOffset) / ZIP_CENTRAL_HEADER.bytes),
+    ),
   );
   const starts = new Uint32Array(capacity);
   const lengths = new Uint16Array(capacity);
   const entries: ApkV1Entry[] = [];
   let at = centralDirectoryOffset;
   for (let i = 0; i < totalEntries; i += 1) {
-    if (at + CD_FIXED_SIZE > end)
+    const extent = readZipCentralExtent(reader, at, end);
+    if (!extent.ok) {
+      const { kind, offset } = extent.error;
+      const detail = {
+        "fixed-fields": `central directory ends after ${String(i)} of ${String(totalEntries)} records`,
+        signature: "central-directory record signature mismatch",
+        name: "central-directory file name runs past the directory",
+        "extra-or-comment":
+          "central-directory extra field or comment runs past the directory",
+      }[kind];
       return err({
         kind: "malformed-central-directory",
-        offset: at,
-        detail: `central directory ends after ${String(i)} of ${String(totalEntries)} records`,
+        offset,
+        detail,
       });
-    if (dv.getUint32(at, true) !== CD_SIGNATURE)
-      return err({
-        kind: "malformed-central-directory",
-        offset: at,
-        detail: "central-directory record signature mismatch",
-      });
-    const nameLength = dv.getUint16(at + 28, true);
-    const extraLength = dv.getUint16(at + 30, true);
-    const commentLength = dv.getUint16(at + 32, true);
-    const nameStart = at + CD_FIXED_SIZE;
-    if (nameStart + nameLength > end)
-      return err({
-        kind: "malformed-central-directory",
-        offset: nameStart,
-        detail: "central-directory file name runs past the directory",
-      });
+    }
+    const { name: nameStart, extra, next } = extent.value;
+    const nameLength = extra - nameStart;
     starts[i] = nameStart;
     lengths[i] = nameLength;
     if (startsWithV1MetaInfPrefix(bytes, nameStart, nameLength)) {
@@ -324,16 +329,18 @@ export const centralDirectoryV1SignatureEntries = (
         entries.push({
           name,
           rawName,
-          flags: dv.getUint16(at + 8, true),
-          method: dv.getUint16(at + 10, true),
-          crc32: dv.getUint32(at + 16, true),
-          compressedSize: dv.getUint32(at + 20, true),
-          uncompressedSize: dv.getUint32(at + 24, true),
-          localHeaderOffset: dv.getUint32(at + 42, true),
+          flags: reader.u16(at + 8),
+          method: reader.u16(at + 10),
+          crc32: reader.u32(at + 16),
+          compressedSize: reader.u32(at + 20),
+          uncompressedSize: reader.u32(at + 24),
+          localHeaderOffset: reader.u32(
+            at + ZIP_CENTRAL_HEADER.localHeaderOffset,
+          ),
         });
       }
     }
-    at = nameStart + nameLength + extraLength + commentLength;
+    at = next;
   }
   // An under-declared record count would silently hide entries (and so v1
   // signing): the walk must consume exactly the declared directory.

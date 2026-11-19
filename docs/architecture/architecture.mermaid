@@ -2,7 +2,7 @@ graph TD
     %% Selected layer owners and dependency/wiring paths, not a directory or import inventory.
     %% Current deep-provider candidates are wired in src/composition/binary.ts.
     %% Layers, innermost first: kernel (src/kernel/: dependency-free helpers such as
-    %% errorMessage), domain, contracts, foundation, ports (src/ports/:
+    %% errorMessage and Node codec-result decoding), domain, contracts, foundation, ports (src/ports/:
     %% interfaces providers implement), providerCore (src/providers/: the shared
     %% provider core), providers, application, composition, adapters. An import may point to the same or an
     %% inner layer. scripts/lib/module-layers.mjs declares the layer of every
@@ -77,7 +77,7 @@ graph TD
 
         ANDROID_TOOLS["src/adb/ + src/apktool/ + src/jeb/<br/>BYO device, resource-decoding and JEB adapters<br/>owned adb and Apktool processes; JEB engine client over MCP"]
         CAPTURE_TOOLS["src/captures/ + src/pcap/ + src/signals/ + src/sqlite/<br/>BYO tshark, pcap, sigrok and SQLite child inspection<br/>selected captures, recordings and databases; owned processes"]
-        NATIVE_READERS["src/go/ + src/rust/ + src/il2cpp/ + src/flutter/ + src/gpu/<br/>Bundled in-process binary metadata readers<br/>Go build info, Rust dependencies, IL2CPP, Dart build ID, GPU code objects<br/>src/compression/: shared codec-result helper for rust and gpu"]
+        NATIVE_READERS["src/go/ + src/rust/ + src/il2cpp/ + src/flutter/ + src/gpu/<br/>Bundled in-process binary metadata readers<br/>Go build info, Rust dependencies, IL2CPP, Dart build ID, GPU code objects"]
         FORMAT_READERS["src/model/ + src/python/ + src/erlang/ + src/electron/<br/>Bundled in-process format readers<br/>GGUF and safetensors headers, Python .pyc, Erlang BEAM, Electron fuses"]
         RUNTIME["src/frida/ + src/cutter/<br/>Frida instrumentation sessions and live Cutter bridge client"]
     end

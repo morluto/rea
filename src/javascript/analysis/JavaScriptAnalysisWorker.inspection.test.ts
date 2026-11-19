@@ -239,6 +239,8 @@ it.each(["cancelled", "physical"] as const)(
       const error = primaryAnalysisError(result.error.error);
       const deadline = {
         _tag: "AnalysisTimeoutError",
+        related: { parameters: ["source_paths"] },
+        remediationAction: expect.not.stringContaining("--source-path"),
         limit: expect.objectContaining({
           setting: "javascript.analysis_timeout_ms",
           effective_value: 20,

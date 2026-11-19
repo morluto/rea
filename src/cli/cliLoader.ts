@@ -22,17 +22,18 @@ const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
 /**
  * The registrars the command these arguments run needs, or undefined when the
  * complete CLI must answer, as it does for shell completion, which has no
- * global arguments. A standalone `--version` needs none: Incur answers
- * it from the CLI identity alone. Help, schemas, `--llms`, completions, other
- * Incur builtins, unknown names ("did you mean"), and a missing or unusable
+ * global arguments. A standalone version or retired per-command MCP query
+ * needs no registrar. Help, schemas, `--llms`, completions, other
+ * CLI builtins, unknown names ("did you mean"), and a missing or unusable
  * recording all describe or search every command.
  */
-export const selectCliRegistrations = (
+const selectCliRegistrations = (
   global: CliGlobalArguments | undefined,
   recorded: Readonly<Record<string, string>> | undefined,
 ): readonly CliCommandRegistrationId[] | undefined => {
   if (global === undefined) return undefined;
   const { command, flags } = global;
+  if (flags.has("--mcp") && command.length > 0) return [];
   if (command.length === 0 && flags.size === 1 && flags.has("--version"))
     return [];
   if (recorded === undefined) return undefined;
@@ -54,8 +55,8 @@ export interface CliRuntime {
 
 /**
  * Load the command runtime for one invocation. A recorded top-level command
- * loads only its registrar's module graph, a standalone version query loads
- * none, and anything else loads the complete CLI.
+ * loads only its registrar's module graph. A standalone version or retired
+ * mode query loads none; anything else loads the complete CLI.
  */
 export const loadCliRuntime = async (
   global: CliGlobalArguments | undefined,

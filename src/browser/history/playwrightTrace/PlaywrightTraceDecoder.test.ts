@@ -391,6 +391,11 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(projectAnalysisError(result.error).details).toMatchObject({
       refusal: { limit: 131072, unit: "parser nodes" },
+      reported_limits: {
+        boundary: "parser-nodes",
+        maximum: 131072,
+        parser_nodes: 131072,
+      },
     });
     expect(resources.hasPending).toBe(false);
   } finally {

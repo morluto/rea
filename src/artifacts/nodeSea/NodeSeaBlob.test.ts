@@ -148,6 +148,50 @@ it("rejects impossible asset rows before applying resource admission", async () 
 });
 
 it.each([
+  {
+    field: "asset_count" as const,
+    bytes: buildNodeSeaBlob({
+      assets: [
+        { name: "a", body: "" },
+        { name: "b", body: "" },
+      ],
+      execArgv: ["x"],
+    }),
+    missingBytes: 17,
+  },
+  {
+    field: "asset_name_bytes" as const,
+    bytes: buildNodeSeaBlob({ assets: [{ name: "asset-name", body: "" }] }),
+    missingBytes: 8,
+  },
+  {
+    field: "argument_bytes" as const,
+    bytes: buildNodeSeaBlob({ execArgv: ["argument", ""] }),
+    missingBytes: 8,
+  },
+])(
+  "reports missing mandatory framing before $field capacity",
+  async ({ field, bytes, missingBytes }) => {
+    const limits = { ...DEFAULT_NODE_SEA_READER_LIMITS, [field]: 1 };
+    await expect(
+      decodeNodeSeaBlob(bytes.subarray(0, -missingBytes), undefined, limits),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(/Node SEA.*truncated/iu),
+    });
+    await expect(
+      decodeNodeSeaBlob(bytes, undefined, limits),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: {
+        parameter: `artifact_limits.node_sea.${field}`,
+        effective_value: 1,
+      },
+    });
+  },
+);
+
+it.each([
   { field: "asset_count" as const, limit: 1, raised: 2 },
   { field: "asset_name_bytes" as const, limit: 2, raised: 3 },
   { field: "argument_count" as const, limit: 1, raised: 2 },

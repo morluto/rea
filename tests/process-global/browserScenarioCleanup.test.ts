@@ -1,5 +1,5 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { EventEmitter } from "node:events";
-import { Cli } from "incur";
 import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -158,7 +158,7 @@ it("waits for a slow but successful browser close before removing its profile", 
 });
 
 const serveScenario = async () => {
-  const cli = Cli.create("browser-cleanup-test", { sync: false });
+  const cli = createCommandCli();
   registerBrowserScenarioCommands(cli, silentLogger, {});
   let stdout = "";
   let exitCode = 0;

@@ -62,55 +62,69 @@ export const registerEvidenceCommands = (
         }),
       ),
   });
-  registerCliCommand(cli, CLI_COMMANDS.compare, {
-    description:
-      "Compare two canonical Evidence bundles by record identity; use compare-artifacts for artifact inventory contents",
-    args: z.object({
-      left: localPathStringSchema.describe("Left Evidence bundle JSON path"),
-      right: localPathStringSchema.describe("Right Evidence bundle JSON path"),
-    }),
-    options: z.object({
-      record_pairs: z
-        .string()
-        .optional()
-        .describe(
-          "Inline JSON array or local JSON file of left_evidence_id/right_evidence_id pairs",
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.compare,
+    {
+      description:
+        "Compare two canonical Evidence bundles by record identity; use compare-artifacts for artifact inventory contents",
+      args: z.object({
+        left: localPathStringSchema.describe("Left Evidence bundle JSON path"),
+        right: localPathStringSchema.describe(
+          "Right Evidence bundle JSON path",
         ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "compare", async () => {
-          const decoded =
-            options.record_pairs === undefined
-              ? { ok: true as const, value: [] }
-              : await parseCliJsonInput(
-                  options.record_pairs,
+      }),
+      options: z.object({
+        record_pairs: z
+          .string()
+          .optional()
+          .describe(
+            "Inline JSON array or local JSON file of left_evidence_id/right_evidence_id pairs",
+          ),
+      }),
+      run: ({ args, options }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, "compare", async () => {
+            const decoded =
+              options.record_pairs === undefined
+                ? { ok: true as const, value: [] }
+                : await parseCliJsonInput(
+                    options.record_pairs,
+                    "compare_bundles",
+                    signal,
+                  );
+            if (!decoded.ok) return decoded.error;
+            const input = { record_pairs: decoded.value };
+            const selected = bundleComparisonInputSchema
+              .pick({ record_pairs: true })
+              .safeParse(input);
+            if (!selected.success)
+              return cliError(
+                analysisInputErrorFromIssues(
                   "compare_bundles",
-                  signal,
-                );
-          if (!decoded.ok) return decoded.error;
-          const input = { record_pairs: decoded.value };
-          const selected = bundleComparisonInputSchema
-            .pick({ record_pairs: true })
-            .safeParse(input);
-          if (!selected.success)
-            return cliError(
-              analysisInputErrorFromIssues(
-                "compare_bundles",
-                selected.error.issues,
-                input,
-              ),
-            );
-          const compared = await compareEvidenceBundlesCommand({
-            leftPath: args.left,
-            rightPath: args.right,
-            recordPairs: selected.data.record_pairs,
-            signal,
-          });
-          return compared.ok ? compared.value : cliError(compared.error);
-        }),
-      ),
-  });
+                  selected.error.issues,
+                  input,
+                ),
+              );
+            const compared = await compareEvidenceBundlesCommand({
+              leftPath: args.left,
+              rightPath: args.right,
+              recordPairs: selected.data.record_pairs,
+              signal,
+            });
+            return compared.ok ? compared.value : cliError(compared.error);
+          }),
+        ),
+    },
+    {
+      operations: [
+        {
+          name: "compare_bundles",
+          flags: { record_pairs: "--record_pairs" },
+        },
+      ],
+    },
+  );
 };
 
 const cliError = (error: AnalysisError): JsonValue => ({

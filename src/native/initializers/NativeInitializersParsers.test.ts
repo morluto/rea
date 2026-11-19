@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { deflateSync } from "node:zlib";
+import { riscvInitializers } from "./RiscvInitializers.fixture.js";
 import { readNativeInitializers } from "./NativeInitializersProvider.js";
 
 /** Pass-through spies on the shared mapping module, so tests can count lookups made from other modules. */
@@ -560,7 +561,7 @@ describe("ELF section content admission", () => {
 describe("ELF incomplete inputs", () => {
   it("reports an unsupported relocation machine as incomplete, not as raw zeros", async () => {
     const bytes = elf64PieInitializers();
-    bytes.writeUInt16LE(243, 18);
+    bytes.writeUInt16LE(21, 18); // EM_PPC64 remains unsupported by the pointer decoder.
     const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
@@ -674,6 +675,77 @@ describe("ELF incomplete inputs", () => {
         line.includes("exceeded the 1024-byte name budget"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("ELF section relocation extents", () => {
+  /**
+   * The relocatable fixture for `machine`, whose two slot relocations use its
+   * word-sized absolute kind, optionally with one `.rela.text` record of
+   * `type` at `offset` of the 16-byte `.text`.
+   */
+  const object = (
+    machine: number,
+    absolute: number,
+    record?: { readonly type: number; readonly offset: bigint },
+  ): Buffer => {
+    const entry = Buffer.alloc(24);
+    entry.writeBigUInt64LE(record?.offset ?? 0n, 0);
+    entry.writeBigUInt64LE((1n << 32n) | BigInt(record?.type ?? 0), 8);
+    const bytes =
+      record === undefined
+        ? elfRelocatableCtors()
+        : withExtraSections(entry, (at) => [
+            sectionHeader(4, at, 24, 4, 24, 1),
+          ]);
+    bytes.writeUInt16LE(machine, 18);
+    bytes.writeUInt32LE(absolute, 0x308);
+    bytes.writeUInt32LE(absolute, 0x320);
+    return bytes;
+  };
+  const OVERRUN =
+    "A section relocation extends beyond its target mapping; affected slots are unresolved.";
+  const facts = (report: Awaited<ReturnType<typeof read>>) => ({
+    status: report.status,
+    coverage: report.coverage.status,
+    limitations: report.limitations,
+    rows: row(report),
+  });
+
+  it.each([
+    { name: "R_X86_64_PLT32", machine: 62, absolute: 1, type: 4 },
+    { name: "R_AARCH64_JUMP26", machine: 183, absolute: 257, type: 282 },
+  ])(
+    "reports nothing for $name relocating the last four bytes of .text",
+    async ({ machine, absolute, type }) => {
+      const report = await read(
+        object(machine, absolute, { type, offset: 12n }),
+      );
+      expect(report.limitations).not.toContain(OVERRUN);
+      // The object without that record is the working comparison.
+      expect(facts(report)).toEqual(
+        facts(await read(object(machine, absolute))),
+      );
+    },
+  );
+
+  it("keeps an x86-64 object complete beside a call that ends .text", async () => {
+    const report = await read(object(62, 1, { type: 4, offset: 12n }));
+    expect(report.status).toBe("parsed");
+    expect(report.coverage.status).toBe("complete");
+  });
+
+  it.each([
+    // R_X86_64_64 writes eight bytes, four of them beyond .text.
+    { name: "an eight-byte R_X86_64_64 at offset 12", type: 1, offset: 12n },
+    // The four-byte field starts two bytes before the end of .text.
+    { name: "a four-byte R_X86_64_PLT32 at offset 14", type: 4, offset: 14n },
+    // No width is known for kind 99, so the assumed word still counts.
+    { name: "an unlisted kind at offset 12", type: 99, offset: 12n },
+  ])("reports $name as running past its section", async (record) => {
+    const report = await read(object(62, 1, record));
+    expect(report.limitations).toContain(OVERRUN);
+    expect(report.status).toBe("incomplete");
   });
 });
 
@@ -868,7 +940,9 @@ describe("ELF repeated observations", () => {
       sectionHeader(2, at + symbolsAt, rows * 24, 9, 24),
     ]);
     const report = await read(bytes);
-    expect(report.status).toBe("incomplete");
+    expect(report.status).toBe("parsed");
+    expect(report.coverage.status).toBe("complete");
+    expect(row(report)).toEqual(row(await read(elfRelocatableCtors())));
     expect(
       report.limitations.filter((line) =>
         line.includes("exceeded the 1024-byte name budget"),
@@ -973,11 +1047,12 @@ describe("ELF section lookups", () => {
     async () => {
       const base = elf64PieInitializers();
       const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
+      const sectionCount = 0xffff;
       const payload = Buffer.alloc(slots * 8);
       for (let slot = 0; slot < slots; slot += 1)
         payload.writeBigUInt64LE(0x100n, slot * 8);
       // Allocated, unnamed sections that cover every slot and target address.
-      const extra = Buffer.alloc((0xffff - 12) * 64);
+      const extra = Buffer.alloc((sectionCount - 12) * 64);
       for (let at = 0; at < extra.length; at += 64) {
         extra.writeUInt32LE(1, at + 4);
         extra.writeBigUInt64LE(2n, at + 8);
@@ -989,8 +1064,11 @@ describe("ELF section lookups", () => {
         base.subarray(0x800, 0x800 + 12 * 64),
         extra,
       ]);
-      bytes.writeBigUInt64LE(BigInt(base.length + payload.length), 40);
-      bytes.writeUInt16LE(0xffff, 60);
+      const sectionTable = base.length + payload.length;
+      bytes.writeBigUInt64LE(BigInt(sectionTable), 40);
+      // Extended section numbering stores the count in section zero's sh_size.
+      bytes.writeUInt16LE(0, 60);
+      bytes.writeBigUInt64LE(BigInt(sectionCount), sectionTable + 32);
       // The single PT_LOAD maps the whole file; DT_INIT_ARRAY moves to the payload.
       bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 32);
       bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
@@ -1496,6 +1574,126 @@ describe("ELF COPY relocations read as section records", () => {
   });
 });
 
+describe("Indexed initializer name coverage", () => {
+  it("qualifies a withheld ELF relocation import name at its entry", async () => {
+    const file = elfRelocatableCtors();
+    const name = "w".repeat(MAX_NATIVE_INITIALIZER_NAME_BYTES + 76);
+    const strings = Buffer.from("\0" + name + "\0init_b\0");
+    const bytes = Buffer.concat([file, strings]);
+    // Redirect .strtab and make the first .ctors relocation symbol undefined.
+    const strtab = 0x500 + 5 * 64;
+    bytes.writeBigUInt64LE(BigInt(file.length), strtab + 24);
+    bytes.writeBigUInt64LE(BigInt(strings.length), strtab + 32);
+    bytes.writeUInt16LE(0, 0x338 + 6);
+    bytes.writeUInt32LE(name.length + 2, 0x368);
+    const report = await read(bytes);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      total_entries: null,
+    });
+    expect(report.entries).toEqual([
+      expect.objectContaining({
+        kind: "init_array",
+        value_va: "0x8",
+        symbol: expect.objectContaining({ name: "init_b" }),
+      }),
+      expect.objectContaining({
+        kind: "ctors",
+        resolution: "unresolved_import",
+        symbol: null,
+      }),
+    ]);
+  });
+
+  it.each([
+    { address: 0x100001000n, status: "partial", total: null },
+    { address: 0x100001200n, status: "complete", total: 3 },
+  ])(
+    "qualifies a withheld Mach-O symbol at $address as $status",
+    async ({ address, status, total }) => {
+      const file = machoArm64Initializers();
+      const name = "w".repeat(MAX_NATIVE_INITIALIZER_NAME_BYTES + 76);
+      const strings = Buffer.from("\0" + name + "\0_term\0");
+      const bytes = Buffer.concat([file, strings]);
+      // Redirect LC_SYMTAB's string range and change where the first nlist points.
+      bytes.writeUInt32LE(file.length, 528);
+      bytes.writeUInt32LE(strings.length, 532);
+      bytes.writeBigUInt64LE(address, 0x3008);
+      bytes.writeUInt32LE(name.length + 2, 0x3010);
+      const report = await read(bytes);
+      expect(report.coverage).toMatchObject({
+        status,
+        total_entries: total,
+        returned_entries: 3,
+      });
+      expect(
+        report.entries.map(({ value_va, symbol }) => [
+          value_va,
+          symbol?.name ?? null,
+        ]),
+      ).toEqual([
+        ["0x100001000", null],
+        ["0x100001000", null],
+        ["0x100001100", "_term"],
+      ]);
+      expect(report.limitations).toContain(
+        "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
+      );
+    },
+  );
+
+  it.each(["ELF", "Mach-O"])(
+    "keeps a long %s name with an unverified terminator unknown",
+    async (format) => {
+      const elf = format === "ELF";
+      const original = elf ? elfRelocatableCtors() : machoArm64Initializers();
+      const prefix = Buffer.from(elf ? "\0init_b\0" : "\0_term\0");
+      const strings = Buffer.concat([
+        prefix,
+        Buffer.alloc(MAX_NATIVE_INITIALIZER_NAME_BYTES + 76, 0x77),
+      ]);
+      const bytes = Buffer.concat([original, strings]);
+      if (elf) {
+        const strtab = 0x500 + 5 * 64;
+        bytes.writeBigUInt64LE(BigInt(original.length), strtab + 24);
+        bytes.writeBigUInt64LE(BigInt(strings.length), strtab + 32);
+        bytes.writeUInt32LE(prefix.length, 0x338);
+        bytes.writeUInt16LE(0, 0x338 + 6);
+        bytes.writeUInt32LE(1, 0x368);
+      } else {
+        bytes.writeUInt32LE(original.length, 528);
+        bytes.writeUInt32LE(strings.length, 532);
+        bytes.writeUInt32LE(prefix.length, 0x3000);
+        bytes.writeBigUInt64LE(0x100001200n, 0x3008);
+        bytes.writeUInt32LE(1, 0x3010);
+      }
+      const report = await read(bytes);
+      expect(report.coverage).toMatchObject({
+        status: "unknown",
+        total_entries: null,
+      });
+      expect(report.entries.map(({ symbol }) => symbol?.name ?? null)).toEqual(
+        elf ? ["init_b", null] : [null, null, "_term"],
+      );
+      expect(report.limitations).toContain(
+        "1 symbol name(s) had no verified string-table terminator.",
+      );
+    },
+  );
+
+  it("keeps an unterminated short name at the end of the table unknown", async () => {
+    const bytes = machoArm64Initializers();
+    // End the table at the last byte of _init, before its terminator.
+    bytes.writeUInt32LE(6, 532);
+    bytes.writeUInt32LE(0, 0x3010);
+    const report = await read(bytes);
+    expect(report.coverage.status).toBe("unknown");
+    expect(report.limitations).toContain(
+      "1 symbol name(s) had no verified string-table terminator.",
+    );
+  });
+});
+
 describe("Unreadable symbol names", () => {
   it("reports an ELF name offset outside its string table as incomplete", async () => {
     const bytes = elf64PieInitializers();
@@ -1700,6 +1898,29 @@ it("reports an object-file import name over the name budget as partial coverage"
 });
 
 describe("Initializer target semantics", () => {
+  it.each([32, 64] as const)(
+    "does not interpret a defined RV%s TLS offset as an initializer address or name",
+    async (bits) => {
+      const report = await read(
+        riscvInitializers(bits, { definedSymbolIsTls: true }),
+      );
+      const slots = report.entries.filter(
+        (entry) => entry.kind === "init_array",
+      );
+      expect(slots).toHaveLength(3);
+      expect(slots[0]).toMatchObject({
+        resolution: "relative_addend",
+        value_va: "0x100",
+        symbol: null,
+      });
+      expect(slots[1]).toMatchObject({
+        resolution: "unresolved",
+        value_va: null,
+        symbol: null,
+      });
+    },
+  );
+
   it("keeps an absolute relocation against an IFUNC symbol unresolved", async () => {
     const bytes = elfRelocatableCtors();
     // `ctor` becomes a global STT_GNU_IFUNC, whose value is its resolver.

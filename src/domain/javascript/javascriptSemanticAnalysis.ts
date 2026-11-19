@@ -130,8 +130,10 @@ import {
 } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
+  javaScriptSourceLoaderCondition,
   javaScriptStrictnessAt,
   parseJavaScriptSource,
+  recoveredJavaScriptSyntaxErrorCount,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
 
@@ -310,7 +312,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   });
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
-  const parserPartial = file.errors.length > 0;
+  const parserPartial = recoveredJavaScriptSyntaxErrorCount(file.errors) > 0;
   const bindings = immutableSemanticBindings(state);
   yield;
   const callables = collectSemanticReturns(state, parserPartial);
@@ -328,8 +330,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     parserPartial,
     expressionNodeBudget,
   );
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const coverage = semanticCoverage(
-    parserPartial,
+    parserPartial || loaderCondition !== undefined,
     [
       ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
     ].sort(),
@@ -347,7 +350,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     coverage: derived.expressionFlowsTruncated
       ? { ...coverage, status: "partial", omittedCount: null }
       : coverage,
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
+      ...(loaderCondition === undefined ? [] : [loaderCondition]),
       ...(derived.expressionFlowsTruncated
         ? [
             "The offered semantic node capacity bounded expression dependencies; omitted influence remains unknown.",

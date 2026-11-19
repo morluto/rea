@@ -530,6 +530,40 @@ it("preserves command deadline timeout when macOS helper preparation aborts with
   }
 });
 
+it("keeps caller cancellation primary when macOS helper preparation is cancelled with a spawn EMFILE reason", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const reason = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const darwinError = new DarwinProcessOwnershipInspectionError(
+    "Darwin process ownership helper preparation was cancelled",
+    {
+      cause: reason,
+      cancellation: { reason },
+    },
+  );
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      throw darwinError;
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("uses platform-aware recovery without /proc when Darwin baseline capture rejects identity_snapshot_unavailable", async () => {
   const { directory } = await createArtifact();
   const command = resolve(directory, "configured-objdump");

@@ -20,6 +20,7 @@ import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
@@ -272,7 +273,8 @@ const observeGhidraJava = async (
       });
     } else if (
       preparation !== undefined &&
-      commandFailure?.reason !== "timeout"
+      commandFailure?.reason !== "timeout" &&
+      preparationHostCapacityFailure(cause) === undefined
     ) {
       primary = new ProviderAdapterError("ghidra", "ghidra:java", {
         cause,
@@ -292,7 +294,9 @@ const observeGhidraJava = async (
     } else if (cause instanceof AnalysisError) {
       primary = cause;
     }
-    const launch = launcherFailureOf(commandFailure?.processError ?? cause);
+    const launch =
+      preparationHostCapacityFailure(cause) ??
+      launcherFailureOf(commandFailure?.processError ?? cause);
     if (
       primary === undefined &&
       (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")

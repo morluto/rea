@@ -10,6 +10,7 @@ import { BYTE_ENTROPY_PROVIDER } from "../../../src/domain/investigationProvider
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
 import { CLI_COMMAND_NAMES } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { createCli } from "../../../src/cli.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { FRIDA_PROVIDER_IDENTITY } from "../../../src/frida/FridaProviderIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
@@ -125,14 +126,14 @@ describe("canonical product catalog", () => {
 });
 
 describe("canonical CLI catalog", () => {
-  it("uses the same primary command names as the actual Incur router", () => {
-    const inventory = createCliInventory(createCli());
+  it("uses the same primary command names as the REA registry", () => {
+    const inventory = createCliInventory(cliCommands(createCli()));
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     expect(inventory.aliases).toEqual([]);
   });
 
   it("describes every primary command argument and option", () => {
-    expect(cliCommandDescriptionIssues(createCli())).toEqual([]);
+    expect(cliCommandDescriptionIssues(cliCommands(createCli()))).toEqual([]);
   });
 
   it("exposes the shared provider selector on every deep-analysis command", () => {
@@ -148,12 +149,16 @@ describe("canonical CLI catalog", () => {
       "inspect-native-api",
       "search",
     ]) {
-      expect(cliCommandOptionNames(cli, name)).toContain("provider");
+      expect(cliCommandOptionNames(cliCommands(cli), name)).toContain(
+        "provider",
+      );
     }
   });
 
   it("does not impose a private result limit on feature tracing", () => {
-    expect(cliCommandOptionNames(createCli(), "trace")).not.toContain("limit");
+    expect(
+      cliCommandOptionNames(cliCommands(createCli()), "trace"),
+    ).not.toContain("limit");
   });
 });
 

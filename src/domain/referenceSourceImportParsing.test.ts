@@ -57,3 +57,87 @@ it("keeps declaration-level imports when the member-mutation phase is refused", 
     ),
   ).toHaveLength(1);
 });
+
+it.each([
+  ["main.mjs", "commonjs", true],
+  ["main.js", "module", true],
+  ["main.cjs", "module", true],
+  ["main.js", "commonjs", true],
+  ["main.mts", "commonjs", true],
+  ["main.cts", "module", true],
+  ["main.ts", "commonjs", true],
+  ["main.tsx", "module", true],
+  ["main.TSX", "module", true],
+  ["main.jsx", "commonjs", true],
+  [".js", "module", true],
+  [".mjs", "module", true],
+  [".mjs", "commonjs", true],
+  [".js", "commonjs", true],
+  [".cjs", "module", true],
+  [".CJS", "module", true],
+  [".JS", "module", true],
+  [".MJS", "module", true],
+  [".cjs", "commonjs", true],
+] as const)(
+  "retains the loader's BOM/hashbang semantics for %s (%s)",
+  (path, packageType, valid) => {
+    const esm =
+      (path.endsWith(".mjs") && path !== ".mjs") ||
+      path.endsWith(".mts") ||
+      path.endsWith(".jsx") ||
+      (path.startsWith(".") && packageType === "module") ||
+      (!path.endsWith(".cjs") &&
+        !path.endsWith(".cts") &&
+        packageType === "module");
+    const statement = esm ? 'import "./dep.mjs";' : 'require("./dep.cjs");';
+    const parsed = parseReferenceSourceImports(
+      path,
+      Buffer.from(`\uFEFF#!/usr/bin/env node\n${statement}`),
+      path.endsWith("js") ? "JavaScript" : "TypeScript",
+      packageType,
+    );
+    if (valid) {
+      expect(parsed.parse_failures).toEqual([]);
+      expect(parsed.relationships).toMatchObject([
+        {
+          to: esm ? "./dep.mjs" : "./dep.cjs",
+          parse_state:
+            path.startsWith(".") ||
+            path === "main.cjs" ||
+            (path === "main.js" && packageType === "commonjs")
+              ? "partial"
+              : "parsed",
+        },
+      ]);
+    } else {
+      expect(parsed.parse_failures).toHaveLength(1);
+      expect(parsed.relationships).toEqual([]);
+    }
+  },
+);
+
+it.each([
+  ["main.js", "unknown"],
+  ["main.js", "unspecified"],
+  [".cjs", "unknown"],
+  [".js", "unspecified"],
+] as const)(
+  "retains a conditional dependency without a strict-mode error for %s in a %s package",
+  (path, mode) => {
+    const parsed = parseReferenceSourceImports(
+      path,
+      Buffer.from(
+        '\uFEFF#!/usr/bin/env node\nwith ({}) {}\nrequire("./dep.cjs");',
+      ),
+      "JavaScript",
+      mode,
+    );
+    expect(parsed.parse_failures).toEqual([]);
+    expect(parsed.relationships).toMatchObject([
+      { to: "./dep.cjs", parse_state: "partial" },
+    ]);
+    expect(parsed.limitations).toContainEqual(
+      expect.stringContaining("package loader mode is unknown"),
+    );
+  },
+);

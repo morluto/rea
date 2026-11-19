@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import { createEvidence } from "../../domain/evidence.js";
-import type { DesktopStateReaders } from "./DesktopApplicationState.js";
+import { runDesktopTaskReader } from "../../desktop/DesktopCaptureProvider.js";
+import type { DesktopExportReaders } from "./DesktopApplicationExport.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
@@ -285,7 +286,7 @@ export const writeCaptureFolder = async (
 };
 
 /** A SQLite reader that reports one row per retained version's last byte. */
-export const readers: DesktopStateReaders = {
+export const readers: DesktopExportReaders = {
   sqlite: async (database) => {
     // A staged write-ahead log, when present, decides the version instead.
     const log = await readFile(`${database}-wal`, "latin1").catch(
@@ -313,4 +314,5 @@ export const readers: DesktopStateReaders = {
     };
   },
   dconf: async () => ({ ok: false, error: "unused" }),
+  taskReader: runDesktopTaskReader,
 };

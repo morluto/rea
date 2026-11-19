@@ -236,6 +236,29 @@ describe("portable PE resource parsing", () => {
   });
 });
 
+it.each([false, true])(
+  "rejects descending numeric sibling IDs without sorting the resource tree (PE32+ = %s)",
+  async (plus) => {
+    const { bytes, directoryOffsets } = peResourceFixture(plus, [
+      { type: 10, name: 4, language: 1, payload: Buffer.from("a") },
+      { type: 10, name: 9, language: 1, payload: Buffer.from("b") },
+    ]);
+    const ordered = await parse(bytes);
+    expect(ordered.resources.map(({ name }) => name)).toEqual([
+      { kind: "id", id: 4 },
+      { kind: "id", id: 9 },
+    ]);
+    const nameDirectory = directoryOffsets[1];
+    if (nameDirectory === undefined) throw new Error("Missing name directory");
+    bytes.writeUInt32LE(9, nameDirectory + 16);
+    bytes.writeUInt32LE(4, nameDirectory + 24);
+    await expect(parse(bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: "PE resource directory numeric IDs are out of order.",
+    });
+  },
+);
+
 describe("PE header admission and bounded traversal", () => {
   it.each([
     [
@@ -584,7 +607,7 @@ describe("PE resource ownership boundaries", () => {
 
 const probeSeaName = (bytes: Buffer) =>
   hasPeResourceName(
-    bytes,
+    bytes.subarray(0, 64),
     bytes.length,
     async (offset, length) =>
       offset < 0 || length > bytes.length - offset
@@ -595,9 +618,9 @@ const probeSeaName = (bytes: Buffer) =>
     4096,
   );
 
-const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB") =>
+const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB", maxEntries = 4096) =>
   locatePeResourcePayloads(
-    bytes,
+    bytes.subarray(0, 64),
     bytes.length,
     async (offset, length) =>
       offset < 0 || length > bytes.length - offset
@@ -605,7 +628,7 @@ const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB") =>
         : bytes.subarray(offset, offset + length),
     10,
     name,
-    4096,
+    maxEntries,
   );
 
 it("locates every language payload of a named resource with the bounded walk", async () => {
@@ -639,6 +662,69 @@ it("reports a named resource that cannot resolve to a payload as malformed", asy
   fixture.bytes.writeUInt32LE(0xffff_fff0, fixture.dataOffsets[0]!);
   await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
     kind: "malformed",
+  });
+});
+
+it("distinguishes a backed directory beyond the budget from a truncated directory", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+  ]);
+  await expect(
+    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 3),
+  ).resolves.toHaveLength(1);
+  await expect(payloadsOf(fixture.bytes, "OTHER", 2)).resolves.toEqual([]);
+  await expect(
+    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 2),
+  ).rejects.toMatchObject({
+    kind: "limit",
+    failure: { limit: { name: "max_entries", maximum: 2, required: 3 } },
+  });
+
+  const [root, , languages] = fixture.directoryOffsets;
+  if (root === undefined || languages === undefined)
+    throw new Error("Missing resource fixture directories");
+  // Keep the language directory header but exclude the first row from the resource interval.
+  fixture.bytes.writeUInt32LE(languages - root + 16, fixture.directoryAt + 4);
+  await expect(
+    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 2),
+  ).rejects.toMatchObject({
+    kind: "malformed",
+  });
+});
+
+it("keeps an out-of-interval name unresolved beside a confirmed resource", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    { type: 10, name: "OTHER", language: 1, payload: Buffer.from("b") },
+  ]);
+  const [root, names] = fixture.directoryOffsets;
+  if (root === undefined || names === undefined)
+    throw new Error("Missing resource fixture directories");
+  const otherName =
+    root + (fixture.bytes.readUInt32LE(names + 16 + 8) & 0x7fff_ffff);
+  const otherPayload = otherName + 2;
+  const locate = (name: string) =>
+    locatePeResourcePayloads(
+      fixture.bytes.subarray(0, 64),
+      fixture.bytes.length,
+      async (offset, length) => {
+        if (offset <= otherPayload && offset + length > otherPayload)
+          throw new Error(
+            "Different-length candidate should not need a name payload read",
+          );
+        return fixture.bytes.subarray(offset, offset + length);
+      },
+      10,
+      name,
+      4096,
+    );
+  await expect(locate("NODE_SEA_BLOB")).resolves.toHaveLength(1);
+
+  fixture.bytes.writeUInt16LE(65_535, otherName);
+  await expect(locate("NOT_PRESENT")).resolves.toEqual([]);
+  await expect(locate("NODE_SEA_BLOB")).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("cannot be read"),
   });
 });
 

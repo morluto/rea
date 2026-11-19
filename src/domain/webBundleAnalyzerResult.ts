@@ -61,6 +61,17 @@ export const buildCapturedWebBundleAnalysis = (
     > => result.status === "unavailable",
   );
   const accumulator = mergeScriptResults(orderedResults);
+  const semanticUnknowns = orderedResults.flatMap((result) =>
+    result.status !== "analyzed" || result.semantic_limits === undefined
+      ? []
+      : result.semantic_limits.map(({ reason, limit }) => ({
+          dimension: "javascript_analysis",
+          reason,
+          limit,
+          remediation: `Increase ${limit.parameter} on the next analysis call.`,
+          affected_script_keys: [result.script_key],
+        })),
+  );
   const attemptedScripts = orderedResults.filter(
     (result) =>
       !(result.status === "unavailable" && result.reason === "not_started"),
@@ -87,6 +98,7 @@ export const buildCapturedWebBundleAnalysis = (
   const sourceMapIncomplete =
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
   const partial =
+    semanticUnknowns.length > 0 ||
     accumulator.failedScripts.length > 0 ||
     accumulator.recoveredScripts.length > 0 ||
     accumulator.widenedScripts.length > 0 ||
@@ -173,6 +185,7 @@ export const buildCapturedWebBundleAnalysis = (
     },
     inferences: accumulator.inferences,
     unknowns: buildUnknowns({
+      semanticUnknowns,
       unavailable,
       unavailableSourceReasons,
       failedScripts: accumulator.failedScripts,
@@ -267,6 +280,7 @@ const chunkNode = (script: IncludedScript) => {
 };
 
 interface UnknownsInput {
+  readonly semanticUnknowns: WebBundleAnalysis["unknowns"];
   readonly unavailable: string[];
   readonly unavailableSourceReasons: readonly string[];
   readonly failedScripts: readonly string[];
@@ -284,6 +298,7 @@ interface UnknownsInput {
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...input.semanticUnknowns,
   ...(input.omittedScripts === undefined
     ? []
     : [
@@ -353,7 +368,7 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
         {
           dimension: "endpoints" as const,
           reason:
-            "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+            "A browser request's endpoint could not be resolved from its URL argument.",
           affected_script_keys: [
             ...new Set(
               input.unresolvedEndpoints.map(

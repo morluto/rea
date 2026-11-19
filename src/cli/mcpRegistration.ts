@@ -96,7 +96,7 @@ const precedingFlags = [
   "--incur-update-check",
 ];
 
-/** Route only the named REA registration operation; other Incur commands remain theirs. */
+/** Route only the named REA registration operation; other builtin commands keep their owners. */
 export const serveMcpRegistration = (
   global: CliGlobalArguments,
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -186,8 +186,6 @@ const createRegistrationPresentation = (
     const handled = await result?.write(value, {
       command: "mcp add",
       duration: "0ms",
-      format: output.format,
-      forceOutput: true,
       failure,
     });
     if (!handled)

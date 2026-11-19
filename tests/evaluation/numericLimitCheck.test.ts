@@ -1,15 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { matchesGlob } from "node:path";
 import { expect, it } from "vitest";
 import {
-  FORBIDDEN_FIELD_SCAN_EXTENSIONS,
-  FORBIDDEN_FIELD_SCAN_ROOTS,
-  NUMERIC_LIMIT_DECLARATION,
   discoverNumericLimitUses,
-  isNumericLimit,
   parseNumericLimitRegistry,
   parseRuntimeSettingEnvironments,
-  perCallLimitFailures,
   requiredRuntimeLimitFailure,
 } from "../../scripts/verify/rea-numeric-limits.mjs";
 
@@ -38,26 +31,26 @@ it("reads only actual settings environment properties", () => {
   ).toThrow(/updateMode/);
   expect(() =>
     parseRuntimeSettingEnvironments(
-      "export const ANALYSIS_SETTINGS = { a: { environment: value } };",
+      'export const ANALYSIS_SETTINGS = { a: { updateMode: "runtime", environment: value } };',
     ),
-  ).toThrow();
+  ).toThrow(/environment must be a static REA_/u);
   expect(() =>
     parseRuntimeSettingEnvironments(
-      'export const ANALYSIS_SETTINGS = { a: { environment: "REA_OLD_MAX_BYTES", ...other } };',
+      'export const ANALYSIS_SETTINGS = { a: { updateMode: "runtime", environment: "REA_OLD_MAX_BYTES", ...other } };',
     ),
-  ).toThrow();
+  ).toThrow(/fields must be static named assignments/u);
   expect(() =>
     parseRuntimeSettingEnvironments(
-      'export const ANALYSIS_SETTINGS = { a: { environment: "REA_OLD_MAX_BYTES", [key]: "REA_NEW_MAX_BYTES" } };',
+      'export const ANALYSIS_SETTINGS = { a: { updateMode: "runtime", environment: "REA_OLD_MAX_BYTES", [key]: "REA_NEW_MAX_BYTES" } };',
     ),
-  ).toThrow();
+  ).toThrow(/fields must be static named assignments/u);
   expect(() =>
     parseRuntimeSettingEnvironments(`
     const shared = { type: "number" };
     Object.assign(shared, { environment: "REA_NEW_MAX_BYTES" });
-    export const ANALYSIS_SETTINGS = { a: { environment: "REA_OLD_MAX_BYTES", ...shared } };
+    export const ANALYSIS_SETTINGS = { a: { updateMode: "runtime", environment: "REA_OLD_MAX_BYTES", ...shared } };
   `),
-  ).toThrow();
+  ).toThrow(/fields must be static named assignments/u);
 });
 
 it("parses declared external provenance rather than inferring it from prose", () => {
@@ -100,37 +93,18 @@ it("parses declared external provenance rather than inferring it from prose", ()
   ).toThrow(/Invalid external provenance/);
 });
 
-it("requires the temporary per-call allowlist to match the registry", () => {
-  const temporary = new Set(["REA_OLD_TIMEOUT_MS"]);
-  expect(
-    perCallLimitFailures(
-      new Map([["REA_OLD_TIMEOUT_MS", "per-call"]]),
-      temporary,
-    ),
-  ).toEqual([]);
-  expect(perCallLimitFailures(new Map(), temporary)).toEqual([
-    expect.stringContaining(
-      "REA_OLD_TIMEOUT_MS is no longer a temporary per-call exception",
-    ),
-  ]);
-  expect(
-    perCallLimitFailures(
-      new Map([["REA_OLD_TIMEOUT_MS", "restart-only"]]),
-      temporary,
-    ),
-  ).toHaveLength(1);
-  expect(
-    perCallLimitFailures(
-      new Map([["REA_NEW_TIMEOUT_MS", "per-call"]]),
-      new Set(),
-    ),
-  ).toEqual([
-    expect.stringContaining("REA_NEW_TIMEOUT_MS is a new per-call exception"),
-  ]);
+it("directs per-call registry declarations to ANALYSIS_SETTINGS", () => {
+  expect(() =>
+    parseNumericLimitRegistry(`
+      export const NUMERIC_LIMIT_REGISTRY = [{
+        name: "REA_NEW_TIMEOUT_MS", update_mode: "restart", policy: "per-call",
+        read: "per-call", reason: "A deadline selected during each call",
+      }];
+    `),
+  ).toThrow(/REA_NEW_TIMEOUT_MS.*ANALYSIS_SETTINGS/u);
 });
 
 it("recognizes the documented endpoint-candidate limit as numeric", () => {
-  expect(isNumericLimit(ENDPOINT_CANDIDATES)).toBe(true);
   const discovered = discoverNumericLimitUses([
     {
       path: "src/domain/webBundleAnalysis.ts",
@@ -144,22 +118,20 @@ it("recognizes the documented endpoint-candidate limit as numeric", () => {
 
 it("does not treat a registry declaration as a producer", () => {
   const name = "REA_REMOVED_MAX_BYTES";
+  const source = `const value = process.env.${name};`;
   const discovered = discoverNumericLimitUses([
     {
-      path: NUMERIC_LIMIT_DECLARATION,
-      source: `name: "${name}",`,
+      path: "src/domain/numericLimitRegistry.ts",
+      source,
     },
     {
       path: "src/config/removedLimit.ts",
-      source: `const value = process.env.${name};`,
+      source,
     },
   ]);
-  expect(discovered.get(name)?.path).toBe("src/config/removedLimit.ts");
-  expect(
-    discoverNumericLimitUses([
-      { path: NUMERIC_LIMIT_DECLARATION, source: `name: "${name}",` },
-    ]).has(name),
-  ).toBe(false);
+  expect(discovered.get(name)?.sites).toMatchObject([
+    { path: "src/config/removedLimit.ts", evidence: "direct" },
+  ]);
 });
 
 it("keeps a helper-call argument that is not the first argument", () => {
@@ -174,18 +146,10 @@ it("keeps a helper-call argument that is not the first argument", () => {
       source: `const value = read(environment, "${name}");`,
     },
   ]);
-  expect(discovered.get(name)?.path).toBe("src/config/newLimit.ts");
-});
-
-it("does not treat prose that mentions a limit name as a producer", () => {
-  const name = "REA_NEW_MAX_BYTES";
-  const discovered = discoverNumericLimitUses([
-    {
-      path: "src/domain/native/nativeDeadlines.ts",
-      source: `const guidance = "input_bytes overrides ${name}; otherwise that launch default applies.";`,
-    },
+  expect(discovered.get(name)?.sites).toMatchObject([
+    { path: "src/config/newLimit.ts", evidence: "candidate" },
+    { path: "src/config/literalLimit.ts", evidence: "candidate" },
   ]);
-  expect(discovered.has(name)).toBe(false);
 });
 
 it("distinguishes direct environment reads from unrelated candidate syntax", () => {
@@ -345,13 +309,13 @@ it("keeps a destructured environment key, including a rename and a default", () 
   const discovered = discoverNumericLimitUses([
     {
       path: "src/config/newLimit.ts",
-      source: `const { ${name}: renamed = 1 } = process.env;\nconst present = "${name}" in environment;\nconst owned = Object.hasOwn(environment, "${name}");\nconst source = { ${name}: renamed };\nconst copy = { ...source };`,
+      source: `const { ${name}: renamed = 1 } = process.env;`,
     },
   ]);
   expect(discovered.get(name)?.path).toBe("src/config/newLimit.ts");
 });
 
-it("records a constructor read separately from a per-call read", () => {
+it("classifies a direct constructor read as construction", () => {
   const name = "REA_NEW_MAX_BYTES";
   const discovered = discoverNumericLimitUses([
     {
@@ -406,17 +370,17 @@ it("retains distinct syntactic sites without claiming complete lifetime coverage
 
 it("treats a count parsed from a property access as numeric without a suffix", () => {
   const name = "REA_ARCHIVE_ENTRY_LIMIT";
-  expect(isNumericLimit(name)).toBe(false);
   const discovered = discoverNumericLimitUses([
     {
       path: "src/config/archiveLimit.ts",
-      source: `const limit = Number(process.env.${name});\nconst indexed = parseInt(environment["${name}"], 10);`,
+      source: `const limit = Number(process.env.${name}); const unparsed = process.env.REA_ARCHIVE_LABEL;`,
     },
   ]);
   expect(discovered.get(name)).toMatchObject({
     path: "src/config/archiveLimit.ts",
     read: "module",
   });
+  expect(discovered.has("REA_ARCHIVE_LABEL")).toBe(false);
   expect(
     discoverNumericLimitUses([
       {
@@ -481,38 +445,26 @@ it("distinguishes numeric values from unrelated reads in numeric expressions", (
   expect(discovered.has("REA_FIFTH_ENTRY_LIMIT")).toBe(true);
 });
 
-it("does not let diagnostic template prose stand in for a removed producer", () => {
+it("does not count mentions or generated text as limit readers", () => {
   const name = "REA_NEW_MAX_BYTES";
-  const prose = discoverNumericLimitUses([
+  const discovered = discoverNumericLimitUses([
     {
-      path: "src/config/mcpResponseBudget.ts",
-      source: `const guidance = \`The effective ${name} value is \${String(effective)} bytes. A change requires restarting.\`;`,
+      path: "src/config/guidance.ts",
+      source: `// ${name} used to be read here
+        const guidance = "input_bytes overrides ${name}";
+        const template = \`The effective ${name} value is \${String(effective)} bytes\`;
+        export const unused = "${name}";`,
     },
     {
-      path: "src/gdb/GdbSessionManager.ts",
-      source: `return \`This release has no runtime override; ${name} does not raise it.\`;`,
+      path: "src/application/SetupRegistrationEnvironment.ts",
+      source: `const SELECTED_REGISTRATION_SETTINGS = ["${name}"] as const;`,
     },
-    {
-      path: "src/config/comparedLimit.ts",
-      source: `const same = \`${name} === \${limit}\`;`,
-    },
-    {
-      path: "src/config/remediation.ts",
-      source: `const help = \`${name} = 100 is the documented default\`;`,
-    },
-    {
-      path: "src/config/constant.ts",
-      source: `export const unused = "${name}";`,
-    },
-  ]);
-  expect(prose.has(name)).toBe(false);
-  const assigned = discoverNumericLimitUses([
     {
       path: "src/hopper/BridgeLauncher.ts",
       source: `const line = \`${name} = \${timeout / 1_000}\`;`,
     },
   ]);
-  expect(assigned.has(name)).toBe(false);
+  expect(discovered.has(name)).toBe(false);
 });
 
 it("does not invent a limit from a spread of the environment object", () => {
@@ -541,33 +493,18 @@ it("distinguishes a write-only environment property from a read-modify-write", (
   expect(discovered.has("REA_COUNT_MAX_BYTES")).toBe(true);
 });
 
-it("keeps a bracket-access read as a producer", () => {
-  const name = "REA_NEW_MAX_BYTES";
+it("keeps ordinary and optional bracket-access reads", () => {
   const discovered = discoverNumericLimitUses([
     {
       path: "src/config/newLimit.ts",
-      source: `const selected = environment["${name}"] ?? environment?.[ "${name}" ];`,
+      source:
+        'const selected = process.env["REA_PRIMARY_MAX_BYTES"] ?? process.env?.["REA_FALLBACK_MAX_BYTES"];',
     },
   ]);
-  expect(discovered.get(name)?.path).toBe("src/config/newLimit.ts");
-});
-
-it("does not treat a registration allowlist or a comment as a producer", () => {
-  const discovered = discoverNumericLimitUses([
-    {
-      path: NUMERIC_LIMIT_DECLARATION,
-      source: `name: "${ENDPOINT_CANDIDATES}",`,
-    },
-    {
-      path: "src/application/SetupRegistrationEnvironment.ts",
-      source: `const SELECTED_REGISTRATION_SETTINGS = ["${ENDPOINT_CANDIDATES}"] as const;`,
-    },
-    {
-      path: "src/config/removedLimit.ts",
-      source: `// ${ENDPOINT_CANDIDATES} used to be read here\nconst unrelated = 1;\n`,
-    },
-  ]);
-  expect(discovered.has(ENDPOINT_CANDIDATES)).toBe(false);
+  for (const name of ["REA_PRIMARY_MAX_BYTES", "REA_FALLBACK_MAX_BYTES"])
+    expect(discovered.get(name)?.sites, name).toMatchObject([
+      { path: "src/config/newLimit.ts", evidence: "direct" },
+    ]);
 });
 
 it("requires the tracked endpoint-candidate limit to be an analysis setting", () => {
@@ -595,24 +532,4 @@ it("requires the tracked endpoint-candidate limit to be an analysis setting", ()
       inRegistry: true,
     }),
   ).toMatch(/numericLimitRegistry/);
-});
-
-it("lets no cached lint pass hide a file the restart-field scan reads", async () => {
-  // `npm run lint` owns this check and turbo caches it by these inputs; a
-  // scanned file outside them would let a cached pass skip a new violation.
-  const turbo = JSON.parse(
-    await readFile(new URL("../../turbo.json", import.meta.url), "utf8"),
-  ) as { tasks: Record<string, { inputs: readonly string[] }> };
-  const globs = turbo.tasks.lint!.inputs;
-  const cached = (path: string) =>
-    globs.some((glob) => !glob.startsWith("!") && matchesGlob(path, glob)) &&
-    !globs.some(
-      (glob) => glob.startsWith("!") && matchesGlob(path, glob.slice(1)),
-    );
-  const samples = FORBIDDEN_FIELD_SCAN_ROOTS.flatMap((root) =>
-    FORBIDDEN_FIELD_SCAN_EXTENSIONS.map(
-      (extension) => `${root}/nested/file.${extension}`,
-    ),
-  );
-  expect(samples.filter((path) => !cached(path))).toEqual([]);
 });

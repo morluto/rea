@@ -37,7 +37,7 @@ audited source revision.
 `npm run fixtures:android` (`scripts/fixtures/android/fetch.mjs`) downloads the audited engine and
 Appium ApiDemos v6.0.18 into ignored `_reference/apk-integration/`. Both downloads
 are checked against fixed SHA-256 values. Fixture provenance is recorded in
-`scripts/fixtures/android-apidemos.json`; the source uses Apache-2.0. This is a
+`scripts/fixtures/android/apidemos.json`; the source uses Apache-2.0. This is a
 static analysis fixture: no emulator, device, SDK installation or app execution
 is needed. APKs and JARs are neither tracked nor included in npm packages.
 

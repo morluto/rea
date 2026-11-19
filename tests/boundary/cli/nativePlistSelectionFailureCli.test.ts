@@ -433,7 +433,10 @@ describe.skipIf(process.platform !== "darwin")(
           details: {
             operation: "inspect_plist",
             resource: "memory",
-            reported_limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
+            reported_limits: {
+              boundary: "plist-decode-bytes",
+              maximum: 64 * 1024 * 1024,
+            },
             refusal: {
               kind: "fixed_ceiling",
               allowance: "The native binary plist decode allowance",

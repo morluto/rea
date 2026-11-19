@@ -28,10 +28,7 @@ import {
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
 import { ElectronFusePathFailure } from "./ElectronFusePath.js";
-import {
-  ELECTRON_FUSE_LIMITS,
-  ElectronFuseResourceFailure,
-} from "./ElectronFuseReader.js";
+import { ElectronFuseResourceFailure } from "./ElectronFuseReader.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_electron_fuses";
@@ -81,38 +78,26 @@ export const electronFuseFailure = (
     return new AnalysisInputError(operation, { cause }, [
       { path: ["path"], reason: cause.reason, message: cause.message },
     ]);
-  if (cause instanceof ElectronFuseResourceFailure)
+  if (cause instanceof ElectronFuseResourceFailure) {
+    const { name, maximum } = cause.limit;
+    const fileSize = name === "maximum_input_bytes";
     return new AnalysisResourceConstraintError(
       operation,
-      cause.boundary === "file-size" ? "file-size" : "capacity",
+      fileSize ? "file-size" : "capacity",
       cause.message,
-      cause.boundary === "file-size"
-        ? { maximum_input_bytes: ELECTRON_FUSE_LIMITS.maximumFileBytes }
-        : {
-            maximum_sentinels_per_slice:
-              ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
-          },
+      { [name]: maximum },
       {
         cause,
-        ...(cause.boundary === "file-size"
-          ? fixedAllowanceOptions(
-              "the Electron fuse input allowance",
-              "input",
-              {
-                limit: ELECTRON_FUSE_LIMITS.maximumFileBytes,
-                unit: "bytes",
-              },
-            )
-          : fixedAllowanceOptions(
-              "The Electron fuse sentinel inventory",
-              "count",
-              {
-                limit: ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
-                unit: "sentinels per slice",
-              },
-            )),
+        ...fixedAllowanceOptions(
+          fileSize
+            ? "the Electron fuse input allowance"
+            : "The Electron fuse sentinel inventory",
+          fileSize ? "input" : "count",
+          { limit: maximum, unit: fileSize ? "bytes" : "sentinels per slice" },
+        ),
       },
     );
+  }
   const formatFailure = parseFailureAnalysisError(operation, path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (cause instanceof RegularFileChangedError)

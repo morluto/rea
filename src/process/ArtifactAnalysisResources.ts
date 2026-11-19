@@ -19,7 +19,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   fixedAllowanceOptions,
@@ -433,11 +433,7 @@ export class ArtifactAnalysisResources {
       (primary ?? failure).retainPartialObservation(cause.partialObservation);
     return primary === undefined
       ? failure
-      : analysisErrorWithCleanupFailure(
-          primary,
-          failure,
-          operation,
-        ).bindCleanupDependencies([primary, failure]);
+      : analysisErrorWithCleanupDependencies(primary, failure, operation);
   }
 
   commandFailure(
@@ -532,11 +528,11 @@ export class ArtifactAnalysisResources {
       await this.release();
     } catch (cause: unknown) {
       if (descriptorFailure !== undefined && cause instanceof AnalysisError)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           descriptorFailure,
           cause,
           this.#artifacts.operation,
-        ).bindCleanupDependencies([descriptorFailure, cause]);
+        );
       throw cause;
     }
     if (descriptorFailure !== undefined) throw descriptorFailure;

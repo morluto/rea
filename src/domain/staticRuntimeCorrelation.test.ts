@@ -21,7 +21,6 @@ import { compareFunctions } from "./functionComparison.js";
 import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
 import {
   correlateStaticAndRuntime,
-  staticRuntimeCorrelationInputSchema,
   staticRuntimeCorrelationResultSchema,
 } from "./staticRuntimeCorrelation.js";
 
@@ -222,17 +221,16 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
 });
 
 describe("static/runtime correlation", () => {
-  it("accepts real runtime dimensions and rejects removed protocol dimensions", () => {
-    const runtime = processComparison("unchanged");
+  it("uses the selected interaction status even when the terminal changed", () => {
+    const runtime = processComparison("changed");
     expect(
       correlateStaticAndRuntime(mapping(runtime, "static_only", "interaction")),
-    ).toMatchObject({ status: "correlated" });
-    for (const dimension of ["protocol", "shim"] as const)
-      expect(
-        staticRuntimeCorrelationInputSchema.safeParse(
-          mapping(runtime, "static_only", dimension),
-        ).success,
-      ).toBe(false);
+    ).toMatchObject({
+      status: "correlated",
+      correlations: {
+        items: [{ runtime: { dimension: "interaction", status: "unchanged" } }],
+      },
+    });
   });
 
   it("rejects duplicate static comparison selection", () => {

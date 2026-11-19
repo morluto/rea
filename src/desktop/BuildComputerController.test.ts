@@ -22,8 +22,10 @@ const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
 /** A computer whose controller lists `files` into a file beside the folder and whose data/get answers them, noting each fetch of a file. */
-const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
-  const listing = Buffer.from(
+const computer = (
+  files: ReadonlyMap<string, Buffer>,
+  steps: string[],
+  listing = Buffer.from(
     JSON.stringify({
       files: [...files].map(([path, bytes]) => ({
         path,
@@ -32,7 +34,8 @@ const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
       })),
       skipped: [],
     }),
-  );
+  ),
+) => {
   return {
     exec: () =>
       Promise.resolve({
@@ -57,6 +60,56 @@ const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
 };
 
 describe("fetchHomeFolder", () => {
+  it.each([
+    {
+      caseName: "a literal replacement character",
+      nameBytes: Buffer.from("\uFFFD"),
+      malformed: false,
+    },
+    {
+      caseName: "malformed filename bytes",
+      nameBytes: Buffer.from([0xff]),
+      malformed: true,
+    },
+  ])("keeps file identity with $caseName", async ({ nameBytes, malformed }) => {
+    const content = Buffer.from("seed");
+    const path = ".rea-build/b/\uFFFD";
+    const files = new Map([[path, content]]);
+    const steps: string[] = [];
+    const listing = Buffer.concat([
+      Buffer.from('{"files":[{"path":".rea-build/b/'),
+      nameBytes,
+      Buffer.from(
+        `","size":${String(content.length)},"sha256":"${sha256(content)}"}],"skipped":[]}`,
+      ),
+    ]);
+    const fetched = fetchHomeFolder(
+      computer(files, steps, listing),
+      ".rea-build/b",
+      {
+        file: (file) => {
+          steps.push(`write ${file.path}`);
+          return Promise.resolve();
+        },
+      },
+    );
+    if (malformed) {
+      await expect(fetched).rejects.toThrow(
+        "The build computer's file listing is not valid UTF-8 JSON.",
+      );
+      expect(steps).toEqual([]);
+    } else {
+      await expect(fetched).resolves.toEqual({
+        files: 1,
+        bytes: content.length,
+      });
+      expect(steps).toEqual([
+        `get ${path} within ${String(content.length)}`,
+        "write \uFFFD",
+      ]);
+    }
+  });
+
   it("splits tiny files before their answer envelopes exceed the live budget", async () => {
     const workingBytes = Math.floor(getHeapStatistics().heap_size_limit / 12);
     const count = Math.floor(workingBytes / (64 * 1024)) + 2;

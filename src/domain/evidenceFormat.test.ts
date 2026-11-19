@@ -11,6 +11,7 @@ import {
   EVIDENCE_FORMAT_REVISION,
   RECREATE_EVIDENCE_GUIDANCE,
 } from "./evidenceFormat.js";
+import { PRE_66_NULL_COVERAGE_EVIDENCE } from "./evidenceLegacy.fixture.js";
 import { ParseFailureError } from "./parseFailure.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidence, readImmutableEvidence } from "./evidenceValidation.js";
@@ -67,16 +68,12 @@ it.each([
 });
 
 it.each([
-  ["an unmarked record", undefined],
-  ["a revision 1 record", 1],
+  ["a pre-6.6 record", PRE_66_NULL_COVERAGE_EVIDENCE],
+  ["a revision 1 record", { ...record, evidence_format: 1 }],
 ])(
   "refuses %s alone or inside a current bundle, with the recreate guidance",
-  (_name, format) => {
-    const { evidence_format: _current, ...unmarked } = record;
-    const earlier =
-      format === undefined
-        ? unmarked
-        : { ...unmarked, evidence_format: format };
+  (_name, fixture) => {
+    const earlier = structuredClone(fixture);
     expect(() => parseEvidence(earlier)).toThrow(RECREATE_EVIDENCE_GUIDANCE);
     for (const read of [readEvidence, readImmutableEvidence]) {
       const refused = read(earlier);
@@ -93,11 +90,6 @@ it.each([
     expect(parsed.error.cause).toMatchObject({
       failure: { format: "evidence-record", field: "evidence_format" },
     });
+    expect(earlier).toEqual(fixture);
   },
 );
-
-it("still names a standalone Evidence record as the wrong input kind", () => {
-  const parsed = safeParseEvidenceBundle(record);
-  if (parsed.ok) throw new Error("Expected a record to be refused");
-  expect(parsed.error.kind).toBe("single-record");
-});

@@ -352,14 +352,16 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
     const denied = Object.assign(new Error("denied"), { code });
     const fileSystem: NonNullable<
-      Parameters<typeof resolveAppleBundleExecutable>[1]
+      NonNullable<
+        Parameters<typeof resolveAppleBundleExecutable>[1]
+      >["fileSystem"]
     > = {
       readFile: async () => {
         throw denied;
       },
       realpath,
     };
-    const result = await resolveAppleBundleExecutable(app, fileSystem);
+    const result = await resolveAppleBundleExecutable(app, { fileSystem });
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -379,10 +381,12 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
     const readError = Object.assign(new Error("I/O failure"), { code: "EIO" });
     const result = await resolveAppleBundleExecutable(app, {
-      readFile: async () => {
-        throw readError;
+      fileSystem: {
+        readFile: async () => {
+          throw readError;
+        },
+        realpath,
       },
-      realpath,
     });
     expect(result).toMatchObject({
       ok: false,
@@ -407,7 +411,9 @@ describe("binary target I/O: app plist permissions and decoding", () => {
       );
       const denied = Object.assign(new Error("denied"), { code });
       const fileSystem: NonNullable<
-        Parameters<typeof resolveAppleBundleExecutable>[1]
+        NonNullable<
+          Parameters<typeof resolveAppleBundleExecutable>[1]
+        >["fileSystem"]
       > = {
         readFile,
         realpath: async (path) => {
@@ -415,7 +421,7 @@ describe("binary target I/O: app plist permissions and decoding", () => {
           return realpath(path);
         },
       };
-      const result = await resolveAppleBundleExecutable(app, fileSystem);
+      const result = await resolveAppleBundleExecutable(app, { fileSystem });
       expect(result).toMatchObject({
         ok: false,
         error: {

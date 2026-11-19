@@ -38,9 +38,9 @@ export interface OneShotCliHost {
   ownCliResources(close: () => Promise<void>): void;
   /**
    * The command asked to end the process with `code`. The host owns that
-   * exit and must call `finishOutput` with the status it reports.
+   * exit and must drain `finishOutput` after closing the owned resources.
    */
-  exit(code: number, finishOutput: (status: number) => Promise<void>): void;
+  exit(code: number, finishOutput: () => Promise<void>): void;
   /** Whether `exit` has run. Its host then owns the pending result write. */
   exitRequested(): boolean;
 }
@@ -69,7 +69,7 @@ export const runOneShotCli = async (
       : readCliOutputArguments(global);
   const outputArguments = outputOptions.validation;
   // `--version` with an explicit format reports the runtime as a document;
-  // plain `--version` stays Incur's bare version string.
+  // plain `--version` stays a bare version string.
   const versionOutput = renderVersionReport(
     outputOptions,
     host.runtime,
@@ -126,7 +126,8 @@ export const runOneShotCli = async (
   const { loadCliRuntime } = await import("./cli/cliLoader.js");
   const runtime = await loadCliRuntime(global, host.environment);
   host.ownCliResources(runtime.closeCliResources);
-  const { createCliResultOutput } = await import("./cli/cliResultOutput.js");
+  const { createCliResultOutput, cliOutputCancellationStatus } =
+    await import("./cli/cliResultOutput.js");
   let wroteOutput = false;
   const resultOutput = createCliResultOutput(
     outputOptions,
@@ -141,21 +142,25 @@ export const runOneShotCli = async (
           return;
         }
         if (output.length > 0) wroteOutput = true;
-        if (resultOutput?.captureSdkOutput(output)) return;
         host.writeStdout(output);
       },
       exit: (code) => {
-        host.exit(typeof code === "number" ? code : 0, async (status) =>
-          resultOutput?.finishSdkOutput(status),
+        host.exit(typeof code === "number" ? code : 0, async () =>
+          resultOutput?.finish(),
         );
       },
     });
   } catch (cause) {
+    const cancelledStatus = cliOutputCancellationStatus(cause);
+    if (cancelledStatus !== undefined) {
+      host.exit(cancelledStatus, async () => resultOutput?.finish());
+      return;
+    }
     if (wroteOutput) throw cause;
     const recovered = await resultOutput
       ?.recoverFormattingFailure(cause)
       .catch((writeFailure: unknown) => {
-        // Recovery writes outside Incur's command boundary. A reader that
+        // Recovery writes outside the command boundary. A reader that
         // declined this document keeps the same quiet closed-pipe outcome.
         if (!host.stdoutClosed()) throw writeFailure;
         return true;
@@ -166,6 +171,5 @@ export const runOneShotCli = async (
   if (!wroteOutput && !resultOutput?.handled)
     host.writeStdout(renderEmptyFilteredCliOutput(outputOptions) ?? "");
   // A requested exit is finished by the host, which owns its pending write.
-  if (!host.exitRequested())
-    await resultOutput?.finishSdkOutput(host.exitCode());
+  if (!host.exitRequested()) await resultOutput?.finish();
 };

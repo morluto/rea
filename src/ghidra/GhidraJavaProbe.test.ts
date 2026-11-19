@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ghidraProfileInstallationHost } from "./GhidraInstallation.fixture.js";
+import { SUPPORTED_GHIDRA_JAVA_MAJOR } from "./GhidraReleasePolicy.js";
 import { inspectGhidraInstallation } from "./GhidraInstallation.js";
 import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
 import { describe, expect, it, afterEach } from "vitest";
@@ -253,7 +254,7 @@ it.skipIf(process.platform === "win32").each([
     const properties = [
       "Property settings:",
       `    java.home = ${home}`,
-      "    java.version = 21.0.11",
+      `    java.version = ${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}.0.1`,
       "    java.vm.name = OpenJDK 64-Bit Server VM",
       `    os.arch = ${process.arch === "arm64" ? "aarch64" : "amd64"}`,
       `    os.name = ${process.platform === "darwin" ? "Mac OS X" : "Linux"}`,
