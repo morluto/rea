@@ -105,10 +105,11 @@ export const anatomyTailMatches = (
 export const projectAppleBundleAnatomy = (
   entries: readonly Entry[],
   subject: { readonly name: string; readonly format: string },
+  includePlacement: boolean,
 ): AppleBundleAnatomy => {
   const tree = indexTree(entries);
   const roots = applicationRoots(tree, subject);
-  return { tree, roots, bundles: detectBundles(tree, roots) };
+  return { tree, roots, bundles: detectBundles(tree, roots, includePlacement) };
 };
 
 /** Application roots and bundles with the tree index they were read from. */
@@ -159,44 +160,73 @@ const applicationRoots = (
 };
 
 /**
- * Bundles are directories with a recognized extension, or a dotted name and
- * bundle anatomy: the code-signing machinery treats a dotted directory as a
- * bundle, so an Automator `.action` with Contents/ is one. An undotted
- * directory is never a bundle, even when it holds Info.plist (as Contents/
- * itself does).
+ * The base inventory retains its path-convention bundle list. Placement rules
+ * use corroborated anatomy, including dotted names outside the known suffixes.
  */
-const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
+const detectBundles = (
+  tree: Tree,
+  roots: readonly string[],
+  includePlacement: boolean,
+): Bundle[] => {
   const paths = new Set<string>(roots);
-  const byAnatomy = new Set<string>();
   for (const path of directoryPaths(tree)) {
-    if (!roots.some((root) => isWithin(path, root))) continue;
-    // An inventoried file keeps its identity: archive members (app.asar/...)
-    // imply a directory at the archive's own path, which is not a bundle.
-    if (isInventoriedFile(tree, path)) continue;
     const name = path.split("/").at(-1) ?? "";
-    if (APPLE_BUNDLE_EXTENSION.test(name)) paths.add(path);
-    else if (name.includes(".") && hasBundleAnatomy(tree, path)) {
-      paths.add(path);
-      byAnatomy.add(path);
-    }
+    if (!roots.some((root) => isWithin(path, root))) continue;
+    const eligible = includePlacement
+      ? name.includes(".") && !isInventoriedFile(tree, path)
+      : APPLE_BUNDLE_EXTENSION.test(name);
+    if (eligible) paths.add(path);
   }
-  return [...paths].sort(compare).map((path) => {
+  const observed = [...paths].sort(compare).flatMap((path) => {
     const layout = bundleLayout(path, tree);
-    return {
+    const role = roots.includes(path)
+      ? "application"
+      : APPLE_BUNDLE_EXTENSION.test(path.split("/").at(-1) ?? "")
+        ? bundleRole(path)
+        : "bundle";
+    const observed = {
       path,
-      parent_path: enclosingBundle(path, paths),
       layout,
-      role: roots.includes(path)
-        ? "application"
-        : byAnatomy.has(path)
-          ? "bundle"
-          : bundleRole(path),
+      role,
       role_basis: "path-convention",
       info_plist_path: infoPlistPath(path, layout, tree),
       executable_candidates: executableCandidates(path, layout, tree),
       signing_paths: signingPaths(path, layout, tree),
-    } satisfies Bundle;
+    } satisfies Omit<Bundle, "parent_path">;
+    return !includePlacement ||
+      roots.includes(path) ||
+      hasBundleAnatomy(observed, tree)
+      ? [observed]
+      : [];
   });
+  const observedPaths = new Set(observed.map(({ path }) => path));
+  return observed.map((bundle) => ({
+    ...bundle,
+    parent_path: enclosingBundle(bundle.path, observedPaths),
+  }));
+};
+
+/** A layout directory alone can be an empty grouping folder. */
+const hasBundleAnatomy = (
+  bundle: Omit<Bundle, "parent_path">,
+  tree: Tree,
+): boolean => {
+  if (
+    bundle.info_plist_path !== null &&
+    !tree.duplicateFiles.has(bundle.info_plist_path)
+  )
+    return true;
+  const name = (bundle.path.split("/").at(-1) ?? "").replace(
+    /\.framework$/iu,
+    "",
+  );
+  return bundle.executable_candidates.some(
+    (path) =>
+      !tree.duplicateFiles.has(path) &&
+      (bundle.layout === "macos-deep" ||
+        (bundle.role === "framework" &&
+          anatomyNameIs(path.split("/").at(-1) ?? "", name))),
+  );
 };
 
 /**
@@ -282,11 +312,6 @@ const enclosingBundle = (
   }
   return bundles.has(".") ? "." : null;
 };
-
-const hasBundleAnatomy = (tree: Tree, directory: string): boolean =>
-  namedDirectory(tree, directory, "Contents") !== null ||
-  namedDirectory(tree, directory, "Versions") !== null ||
-  namedFile(tree, directory, "Info.plist") !== null;
 
 const bundleLayout = (bundle: string, tree: Tree): Bundle["layout"] => {
   const directory = directoryOf(bundle);

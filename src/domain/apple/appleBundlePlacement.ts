@@ -139,7 +139,7 @@ export const projectAppleBundlePlacement = (
   const targets = [
     ...evaluated.flatMap((bundle) => frameworkRootContent(bundle, tree)),
     ...evaluated.flatMap((bundle) =>
-      groupingDirectories(bundle, tree, bundlePaths),
+      groupingDirectories(bundle, tree, bundlePaths, inventoryComplete),
     ),
   ];
   const scanned = scanEntries(
@@ -518,12 +518,16 @@ const groupingDirectories = (
   bundle: Bundle,
   tree: AppleBundleTree,
   bundlePaths: ReadonlySet<string>,
+  inventoryComplete: boolean,
 ): Finding[] =>
   codeLocations(bundle, tree).flatMap((location) =>
     [...childKinds(tree, location)].flatMap(([name, kind]) => {
       const path = joinPath(location, name);
       if (kind !== "directory" || bundlePaths.has(path)) return [];
-      const rules: Finding["rules"] = name.includes(".")
+      const dotted = name.includes(".");
+      // A partial inventory can omit the anatomy of a dotted directory.
+      if (dotted && !inventoryComplete) return [];
+      const rules: Finding["rules"] = dotted
         ? ["grouping-directory-in-code-location", "dotted-directory-name"]
         : ["grouping-directory-in-code-location"];
       return [

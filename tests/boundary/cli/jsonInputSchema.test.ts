@@ -29,6 +29,7 @@ import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView
 import { browserScenarioSchema } from "../../../src/domain/browserScenario.js";
 import { getEvidenceInputContract } from "../../../src/domain/evidenceInputContract.js";
 import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
+import { appleApplicationProjectionInputSchema } from "../../../src/domain/apple/appleApplication.js";
 import { applicationInventoryProjectionInputSchema } from "../../../src/domain/mobileApplicationGraphProjection.js";
 import { managedApplicationGraphReferenceInputSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import { managedNativeVerificationRequestSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
@@ -101,7 +102,7 @@ const documents: readonly {
   },
   {
     command: cliCommandFor("project_apple_application_graph"),
-    schema: inventoryDocumentSchema,
+    schema: frame(appleApplicationProjectionInputSchema),
   },
   {
     command: cliCommandFor("project_harmony_application_graph"),

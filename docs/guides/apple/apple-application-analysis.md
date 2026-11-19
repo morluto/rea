@@ -66,8 +66,7 @@ encryption flag, limitations, and null content identity. The same application-ro
 and AppleDouble attribution rules apply. These files make overall coverage
 `partial`; component absence is unknown even when `inventory_complete` is true.
 Directories have no file bytes and symlinks remain in `symlinks`, so neither is
-an unavailable file component. The additive field participates in `projection_id`,
-including when empty, so Apple projection identifiers change.
+an unavailable file component.
 
 ## Application roots
 
@@ -180,8 +179,10 @@ read, and `slices.unsigned` those reported unsigned. Any other slice in
 
 ## Bundle placement
 
-`bundle_placement` compares observed placement with Apple's
+Set `include_bundle_placement` to `true` in the projection's JSON request
+to compare observed placement with Apple's
 [Placing content in a bundle](https://developer.apple.com/documentation/bundleresources/placing-content-in-a-bundle).
+The opt-in result includes `bundle_placement` with findings and rule coverage.
 A finding reports a mismatch with that documented layout. It is not a verdict
 that the bundle is malicious or will fail to sign, install, or launch. The check
 is static: it never signs, verifies, or launches target code.
@@ -210,7 +211,7 @@ is examined as unknown.
 | ------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `code-in-resource-location`           | `macos-deep`, `versioned-framework`                       | The outermost item under `Contents/Resources/` or `Versions/<version>/Resources/` that is or contains a Mach-O image. A nested bundle is reported once, counting all of its images. |
 | `framework-root-content`              | `versioned-framework` with the `framework` role           | A framework root entry other than `Versions/` and symlinks, or a `Versions/` entry other than a version directory and the `Current` symlink.                                        |
-| `grouping-directory-in-code-location` | `macos-deep`, `versioned-framework`, iOS-family `shallow` | A directory directly in a code location that contains a Mach-O image and that `bundles` does not list.                                                                              |
+| `grouping-directory-in-code-location` | `macos-deep`, `versioned-framework`, iOS-family `shallow` | A directory directly in a code location that contains a Mach-O image and whose own bundle anatomy is absent.                                                                        |
 | `dotted-directory-name`               | As above                                                  | Also cited by a grouping-directory finding whose name contains a dot.                                                                                                               |
 | `standalone-dynamic-library`          | None                                                      | Not evaluated.                                                                                                                                                                      |
 | `framework-in-nested-bundle`          | None                                                      | Not evaluated.                                                                                                                                                                      |
@@ -244,9 +245,17 @@ has an `unknown` format, unavailable content, a node outside the supplied
 pages, or a path the inventory repeats. An empty findings list then does not establish a clean bundle.
 `evaluated_bundles: 0` means that no bundle has a layout the rule covers.
 
-Historical projections omit `bundle_placement`, which means that placement was
-not evaluated. The field participates in `projection_id`, so Apple projection
-identifiers change.
+The placement projection requires bundle anatomy to corroborate a nested
+bundle. A filename suffix or empty layout directory alone is insufficient.
+An `Info.plist` in the layout's metadata location, a Mach-O image in a
+`Contents/MacOS/` directory, or a matching framework executable corroborates
+the relevant layout. Partial inventories can omit this anatomy, so a dotted
+directory with unresolved anatomy has no grouping finding.
+
+The default request preserves the original bundle inventory and its
+`projection_id`. The opt-in identifier covers the full result, including rule
+coverage when findings are empty. Omission of `bundle_placement` means
+placement was not evaluated.
 
 ## Dylib load resolution
 

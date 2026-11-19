@@ -31,6 +31,7 @@ import {
   projectCartesianCandidates,
 } from "../bridgeCandidateProjection.js";
 import {
+  applicationInventoryProjectionInputSchema,
   projectedComponentSchema,
   projectionEvidenceIdSchema,
   projectionPathSchema,
@@ -109,9 +110,20 @@ export type AppleApplicationProjectionResult = z.infer<
 type Component = z.infer<typeof projectedComponentSchema>;
 type RootFormat = (typeof APPLE_ROOT_FORMATS)[number];
 
+export const appleApplicationProjectionInputSchema =
+  applicationInventoryProjectionInputSchema.extend({
+    include_bundle_placement: z
+      .boolean()
+      .exactOptional()
+      .describe(
+        "Include static Apple bundle placement findings and per-rule coverage.",
+      ),
+  });
+
 /** Project an already authenticated inventory without reparsing its source. */
 export const projectAppleInventory = (
   source: ParsedInventorySet,
+  includeBundlePlacement = false,
 ): Result<AppleApplicationProjectionResult, AnalysisInputError> => {
   const { evidence, inventory } = source;
   const rootFormatResult = appleRootFormat(inventory.manifest.root_format);
@@ -120,10 +132,14 @@ export const projectAppleInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const inventoried = projectedFileComponents(entries);
-  const anatomy = projectAppleBundleAnatomy(entries, {
-    name: evidenceSubjectDisplay(evidence[0] ?? {})?.name ?? "",
-    format: rootFormat,
-  });
+  const anatomy = projectAppleBundleAnatomy(
+    entries,
+    {
+      name: evidenceSubjectDisplay(evidence[0] ?? {})?.name ?? "",
+      format: rootFormat,
+    },
+    includeBundlePlacement,
+  );
   const { roots, bundles } = anatomy;
   const { all, unattributed } = attributeComponents(
     inventoried,
@@ -190,7 +206,9 @@ export const projectAppleInventory = (
     runtime_families: runtimeFamilies,
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
-    bundle_placement: projectAppleBundlePlacement(anatomy, complete),
+    ...(includeBundlePlacement
+      ? { bundle_placement: projectAppleBundlePlacement(anatomy, complete) }
+      : {}),
     coverage: {
       status:
         complete &&

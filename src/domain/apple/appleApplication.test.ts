@@ -194,9 +194,10 @@ const inventoryEvidence = (
   );
 };
 
-const project = (evidence: Evidence) => {
+const project = (evidence: Evidence, includeBundlePlacement = false) => {
   const result = projectAppleInventory(
     parseArtifactInventoryEvidence([evidence]),
+    includeBundlePlacement,
   );
   if (!result.ok) throw result.error;
   return result.value;
@@ -1180,6 +1181,7 @@ describe("Apple bundle placement findings", () => {
         // A dotted directory with bundle anatomy is a bundle, evaluated as one.
         macho("Contents/Library/Automator/Act.action/Contents/MacOS/Act"),
       ]),
+      true,
     );
     const placement = result.bundle_placement;
     expect(placement?.reference).toBe(
@@ -1287,6 +1289,7 @@ describe("Apple bundle placement image records", () => {
         macho(`${inner}/Deep.bundle/Contents/MacOS/Deep`),
         { path: `${inner}/blob`, format: "unknown" },
       ]),
+      true,
     );
     const placement = result.bundle_placement;
     expect(
@@ -1324,6 +1327,7 @@ describe("Apple framework placement", () => {
         { path: `${framework}/Versions/B`, kind: "symlink" },
         { path: `${framework}/Versions/notes.txt` },
       ]),
+      true,
     );
     expect(
       result.bundle_placement?.findings.map(
@@ -1380,6 +1384,7 @@ describe("Apple bundle placement coverage", () => {
         { path: "Contents/Resources/secret", unavailable: true },
         { path: "Contents/PlugIns/Group/thing", format: "unknown" },
       ]),
+      true,
     );
     expect(result.bundle_placement?.findings).toEqual([]);
     expect(ruleCoverage(result)).toMatchObject({
@@ -1400,13 +1405,16 @@ describe("Apple bundle placement coverage", () => {
       macho("Contents/MacOS/Fixture"),
     ]);
     const parsed = parseArtifactInventoryEvidence([evidence]);
-    const result = projectAppleInventory({
-      ...parsed,
-      inventory: {
-        ...parsed.inventory,
-        coverage: { scope: "container-entries", status: "unknown" },
+    const result = projectAppleInventory(
+      {
+        ...parsed,
+        inventory: {
+          ...parsed.inventory,
+          coverage: { scope: "container-entries", status: "unknown" },
+        },
       },
-    });
+      true,
+    );
     if (!result.ok) throw result.error;
     expect(ruleCoverage(result.value)).toMatchObject({
       "code-in-resource-location": ["partial", 1],
@@ -1430,13 +1438,16 @@ describe("Apple bundle placement coverage", () => {
       macho("Contents/Resources/app.asar/addon.node"),
     ]);
     const parsed = parseArtifactInventoryEvidence([evidence]);
-    const result = projectAppleInventory({
-      ...parsed,
-      inventory: {
-        ...parsed.inventory,
-        coverage: { scope: "container-entries", status: "unknown" },
+    const result = projectAppleInventory(
+      {
+        ...parsed,
+        inventory: {
+          ...parsed.inventory,
+          coverage: { scope: "container-entries", status: "unknown" },
+        },
       },
-    });
+      true,
+    );
     if (!result.ok) throw result.error;
     const placement = result.value.bundle_placement;
     expect(placement?.findings.map(({ path }) => path)).toEqual([
@@ -1471,6 +1482,7 @@ describe("Apple bundle placement coverage", () => {
         macho(`${app}/PlugIns/Ext.appex/Frameworks/Inner.framework/Inner`),
         macho(`${app}/PlugIns/Group/Late.appex/Late`),
       ]),
+      true,
     );
     expect(result.bundle_placement?.findings).toEqual([
       {
@@ -1503,17 +1515,33 @@ describe("Apple bundle placement coverage", () => {
         expect.stringMatching(/platform.*not established.*visionOS/u),
       ]);
   });
+});
 
-  it("parses historical projections without placement findings", () => {
-    const { bundle_placement: placement, ...historical } = project(
-      inventoryEvidence("directory", "Fixture.app", [
-        macho("Contents/MacOS/Fixture"),
-      ]),
-    );
-    expect(placement).toBeDefined();
-    const parsed = appleApplicationProjectionResultSchema.parse(historical);
-    expect("bundle_placement" in parsed).toBe(false);
-  });
+it("keeps placement unknown for a dotted grouping name on partial pages", () => {
+  const grouping = "Contents/PlugIns/Group.bundle";
+  const source = parseArtifactInventoryEvidence([
+    inventoryEvidence("directory", "Fixture.app", [
+      { path: "Contents", kind: "directory" },
+      { path: "Contents/PlugIns", kind: "directory" },
+      { path: grouping, kind: "directory" },
+      macho(`${grouping}/tool`),
+    ]),
+  ]);
+  const result = projectAppleInventory(
+    {
+      ...source,
+      inventory: {
+        ...source.inventory,
+        coverage: { scope: "container-entries", status: "unknown" },
+      },
+    },
+    true,
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    ruleCoverage(result.value)["grouping-directory-in-code-location"],
+  ).toEqual(["partial", 1]);
+  expect(result.value.bundle_placement?.findings).toEqual([]);
 });
 
 describe("Apple bundle placement ownership", () => {
@@ -1527,6 +1555,7 @@ describe("Apple bundle placement ownership", () => {
         macho(`${action}/Contents/MacOS/Act`),
         macho(`${action}/Contents/Resources/stray`),
       ]),
+      true,
     );
     expect(result.bundles).toContainEqual(
       expect.objectContaining({
@@ -1553,6 +1582,7 @@ describe("Apple bundle placement ownership", () => {
         { path: `${root}/Versions/notes.txt` },
         { path: `${root}/Assets.car` },
       ]),
+      true,
     );
     expect(result.bundles[0]).toMatchObject({
       path: root,
@@ -1574,6 +1604,7 @@ describe("Apple bundle placement ownership", () => {
         macho("Contents/Resources/payload"),
         { path: "Contents/Resources/payload" },
       ]),
+      true,
     );
     expect(result.bundle_placement?.findings).toEqual([]);
     const rule = result.bundle_placement?.rules.find(
@@ -1594,6 +1625,7 @@ describe("Apple bundle placement ownership", () => {
         macho(`${app}/Contents/MacOS/Fixture`),
         macho(`${app}/Contents/Resources/stray`),
       ]),
+      true,
     );
     expect(result.bundle_placement?.findings).toEqual([]);
     expect(ruleCoverage(result)["code-in-resource-location"]).toEqual([

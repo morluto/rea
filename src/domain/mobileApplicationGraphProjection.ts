@@ -7,10 +7,8 @@ import {
   type ParsedInventorySet,
 } from "./artifactInventoryEvidence.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
-import { getEvidenceInputContract } from "./evidenceInputContract.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
-import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { err, ok, type Result } from "./result.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
 
@@ -23,24 +21,13 @@ export const applicationInventoryProjectionInputSchema = z.strictObject({
   inventory_evidence: z.array(evidenceInputSchema).min(1),
 });
 
-const applicationInventoryRequestSchema = getEvidenceInputContract(
-  applicationInventoryProjectionInputSchema,
-).frameSchema;
-
-/** Resolve the request and authenticate inventory pages once for all projections. */
+/** Authenticate inventory pages after the operation admits its request envelope. */
 export const readApplicationInventoryProjection = (
-  input: unknown,
+  carriers: readonly unknown[],
   operation: string,
 ): Result<ParsedInventorySet, AnalysisInputError | EvidenceIntegrityError> => {
-  const frame = applicationInventoryRequestSchema.safeParse(input);
-  if (!frame.success)
-    return err(
-      analysisInputErrorFromIssues(operation, frame.error.issues, input, {
-        cause: frame.error,
-      }),
-    );
   try {
-    return ok(parseArtifactInventoryEvidence(frame.data.inventory_evidence));
+    return ok(parseArtifactInventoryEvidence(carriers));
   } catch (cause: unknown) {
     if (cause instanceof EvidenceIntegrityError) return err(cause);
     if (!(cause instanceof ArtifactInventoryCarrierError)) throw cause;

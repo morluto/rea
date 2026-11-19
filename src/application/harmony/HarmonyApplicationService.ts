@@ -1,3 +1,4 @@
+import { applicationInventoryProjectionInputSchema } from "../../domain/mobileApplicationGraphProjection.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -19,6 +20,7 @@ export const projectHarmonyApplicationEvidence = (
 ): Result<InventoryProjectionEvidenceResult, AnalysisError> => {
   return projectInventoryEvidence({
     rawInput,
+    inputSchema: applicationInventoryProjectionInputSchema,
     ...(lookup === undefined ? {} : { lookup }),
     ...(execution === undefined ? {} : { execution }),
     project: projectHarmonyInventory,
