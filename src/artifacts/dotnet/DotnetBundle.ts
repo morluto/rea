@@ -91,6 +91,12 @@ export const readDotnetBundle = async (
     );
   const count = await cursor.i32();
   if (count < 0) fail(".NET bundle entry count is negative");
+  // Include the bundle ID length prefix and, starting at v2, the two
+  // configuration ranges and flags. Each row has a type and a path prefix.
+  const minimumHeaderTail = majorVersion >= 2 ? 41 : 1;
+  const minimumEntry = majorVersion === 6 ? 26 : 18;
+  if (minimumHeaderTail + count * minimumEntry > cursor.remainingBytes)
+    fail(".NET bundle entry count cannot fit in the manifest");
   if (count > limits.entry_count)
     throw artifactReaderLimitFailure(
       "artifact_limits.dotnet_bundle.entry_count",
@@ -141,6 +147,9 @@ export const readDotnetBundle = async (
     const path = await cursor.string();
     const normalized = normalizeArtifactPath(path);
     paths.add(normalized, "file");
+    const storedSize = compressedSize || fileSize;
+    if (offset > headerOffset || storedSize > headerOffset - offset)
+      fail(`.NET bundle entry crosses the manifest or file boundary: ${path}`);
     if (fileSize > limits.member_bytes || compressedSize > limits.member_bytes)
       throw artifactReaderLimitFailure(
         "artifact_limits.dotnet_bundle.member_bytes",
@@ -156,9 +165,6 @@ export const readDotnetBundle = async (
         "bytes",
         expandedBytes,
       );
-    const storedSize = compressedSize || fileSize;
-    if (offset > headerOffset || storedSize > headerOffset - offset)
-      fail(`.NET bundle entry crosses the manifest or file boundary: ${path}`);
     files.push({ path, offset, size: fileSize, compressedSize, fileType });
   }
   const ranges = files
@@ -200,6 +206,10 @@ class BundleCursor {
     private readonly signal?: AbortSignal,
   ) {
     this.#position = start;
+  }
+
+  get remainingBytes(): number {
+    return this.size - this.#position;
   }
 
   async take(length: number): Promise<Buffer> {
