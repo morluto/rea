@@ -459,3 +459,72 @@ it("leaves an earlier destructuring dependency intact before an iterator prototy
     ),
   ).toMatchObject({ resolution: "resolved" });
 });
+
+it.each([
+  ["declaration", "const [selected] = config;", "resolved"],
+  ["assignment", "let selected; [selected] = config;", "resolved"],
+  ["unrelated write", "config[1] = 2; const [selected] = config;", "resolved"],
+  ["later default", "const [selected, missing = 0] = config;", "resolved"],
+  [
+    "earlier delete",
+    "delete config[0]; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "earlier truncation",
+    "config.length = 0; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "own custom iterator",
+    "config[Symbol.iterator] = function* () { yield 2; }; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "prototype iterator",
+    "Array.prototype[Symbol.iterator] = function* () { yield 2; }; const [selected] = config;",
+    "candidate",
+  ],
+  [
+    "earlier shared next replacement",
+    'Object.getPrototypeOf([].values()).next = () => ({ value: "other", done: false }); const [selected] = config;',
+    "candidate",
+  ],
+  [
+    "later shared next replacement",
+    'const [selected] = config; Object.getPrototypeOf([].values()).next = () => ({ value: "other", done: false });',
+    "resolved",
+  ],
+  [
+    "custom prototype",
+    "Object.setPrototypeOf(config, { *[Symbol.iterator]() { yield 2; } }); const [selected] = config;",
+    "candidate",
+  ],
+  ["earlier default", "const [value = 0, selected] = config;", "candidate"],
+  [
+    "earlier setter",
+    "let selected; const target = { set value(_) { config[1] = 2; } }; [target.value, selected] = config;",
+    "candidate",
+  ],
+  ["nested binding", "let selected; [[selected]] = config;", "candidate"],
+] as const)(
+  "preserves array iteration dependencies for %s",
+  (_name, read, resolution) => {
+    const graph = graphForJavaScript(`
+    const config = [[1], 1];
+    ${read}
+    config[0] = 2;
+    config[1] = 2;
+  `);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);

@@ -35,6 +35,9 @@ cliTest(
     Object.getPrototypeOf(sourcePrototype);
     const before = ["first"];
     const [ordinary] = before;
+    let arrayAssigned;
+    [arrayAssigned] = before;
+    before[0] = "later";
     const box = { items: [] };
     const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
@@ -61,6 +64,7 @@ cliTest(
       ["fallback", ["a", "0"]],
       ["scalar", ["b"]],
       ["ordinary", ["0"]],
+      ["arrayAssigned", ["0"]],
       ["selected", ["0"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
@@ -91,7 +95,7 @@ cliTest(
       ),
     ).toMatchObject({ resolution: "resolved" });
     const queryPath = join(root, "query.json");
-    for (const name of ["declared", "ordinary", "selected"]) {
+    for (const name of ["declared", "ordinary", "arrayAssigned", "selected"]) {
       const binding = graph.nodes.find(
         ({ kind, label }) => kind === "binding" && label === name,
       );

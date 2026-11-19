@@ -18,7 +18,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import { createSemanticReadPresenceQuery } from "./javascriptSemanticValues.js";
+import { createSemanticReadPresenceQuery } from "./javascriptSemanticReadPresence.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -145,10 +145,17 @@ const collectDestructuring = (
   { state, output, readPresence }: ObjectCollectionContext,
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
+  const rootArray = t.isArrayPattern(root);
   let ownSlot =
-    initializer == null || source.path === null
-      ? undefined
-      : readPresence(source.bindingId, initializer);
+    initializer != null &&
+    source.path !== null &&
+    (!rootArray || source.path.length === 0)
+      ? readPresence(
+          source.bindingId,
+          initializer,
+          rootArray ? "array-iteration" : "property",
+        )
+      : undefined;
   // An unsupported property still occupies its place in the pattern's
   // evaluation order, even when it cannot produce a graph operation.
   const pending: ({
@@ -180,6 +187,7 @@ const collectDestructuring = (
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
+      if (rootArray) ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
         if (!t.isObjectProperty(property)) {
           pending.push(null);
@@ -199,15 +207,16 @@ const collectDestructuring = (
       continue;
     }
     if (t.isArrayPattern(pattern)) {
-      ownSlot = undefined;
+      if (pattern !== root) ownSlot = undefined;
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
-        if (
-          element !== null &&
-          element !== undefined &&
-          !t.isRestElement(element)
-        )
-          pending.push({ pattern: element, path: [...path, String(index)] });
+        if (element == null || t.isRestElement(element)) pending.push(null);
+        else
+          pending.push({
+            pattern: element,
+            path: [...path, String(index)],
+            lookup: "own",
+          });
       }
       continue;
     }
