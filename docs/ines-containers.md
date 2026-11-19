@@ -22,8 +22,8 @@ The single inventory Evidence under `substeps[].evidence.normalized_result`
 contains the complete graph and an `ines` object:
 
 - `ines.header`: `format` (`ines` or `nes-2.0`), original 16-byte `header_hex`,
-  PRG/CHR file-unit counts, mapper, raw flags 6/7, trainer and battery flags,
-  and the declared mirroring mode. Classic iNES reports only these fields.
+  PRG/CHR file-unit counts, mapper, raw flags 6/7, and trainer and battery
+  flags. Classic iNES also reports its existing declared mirroring mode.
 - NES 2.0 headers add `prg_rom_bytes`/`chr_rom_bytes`, the 12-bit mapper and
   `submapper`, `console_type`, `cpu_ppu_timing`, declared PRG-RAM,
   PRG-NVRAM, CHR-RAM and CHR-NVRAM byte sizes (`0` when none is declared),
@@ -31,7 +31,9 @@ contains the complete graph and an `ines` object:
   `vs_ppu_type` and `vs_hardware_type`; extended console headers add
   `extended_console_type`. These codes are reported as numbers. When the
   exponent-multiplier form declares a ROM size, its unit count is omitted
-  rather than reported as zero.
+  rather than reported as zero. `nametable_layout_flags` preserves byte 6's
+  `arrangement_bit` (bit 0) and `alternative_layout_bit` (bit 3) as header
+  flags. Their effective behavior can depend on the mapper.
 - `occurrences[]`: each region's path, `source_location.offset` and
   `source_location.length` in the original container. Follow `artifact_id` to
   the node's observed SHA-256 and byte count.
@@ -64,8 +66,8 @@ PRG count, complete declared trainer/PRG/CHR payload, and zero reserved bytes
 12–15. Dirty legacy headers are refused because their upper mapper bits are
 ambiguous; REA does not silently repair them. NES 2.0 additionally requires
 nonzero PRG-ROM, zero unused header bits (byte 12 bits 2–7, byte 13 outside
-the Vs. System and extended console fields, byte 14 bits 2–7 and byte 15 bits
-6–7), and at least one byte after CHR-ROM when miscellaneous ROMs are
+the Vs. System and extended console fields, byte 14 bits 2–7 and byte 15 bit
+7), and at least one byte after CHR-ROM when miscellaneous ROMs are
 declared. A NES 2.0 size larger than the file, including an exponent-multiplier
 size beyond the safe integer range, is refused with its exact declared total;
 REA does not fall back to a classic reading. UNIF signatures, unsupported

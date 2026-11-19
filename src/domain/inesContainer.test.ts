@@ -94,7 +94,10 @@ it("reports 12-bit NES 2.0 sizes and mapper with declared memory and timing", ()
     flags_7: 0x48,
     trainer_present: false,
     battery_flag: true,
-    mirroring: "vertical",
+    nametable_layout_flags: {
+      arrangement_bit: true,
+      alternative_layout_bit: false,
+    },
     console_type: "nes-famicom",
     cpu_ppu_timing: "pal",
     prg_ram_bytes: 8_192,
@@ -275,7 +278,7 @@ it.each([
       [12, 0x04],
       [13, 0x01],
       [14, 0x04],
-      [15, 0x40],
+      [15, 0x80],
     ] as const
   ).map(([index, value]) => ({
     label: `reserved NES 2.0 byte ${index} bits`,

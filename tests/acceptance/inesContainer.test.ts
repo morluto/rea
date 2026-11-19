@@ -125,6 +125,9 @@ cliTest(
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const inventory = inventoryFrom(cliResult.json);
+    expect(inventory.limitations).toContain(
+      "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.",
+    );
     const digest = createHash("sha256").update(bytes).digest("hex");
     expect(inventory.ines).toMatchObject({
       header: {
@@ -268,7 +271,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-nes2-public-");
     const path = join(root, "cartridge.nes");
     const bytes = nes2Fixture({
-      header: { 8: 0x10, 12: 0x01, 14: 1 },
+      header: { 6: 0x38, 8: 0x10, 12: 0x01, 14: 1, 15: 0x40 },
       miscRom: Buffer.from("misc"),
     });
     await writeFile(path, bytes);
@@ -287,7 +290,12 @@ cliTest(
         mapper: 19,
         submapper: 1,
         cpu_ppu_timing: "pal",
+        nametable_layout_flags: {
+          arrangement_bit: false,
+          alternative_layout_bit: true,
+        },
         misc_rom_count: 1,
+        default_expansion_device: 0x40,
       },
       reconstruction: {
         region_order: [

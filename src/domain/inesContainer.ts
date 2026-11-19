@@ -95,7 +95,10 @@ const nes2HeaderSchema = z.strictObject({
   flags_7: byteSchema,
   trainer_present: z.boolean(),
   battery_flag: z.boolean(),
-  mirroring: mirroringSchema,
+  nametable_layout_flags: z.strictObject({
+    arrangement_bit: z.boolean(),
+    alternative_layout_bit: z.boolean(),
+  }),
   console_type: z.enum(NES_2_CONSOLE_TYPES),
   vs_ppu_type: nibbleSchema.exactOptional(),
   vs_hardware_type: nibbleSchema.exactOptional(),
@@ -106,7 +109,7 @@ const nes2HeaderSchema = z.strictObject({
   chr_ram_bytes: declaredRamBytesSchema,
   chr_nvram_bytes: declaredRamBytesSchema,
   misc_rom_count: z.number().int().min(0).max(3),
-  default_expansion_device: z.number().int().min(0).max(0x3f),
+  default_expansion_device: z.number().int().min(0).max(0x7f),
 });
 
 /** Verified concatenation is a byte identity claim, not an emulator claim. */
@@ -151,7 +154,7 @@ interface HeaderDeclaration {
   readonly chr: RomArea;
 }
 
-const mirroring = (flags6: number): InesHeader["mirroring"] =>
+const classicMirroring = (flags6: number): z.infer<typeof mirroringSchema> =>
   (flags6 & 8) !== 0
     ? "four-screen"
     : (flags6 & 1) !== 0
@@ -205,7 +208,7 @@ const classicDeclaration = (
       flags_7: flags7,
       trainer_present: (flags6 & 4) !== 0,
       battery_flag: (flags6 & 2) !== 0,
-      mirroring: mirroring(flags6),
+      mirroring: classicMirroring(flags6),
     },
   });
 };
@@ -235,7 +238,7 @@ const nes2Declaration = (
     [12, 0xfc],
     [13, NES_2_BYTE_13_RESERVED[consoleType]],
     [14, 0xfc],
-    [15, 0xc0],
+    [15, 0x80],
   ] as const)
     if ((byte(index) & reserved) !== 0)
       return err(
@@ -273,7 +276,11 @@ const nes2Declaration = (
       flags_7: flags7,
       trainer_present: (flags6 & 4) !== 0,
       battery_flag: (flags6 & 2) !== 0,
-      mirroring: mirroring(flags6),
+      // The mapper can override the hard-wired arrangement or give these bits a different meaning.
+      nametable_layout_flags: {
+        arrangement_bit: (flags6 & 1) !== 0,
+        alternative_layout_bit: (flags6 & 8) !== 0,
+      },
       console_type: NES_2_CONSOLE_TYPES[consoleType],
       ...(consoleType === 1
         ? { vs_ppu_type: byte(13) & 0x0f, vs_hardware_type: byte(13) >>> 4 }
@@ -285,7 +292,7 @@ const nes2Declaration = (
       chr_ram_bytes: declaredRamBytes(byte(11) & 0x0f),
       chr_nvram_bytes: declaredRamBytes(byte(11) >>> 4),
       misc_rom_count: byte(14) & 3,
-      default_expansion_device: byte(15) & 0x3f,
+      default_expansion_device: byte(15) & 0x7f,
     },
   });
 };
