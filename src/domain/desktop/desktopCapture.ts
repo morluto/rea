@@ -263,7 +263,10 @@ const packageSchema = z.strictObject({
 export const desktopApplicationInventorySchema = z.strictObject({
   desktop_entry: desktopEntrySchema.nullable(),
   argv: z.array(z.string()).min(1),
+  /** Directory in which the recorded argv is invoked. */
   working_directory: z.string().min(1),
+  /** Physical directory selected by an env chdir option, when present. */
+  application_working_directory: z.string().min(1).optional(),
   executable: z.strictObject({
     path: z.string().min(1),
     resolved_path: z.string().nullable(),

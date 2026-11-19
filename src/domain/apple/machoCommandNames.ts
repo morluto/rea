@@ -13,8 +13,8 @@ import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import { readMachoSectionHeader } from "./machoSectionHeader.js";
 import { createHash } from "node:crypto";
 import {
+  decodeLimit,
   malformedInput,
-  ParseFailureError,
   truncatedInput,
 } from "../parseFailure.js";
 import { invariantViolation } from "../internalInvariant.js";
@@ -55,24 +55,15 @@ export type MachoRangeReader = (
   size: number,
 ) => Promise<Uint8Array>;
 
-/**
- * Producer-derived output capacity exceeded while retaining binary strings,
- * with the unit its maximum counts.
- */
-export class MachoCommandNamesLimitError extends ParseFailureError<"limit"> {
-  constructor(
-    readonly maximum: number,
-    readonly unit: "bytes" | "records" | "projected_bytes",
-  ) {
-    super({
-      kind: "limit",
-      format: "macho",
-      detail: `Mach-O load-command ${unit === "projected_bytes" ? "projected bytes" : unit} exceed the retained output budget`,
-      limit: { name: `macho_load_command_${unit}`, maximum },
-    });
-    this.name = "MachoCommandNamesLimitError";
-  }
-}
+const loadCommandLimit = (
+  maximum: number,
+  unit: "bytes" | "records" | "projected_bytes",
+) =>
+  decodeLimit(
+    "macho",
+    `Mach-O load-command ${unit === "projected_bytes" ? "projected bytes" : unit} exceed the retained output budget`,
+    { name: `macho_load_command_${unit}`, maximum },
+  );
 
 // Reserve fixed projection keys, scalar metadata, arrays and bounded limitation
 // messages even when the input has no load commands.
@@ -228,14 +219,11 @@ export const readMachoCommandNames = async (
   const table = parsed.value;
   const cursor = new MachoLoadCommandCursor(table);
   if (table.commandCount > maximumRecords)
-    throw new MachoCommandNamesLimitError(maximumRecords, "records");
+    throw loadCommandLimit(maximumRecords, "records");
   let projectedBytes = 0;
   const chargeProjection = (count: number, perItem: number): void => {
     if (count > Math.floor((maximumProjectedBytes - projectedBytes) / perItem))
-      throw new MachoCommandNamesLimitError(
-        maximumProjectedBytes,
-        "projected_bytes",
-      );
+      throw loadCommandLimit(maximumProjectedBytes, "projected_bytes");
     projectedBytes += count * perItem;
   };
   chargeProjection(1, PROJECTED_ENVELOPE_BYTES);
@@ -251,12 +239,9 @@ export const readMachoCommandNames = async (
     );
   const admitStringBytes = (count: number): void => {
     if (count > maximumStringBytes - retainedStringBytes)
-      throw new MachoCommandNamesLimitError(maximumStringBytes, "bytes");
+      throw loadCommandLimit(maximumStringBytes, "bytes");
     if (count > stringAllowance())
-      throw new MachoCommandNamesLimitError(
-        maximumProjectedBytes,
-        "projected_bytes",
-      );
+      throw loadCommandLimit(maximumProjectedBytes, "projected_bytes");
   };
   const retain = (bytes: Uint8Array): Uint8Array => {
     admitStringBytes(bytes.byteLength);
@@ -336,7 +321,7 @@ export const readMachoCommandNames = async (
       )
         throw malformedInput("macho", "Mach-O section table is truncated");
       if (segment.value.sectionCount > maximumRecords - records)
-        throw new MachoCommandNamesLimitError(maximumRecords, "records");
+        throw loadCommandLimit(maximumRecords, "records");
       chargeProjection(segment.value.sectionCount, PROJECTED_SECTION_BYTES);
       records += segment.value.sectionCount;
       segmentName = retain(segment.value.nameBytes);
@@ -540,7 +525,7 @@ export const readMachoCommandNames = async (
         countBytes.byteLength,
       ).getUint32(0, table.littleEndian);
       if (count > maximumRecords - records)
-        throw new MachoCommandNamesLimitError(maximumRecords, "records");
+        throw loadCommandLimit(maximumRecords, "records");
       if (count > frame.size - 12)
         throw malformedInput(
           "macho",
@@ -679,7 +664,7 @@ export const readMachoCommandNames = async (
       if (toolCount > Math.floor((frame.size - 24) / 8))
         throw malformedInput("macho", "Mach-O build tool table is truncated");
       if (toolCount > maximumRecords - records)
-        throw new MachoCommandNamesLimitError(maximumRecords, "records");
+        throw loadCommandLimit(maximumRecords, "records");
       chargeProjection(toolCount, PROJECTED_CHILD_BYTES);
       records += toolCount;
       const tools: { tool: number; version: number }[] = [];

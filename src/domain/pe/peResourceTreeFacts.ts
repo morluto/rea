@@ -1,6 +1,9 @@
+import { BinaryReader } from "../binaryContainer.js";
+
 /** Fixed PE resource records; callers own interval, budget and tree admission. */
 export const PE_RESOURCE_DIRECTORY_BYTES = 16;
 export const PE_RESOURCE_ENTRY_BYTES = 8;
+export const PE_RESOURCE_DATA_ENTRY_BYTES = 16;
 export const PE_RESOURCE_NAME_PREFIX_BYTES = 2;
 
 /** Decode an already-admitted IMAGE_RESOURCE_DIRECTORY record. */
@@ -46,4 +49,15 @@ export const readPeResourceEntryFacts = (bytes: Buffer) => {
 export const readPeResourceNameFacts = (bytes: Buffer) => {
   const utf16Units = bytes.readUInt16LE(0);
   return { utf16Units, payloadBytes: utf16Units * 2 };
+};
+
+/** Decode an already-admitted IMAGE_RESOURCE_DATA_ENTRY record. */
+export const readPeResourceDataEntryFacts = (bytes: Buffer) => {
+  const record = new BinaryReader(bytes, true, "pe");
+  return {
+    rva: record.u32(0),
+    size: record.u32(4),
+    codePage: record.u32(8),
+    reserved: record.u32(12),
+  };
 };

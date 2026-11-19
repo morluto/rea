@@ -6,7 +6,6 @@ import { expect, it } from "vitest";
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/sourceMapLimits.js";
 
 it("follows only redirect statuses and releases discarded HTTP response bodies", async () => {
   const redirects = [301, 302, 303, 307, 308];
@@ -147,7 +146,8 @@ it("keeps the redirected URL when the body exceeds the fetch limit", async () =>
 
 it("reserves output for the fetched URL before reading and preserves failed cleanup", async () => {
   const origin = "https://app.example.test";
-  const fetchedUrl = `${origin}/${"u".repeat(WEB_SOURCE_MAP_LIMITS.outputBytes)}`;
+  const outputBytes = 4_000;
+  const fetchedUrl = `${origin}/${"u".repeat(outputBytes)}`;
   const requests = [
     {
       scriptKey: "script",
@@ -160,6 +160,7 @@ it("reserves output for the fetched URL before reading and preserves failed clea
     target_id: "page",
     allowed_origins: [origin],
     fetch_source_maps: true,
+    source_map_limits: { output_bytes: outputBytes },
   });
   const callerReason = { requested: "stop during response cleanup" };
   const scenarios = [
@@ -222,6 +223,7 @@ it("reserves output for the fetched URL before reading and preserves failed clea
     expect(error, scenario.label).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       message: expect.stringContaining("Expanded source-map evidence"),
+      reportedLimits: { boundary: "output_bytes", maximum: outputBytes },
       cleanupIncomplete: true,
     });
     expect(error.cleanupResources, scenario.label).toHaveLength(1);

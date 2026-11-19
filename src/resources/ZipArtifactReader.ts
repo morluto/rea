@@ -569,11 +569,8 @@ const extractStream = (
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },
-    close: async () => {
-      await verifySource();
-      assertArtifactReadActive(signal);
-      output.end();
-    },
+    // Sink closure can precede getData's final validation or rejection.
+    // The producer's successful settlement owns consumer-visible EOF below.
     abort: (reason) => {
       output.destroy(toError(typedZipFailure(reason, entry.compressionMethod)));
     },
@@ -587,14 +584,14 @@ const extractStream = (
         onprogress: () => assertArtifactReadActive(signal),
       }),
     )
-    .then(
-      () => undefined,
-      (cause: unknown) => {
-        output.destroy(
-          toError(typedZipFailure(cause, entry.compressionMethod)),
-        );
-      },
-    );
+    .then(async () => {
+      await verifySource();
+      assertArtifactReadActive(signal);
+      output.end();
+    })
+    .catch((cause: unknown) => {
+      output.destroy(toError(typedZipFailure(cause, entry.compressionMethod)));
+    });
   return { output, completion };
 };
 

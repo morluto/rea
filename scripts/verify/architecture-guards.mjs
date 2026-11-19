@@ -137,9 +137,8 @@ check(
 // prlimitCeilingArguments because PcapCommand appends the producer command.
 // Its CPU ceiling stays 300 seconds and it has no resident-input budget;
 // address space and file size use those shared fields.
-// selectEvmWorkerLimits stays a separate selector: Result failures, unit
-// checks, and a refusal when soft exceeds hard. It must not call
-// clampLinuxResourceLimits.
+// EVMole reads and validates inherited limits through the same foundation
+// reader. It still selects soft-only arguments as a separate launch policy.
 check(
   "inline paired prlimit ceilings (use prlimitArgumentVector from src/process/LinuxResourceLimits)",
   files,

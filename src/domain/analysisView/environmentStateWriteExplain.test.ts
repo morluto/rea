@@ -1354,3 +1354,17 @@ it("trims a created clock's fraction, and its sibling clock's, when held entitie
     format: trimmed,
   });
 });
+
+it.each([
+  ["2024-02-29", "2024-02-29T00:00:00Z", false],
+  ["2024-02-30", "2024-03-01T00:00:00Z", true],
+  ["2023-02-29", "2023-03-01T00:00:00Z", true],
+])(
+  "only pins the date-only member %s when it denotes a real date",
+  (dateEnd, dateEndUtc, editable) => {
+    const { body } = explainCreate(
+      created({ id: "42", dateEnd, dateEndUtc }, { dateEnd }),
+    );
+    expect(body.accepted.includes("dateEnd")).toBe(editable);
+  },
+);
