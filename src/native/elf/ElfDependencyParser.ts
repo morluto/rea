@@ -1,7 +1,20 @@
 import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
+import {
+  DT_FLAGS,
+  DT_FLAGS_1,
+  DT_GNU_HASH,
+  DT_HASH,
+  DT_NEEDED,
+  DT_RPATH,
+  DT_RUNPATH,
+  DT_STRTAB,
+  DT_STRSZ,
+  DT_SYMENT,
+  DT_SYMTAB,
+  walkElfDynamicTable,
+} from "../../domain/elfDynamicEntry.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
@@ -60,24 +73,12 @@ const SHT_GNU_HASH = 0x6ffffff6;
 const SHT_GNU_VERDEF = 0x6ffffffd;
 const SHT_GNU_VERNEED = 0x6ffffffe;
 const SHT_GNU_VERSYM = 0x6fffffff;
-const DT_NULL = 0;
-const DT_NEEDED = 1;
-const DT_HASH = 4;
-const DT_STRTAB = 5;
-const DT_SYMTAB = 6;
-const DT_STRSZ = 10;
-const DT_SYMENT = 11;
-const DT_SONAME = 14;
-const DT_RPATH = 15;
-const DT_RUNPATH = 29;
-const DT_FLAGS = 30;
-const DT_GNU_HASH = 0x6ffffef5;
-const DT_VERSYM = 0x6ffffff0;
-const DT_FLAGS_1 = 0x6ffffffb;
-const DT_VERDEF = 0x6ffffffc;
-const DT_VERDEFNUM = 0x6ffffffd;
-const DT_VERNEED = 0x6ffffffe;
-const DT_VERNEEDNUM = 0x6fffffff;
+const DT_SONAME = 14n;
+const DT_VERSYM = 0x6ffffff0n;
+const DT_VERDEF = 0x6ffffffcn;
+const DT_VERDEFNUM = 0x6ffffffdn;
+const DT_VERNEED = 0x6ffffffen;
+const DT_VERNEEDNUM = 0x6fffffffn;
 const VER_FLG_BASE = 1;
 const VER_FLG_WEAK = 2;
 /**
@@ -147,12 +148,6 @@ const fail = (message: string): never => {
 };
 
 const hex = (value: number | bigint): string => `0x${value.toString(16)}`;
-
-/** Class-width tag value, or null when it is wider than every known DT_* tag. */
-const asTag = (tag: bigint, bits: 32 | 64): number | null => {
-  const word = BigInt.asUintN(bits, tag);
-  return word > 0xffffffffn ? null : Number(word);
-};
 
 const asNumber = (value: bigint, label: string): number => {
   if (value > BigInt(Number.MAX_SAFE_INTEGER))
@@ -709,50 +704,36 @@ export const readElfDependenciesSteps = function* (
   const interpreter = parseInterpreter(reader, interp, issues);
   if (dynamic === null)
     return emptyInventory(artifact, identity, interpreter, issues);
-  reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
-  const entrySize = bits === 64 ? 16 : 8;
-  const unique = new Map<number, number>();
-  const addresses = new Map<number, bigint>();
+  const table = reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
+  const unique = new Map<bigint, number>();
+  const addresses = new Map<bigint, bigint>();
   const neededOffsets: number[] = [];
-  let terminated = false;
-  for (
-    let base = dynamic.offset;
-    base + entrySize <= dynamic.offset + dynamic.bytes;
-    base += entrySize
-  ) {
-    const parsedEntry = readElfDynamicEntry(
-      bytes.subarray(base, base + entrySize),
-      bits,
-      reader.little,
+  const walked = walkElfDynamicTable<never>(
+    table,
+    { bits, littleEndian: reader.little },
+    UNIQUE_DYNAMIC_TAGS,
+    ({ tag, value, singleton }) => {
+      if (tag === DT_NEEDED) {
+        neededOffsets.push(asNumber(value, "DT_NEEDED"));
+        charge(
+          neededOffsets.length,
+          input.max_needed,
+          MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
+          "DT_NEEDED entries",
+          "max_needed",
+        );
+      } else if (ADDRESS_DYNAMIC_TAGS.has(tag)) addresses.set(tag, value);
+      else if (singleton)
+        unique.set(tag, asNumber(value, `DT tag ${hex(tag)}`));
+    },
+  );
+  if (!walked.ok)
+    return fail(
+      walked.error.kind === "duplicate-singleton"
+        ? `Duplicate dynamic tag ${hex(walked.error.tag)}`
+        : walked.error.error,
     );
-    if (!parsedEntry.ok) return fail(parsedEntry.error.message);
-    const tag = asTag(parsedEntry.value.tag, bits);
-    if (tag === null) continue;
-    if (tag === DT_NULL) {
-      terminated = true;
-      break;
-    }
-    if (tag === DT_NEEDED) {
-      neededOffsets.push(asNumber(parsedEntry.value.value, "DT_NEEDED"));
-      charge(
-        neededOffsets.length,
-        input.max_needed,
-        MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
-        "DT_NEEDED entries",
-        "max_needed",
-      );
-      continue;
-    }
-    if (!UNIQUE_DYNAMIC_TAGS.has(tag)) continue;
-    if (unique.has(tag) || addresses.has(tag))
-      fail(`Duplicate dynamic tag ${hex(tag)}`);
-    if (ADDRESS_DYNAMIC_TAGS.has(tag)) {
-      addresses.set(tag, parsedEntry.value.value);
-      continue;
-    }
-    unique.set(tag, asNumber(parsedEntry.value.value, `DT tag ${hex(tag)}`));
-  }
-  if (!terminated)
+  if (walked.value.terminatorOffset === null)
     issues.push({
       code: "malformed_entry",
       location: hex(dynamic.offset),
@@ -779,7 +760,7 @@ export const readElfDependenciesSteps = function* (
     });
     return undefined;
   };
-  const sectionOf = (type: number, tag: number, label: string) =>
+  const sectionOf = (type: number, tag: bigint, label: string) =>
     agreedSection(
       sectionOfType(type, label),
       addresses.get(tag),
@@ -1162,7 +1143,7 @@ const locateSymbolCount = function* (
   dynsym: SectionFacts | undefined,
   hash: SectionFacts | undefined,
   gnuHash: SectionFacts | undefined,
-  tags: ReadonlyMap<number, bigint>,
+  tags: ReadonlyMap<bigint, bigint>,
   bits: 32 | 64,
   entrySize: number,
   issues: ElfDependencyIssue[],

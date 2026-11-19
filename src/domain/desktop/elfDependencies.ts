@@ -3,7 +3,14 @@ import {
   desktopLibraryPolicy,
   type DesktopLibraryPolicy,
 } from "./libraryPolicy.js";
-import { readElfDynamicEntry } from "../elfDynamicEntry.js";
+import {
+  DT_NEEDED,
+  DT_RPATH,
+  DT_RUNPATH,
+  DT_STRTAB,
+  DT_STRSZ,
+  walkElfDynamicTable,
+} from "../elfDynamicEntry.js";
 import {
   admitElfFixedHeaderFacts,
   readElfHeaderFacts,
@@ -63,11 +70,12 @@ export interface ElfDependencies extends ElfLibraryIdentity {
 
 const PT_LOAD = 1;
 const PT_DYNAMIC = 2;
-const DT_NEEDED = 1n;
-const DT_STRTAB = 5n;
-const DT_STRSZ = 10n;
-const DT_RPATH = 15n;
-const DT_RUNPATH = 29n;
+const DEPENDENCY_SINGLETONS = new Set([
+  DT_STRTAB,
+  DT_STRSZ,
+  DT_RPATH,
+  DT_RUNPATH,
+]);
 
 const readExactly = async (
   read: ReadAt,
@@ -146,7 +154,6 @@ const dynamicTags = (
   },
   string
 > => {
-  const width = bits === 64 ? 16 : 8;
   const found = {
     needed: new Set<bigint>(),
     runpath: new Set<bigint>(),
@@ -180,30 +187,36 @@ const dynamicTags = (
       },
     ],
   ]);
-  for (let at = 0; at + width <= table.length; at += width) {
-    const entry = readElfDynamicEntry(
-      table.subarray(at, at + width),
-      bits,
-      little,
+  const walked = walkElfDynamicTable(
+    table,
+    { bits, littleEndian: little },
+    DEPENDENCY_SINGLETONS,
+    ({ tag, value }) => {
+      const list = lists.get(tag);
+      if (list !== undefined) {
+        list.offsets.add(value);
+        if (list.offsets.size > list.limit)
+          return err(
+            desktopLibraryLimit(
+              policy,
+              list.key,
+              `ELF dynamic table ${tag === DT_NEEDED ? "needed libraries" : "search path entries"}`,
+            ),
+          );
+      } else if (tag === DT_STRTAB) found.strtab = value;
+      else if (tag === DT_STRSZ) found.strsz = value;
+      return undefined;
+    },
+  );
+  if (!walked.ok)
+    return err(
+      walked.error.kind === "visitor"
+        ? walked.error.error
+        : `Duplicate dynamic tag 0x${walked.error.tag.toString(16)}`,
     );
-    if (!entry.ok) return err(entry.error.message);
-    const { tag, value } = entry.value;
-    if (tag === 0n) return ok(found);
-    const list = lists.get(tag);
-    if (list !== undefined) {
-      list.offsets.add(value);
-      if (list.offsets.size > list.limit)
-        return err(
-          desktopLibraryLimit(
-            policy,
-            list.key,
-            `ELF dynamic table ${tag === DT_NEEDED ? "needed libraries" : "search path entries"}`,
-          ),
-        );
-    } else if (tag === DT_STRTAB) found.strtab = value;
-    else if (tag === DT_STRSZ) found.strsz = value;
-  }
-  return err("ELF dynamic table has no DT_NULL terminator");
+  return walked.value.terminatorOffset === null
+    ? err("ELF dynamic table has no DT_NULL terminator")
+    : ok(found);
 };
 
 /** The strings at the given offsets of the dynamic string table at file offset `at`, `bytes` long. */
