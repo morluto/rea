@@ -643,6 +643,13 @@ it("reports a TLS descriptor as a two-word write", () => {
   expect(elfRelocationWidth(3, 41, 32)).toBe(8);
 });
 
+it("reports a sized link-time kind in a dynamic table as a write of unknown value", () => {
+  // R_X86_64_PLT32, as a text relocation would carry it.
+  const { writes, result } = walk(symbolicImage(4n, 0n));
+  expect(writes).toMatchObject([{ address: 0x300n, width: 4, value: null }]);
+  expect(result.pointer_coverage_known).toBe(true);
+});
+
 it("sizes the link-time kinds compilers emit into x86-64 and AArch64 objects", () => {
   // Kind numbers and names were paired from clang output with llvm-objdump.
   for (const kind of [4, 9, 19, 20, 21, 22, 23, 34, 41, 42])
