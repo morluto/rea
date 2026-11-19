@@ -98,7 +98,7 @@ it("reports a browser request whose URL is not a literal as an unknown endpoint 
   expect(result.unknowns).toContainEqual({
     dimension: "endpoints",
     reason:
-      "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+      "A browser request's endpoint could not be resolved from its URL argument.",
     affected_script_keys: [scriptKey],
     call_sites: [
       {
@@ -111,6 +111,42 @@ it("reports a browser request whose URL is not a literal as an unknown endpoint 
       },
     ],
   });
+});
+
+it("recovers inline Request inputs only for proven fetch calls", () => {
+  const source = [
+    'fetch(new Request("/bare"));',
+    "window.fetch(new globalThis.Request(`/qualified`));",
+    'function local(Request) { fetch(new Request("/shadowed")); }',
+    "fetch(new Request(dynamic));",
+    'new WebSocket(new Request("wss://app.example.test/coerced"));',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(
+    result.observations.endpoints.map(({ value, mechanism }) => ({
+      value,
+      mechanism,
+    })),
+  ).toEqual([
+    { value: "/bare", mechanism: "call:fetch" },
+    { value: "/qualified", mechanism: "call:window.fetch" },
+  ]);
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 3 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 4 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 5 }),
+        }),
+      ],
+    }),
+  );
 });
 
 it("reads an XMLHttpRequest URL from open's second argument on an inline receiver", () => {

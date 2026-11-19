@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
@@ -11,11 +11,13 @@ const admission = vi.hoisted(() => ({
   reason: undefined as unknown,
   statFailure: undefined as Error | undefined,
   closeFailure: undefined as Error | undefined,
+  readFailure: undefined as Error | undefined,
+  beforeClose: undefined as (() => void) | undefined,
   handles: [] as FileHandle[],
   afterStat: undefined as ((count: number) => Promise<void>) | undefined,
 }));
 
-// Only control when cancellation arrives; preserve real open/stat/close IO.
+// Inject failures and cancellation timing only on the selected real descriptor.
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -24,6 +26,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const handle = await fs.open(...args);
       if (args[0] !== admission.path) return handle;
       admission.handles.push(handle);
+      if (admission.readFailure !== undefined)
+        vi.spyOn(handle, "read").mockRejectedValue(admission.readFailure);
       const stat = handle.stat.bind(handle);
       const close = handle.close.bind(handle);
       handle.stat = (async (...options: Parameters<FileHandle["stat"]>) => {
@@ -37,6 +41,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         return metadata;
       }) as FileHandle["stat"];
       handle.close = async () => {
+        admission.beforeClose?.();
         if (admission.closeFailure !== undefined) {
           const failure = admission.closeFailure;
           admission.closeFailure = undefined;
@@ -80,6 +85,7 @@ const fixture = async (abortAt: number, reason?: unknown) => {
 
 afterEach(async () => {
   admission.closeFailure = undefined;
+  admission.beforeClose = undefined;
   for (const handle of admission.handles)
     if (handle.fd >= 0) await handle.close();
   Object.assign(admission, {
@@ -89,6 +95,7 @@ afterEach(async () => {
     controller: undefined,
     reason: undefined,
     statFailure: undefined,
+    readFailure: undefined,
     afterStat: undefined,
     handles: [],
   });
@@ -215,6 +222,70 @@ it("retains the cleanup failure and its file owner when cancelled admission cann
   expect(failure.owner.handle.fd).toBe(-1);
   expect(result.error.cleanupIncomplete).toBe(false);
 });
+
+it.each([false, true])(
+  "keeps physical Info.plist read failure ahead of cancellation during its close (close fails: %s)",
+  async (closeFails) => {
+    const root = await realpath(
+      await createTestTempDirectory("rea-plist-read-failure-"),
+    );
+    const bundle = join(root, "Fixture.app");
+    const programs = join(bundle, "Contents", "MacOS");
+    const path = join(bundle, "Contents", "Info.plist");
+    await mkdir(programs, { recursive: true });
+    await writeFile(
+      path,
+      "<plist><dict><key>CFBundleExecutable</key><string>target.hop</string></dict></plist>",
+    );
+    await writeFile(join(programs, "target.hop"), "database bytes");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { caller: "cancel during plist close" };
+    const physical = Object.assign(new Error("Info.plist disk read failed"), {
+      code: "EIO",
+    });
+    const closeFailure = new Error("Info.plist close denied");
+    admission.path = path;
+    admission.readFailure = physical;
+    let denied = closeFails;
+    admission.beforeClose = () => {
+      controller.abort(reason);
+      if (denied) throw closeFailure;
+    };
+    try {
+      const result = await parseBinaryTarget(bundle, {
+        resources,
+        signal: controller.signal,
+      });
+      if (result.ok)
+        throw new Error("Expected the physical bundle read failure");
+      const primary = result.error.cleanupPrimary ?? result.error;
+      expect(primary).toMatchObject({
+        _tag: "BinaryTargetError",
+        reason: expect.stringContaining("(EIO)"),
+      });
+      expect(primary.cause).toBe(physical);
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+      expect(
+        projectAnalysisError(result.error).details?.secondary_failures,
+      ).toEqual([expect.objectContaining({ code: "cancelled" })]);
+      expect(result.error.cleanupIncomplete).toBe(closeFails);
+      expect(resources.cleanupResources).toEqual(closeFails ? [path] : []);
+      expect(admission.handles).toHaveLength(1);
+      if (closeFails)
+        expect(admission.handles[0]?.fd).toBeGreaterThanOrEqual(0);
+      denied = false;
+      await resources.retryCleanup();
+      expect(admission.handles[0]?.fd).toBe(-1);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(primary.cause).toBe(physical);
+    } finally {
+      denied = false;
+      await resources.close();
+    }
+  },
+);
 
 it.each([
   "stop before admission",
