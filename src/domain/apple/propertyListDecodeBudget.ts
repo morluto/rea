@@ -19,6 +19,8 @@ import {
   binaryPlistUidNormalizationWidth,
 } from "./plistScalars.js";
 
+const DEFAULT_PLIST_DECODE_BUDGET = "the property list decode budget";
+
 /** Preflight the representation created by the pinned plist decoder. */
 export const preflightPropertyListDecode = (
   bytes: Buffer,
@@ -32,40 +34,54 @@ export const preflightPropertyListDecode = (
   const {
     numberProjection = false,
     uidProjection = false,
-    budget = "the property list decode budget",
+    budget = DEFAULT_PLIST_DECODE_BUDGET,
   } = options;
-  const expansion = hasBinaryPlistSignature(bytes)
-    ? estimateBinaryPlistExpansion(bytes, maxBytes, {
-        numberProjection,
-        uidProjection,
-        budget,
-      })
-    : {
-        estimatedBytes: estimateXmlPlistExpansion(
-          bytes,
-          maxBytes,
-          xmlText,
-          numberProjection,
-          budget,
-        ),
+  if (hasBinaryPlistSignature(bytes))
+    return estimateBinaryPlistExpansion(bytes, maxBytes, {
+      numberProjection,
+      uidProjection,
+      budget,
+    });
+  return {
+    estimatedBytes: preflightXmlPropertyListDecode(
+      xmlText ?? decodeXmlPlistText(bytes),
+      maxBytes,
+      { numberProjection, budget },
+    ),
+    datePrecisionOverlapCount: 0,
+    reachableDateOffsets: [],
+    overlappingDateOffsets: [],
+    reachableWideIntegerOffsets: [],
+    overlappingWideIntegerOffsets: [],
+    reachableNumericOffsets: [],
+    uidOffsetsToNormalize: [],
+    containersToNormalize: [],
+    normalizedOffsetSize: 1,
+    normalizedReferenceSize: 1,
+  };
+};
 
-        datePrecisionOverlapCount: 0,
-        reachableDateOffsets: [],
-        overlappingDateOffsets: [],
-        reachableWideIntegerOffsets: [],
-        overlappingWideIntegerOffsets: [],
-        reachableNumericOffsets: [],
-        uidOffsetsToNormalize: [],
-        containersToNormalize: [],
-        normalizedOffsetSize: 1,
-        normalizedReferenceSize: 1,
-      };
-  if (expansion.estimatedBytes > maxBytes)
+/** Refuse an XML plist whose decoded representation exceeds the byte allowance. */
+export const preflightXmlPropertyListDecode = (
+  xml: string,
+  maxBytes: number,
+  {
+    numberProjection = false,
+    budget = DEFAULT_PLIST_DECODE_BUDGET,
+  }: Pick<BinaryPlistExpansionOptions, "numberProjection" | "budget"> = {},
+): number => {
+  const estimatedBytes = estimateXmlPlistExpansion(
+    xml,
+    maxBytes,
+    numberProjection,
+    budget,
+  );
+  if (estimatedBytes > maxBytes)
     throw decodeBudgetExceeded(
       `plist representation exceeds ${budget}`,
       maxBytes,
     );
-  return expansion;
+  return estimatedBytes;
 };
 
 /**
@@ -80,13 +96,11 @@ const XML_NODE_BYTES = 384;
 const XML_REFERENCE_BYTES = 64;
 
 const estimateXmlPlistExpansion = (
-  bytes: Buffer,
+  xml: string,
   maxBytes: number,
-  xmlText: string | undefined,
   numberProjection: boolean,
   budget: string,
 ): number => {
-  const xml = xmlText ?? decodeXmlPlistText(bytes);
   // The decoded text and the DOM's copies of its character data.
   let estimate = xml.length * 4;
   const elementBytes =
@@ -347,7 +361,7 @@ export const estimateBinaryPlistExpansion = (
   bytes: Buffer,
   maxBytes: number,
   {
-    budget = "the property list decode budget",
+    budget = DEFAULT_PLIST_DECODE_BUDGET,
     bounds = "strict",
     numberProjection = false,
     uidProjection = false,

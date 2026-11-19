@@ -11,7 +11,10 @@ import {
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
-import { OPENABLE_APPLE_BUNDLE_TYPES_TEXT } from "./apple/appleBundleTypes.js";
+import {
+  INFO_PLIST_DECODE_MIB,
+  OPENABLE_APPLE_BUNDLE_TYPES_TEXT,
+} from "./apple/appleBundleTypes.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -186,6 +189,11 @@ export const analysisErrorRemediationAction = (
     error.infoPlist !== undefined
   )
     return `Read ${error.infoPlist} with inspect_plist to review its CFBundleExecutable, then select an existing program file directly.`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "bundle_info_plist_decode_budget_exceeded"
+  )
+    return `Reduce the Info.plist below the ${INFO_PLIST_DECODE_MIB} MiB decoded representation allowance, then retry opening the bundle.`;
   if (
     error instanceof BinaryTargetError &&
     (error.constraint === "bundle_info_plist_missing" ||
