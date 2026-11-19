@@ -171,7 +171,7 @@ cliTest(
 );
 
 cliTest(
-  "identifies an analysis snapshot on either side of a bundle comparison",
+  "identifies an analysis snapshot across portable Evidence readers",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-compare-snapshot-kind-");
     const bundlePath = join(root, "bundle.json");
@@ -223,6 +223,46 @@ cliTest(
         parseMcpToolError(await compareMcp(left, right)).error,
       ).toMatchObject(wrongKind);
     }
+
+    const source = { kind: "evidence-file", path: snapshotPath };
+    const view = { kind: "summary" };
+    const direct = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        JSON.stringify({ source, view }),
+        "--json",
+      ],
+    });
+    expect(direct.exitCode).toBe(1);
+    const explicitSource = {
+      ...wrongKind,
+      remediation: {
+        action: expect.stringContaining("standalone Evidence record or bundle"),
+      },
+    };
+    expect(direct.json).toMatchObject(explicitSource);
+    expect(
+      parseMcpToolError(await call("inspect_analysis_view", { source, view }))
+        .error,
+    ).toMatchObject(explicitSource);
+
+    const portable = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        JSON.stringify({
+          source: {
+            kind: "retained-evidence",
+            evidence_id: `ev_${"f".repeat(64)}`,
+          },
+          view,
+        }),
+        "--evidence-bundle",
+        snapshotPath,
+        "--json",
+      ],
+    });
+    expect(portable.exitCode).toBe(1);
+    expect(portable.json).toMatchObject(wrongKind);
 
     const malformed = await compareCli(bundlePath, malformedPath);
     expect(malformed.exitCode).toBe(1);
