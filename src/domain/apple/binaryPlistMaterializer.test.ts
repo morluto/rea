@@ -1,5 +1,9 @@
 import { expect, it, vi } from "vitest";
-import { binaryPlistObjectTable } from "../../../tests/fixtures/binaryPlistObjectTable.js";
+import {
+  binaryPlistObjectTable,
+  readBinaryPlistObjectTableLayout,
+  writeBinaryPlistObjectOffset,
+} from "../../../tests/fixtures/binaryPlistObjectTable.js";
 import { createPlistNumberProjection } from "./plistNumbers.js";
 import { projectPlistValue } from "./plistValue.js";
 import { scanBinaryPlistScalars } from "./plistScalars.js";
@@ -298,6 +302,34 @@ it("keeps readable text beside an unreferenced string it cannot read", () => {
   ]);
   expect(decodeBinaryPlistText(bytes, budget)).toEqual({
     text: expect.stringContaining("kept"),
+    complete: false,
+  });
+});
+
+it("keeps readable text when an unreferenced string crosses the offset table", () => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    Buffer.from([0x52, 0x61]), // Two declared characters, one in the object area.
+  ]);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept",
+    complete: false,
+  });
+});
+
+it("keeps readable text when an unreferenced entry starts at the offset table", () => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    Buffer.from([0x00]),
+  ]);
+  const table = readBinaryPlistObjectTableLayout(bytes);
+  writeBinaryPlistObjectOffset(bytes, table, 3, table.tableOffset);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept",
     complete: false,
   });
 });
