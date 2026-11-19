@@ -147,6 +147,15 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.ok(probe.checks.includes("independent_entry_preserved"));
     assert.ok(probe.checks.includes("propagated_flag_repaired_rea_tls_outer"));
     assert.ok(probe.checks.includes("recovered_pseudocode"));
+    for (const symbol of [
+      "_Znwm",
+      "_ZnwmSt11align_val_tRKSt9nothrow_t",
+      "_Znwy",
+      "__cxa_guard_acquire",
+    ]) {
+      assert.ok(probe.checks.includes(`returning_import_${symbol}`), symbol);
+      assert.ok(probe.checks.includes(`recovered_body_${symbol}`), symbol);
+    }
   } finally {
     const stopped = await supervisor.stop();
     cleaned = stopped.status === "verified-cleanup";

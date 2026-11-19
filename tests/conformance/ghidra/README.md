@@ -56,7 +56,10 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   relocations. The cross-format verifier checks their Ghidra observations through
   the public CLI without executing the artifact.
 - `no-return.c` and `ReaNoReturnProbe.java` inject incorrect import flags into a
-  real ELF or Mach-O analysis database, verify caller recovery, propagated flag
+  real ELF or Mach-O analysis database, including the demangled C++ runtime
+  imports `_Znwm`, `_ZnwmSt11align_val_tRKSt9nothrow_t`, `_Znwy` and
+  `__cxa_guard_acquire`,
+  verify caller recovery, propagated flag
   repair and signature preservation, and retain genuine/unknown no-return calls
   and independently identified entries. Run `npm run build:cached`, then
   `node scripts/verify-real-ghidra-noreturn.mjs` with the Ghidra/JDK environment
