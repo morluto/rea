@@ -70,12 +70,7 @@ export const startFakeCdpBrowser = async (
       );
       return;
     }
-    if (options.handshakeDelayMs === undefined) {
-      accept();
-      return;
-    }
-    const timer = setTimeout(accept, options.handshakeDelayMs);
-    socket.once("close", () => clearTimeout(timer));
+    accept();
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const directPage = request.url?.startsWith("/devtools/page/") === true;
