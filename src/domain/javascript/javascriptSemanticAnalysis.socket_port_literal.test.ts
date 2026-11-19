@@ -19,7 +19,7 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   net.connect() / undefined / void 0 -> THREW ERR_MISSING_ARGS
  *   net.connect({}) / []              -> THREW ERR_MISSING_ARGS (undecided here)
  */
-const socketAcquisitionsFor = (call: string) =>
+const socketOperationsFor = (call: string) =>
   analyzeJavaScriptSemantics(
     `import net from "node:net";\nimport tls from "node:tls";\nfunction g(p) { ${call}; }`,
   ).resourceOperations.map(({ kind, method }) => ({ kind, method }));
@@ -34,7 +34,7 @@ it.each([
   ["a BigInt port", `net.connect(0n)`],
   ["a boolean port", `net.connect(true)`],
   ["a null port", `net.connect(null)`],
-  ["an empty path", `net.connect("")`],
+  ["an empty string port", `net.connect("")`],
   ["an omitted argument", `net.connect()`],
   ["an explicit undefined port", `net.connect(undefined)`],
   ["a void port", `net.connect(void 0)`],
@@ -43,10 +43,60 @@ it.each([
   ["a tls negative port", `tls.connect(-1)`],
   ["a tls NaN port", `tls.connect(NaN)`],
   ["a createConnection port above the range", `net.createConnection(65536)`],
-  ["a createConnection empty path", `net.createConnection("")`],
+  ["a createConnection empty string port", `net.createConnection("")`],
 ] as const)("emits no socket acquisition for %s", (_name, call) => {
-  expect(socketAcquisitionsFor(call)).toEqual([]);
+  expect(socketOperationsFor(call)).toEqual([]);
 });
+
+it.each([
+  [
+    "a numeric string with a rejected TLS port override",
+    `tls.connect("443", { port: -1 })`,
+  ],
+  [
+    "a numeric string with an invalid TLS host",
+    `tls.connect("443", { host: 1 })`,
+  ],
+  [
+    "a numeric template with an invalid TLS host",
+    "tls.connect(`443`, { host: 1 })",
+  ],
+  [
+    "a numeric unary result with an invalid TLS host",
+    `tls.connect(+443, { host: 1 })`,
+  ],
+  ["an out-of-range numeric net string", `net.connect("65536")`],
+] as const)(
+  "omits the acquisition and linked release for %s",
+  (_name, call) => {
+    expect(
+      socketOperationsFor(`const handle = ${call}; handle.destroy()`),
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  [
+    "a later override of a bad positional TLS port",
+    `tls.connect(-1, { port: 443 })`,
+  ],
+  [
+    "a negative numeric string that selects a path",
+    `tls.connect("-1", { host: 1, port: -1 })`,
+  ],
+  ["an unreadable positional overload", `tls.connect(p, { port: -1 })`],
+  ["an unreadable template overload", "tls.connect(`${p}`, { port: -1 })"],
+] as const)(
+  "retains the acquisition and linked release for %s",
+  (_name, call) => {
+    expect(
+      socketOperationsFor(`const handle = ${call}; handle.destroy()`),
+    ).toEqual([
+      { kind: "acquire", method: "connect" },
+      { kind: "release", method: "destroy" },
+    ]);
+  },
+);
 
 it.each([
   ["a zero port", `net.connect(0)`, "connect"],
@@ -63,7 +113,7 @@ it.each([
   ["a tls port", `tls.connect(80)`, "connect"],
   ["a createConnection port", `net.createConnection(80)`, "createConnection"],
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
-  expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+  expect(socketOperationsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
 
 it.each([
@@ -99,7 +149,7 @@ it.each([
 ] as const)(
   "keeps the socket acquisition when options make the port irrelevant or valid: %s",
   (_name, call) => {
-    expect(socketAcquisitionsFor(call)).toHaveLength(1);
+    expect(socketOperationsFor(call)).toHaveLength(1);
   },
 );
 
@@ -115,7 +165,7 @@ it.each([
   ["a null options port", `net.connect({ port: null })`],
   ["a bad port with a null path", `net.connect({ path: null, port: -1 })`],
 ] as const)("emits no socket acquisition for %s", (_name, call) => {
-  expect(socketAcquisitionsFor(call)).toEqual([]);
+  expect(socketOperationsFor(call)).toEqual([]);
 });
 
 it("retains candidate socket resources without applying Node-specific admission", () => {

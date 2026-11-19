@@ -81,28 +81,9 @@ export const collectJavaScriptSemanticResources = (
   };
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
-      !socketPortInFirstArgument(candidate) ||
+      !usesSocketArguments(candidate) ||
       candidate.builtinAuthority === "candidate" ||
-      (!rejectsSocketLiteralArguments(
-        candidate.node,
-        candidate.specifier,
-        context,
-      ) &&
-        !rejectsSocketOptionsPort(
-          candidate.node,
-          candidate.specifier,
-          context,
-        ) &&
-        !rejectsTlsProtocolVersionLiteral(
-          candidate.node,
-          candidate.specifier,
-          context.state,
-        ) &&
-        !rejectsSocketHostMember(
-          candidate.node,
-          candidate.specifier,
-          context.state,
-        )),
+      !rejectsSocketArguments(candidate.node, candidate.specifier, context),
   );
   return [
     ...acquisitions.map(immutableAcquisition),
@@ -260,7 +241,9 @@ const unaryOperandNumber = (
     if (value.operator === "~") return ~inner;
     return undefined;
   }
-  return primitiveToNumber(value) ?? nonFiniteGlobalNumber(value, context);
+  return (
+    primitiveToNumber(value) ?? nonFiniteGlobalNumber(value, context.state)
+  );
 };
 
 /**
@@ -270,12 +253,12 @@ const unaryOperandNumber = (
  */
 const nonFiniteGlobalNumber = (
   value: t.Node,
-  context: DataEffectTraversalContext,
+  state: JavaScriptSemanticAnalysisState,
 ): number | undefined => {
   if (
     !t.isIdentifier(value) ||
     (value.name !== "NaN" && value.name !== "Infinity") ||
-    !isUnmodifiedGlobalReference(value, context.state, value.name)
+    !isUnmodifiedGlobalReference(value, state, value.name)
   )
     return undefined;
   return value.name === "NaN" ? Number.NaN : Number.POSITIVE_INFINITY;
@@ -627,100 +610,53 @@ const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
 /**
- * `net` and `tls` validate a numeric port before creating a socket, so a
- * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
- * or `null` first argument throws synchronously and no socket exists. A string
- * is a Unix socket path and an object may carry a path, so only an exactly
- * readable non-port literal is decided. `""` is a path with no length, which
- * Node also rejects.
- *
- * `net` also rejects an omitted or undefined port, before it returns a socket.
- * TLS merges later options, so an undefined first argument alone cannot decide
- * its admission. Object arguments and spread positions remain undecided here.
+ * Decide synchronous socket argument refusals from one normalized call. TLS may
+ * replace a positional port with a later option before the socket reads it.
  */
-const rejectsSocketLiteralArguments = (
+const rejectsSocketArguments = (
   node: t.CallExpression | t.OptionalCallExpression,
   specifier: string,
   context: DataEffectTraversalContext,
 ): boolean => {
-  const port = node.arguments[0];
-  if (port === undefined) return specifier === "net";
-  if (t.isSpreadElement(port)) return false;
-  const value = unwrapJavaScriptExpression(port).node;
-  if (
-    specifier === "net" &&
-    (t.isUnaryExpression(value, { operator: "void" }) ||
-      isUnmodifiedGlobalReference(value, context.state, "undefined"))
-  )
-    return true;
-  if (t.isStringLiteral(value)) return value.value.length === 0;
-  if (
-    t.isNullLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value)
-  )
-    return true;
-  if (t.isNumericLiteral(value))
-    return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
-    );
-  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
-  if (
-    t.isIdentifier(value) &&
-    (value.name === "NaN" || value.name === "Infinity") &&
-    isUnmodifiedGlobalReference(value, context.state, value.name)
-  )
-    return true;
-  // Numeric unary operators are judged by their result: `-0` is port zero,
-  // and `~(-1.5)` is zero too. `typeof` instead yields a nonempty IPC path.
-  if (t.isUnaryExpression(value)) {
-    if (value.operator === "!" || value.operator === "delete") return true;
-    const number = unaryOperandNumber(value, context, 0);
-    return (
-      number !== undefined &&
-      (!Number.isInteger(number) || number < 0 || number > 65535)
-    );
-  }
-  return false;
-};
-
-/**
- * Whether an options object carries a port Node rejects before creating a socket.
- *
- * `net` and `tls` read the same port member whether it arrives in the first options object,
- * a later TLS options object, or the third TLS argument when the second argument is not an
- * object. A Unix `path` (or TLS `socket`) wins before the port is validated. Keep an unresolved
- * member undecided: accessors, dynamic spreads and constructors may change the value while Node
- * copies the options.
- */
-const rejectsSocketOptionsPort = (
-  node: t.CallExpression | t.OptionalCallExpression,
-  specifier: string,
-  context: DataEffectTraversalContext,
-): boolean => {
-  const effective = socketOptionReader(node, specifier, context.state);
+  const { state } = context;
+  const effective = socketOptionReader(node, specifier, state);
   if (effective === undefined) return false;
-  const falsy = (value: t.Node): boolean =>
-    isNullishPlaceholder(value, context.state) ||
-    staticJavaScriptTruthiness(value) === false;
-  const inheritable = prototypeMutationMayPrecede(
-    context.state,
-    "Object",
-    node,
-  );
-  for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
-    const value = effective(member);
-    if (value === "unknown") return false;
-    if (value !== undefined && !falsy(value)) return false;
-    if (value === undefined && inheritable) return false;
-  }
+  if (specifier === "tls" && rejectsTlsProtocolVersionLiteral(effective, state))
+    return true;
+
+  const inheritable = prototypeMutationMayPrecede(state, "Object", node);
+  const path = effective("path");
+  const skipsTcp = (value: SocketOptionValue): boolean =>
+    value === "unknown" ||
+    (value === undefined
+      ? inheritable
+      : !isNullishPlaceholder(value, state) &&
+        staticJavaScriptTruthiness(value) !== false);
+  if (skipsTcp(path) || (specifier === "tls" && skipsTcp(effective("socket"))))
+    return false;
+
   const port = effective("port");
-  if (port === undefined || port === "unknown") return false;
-  return rejectsSocketOptionsPortValue(port, context, effective("path"));
+  if (port === undefined && specifier === "net" && node.arguments.length === 0)
+    return true;
+  if (
+    port !== undefined &&
+    port !== "unknown" &&
+    rejectsSocketPortValue(port, context, path)
+  )
+    return true;
+
+  const host = effective("host");
+  // Node falls back to localhost for falsy hosts. An unknown host cannot prove a refusal.
+  return (
+    host !== undefined &&
+    host !== "unknown" &&
+    staticJavaScriptTruthiness(host) === true &&
+    !t.isStringLiteral(unwrapJavaScriptExpression(host).node)
+  );
 };
 
-/** Node coerces an options `port` member, unlike a positional string path. */
-const rejectsSocketOptionsPortValue = (
+/** Validate a TCP port after later options and pipe precedence are resolved. */
+const rejectsSocketPortValue = (
   value: t.Node,
   context: DataEffectTraversalContext,
   path: t.Node | "unknown" | undefined,
@@ -802,66 +738,55 @@ const TLS_PROTOCOL_VERSIONS = new Set([
   "TLSv1.3",
 ]);
 
-/** Select Node's merge target and source without conflating typeof with own keys. */
-const tlsOptionMerge = (
-  node: t.CallExpression | t.OptionalCallExpression,
+const socketArgumentKind = (
+  value: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
-):
-  | {
-      readonly target: t.ObjectExpression | "fresh" | "unknown";
-      readonly source: t.Node | undefined;
-    }
-  | undefined => {
-  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
-    return undefined;
-  const argument = (index: number): t.Node | undefined => {
-    const value = node.arguments[index];
-    return value === undefined
-      ? undefined
-      : unwrapJavaScriptExpression(value as t.Node).node;
-  };
-  const objectKind = (
-    value: t.Node | undefined,
-  ): "object" | "non-object" | "unknown" => {
-    if (value === undefined) return "non-object";
-    if (
-      t.isObjectExpression(value) ||
-      t.isArrayExpression(value) ||
-      t.isRegExpLiteral(value) ||
-      t.isNewExpression(value)
-    )
-      return "object";
-    if (
-      t.isFunctionExpression(value) ||
-      t.isArrowFunctionExpression(value) ||
-      t.isClassExpression(value) ||
-      primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
-        null
-    )
-      return "non-object";
-    return "unknown";
-  };
-  const first = argument(0);
-  const firstKind = objectKind(first);
-  const second = argument(1);
-  const secondKind = objectKind(second);
-  if (firstKind === "unknown" || secondKind === "unknown") return undefined;
-  return {
-    target:
-      firstKind === "non-object"
-        ? "fresh"
-        : t.isObjectExpression(first)
-          ? first
-          : "unknown",
-    source: secondKind === "object" ? second : argument(2),
-  };
+): "object" | "non-object" | "possibly-string" | "unknown" => {
+  if (value === undefined) return "non-object";
+  if (
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isNewExpression(value)
+  )
+    return "object";
+  if (
+    isFunctionValuedSyntax(value) ||
+    nonFiniteGlobalNumber(value, state) !== undefined
+  )
+    return "non-object";
+  const keys = primitiveOwnKeys(value, (child) =>
+    isNullishPlaceholder(child, state),
+  );
+  if (keys === "indices") return "possibly-string";
+  return keys === "none" ? "non-object" : "unknown";
+};
+
+type SocketOptionValue = t.Node | "unknown" | undefined;
+type SocketOptionReader = (member: string) => SocketOptionValue;
+
+/** Node's net._normalizeArgs treats exactly strings coercible to >= 0 as ports. */
+const positionalSocketOptions = (
+  value: t.Node | undefined,
+  possiblyString: boolean,
+): { readonly path?: SocketOptionValue; readonly port?: SocketOptionValue } => {
+  if (value === undefined) return {};
+  if (!possiblyString) return { port: value };
+  // typeof always yields a nonnumeric string. Other string-producing syntax
+  // may need its runtime value to distinguish a pipe from a TCP port.
+  if (t.isUnaryExpression(value, { operator: "typeof" }))
+    return { path: value };
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found && typeof literal.value === "string")
+    return Number(literal.value) >= 0 ? { port: value } : { path: value };
+  return { path: "unknown", port: "unknown" };
 };
 
 /**
  * The value Node reads for one `net`/`tls` option member: a node, `undefined` when
  * the member is absent, or `"unknown"` when an accessor, a prototype write or a
- * dynamic copy could change it. `tls` merges its option arguments (see
- * `tlsOptionMerge`); `net` reads only an options object in argument 0. Returns
+ * dynamic copy could change it. TLS merges its second or third argument over
+ * the object or positional options selected by net's normalizer. Returns
  * `undefined` when the options themselves are not statically known.
  *
  * The answer stays unknown whenever an accessor could have written the member
@@ -874,46 +799,34 @@ const socketOptionReader = (
   node: t.CallExpression | t.OptionalCallExpression,
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
-): ((member: string) => t.Node | "unknown" | undefined) | undefined => {
-  let target: t.ObjectExpression | undefined;
+): SocketOptionReader | undefined => {
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return undefined;
+  const argument = (index: number): t.Node | undefined => {
+    const value = node.arguments[index];
+    return value === undefined
+      ? undefined
+      : unwrapJavaScriptExpression(value as t.Node).node;
+  };
+  const first = argument(0);
+  const firstKind = socketArgumentKind(first, state);
+  if (
+    firstKind === "unknown" ||
+    (firstKind === "object" && !t.isObjectExpression(first))
+  )
+    return undefined;
+  const target = t.isObjectExpression(first) ? first : undefined;
+  const positional =
+    firstKind === "object"
+      ? {}
+      : positionalSocketOptions(first, firstKind === "possibly-string");
   let source: t.Node | undefined;
-  let positionalPath: t.Node | "unknown" | undefined;
   if (specifier === "tls") {
-    const merge = tlsOptionMerge(node, state);
-    if (merge === undefined || merge.target === "unknown") return undefined;
-    target = merge.target === "fresh" ? undefined : merge.target;
-    source = merge.source;
-    if (merge.target === "fresh") {
-      const first = node.arguments[0];
-      const value =
-        first === undefined
-          ? undefined
-          : unwrapJavaScriptExpression(first as t.Node).node;
-      if (value !== undefined && !isNullishPlaceholder(value, state)) {
-        if (
-          t.isStringLiteral(value) ||
-          (t.isTemplateLiteral(value) && value.expressions.length === 0)
-        )
-          positionalPath = value;
-        else if (
-          !t.isNumericLiteral(value) &&
-          !t.isBigIntLiteral(value) &&
-          !t.isBooleanLiteral(value)
-        )
-          positionalPath = "unknown";
-      }
-    }
-  } else if (specifier === "net") {
-    const first = node.arguments[0];
-    if (
-      first === undefined ||
-      node.arguments.some((argument) => t.isSpreadElement(argument))
-    )
-      return undefined;
-    const options = unwrapJavaScriptExpression(first as t.Node).node;
-    if (!t.isObjectExpression(options)) return undefined;
-    target = options;
-  } else return undefined;
+    const second = argument(1);
+    const secondKind = socketArgumentKind(second, state);
+    if (secondKind === "unknown") return undefined;
+    source = secondKind === "object" ? second : argument(2);
+  }
   const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
   // A known source value proves the final option only when target writes are
   // ordinary. Target prototypes and copied __proto__ can absorb later writes.
@@ -945,8 +858,8 @@ const socketOptionReader = (
   );
   const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
   return (member) => {
-    let read: t.Node | "unknown" | undefined =
-      member === "path" ? positionalPath : undefined;
+    let read =
+      member === "path" || member === "port" ? positional[member] : undefined;
     for (const reader of readers) {
       const property = reader(member);
       if (property.status === "missing") continue;
@@ -976,13 +889,9 @@ const socketOptionReader = (
  * Only `tls` reads these members, so `net` is not consulted.
  */
 const rejectsTlsProtocolVersionLiteral = (
-  node: t.CallExpression | t.OptionalCallExpression,
-  specifier: string,
+  effective: SocketOptionReader,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  if (specifier !== "tls") return false;
-  const effective = socketOptionReader(node, specifier, state);
-  if (effective === undefined) return false;
   // A truthy context means Node never parses the members at all. The shared owner
   // already treats `-0` as falsy. Measured on Node 24.22.1,
   // `{secureContext: -0, minVersion: "nope"}` throws while a real context connects.
@@ -1070,7 +979,7 @@ const TLS_SECURE_PROTOCOLS = new Set(
  *   0 beside a minVersion                                -> socket
  */
 const rejectsSecureProtocolLiteral = (
-  effective: (member: string) => t.Node | "unknown" | undefined,
+  effective: SocketOptionReader,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   const protocol = effective("secureProtocol");
@@ -1104,46 +1013,7 @@ const rejectsSecureProtocolLiteral = (
   });
 };
 
-/**
- * Whether a `net`/`tls` call carries a `host` option Node rejects.
- *
- * Measured on Node 24.22.1: both connect through `options.host || "localhost"` and
- * throw `ERR_INVALID_ARG_TYPE` from the call when that is not a string, so a truthy
- * non-string host leaves no socket while a falsy one (`0`, `""`, `false`, `null`)
- * connects to localhost. A truthy `path` connects a pipe and a truthy TLS `socket`
- * skips the connect, so neither reads `host`, and an absent one may be inherited
- * from a patched `Object.prototype`. Anything not statically known keeps the
- * acquisition.
- */
-const rejectsSocketHostMember = (
-  node: t.CallExpression | t.OptionalCallExpression,
-  specifier: string,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const effective = socketOptionReader(node, specifier, state);
-  if (effective === undefined) return false;
-  const falsy = (value: t.Node) =>
-    isNullishPlaceholder(value, state) ||
-    staticJavaScriptTruthiness(value) === false;
-  // Node reads an absent member through the prototype chain, so a write to
-  // Object.prototype that may run first can supply a path or socket.
-  const inheritable = prototypeMutationMayPrecede(state, "Object", node);
-  for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
-    const value = effective(member);
-    if (value === "unknown" || (value !== undefined && !falsy(value)))
-      return false;
-    if (value === undefined && inheritable) return false;
-  }
-  const host = effective("host");
-  if (host === undefined || host === "unknown") return false;
-  // Every statically truthy shape other than a string literal is a non-string.
-  return (
-    staticJavaScriptTruthiness(host) === true &&
-    !t.isStringLiteral(unwrapJavaScriptExpression(host).node)
-  );
-};
-
-/** Only `net`/`tls` sockets take a port in argument 0. */
-const socketPortInFirstArgument = (
+/** Only net and TLS acquisitions use Node socket overloads. */
+const usesSocketArguments = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
