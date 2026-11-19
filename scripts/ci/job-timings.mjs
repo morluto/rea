@@ -10,8 +10,23 @@ const TIMEOUT_MS = 30_000;
 const OUTPUT_DIRECTORY = join(".cache", "ci-job-timings");
 const STEP_COSTS = [
   { key: "npmCi", pattern: /\bnpm ci\b/iu },
-  { key: "artifactUpload", pattern: /upload.*artifact/iu },
-  { key: "artifactDownload", pattern: /download.*artifact/iu },
+  {
+    key: "artifactUpload",
+    pattern: /upload.*artifact/iu,
+    // Named upload-artifact steps in the CI workflow whose names omit "artifact".
+    names: new Set([
+      "Upload complete static diagnostics",
+      "Upload complete deep static diagnostics",
+      "Retain available reverse tools diagnostics",
+      "Publish successful timing history",
+      "Retain the exact qualified release package",
+    ]),
+  },
+  {
+    key: "artifactDownload",
+    pattern: /download.*artifact/iu,
+    names: new Set(["Download previous timing report"]),
+  },
 ];
 
 /** Fetch and summarize one workflow attempt without turning telemetry into a gate. */
@@ -221,7 +236,9 @@ function normalizeStep(step) {
     typeof step.name !== "string"
   )
     throw new Error("GitHub jobs API contains a malformed job step");
-  const cost = STEP_COSTS.find(({ pattern }) => pattern.test(step.name));
+  const cost = STEP_COSTS.find(
+    ({ pattern, names }) => names?.has(step.name) || pattern.test(step.name),
+  );
   return {
     name: step.name,
     costKey: cost?.key ?? null,

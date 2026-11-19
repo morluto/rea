@@ -38,6 +38,11 @@ it("merges paginated jobs, reports elapsed metrics, and preserves raw responses"
               started_at: "2026-10-13T00:00:40Z",
               completed_at: "2026-10-13T00:00:41Z",
             },
+            {
+              name: "Upload complete static diagnostics",
+              started_at: "2026-10-13T00:00:41Z",
+              completed_at: "2026-10-13T00:00:44Z",
+            },
           ],
         },
       ],
@@ -64,6 +69,16 @@ it("merges paginated jobs, reports elapsed metrics, and preserves raw responses"
               name: "Download artifacts",
               started_at: "2026-10-13T00:00:20Z",
               completed_at: "2026-10-13T00:00:22Z",
+            },
+            {
+              name: "Download previous timing report",
+              started_at: "2026-10-13T00:00:22Z",
+              completed_at: "2026-10-13T00:00:26Z",
+            },
+            {
+              name: "Cache npm package downloads",
+              started_at: "2026-10-13T00:00:26Z",
+              completed_at: "2026-10-13T00:00:31Z",
             },
           ],
         },
@@ -122,8 +137,16 @@ it("merges paginated jobs, reports elapsed metrics, and preserves raw responses"
     reason: "job was skipped",
   });
   expect(report.stepCosts.npmCi[0].duration.seconds).toBe(30);
-  expect(report.stepCosts.artifactUpload[0].duration.seconds).toBe(1);
-  expect(report.stepCosts.artifactDownload[0].duration.seconds).toBe(2);
+  expect(
+    report.stepCosts.artifactUpload.map(
+      (step: { duration: { seconds: number } }) => step.duration.seconds,
+    ),
+  ).toEqual([1, 3]);
+  expect(
+    report.stepCosts.artifactDownload.map(
+      (step: { duration: { seconds: number } }) => step.duration.seconds,
+    ),
+  ).toEqual([2, 4]);
   expect(report.stepCostInterpretation).toContain(
     "not total artifact transfer costs",
   );
