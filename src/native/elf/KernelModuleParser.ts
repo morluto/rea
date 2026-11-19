@@ -337,18 +337,14 @@ const parseVersions = (
     };
   const nameBytes = bits === 64 ? 56 : 60;
   const crcBytes = bits === 64 ? 8 : 4;
+  const reader = new BinaryReader(stored, little, "elf");
   const count = stored.length / entryBytes;
   exceeds(examined.count + count, maxEntries);
   const entries: NonNullable<Report["versions"]>["entries"] = [];
   for (let index = 0; index < count; index += 1) {
     const start = index * entryBytes;
     const record = stored.subarray(start, start + entryBytes);
-    const crc =
-      bits === 64
-        ? little
-          ? record.readBigUInt64LE(0)
-          : record.readBigUInt64BE(0)
-        : BigInt(little ? record.readUInt32LE(0) : record.readUInt32BE(0));
+    const crc = reader.word(start, bits);
     const nameField = record.subarray(crcBytes, crcBytes + nameBytes);
     const end = nameField.indexOf(0);
     entries.push({
