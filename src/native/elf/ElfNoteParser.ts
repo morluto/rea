@@ -273,27 +273,18 @@ const parseNoteStream = (
   text: TextBudget,
   signal?: AbortSignal,
 ): ParsedNote[] => {
-  // Alignment padding is not read when a note's aligned size equals the
-  // declared table. Require the whole table first so a short file is invalid
-  // input instead of a provider result the service rejects.
-  reader.require(offset, size);
+  // Admit the full declared range, including alignment bytes that are not decoded.
+  const table = reader.slice(offset, size);
   const notes: ParsedNote[] = [];
   let at = 0;
-  while (at + ELF_NOTE_HEADER_BYTES <= size) {
+  while (at + ELF_NOTE_HEADER_BYTES <= table.length) {
     assertArtifactReadActive(signal);
-    examined.count += 1;
-    if (examined.count > maxEntries)
-      throw decodeLimit(
-        "elf-notes",
-        `ELF note tables exceed the ${String(maxEntries)}-entry budget.`,
-        { name: "max_entries", maximum: maxEntries, required: examined.count },
-      );
-    const header = offset + at;
+    const nameStart = at + ELF_NOTE_HEADER_BYTES;
     const frame = readElfNoteFrame(
-      reader.slice(header, ELF_NOTE_HEADER_BYTES),
+      table.subarray(at, nameStart),
       reader.little,
       alignment,
-      size - at,
+      table.length - at,
     );
     if (!frame.ok) return fail(frame.error.message);
     const {
@@ -305,13 +296,21 @@ const parseNoteStream = (
       framing,
     } = frame.value;
     if (framing !== "complete") fail("ELF note entry exceeds its table.");
-    const nameBytes = reader.slice(header + ELF_NOTE_HEADER_BYTES, namesz);
-    const descriptor = reader.slice(header + descRel, descsz);
+    examined.count += 1;
+    if (examined.count > maxEntries)
+      throw decodeLimit(
+        "elf-notes",
+        `ELF note tables exceed the ${String(maxEntries)}-entry budget.`,
+        { name: "max_entries", maximum: maxEntries, required: examined.count },
+      );
+    const descStart = at + descRel;
+    const nameBytes = table.subarray(nameStart, nameStart + namesz);
+    const descriptor = table.subarray(descStart, descStart + descsz);
     const ownerEnd = nameBytes.indexOf(0);
     const ownerBytes = ownerEnd < 0 ? namesz : ownerEnd;
     chargeText(text, ownerBytes + namesz * 2);
     notes.push({
-      location: { offset: header, bytes: next },
+      location: { offset: offset + at, bytes: next },
       namesz,
       descsz,
       type,
@@ -321,11 +320,11 @@ const parseNoteStream = (
           : nameBytes.subarray(0, ownerEnd).toString("latin1"),
       owner_bytes_hex: nameBytes.toString("hex"),
       descriptor,
-      descriptor_offset: header + descRel,
+      descriptor_offset: offset + descStart,
     });
     at += next;
   }
-  if (at < size && !isElfNotePadding(reader.slice(offset + at, size - at)))
+  if (at < table.length && !isElfNotePadding(table.subarray(at)))
     fail("ELF note table has trailing non-zero bytes.");
   return notes;
 };
