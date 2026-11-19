@@ -11,6 +11,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  semanticArrayIndex,
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
@@ -27,6 +28,7 @@ import {
 } from "./javascriptSemanticEffectPathIndex.js";
 import {
   isUnshadowedGlobal,
+  isSemanticArrayPatternEffect,
   semanticBindingEffectFollowsCapture,
   semanticEscapeFollowsCapture,
   semanticDefiniteEffectPrecedesReference,
@@ -376,6 +378,38 @@ export const semanticEffectMayFollow = (
 type AmbientEffect =
   JavaScriptSemanticAnalysisState["ambientWriteEffects"][number];
 
+/** Which effects on the native prototype chain can alter array iteration. */
+export const semanticArrayPrototypeIterationMayChange = (
+  path: JavaScriptSemanticPropertyPath,
+): boolean => {
+  let offset = 0;
+  while (path[offset] === "constructor" && path[offset + 1] === "prototype")
+    offset += 2;
+  const key = path[offset];
+  return (
+    key === undefined ||
+    key === null ||
+    typeof key === "object" ||
+    semanticArrayIndex(key) !== null ||
+    key === "__proto__"
+  );
+};
+
+/** Seed the iteration guard from the earlier, alias-aware ambient effect index. */
+export const semanticAmbientArrayIterationUnknown = (
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const changesIteration = ({ path }: AmbientEffect): boolean =>
+    path[0] === "global" &&
+    (path[1] === "Array" || path[1] === "Object" || path[1] === null) &&
+    (path[2] === "prototype" || path[2] === null) &&
+    semanticArrayPrototypeIterationMayChange(path.slice(3));
+  return (
+    state.ambientWriteEffects.some(changesIteration) ||
+    state.ambientEscapeEffects.some(changesIteration)
+  );
+};
+
 type MemberWrite = JavaScriptSemanticBindingState["memberWrites"][number];
 
 /** Matching effects per queried path; the effect lists only grow, so their
@@ -580,6 +614,27 @@ export const bindingMemberEffectMayPrecedeReads = (
     }
   return false;
 };
+
+/** Whether a selected receiver's contents can change before use.
+ * Writes replacing the receiver are covered by the source-selection query.
+ */
+export const bindingProjectedContentsMayChangeAt = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  path: JavaScriptSemanticPropertyPath,
+  read: t.Node,
+): boolean =>
+  opaqueCodeMayReachBindingReference(binding, state, read) ||
+  bindingMemberEffectMayPrecedeReads(
+    state,
+    binding,
+    (kind, effect) =>
+      (kind === "escape" || effect.path.length > path.length) &&
+      semanticEffectPathMatches(effect.path.slice(0, path.length), path)
+        ? [read]
+        : undefined,
+    "activation",
+  );
 
 /**
  * Whether an assignment to `binding` recorded as a reference initializer
@@ -1028,6 +1083,37 @@ export const capturedBindingPathMayHaveChanged = (
           state.parentsByNode,
         ),
     )
+  );
+};
+
+/** Preserve an own-data read when the only possible changes follow it in an iterator phase. */
+export const bindingPathOnlyEscapesAtLaterIteratorEffects = (
+  binding: JavaScriptSemanticBindingState,
+  path: readonly string[],
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let laterIterator = false;
+  const matches = (effect: JavaScriptSemanticMemberEffect): boolean =>
+    semanticEffectPathMatches(effect.path, path);
+  if (
+    semanticSomeEffectPathCandidate(binding.escapedPaths, path, (effect) => {
+      if (!matches(effect)) return false;
+      if (
+        !isSemanticArrayPatternEffect(effect.node) ||
+        semanticEffectTiming(read, effect.node, state) !== "after"
+      )
+        return true;
+      laterIterator = true;
+      return false;
+    }) ||
+    !laterIterator
+  )
+    return false;
+  return (
+    !opaqueCodeMayReachBindingReference(binding, state, read) &&
+    !semanticOpaqueGlobalMayHaveChanged(read, state) &&
+    !semanticSomeEffectPathCandidate(binding.memberWrites, path, matches)
   );
 };
 

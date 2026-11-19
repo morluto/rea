@@ -4,6 +4,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  bindingPathOnlyEscapesAtLaterIteratorEffects,
   capturedBindingPathMayHaveChanged,
   hasRecordedReferenceEffects,
   opaqueCodeMayRebindBinding,
@@ -11,7 +12,9 @@ import {
 import { semanticBindingPrecedesCapture } from "./javascriptSemanticMutationInitializers.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { semanticKnownArrayIteration } from "./javascriptSemanticReferenceSources.js";
+import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -22,6 +25,21 @@ import {
 interface ReadPresenceOrigin {
   readonly binding: JavaScriptSemanticBindingState;
   readonly value: t.Node;
+}
+
+type ReadOwnData = (
+  path: readonly string[],
+  beforeIterator?: t.Node,
+) => t.Node | undefined;
+
+interface ReadPresence {
+  readonly read: ReadOwnData;
+  readonly readNestedArray?: (
+    literal: t.ArrayExpression,
+    path: readonly string[],
+    fromRhs: readonly string[],
+    acquisition: t.ArrayPattern,
+  ) => ReadOwnData | undefined;
 }
 
 /** Prove a direct data slot in its source at the time of the read. */
@@ -82,11 +100,28 @@ export const createSemanticReadPresenceQuery = (
     return origin ?? undefined;
   };
 
+  const ownDataAtPath = (value: t.Node, path: readonly string[], from = 0) => {
+    let receiver = value;
+    for (let index = from; index < path.length; index += 1) {
+      const key = path[index]!;
+      if (!t.isObjectExpression(receiver)) return undefined;
+      let read = readers.get(receiver);
+      if (read === undefined) {
+        read = staticObjectPropertyReader(receiver);
+        readers.set(receiver, read);
+      }
+      const property = read(key);
+      if (property.status !== "explicit") return undefined;
+      receiver = unwrapJavaScriptExpression(property.value).node;
+    }
+    return receiver;
+  };
+
   return (
     bindingId: string | null,
     capture: t.Node,
-    source: "property" | "array-iteration" = "property",
-  ) => {
+    iterationPath?: readonly string[],
+  ): ReadPresence | undefined => {
     const binding =
       bindingId === null ? undefined : state.bindingsById.get(bindingId);
     const initializer = binding?.initializers[0];
@@ -117,57 +152,110 @@ export const createSemanticReadPresenceQuery = (
     )
       return undefined;
     const { value } = origin;
-    if (source === "array-iteration") {
-      if (!t.isArrayExpression(value)) return undefined;
-      const array = evaluateSemanticExpression(
+    let rhsSnapshot: JavaScriptSemanticValue | undefined;
+    const arraySlots = (
+      literal: t.ArrayExpression,
+      arrayPath: readonly string[],
+      fromRhs: readonly string[],
+      acquisition: t.Node | undefined,
+    ): ReadOwnData | undefined => {
+      rhsSnapshot ??= evaluateSemanticExpression(
         capture,
         state,
         capture,
         "query",
       );
+      const selectedArray = semanticSlotAtPath(rhsSnapshot, fromRhs);
+      const array = selectedArray.value;
       if (
-        !semanticKnownArrayIteration(array, state, capture) ||
-        array.unknownItems
+        selectedArray.presence !== "present" ||
+        array.status !== "array" ||
+        array.unknownItems ||
+        (acquisition !== undefined &&
+          !semanticKnownArrayIteration(array, state, acquisition))
       )
         return undefined;
-      return (path: readonly string[]): boolean => {
-        const [key] = path;
-        if (key === undefined || path.length !== 1) return false;
+      return (path, beforeIterator) => {
+        if (
+          beforeIterator !== undefined ||
+          (fromRhs.length > 0 && path.length !== arrayPath.length + 1)
+        )
+          return undefined;
+        const key = path[arrayPath.length];
+        if (key === undefined) return undefined;
         const index = semanticArrayIndex(key);
-        const slot = index === null ? undefined : array.items[index];
-        return (
-          slot?.name === key &&
-          slot.presence === "present" &&
-          !capturedBindingPathMayHaveChanged(
+        if (index === null) return undefined;
+        const slot = array.items[index];
+        const element = literal.elements[index];
+        if (
+          slot?.name !== key ||
+          slot.presence !== "present" ||
+          element == null
+        )
+          return undefined;
+        const selected = ownDataAtPath(
+          unwrapJavaScriptExpression(element).node,
+          path,
+          arrayPath.length + 1,
+        );
+        return selected === undefined ||
+          capturedBindingPathMayHaveChanged(
             origin.binding,
             path,
             capture,
             state,
           )
-        );
+          ? undefined
+          : selected;
       };
+    };
+    // An identifier RHS in an object pattern can select numeric own data
+    // without starting an iterator, even when a later read closes one.
+    const arrayPath =
+      iterationPath ??
+      (t.isArrayExpression(value) &&
+      t.isIdentifier(unwrapJavaScriptExpression(capture).node)
+        ? []
+        : undefined);
+    if (arrayPath !== undefined) {
+      const literal = ownDataAtPath(value, arrayPath);
+      if (!t.isArrayExpression(literal)) return undefined;
+      const read = arraySlots(
+        literal,
+        arrayPath,
+        [],
+        iterationPath === undefined ? undefined : capture,
+      );
+      return read === undefined
+        ? undefined
+        : {
+            read,
+            ...(iterationPath === undefined
+              ? {}
+              : { readNestedArray: arraySlots }),
+          };
     }
     if (!t.isObjectExpression(value)) return undefined;
-    return (path: readonly string[]): boolean => {
-      if (path.length === 0) return false;
-      let receiver: t.Node = value;
-      for (const key of path) {
-        if (!t.isObjectExpression(receiver)) return false;
-        let read = readers.get(receiver);
-        if (read === undefined) {
-          read = staticObjectPropertyReader(receiver);
-          readers.set(receiver, read);
-        }
-        const property = read(key);
-        if (property.status !== "explicit") return false;
-        receiver = unwrapJavaScriptExpression(property.value).node;
-      }
-      return !capturedBindingPathMayHaveChanged(
-        origin.binding,
-        path,
-        capture,
-        state,
-      );
+    const read: ReadOwnData = (path, beforeIterator) => {
+      if (path.length === 0) return undefined;
+      const selected = ownDataAtPath(value, path);
+      if (selected === undefined) return undefined;
+      const stillPresent =
+        beforeIterator === undefined
+          ? !capturedBindingPathMayHaveChanged(
+              origin.binding,
+              path,
+              capture,
+              state,
+            )
+          : bindingPathOnlyEscapesAtLaterIteratorEffects(
+              origin.binding,
+              path,
+              beforeIterator,
+              state,
+            );
+      return stillPresent ? selected : undefined;
     };
+    return { read, readNestedArray: arraySlots };
   };
 };

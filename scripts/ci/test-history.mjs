@@ -11,6 +11,7 @@ const TIER_PROFILES = {
 };
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CANDIDATES = 5;
+const COMMIT_SHA = /^[0-9a-f]{40}$/u;
 const EMPTY_SELECTION = { runId: "", artifactName: "" };
 const positiveId = (value) =>
   (typeof value === "string" || typeof value === "number") &&
@@ -76,6 +77,8 @@ function findTimingRun({
           positiveId(lineage?.head_repository_id) &&
           lineage.repository_id === lineage.head_repository_id &&
           lineage.repository_id === Number(repositoryId) &&
+          typeof lineage.head_sha === "string" &&
+          COMMIT_SHA.test(lineage.head_sha) &&
           lineage.head_branch === branch
         );
       })
@@ -92,6 +95,7 @@ function findTimingRun({
         age >= 0 &&
         age < MAX_AGE_MS &&
         run.id === artifact.workflow_run.id &&
+        run.head_sha === artifact.workflow_run.head_sha &&
         run.status === "completed" &&
         run.conclusion === "success" &&
         run.workflowPath?.file === ".github/workflows/ci.yml" &&

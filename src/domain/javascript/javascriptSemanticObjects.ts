@@ -126,8 +126,8 @@ const collectMember = (
       provenOwnSlot:
         !write &&
         identity.path !== null &&
-        context.readPresence(identity.bindingId, node)?.(identity.path) ===
-          true,
+        context.readPresence(identity.bindingId, node)?.read(identity.path) !==
+          undefined,
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
@@ -146,23 +146,23 @@ const collectDestructuring = (
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
   const rootArray = t.isArrayPattern(root);
-  let ownSlot =
-    initializer != null &&
-    source.path !== null &&
-    (!rootArray || source.path.length === 0)
+  const sourcePresence =
+    initializer != null && source.path !== null
       ? readPresence(
           source.bindingId,
           initializer,
-          rootArray ? "array-iteration" : "property",
+          rootArray ? source.path : undefined,
         )
       : undefined;
+  let ownSlot = sourcePresence?.read;
   // An unsupported property still occupies its place in the pattern's
   // evaluation order, even when it cannot produce a graph operation.
   const pending: ({
-    readonly pattern: t.Node;
+    readonly pattern: t.Node | undefined;
     readonly path: readonly string[];
+    readonly plainObjectPath?: boolean;
     readonly lookup?: "own" | "unproven";
-  } | null)[] = [{ pattern: root, path: [] }];
+  } | null)[] = [{ pattern: root, path: [], plainObjectPath: !rootArray }];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) break;
@@ -173,21 +173,32 @@ const collectDestructuring = (
     const { path } = next;
     const propertyPath =
       source.path === null ? null : [...source.path, ...path];
+    const selected =
+      next.lookup === "own" && propertyPath !== null
+        ? ownSlot?.(propertyPath)
+        : undefined;
     if (
       next.lookup === "unproven" ||
-      (next.lookup === "own" &&
-        ownSlot !== undefined &&
-        propertyPath !== null &&
-        !ownSlot(propertyPath))
+      (next.lookup === "own" && selected === undefined)
     )
       ownSlot = undefined;
+    // Elision still advances the iterator and can read a property. It
+    // contributes no binding once the shared slot check has run.
+    if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
+    const plainObjectPath =
+      next.plainObjectPath === true && !t.isAssignmentPattern(occurrence);
     if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
     const pattern = t.isAssignmentPattern(occurrence)
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
-      if (rootArray) ownSlot = undefined;
+      // A nested pattern needs a proved object even if it has no children.
+      if (
+        ownSlot !== sourcePresence?.read ||
+        (rootArray && !t.isObjectExpression(selected))
+      )
+        ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
         if (!t.isObjectProperty(property)) {
           pending.push(null);
@@ -201,19 +212,38 @@ const collectDestructuring = (
         pending.push({
           pattern: property.value,
           path: [...path, name],
+          plainObjectPath: plainObjectPath && !property.computed,
           lookup: property.computed ? "unproven" : "own",
         });
       }
       continue;
     }
     if (t.isArrayPattern(pattern)) {
-      if (pattern !== root) ownSlot = undefined;
+      if (pattern !== root) {
+        ownSlot =
+          ownSlot !== undefined &&
+          ownSlot === sourcePresence?.read &&
+          (!rootArray || path.length === 1) &&
+          t.isArrayExpression(selected) &&
+          propertyPath !== null
+            ? sourcePresence?.readNestedArray?.(
+                selected,
+                propertyPath,
+                path,
+                pattern,
+              )
+            : undefined;
+        // IteratorClose can run after these elements and before the next
+        // sibling. Reaching this boundary ends the current presence proof.
+        if (ownSlot !== undefined) pending.push(null);
+      }
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
-        if (element == null || t.isRestElement(element)) pending.push(null);
+        if (element === undefined || t.isRestElement(element))
+          pending.push(null);
         else
           pending.push({
-            pattern: element,
+            pattern: element ?? undefined,
             path: [...path, String(index)],
             lookup: "own",
           });
@@ -238,7 +268,12 @@ const collectDestructuring = (
         objectBindingId: source.bindingId,
         targetBindingId: targetBinding?.bindingId ?? null,
         propertyPath,
-        provenOwnSlot: ownSlot !== undefined,
+        provenOwnSlot:
+          ownSlot !== undefined ||
+          (plainObjectPath &&
+            targetBinding !== undefined &&
+            propertyPath !== null &&
+            sourcePresence?.read(propertyPath, occurrence) !== undefined),
       },
       state,
       output,

@@ -698,3 +698,28 @@ it("retains legacy on-disk dylib and fixed-library identities", async () => {
     ),
   ).rejects.toThrow("bitmap exceeds");
 });
+
+it("reads both LC_MAIN words from a big-endian command subview", async () => {
+  const backing = Buffer.alloc(61, 0xee);
+  const image = backing.subarray(3, 59);
+  image.fill(0);
+  image.writeUInt32BE(0xfeedfacf, 0);
+  image.writeUInt32BE(0x01000012, 4);
+  image.writeUInt32BE(2, 12);
+  image.writeUInt32BE(1, 16);
+  image.writeUInt32BE(24, 20);
+  image.writeUInt32BE(0x80000028, 32);
+  image.writeUInt32BE(24, 36);
+  image.writeBigUInt64BE(0x0123456789abcdefn, 40);
+  image.writeBigUInt64BE(0xfedcba9876543210n, 48);
+  const read = async (offset: number, size: number) =>
+    new Uint8Array(image.buffer, image.byteOffset + offset, size);
+  const result = await readMachoCommandNames(read, image.length, 0, 1);
+  expect(result.commands[0]?.entrypoint).toEqual({
+    offset: 0x0123456789abcdefn,
+    stackSize: 0xfedcba9876543210n,
+  });
+  await expect(
+    readMachoCommandNames(read, image.length - 1, 0, 1),
+  ).rejects.toMatchObject({ kind: "malformed" });
+});
