@@ -42,6 +42,8 @@ of its payload. Unknown items are not guessed.
 common network relative link names, with Unicode variants when the header
 declares them. ANSI strings use a byte-preserving Latin1 projection; the
 original system ANSI code page is unobserved.
+LinkInfo header sizes `0x1D` through `0x23` make coverage partial. The report
+retains the stored header size, readable ANSI fields, and following sections.
 
 `string_data` reports name, relative path, working directory, command-line
 arguments, and icon location according to `LinkFlags`, each with encoding,
@@ -60,6 +62,10 @@ birth-droid GUIDs. Version-1 UUID MAC and timestamp values are labelled
 keep their folder identifiers. `ConsoleFEDataBlock` keeps the code page.
 `PropertyStoreDataBlock` and unrecognized signatures stay raw with SHA-256.
 Unknown signatures are listed and are not dropped.
+When `HasExpString`, `HasDarwinID`, `HasExpIcon`, or `RunWithShimLayer`
+declares a block, the terminal record lets REA report a missing block and mark
+coverage partial. If parsing stops before the terminal, an unseen block remains
+unknown.
 
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
@@ -84,6 +90,10 @@ extension. Raw fields and artifact identity are preserved. The code page in a
 ConsoleFE block describes the console and does not establish the original
 system ANSI encoding for these paths.
 
+An unreadable declared `LinkInfo` target path leaves the target extension
+unknown and prevents a mismatch claim, unless another complete target matches
+the icon.
+
 A missing optional section is observed absence of that structure. It is not
 proof the shortcut never carried that data in another container.
 
@@ -96,9 +106,13 @@ LinkInfo, and ExtraData are limited to 64 KiB by default (1 MiB maximum).
 Malformed `HeaderSize` or `LinkCLSID`, and exhausted budgets, fail without
 partial success. Truncation after a valid header, ExtraData size overruns, and
 odd Unicode lengths return partial coverage with `coverage.failing_offset`.
-A LinkInfo offset that points outside its structure is reported at the
-offset field itself, so every issue offset lies inside the file.
+A LinkInfo, VolumeID, or network-name string offset that points inside its
+structure header or outside its structure is reported at the offset field itself,
+so every issue offset lies inside the file.
 Coverage is never `complete` when issues are present.
+A PropertyStoreDataBlock shorter than 12 bytes or a ShimDataBlock shorter than
+136 bytes makes coverage partial. The report retains the block's signature,
+size, and payload digest and continues to following blocks.
 
 The selected path must be a regular file. Symbolic links are rejected.
 UNC paths and other host-prefixed device paths, such as `\\server\share\a.lnk`

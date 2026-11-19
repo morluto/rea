@@ -24,7 +24,7 @@ import {
 } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -505,7 +505,7 @@ const readSymbols = (
             "An SHT_DYNSYM section exists, but no DT_SYMTAB declares it, so its names are not established as imports.",
           names: [],
         };
-  const width = bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(bits);
   const syment = dynamic.entries.get(DT_SYMENT);
   if (syment !== undefined && syment.value !== BigInt(width))
     malformed("ELF DT_SYMENT does not match the ELF class symbol width");
@@ -584,7 +584,7 @@ const readSymbolNames = (
   strings: Buffer,
   stringFileOffset: number,
 ): SymbolScan => {
-  const width = bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(bits);
   const names: SymbolName[] = [];
   let scanned = 0;
   let unterminated = false;

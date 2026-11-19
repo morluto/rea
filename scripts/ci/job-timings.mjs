@@ -240,6 +240,12 @@ function normalizeStep(step) {
     typeof step.name !== "string"
   )
     throw new Error("GitHub jobs API contains a malformed job step");
+  if (step.conclusion === "skipped")
+    return {
+      name: step.name,
+      costKey: null,
+      duration: unknownDuration("step was skipped"),
+    };
   const cost = STEP_COSTS.find(
     ({ pattern, names }) => names?.has(step.name) || pattern.test(step.name),
   );

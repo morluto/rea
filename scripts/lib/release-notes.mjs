@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
+import { releaseSection } from "./release-markdown.mjs";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const actor = z.object({
@@ -177,28 +178,11 @@ export function contributionSummary(raw) {
   return `Full contribution record: [${inventory.commits.length} commits and ${inventory.pullRequests.length} merged PR${inventory.pullRequests.length === 1 ? "" : "s"}](https://github.com/${inventory.repository}/blob/rea-agents-${inventory.version}/docs/releases/${inventory.version}.contributions.json).\n`;
 }
 
-export function selectedReleaseNotes(text, version) {
-  const headings = [...text.matchAll(/^## \[([^\]]+)\].*$/gmu)];
-  if (headings[0]?.[1] !== version)
+function readReleaseSection(text, version) {
+  const section = releaseSection(text, version);
+  if (section === undefined)
     throw new Error(`Notes must start with release [${version}]`);
-  return text
-    .slice(headings[0].index, headings[1]?.index ?? text.length)
-    .trim();
-}
-
-// Notes have one Markdown list item per line; fenced examples are never credit sources.
-function proseBullets(text) {
-  let fence;
-  return text.split("\n").filter((line) => {
-    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
-    if (marker) {
-      if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length)
-        fence = undefined;
-      return false;
-    }
-    return !fence && /^[-*] /u.test(line);
-  });
+  return section;
 }
 
 function bulletPrs(bullet, repository) {
@@ -281,7 +265,8 @@ function verifyEditorialCredits(inventory, prose) {
   const errors = [];
   const requiredByContext = new Map();
   const thankedByContext = new Map();
-  for (const bullet of proseBullets(prose)) {
+  for (const bullet of prose) {
+    if (!/^[-*] /u.test(bullet)) continue;
     const references = bulletPrs(bullet, inventory.repository);
     const start = bullet.indexOf("Thanks ");
     const thanked = new Set(
@@ -317,9 +302,27 @@ function verifyEditorialCredits(inventory, prose) {
   return errors;
 }
 
+function editorialReleaseLines(notes, lines, inventory) {
+  const record = contributionRecord(inventory).trim();
+  const summary = contributionSummary(inventory).trim();
+  const summaryOffset = notes.length - summary.length;
+  const expected = notes.endsWith(summary) ? summary : record;
+  const contributionStart =
+    expected === summary
+      ? lines.find(({ offset }) => offset === summaryOffset)
+      : lines.find(({ line }) => line === "### Complete contribution record");
+  const start = contributionStart?.offset;
+  if (start === undefined || notes.slice(start).trim() !== expected)
+    throw new Error(
+      "Contribution record differs from inventory; regenerate it with release-notes record",
+    );
+  return lines.filter(({ offset }) => offset < start).map(({ line }) => line);
+}
+
 export function verifyReleaseNotes(raw, text, body) {
   const inventory = releaseInventorySchema.parse(raw);
-  const notes = selectedReleaseNotes(text, inventory.version);
+  const { source, lines } = readReleaseSection(text, inventory.version);
+  const notes = source.trim();
   // Release Please's inline issue/PR body limit (pull-request-overflow-handler).
   if (notes.length > 65_536 || (body !== undefined && body.length > 65_536))
     throw new Error(
@@ -329,23 +332,10 @@ export function verifyReleaseNotes(raw, text, body) {
     throw new Error(
       "Release notes exceed GitHub's body budget; shorten prose without dropping credit",
     );
-  const record = contributionRecord(inventory).trim();
-  const summary = contributionSummary(inventory).trim();
-  const start = notes.endsWith(summary)
-    ? notes.length - summary.length
-    : notes.indexOf("### Complete contribution record");
-  if (
-    start < 0 ||
-    (notes.slice(start).trim() !== record &&
-      notes.slice(start).trim() !== summary)
-  )
-    throw new Error(
-      "Contribution record differs from inventory; regenerate it with release-notes record",
-    );
-  const prose = notes.slice(0, start);
+  const prose = editorialReleaseLines(notes, lines, inventory);
   const errors = verifyEditorialCredits(inventory, prose);
   for (const heading of ["Highlights", "Changes", "Fixes"])
-    if (!prose.includes(`### ${heading}\n`))
+    if (!prose.includes(`### ${heading}`))
       errors.push(`Missing ${heading} section`);
   if (body !== undefined) {
     // Use the publisher's parser: finding a heading alone does not establish
@@ -366,14 +356,17 @@ export function verifyReleaseNotes(raw, text, body) {
   }
   if (errors.length) throw new Error(errors.join("\n"));
   return {
-    version: inventory.version,
-    pullRequests: inventory.pullRequests.length,
-    commits: inventory.commits.length,
-    unresolvedAuthors: inventory.commits.flatMap((item) =>
-      item.authors
-        .filter((identity) => identity.user === null)
-        .map((identity) => ({ sha: item.sha, ...identity })),
-    ),
+    notes,
+    report: {
+      version: inventory.version,
+      pullRequests: inventory.pullRequests.length,
+      commits: inventory.commits.length,
+      unresolvedAuthors: inventory.commits.flatMap((item) =>
+        item.authors
+          .filter((identity) => identity.user === null)
+          .map((identity) => ({ sha: item.sha, ...identity })),
+      ),
+    },
   };
 }
 

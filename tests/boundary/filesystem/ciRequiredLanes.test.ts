@@ -36,6 +36,49 @@ const scopeFlags = async () =>
       ),
     ).CI_FLAGS;
 
+it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fallback", async () => {
+  const archive = "./.github/actions/ubuntu-archive";
+  const input = "noble-azure-fallback";
+  const steps = z.array(
+    z.object({
+      uses: z.string().optional(),
+      with: z.record(z.string(), z.unknown()).optional(),
+    }),
+  );
+  const action = async (name: string) =>
+    parse(
+      await readFile(
+        new URL(`../../../.github/actions/${name}/action.yml`, import.meta.url),
+        "utf8",
+      ),
+    );
+  const layout = (await workflow("real-binary-layout.yml")).jobs[
+    "real-binary-layout"
+  ];
+  expect(layout?.["runs-on"]).toBe("ubuntu-24.04");
+  expect(
+    steps.parse(layout?.steps).filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive, with: { [input]: "true" } }]);
+  expect(
+    z
+      .object({ runs: z.object({ steps }) })
+      .parse(await action("windows-cross-compiler"))
+      .runs.steps.filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive }]);
+  expect(
+    steps
+      .parse((await workflow("real-signal-recording.yml")).jobs.sigrok?.steps)
+      .filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive }]);
+  expect(
+    z
+      .object({
+        inputs: z.record(z.string(), z.object({ default: z.string() })),
+      })
+      .parse(await action("ubuntu-archive")).inputs[input]?.default,
+  ).toBe("false");
+});
+
 const recordedCrashRefresh = "refresh --kill-after=5s 90s";
 const recordedCrashDownload = "download --kill-after=5s 180s";
 
