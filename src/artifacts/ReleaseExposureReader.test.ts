@@ -2524,6 +2524,68 @@ describe("ReleaseExposureReader text encodings incomplete reads", () => {
   });
 });
 
+describe("ReleaseExposureReader lossy source-map URL suffixes", () => {
+  const badByte = Buffer.from([0xff]);
+
+  it.each([
+    {
+      name: "malformed UTF-8 confined to the fragment",
+      prefix: Buffer.alloc(0),
+      fragment: badByte,
+    },
+    {
+      name: "a literal replacement character and unrelated malformed UTF-8",
+      prefix: Buffer.concat([
+        Buffer.from('const value = "'),
+        badByte,
+        Buffer.from('";\n'),
+      ]),
+      fragment: Buffer.from("\ufffd"),
+    },
+  ])("retains an inline map with $name", async ({ prefix, fragment }) => {
+    const root = await createTestTempDirectory("rea-release-inline-fragment-");
+    const path = join(root, "app.js");
+    const encoded = embeddedSourceMap().toString("base64");
+    await writeFile(
+      path,
+      Buffer.concat([
+        prefix,
+        Buffer.from(`//${INLINE_MAP_PREFIX}${encoded}#`),
+        fragment,
+        Buffer.from("\n"),
+      ]),
+    );
+    const scanned = await inspect(path);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it.each([
+    { form: "relative", delimiter: "?" },
+    { form: "file:", delimiter: "#" },
+  ])(
+    "resolves a $form map when malformed UTF-8 is in its '$delimiter' suffix",
+    async ({ form, delimiter }) => {
+      const root = await createTestTempDirectory("rea-release-map-suffix-");
+      const mapPath = join(root, "debug.json");
+      const reference =
+        form === "relative" ? "debug.json" : pathToFileURL(mapPath).href;
+      await writeFile(mapPath, embeddedSourceMap());
+      await writeFile(
+        join(root, "app.js"),
+        Buffer.concat([
+          Buffer.from(`//# sourceMappingURL=${reference}${delimiter}`),
+          badByte,
+          Buffer.from("\n"),
+        ]),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+});
+
 describe("ReleaseExposureReader text encodings address identity", () => {
   it.each(["javascript", "html"])(
     "does not turn a lossy %s declaration into another file's path",

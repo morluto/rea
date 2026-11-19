@@ -2135,21 +2135,23 @@ const examineInlineMaps = (
   const directives = createJavaScriptAnalysisAccumulator(source.length);
   addSourceMapDirectives(source, parsed.comments ?? [], directives);
   for (const { declared_url: url } of directives.sourceMaps) {
-    if (!complete && url.includes("\ufffd")) {
-      state.skippedMaps += 1;
-      continue;
-    }
     // URL schemes are case-insensitive (RFC 3986 section 3.1).
     if (!/^data:/iu.test(url)) {
-      noteLocalMapReference(state, member, url);
+      noteLocalMapReference(state, member, url, complete);
       continue;
     }
     if (state.mapsRead >= MAX_RELEASE_EXPOSURE_SOURCE_MAPS) {
       state.skippedMaps += 1;
       continue;
     }
+    // Only the text before the literal fragment affects the data URL body.
+    if (!complete && url.replace(/#.*$/su, "").includes("\ufffd")) {
+      state.skippedMaps += 1;
+      continue;
+    }
     try {
-      // The data URL processor retains the query and excludes the fragment.
+      // Parse the full URL before removing the fragment so opaque path spaces
+      // before it are preserved. The serialized body still includes the query.
       const dataUrl = new URL(url);
       dataUrl.hash = "";
       const serialized = dataUrl.href;
@@ -2196,7 +2198,13 @@ const noteLocalMapReference = (
   state: ScanState,
   member: MemberView,
   url: string,
+  complete: boolean,
 ): void => {
+  const path = url.replace(/[?#].*$/su, "");
+  if (!complete && path.includes("\ufffd")) {
+    state.skippedMaps += 1;
+    return;
+  }
   if (/^file:/iu.test(url)) {
     try {
       noteMapTarget(state, fileURLToPath(url));
@@ -2206,7 +2214,6 @@ const noteLocalMapReference = (
     return;
   }
   if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
-  const path = url.replace(/[?#].*$/su, "");
   if (path.length === 0) return;
   let decoded: string;
   try {
