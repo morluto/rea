@@ -1,7 +1,9 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import { createHash } from "node:crypto";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
+import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -161,6 +163,57 @@ it("refuses to open a partition whose distinct operation data exceeds the read b
     });
   } finally {
     await reader.close();
+  }
+});
+
+it("cancels a many-frame REPLACE_ZSTD partition", async () => {
+  const frame = Buffer.from([
+    0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, 0x61,
+  ]);
+  const compressed = Buffer.alloc(frame.length * 32);
+  for (let index = 0; index < 32; index += 1)
+    frame.copy(compressed, index * frame.length);
+  const path = await fixture(
+    buildAndroidOtaPayload({
+      partitions: [
+        {
+          name: "vendor",
+          operations: [
+            {
+              type: 14,
+              data: compressed,
+              dataHash: createHash("sha256").update(compressed).digest(),
+              dstExtents: [{ startBlock: 0, numBlocks: 1 }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new AndroidOtaPayloadArtifactReader(path, admitted);
+  const reason = new Error("stop ota frames");
+  const controller = new AbortController();
+  const yieldImpl = scheduler.yield.bind(scheduler);
+  let yields = 0;
+  const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+    yields += 1;
+    await yieldImpl();
+    if (yields === 1) controller.abort(reason);
+  });
+  try {
+    const [entry] = await entries(reader);
+    await expect(reader.open(entry!, controller.signal)).rejects.toMatchObject({
+      reason: "cancelled",
+      cause: reason,
+    });
+  } finally {
+    spy.mockRestore();
+    try {
+      await reader.close();
+    } finally {
+      await admitted.handle.close();
+    }
   }
 });
 

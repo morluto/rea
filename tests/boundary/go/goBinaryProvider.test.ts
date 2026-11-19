@@ -1,6 +1,7 @@
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { scheduler } from "node:timers/promises";
+import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import {
@@ -16,6 +17,7 @@ import {
 } from "../../fixtures/go/image.js";
 import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage.js";
 import { CPU_ARM64, universalMacho } from "../../fixtures/universalMacho.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("rejects advertised PE32 data directories outside the optional header", async () => {
@@ -356,3 +358,33 @@ it.each([
     }
   },
 );
+
+it("cancels a many-frame compressed ELF section-name table", async () => {
+  const root = await createTestTempDirectory("rea-go-zstd-cancel-");
+  const path = join(root, "app");
+  await writeFile(path, elfFrameAllowanceFixture());
+  const reason = new Error("stop go frames");
+  const controller = new AbortController();
+  const yieldImpl = scheduler.yield.bind(scheduler);
+  let yields = 0;
+  const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+    yields += 1;
+    await yieldImpl();
+    if (yields === 1) controller.abort(reason);
+  });
+  try {
+    const result = await new GoBinaryProvider().inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_go_binary",
+      cause: reason,
+    });
+  } finally {
+    spy.mockRestore();
+  }
+});
