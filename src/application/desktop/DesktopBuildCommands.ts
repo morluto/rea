@@ -12,13 +12,15 @@ import {
   type JsonValue,
 } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerRefusal,
 } from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
-import { runRea as runControllerRea } from "../../desktop/BuildComputerController.js";
+import {
+  parseBuildComputerJson,
+  runRea as runControllerRea,
+} from "../../desktop/BuildComputerController.js";
 import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 
 /** The work folder REA keeps under the computer user's home; every capture leaves it out. */
@@ -139,16 +141,6 @@ const redactedJson = (
   );
 };
 
-/** Decode structured REA output without forwarding parser excerpts of guest data. */
-export const parseBuildComputerJson = (bytes: Uint8Array): unknown => {
-  try {
-    return JSON.parse(decodeStrictUtf8(bytes, "preserve")) as unknown;
-  } catch {
-    // Parser excerpts may retain only part of a control token or typed secret.
-    throw new Error("The build computer's REA output is not valid UTF-8 JSON.");
-  }
-};
-
 /**
  * The Evidence result, or the reported failure, a REA command wrote to a file
  * of `bytes` in the computer, with the control token replaced in every
@@ -165,7 +157,7 @@ export const readOutput = async (
   if (refusal !== undefined) throw refusal;
   const content = (await computer.homeFiles([path], bytes, signal)).get(path);
   if (content === undefined) throw new Error(`The computer has no ${path}.`);
-  const value = parseBuildComputerJson(content);
+  const value = parseBuildComputerJson(content, "REA output");
   const redact = (text: string) => computer.redacted(text);
   if (cliFailureSchema.safeParse(value).success) {
     const reported = jsonObjectSchema.parse(
