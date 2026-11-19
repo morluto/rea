@@ -84,11 +84,18 @@ it.each([
     "a later TLS Unix path",
     `tls.connect({ port: -1 }, { path: "/tmp/x.sock" })`,
   ],
+  ["a positional TLS Unix path", `tls.connect("/tmp/x.sock", { port: -1 })`],
   [
     "a constructed TLS options object",
     `tls.connect({ port: -1 }, new Object({ port: 443 }))`,
   ],
   ["a valid numeric string port", `net.connect({ port: "8080" })`],
+  ["an unreadable unary port", `net.connect({ port: +p })`],
+  ["a constant boolean unary port", `net.connect({ port: +!0 })`],
+  [
+    "an undefined port with an explicit empty path",
+    `net.connect({ path: "", port: undefined })`,
+  ],
 ] as const)(
   "keeps the socket acquisition when options make the port irrelevant or valid: %s",
   (_name, call) => {
@@ -109,4 +116,24 @@ it.each([
   ["a bad port with a null path", `net.connect({ path: null, port: -1 })`],
 ] as const)("emits no socket acquisition for %s", (_name, call) => {
   expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it("retains candidate socket resources without applying Node-specific admission", () => {
+  const result = analyzeJavaScriptSemantics(`
+    const { connect } = require("node:net");
+    const handle = connect({ port: -1 });
+    handle.destroy();
+  `);
+  expect(result.resourceOperations).toEqual([
+    expect.objectContaining({
+      kind: "acquire",
+      method: "connect",
+      builtinAuthority: "candidate",
+    }),
+    expect.objectContaining({
+      kind: "release",
+      method: "destroy",
+      builtinAuthority: "candidate",
+    }),
+  ]);
 });

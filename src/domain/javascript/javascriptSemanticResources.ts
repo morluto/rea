@@ -82,6 +82,7 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
+      candidate.builtinAuthority === "candidate" ||
       (!rejectsSocketLiteralArguments(
         candidate.node,
         candidate.specifier,
@@ -715,13 +716,14 @@ const rejectsSocketOptionsPort = (
   }
   const port = effective("port");
   if (port === undefined || port === "unknown") return false;
-  return rejectsSocketOptionsPortValue(port, context);
+  return rejectsSocketOptionsPortValue(port, context, effective("path"));
 };
 
 /** Node coerces an options `port` member, unlike a positional string path. */
 const rejectsSocketOptionsPortValue = (
   value: t.Node,
   context: DataEffectTraversalContext,
+  path: t.Node | "unknown" | undefined,
 ): boolean => {
   const unwrapped = unwrapJavaScriptExpression(value).node;
   if (t.isStringLiteral(unwrapped)) {
@@ -736,6 +738,14 @@ const rejectsSocketOptionsPortValue = (
     const port = Number(cooked);
     return !Number.isInteger(port) || port < 0 || port > 65535;
   }
+  if (
+    (t.isUnaryExpression(unwrapped, { operator: "void" }) ||
+      isUnmodifiedGlobalReference(unwrapped, context.state, "undefined")) &&
+    path !== undefined &&
+    path !== "unknown" &&
+    !isNullishPlaceholder(path, context.state)
+  )
+    return false;
   if (
     isNullishPlaceholder(unwrapped, context.state) ||
     t.isBigIntLiteral(unwrapped) ||
@@ -762,14 +772,16 @@ const rejectsSocketOptionsPortValue = (
       unwrapped.value > 65535
     );
   if (t.isUnaryExpression(unwrapped)) {
-    if (unwrapped.operator === "!" || unwrapped.operator === "delete")
+    if (
+      unwrapped.operator === "!" ||
+      unwrapped.operator === "delete" ||
+      unwrapped.operator === "typeof"
+    )
       return true;
     const number = unaryOperandNumber(unwrapped, context, 0);
     return (
-      number === undefined ||
-      !Number.isInteger(number) ||
-      number < 0 ||
-      number > 65535
+      number !== undefined &&
+      (!Number.isInteger(number) || number < 0 || number > 65535)
     );
   }
   return false;
@@ -865,11 +877,32 @@ const socketOptionReader = (
 ): ((member: string) => t.Node | "unknown" | undefined) | undefined => {
   let target: t.ObjectExpression | undefined;
   let source: t.Node | undefined;
+  let positionalPath: t.Node | "unknown" | undefined;
   if (specifier === "tls") {
     const merge = tlsOptionMerge(node, state);
     if (merge === undefined || merge.target === "unknown") return undefined;
     target = merge.target === "fresh" ? undefined : merge.target;
     source = merge.source;
+    if (merge.target === "fresh") {
+      const first = node.arguments[0];
+      const value =
+        first === undefined
+          ? undefined
+          : unwrapJavaScriptExpression(first as t.Node).node;
+      if (value !== undefined && !isNullishPlaceholder(value, state)) {
+        if (
+          t.isStringLiteral(value) ||
+          (t.isTemplateLiteral(value) && value.expressions.length === 0)
+        )
+          positionalPath = value;
+        else if (
+          !t.isNumericLiteral(value) &&
+          !t.isBigIntLiteral(value) &&
+          !t.isBooleanLiteral(value)
+        )
+          positionalPath = "unknown";
+      }
+    }
   } else if (specifier === "net") {
     const first = node.arguments[0];
     if (
@@ -912,7 +945,8 @@ const socketOptionReader = (
   );
   const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
   return (member) => {
-    let read: t.Node | "unknown" | undefined;
+    let read: t.Node | "unknown" | undefined =
+      member === "path" ? positionalPath : undefined;
     for (const reader of readers) {
       const property = reader(member);
       if (property.status === "missing") continue;
