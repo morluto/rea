@@ -757,6 +757,22 @@ it.each([true, false])(
   },
 );
 
+it("uses the ELF byte order when counting sectionless imports through DT_HASH", () => {
+  const image = readElfHardening(
+    elfHardeningFixture({
+      little: false,
+      sections: false,
+      stackChk: true,
+      fortify: true,
+    }),
+  );
+  expect(image.byte_order).toBe("big");
+  expect(states(image.rows)).toMatchObject({
+    stack_protector: "enabled",
+    fortify: "enabled",
+  });
+});
+
 it("reads sectionless GNU hash buckets with many non-owning load declarations", () => {
   const original = elfHardeningFixture({ sections: false, stackChk: true });
   const oldPhoff = Number(original.readBigUInt64LE(32));
