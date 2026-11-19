@@ -78,6 +78,8 @@ next eight-byte boundary, or leaves fewer than eight header bytes including
 zeros, is truncated and fails the same way. The
 [PE format specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-attribute-certificate-table-image-only)
 requires the sum of the rounded entry lengths to equal the directory size.
+The reader checks the next entry's header and rounded extent before applying
+`max_entries`. Only a framed entry can exhaust the count budget.
 SignedData must contain at least one `SignerInfo`, and each `SignerInfo` must
 carry a non-empty signature value. Each embedded X.509
 certificate must include `subjectPublicKeyInfo` and `signatureValue`.

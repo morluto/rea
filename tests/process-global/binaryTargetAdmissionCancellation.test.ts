@@ -143,22 +143,55 @@ it("preserves unsupported-format diagnostics when admission is not cancelled", a
   expect(admission.handles[0]?.fd).toBe(-1);
 });
 
-it("does not replace an unrelated stat failure with cancellation", async () => {
-  const { path, controller } = await fixture(1);
-  const failure = Object.assign(new Error("disk read failed"), { code: "EIO" });
-  admission.statFailure = failure;
-  expect(
-    await parseBinaryTarget(path, { signal: controller.signal }),
-  ).toMatchObject({
-    ok: false,
-    error: {
+it.each([
+  { checkpoint: 1, sameReason: false, closeFails: false },
+  { checkpoint: 1, sameReason: true, closeFails: false },
+  { checkpoint: 2, sameReason: false, closeFails: false },
+  { checkpoint: 2, sameReason: false, closeFails: true },
+])(
+  "keeps physical stat $checkpoint failure through cancellation (same reason: $sameReason, close fails: $closeFails)",
+  async ({ checkpoint, sameReason, closeFails }) => {
+    const physical = Object.assign(new Error("disk read failed"), {
+      code: "EIO",
+    });
+    const reason = sameReason
+      ? physical
+      : { caller: "stop after stat failure" };
+    const { path, controller } = await fixture(checkpoint, reason);
+    admission.statFailure = physical;
+    if (closeFails)
+      admission.closeFailure = new Error("descriptor close failed");
+    const resolved = await parseBinaryTarget(path, {
+      signal: controller.signal,
+      formatHint: "raw-binary",
+      architecture: "x86",
+      entryPoint: "0x1000",
+    });
+    if (resolved.ok) throw new Error("Expected the physical stat failure");
+    const primary = resolved.error.cleanupPrimary ?? resolved.error;
+    expect(primary).toMatchObject({
       _tag: "BinaryTargetError",
-      cause: failure,
       reason: expect.stringContaining("(EIO)"),
-    },
-  });
-  expect(admission.handles[0]?.fd).toBe(-1);
-});
+    });
+    expect(primary.cause).toBe(physical);
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]?._tag).toBe("AnalysisCancelledError");
+    expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+    expect(resolved.error.cleanupIncomplete).toBe(closeFails);
+    if (closeFails) {
+      const failure = resolved.error.cause;
+      if (!(failure instanceof RetainedRegularFileCleanupFailure))
+        throw failure;
+      expect(failure.owner.handle).toBe(admission.handles[0]);
+      expect(failure.owner.handle.fd).toBeGreaterThanOrEqual(0);
+      const resources = new ArtifactResourceScope();
+      await retryRegularFileCleanup(failure, resources);
+      await resources.close();
+      expect(resolved.error.cleanupIncomplete).toBe(false);
+    }
+    expect(admission.handles[0]?.fd).toBe(-1);
+  },
+);
 
 it("retains the cleanup failure and its file owner when cancelled admission cannot close", async () => {
   const reason = new Error("caller cancelled");
@@ -249,6 +282,31 @@ it.each([false, true])(
       expect(primary.cause).toBe(physical);
     } finally {
       denied = false;
+      await resources.close();
+    }
+  },
+);
+
+it.each([
+  "stop before admission",
+  Object.assign(new Error("caller-selected reason"), { code: "EIO" }),
+])(
+  "preserves typed cancellation after a successful descriptor close retry",
+  async (reason) => {
+    const { path, controller } = await fixture(1, reason);
+    admission.closeFailure = new Error("first descriptor close failed");
+    const resources = new ArtifactResourceScope();
+    try {
+      const resolved = await parseBinaryTarget(path, {
+        signal: controller.signal,
+        resources,
+      });
+      if (resolved.ok) throw new Error("cancelled target was admitted");
+      expect(resolved.error._tag).toBe("AnalysisCancelledError");
+      expect(resolved.error.cause).toBe(reason);
+      expect(resolved.error.cleanupIncomplete).toBe(false);
+      expect(admission.handles[0]?.fd).toBe(-1);
+    } finally {
       await resources.close();
     }
   },

@@ -38,6 +38,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { explicitValueSpans } from "../domain/explicitSensitiveValues.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupLease } from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -935,18 +936,15 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       }
     }
     if (failures.length > 0)
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         "frida",
-        failures.flatMap((failure) => failure.cleanupResources),
-        { reason: "Frida session cleanup was incomplete" },
+        failures,
+        "Frida session cleanup was incomplete",
         {
           operation: "frida_cleanup",
-          cause: new AggregateError(
-            failures,
-            "Frida session cleanup was incomplete",
-          ),
+          message: "Frida session cleanup was incomplete",
         },
-      ).bindCleanupDependencies(failures);
+      );
   }
 
   #cleanupStartup(pending: PendingStartupCleanup): Promise<readonly string[]> {

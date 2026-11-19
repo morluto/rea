@@ -14,7 +14,7 @@ import {
   erlangBeamManyAtomsFixture,
   erlangBeamOtp29Fixture,
 } from "./Beam.fixture.js";
-import { BeamCapacityFailure, parseErlangBeam } from "./BeamParser.js";
+import { parseErlangBeam } from "./BeamParser.js";
 import { BeamProvider } from "./BeamProvider.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
@@ -316,9 +316,14 @@ it("rejects combined table rows before allocating them", () => {
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "limit",
-      boundary: "capacity",
-      message: expect.stringContaining("row budget"),
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: {
+          name: "max_table_rows",
+          maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+          required: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1,
+        },
+      }),
     }),
   );
   const complete = Buffer.alloc(
@@ -344,17 +349,29 @@ it("rejects combined table rows before allocating them", () => {
   );
 });
 
-it("fails when the atom budget is exhausted", () => {
-  const bytes = erlangBeamManyAtomsFixture(3);
-  expect(() =>
-    parse(
-      bytes,
-      inspectErlangBeamInputSchema.parse({
-        path: defaults.path,
-        max_atoms: 1,
+it.each([
+  {
+    bytes: erlangBeamManyAtomsFixture(3),
+    limit: { name: "max_atoms", maximum: 1, required: 3 },
+  },
+  {
+    bytes: erlangBeamFixture(),
+    limit: { name: "max_chunks", maximum: 1 },
+  },
+])("retains the exhausted $limit.name allowance", ({ bytes, limit }) => {
+  const input = inspectErlangBeamInputSchema.parse({
+    path: defaults.path,
+    [limit.name]: limit.maximum,
+  });
+  expect(() => parse(bytes, input)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "beam",
+        limit,
       }),
-    ),
-  ).toThrow(ArtifactReaderFailure);
+    }),
+  );
 });
 
 it("does not infer a BEAM budget from diagnostic prose", async () => {
@@ -381,72 +398,6 @@ it("does not infer a BEAM budget from diagnostic prose", async () => {
     await provider.close();
   }
 });
-
-it.each([
-  {
-    resource: "atoms",
-    bytes: erlangBeamManyAtomsFixture(3),
-    settings: { max_atoms: 1 },
-    maximum: 1,
-    remediation: "Raise max_atoms above 1",
-  },
-  {
-    resource: "chunks",
-    bytes: erlangBeamFixture(),
-    settings: { max_chunks: 1 },
-    maximum: 1,
-    remediation: "Raise max_chunks above 1",
-  },
-  {
-    resource: "table-rows",
-    bytes: erlangBeamRowsFixture([
-      ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
-    ]),
-    settings: {},
-    maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
-    remediation: `${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row ceiling`,
-  },
-])(
-  "retains the producing $resource allowance when diagnostic wording changes",
-  async ({ resource, bytes, settings, maximum, remediation }) => {
-    const input = inspectErlangBeamInputSchema.parse({
-      path: defaults.path,
-      ...settings,
-    });
-    let cause: unknown;
-    try {
-      parse(bytes, input);
-    } catch (failure) {
-      cause = failure;
-    }
-    expect(cause).toBeInstanceOf(BeamCapacityFailure);
-    if (!(cause instanceof BeamCapacityFailure))
-      throw new Error("Missing named parser allowance");
-    expect(cause).toMatchObject({
-      resource,
-      maximum,
-      reason: "limit",
-      boundary: "capacity",
-    });
-    cause.message = "BEAM parser allowance exhausted.";
-    const provider = new BeamProvider();
-    const injection = vi
-      .spyOn(ArtifactResourceScope.prototype, "run")
-      .mockRejectedValueOnce(cause);
-    try {
-      const result = await provider.inspect(input);
-      if (result.ok) throw new Error("Expected named capacity failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        retryable: false,
-        remediationAction: expect.stringContaining(remediation),
-      });
-    } finally {
-      injection.mockRestore();
-      await provider.close();
-    }
-  },
-);
 
 it.each([
   ["Atom", Buffer.from([0, 0, 0, 1, 1, 0x61])],

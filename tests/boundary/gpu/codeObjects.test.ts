@@ -112,6 +112,53 @@ it("rejects a CUDA LZ4 entry whose declared decoded length disagrees", async () 
   expect(result.value.coverage.payloads).toBe("partial");
   expect(result.value.ptx_artifacts).toEqual([]);
 });
+it("preserves CUDA inventory and selection across an oversized declared decoded length", async () => {
+  const bytes = cudaFixture("zstd", [
+    { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
+    { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
+  ]);
+  const firstEntry = 16;
+  const declared = 1n << 53n;
+  const encoded = bytes.readUInt32LE(firstEntry + 16);
+  bytes.writeBigUInt64LE(declared, firstEntry + 56);
+  const inventory = await inspect(bytes, { analysis: "inventory" });
+  if (!inventory.ok) throw inventory.error;
+  expect(inventory.value.artifact).toMatchObject({
+    path: expect.stringContaining("no-format-extension"),
+    file_size: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  expect(inventory.value.objects).toMatchObject([
+    {
+      target: "sm_90",
+      inspection: "inventory",
+      encoded_size: encoded,
+      decoded_size: null,
+      location: { offset: firstEntry + 64, size: encoded },
+      limitations: [expect.stringContaining(String(declared))],
+    },
+    { target: "sm_80", inspection: "inventory" },
+  ]);
+  for (const [targets, inspection] of [
+    [undefined, "capacity"],
+    [["sm_80"], "not-selected"],
+  ] as const) {
+    const result = await inspect(
+      bytes,
+      targets ? { targets: [...targets] } : {},
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.objects).toMatchObject([
+      { id: inventory.value.objects[0]!.id, target: "sm_90", inspection },
+      {
+        id: inventory.value.objects[1]!.id,
+        target: "sm_80",
+        inspection: "complete",
+      },
+    ]);
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  }
+});
 it("retains the unsupported legacy CUDA compression declaration and extents", async () => {
   const result = await inspect(
     cudaFixture("legacy", [
@@ -1300,6 +1347,43 @@ it("continues at the declared CCOB boundary after an unsupported codec", async (
   expect(result.value.kernels).toHaveLength(1);
   expect(result.value.coverage.discovery).toBe("partial");
 });
+
+it.each([
+  { label: "exact JSON integer", decoded: 1n << 28n, projected: 1 << 28 },
+  {
+    label: "outside exact JSON integer range",
+    decoded: 1n << 53n,
+    projected: null,
+  },
+])(
+  "keeps later CCOB v3 bundles after a decoded size $label exceeds capacity",
+  async ({ decoded, projected }) => {
+    const first = ccobFixture(3, "zlib");
+    first.writeBigUInt64LE(decoded, 16);
+    const result = await inspect(
+      Buffer.concat([first, ccobFixture(3, "zlib")]),
+    );
+    if (!result.ok) throw result.error;
+    const wrappers = result.value.objects.filter(
+      ({ kind }) => kind === "hip-bundle",
+    );
+    expect(wrappers).toMatchObject([
+      {
+        inspection: "capacity",
+        encoded_size: first.length - 32,
+        decoded_size: projected,
+        location: { offset: 32, size: first.length - 32 },
+      },
+      { inspection: "complete", metadata_location: { offset: first.length } },
+    ]);
+    if (projected === null)
+      expect(wrappers[0]?.limitations).toContain(
+        `Declared decoded size is ${String(decoded)} bytes, outside the exact integer range of decoded_size`,
+      );
+    expect(result.value.coverage.discovery).toBe("partial");
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  },
+);
 
 it("refuses escaped PTX report expansion while preserving bounded interrupted facts", async () => {
   const text = ptxFixture + "\n//" + "\u0001".repeat(3 * 1024 * 1024);

@@ -2,7 +2,10 @@ import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
 } from "./PlaywrightExecutionBoundary.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -551,14 +554,11 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
     }
     if (failures.length === 0) return undefined;
     if (failures.length === 1) return failures[0];
-    return new ProviderCleanupError(
+    return providerCleanupErrorFromFailures(
       PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
-      failures.flatMap((failure) => failure.cleanupResources),
-      { reason: "One or more browser scenario resources remain owned." },
-      {
-        operation: OPERATION,
-        cause: new AggregateError(failures, "Browser scenario cleanup failed"),
-      },
-    ).bindCleanupDependencies(failures);
+      failures,
+      "One or more browser scenario resources remain owned.",
+      { operation: OPERATION, message: "Browser scenario cleanup failed" },
+    );
   }
 }
