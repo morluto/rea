@@ -674,6 +674,34 @@ it.each([
   },
 );
 
+const htmlMigrationBlock = "<pre>\nHeader: exact value\n</pre>";
+
+it.each([
+  { form: "preserved", block: htmlMigrationBlock, accepted: true },
+  { form: "omitted", block: "", accepted: false },
+])("keeps raw HTML migration blocks: $form", async ({ block, accepted }) => {
+  const f = await fixture(
+    "fix(contracts)!: migrate configuration",
+    `BREAKING CHANGE: Write the new configuration.\n\n${htmlMigrationBlock}\n\nReviewed-by: Fixture Reviewer`,
+  );
+  await candidate(
+    f,
+    "6.0.0",
+    `### ⚠ BREAKING CHANGES\n\nWrite the new configuration.\n\n${block}`,
+  );
+  const result = verify(f);
+  if (accepted) {
+    await expect(result).resolves.toHaveProperty("stdout");
+  } else {
+    await expect(result).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "migration notes omit unreleased breaking changes",
+      ),
+    });
+  }
+});
+
 it.each([
   { form: "preserved", command: "Header: exact value", accepted: true },
   { form: "changed", command: "Header: another value", accepted: false },
