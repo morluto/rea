@@ -147,7 +147,7 @@ export const createSemanticOpaqueGlobalObserver = (
 };
 
 /** Global code can affect globals, but cannot rebind its caller's locals. */
-const semanticOpaqueGlobalMayHaveChanged = (
+export const semanticOpaqueGlobalMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>

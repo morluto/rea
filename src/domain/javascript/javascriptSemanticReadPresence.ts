@@ -12,6 +12,7 @@ import {
 import { semanticBindingPrecedesCapture } from "./javascriptSemanticMutationInitializers.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { semanticKnownArrayIteration } from "./javascriptSemanticReferenceSources.js";
+import { semanticArrayLiteralSlots } from "./javascriptSemanticArrayLayout.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
@@ -175,6 +176,8 @@ export const createSemanticReadPresenceQuery = (
           !semanticKnownArrayIteration(array, state, acquisition))
       )
         return undefined;
+      const elements = semanticArrayLiteralSlots(literal, state);
+      if (elements === undefined) return undefined;
       return (path, beforeIterator) => {
         if (
           beforeIterator !== undefined ||
@@ -186,7 +189,7 @@ export const createSemanticReadPresenceQuery = (
         const index = semanticArrayIndex(key);
         if (index === null) return undefined;
         const slot = array.items[index];
-        const element = literal.elements[index];
+        const element = elements[index];
         if (
           slot?.name !== key ||
           slot.presence !== "present" ||

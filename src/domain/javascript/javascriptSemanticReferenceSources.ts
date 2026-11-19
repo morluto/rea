@@ -12,6 +12,10 @@ import {
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+import {
+  semanticArrayIteratorPrototypePath,
+  semanticNativeArrayIteratorIntactAt,
+} from "./javascriptSemanticArrayLayout.js";
 
 /**
  * Node's wrapper module inherits require. A copy cannot read that delegate
@@ -34,14 +38,27 @@ interface ReferenceSource {
   readonly iterationSources?: readonly ReferenceSource[];
 }
 
-/** Shared intrinsic reached through a native array iterator's prototype. */
-export const semanticArrayIteratorPrototypePath = [
-  "array-iterator-prototype",
-] as const;
-const arrayIteratorNextPath = [
-  ...semanticArrayIteratorPrototypePath,
-  "next",
-] as const;
+const arrayIteratorReturnGlobalOwners = new Set(["Iterator", "Object"]);
+
+/** Select prototype effects from spread sources whose exact index is unknown. */
+export const semanticArrayIterationPrototypeEffectPath = (
+  path: readonly (string | null)[],
+  kind: "write" | "escape",
+): readonly (string | null)[] | undefined => {
+  const [namespace, owner, property] = path;
+  if (namespace === semanticArrayIteratorPrototypePath[0]) return path;
+  if (
+    namespace !== "global" ||
+    typeof owner !== "string" ||
+    (owner !== "Array" && !arrayIteratorReturnGlobalOwners.has(owner))
+  )
+    return undefined;
+  return property === "prototype" ||
+    property === null ||
+    (kind === "escape" && path.length === 2)
+    ? [namespace, owner, "prototype", ...path.slice(3)]
+    : undefined;
+};
 
 /** Native array iteration preserves numeric slots only while its iterator is intact. */
 export const semanticKnownArrayIteration = (
@@ -49,17 +66,20 @@ export const semanticKnownArrayIteration = (
   state: JavaScriptSemanticAnalysisState,
   read: t.Node,
 ): value is Extract<JavaScriptSemanticValue, { status: "array" }> =>
-  !state.arrayIterationUnknown &&
   value?.status === "array" &&
-  !ambientPathMayObserveAt(state, read, arrayIteratorNextPath, "contents") &&
+  semanticNativeArrayIteratorIntactAt(state, read) &&
   value.items.every((item) => semanticArrayIndex(item.name) !== null);
 
 const arrayIteratorReturnPaths = [
   [...semanticArrayIteratorPrototypePath, "return"],
   [...semanticArrayIteratorPrototypePath, "__proto__", "return"],
   [...semanticArrayIteratorPrototypePath, "__proto__", "__proto__", "return"],
-  ["global", "Iterator", "prototype", "return"],
-  ["global", "Object", "prototype", "return"],
+  ...Array.from(arrayIteratorReturnGlobalOwners, (owner) => [
+    "global",
+    owner,
+    "prototype",
+    "return",
+  ]),
 ] as const;
 
 /** References a possible native close hook can still obtain by advancing its iterator. */

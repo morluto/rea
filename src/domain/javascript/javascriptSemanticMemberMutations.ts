@@ -264,7 +264,11 @@ const localPropertyMethods = (
           (capture) => capture.depth === 1 && capture.ownEnumerable,
         )
       ) {
-        for (const prototype of semanticNativePrototypeChain(node, selected!)) {
+        for (const prototype of semanticNativePrototypeChain(
+          node,
+          selected!,
+          state,
+        )) {
           if (selected === null || typeof selected === "object")
             return undefined;
           const at = current.memberReadAt ?? root;
@@ -295,7 +299,7 @@ const localPropertyMethods = (
         }
       }
       const references = t.isArrayExpression(node)
-        ? semanticArrayPropertyReferences(node, [selected!])
+        ? semanticArrayPropertyReferences(node, [selected!], state)
         : remaining.length === 0 && accessor !== "invoke"
           ? semanticObjectAccessorReferences(
               node,
@@ -2366,7 +2370,7 @@ const referencedValues = (
     if (effect === "write" && path.length < 2) return [];
     return t.isObjectExpression(node)
       ? semanticObjectPropertyReferences(node, path, state)
-      : semanticArrayPropertyReferences(node, path);
+      : semanticArrayPropertyReferences(node, path, state);
   }
   if (t.isClass(node) || t.isNewExpression(node))
     return constructedReferenceValues(
