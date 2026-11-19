@@ -379,6 +379,7 @@
 * **ghidra:** say when an inferred no-return call cuts a function ([ad2111f](https://github.com/morluto/rea/commit/ad2111fac64aa8acf9b9d6fba656b64be46ff677)), closes [#10365](https://github.com/morluto/rea/issues/10365)
 * **godot:** keep PCK members within the pack data region ([#12269](https://github.com/morluto/rea/issues/12269)) ([3d460d1](https://github.com/morluto/rea/commit/3d460d1e0c59bca09316d250294b2a1227829272))
 * **go:** validate string extents before budget admission ([#10231](https://github.com/morluto/rea/issues/10231)) ([feca30c](https://github.com/morluto/rea/commit/feca30c72cfc0355fb3a2652be09aefd6b9ed8da))
+* **gpu:** admit offload bundle entry extents before limits ([#12299](https://github.com/morluto/rea/issues/12299)) ([f48417f](https://github.com/morluto/rea/commit/f48417f31240cd6bd53cba3fab786fef2693aacd))
 * **gpu:** read PTX integer literals in array parameter layouts ([#12229](https://github.com/morluto/rea/issues/12229)) ([50ed816](https://github.com/morluto/rea/commit/50ed816a06c4b4c879dcc560fa8da9ffbe572cba))
 * **gpu:** report malformed GPU containers as invalid_format ([#10644](https://github.com/morluto/rea/issues/10644)) ([3080a63](https://github.com/morluto/rea/commit/3080a63729a476de1061dee5f13672cb9f949409))
 * **gpu:** report malformed GPU containers as invalid_format through the shared parse-failure mapping ([3080a63](https://github.com/morluto/rea/commit/3080a63729a476de1061dee5f13672cb9f949409))
