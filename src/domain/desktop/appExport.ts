@@ -462,12 +462,14 @@ const docText = (value: string): string => value.replace(/["\\]/gu, "'");
  * folder, where an open or save dialog would show build files. That
  * directory, arguments that are or start with a path under the captured home,
  * and `<option>=<path>` values that do, are respelled under the computer
- * user's `$HOME`.
+ * user's `$HOME`. An explicit env working directory inside that home must
+ * exist even when it has no seed files.
  */
 export const launchCommand = (
   argv: readonly string[],
   capturedHome: string,
   workingDirectory: string,
+  envWorkingDirectory?: string,
 ): readonly string[] => {
   const homeUrl = (value: string): string | undefined => {
     const parsed = capturedFileUrl(value);
@@ -514,8 +516,17 @@ export const launchCommand = (
   const respelled = argv.map(respell);
   const command = `exec ${argv.map((argument, index) => respelled[index] ?? shellQuote(argument)).join(" ")}`;
   const directory = underHome(workingDirectory) ?? shellQuote(workingDirectory);
-  // A missing working directory must not stop the boot.
-  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${command}`];
+  const requiredDirectory =
+    envWorkingDirectory !== undefined &&
+    isWithinAny(posix.normalize(envWorkingDirectory), [capturedHome])
+      ? underHome(envWorkingDirectory)
+      : undefined;
+  const prepare =
+    requiredDirectory === undefined
+      ? ""
+      : `mkdir -p -- ${requiredDirectory} && `;
+  // The desktop entry's initial directory is best-effort.
+  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${prepare}${command}`];
 };
 
 /** A Python string literal; JSON escapes are valid Python escapes. */

@@ -11,6 +11,38 @@ const file = (physical: string, role: StatePath["role"]): StatePath =>
   ({ path: physical, role }) as StatePath;
 
 describe("planLaunch captured paths", () => {
+  it("uses the env-selected directory to identify and replay a relative document", () => {
+    const first = `${HOME}/ambient`;
+    const selected = `${HOME}/selected`;
+    const capture = {
+      host: { home: HOME },
+      application: {
+        argv: ["env", "--chdir=../selected", "--", "./app", "project.txt"],
+        working_directory: first,
+        application_working_directory: selected,
+        desktop_entry: { exec: "env --chdir=../selected -- ./app %f" },
+        state_directories: [],
+      },
+      state: { state_directories: [] },
+    } as unknown as DesktopApplicationCapture;
+    const files = new Map([
+      [
+        "ambient/project.txt",
+        file(`${first}/project.txt`, "application_state"),
+      ],
+      ["selected/project.txt", file(`${selected}/project.txt`, "document")],
+    ]);
+    const seeds = new Map([
+      ["selected/project.txt", { sha256: "a".repeat(64), format: "text" }],
+    ]);
+    const launch = planLaunch(capture, false, seeds, files);
+    expect(launch.opens).toEqual({ kind: "captured" });
+    expect(launch.command[2]).toContain('cd "$HOME"/');
+    expect(launch.command[2]).toMatch(/'-C'[^;]+\$HOME[^;]+selected/u);
+    expect(launch.command[2]).not.toContain("../selected");
+    expect(launch.command[2]).toContain("project.txt");
+  });
+
   it.each([
     ["/mnt/data/books.db", "/mnt/data/books.db"],
     ["file:///mnt/data/books.db?mode=edit#page", "/mnt/data/books.db"],
