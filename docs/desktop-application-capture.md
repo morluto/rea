@@ -41,7 +41,11 @@ requires, so a relative value leaves the home default in use instead of
 naming a folder under the working directory. The entry's `Exec` line is
 expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
-entry's `Path` or the home directory. When the line starts with
+entry's `Path` or the home directory. An `env -C` or `env --chdir` prefix
+selects the directory for executable lookup and relative arguments. Capture
+retains the original argv and launch directory, with the resolved application
+directory recorded as `application_working_directory`. Export maps that
+directory into the seed before replay. When the line starts with
 `env NAME=value` or `env -- NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
 in, and their XDG folders name the state directories. Otherwise the program is
