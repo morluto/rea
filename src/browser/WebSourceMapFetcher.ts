@@ -15,7 +15,10 @@ import { err, ok, type Result } from "../domain/result.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
 import { analyzeParsedJavaScriptReferences } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTraversal.js";
-import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
+import {
+  isTypeScriptSourcePath,
+  parseJavaScriptSource,
+} from "../domain/javascript/javascriptSourceParser.js";
 import {
   semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
@@ -1609,15 +1612,10 @@ const resolveOriginalSource = (
   }
 };
 
-const sourceMediaType = (source: string | null): string => {
-  const path = source === null ? null : originalSourcePath(source);
-  return path?.endsWith(".ts") ||
-    path?.endsWith(".tsx") ||
-    path?.endsWith(".mts") ||
-    path?.endsWith(".cts")
+const sourceMediaType = (source: string | null): string =>
+  source !== null && isTypeScriptSourcePath(originalSourcePath(source))
     ? "text/typescript"
     : "text/javascript";
-};
 
 const originalDependency = (
   node: t.Node,
