@@ -284,15 +284,24 @@ it("runs the published runtime in-process from the owner-private install prefix"
     temp.temporaryRoot,
   );
   const caller = await createTestTempDirectory("rea-published-caller-");
-  const missingBin = await createTestTempDirectory(
-    "rea-published-missing-npm-",
+  // Keep OS PATH so Windows cache admission can resolve powershell.exe;
+  // pin a failing npm entry so a missed ready marker cannot hit the registry.
+  const bin = await createTestTempDirectory("rea-published-missing-npm-");
+  const npmEntry = join(bin, "npm-cli.cjs");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+process.stderr.write("controlled npm install failure\\n");
+process.exit(1);
+`,
   );
   const child = spawn(process.execPath, [launcher, version], {
     cwd: caller,
     env: {
       ...process.env,
       ...temp.env,
-      PATH: missingBin,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
     },
     stdio: "pipe",
   });
@@ -1451,16 +1460,23 @@ it.skipIf(process.platform !== "win32")(
       { encoding: "utf8", windowsHide: true },
     );
     expect(foreign.status, foreign.stderr || foreign.stdout).toBe(0);
-    const missingBin = await createTestTempDirectory(
-      "rea-published-foreign-sid-bin-",
+    // Keep OS PATH so inspectWindowsPrivateAcl can resolve powershell.exe;
+    // pin a failing npm entry so a missed refusal cannot hit the registry.
+    const bin = await createTestTempDirectory("rea-published-foreign-sid-bin-");
+    const npmEntry = join(bin, "npm-cli.cjs");
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+process.stderr.write("controlled npm install failure\\n");
+process.exit(1);
+`,
     );
-    const env: NodeJS.ProcessEnv = {
+    const { child, closed } = start([version], {
       ...process.env,
       ...temp.env,
-      PATH: missingBin,
-    };
-    delete env.npm_execpath;
-    const { child, closed } = start([version], env);
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    });
     child.stdin.end();
     const result = await closed;
     expect(result.code).toBe(1);
