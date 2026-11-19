@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { parseJsonStringLiteral } from "../domain/jsonDuplicateMember.js";
 import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
@@ -218,8 +219,10 @@ export const readSafetensorsHeader = async (
   if ((pickle || zip) && reader.size < 9) rejectPickle();
   const second = await reader.take(4);
   reader.excludeSafetensorsLengthPrefix();
+  // first and second are exact four-byte takes of the little-endian u64 prefix.
   const length =
-    BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
+    new BinaryReader(first, true, "safetensors").word(0, 32) +
+    (new BinaryReader(second, true, "safetensors").word(0, 32) << 32n);
   const brace = length === 0n ? undefined : (await reader.take(1))[0];
   // A brace after an admissible length is safetensors, even if truncated.
   if (

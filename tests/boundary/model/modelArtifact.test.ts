@@ -759,6 +759,65 @@ it("keeps unknown safetensors storage validation separate from observed valid by
   });
 });
 
+it.each([false, true])(
+  "decodes every fixed-width GGUF scalar type, big-endian=%s",
+  async (bigEndian) => {
+    const scalar = (width: number, write: (b: Buffer) => void) => {
+      const b = Buffer.alloc(width);
+      write(b);
+      return b;
+    };
+    const order = bigEndian ? "BE" : "LE";
+    const rows = [
+      [0, "UINT8", scalar(1, (b) => b.writeUInt8(0xfe)), 0xfe],
+      [1, "INT8", scalar(1, (b) => b.writeInt8(-2)), -2],
+      [2, "UINT16", scalar(2, (b) => b[`writeUInt16${order}`](0xfffe)), 0xfffe],
+      [3, "INT16", scalar(2, (b) => b[`writeInt16${order}`](-300)), -300],
+      [
+        4,
+        "UINT32",
+        scalar(4, (b) => b[`writeUInt32${order}`](0xfffffffe)),
+        0xfffffffe,
+      ],
+      [5, "INT32", scalar(4, (b) => b[`writeInt32${order}`](-70000)), -70000],
+      [6, "FLOAT32", scalar(4, (b) => b[`writeFloat${order}`](-1.5)), -1.5],
+      [7, "BOOL", scalar(1, (b) => b.writeUInt8(1)), true],
+      [
+        10,
+        "UINT64",
+        scalar(8, (b) => b[`writeBigUInt64${order}`](2n ** 63n)),
+        "9223372036854775808",
+      ],
+      [
+        11,
+        "INT64",
+        scalar(8, (b) => b[`writeBigInt64${order}`](-(2n ** 62n))),
+        "-4611686018427387904",
+      ],
+      [
+        12,
+        "FLOAT64",
+        scalar(8, (b) => b[`writeDouble${order}`](-0.125)),
+        -0.125,
+      ],
+    ] as const;
+    const fixture = ggufFixture({
+      bigEndian,
+      metadata: rows.map(([type, name, value]) => ({
+        key: `custom.${name.toLowerCase()}`,
+        type,
+        value,
+      })),
+    });
+    const { path, provider } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(result.value.metadata.map((row) => [row.type, row.value])).toEqual(
+      rows.map(([, name, , expected]) => [name, expected]),
+    );
+  },
+);
+
 it("preserves nonfinite floating metadata and negative zero without JSON coercion", async () => {
   const values = [NaN, Infinity, -Infinity, -0];
   const fixture = ggufFixture({
