@@ -34,11 +34,17 @@ const artifactClaimSchema = z.object({
   kind: z.literal("structural-artifact"),
   dimension: z.literal("overall"),
 });
+const visualClaimSchema = z.object({
+  ...commonClaim,
+  kind: z.literal("visual"),
+  dimension: z.literal("overall"),
+});
 
 const reconstructionClaimSchema = z.discriminatedUnion("kind", [
   behavioralClaimSchema,
   functionClaimSchema,
   artifactClaimSchema,
+  visualClaimSchema,
 ]);
 
 /** Finite, typed behavioral and structural specification. */
@@ -69,7 +75,12 @@ export const reconstructionVerificationInputSchema = z.strictObject({
 
 export const reconstructionClaimResultSchema = z.object({
   claim_id: claimIdSchema,
-  kind: z.enum(["behavioral", "structural-function", "structural-artifact"]),
+  kind: z.enum([
+    "behavioral",
+    "structural-function",
+    "structural-artifact",
+    "visual",
+  ]),
   dimension: z.string().min(1),
   status: verificationStatusSchema,
   observed_status: z.enum([

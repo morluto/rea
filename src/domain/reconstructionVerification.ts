@@ -1,4 +1,5 @@
 import { evidenceFileTarget } from "./evidence.js";
+import { z } from "zod";
 import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
@@ -43,11 +44,13 @@ import {
   reconstructionUnknownHeads,
 } from "./reconstructionUnknowns.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
+import { webScreenshotSchema } from "./webScreenshot.js";
 
 const comparisonOperationsByClaimKind = {
   behavioral: "compare_process_captures",
   "structural-function": "compare_functions",
   "structural-artifact": "compare_artifacts",
+  visual: "compare_web_screenshots",
 } as const;
 
 interface FunctionSourceFacts {
@@ -153,14 +156,32 @@ const evaluateClaim = (
       `Missing comparison Evidence ${claim.comparison_evidence_id}`,
     );
   validateComparisonIdentity(claim, comparison, claimIndex);
-  const sides = comparisonSourceEvidenceSides(comparison);
+  const sides =
+    claim.kind === "visual"
+      ? screenshotComparisonSourceEvidenceSides(comparison, records)
+      : comparisonSourceEvidenceSides(comparison);
   const allSourceIds = uniqueSorted([...sides.left, ...sides.right]);
-  if (!sameSet(comparison.evidence_links, allSourceIds))
+  if (
+    claim.kind !== "visual" &&
+    !sameSet(comparison.evidence_links, allSourceIds)
+  )
     throw new EvidenceIntegrityError(
       "Comparison Evidence closure disagrees with its parameters",
       {
         userMessage:
           "Comparison Evidence closure disagrees with its parameters",
+      },
+    );
+  if (
+    claim.kind === "visual" &&
+    comparison.evidence_links.length > 0 &&
+    !sameSet(comparison.evidence_links, allSourceIds)
+  )
+    throw new EvidenceIntegrityError(
+      "Screenshot comparison Evidence links disagree with its artifact inputs",
+      {
+        userMessage:
+          "Screenshot comparison Evidence links disagree with its artifact inputs",
       },
     );
   const sources = allSourceIds.map((id) => {
@@ -222,6 +243,58 @@ const evaluateClaim = (
       ),
     ]),
   });
+};
+
+const screenshotComparisonParametersSchema = z.strictObject({
+  before_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  after_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  channel_threshold: z.int().min(0).max(255),
+  comparison_input_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+});
+
+/** Match screenshot comparison artifacts back to their captured Evidence. */
+const screenshotComparisonSourceEvidenceSides = (
+  comparison: Evidence,
+  records: ReadonlyMap<string, Evidence>,
+): { left: string[]; right: string[] } => {
+  const parsed = readEvidencePayload(
+    screenshotComparisonParametersSchema,
+    comparison.parameters,
+    { within: ["parameters"] },
+  );
+  if (!parsed.ok) throw parsed.error;
+  const sourceForArtifact = (sha256: string, side: "before" | "after") => {
+    const matches: string[] = [];
+    for (const [evidenceId, source] of records) {
+      if (
+        source.operation !== "capture_web_screenshot" ||
+        source.predicate_type !== "rea.web-screenshot"
+      )
+        continue;
+      const screenshot = readEvidencePayload(
+        webScreenshotSchema,
+        source.normalized_result,
+        { within: ["normalized_result"] },
+      );
+      if (!screenshot.ok) throw screenshot.error;
+      if (screenshot.value.artifact.sha256 === sha256) matches.push(evidenceId);
+    }
+    if (matches.length !== 1)
+      throw new EvidenceIntegrityError(
+        `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record`,
+        {
+          userMessage: `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record`,
+        },
+      );
+    return matches[0]!;
+  };
+  return {
+    left: [sourceForArtifact(parsed.value.before_artifact_sha256, "before")],
+    right: [sourceForArtifact(parsed.value.after_artifact_sha256, "after")],
+  };
 };
 
 const assessArtifactSourceComparison = (
@@ -309,6 +382,11 @@ const readValidatedSourceFacts = (
         source.operation === "analyze_function" &&
         source.predicate_type === "rea.analysis"
       );
+    if (claim.kind === "visual")
+      return (
+        source.operation === "capture_web_screenshot" &&
+        source.predicate_type === "rea.web-screenshot"
+      );
     return (
       (source.operation === "inventory_artifact" ||
         source.operation === "inspect_artifact") &&
@@ -357,6 +435,13 @@ const readValidatedSourceFacts = (
         ],
         callCoverageDiagnostics: callCoverage.diagnostics,
       });
+    } else if (claim.kind === "visual") {
+      const screenshot = readEvidencePayload(
+        webScreenshotSchema,
+        source.normalized_result,
+        { within: ["normalized_result"] },
+      );
+      if (!screenshot.ok) throw screenshot.error;
     } else {
       try {
         parseArtifactInventoryEvidence(source);
@@ -454,6 +539,25 @@ const comparisonObservation = (
     }
     return { status: dimension.status, limitations: dimension.limitations };
   }
+  if (claim.kind === "visual") {
+    const parsed = readComparisonResult(evidence, "compare_web_screenshots");
+    if (!parsed.ok) throw parsed.error;
+    const result = parsed.value.result;
+    return {
+      status:
+        result.status === "identical"
+          ? "unchanged"
+          : result.status === "different"
+            ? "changed"
+            : "unknown",
+      limitations: [
+        ...result.limitations,
+        ...(result.status === "dimension_mismatch"
+          ? ["Screenshot dimensions differ."]
+          : []),
+      ],
+    };
+  }
   const parsed = readComparisonResult(evidence, "compare_artifacts");
   if (!parsed.ok) throw parsed.error;
   const result = parsed.value.result;
@@ -478,7 +582,11 @@ const authorityLimitations = (
   },
 ): string[] => {
   const requiredAuthority =
-    claim.kind === "behavioral" ? "controlled-replay" : "shipped-artifact";
+    claim.kind === "behavioral"
+      ? "controlled-replay"
+      : claim.kind === "visual"
+        ? "external-service"
+        : "shipped-artifact";
   const limitations: string[] = [];
   if (sides.left.some((id) => sides.right.includes(id)))
     limitations.push(
@@ -497,7 +605,8 @@ const authorityLimitations = (
       `Source Evidence lacks qualifying ${requiredAuthority} authority.`,
     );
   if (
-    claim.kind !== "behavioral" &&
+    (claim.kind === "structural-function" ||
+      claim.kind === "structural-artifact") &&
     sources.some((source) => evidenceFileTarget(source) === undefined)
   )
     limitations.push("Structural source artifact identity is unavailable.");
