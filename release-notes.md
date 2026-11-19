@@ -564,6 +564,7 @@
 * **tests:** treat zombies as stopped in process liveness checks ([6c3e9e0](https://github.com/morluto/rea/commit/6c3e9e0847f24850383450b4d04e5122c0da4f0e))
 * **tests:** treat zombies as stopped in process liveness checks ([#11819](https://github.com/morluto/rea/issues/11819)) ([#12034](https://github.com/morluto/rea/issues/12034)) ([6c3e9e0](https://github.com/morluto/rea/commit/6c3e9e0847f24850383450b4d04e5122c0da4f0e))
 * **unityfs:** share bounded header probing with desktop inspection ([#12169](https://github.com/morluto/rea/issues/12169)) ([2b7d542](https://github.com/morluto/rea/commit/2b7d54257f2edba82f4d2eb4a2c65dce991a367b))
+* **unityfs:** validate encoded block extents before decoder limits ([#12223](https://github.com/morluto/rea/issues/12223)) ([56d31bc](https://github.com/morluto/rea/commit/56d31bc7a87e96d49642d3a8db308a99cae2e7af))
 * **v8:** report a pre-13.4 V8 module code cache as a module ([7a03182](https://github.com/morluto/rea/commit/7a031823492dbbb9d651574d7323e0341eadb19b)), closes [#10262](https://github.com/morluto/rea/issues/10262) [#10263](https://github.com/morluto/rea/issues/10263)
 * **verifiers:** accept Hopper's declared unknown relationship coverage ([30d23cc](https://github.com/morluto/rea/commit/30d23ccd926b41c9b23c971e0901a4fe383bc1b0))
 * **verifiers:** release fixture roots only after their owners finish ([#10491](https://github.com/morluto/rea/issues/10491)) ([67ce671](https://github.com/morluto/rea/commit/67ce671d66876da51c03220b2d4a16e6e02f4f00))
