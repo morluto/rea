@@ -1,5 +1,6 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { Budget } from "../../domain/budget.js";
+import { declaredFileRange } from "../../domain/binaryContainer.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
@@ -728,22 +729,13 @@ const elfClaims = async (
       elfClass,
       byteOrder === "little",
     );
-    if (
-      !section.ok ||
-      section.value.offset > MAX_SAFE_FILE_WORD ||
-      section.value.size > MAX_SAFE_FILE_WORD
-    )
-      return null;
-    return {
-      nameOffset: section.value.nameOffset,
-      type: section.value.type,
-      offset: Number(section.value.offset),
-      size: Number(section.value.size),
-    };
+    return section.ok ? section.value : null;
   };
 
   const strings = readSection(namesIndex);
   if (strings === null || strings.type !== ELF_SHT_STRTAB) return [];
+  const stringRange = declaredFileRange(fileSize, strings.offset, strings.size);
+  if (!stringRange.file_backed) return [];
   // Only ".bun" and its terminator are needed. Duplicate offsets share one
   // bounded lookup, even when the referenced string is much longer.
   const names = new Map<number, boolean>();
@@ -753,19 +745,21 @@ const elfClaims = async (
     if (
       section === null ||
       section.type === ELF_SHT_NULL ||
-      section.type === ELF_SHT_NOBITS
+      section.type === ELF_SHT_NOBITS ||
+      section.offset > MAX_SAFE_FILE_WORD ||
+      section.size > MAX_SAFE_FILE_WORD
     )
       continue;
     const { nameOffset } = section;
     let isBun = names.get(nameOffset);
     if (isBun === undefined) {
       const name =
-        nameOffset >= strings.size
+        nameOffset >= stringRange.size
           ? null
           : await tryRead(
               handle,
-              strings.offset + nameOffset,
-              Math.min(ELF_BUN_NAME.length + 1, strings.size - nameOffset),
+              stringRange.offset + nameOffset,
+              Math.min(ELF_BUN_NAME.length + 1, stringRange.size - nameOffset),
               fileSize,
               signal,
             );
@@ -778,7 +772,12 @@ const elfClaims = async (
     }
     if (!isBun) continue;
     claims.push(
-      windowFor("elf-section", section.offset, section.size, fileSize),
+      windowFor(
+        "elf-section",
+        Number(section.offset),
+        Number(section.size),
+        fileSize,
+      ),
     );
   }
   return claims;

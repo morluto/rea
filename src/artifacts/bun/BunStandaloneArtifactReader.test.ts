@@ -160,6 +160,8 @@ it.each([
   { declaration: "inactive .bun", format: "elf" },
   { declaration: "non-string section-name table", format: "elf" },
   { declaration: "unterminated .bun name", format: "elf" },
+  { declaration: "truncated section-name table", format: "elf" },
+  { declaration: "truncated section-header table", format: "elf" },
 ] as const)(
   "inventories an ELF carrier with $declaration as $format",
   async ({ declaration, format }) => {
@@ -179,8 +181,15 @@ it.each([
       bytes.writeUInt32LE(0, sectionTable + 128 + 4);
     if (declaration === "non-string section-name table")
       bytes.writeUInt32LE(1, sectionTable + 64 + 4);
+    const stringTableSize = sectionTable + 64 + 32;
+    if (declaration === "truncated section-name table") {
+      const stringTableOffset = bytes.readBigUInt64LE(sectionTable + 64 + 24);
+      bytes.writeBigUInt64LE(
+        BigInt(bytes.length) - stringTableOffset + 1n,
+        stringTableSize,
+      );
+    }
     if (declaration === "unterminated .bun name") {
-      const stringTableSize = sectionTable + 64 + 32;
       bytes.writeBigUInt64LE(
         bytes.readBigUInt64LE(stringTableSize) - 1n,
         stringTableSize,
@@ -190,7 +199,12 @@ it.each([
       await createTestTempDirectory("rea-bun-elf-section-"),
       "app",
     );
-    await writeFile(path, bytes);
+    await writeFile(
+      path,
+      declaration === "truncated section-header table"
+        ? bytes.subarray(0, -1)
+        : bytes,
+    );
     const scope = new ArtifactResourceScope();
     try {
       const result = await inventoryArtifact(path, { resourceScope: scope });
