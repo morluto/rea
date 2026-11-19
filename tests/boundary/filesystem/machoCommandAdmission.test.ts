@@ -117,7 +117,9 @@ it.each([
     );
     await writeFile(path, bytes);
     expect(parseExecutableHeader(bytes, "arm64").ok).toBe(false);
-    expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(/load command/iu);
+    expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+      /load command/iu,
+    );
     const resolved = await parseBinaryTarget(path);
     expect(resolved.ok).toBe(false);
     if (resolved.ok || !(resolved.error instanceof BinaryTargetError))
@@ -219,7 +221,9 @@ const OVERSIZED_COMMAND_BYTES = 16 * 1024 * 1024 + 8;
 it("reports truncation when an oversized command table cannot fit the file", () => {
   const bytes = commandImage(true, true, [16]);
   bytes.writeUInt32LE(OVERSIZED_COMMAND_BYTES, 20);
-  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(BinaryFormatFailure);
+  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+    BinaryFormatFailure,
+  );
   expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
     expect.objectContaining({
       kind: "truncated",
@@ -238,5 +242,7 @@ it("retains the native capacity result for a backed oversized command table", ()
     ok: true,
     value: { commandBytes: OVERSIZED_COMMAND_BYTES },
   });
-  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(BinaryResourceFailure);
+  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+    BinaryResourceFailure,
+  );
 });

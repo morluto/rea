@@ -77,7 +77,9 @@ it.each([
     const bytes = rustElfSectionNameFixture("empty");
     bytes.writeUInt32LE(type, 384 + 4);
     bytes.writeBigUInt64LE(flags, 384 + 8);
-    expect(readBinaryContainer(bytes, "elf-directory").sections).not.toContainEqual(
+    expect(
+      readBinaryContainer(bytes, "elf-directory").sections,
+    ).not.toContainEqual(
       expect.objectContaining({ offset: 2048, read_only: true }),
     );
     expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
@@ -88,9 +90,9 @@ it("does not scan an unnamed ELF section whose declared range leaves the file", 
   const bytes = rustElfSectionNameFixture("empty");
   // The compiler path still exists at 2048, but its declared section no longer fits.
   bytes.writeBigUInt64LE(BigInt(bytes.length), 384 + 32);
-  expect(readBinaryContainer(bytes, "elf-directory").sections).not.toContainEqual(
-    expect.objectContaining({ read_only: true }),
-  );
+  expect(
+    readBinaryContainer(bytes, "elf-directory").sections,
+  ).not.toContainEqual(expect.objectContaining({ read_only: true }));
   expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
 });
 

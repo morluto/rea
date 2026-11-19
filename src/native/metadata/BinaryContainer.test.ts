@@ -376,10 +376,12 @@ const elfWithLoadSegment = (fileSize: bigint): Buffer => {
 };
 
 it("names a load segment that runs past the end of the file as truncated", () => {
-  expect(readBinaryContainer(elfWithLoadSegment(120n), "elf-directory").mappings).toHaveLength(
-    1,
-  );
-  expect(() => readBinaryContainer(elfWithLoadSegment(0x1000n), "elf-directory")).toThrow(
+  expect(
+    readBinaryContainer(elfWithLoadSegment(120n), "elf-directory").mappings,
+  ).toHaveLength(1);
+  expect(() =>
+    readBinaryContainer(elfWithLoadSegment(0x1000n), "elf-directory"),
+  ).toThrow(
     expect.objectContaining({
       failure: {
         kind: "truncated",

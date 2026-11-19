@@ -111,9 +111,12 @@ it.each([
   "retains ELF%i little=%s compression independently of stored section coverage",
   (bits, little) => {
     const bytes = compressedElfNoteSectionFixture(bits, little);
-    const initial = readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1]!;
+    const initial = readElfDirectoryFromBuffer(bytes, "elf-directory")
+      .sections[1]!;
     expect(initial).toMatchObject({ compressed: true, file_backed: true });
-    expect(readElfDirectoryFromBuffer(bytes, "elf-directory").sections[2]).toMatchObject({
+    expect(
+      readElfDirectoryFromBuffer(bytes, "elf-directory").sections[2],
+    ).toMatchObject({
       compressed: false,
       file_backed: true,
     });
@@ -125,7 +128,9 @@ it.each([
       else bytes.writeBigUInt64BE(BigInt(bytes.length), sizeAt);
     } else if (little) bytes.writeUInt32LE(bytes.length, sizeAt);
     else bytes.writeUInt32BE(bytes.length, sizeAt);
-    expect(readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1]).toMatchObject({
+    expect(
+      readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1],
+    ).toMatchObject({
       compressed: true,
       file_backed: false,
       offset: initial.offset,

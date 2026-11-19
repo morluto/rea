@@ -757,14 +757,16 @@ it("checks direct section count encoding in notes and the native directory", () 
   bytes.writeBigUInt64LE(0n, sectionZero + 32);
   bytes.writeUInt16LE(0xfeff, 60);
   expect(parse(bytes).tables[0]?.name).toBe(".note.gnu.build-id");
-  expect(readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1]?.name).toBe(
-    ".note.gnu.build-id",
-  );
+  expect(
+    readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1]?.name,
+  ).toBe(".note.gnu.build-id");
 
   bytes.writeUInt16LE(0xff00, 60);
   const reason = /e_shnum uses a reserved direct section count/u;
   expect(() => parse(bytes)).toThrow(reason);
-  expect(() => readElfDirectoryFromBuffer(bytes, "elf-directory")).toThrow(reason);
+  expect(() => readElfDirectoryFromBuffer(bytes, "elf-directory")).toThrow(
+    reason,
+  );
 });
 
 const repeatedNotes = (count: number, notes: Buffer): Buffer => {
