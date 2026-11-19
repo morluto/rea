@@ -536,7 +536,7 @@ print(json.dumps(None if view is None else {
         })),
       );
     }
-  }, 15_000);
+  });
 
   it("refuses archives whose selected directory or Zip64 locator names another volume", async () => {
     const classic = zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]);
