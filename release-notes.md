@@ -559,6 +559,7 @@
 * **pe:** report the enforced resource parser limit ([#12328](https://github.com/morluto/rea/issues/12328)) ([39d20dc](https://github.com/morluto/rea/commit/39d20dce3d5769eb9a6929af7eacb4df4037ece7))
 * **pe:** retain TLS templates without complete file backing ([85198fd](https://github.com/morluto/rea/commit/85198fd5cb860445f265cea9dd3cbaaecab28342)), closes [#7400](https://github.com/morluto/rea/issues/7400) [#7529](https://github.com/morluto/rea/issues/7529)
 * **pe:** validate certificate entry framing before capacity ([#12336](https://github.com/morluto/rea/issues/12336)) ([15150b0](https://github.com/morluto/rea/commit/15150b017a1012ecc3bbd9e992f5086457a527c6))
+* **pe:** validate resource name extents before capacity ([#12368](https://github.com/morluto/rea/issues/12368)) ([17ad9c1](https://github.com/morluto/rea/commit/17ad9c14ff84f41d13d2b5cedf02a19fdd49401b))
 * **plist:** bound stored text to the object table ([#12312](https://github.com/morluto/rea/issues/12312)) ([ed4b372](https://github.com/morluto/rea/commit/ed4b372435d66145c06d32db59cf09c081f52008))
 * **plist:** carry keyed archive parser limit facts into errors ([#12324](https://github.com/morluto/rea/issues/12324)) ([f175382](https://github.com/morluto/rea/commit/f175382ed71c6e880861d50f24eafed7068d0c8d))
 * **plist:** disclose lossy stored text decoding ([#12268](https://github.com/morluto/rea/issues/12268)) ([4afa99b](https://github.com/morluto/rea/commit/4afa99bebe11a87e4a74ee2274ffbec507d90fcd))
