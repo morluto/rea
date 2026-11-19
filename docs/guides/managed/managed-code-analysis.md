@@ -102,9 +102,10 @@ Repeated `#Strings` declarations for the same range keep the existing name
 facts and disclose the duplicate. Distinct ranges leave nonzero string
 indices unresolved. When there is exactly one Module row, its token, file
 offset, generation, raw name index, and independently readable GUIDs remain
-in `metadata.unresolved_module_name`. The usual `module` object is null in
-this case. Index zero still reads as an empty string when the Module row is
-unique. If there are competing string heaps and multiple Module rows, Module
+in `metadata.unresolved_module_name` if a malformed or ambiguous name lookup
+prevents reading its name. The usual `module` object is null in this case.
+Index zero still reads as an empty string when the Module row is unique.
+If there are competing string heaps and multiple Module rows, Module
 identity remains unknown even when a name index is zero. A known MVID can bound
 build-local token identity even when the Module name is unresolved. Unreadable
 names do not supply nominal member or type lookup keys.
