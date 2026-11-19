@@ -237,39 +237,73 @@ export const semanticTopLevelEffectFollowsCapture = (
   );
 };
 
-const scopeExitMarkers = new WeakMap<t.Node, t.EmptyStatement>();
-const scopeExitOwners = new WeakMap<
+const scopeEffectMarkers = {
+  acquire: new WeakMap<t.Node, t.EmptyStatement>(),
+  exit: new WeakMap<t.Node, t.EmptyStatement>(),
+};
+const scopeEffectOwners = new WeakMap<
   t.Node,
-  { readonly scope: t.Node; readonly positionOwner: t.Node }
+  {
+    readonly scope: t.Node;
+    readonly positionOwner: t.Node;
+    readonly phase: "acquire" | "exit";
+  }
 >();
+
+const semanticScopeEffect = (
+  scope: t.Node,
+  positionOwner: t.Node,
+  phase: "acquire" | "exit",
+): t.Node => {
+  const markers = scopeEffectMarkers[phase];
+  const cached = markers.get(scope);
+  if (cached !== undefined) return cached;
+  const marker = t.emptyStatement();
+  const boundary = phase === "acquire" ? "start" : "end";
+  if (scope[boundary] !== undefined) {
+    marker.start = scope[boundary];
+    marker.end = scope[boundary];
+  }
+  if (scope.loc != null)
+    marker.loc = {
+      ...scope.loc,
+      start: scope.loc[boundary],
+      end: scope.loc[boundary],
+    };
+  markers.set(scope, marker);
+  scopeEffectOwners.set(marker, { scope, positionOwner, phase });
+  return marker;
+};
 
 /** A derived scope-end effect keeps finalization separate from source evaluation. */
 export const semanticScopeExitEffect = (
   scope: t.Node,
   positionOwner = scope,
-): t.Node => {
-  const cached = scopeExitMarkers.get(scope);
-  if (cached !== undefined) return cached;
-  const marker = t.emptyStatement();
-  if (scope.end !== undefined) {
-    marker.start = scope.end;
-    marker.end = scope.end;
-  }
-  if (scope.loc != null)
-    marker.loc = { ...scope.loc, start: scope.loc.end, end: scope.loc.end };
-  scopeExitMarkers.set(scope, marker);
-  scopeExitOwners.set(marker, { scope, positionOwner });
-  return marker;
-};
+): t.Node => semanticScopeEffect(scope, positionOwner, "exit");
+
+/** An array's iterator acquisition precedes the pattern's element targets. */
+export const semanticArrayPatternAcquisitionEffect = (
+  scope: t.ArrayPattern,
+  positionOwner: t.Node | undefined,
+): t.Node => semanticScopeEffect(scope, positionOwner ?? scope, "acquire");
 
 /** The array pattern that owns a recorded native iterator close. */
 export const semanticArrayPatternCloseScope = (
   effect: t.Node | undefined,
 ): t.ArrayPattern | undefined => {
-  const scope =
-    effect === undefined ? undefined : scopeExitOwners.get(effect)?.scope;
-  return t.isArrayPattern(scope) ? scope : undefined;
+  const owner =
+    effect === undefined ? undefined : scopeEffectOwners.get(effect);
+  return owner?.phase === "exit" && t.isArrayPattern(owner.scope)
+    ? owner.scope
+    : undefined;
 };
+
+/** Whether an effect belongs to the opening or closing of an array pattern. */
+export const isSemanticArrayPatternEffect = (
+  effect: t.Node | undefined,
+): boolean =>
+  effect !== undefined &&
+  t.isArrayPattern(scopeEffectOwners.get(effect)?.scope);
 
 const withinScopeExit = (
   reference: t.Node,
@@ -304,9 +338,13 @@ export const semanticEffectFollowsReference = (
   parents: WeakMap<t.Node, t.Node>,
 ): boolean => {
   if (reference === effect) return false;
-  const exit = effect === undefined ? undefined : scopeExitOwners.get(effect);
+  const exit = effect === undefined ? undefined : scopeEffectOwners.get(effect);
   if (exit !== undefined) {
-    if (withinScopeExit(reference, exit.scope, parents)) return true;
+    if (
+      (exit.phase === "exit" || reference === exit.scope) &&
+      withinScopeExit(reference, exit.scope, parents)
+    )
+      return true;
     effect = exit.scope;
   }
   let current: t.Node | undefined = reference;
@@ -359,9 +397,10 @@ export const semanticEffectTiming = (
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticEffectTiming => {
   if (effect === undefined) return "unknown";
-  const exit = scopeExitOwners.get(effect);
+  const exit = scopeEffectOwners.get(effect);
   if (exit !== undefined) {
-    if (withinScopeExit(site, exit.scope, state.parentsByNode)) return "after";
+    if (withinScopeExit(site, exit.scope, state.parentsByNode))
+      return exit.phase === "exit" || site === exit.scope ? "after" : "before";
     effect = exit.scope;
   }
   // Invocation receives arguments after their values have been selected.
@@ -1984,7 +2023,7 @@ export const semanticEscapeFollowsCapture = (
   )
     return false;
   const capturePosition = semanticCapturePosition(capture, parents);
-  const exit = scopeExitOwners.get(escape);
+  const exit = scopeEffectOwners.get(escape);
   if (exit !== undefined) {
     // Unlike a source-global ordering proof, this binding was initialized in
     // the captured body. Its later sibling scope exits follow this activation.
@@ -1998,7 +2037,7 @@ export const semanticEscapeFollowsCapture = (
           positionOwner.init === capture) ||
           (t.isAssignmentExpression(positionOwner) &&
             positionOwner.right === capture))) ||
-      withinScopeExit(capture, scope, parents) ||
+      (exit.phase === "exit" && withinScopeExit(capture, scope, parents)) ||
       (capturePosition !== null &&
         exitPosition !== null &&
         (positionPrecedes(capturePosition, exitPosition) ||
