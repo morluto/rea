@@ -42,6 +42,7 @@ import {
   ArtifactReaderFailure,
   artifactParseFailure,
   artifactReaderLimitFailure,
+  artifactFixedLimitFailure,
   abortIfNeeded,
 } from "../../resources/index.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
@@ -254,6 +255,24 @@ const collapseRanges = async (
   const chosen = unique[0];
   if (chosen === undefined) return undefined;
   if (unique.length > 1) {
+    if (unique.some((range) => range.length !== chosen.length))
+      throw formatFailure(NODE_SEA_DUPLICATE_BLOB);
+    // Disjoint copies fit in the file; overlapping declarations must not
+    // multiply verification work by the number of native table entries.
+    let remainingBytes = carrier.fileSize;
+    for (const range of unique) {
+      if (range.length > remainingBytes)
+        throw artifactFixedLimitFailure(
+          {
+            name: "Node SEA duplicate-blob verification allowance",
+            kind: "work",
+            limit: carrier.fileSize,
+            unit: "bytes",
+          },
+          "Node SEA duplicate-blob verification exceeds the carrier-byte work allowance.",
+        );
+      remainingBytes -= range.length;
+    }
     const hashes = new Set<string>();
     for (const range of unique) {
       const hash = await hashArtifactRange(carrier, range.offset, range.length);
