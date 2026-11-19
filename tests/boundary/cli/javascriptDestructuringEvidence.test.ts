@@ -38,6 +38,16 @@ cliTest(
     let arrayAssigned;
     [arrayAssigned] = before;
     before[0] = "later";
+    const skipped = ["skip", "first"];
+    const [,elided] = skipped;
+    skipped[1] = "later";
+    const projectedSource = { items: ["projected"] };
+    const projectedAlias = projectedSource;
+    const [projected] = projectedAlias.items;
+    projectedSource.items[0] = "later";
+    const nestedArray = [{ mode: "read-time" }];
+    const [{ mode: arrayObject }] = nestedArray;
+    nestedArray[0].mode = "later";
     const box = { items: [] };
     const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
@@ -65,6 +75,9 @@ cliTest(
       ["scalar", ["b"]],
       ["ordinary", ["0"]],
       ["arrayAssigned", ["0"]],
+      ["elided", ["1"]],
+      ["projected", ["items", "0"]],
+      ["arrayObject", ["0", "mode"]],
       ["selected", ["0"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
@@ -95,7 +108,15 @@ cliTest(
       ),
     ).toMatchObject({ resolution: "resolved" });
     const queryPath = join(root, "query.json");
-    for (const name of ["declared", "ordinary", "arrayAssigned", "selected"]) {
+    for (const name of [
+      "declared",
+      "ordinary",
+      "arrayAssigned",
+      "elided",
+      "projected",
+      "arrayObject",
+      "selected",
+    ]) {
       const binding = graph.nodes.find(
         ({ kind, label }) => kind === "binding" && label === name,
       );

@@ -1,3 +1,4 @@
+import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
 import {
   BINARY_TARGET_FORMAT_KINDS,
   type TargetFormatHint,
@@ -500,6 +501,7 @@ const readOpenedBinaryTarget = async (
     targetKind === "database" ||
     (targetKind === undefined &&
       artifactFormat !== "ines" &&
+      artifactFormat !== "uefi" &&
       artifactFormat !== "plist" &&
       path.toLowerCase().endsWith(".hop"))
   )
@@ -801,6 +803,7 @@ const detectArtifactFormat = async (
     ))
   )
     return "dmg";
+  if (await probeUefiFlashImage(handle, signal)) return "uefi";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();

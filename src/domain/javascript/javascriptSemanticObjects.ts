@@ -126,8 +126,8 @@ const collectMember = (
       provenOwnSlot:
         !write &&
         identity.path !== null &&
-        context.readPresence(identity.bindingId, node)?.(identity.path) ===
-          true,
+        context.readPresence(identity.bindingId, node)?.(identity.path) !==
+          undefined,
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
@@ -147,19 +147,17 @@ const collectDestructuring = (
   const source = expressionObjectIdentity(initializer, state);
   const rootArray = t.isArrayPattern(root);
   let ownSlot =
-    initializer != null &&
-    source.path !== null &&
-    (!rootArray || source.path.length === 0)
+    initializer != null && source.path !== null
       ? readPresence(
           source.bindingId,
           initializer,
-          rootArray ? "array-iteration" : "property",
+          rootArray ? source.path : undefined,
         )
       : undefined;
   // An unsupported property still occupies its place in the pattern's
   // evaluation order, even when it cannot produce a graph operation.
   const pending: ({
-    readonly pattern: t.Node;
+    readonly pattern: t.Node | undefined;
     readonly path: readonly string[];
     readonly lookup?: "own" | "unproven";
   } | null)[] = [{ pattern: root, path: [] }];
@@ -173,21 +171,26 @@ const collectDestructuring = (
     const { path } = next;
     const propertyPath =
       source.path === null ? null : [...source.path, ...path];
+    const selected =
+      next.lookup === "own" && propertyPath !== null
+        ? ownSlot?.(propertyPath)
+        : undefined;
     if (
       next.lookup === "unproven" ||
-      (next.lookup === "own" &&
-        ownSlot !== undefined &&
-        propertyPath !== null &&
-        !ownSlot(propertyPath))
+      (next.lookup === "own" && selected === undefined)
     )
       ownSlot = undefined;
+    // Elision still advances the iterator and can read a property. It
+    // contributes no binding once the shared slot check has run.
+    if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
     if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
     const pattern = t.isAssignmentPattern(occurrence)
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
-      if (rootArray) ownSlot = undefined;
+      // A nested pattern needs a proved object even if it has no children.
+      if (rootArray && !t.isObjectExpression(selected)) ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
         if (!t.isObjectProperty(property)) {
           pending.push(null);
@@ -210,10 +213,11 @@ const collectDestructuring = (
       if (pattern !== root) ownSlot = undefined;
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
-        if (element == null || t.isRestElement(element)) pending.push(null);
+        if (element === undefined || t.isRestElement(element))
+          pending.push(null);
         else
           pending.push({
-            pattern: element,
+            pattern: element ?? undefined,
             path: [...path, String(index)],
             lookup: "own",
           });
