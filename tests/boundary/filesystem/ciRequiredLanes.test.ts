@@ -36,6 +36,74 @@ const scopeFlags = async () =>
       ),
     ).CI_FLAGS;
 
+const recordedCrashRefresh = "refresh --kill-after=5s 90s";
+const recordedCrashDownload = "download --kill-after=5s 180s";
+
+it.skipIf(process.platform === "win32").each([
+  ["ok", 0, [recordedCrashRefresh, recordedCrashDownload, "install untimed"]],
+  ["refresh", 100, [recordedCrashRefresh]],
+  ["download", 124, [recordedCrashRefresh, recordedCrashDownload]],
+] as const)(
+  "recorded-crash APT runs the expected stages and deadlines for the %s outcome",
+  async (mode, code, expected) => {
+    const steps = z
+      .array(z.object({ run: z.string().optional() }))
+      .parse(
+        (await workflow("real-recorded-crash.yml")).jobs["real-recorded-crash"]
+          ?.steps,
+      );
+    const provision = steps.find((step) =>
+      step.run?.includes("python3-venv gcc libc6-dev strace gdb"),
+    )?.run;
+    if (!provision) throw new Error("Missing recorded-crash APT step");
+    const mock = `
+      mode=$1
+      timeout() {
+        local args="$1 $2"
+        shift 2
+        apt_timeout="$args" "$@"
+      }
+      record_stage() { printf '%s %s\\n' "$1" "\${apt_timeout:-untimed}"; }
+      apt-get() {
+        case " $* " in
+          *" update "*)
+            record_stage refresh
+            if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
+              return 100
+            fi
+            ;;
+          *" --download-only "*)
+            record_stage download
+            if [[ $mode == download ]]; then return 124; fi
+            ;;
+          *" --no-download "*) record_stage install ;;
+          *) record_stage unexpected-install ;;
+        esac
+      }
+    `;
+    const outcome = await executeWorkflowFixture("bash", [
+      "-e",
+      "-c",
+      mock + provision,
+      "fixture",
+      mode,
+    ])
+      .then(({ stdout }) => ({ code: 0, stdout }))
+      .catch((cause: unknown) =>
+        z.object({ code: z.number(), stdout: z.string() }).parse(cause),
+      );
+    expect(outcome.code).toBe(code);
+    const lines = outcome.stdout.trim().split("\n");
+    expect(lines.filter((line) => !line.startsWith("::error::"))).toEqual(
+      expected,
+    );
+    if (code !== 0)
+      expect(lines.at(-1)).toContain(
+        mode === "refresh" ? "index refresh failed" : "package download failed",
+      );
+  },
+);
+
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
   const { engines } = z
     .object({ engines: z.object({ node: z.string() }) })
