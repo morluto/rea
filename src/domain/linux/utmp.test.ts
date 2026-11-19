@@ -600,24 +600,48 @@ describe("utmp truncated tails", () => {
       user: "analyst",
       session: 12,
       timestampSeconds: 1_700_000_000,
+      // The reserved region and the struct padding are the only members the cut removed.
+      coverage: { complete: false, missing: ["__glibc_reserved"] },
     });
     expect(result.value.issues).toEqual([
       { kind: "truncated_trailing_bytes", fileOffset: 0, bytes: 384 },
     ]);
   });
 
-  it("still drops a tail that stops before the last modeled field", () => {
-    // 375 bytes leaves the fourth address word incomplete, so there is no whole
-    // set of modeled fields to report.
+  it("keeps a tail that reaches the identifying members, naming what it holds", () => {
+    // 375 bytes stops inside the fourth address word: the login, the session and both time
+    // words are present, and `coverage` names what the bytes did not reach so an absent word
+    // is never read as a zero.
     const tooShort = recordBytes(glibc64, login()).subarray(0, 375);
     const result = parseUtmpFile(tooShort, {
       source: "wtmp",
       profile: glibc64,
     });
-    if (!result.ok) throw new Error("expected a parsed, empty result");
-    expect(result.value.records).toEqual([]);
+    if (!result.ok) throw new Error("expected the tail to decode");
+    expect(result.value.records).toHaveLength(1);
+    expect(result.value.records[0]).toMatchObject({
+      user: "analyst",
+      session: 12,
+      timestampSeconds: 1_700_000_000,
+      addressV6: [0, 0, 0],
+      coverage: {
+        complete: false,
+        missing: ["ut_addr_v6[3]", "__glibc_reserved"],
+      },
+    });
     expect(result.value.issues).toEqual([
       { kind: "truncated_trailing_bytes", fileOffset: 0, bytes: 375 },
     ]);
+  });
+
+  it("still drops a tail that stops before the timestamps", () => {
+    // 351 bytes ends inside the first time word, so the record has no identifying facts.
+    const truncated = recordBytes(glibc64, login()).subarray(0, 351);
+    const result = parseUtmpFile(truncated, {
+      source: "wtmp",
+      profile: glibc64,
+    });
+    if (!result.ok) throw new Error("expected a parsed, empty result");
+    expect(result.value.records).toEqual([]);
   });
 });

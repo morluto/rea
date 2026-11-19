@@ -85,8 +85,11 @@ PID, session, both time words and each address word — would read byte-swapped.
 ## Records and diagnostics
 
 A record keeps its file offset, the raw `ut_type` alongside the glibc name when
-one exists, the decoded fixed-width strings, exit status, session id, timestamp
-and the four `ut_addr_v6` words.
+one exists, the decoded fixed-width strings, exit status, session id, timestamp,
+the `ut_addr_v6` words its bytes held, and a `coverage` member naming the members
+they did not reach. A tail that ends inside the fourth address word still yields
+the login, so `coverage` distinguishes "this word was absent" from "this word is
+zero" instead of returning a shorter array a consumer would read as data.
 
 Signed fields are sign-extended at their declared width: `ut_type` and the exit
 status at 16 bits, `ut_session` at its profile width, and `tv_sec` as a signed

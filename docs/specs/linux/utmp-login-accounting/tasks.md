@@ -15,16 +15,12 @@
       terminator (`__attribute_nonstring__`), so only malformed bytes are marked.
 - [x] Keep unknown `ut_type` values inspectable with the raw number.
 - [x] Report a truncated tail without discarding the records before it.
+- [x] Decode a trailing record that reaches the timestamps, and name the members
+      its bytes did not reach in `coverage`.
 - [x] Return an empty result for an empty file, which carries no layout facts.
 - [x] Cover both layouts and every diagnostic in `utmp.test.ts`.
 
 ## Slice 2 — timeline and correlation
-
-- [ ] Decode a trailing record shorter than the modeled extent. A 375-byte
-      `glibc-time64` tail still holds the head, session, both time words and three
-      address words, but `UtmpRecord` promises a complete record, so keeping them
-      requires stating which members were readable instead of returning a shorter
-      `addressV6` that an absent word and a zero word would share.
 
 - [ ] Normalize records into a timeline that retains the source file and offset.
 - [ ] Correlate `wtmp` logouts with the `utmp` sessions that opened them.

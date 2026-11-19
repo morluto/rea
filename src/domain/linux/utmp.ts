@@ -178,6 +178,21 @@ export interface UtmpRecord {
   readonly addressV6: readonly number[];
   /** Fixed-width fields whose bytes were not well-formed UTF-8. */
   readonly undecodedFields: readonly UndecodedField[];
+  /**
+   * Which members the record's bytes actually held.
+   *
+   * A tail shorter than the record still carries every member up to the timestamps, so the
+   * login is recoverable; the members after it are named here rather than left as zeros a
+   * consumer would read as data.
+   */
+  readonly coverage: UtmpCoverage;
+}
+
+export interface UtmpCoverage {
+  /** Whether every member this reader models was present. */
+  readonly complete: boolean;
+  /** The members the record's bytes did not reach, in record order. */
+  readonly missing: readonly string[];
 }
 
 export type UtmpIssue =
@@ -355,6 +370,7 @@ const decodeRecords = (
   examined: number,
   issues: UtmpIssue[],
 ): UtmpRecord[] => {
+  const totalBytes = bytes.length;
   const records: UtmpRecord[] = [];
 
   for (let index = 0; index < examined; index += 1) {
@@ -373,6 +389,25 @@ const decodeRecords = (
       if (decoded.decoded) continue;
       issues.push({ kind: "undecoded_field", fileOffset: base, field });
     }
+    const availableBytes = Math.min(profile.recordBytes, totalBytes - base);
+    const availableAddressWords = Math.max(
+      0,
+      Math.min(
+        ADDRESS_V6_FIELDS,
+        Math.floor((availableBytes - layout.addressOffset) / 4),
+      ),
+    );
+    const missing = [
+      ...Array.from(
+        { length: ADDRESS_V6_FIELDS - availableAddressWords },
+        (_, slot) => `ut_addr_v6[${String(availableAddressWords + slot)}]`,
+      ),
+      ...(availableBytes < profile.recordBytes ? ["__glibc_reserved"] : []),
+    ];
+    const coverage: UtmpCoverage = {
+      complete: missing.length === 0,
+      missing,
+    };
     const type = signed(reader.u16(base + TYPE_OFFSET), 16);
     const typeName = UTMP_TYPE_NAMES.get(type) ?? null;
     if (typeName === null)
@@ -420,10 +455,11 @@ const decodeRecords = (
         base,
         issues,
       ),
-      addressV6: Array.from({ length: ADDRESS_V6_FIELDS }, (_, slot) => {
+      addressV6: Array.from({ length: availableAddressWords }, (_, slot) => {
         const word = reader.u32(base + layout.addressOffset + slot * 4);
         return profile.addressSigned ? signed(word, 32) : word;
       }),
+      coverage,
       undecodedFields: fields.flatMap(([field, decoded]) =>
         decoded.decoded ? [] : [{ field, hex: decoded.hex }],
       ),
@@ -508,7 +544,13 @@ export const parseUtmpFile = (
   // the struct padding sit at the end. Decoding it keeps the final login instead of
   // dropping it over bytes `UtmpRecord` never exposes.
   const modeledExtent = layout.addressOffset + ADDRESS_V6_FIELDS * 4;
-  const decodable = remainder >= modeledExtent ? whole + 1 : whole;
+  // A tail reaches `UtmpRecord`'s identifying members well before the modeled extent: the
+  // session and both time words end at `microsecondsOffset + timeBytes`, and everything
+  // after that is the address words and the reserved region, which `coverage` names.
+  const identifyingExtent = layout.microsecondsOffset + profile.timeBytes;
+  const tailDecodable =
+    remainder >= modeledExtent || remainder >= identifyingExtent;
+  const decodable = tailDecodable ? whole + 1 : whole;
   const limit = options.maxRecords ?? UTMP_RECORD_LIMIT;
   const examined = Math.min(decodable, limit);
   const records = decodeRecords(
