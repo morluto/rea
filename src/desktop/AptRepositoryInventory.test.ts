@@ -207,6 +207,71 @@ it.each([
   },
 );
 
+it("retains an empty-port deb822 URI, its suite, and its signing key", async () => {
+  const root = await createTestTempDirectory("apt-empty-port-");
+  const sources = join(root, "vendor.sources");
+  const key = join(root, "vendor.gpg");
+  const lists = join(root, "lists");
+  const authored = "https://vendor.invalid:/archive";
+  const repoUri = "https://vendor.invalid/archive/";
+  const baseUri = `${repoUri}dists/stable/`;
+  const source = "https://vendor.invalid/archive stable/main amd64 Packages";
+  await mkdir(lists);
+  await writeFile(key, VENDOR_A.key);
+  await writeFile(
+    join(lists, `${aptListFileName(baseUri)}InRelease`),
+    "controlled release",
+  );
+  await writeFile(
+    sources,
+    `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\nSigned-By: ${key}\n`,
+  );
+  const targets = [
+    `Description: ${source}`,
+    `Sourcesentry: ${sources}:1`,
+    `Repo-URI: ${repoUri}`,
+    "Release: stable",
+    "Suite: stable",
+    "Component: main",
+    `Base-URI: ${baseUri}`,
+    `Filename: ${join(lists, "Packages")}`,
+  ].join("\n");
+  const runQuery: QueryRunner = async (command) => {
+    if (command === "apt-get") return { stdout: targets, exitCode: 0 };
+    if (command !== "gpgv") throw new Error(`Unexpected query ${command}`);
+    return { stdout: GPGV_A_ONLY, exitCode: 2 };
+  };
+  const facts = await inspectAptRepositories(
+    { sources: [source], origins: ["Vendor"] },
+    {
+      runQuery,
+      apt: { lists, trustedParts: root, trusted: join(root, "trusted.gpg") },
+    },
+    undefined,
+  );
+
+  expect(facts.repositories).toHaveLength(1);
+  const repository = facts.repositories[0];
+  expect(repository).toMatchObject({
+    source,
+    sources_file: sources,
+    uri: authored,
+    repo_uri: repoUri,
+    uri_credentials_removed: false,
+    suite: "stable",
+    components: ["main"],
+    architectures: [],
+    release: "stable",
+    signing_key: {
+      path: key,
+      format: "binary",
+      fingerprint: VENDOR_A.fingerprint,
+    },
+  });
+  expect(repository).not.toHaveProperty("signing_key_reason");
+  expect([...facts.keys.values()]).toEqual([VENDOR_A.key]);
+});
+
 it("withholds an undecodable APT index and preserves an intact peer", async () => {
   const root = await createTestTempDirectory("apt-index-encoding-");
   const file = join(root, "vendor.list");

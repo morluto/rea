@@ -454,6 +454,34 @@ describe("single-stanza APT source identity", () => {
   });
 
   it.each([
+    ["https://vendor.invalid:/archive", "https://vendor.invalid/archive/"],
+    ["https://[2001:db8::11]:/apt", "https://[2001:db8::11]/apt/"],
+  ])(
+    "matches empty port %s to APT's portless Repo-URI and keeps the authored URI",
+    (authored, repoUri) => {
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+        deb822LookupFile,
+      );
+      // APT 2.8.3 `indextargets` reports the portless Repo-URI, not the colon.
+      expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+        file: deb822LookupFile,
+        position: 1,
+        uri: authored,
+        credentials: false,
+        suite: "stable",
+        components: ["main"],
+        architectures: [],
+        signedBy: [],
+        inlineKey: null,
+      });
+      expect(
+        entryForTarget(targetFor(`${authored}/`), stanzas),
+      ).toBeUndefined();
+    },
+  );
+
+  it.each([
     {
       field: "suite",
       uri: "https://vendor.invalid/archive",

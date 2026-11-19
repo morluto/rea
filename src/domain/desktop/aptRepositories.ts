@@ -77,6 +77,8 @@ const withTrailingSlash = (uri: string): string =>
   uri.endsWith("/") ? uri : `${uri}/`;
 
 const EMPTY_AUTHORITY = /^([a-z][a-z0-9+.-]*:)\/\/(?=\/)/iu;
+// APT's URI parser takes the host's last :suffix with atoi and emits a port
+// only when it is non-zero, so an empty or all-zero port loses its colon.
 const DECIMAL_PORT =
   /^([a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]+\]|[^/:]+)):([0-9]*)(?=\/|$)/iu;
 
