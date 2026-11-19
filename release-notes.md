@@ -145,6 +145,7 @@
 * **android:** report method disassembly failure as unavailable body ([#12090](https://github.com/morluto/rea/issues/12090)) ([dc6799d](https://github.com/morluto/rea/commit/dc6799d4880f3e0737be54dddfd4d48a8080fbf4))
 * **android:** share decoded Android XML admission ([#12158](https://github.com/morluto/rea/issues/12158)) ([61af8ab](https://github.com/morluto/rea/commit/61af8abeb6f8b95fe99e2470e6cb57ab974f5bca)), closes [#12139](https://github.com/morluto/rea/issues/12139)
 * **apk:** preserve ambiguous v1 certificate identity ([#11835](https://github.com/morluto/rea/issues/11835)) ([e7ed930](https://github.com/morluto/rea/commit/e7ed93004a734d156d6165f6dd5d2094a39daa94))
+* **apk:** require consistent Zip64 volume declarations ([#12187](https://github.com/morluto/rea/issues/12187)) ([734ae35](https://github.com/morluto/rea/commit/734ae3537ab5c5b3bee9b1159d22d06ccc710382))
 * **apktool:** report the decoder JVM's heap exhaustion as memory, not a target refusal ([#10634](https://github.com/morluto/rea/issues/10634)) ([c296c91](https://github.com/morluto/rea/commit/c296c91770a0ac8d14d8773ae0e2d0699ab56888))
 * **apktool:** treat an EPERM launcher spawn as not executable ([4bf5226](https://github.com/morluto/rea/commit/4bf522672468cf21ff09a804ff287f0195501712))
 * **apk:** validate classic ZIP disk declarations ([5e1ddec](https://github.com/morluto/rea/commit/5e1ddec2daf78c417773a2e2124d28426d19d484)), closes [#7433](https://github.com/morluto/rea/issues/7433) [#7471](https://github.com/morluto/rea/issues/7471)
@@ -266,6 +267,7 @@
 * **desktop:** admit a build witness folder by the record's own rule ([0ffde0c](https://github.com/morluto/rea/commit/0ffde0cd0923e37901c55a78c8b5fd1f124ae68b))
 * **desktop:** admit build export folders before running the in-computer export ([#11307](https://github.com/morluto/rea/issues/11307)) ([3fb17d7](https://github.com/morluto/rea/commit/3fb17d72a902bfea57cf44a8585f3408504bfc74))
 * **desktop:** align exported task whitespace interpretation ([#11947](https://github.com/morluto/rea/issues/11947)) ([a7c4ee8](https://github.com/morluto/rea/commit/a7c4ee8394c62c67fdd5738c1a3009c1be7319b8))
+* **desktop:** bind launcher rewrites to effective entry keys ([#11701](https://github.com/morluto/rea/issues/11701)) ([d785d63](https://github.com/morluto/rea/commit/d785d6326753877273aeecc97ff0c48092e1ff24))
 * **desktop:** bound exported XML selector traversal ([#12105](https://github.com/morluto/rea/issues/12105)) ([c6033aa](https://github.com/morluto/rea/commit/c6033aaaca3be2e0bae086ae42dd4a66a035488c))
 * **desktop:** check retained reader JSON numbers ([#11833](https://github.com/morluto/rea/issues/11833)) ([458f583](https://github.com/morluto/rea/commit/458f583e1496a55f05d00017143364cd33525143))
 * **desktop:** discover application state under its launch home ([#12114](https://github.com/morluto/rea/issues/12114)) ([8062a14](https://github.com/morluto/rea/commit/8062a14a3ad455b4b767128e864094506555ffb5))
@@ -288,6 +290,7 @@
 * **desktop:** preserve Unicode separators in entry values ([#10210](https://github.com/morluto/rea/issues/10210)) ([594d739](https://github.com/morluto/rea/commit/594d73985c9d631e52ad644848fe825d5dffa119))
 * **desktop:** preserve ZIP member identity across bounded readers ([86799f9](https://github.com/morluto/rea/commit/86799f919d3f16c1eaef0c403729b90dfd23713c)), closes [#10172](https://github.com/morluto/rea/issues/10172) [#10173](https://github.com/morluto/rea/issues/10173)
 * **desktop:** read BOM-marked UTF-16 in state and task views ([#12052](https://github.com/morluto/rea/issues/12052)) ([c47442a](https://github.com/morluto/rea/commit/c47442a2eb240c6590a98df7185d6f8b08962e82))
+* **desktop:** reject malformed build command JSON output ([#12177](https://github.com/morluto/rea/issues/12177)) ([b0ef28a](https://github.com/morluto/rea/commit/b0ef28a77f20677b90f262910a1fcb9fb2dcd8f3))
 * **desktop:** retain all matching APT primary-key blocks ([#11944](https://github.com/morluto/rea/issues/11944)) ([18c6b44](https://github.com/morluto/rea/commit/18c6b4490c45b8fb944a62d3ea50dd8c68a23c8b))
 * **desktop:** retain dconf failures without stderr ([#10230](https://github.com/morluto/rea/issues/10230)) ([913b029](https://github.com/morluto/rea/commit/913b029c9607421271b0203acf7084d129491623))
 * **desktop:** share launch syntax, replay paths, and runtime admission ([#12153](https://github.com/morluto/rea/issues/12153)) ([47461fd](https://github.com/morluto/rea/commit/47461fddab14539082ed17643670b392fb0691d8))
@@ -572,6 +575,7 @@
 * **zip:** account 64-bit data descriptors that MSIX packages write ([#11733](https://github.com/morluto/rea/issues/11733)) ([43aaa9f](https://github.com/morluto/rea/commit/43aaa9f1903cd11826fd261794b5514da0bb6162))
 * **zip:** corroborate member extents before claiming complete coverage ([#11855](https://github.com/morluto/rea/issues/11855)) ([ad02201](https://github.com/morluto/rea/commit/ad02201d0b63d5a51830459f8669e5d6512fe875))
 * **zip:** publish EOF after extraction finalization ([#12164](https://github.com/morluto/rea/issues/12164)) ([ca3f35d](https://github.com/morluto/rea/commit/ca3f35dcbb9942c8d0432cee9c588b9c4996ab26))
+* **zip:** require complete local headers in trailing archive probes ([#12182](https://github.com/morluto/rea/issues/12182)) ([13e9ac3](https://github.com/morluto/rea/commit/13e9ac3871f3c0cded8b974adee82e83b3ca6ae4))
 * **zip:** share desktop and APK framing and preserve bounded ZIP64 views ([#12157](https://github.com/morluto/rea/issues/12157)) ([3d313b5](https://github.com/morluto/rea/commit/3d313b56bc16b3c132c91a1eeb313f4744ef2f0b))
 
 
