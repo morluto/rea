@@ -64,7 +64,11 @@ interface PendingMap {
 interface PartialStructure {
   readonly invalid: (path: readonly number[], failure: ParseFailure) => void;
   readonly external: (section: ExternalSourceMapSection) => void;
-  readonly leaf: (node: PendingMap, failure: ParseFailure) => void;
+  readonly leaf: (
+    node: PendingMap,
+    failure: ParseFailure,
+    unpositionedMap?: z.output<typeof leafSchema>,
+  ) => void;
 }
 
 /** Aggregate structural work shared by maps in one selected inspection. */
@@ -399,24 +403,19 @@ const admitLeafFields = (
 };
 
 const inspectLeaf = (
-  node: PendingMap,
+  value: RawMap,
   budget: SourceMapStructureBudget,
   options: SourceMapStructureOptions,
-): z.output<typeof leafSchema> => {
+): { map: z.output<typeof leafSchema>; lines: number } => {
   const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
-  const leaf = parseStructure(leafSchema, node.value);
-  const layout = inspectMappingLayout(leaf.mappings, limits, options.check);
-  consumeRecords(budget, limits, layout.segments + layout.lines);
-  if (
-    node.offset !== null &&
-    node.offset.line + layout.lines > limits.decodedRows
-  )
-    throw sourceMapLimitFailure(
-      "Source-map layout exceeds decoder admission.",
-      "decoded_rows",
-      limits.decodedRows,
-    );
-  return leaf;
+  const map = parseStructure(leafSchema, value);
+  const { lines, segments } = inspectMappingLayout(
+    map.mappings,
+    limits,
+    options.check,
+  );
+  consumeRecords(budget, limits, segments + lines);
+  return { map, lines };
 };
 
 /** Shared bounded walk. Only position-based consumers require offsets for every leaf. */
@@ -468,16 +467,31 @@ const walkSourceMapStructure = (
         ) === null
       )
         continue;
-      let map: z.output<typeof leafSchema>;
+      let admitted: ReturnType<typeof inspectLeaf>;
       try {
-        map = inspectLeaf(node, budget, options);
+        admitted = inspectLeaf(node.value, budget, options);
       } catch (failure) {
         if (partial === undefined || !isSourceMapFailure(failure))
           throw failure;
         partial.leaf(node, failure.failure);
         continue;
       }
-      leaf(node, map);
+      // A valid leaf can exceed the positioned row allowance without losing
+      // its bounded source declarations.
+      if (
+        node.offset !== null &&
+        node.offset.line + admitted.lines > limits.decodedRows
+      ) {
+        const failure = sourceMapLimitFailure(
+          "Source-map layout exceeds decoder admission.",
+          "decoded_rows",
+          limits.decodedRows,
+        );
+        if (partial === undefined) throw failure;
+        partial.leaf(node, failure.failure, admitted.map);
+        continue;
+      }
+      leaf(node, admitted.map);
     }
   }
 };
@@ -731,17 +745,19 @@ export const inspectSourceMapSourceContent = (
   } catch (failure) {
     if (!isSourceMapFailure(failure)) throw failure;
     let embedded = false;
-    if (isVersion3Map(value))
-      walkSourceMapStructure(
-        value,
-        options,
-        (_node, leaf) => {
-          embedded ||= leaf.sources.some(
-            (_source, index) => (leaf.sourcesContent?.[index]?.length ?? 0) > 0,
-          );
-        },
-        { invalid: () => {}, external: () => {}, leaf: () => {} },
+    const observe = (leaf: z.output<typeof leafSchema>): void => {
+      embedded ||= leaf.sources.some(
+        (_source, index) => (leaf.sourcesContent?.[index]?.length ?? 0) > 0,
       );
+    };
+    if (isVersion3Map(value))
+      walkSourceMapStructure(value, options, (_node, leaf) => observe(leaf), {
+        invalid: () => {},
+        external: () => {},
+        leaf: (_node, _failure, unpositionedMap) => {
+          if (unpositionedMap !== undefined) observe(unpositionedMap);
+        },
+      });
     return { embedded, complete: false, failure };
   }
 };
