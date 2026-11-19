@@ -64,7 +64,10 @@ Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
 ```
 
 Extraction also accepts `ffs-file`, `section`, and `whole-image` targets.
-Volume, file, and section targets include mapped descendants. Unparsed ranges
+Volume, file, and section targets include mapped descendants. If inspection
+raised `max_volumes`, `max_files`, or `max_depth`, use the same values for
+extraction. The equivalent CLI options are `--max-volumes`, `--max-files`, and
+`--max-depth`. Unparsed ranges
 within the selection appear in `extraction_gaps` and make extraction partial.
 The gap names the owning volume, file, or section and its source stream.
 Bytes outside the file and volume headers that occupy an FFS alignment span
