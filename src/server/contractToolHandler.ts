@@ -620,6 +620,8 @@ export const createAnalysisToolHandler =
                   : analyzed,
                 contract,
                 retention.recordEvidence,
+                undefined,
+                retention.evidenceById,
               )
             : analyzed.value.recorded === undefined
               ? deliverEvidenceResult(
