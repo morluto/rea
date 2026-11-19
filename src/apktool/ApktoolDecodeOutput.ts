@@ -1,4 +1,5 @@
 import type { Element, Node } from "@xmldom/xmldom";
+import { parseDecodedAndroidManifest } from "../domain/android/decodedAndroidManifest.js";
 import {
   parseXmlDocument,
   type XmlParseFailure,
@@ -142,19 +143,14 @@ const apktool3String = (source: string): string => {
 
 /** Read the package attribute from the decoded Android manifest root. */
 export const parseManifestPackage = (manifest: string): string | null => {
-  const parsed = parseXmlDocument(manifest, {
-    doctype: "allow",
-    lineEndings: "preserve",
-  });
-  if (!parsed.ok)
-    throw new TypeError(
-      `AndroidManifest.xml is not well-formed XML: ${parsed.error.message}`,
-      { cause: parsed.error },
-    );
-  const root = parsed.value.documentElement;
-  if (root === null || root.nodeName !== "manifest")
+  const parsed = parseDecodedAndroidManifest(manifest, "allow");
+  if (parsed.ok) return parsed.value.packageName;
+  if (parsed.error.kind === "unexpected-root")
     throw new TypeError("AndroidManifest.xml root must be <manifest>");
-  return root.getAttribute("package") || null;
+  throw new TypeError(
+    `AndroidManifest.xml is not well-formed XML: ${parsed.error.message}`,
+    { cause: parsed.error },
+  );
 };
 
 export interface DecodedStringEntry {
