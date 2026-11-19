@@ -87,9 +87,9 @@ it("maps one volume with UI string, PE payload, checksums and pad classification
   expect(mappedTwo?.checksum).toBe("valid");
   expect(mappedPad?.type_name).toBe("pad");
   expect(mappedPad?.checksum).toBe("pad-file-unchecked");
-  expect(summary.budgetExhausted).toBe(false);
+  expect(summary.coverage).toBe("complete");
   // Volume block padding (erased) stays classified, never hidden.
-  const tail = summary.unknownRegions.at(-1)?.observation;
+  const tail = summary.unknownRegions.at(-1);
   expect(tail?.classification).toBe("erased-ff");
   expect(tail?.erasure).toBe("0xff");
 });
@@ -113,7 +113,7 @@ it("recurses into firmware-volume-image sections with parent linkage", async () 
   );
 
   expect(summary.volumes).toHaveLength(2);
-  expect(summary.budgetExhausted).toBe(false);
+  expect(summary.coverage).toBe("complete");
   const top = summary.volumes[0];
   const nested = summary.volumes[1];
   expect(nested?.depth).toBe(1);
@@ -173,7 +173,7 @@ it("keeps an unframed raw body without a confirmed embedded volume untouched", a
   expect(summary.volumes).toHaveLength(1);
   const raw = summary.volumes[0]?.ffs_files[0];
   expect(raw?.sections).toHaveLength(0);
-  expect(summary.truncationObserved).toBe(false);
+  expect(summary.coverage).toBe("complete");
 });
 
 it("decodes LZMA-guided sections through the injected decoder lane", async () => {
@@ -363,11 +363,11 @@ it("maps a plausible PSP directory and candidates an implausible one", async () 
 it("marks the scan partial when the FFS file budget is hit", async () => {
   const fileOne = driverFile(
     "2b111111-2222-3333-4444-555555555555",
-    Buffer.from("a"),
+    buildSection(0x19, Buffer.from("a")),
   );
   const fileTwo = driverFile(
     "2c111111-2222-3333-4444-555555555555",
-    Buffer.from("b"),
+    buildSection(0x19, Buffer.from("b")),
   );
   const fv = buildFv({ files: [fileOne, fileTwo] });
   const summary = await scanUefiImage(
@@ -375,8 +375,15 @@ it("marks the scan partial when the FFS file budget is hit", async () => {
     { maxDepth: 3, maxVolumes: 64, maxFiles: 1 },
     noDecoder,
   );
-  expect(summary.budgetExhausted).toBe(true);
+  expect(summary.coverage).toBe("partial");
   expect(summary.volumes[0]?.ffs_files).toHaveLength(1);
+  expect(summary.omissions).toMatchObject([
+    {
+      kind: "size-truncated",
+      logical_path: "flash/FV@0x0",
+      detail: expect.stringContaining("FFS file budget"),
+    },
+  ]);
 });
 
 it("classifies uncovered ranges around volumes and in an image without a volume", async () => {
@@ -387,12 +394,7 @@ it("classifies uncovered ranges around volumes and in an image without a volume"
   const image = Buffer.concat([prefix, fv, middle, fv, suffix]);
   const limits = { maxDepth: 3, maxVolumes: 2, maxFiles: 8 };
   const { unknownRegions } = await scanUefiImage(image, limits, noDecoder);
-  expect(
-    unknownRegions.map(({ observation: { offset, length } }) => [
-      offset,
-      length,
-    ]),
-  ).toEqual(
+  expect(unknownRegions.map(({ offset, length }) => [offset, length])).toEqual(
     expect.arrayContaining([
       [0, prefix.length],
       [prefix.length + fv.length, middle.length],
@@ -400,9 +402,7 @@ it("classifies uncovered ranges around volumes and in an image without a volume"
     ]),
   );
   expect(
-    (await scanUefiImage(prefix, limits, noDecoder)).unknownRegions.map(
-      ({ observation }) => observation,
-    ),
+    (await scanUefiImage(prefix, limits, noDecoder)).unknownRegions,
   ).toMatchObject([
     { offset: 0, length: prefix.length, classification: "no-fv-magic" },
   ]);
@@ -419,9 +419,18 @@ it("marks partial when the structural budget ends inside a section chain", async
     { maxDepth: 3, maxVolumes: 4, maxFiles: 4 },
     noDecoder,
   );
-  expect(scan.budgetExhausted).toBe(true);
+  expect(scan.coverage).toBe("partial");
   expect(
     scan.limitations.some((line) => line.includes("Structural record limit")),
   ).toBe(true);
   expect(scan.volumes[0]?.ffs_files[0]?.sections.length).toBeLessThan(100_000);
+  expect(scan.omissions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "size-truncated",
+        logical_path: expect.stringContaining("/FFS:"),
+        detail: expect.stringContaining("section walk"),
+      }),
+    ]),
+  );
 });

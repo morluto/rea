@@ -196,7 +196,8 @@ export function nextFfsFileLocal(
 }
 
 type FfsHeaderRead =
-  | { readonly kind: "end" | "limited" }
+  | { readonly kind: "end" }
+  | { readonly kind: "limited" }
   | {
       readonly kind: "unparsed";
       readonly offset: number;

@@ -47,11 +47,16 @@ export function walkSections(
   localEnd: number,
   typeNameFor: (typeCode: number) => string,
   reserve: () => boolean = () => true,
-): { sections: SectionDraft[]; terminated: boolean } {
+): {
+  sections: SectionDraft[];
+  remainder: { kind: "limited" | "unparsed"; start: number } | null;
+} {
   const reader = new BinaryReader(region.buffer, true, "FFS sections");
   const sections: SectionDraft[] = [];
   let cursor = localStart;
-  while (cursor + SECTION_LAYOUT.commonLength <= localEnd && reserve()) {
+  while (cursor + SECTION_LAYOUT.commonLength <= localEnd) {
+    if (!reserve())
+      return { sections, remainder: { kind: "limited", start: cursor } };
     const compactSize = reader.u16(cursor) | (reader.u8(cursor + 2) << 16);
     const typeCode = reader.u8(cursor + SECTION_LAYOUT.typeOffset);
     const extended = compactSize === SECTION_LAYOUT.largeSectionMarker;
@@ -136,12 +141,17 @@ export function walkSections(
         ? null
         : { start: cursor + headerLength, end: cursor + observedLength },
     });
-    if (declaredLength < commonLength || truncated) {
-      return { sections, terminated: false };
+    if (truncated) return { sections, remainder: null };
+    if (declaredLength < commonLength) {
+      cursor += commonLength;
+      break;
     }
     cursor = localStart + alignUp(cursor + declaredLength - localStart, 4);
   }
-  return { sections, terminated: cursor >= localEnd };
+  return {
+    sections,
+    remainder: cursor < localEnd ? { kind: "unparsed", start: cursor } : null,
+  };
 }
 
 /** Payload window of one section as a sub-region; null when empty. */

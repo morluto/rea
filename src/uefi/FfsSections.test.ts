@@ -29,7 +29,7 @@ it("walks a two-section chain with clean payload windows", () => {
   const chain = Buffer.concat([ui, pe]);
   const region = imageRegion(chain, 0, chain.length);
   const walked = walkSections(region, 0, chain.length, typeNameFor);
-  expect(walked.terminated).toBe(true);
+  expect(walked.remainder).toBeNull();
   expect(walked.sections).toHaveLength(2);
   const [uiDraft, peDraft] = walked.sections;
   expect(uiDraft?.typeCode).toBe(0x15);
@@ -118,7 +118,6 @@ it("records a truncated final section instead of inventing one", () => {
   const last = walked.sections[1];
   expect(last?.typeCode).toBe(0x10);
   expect(last?.truncated).toBe(true);
-  expect(walked.terminated).toBe(false);
 });
 
 it("returns no sections when the area is shorter than one header", () => {

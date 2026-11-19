@@ -112,6 +112,7 @@ const extractRequest = (
       UefiRequest,
       { operation: "extract_uefi_firmware" }
     >["input"]["target"];
+    readonly max_depth?: number;
     readonly max_output_files?: number;
     readonly include_compressed?: boolean;
   },
@@ -911,3 +912,144 @@ it.each([
     }
   },
 );
+
+it("scopes a short non-erased FFS suffix to its own volume", async () => {
+  const raw = buildFfsFile({
+    guid: GUID_RAW,
+    typeCode: 1,
+    payload: Buffer.alloc(3992, 0x42),
+  });
+  const damaged = buildFv({ files: [raw] }).buffer;
+  damaged.fill(0x22, 0xff8);
+  const sibling = buildFv({
+    files: [
+      buildFfsFile({
+        guid: GUID_DRIVER,
+        typeCode: 7,
+        payload: buildSection(0x10, MODULE_A),
+      }),
+    ],
+  }).buffer;
+  const directory = await createTestTempDirectory("rea-uefi-scoped-tail-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, Buffer.concat([damaged, sibling]));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const extract = async (name: string, offset: number) =>
+      expectOk(
+        await provider.execute(
+          extractRequest(path, join(directory, name), {
+            target: { kind: "volume", offset },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+    const intact = await extract("sibling", 0x1000);
+    expect(intact.coverage).toBe("complete");
+    expect(intact.extraction_gaps).toEqual([]);
+    expect(intact.files.map(({ sha256 }) => sha256)).toEqual([
+      sha256(MODULE_A),
+    ]);
+
+    const parsed = await extract("damaged", 0);
+    expect(parsed.coverage).toBe("partial");
+    expect(parsed.extraction_gaps).toMatchObject([
+      {
+        kind: "unparsed-region",
+        logical_path: "flash/FV@0x0",
+        source_stream: null,
+        range: { offset: 0xff8, length: 8 },
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports an incomplete section suffix for the containing file", async () => {
+  const section = buildSection(0x10, MODULE_A);
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: Buffer.concat([section, Buffer.from([0x12, 0x34])]),
+  });
+  const fv = buildFv({ files: [file] });
+  const directory = await createTestTempDirectory("rea-uefi-scoped-section-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, fv.buffer);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const result = expectOk(
+      await provider.execute(
+        extractRequest(path, join(directory, "file"), {
+          target: { kind: "ffs-file", offset: fv.headerLength },
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.files.map(({ sha256 }) => sha256)).toEqual([
+      sha256(MODULE_A),
+    ]);
+    expect(result.extraction_gaps).toMatchObject([
+      {
+        kind: "unparsed-region",
+        source_stream: null,
+        range: { offset: fv.headerLength + 24 + section.length, length: 2 },
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("limits coverage to the section that contains depth-limited children", async () => {
+  const raw = buildSection(0x10, MODULE_A);
+  const nested = buildSection(0x03, buildSection(0x03, raw));
+  const driver = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: Buffer.concat([raw, nested]),
+  });
+  const fv = buildFv({ files: [driver] });
+  const directory = await createTestTempDirectory("rea-uefi-scoped-depth-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, fv.buffer);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const extract = async (
+      name: string,
+      target: Extract<
+        UefiRequest,
+        { operation: "extract_uefi_firmware" }
+      >["input"]["target"],
+    ) =>
+      expectOk(
+        await provider.execute(
+          extractRequest(path, join(directory, name), {
+            max_depth: 1,
+            target,
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+    const offset = fv.headerLength + 24;
+    const sibling = await extract("sibling", { kind: "section", offset });
+    expect(sibling.coverage).toBe("complete");
+    expect(sibling.extraction_gaps).toEqual([]);
+    const enclosing = await extract("enclosed", {
+      kind: "section",
+      offset: offset + raw.length,
+    });
+    expect(enclosing.coverage).toBe("partial");
+    expect(enclosing.extraction_gaps).toMatchObject([
+      {
+        kind: "depth-limited",
+        source_stream: null,
+        range: { offset: offset + raw.length + 8, length: raw.length },
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});

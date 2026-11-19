@@ -436,16 +436,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           entry_stride_basis: table.entryStrideBasis,
         })),
         psp_candidates: scan.pspCandidates,
-        unknown_regions: scan.unknownRegions.map(
-          ({ observation }) => observation,
-        ),
+        unknown_regions: scan.unknownRegions,
         integrity: scan.integrity,
-        coverage:
-          scan.budgetExhausted ||
-          scan.truncationObserved ||
-          scan.unknownRegions.some(({ omission }) => omission !== null)
-            ? "partial"
-            : "complete",
+        coverage: scan.coverage,
         limitations: [...scan.limitations],
       });
     return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
@@ -637,8 +630,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       for (const file of volume.ffs_files) {
         checkpoint();
         if (includes(file.logical_path)) {
+          recordDerivation(file.source_stream);
           const range = { offset: file.offset, length: file.length };
-          if (file.type_code === FFS_FILE_TYPE_PAD) {
+          if (
+            file.type_code === FFS_FILE_TYPE_PAD &&
+            file.declared_length >= file.header_length &&
+            file.declared_length <= file.length
+          ) {
             gap(
               "pad-file",
               file.logical_path,
@@ -662,7 +660,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           } else {
             const raw = scan.payloads.get(file.logical_path);
             if (raw !== undefined) {
-              recordDerivation(raw.sourceStream);
               stage(
                 file.logical_path,
                 "body",
@@ -677,6 +674,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           if (!includes(section.logical_path)) continue;
           checkpoint();
           const path = section.logical_path;
+          recordDerivation(section.source_stream);
           const payload = scan.payloads.get(path);
           if (section.truncated || section.malformed) {
             gap(
@@ -689,18 +687,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           } else if (scan.decodedStreams.has(path)) {
             recordDerivation(path);
           } else if (section.compression.kind !== "none") {
+            const failure = scan.decodeGaps.get(path);
             gap(
-              section.compression.kind === "unknown-guid"
-                ? "unknown-guid-handler"
-                : "unsupported-compression",
+              failure?.kind ??
+                (section.compression.kind === "unknown-guid"
+                  ? "unknown-guid-handler"
+                  : "unsupported-compression"),
               path,
               section.source_stream,
               payload?.range ?? null,
-              scan.decodeGaps.get(path) ??
+              failure?.detail ??
                 `No decoded payload for ${section.compression.kind}.`,
             );
             if (input.include_compressed && payload !== undefined) {
-              recordDerivation(payload.sourceStream);
               stage(
                 path,
                 "compressed",
@@ -713,7 +712,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             payload !== undefined &&
             section.sub_volumes.length === 0
           ) {
-            recordDerivation(payload.sourceStream);
             stage(
               path,
               "payload",
@@ -729,17 +727,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
     }
 
-    for (const { observation, logicalPath, omission } of scan.unknownRegions) {
-      if (omission === null || !includes(logicalPath)) continue;
+    for (const omission of scan.omissions) {
+      if (!includes(omission.logical_path)) continue;
       checkpoint();
-      recordDerivation(observation.source_stream);
-      gap(
-        "unparsed-region",
-        logicalPath,
-        observation.source_stream,
-        { offset: observation.offset, length: observation.length },
-        omission,
-      );
+      recordDerivation(omission.source_stream);
+      gaps.push(omission);
     }
     if (scan.volumes.length === 0 && gaps.length === 0) {
       gap(
@@ -768,12 +760,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             target_kind: input.target.kind,
           },
           output_directory: outputRoot,
-          coverage:
-            gaps.some(({ kind }) => kind !== "pad-file") ||
-            scan.budgetExhausted ||
-            scan.truncationObserved
-              ? "partial"
-              : "complete",
+          coverage: gaps.some(({ kind }) => kind !== "pad-file")
+            ? "partial"
+            : "complete",
           files,
           derivations,
           extraction_gaps: gaps,
@@ -792,7 +781,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
       subject: { path: input.path, sha256: imageSha256, format: "file" },
       locations: [{ kind: "artifact-path", path: input.path }],
-      limitations: scan.limitations,
+      limitations:
+        input.target.kind === "whole-image"
+          ? scan.limitations
+          : gaps
+              .filter(({ kind }) => kind !== "pad-file")
+              .slice(0, 512)
+              .map(({ detail }) => detail),
     });
   }
 

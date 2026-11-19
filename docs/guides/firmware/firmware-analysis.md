@@ -59,6 +59,8 @@ Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
 Extraction also accepts `ffs-file`, `section`, and `whole-image` targets.
 Volume, file, and section targets include mapped descendants. Unparsed ranges
 within the selection appear in `extraction_gaps` and make extraction partial.
+The gap names the owning volume, file, or section and its source stream.
+A gap in one volume leaves a fully extracted sibling's coverage complete.
 Erased padding alone does not make a mapped volume partial. A whole-image
 request that maps no volumes reports a gap with no published payloads.
 A decoded record's
