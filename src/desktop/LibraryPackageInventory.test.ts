@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { mixedDpkgOwnershipStdout } from "./DpkgOwnershipQuery.fixture.js";
 import { runHostQuery } from "./HostQuery.js";
 import { inspectLibraryPackages } from "./LibraryPackageInventory.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
@@ -365,13 +366,7 @@ it.skipIf(process.platform === "win32")(
       writeFile(unknown, elfImage({})),
       writeFile(executable, elfImage({ needed: [known, unknown] })),
     ]);
-    const raw = Buffer.concat([
-      Buffer.from(
-        `local diversion from: ${known}\nactual-owner: ${known}\nwrong-owner: ${lib}/damaged-`,
-      ),
-      Buffer.from([0xff]),
-      Buffer.from(".so\n"),
-    ]);
+    const raw = mixedDpkgOwnershipStdout(known, unknown);
     const result = await inspectLibraryPackages(
       executable,
       "app",
