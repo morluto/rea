@@ -67,8 +67,6 @@
   "src/il2cpp/Il2cppMetadataFormat.ts": 3,
   "src/il2cpp/Il2cppMetadataMembers.ts": 5,
   "src/il2cpp/Il2cppMetadataV108.ts": 3,
-  "src/model/GgufHeader.ts": 26,
-  "src/model/SafetensorsHeader.ts": 2,
   "src/native/AppleDispatchMetadata.ts": 4,
   "src/native/AppleObjcClassImportBindings.ts": 1,
   "src/native/AppleObjcDispatchFacets.ts": 1,

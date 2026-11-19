@@ -282,9 +282,21 @@ export class BinaryReader {
     return this.bytes.subarray(offset, offset + size);
   }
 
+  u8(offset: number): number {
+    this.#checkRange(offset, 1, "8-bit field");
+    return this.bytes.readUInt8(offset);
+  }
+
   i8(offset: number): number {
     this.#checkRange(offset, 1, "8-bit field");
     return this.bytes.readInt8(offset);
+  }
+
+  u16(offset: number): number {
+    this.#checkRange(offset, 2, "16-bit field");
+    return this.little
+      ? this.bytes.readUInt16LE(offset)
+      : this.bytes.readUInt16BE(offset);
   }
 
   i16(offset: number): number {
@@ -292,6 +304,13 @@ export class BinaryReader {
     return this.little
       ? this.bytes.readInt16LE(offset)
       : this.bytes.readInt16BE(offset);
+  }
+
+  u32(offset: number): number {
+    this.#checkRange(offset, 4, "32-bit field");
+    return this.little
+      ? this.bytes.readUInt32LE(offset)
+      : this.bytes.readUInt32BE(offset);
   }
 
   i32(offset: number): number {
@@ -309,31 +328,17 @@ export class BinaryReader {
   }
 
   f32(offset: number): number {
-    this.#checkRange(offset, 4, "32-bit float");
+    this.#checkRange(offset, 4, "32-bit field");
     return this.little
       ? this.bytes.readFloatLE(offset)
       : this.bytes.readFloatBE(offset);
   }
 
   f64(offset: number): number {
-    this.#checkRange(offset, 8, "64-bit float");
+    this.#checkRange(offset, 8, "64-bit field");
     return this.little
       ? this.bytes.readDoubleLE(offset)
       : this.bytes.readDoubleBE(offset);
-  }
-
-  u16(offset: number): number {
-    this.#checkRange(offset, 2, "16-bit field");
-    return this.little
-      ? this.bytes.readUInt16LE(offset)
-      : this.bytes.readUInt16BE(offset);
-  }
-
-  u32(offset: number): number {
-    this.#checkRange(offset, 4, "32-bit field");
-    return this.little
-      ? this.bytes.readUInt32LE(offset)
-      : this.bytes.readUInt32BE(offset);
   }
 
   word(offset: number, bits: 32 | 64): bigint {
