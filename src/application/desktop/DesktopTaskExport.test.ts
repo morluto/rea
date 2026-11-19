@@ -531,7 +531,15 @@ describe("exportDesktopApplication with a task's readers", () => {
       join(directory, "artifacts/note-milk-check/verify.py"),
       "utf8",
     );
-    expect(verifier).toContain('"reader": "version"');
+    expect(readExportedTaskChecks(verifier)).toEqual([
+      {
+        id: "version",
+        kind: "lines_present",
+        file: DATABASE,
+        reader: "version",
+        lines: ["version v2"],
+      },
+    ]);
     const readerLine = verifier.match(
       /^\s*(\{"id": "version", "arguments": .*\}),$/mu,
     );
