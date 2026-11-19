@@ -5,6 +5,7 @@ import {
   ZIP64_END,
   ZIP64_LOCATOR,
 } from "../zipEndOfCentralDirectory.js";
+import { ZIP_CENTRAL_HEADER } from "../zip/zipCentralHeader.js";
 import { ZIP_EXTRA_FIELD } from "../zip/zipExtraFields.js";
 
 /**
@@ -18,7 +19,8 @@ ZIP_READ_CHUNK = 64 * 1024
 #: Small, since the end of each gzip member copies what is left of the piece it was read from.
 GZIP_READ_CHUNK = 4 * 1024
 ZIP_END = b"PK\x05\x06"
-ZIP_CENTRAL = b"PK\x01\x02"
+ZIP_CENTRAL_LAYOUT = ${JSON.stringify(ZIP_CENTRAL_HEADER)}
+ZIP_CENTRAL = ZIP_CENTRAL_LAYOUT["signature"].to_bytes(4, "little")
 ZIP64_LOCATOR = b"PK\x06\x07"
 ZIP64_END = b"PK\x06\x06"
 ZIP64_END_LAYOUT = ${JSON.stringify(ZIP64_END)}
@@ -196,7 +198,7 @@ def _zip_kept_record(fixed: bytes, raw: bytes, extra, comment: bytes):
     occurrence, retaining an earlier valid name or rejecting invalid UTF-8 that zip.js already superseded.
     All other fields, comments and the original artifact bytes remain unchanged."""
     header = bytearray(fixed)
-    struct.pack_into("<H", header, 30, len(extra))
+    struct.pack_into("<H", header, ZIP_CENTRAL_LAYOUT["extraBytesOffset"], len(extra))
     return header + raw + extra + comment
 
 
@@ -213,16 +215,22 @@ def _zip_directory(file, size: int, keep: int):
         return None
     file.seek(start)
     records, names, count, seen, at = [], [], 0, 0, start
+    fixed_bytes = ZIP_CENTRAL_LAYOUT["bytes"]
     while at < end:
-        fixed = file.read(46)
-        if at + 46 > end or len(fixed) < 46 or fixed[:4] != ZIP_CENTRAL:
+        if at + fixed_bytes > end:
+            return None
+        fixed = file.read(fixed_bytes)
+        if len(fixed) < fixed_bytes or fixed[:4] != ZIP_CENTRAL:
             return None
         made_by, flags = struct.unpack_from("<H2xH", fixed, 4)
-        name_length, extra_length, comment_length = struct.unpack_from("<HHH", fixed, 28)
+        name_length, extra_length, comment_length = struct.unpack_from("<HHH", fixed, ZIP_CENTRAL_LAYOUT["nameBytesOffset"])
         external = struct.unpack_from("<I", fixed, 38)[0]
-        rest = file.read(name_length + extra_length + comment_length)
-        at += 46 + name_length + extra_length + comment_length
-        if len(rest) < name_length + extra_length + comment_length or at > end:
+        variable_bytes = name_length + extra_length + comment_length
+        at += fixed_bytes + variable_bytes
+        if at > end:
+            return None
+        rest = file.read(variable_bytes)
+        if len(rest) < variable_bytes:
             return None
         seen += 1
         extra_end = name_length + extra_length

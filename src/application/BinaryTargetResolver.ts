@@ -97,7 +97,7 @@ import {
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
-  locateTrailingZipArchive,
+  hasTrailingZipArchive,
   zipRootPackageFormat,
 } from "../domain/zipPackageFormat.js";
 
@@ -528,9 +528,9 @@ const readOpenedBinaryTarget = async (
     // executable with an appended archive keeps its executable route.
     if (
       !(await claimsLeadingExecutableHeader(handle, metadata.size, signal)) &&
-      (await locateTrailingZipArchive(metadata.size, (position, length) =>
+      (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
-      )) !== undefined
+      ))
     )
       return ok({
         ...(await artifactIdentity()),
