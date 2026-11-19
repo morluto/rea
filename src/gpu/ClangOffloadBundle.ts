@@ -139,23 +139,23 @@ export const readCcobHeader = (bytes: Buffer, remaining: number) => {
   const reader = new BinaryReader(bytes, true, "ccob");
   const version = reader.u16(4),
     method = reader.u16(6);
-  let width: number, total: number, decoded: number, hash: bigint;
+  let width: number, total: number, decoded: bigint, hash: bigint;
   if (version === 1) {
     width = 20;
     total = remaining;
-    decoded = reader.u32(8);
+    decoded = reader.word(8, 32);
     hash = reader.word(12, 64);
   } else if (version === 2) {
     width = 24;
     if (bytes.length < width) rejectGpu("CCOB v2 header is truncated");
     total = reader.u32(8);
-    decoded = reader.u32(12);
+    decoded = reader.word(12, 32);
     hash = reader.word(16, 64);
   } else if (version === 3) {
     width = 32;
     if (bytes.length < width) rejectGpu("CCOB v3 header is truncated");
     total = gpuCount(reader.word(8, 64));
-    decoded = gpuCount(reader.word(16, 64));
+    decoded = reader.word(16, 64);
     hash = reader.word(24, 64);
   } else
     throw new BinaryFormatFailure(
