@@ -293,14 +293,19 @@ REA_RISCV_OBJDUMP=/path/to/llvm/bin/llvm-objdump \
 npm run verify:ghidra:riscv
 ```
 
-The lane builds four `ET_EXEC` fixtures from committed freestanding C and
-assembly sources:
+The lane builds six fixtures from committed freestanding C and assembly sources:
 
-- RV32 and RV64 double-float builds (`rv{32,64}imafdc`) of `riscv.c`.
+- RV32 and RV64 double-float builds (`rv{32,64}imafdc`) of `riscv.c`,
+  each linked as `ET_EXEC` and as a PIE.
 - An RV32 soft-float build of `riscv-float-abi.c` with ESP32-C3's
   `-march=rv32imc_zicsr_zifencei -mabi=ilp32`, typed with DWARF.
 - The same objects linked with `--strip-all`. Every allocated section keeps
   its address and bytes, so the typed build's symbols locate its functions.
+
+PIE admission checks that the `PT_INTERP` declaration has an in-file range
+large enough for a pathname byte and its terminator. The verifier checks the
+real provider's load base and relocated probe bytes and checks refusal of
+`ET_DYN` without `PT_INTERP`. REA never invokes the target interpreter.
 
 Independent LLVM readelf observations establish ELF declarations,
 `Tag_RISCV_arch` and symbol addresses. Public CLI and stdio MCP workflows verify
