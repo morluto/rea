@@ -249,6 +249,7 @@
 * **ci:** keep dispatcher fixture exports aligned with runtime ([#12131](https://github.com/morluto/rea/issues/12131)) ([3b81511](https://github.com/morluto/rea/commit/3b8151125cdbe9a391f29a19273b8d0f8121dc47))
 * **ci:** keep MinGW setup within the native build deadline ([#11887](https://github.com/morluto/rea/issues/11887)) ([2cc7f01](https://github.com/morluto/rea/commit/2cc7f01731e5049f4b5d0d9b338050caf5c13d94))
 * **ci:** let npm retry upstream registry connection resets ([3f361d8](https://github.com/morluto/rea/commit/3f361d820fd4a54e037bf60726e79217586ad431))
+* **ci:** preserve all cases in selected test shards ([#12425](https://github.com/morluto/rea/issues/12425)) ([2206984](https://github.com/morluto/rea/commit/2206984be281ebaddd72a6da39b82d25fde699da))
 * **ci:** preserve conformance subprocess cleanup ownership ([#12025](https://github.com/morluto/rea/issues/12025)) ([93fb79e](https://github.com/morluto/rea/commit/93fb79e3b881c2997e0a625bab1c416de0e2e170))
 * **ci:** preserve line breaks in Git blob paths ([#12227](https://github.com/morluto/rea/issues/12227)) ([fedf33e](https://github.com/morluto/rea/commit/fedf33eb597538b4e8d60ac0058350bfb2e16650))
 * **ci:** refresh CLI decimal schema goldens ([25784cd](https://github.com/morluto/rea/commit/25784cd4e790a6290e2f719549a83f5f7a63b3e0))
