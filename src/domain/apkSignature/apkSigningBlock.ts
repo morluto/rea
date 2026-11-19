@@ -1,6 +1,7 @@
 import { BinaryReader } from "../binaryContainer.js";
 import {
   readZip64DirectoryRecord,
+  zip64EndUsesSingleVolume,
   zipEndOfCentralDirectoryCandidates,
   zipEndUsesSingleVolume,
   ZIP_CLASSIC_DIRECTORY_LIMITS,
@@ -232,6 +233,14 @@ const centralDirectoryOffset = (
         });
     }
   }
+  if (
+    !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
+    !zip64EndUsesSingleVolume(reader, locator, recordOffset)
+  )
+    return err({
+      kind: "zip64-unsupported",
+      detail: "Zip64 end records do not describe the selected single disk",
+    });
   const { directoryOffset, directorySize, totalEntries } = record.value;
   if (
     directoryOffset > maximumExact ||
