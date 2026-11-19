@@ -444,6 +444,7 @@ const redirectCases = [
       ["null status", null],
       ["boolean status", false],
       ["object status", {}],
+      ["zero status", 0],
     ] as const
   ).map(([name, status]) => ({
     name,
@@ -476,15 +477,6 @@ const redirectCases = [
     expected: (origin: string) => ({
       url: `${origin}/prior`,
       status: null,
-      scope: "approved",
-    }),
-  },
-  {
-    name: "zero status",
-    response: (origin: string) => ({ url: `${origin}/prior`, status: 0 }),
-    expected: (origin: string) => ({
-      url: `${origin}/prior`,
-      status: 0,
       scope: "approved",
     }),
   },
@@ -571,7 +563,7 @@ it("retains scoped redirect response facts for each request", async () => {
   expect(timelineExclusions).toHaveLength(3);
   expect(timelineExclusions).toEqual(
     expect.arrayContaining([
-      { section: "timeline", reason: "invalid_protocol_value", count: 7 },
+      { section: "timeline", reason: "invalid_protocol_value", count: 8 },
       { section: "timeline", reason: "disallowed_origin", count: 1 },
       { section: "timeline", reason: "unsupported_url", count: 1 },
     ]),
