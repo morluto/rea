@@ -63,9 +63,9 @@ const main = async (): Promise<void> => {
   );
   let reply: UefiLzmaReply;
   try {
-    const require2 = createRequire(import.meta.url);
-    const lzma = require2("lzma-purejs");
-    const workerModulePath = require2.resolve("lzma-purejs");
+    const require = createRequire(import.meta.url);
+    const lzma = require("lzma-purejs");
+    const workerModulePath = require.resolve("lzma-purejs");
     const upstreamMetadata = JSON.parse(
       await readFile(join(workerModulePath, "..", "package.json"), "utf8"),
     );
