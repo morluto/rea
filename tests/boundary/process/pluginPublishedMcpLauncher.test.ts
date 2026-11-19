@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -6,6 +6,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  realpath,
   rm,
   symlink,
   utimes,
@@ -19,6 +20,9 @@ import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processHasStopped } from "../../support/process/observePosixProcess.js";
+
+/** Bound for launcher teardown to cancel an owned installer before force-kill. */
+const LAUNCHER_TEARDOWN_GRACE_MS = 2_000;
 
 const launcher = fileURLToPath(
   new URL(
@@ -91,6 +95,58 @@ const seedPublishedRuntime = async (
   return entry;
 };
 
+const waitForClosed = (
+  closed: Promise<unknown>,
+  graceMs: number,
+): Promise<boolean> =>
+  Promise.race([
+    closed.then(() => true),
+    new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(false), graceMs),
+    ),
+  ]);
+
+/**
+ * Force-stop a launcher and any detached installer tree it still parents.
+ * stdin-EOF / SIGTERM normally cancel through runOwnedInstaller; this path is
+ * only the bounded fallback when that ownership path does not finish.
+ */
+const forceStopLauncherTree = (child: ChildProcess) => {
+  if (child.pid === undefined) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    return;
+  }
+  // Detached npm leads its own process group; signal still-parented children
+  // before SIGKILL so their groups do not outlive the launcher pipe.
+  const listed = spawnSync("pgrep", ["-P", String(child.pid)], {
+    encoding: "utf8",
+  });
+  if (listed.status === 0) {
+    for (const line of listed.stdout.split("\n")) {
+      const pid = Number.parseInt(line.trim(), 10);
+      if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Child already exited.
+        }
+      }
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // Launcher already exited.
+  }
+};
+
 const start = (
   args: string[],
   env: NodeJS.ProcessEnv,
@@ -121,9 +177,26 @@ const start = (
     );
   });
   onTestFinished(async () => {
-    if (child.exitCode === null && child.signalCode === null)
-      child.kill("SIGKILL");
-    await closed;
+    if (child.exitCode === null && child.signalCode === null) {
+      // Close stdin first so observeAcquisitionCancel stops a detached
+      // installer before any forced kill can orphan it on the stderr pipe.
+      try {
+        if (child.stdin !== null && !child.stdin.destroyed) child.stdin.end();
+      } catch {
+        // Case may already have closed stdin.
+      }
+      if (await waitForClosed(closed, LAUNCHER_TEARDOWN_GRACE_MS)) return;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Launcher already exited.
+      }
+      if (await waitForClosed(closed, LAUNCHER_TEARDOWN_GRACE_MS)) return;
+      forceStopLauncherTree(child);
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }
+    await closed.catch(() => undefined);
   });
   return { child, closed };
 };
@@ -572,6 +645,117 @@ writeFileSync(
   expect(await readFile(counterPath, "utf8")).toBe("1");
   await access(join(prefix, READY_MARKER));
 });
+
+it.skipIf(process.platform === "win32")(
+  "shares one install lease across symlink-equivalent TMPDIR spellings",
+  async () => {
+    const version = "6.8.0-published-alias-tmpdir";
+    const physicalRoot = await createTestTempDirectory(
+      "rea-published-alias-physical-",
+    );
+    const aliasParent = await createTestTempDirectory(
+      "rea-published-alias-link-",
+    );
+    const aliasRoot = join(aliasParent, "tmpdir-alias");
+    await symlink(physicalRoot, aliasRoot);
+    expect(await realpath(aliasRoot)).toBe(await realpath(physicalRoot));
+
+    const physicalLock = lockPathFor(version, physicalRoot);
+    const aliasLock = lockPathFor(version, aliasRoot);
+    expect(physicalLock).not.toBe(aliasLock);
+    expect(
+      createHash("sha256").update(physicalLock).digest("hex").slice(0, 32),
+    ).not.toBe(
+      createHash("sha256").update(aliasLock).digest("hex").slice(0, 32),
+    );
+
+    const prefix = installPrefix(version, physicalRoot);
+    await rm(prefix, { recursive: true, force: true });
+    await rm(physicalLock, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+
+    const workspace = await createTestTempDirectory(
+      "rea-published-alias-tmpdir-",
+    );
+    const bin = join(workspace, "bin");
+    await mkdir(bin);
+    const npmEntry = join(bin, "npm-cli.cjs");
+    const counterPath = join(workspace, "install-count");
+    const releasePath = join(workspace, "release");
+    const startedPath = join(workspace, "started");
+    await writeFile(counterPath, "0", { mode: 0o600 });
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const counterPath = ${JSON.stringify(counterPath)};
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const count = Number(readFileSync(counterPath, "utf8")) + 1;
+writeFileSync(counterPath, String(count));
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('imported-too-early');", { mode: 0o600 });
+writeFileSync(startedPath, prefix);
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(20);
+  }
+}
+writeFileSync(
+  entry,
+  "process.stdout.write(JSON.stringify({ installs: " + count + " })); process.exit(0);",
+  { mode: 0o600 },
+);
+`,
+    );
+
+    const sharedPath = `${bin}${delimiter}${process.env.PATH ?? ""}`;
+    const physicalEnv = {
+      ...process.env,
+      TMPDIR: physicalRoot,
+      TEMP: physicalRoot,
+      TMP: physicalRoot,
+      PATH: sharedPath,
+      npm_execpath: npmEntry,
+    };
+    const aliasEnv = {
+      ...process.env,
+      TMPDIR: aliasRoot,
+      TEMP: aliasRoot,
+      TMP: aliasRoot,
+      PATH: sharedPath,
+      npm_execpath: npmEntry,
+    };
+
+    const first = start([version], physicalEnv);
+    const stagingPrefix = (await waitForFile(startedPath)).trim();
+    expect(dirname(stagingPrefix)).toBe(cacheRootFor(physicalRoot));
+    const second = start([version], aliasEnv);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(second.child.exitCode).toBeNull();
+    expect(await readFile(counterPath, "utf8")).toBe("1");
+    await writeFile(releasePath, "go", { mode: 0o600 });
+    const [firstResult, secondResult] = await Promise.all([
+      first.closed,
+      second.closed,
+    ]);
+    expect(firstResult.code).toBe(0);
+    expect(secondResult.code).toBe(0);
+    expect(firstResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+    expect(secondResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+    expect(await readFile(counterPath, "utf8")).toBe("1");
+    await access(join(prefix, READY_MARKER));
+  },
+);
 
 it("leaves a stale install lock unchanged while another process reserves recovery", async () => {
   const version = "6.8.0-published-recovery-busy";
@@ -1037,9 +1221,8 @@ for (;;) {
   };
   const holder = start([version], launchEnv);
   onTestFinished(async () => {
+    // Release the fixture installer; start()'s teardown owns cancellation.
     await writeFile(releasePath, "go", { mode: 0o600 }).catch(() => undefined);
-    holder.child.kill("SIGKILL");
-    await holder.closed.catch(() => undefined);
   });
   await waitForFile(startedPath);
   const waiter = start([version], launchEnv);
@@ -1112,9 +1295,8 @@ for (;;) {
   };
   const holder = start([version], launchEnv);
   onTestFinished(async () => {
+    // Release the fixture installer; start()'s teardown owns cancellation.
     await writeFile(releasePath, "go", { mode: 0o600 }).catch(() => undefined);
-    holder.child.kill("SIGKILL");
-    await holder.closed.catch(() => undefined);
   });
   await waitForFile(startedPath);
   const waiter = start([version], launchEnv);

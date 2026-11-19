@@ -14,6 +14,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -55,10 +56,14 @@ try {
 /** POSIX uid when the host reports one; Windows TEMP is already per-user. */
 const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 
-const cacheRoot = join(
-  tmpdir(),
-  uid === undefined ? "rea-plugin-mcp" : `rea-plugin-mcp-${uid}`,
-);
+const cacheDirectoryName =
+  uid === undefined ? "rea-plugin-mcp" : `rea-plugin-mcp-${uid}`;
+
+/**
+ * Logical spelling until ensurePrivateCacheRoot admits the temporary root and
+ * rewrites this to the physical path used for lock and lease identity.
+ */
+let cacheRoot = join(tmpdir(), cacheDirectoryName);
 
 // Native bindings (for example Frida) are arch-specific. ARM64 and Rosetta x64
 // clients under the same user must not share one install prefix or lock.
@@ -121,6 +126,12 @@ const verifyOwnedCachePath = (path, kind) => {
 };
 
 const ensurePrivateCacheRoot = () => {
+  const temporaryRoot = tmpdir();
+  // Admit the selected temporary root before canonicalizing so symlink-
+  // equivalent TMPDIR spellings share one physical cache and lease identity
+  // (PrivateRuntimeRoot physical-path boundary).
+  statSync(temporaryRoot === "" ? temporaryRoot : join(temporaryRoot, "."));
+  cacheRoot = join(realpathSync(temporaryRoot), cacheDirectoryName);
   mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
   verifyOwnedCachePath(cacheRoot, "root");
 };
@@ -719,18 +730,23 @@ const applyAcquisitionCancel = (cancelled) => {
 if (process.exitCode === 1) {
   // Argument validation already failed.
 } else {
-  const prefix = join(cacheRoot, installKey);
-  const lockPath = join(cacheRoot, `${installKey}.lock`);
-  const staging = join(
-    cacheRoot,
-    `${installKey}.staging-${String(process.pid)}`,
-  );
   let entry;
   /** @type {import("node:net").Server | undefined} */
   let lockServer;
+  /** @type {string} */
+  let prefix;
+  /** @type {string} */
+  let lockPath;
+  /** @type {string} */
+  let staging;
 
   try {
     ensurePrivateCacheRoot();
+    // Derive install paths from the admitted physical cache root so lease
+    // identity cannot diverge across symlink-equivalent TMPDIR spellings.
+    prefix = join(cacheRoot, installKey);
+    lockPath = join(cacheRoot, `${installKey}.lock`);
+    staging = join(cacheRoot, `${installKey}.staging-${String(process.pid)}`);
     retryRetainedStagingCleanup();
   } catch (cause) {
     refuseUntrustedCache(cause);
