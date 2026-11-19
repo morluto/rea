@@ -242,3 +242,61 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps local originals but reports incomplete source maps with malformed mappings or offsets through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-malformed-source-map-");
+    const leaf = {
+      version: 3,
+      sources: ["original.ts"],
+      sourcesContent: ["export const answer = 42;"],
+      names: [],
+      mappings: "AAAA",
+    };
+    const maps = {
+      "valid.js.map": leaf,
+      "bad-mapping.js.map": { ...leaf, mappings: "!" },
+      "bad-offset.js.map": {
+        version: 3,
+        sections: [{ offset: { line: -1, column: 0 }, map: leaf }],
+      },
+    };
+    await writeFixtureFiles(
+      root,
+      Object.fromEntries(
+        Object.entries(maps).map(([path, map]) => [path, JSON.stringify(map)]),
+      ),
+    );
+
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(graph.coverage.status).toBe("partial");
+    for (const path of Object.keys(maps))
+      expect(graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind: "source-module",
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              source_map_reference: expect.objectContaining({
+                map_path: path,
+                source_name: "original.ts",
+              }),
+              properties: expect.objectContaining({ content_available: true }),
+            }),
+          ]),
+        }),
+      );
+
+    const unknownPaths = graph.nodes
+      .filter((node) => node.kind === "unknown")
+      .flatMap((node) => node.observations)
+      .filter(
+        ({ properties }) => properties.operation === "parse-local-source-map",
+      )
+      .map(({ properties }) => properties.path);
+    expect(unknownPaths.toSorted()).toEqual([
+      "bad-mapping.js.map",
+      "bad-offset.js.map",
+    ]);
+  },
+);

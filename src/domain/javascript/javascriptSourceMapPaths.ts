@@ -25,24 +25,22 @@ export type JavaScriptSourceMapReference = z.infer<
   typeof javascriptSourceMapReferenceSchema
 >;
 
-/** Interpret declarations together once at their source-map ingestion boundary. */
-export const resolveJavaScriptSourceMapReferences = (
-  sourceNames: readonly (string | null)[],
+/** Interpret a declaration once at the source-map ingestion boundary. */
+export const resolveJavaScriptSourceMapReference = (
+  sourceName: string | null,
   sourceRoot: string | null,
   mapPath: string,
-): (JavaScriptSourceMapReference | null)[] => {
-  return sourceNames.map((sourceName) => {
-    if (sourceName === null) return null;
-    return {
-      source_name: sourceName,
-      source_root: sourceRoot,
-      map_path: mapPath,
-      resolution: resolveJavaScriptSourceMapPath(
-        sourceMapReference(sourceName, sourceRoot),
-        mapPath,
-      ),
-    };
-  });
+): JavaScriptSourceMapReference | null => {
+  if (sourceName === null) return null;
+  return {
+    source_name: sourceName,
+    source_root: sourceRoot,
+    map_path: mapPath,
+    resolution: resolveJavaScriptSourceMapPath(
+      sourceMapReference(sourceName, sourceRoot),
+      mapPath,
+    ),
+  };
 };
 
 /** Resolve one source declaration with ECMA-426's WHATWG URL parsing rule. */
