@@ -984,6 +984,10 @@ complete observation.
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
   XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
+  Bundle executable resolution and Hopper's minimum-version check admit
+  `Info.plist` only when its opened descriptor is a regular file of at most
+  64 MiB. A symlink at the selected path can resolve to that regular file.
+  The separate 16 MiB budget applies to the decoded representation.
   App bundle `Info.plist` executable resolution uses the same decoder as keyed
   archives and Interface Builder. The decoder consumes an initial
   BOM and rejects malformed byte sequences, unsupported encoding declarations,

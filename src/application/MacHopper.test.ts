@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdir, truncate, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  realpath,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -7,6 +13,7 @@ import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { err, ok } from "../domain/result.js";
+import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 import {
   HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
@@ -42,6 +49,35 @@ it("bounds the system host's Hopper minimum-version plist read", async () => {
     message: expect.stringContaining("67108864-byte input allowance"),
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps symlinked Info.plist selection in bundle resolution and the Hopper version check",
+  async () => {
+    const root = await createTestTempDirectory("rea-symlinked-info-plist-");
+    const app = join(root, "Hopper.app");
+    const contents = join(app, "Contents");
+    const plist = join(contents, "Info.plist");
+    const selected = join(root, "Selected.plist");
+    const executable = join(contents, "MacOS", "Hopper");
+    await mkdir(join(contents, "MacOS"), { recursive: true });
+    await writeFile(executable, "inert fixture");
+    await writeFile(
+      selected,
+      "<plist><dict><key>CFBundleExecutable</key><string>Hopper</string><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>",
+    );
+    await symlink(selected, plist);
+    const host = systemMacHopperInstallHost(root, {}, async () => "15.0");
+    try {
+      await expect(resolveAppleBundleExecutable(app)).resolves.toEqual({
+        ok: true,
+        value: { executable: await realpath(executable), infoPlist: plist },
+      });
+      await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
+    } finally {
+      await host.close();
+    }
+  },
+);
 
 it("retains the system host's minimum-version plist descriptor until close can retry it", async () => {
   const root = await createTestTempDirectory("rea-hopper-plist-cleanup-");
