@@ -18,6 +18,20 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const buildSelectedCoordinateFixture = (): Buffer => {
+  const bytes = buildManagedPeFixture({ additionalEmptyTypes: 1 });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "fixture"),
+    size,
+  );
+  bytes.writeUInt16LE(0, metadataRowOffset(layout, 2, 1) + 4);
+  return bytes;
+};
+
 cliTest(
   "retains unresolved Module and definition facts through CLI, MCP and retained pages",
   async ({ cli }) => {
@@ -128,17 +142,7 @@ cliTest(
     });
 
     const selectedPath = join(root, "selected.dll");
-    const selectedBytes = buildManagedPeFixture({ additionalEmptyTypes: 1 });
-    const pe = readManagedPeLayout(selectedBytes);
-    if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
-    const { rva, size } = pe.cli.metadata;
-    const layout = readManagedMetadataLayout(
-      selectedBytes,
-      pe.rvaToOffset(rva, size, "fixture"),
-      size,
-    );
-    selectedBytes.writeUInt16LE(0, metadataRowOffset(layout, 2, 1) + 4);
-    await writeFile(selectedPath, selectedBytes);
+    await writeFile(selectedPath, buildSelectedCoordinateFixture());
     const selected = await call("inspect_managed_members", {
       path: selectedPath,
       type_names: ["Fixture.Program"],
