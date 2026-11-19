@@ -16,6 +16,7 @@ import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../../domain/analysisErrorCancellation.js";
 import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { err, ok } from "../../../domain/result.js";
 import {
@@ -116,6 +117,11 @@ class TraceArchiveRead {
           ? this.inventory.finish(true)
           : this.identity);
       if (partial !== undefined) error.retainPartialObservation(partial);
+      if (this.signal?.aborted)
+        analysisErrorWithCancellation(
+          error,
+          cancelledBy(operation, this.signal),
+        );
       return err(
         projectStableArtifactFailure(
           cause,
