@@ -391,6 +391,7 @@
 * **erlang:** report unexamined BEAM table tails ([#12267](https://github.com/morluto/rea/issues/12267)) ([a21a5db](https://github.com/morluto/rea/commit/a21a5db09dbaaa7961a12d0947ffc4f0de91d8cb))
 * **errors:** name rea doctor only for providers it can check ([#10565](https://github.com/morluto/rea/issues/10565)) ([4aefe2d](https://github.com/morluto/rea/commit/4aefe2daec12bbf7e9e4ed7e994d92ac245dea28))
 * **errors:** rethrow internal invariant violations from plist consumers and the native output projection ([#11029](https://github.com/morluto/rea/issues/11029)) ([63b0426](https://github.com/morluto/rea/commit/63b0426e409339a5efbc8ea7bbdea0b4502ec935))
+* **esp:** disclose partition entries outside the table checksum ([#12384](https://github.com/morluto/rea/issues/12384)) ([ebd709c](https://github.com/morluto/rea/commit/ebd709cef51ee0791ef9cf935da974fd51374e5d))
 * **evidence:** derive default authority from subject binding ([#10321](https://github.com/morluto/rea/issues/10321)) ([b99e773](https://github.com/morluto/rea/commit/b99e7737de1d6813e698759e2b024e155e8d1776))
 * **evidence:** identify snapshots across portable file readers ([#12172](https://github.com/morluto/rea/issues/12172)) ([5dc5418](https://github.com/morluto/rea/commit/5dc54183f2af09f1ab6f0ddaf88faacaa6cf3f07))
 * **evidence:** name the noncanonical bundle sections ([3ae21f9](https://github.com/morluto/rea/commit/3ae21f9ff8af38611adc796bd180c917f082ea42))
