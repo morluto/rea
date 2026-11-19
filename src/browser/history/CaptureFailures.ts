@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { isAbortOf } from "../../process/SignalAbort.js";
 import { captureBudgets } from "./CaptureBudgets.js";
@@ -19,6 +20,10 @@ import {
   analysisErrorWithCleanupDependencies,
 } from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -52,6 +57,7 @@ import {
 import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
 import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
 import {
+  CAPTURE_FORMAT,
   CAPTURE_LIMITS,
   type CaptureFormatError,
 } from "./CaptureFormatError.js";
@@ -64,8 +70,8 @@ export const protobufCaptureFailure = (
   cause: CaptureFormatError,
 ): AnalysisError => {
   const { limit } = cause;
-  if (limit === undefined)
-    return new AnalysisInputError(OPERATION, undefined, [
+  if (limit === undefined || !isParseLimit(cause, CAPTURE_FORMAT))
+    return new AnalysisInputError(OPERATION, { cause }, [
       {
         path: ["protobuf"],
         reason: "invalid_format",
@@ -73,23 +79,19 @@ export const protobufCaptureFailure = (
       },
     ]);
   const { parameter, expected } = CAPTURE_LIMITS[limit.name];
-  return new AnalysisResourceConstraintError(
-    OPERATION,
-    "capacity",
-    cause.message,
-    { [expected]: limit.maximum },
-    {
-      retryable: false,
-      ...(parameter === null
-        ? {}
-        : {
-            remediationAction: webNetworkCaptureBudgetRecovery(
-              input,
-              parameter,
-            ),
-          }),
-    },
-  );
+  return parseLimitConstraint(OPERATION, "capacity", cause, {
+    legacyMaximumKey: expected,
+    retryable: false,
+    ...(parameter === null
+      ? {}
+      : {
+          remediationAction: webNetworkCaptureBudgetRecovery(
+            input,
+            parameter,
+            limit.maximum,
+          ),
+        }),
+  });
 };
 
 /** Reason for a decoder whose owned process tree reached its Job Object commit limit. */
@@ -322,10 +324,7 @@ export const historicalCaptureFailure = (
       cause instanceof OwnedCommandFailure &&
       cause.snapshot !== null
         ? {
-            exit_code: cause.snapshot.exitCode ?? null,
-            signal: cause.snapshot.signal ?? null,
-            stdout: cause.snapshot.stdout.text,
-            stderr: cause.snapshot.stderr.text,
+            ...capturedProviderOutput(cause.snapshot),
             diagnostic_truncated: cause.snapshot.diagnosticTruncated ?? false,
           }
         : {}),
@@ -405,11 +404,7 @@ export const captureMemoryFailure = (
           }),
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
-            capturedOutput: {
-              stdout: cause.snapshot.stdout.text,
-              stderr: cause.snapshot.stderr.text,
-              truncated: cause.snapshot.diagnosticTruncated ?? false,
-            },
+            capturedOutput: capturedProviderOutput(cause.snapshot),
           }
         : {}),
     },

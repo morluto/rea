@@ -37,11 +37,14 @@ import {
   sectionRelocations,
   sectionSymbolKey,
   type ElfInitializerSymbol,
+  type ElfSymbolIndex,
   type SlotRelocation,
   type ElfInitializerSlot,
 } from "./ElfInitializerSymbols.js";
 import {
   finishInitializerReport,
+  preferInitializerSymbolName,
+  type InitializerSymbolName,
   type CollectedInitializer,
   type InitializerPage,
 } from "./initializerReport.js";
@@ -733,7 +736,7 @@ const fromDynamicWrite = (
       importName: null,
       definedName: null,
     };
-  const relative = elfRelativeRelocationType(scan.machine);
+  const relative = elfRelativeRelocationType(scan.machine, scan.bits);
   if (write.value !== null && write.source.kind === relative)
     return {
       method: "relative_addend",
@@ -804,27 +807,25 @@ const resolveSlot = (
   return rawRelocation(scan, slot.fileOffset);
 };
 
-interface SymbolNames {
-  readonly defined: ReadonlyMap<bigint, string>;
-  readonly definedInSection: ReadonlyMap<string, string>;
-}
+type SymbolNames = Pick<ElfSymbolIndex, "defined" | "definedInSection">;
 
 const symbolOf = (
   scan: ElfScan,
   applied: SlotRelocation,
   names: SymbolNames,
-): string | null => {
+): InitializerSymbolName | null => {
   if (applied.method === "unresolved_import") return applied.importName;
-  if (applied.method === "symbol_addend" && applied.definedName !== null)
-    return applied.definedName;
-  if (applied.value === null) return null;
-  if (scan.relocatable)
-    return applied.sectionIndex === undefined
-      ? null
-      : (names.definedInSection.get(
+  const direct =
+    applied.method === "symbol_addend" ? applied.definedName : null;
+  if (typeof direct === "string" || applied.value === null) return direct;
+  const indexed = !scan.relocatable
+    ? names.defined.get(applied.value)
+    : applied.sectionIndex === undefined
+      ? undefined
+      : names.definedInSection.get(
           sectionSymbolKey(applied.sectionIndex, applied.value),
-        ) ?? null);
-  return names.defined.get(applied.value) ?? null;
+        );
+  return preferInitializerSymbolName(direct, indexed);
 };
 
 interface Target {
@@ -992,7 +993,7 @@ export const readElfInitializers = async (
   if (scan.relocatable)
     note(
       scan,
-      "Relocatable object (ET_REL): slot and value addresses are offsets inside the named section, not load addresses.",
+      "Relocatable object (ET_REL): section-associated slot and value addresses are offsets inside that section, not load addresses. Absolute symbols do not name a section.",
       "complete",
     );
   const tags = readDynamicTags(

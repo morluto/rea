@@ -24,18 +24,13 @@ export class ManagedRepresentationFailure extends ManagedReaderFailure {
   }
 }
 
-interface CachedString {
-  readonly value: string;
-  readonly encodedBytes: number;
-}
-
 /** The layout owns decoding capacity and heap identity for all of its consumers. */
 export class ManagedDecodeBudget {
   readonly #bytes: Budget;
   /** Part of the charge that `releaseTransient` refunds. */
   #transient = 0;
   readonly #rows = new Map<number, Set<number>>();
-  readonly #strings = new Map<number, CachedString>();
+  readonly #strings = new Map<number, string>();
   readonly #digests = new WeakMap<ArrayBufferLike, Map<string, string>>();
   readonly #prepaid = new WeakSet<object>();
 
@@ -109,12 +104,12 @@ export class ManagedDecodeBudget {
     return this.#prepaid.delete(value);
   }
 
-  cachedString(index: number): CachedString | undefined {
+  cachedString(index: number): string | undefined {
     return this.#strings.get(index);
   }
 
-  cacheString(index: number, value: string, encodedBytes: number): void {
-    this.#strings.set(index, { value, encodedBytes });
+  cacheString(index: number, value: string): void {
+    this.#strings.set(index, value);
   }
 }
 

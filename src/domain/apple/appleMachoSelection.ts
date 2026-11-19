@@ -9,13 +9,18 @@ import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
 } from "./machoDylibCommand.js";
-import { readMachoSectionHeader } from "./machoSectionHeader.js";
+import {
+  machoSectionHeaderSize,
+  readMachoSectionHeader,
+} from "./machoSectionHeader.js";
 import {
   admitMachoSegmentMapping,
+  machoSegmentSectionTableFits,
   readMachoSegmentHeader,
 } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
+  machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
 import {
@@ -123,9 +128,14 @@ export const parseMachoLayout = (
         undecodedContent: true,
       },
     );
-  const commandEnd = slice + table.headerSize + table.commandBytes;
-  if (commandEnd > sliceEnd)
-    throw malformedInput("macho", "Malformed Mach-O command bounds");
+  const issue = machoCommandTableIssue(table, selectedBytes.length);
+  if (issue !== null)
+    throw malformedInput(
+      "macho",
+      issue.kind === "extent"
+        ? "Malformed Mach-O command bounds"
+        : issue.message,
+    );
   const state: LayoutState = {
     slice,
     sliceEnd,
@@ -269,12 +279,13 @@ const collectSegment = (
     fileSize > 0n
   )
     state.baseAddress ??= address;
-  if (headerSize + count * 80 > size)
+  if (!machoSegmentSectionTableFits(parsed.value, size, true))
     throw truncatedInput("macho", "Truncated section table");
+  const sectionWidth = machoSectionHeaderSize(true);
   for (let section = 0; section < count; section++) {
-    const position = cursor + headerSize + section * 80;
+    const position = cursor + headerSize + section * sectionWidth;
     const parsedSection = readMachoSectionHeader(
-      bytes.subarray(position, position + 80),
+      bytes.subarray(position, position + sectionWidth),
       true,
       true,
     );
@@ -336,6 +347,7 @@ const collectFixupCommand = (
   } else if (machoDependencyCommand(kind) !== null) {
     const parsed = readMachoDylibCommandFacts(
       bytes.subarray(cursor, cursor + size),
+      kind,
       true,
     );
     if (!parsed.ok) {

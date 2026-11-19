@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
@@ -147,16 +148,19 @@ const resourceLimits = (
 
 export const sideManifest = (
   side: ManagedMemberComparisonSide,
-): ManagedMemberComparisonResult["left"] => ({
-  evidence_id: side.evidenceId,
-  artifact_sha256: side.result.artifact.sha256,
-  mvid: side.result.module?.mvid ?? null,
-  module_name: side.result.module?.name ?? null,
-  metadata_status: side.result.metadata.status,
-  methods_total: side.result.methods.length,
-  fields_total: side.result.fields.length,
-  resource_limits: resourceLimits(side.result),
-});
+): ManagedMemberComparisonResult["left"] => {
+  const module = managedModuleRow(side.result);
+  return {
+    evidence_id: side.evidenceId,
+    artifact_sha256: side.result.artifact.sha256,
+    mvid: module?.mvid ?? null,
+    module_name: module?.name ?? null,
+    metadata_status: side.result.metadata.status,
+    methods_total: side.result.methods.length,
+    fields_total: side.result.fields.length,
+    resource_limits: resourceLimits(side.result),
+  };
+};
 
 export const buildComparisonSummary = (
   items: readonly (

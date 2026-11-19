@@ -233,163 +233,178 @@ export const registerReverseEngineeringCommands = (
         ),
       ),
   );
-  registerCliCommand(cli, CLI_COMMANDS.debugWithGdb, {
-    description:
-      "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
-    args: z.object({
-      command: z
-        .string()
-        .min(1)
-        .describe("One unrestricted GDB console command."),
-    }),
-    options: z.object({
-      executable: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Initial local file to hash and load without running it; command Evidence retains this initial selection.",
-        ),
-      inferiorTty: z
-        .string()
-        .min(1)
-        .describe(
-          "Caller-selected durable TTY for output from a live GDB inferior.",
-        ),
-      ...analysisEvidenceDeliveryOptions,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.debugWithGdb, async () => {
-          const delivery = {
-            providerId: "gdb",
-            operation: "gdb_console",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          };
-          const inputError = cliEvidenceDeliveryInputError(delivery);
-          if (inputError !== undefined) return projectAnalysisError(inputError);
-          if (gdbOneShotCommandMayInvalidateDetachProof(args.command))
-            return projectAnalysisError(
-              new AnalysisInputError("gdb_console", undefined, [
-                {
-                  path: ["command"],
-                  reason: "invalid_value",
-                  message:
-                    "This command can invalidate the verified inferior output route; use the persistent GDB session workflow.",
-                },
-              ]),
-            );
-          const manager = createGdbManager(environment);
-          let sessionId: string | undefined;
-          return deliverCliAnalysisEvidence({
-            ...delivery,
-            run: async () => {
-              const started = await manager.start(signal, {
-                inferiorTty: options.inferiorTty,
-                ...(options.executable === undefined
-                  ? {}
-                  : { executable: options.executable }),
-              });
-              if (!started.ok) return started;
-              sessionId = started.value.session_id;
-              const executed = await manager.execute(
-                sessionId,
-                args.command,
-                signal,
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.debugWithGdb,
+    {
+      description:
+        "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
+      args: z.object({
+        command: z
+          .string()
+          .min(1)
+          .describe("One unrestricted GDB console command."),
+      }),
+      options: z.object({
+        executable: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Initial local file to hash and load without running it; command Evidence retains this initial selection.",
+          ),
+        inferiorTty: z
+          .string()
+          .min(1)
+          .describe(
+            "Caller-selected durable TTY for output from a live GDB inferior.",
+          ),
+        ...analysisEvidenceDeliveryOptions,
+      }),
+      run: ({ args, options }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, CLI_COMMANDS.debugWithGdb, async () => {
+            const delivery = {
+              providerId: "gdb",
+              operation: "gdb_console",
+              signal,
+              detail: options.detail,
+              evidenceOutput: options.evidence_output,
+            };
+            const inputError = cliEvidenceDeliveryInputError(delivery);
+            if (inputError !== undefined)
+              return projectAnalysisError(inputError);
+            if (gdbOneShotCommandMayInvalidateDetachProof(args.command))
+              return projectAnalysisError(
+                new AnalysisInputError("gdb_console", undefined, [
+                  {
+                    path: ["command"],
+                    reason: "invalid_value",
+                    message:
+                      "This command can invalidate the verified inferior output route; use the persistent GDB session workflow.",
+                  },
+                ]),
               );
-              return executed.ok ? ok(executed.value.evidence) : executed;
-            },
-            service: {
-              close: () =>
-                closeDebuggerCommandSession(
-                  manager,
-                  sessionId,
-                  "gdb",
-                  "gdb_console",
-                  (cleanup) =>
-                    logger.error(
-                      { command: CLI_COMMANDS.debugWithGdb, cleanup },
-                      "GDB cleanup failed after collecting command output",
-                    ),
-                ),
-            },
-          });
-        }),
-      ),
-  });
-  registerCliCommand(cli, CLI_COMMANDS.debugWithRizin, {
-    description:
-      "Run one unrestricted Rizin debugger command in an ephemeral session",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Path to the local artifact to debug.",
-      ),
-      command: z
-        .string()
-        .min(1)
-        .describe("One unrestricted Rizin debugger command.")
-        .refine((value) => !/[\r\n]/u.test(value)),
-    }),
-    options: z.object({
-      inferiorTty: z
-        .string()
-        .min(1)
-        .describe(
-          "Caller-selected Linux TTY for inferior stdin, stdout and stderr.",
-        ),
-      backend: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Optional Rizin IO debugger backend name."),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.debugWithRizin, async () => {
-          const manager = createRizinDebugSessionManager(environment);
-          let sessionId: string | undefined;
-          return finishAnalysisCommand(
-            async () => {
-              const started = await manager.start(
-                {
-                  ...args,
-                  inferior_tty: options.inferiorTty,
-                  ...(options.backend === undefined
+            const manager = createGdbManager(environment);
+            let sessionId: string | undefined;
+            return deliverCliAnalysisEvidence({
+              ...delivery,
+              run: async () => {
+                const started = await manager.start(signal, {
+                  inferiorTty: options.inferiorTty,
+                  ...(options.executable === undefined
                     ? {}
-                    : { backend: options.backend }),
-                },
-                signal,
-              );
-              if (!started.ok) return started;
-              sessionId = started.value.session_id;
-              const executed = await manager.execute(
-                sessionId,
-                args.command,
-                signal,
-              );
-              return executed.ok ? ok(executed.value.evidence) : executed;
-            },
-            {
-              close: () =>
-                closeDebuggerCommandSession(
-                  manager,
+                    : { executable: options.executable }),
+                });
+                if (!started.ok) return started;
+                sessionId = started.value.session_id;
+                const executed = await manager.execute(
                   sessionId,
-                  "rizin",
-                  "rizin_debug_command",
-                  (cleanup) =>
-                    logger.error(
-                      { command: CLI_COMMANDS.debugWithRizin, cleanup },
-                      "Rizin cleanup failed after collecting command output",
-                    ),
-                ),
-            },
-            "rizin",
-            "rizin_debug_command",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
+                  args.command,
+                  signal,
+                );
+                return executed.ok ? ok(executed.value.evidence) : executed;
+              },
+              service: {
+                close: () =>
+                  closeDebuggerCommandSession(
+                    manager,
+                    sessionId,
+                    "gdb",
+                    "gdb_console",
+                    (cleanup) =>
+                      logger.error(
+                        { command: CLI_COMMANDS.debugWithGdb, cleanup },
+                        "GDB cleanup failed after collecting command output",
+                      ),
+                  ),
+              },
+            });
+          }),
+        ),
+    },
+    {
+      operations: [{ name: "gdb_console", flags: {} }],
+    },
+  );
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.debugWithRizin,
+    {
+      description:
+        "Run one unrestricted Rizin debugger command in an ephemeral session",
+      args: z.object({
+        path: localPathStringSchema.describe(
+          "Path to the local artifact to debug.",
+        ),
+        command: z
+          .string()
+          .min(1)
+          .describe("One unrestricted Rizin debugger command.")
+          .refine((value) => !/[\r\n]/u.test(value)),
+      }),
+      options: z.object({
+        inferiorTty: z
+          .string()
+          .min(1)
+          .describe(
+            "Caller-selected Linux TTY for inferior stdin, stdout and stderr.",
+          ),
+        backend: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional Rizin IO debugger backend name."),
+      }),
+      run: ({ args, options }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, CLI_COMMANDS.debugWithRizin, async () => {
+            const manager = createRizinDebugSessionManager(environment);
+            let sessionId: string | undefined;
+            return finishAnalysisCommand(
+              async () => {
+                const started = await manager.start(
+                  {
+                    ...args,
+                    inferior_tty: options.inferiorTty,
+                    ...(options.backend === undefined
+                      ? {}
+                      : { backend: options.backend }),
+                  },
+                  signal,
+                );
+                if (!started.ok) return started;
+                sessionId = started.value.session_id;
+                const executed = await manager.execute(
+                  sessionId,
+                  args.command,
+                  signal,
+                );
+                return executed.ok ? ok(executed.value.evidence) : executed;
+              },
+              {
+                close: () =>
+                  closeDebuggerCommandSession(
+                    manager,
+                    sessionId,
+                    "rizin",
+                    "rizin_debug_command",
+                    (cleanup) =>
+                      logger.error(
+                        { command: CLI_COMMANDS.debugWithRizin, cleanup },
+                        "Rizin cleanup failed after collecting command output",
+                      ),
+                  ),
+              },
+              "rizin",
+              "rizin_debug_command",
+              signal,
+            ).then(projectCliAnalysisResult);
+          }),
+        ),
+    },
+    {
+      operations: [{ name: "rizin_debug_command", flags: {} }],
+    },
+  );
 };

@@ -52,7 +52,10 @@ describe("provider-derived selectors in IDA composed workflows", () => {
   it("records an external callee IDA cannot resolve as a producer fault in the call graph", async () => {
     const { client, tools } = await session();
     try {
-      const result = await tools.execute("get_call_graph", { address: "main" });
+      const result = await tools.executeValidated({
+        name: "get_call_graph",
+        input: { address: "main", direction: "forward" },
+      });
 
       if (!result.ok) throw result.error;
       expect(
@@ -79,7 +82,10 @@ describe("provider-derived selectors in IDA composed workflows", () => {
   it("records the same node as a producer fault in the call path", async () => {
     const { client, tools } = await session();
     try {
-      const result = await tools.execute("trace_call_path", { start: "main" });
+      const result = await tools.executeValidated({
+        name: "trace_call_path",
+        input: { start: "main", direction: "forward" },
+      });
 
       if (!result.ok) throw result.error;
       expect(
@@ -96,12 +102,17 @@ describe("provider-derived selectors in IDA composed workflows", () => {
   it("keeps the caller's own unknown selector an invalid request in each workflow", async () => {
     const { client, tools } = await session();
     try {
-      const graph = await tools.execute("get_call_graph", {
-        address: "nosuch",
+      const graph = await tools.executeValidated({
+        name: "get_call_graph",
+        input: { address: "nosuch", direction: "forward" },
       });
-      const trace = await tools.execute("trace_call_path", { start: "nosuch" });
-      const batch = await tools.execute("batch_decompile", {
-        addresses: ["nosuch"],
+      const trace = await tools.executeValidated({
+        name: "trace_call_path",
+        input: { start: "nosuch", direction: "forward" },
+      });
+      const batch = await tools.executeValidated({
+        name: "batch_decompile",
+        input: { addresses: ["nosuch"] },
       });
 
       if (graph.ok || trace.ok) throw new Error("expected invalid requests");

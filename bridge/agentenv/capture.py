@@ -27,6 +27,11 @@ POLL_S = 0.2
 TAIL_BYTES = 4096
 
 
+def _poll_sleep(attempt: int, cap: float = POLL_S) -> float:
+    """Back off from 5 ms to `cap` so fast fake/local operations settle without fixed 200 ms stalls."""
+    return min(cap, 0.005 * (2 ** min(attempt, 6)))
+
+
 def _say(value: dict) -> int:
     print(json.dumps(value), flush=True)
     return 0
@@ -122,6 +127,7 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
     """Wait for the capture's event, or for it to exit, or for time to run out."""
     log = os.path.join(capture, "progress.log")
     deadline = time.monotonic() + timeout
+    attempt = 0
     while True:
         line = _event_line(log, offset, kinds, name)
         if line is not None:
@@ -131,7 +137,8 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
             return _ended(capture, code)
         if time.monotonic() > deadline:
             return {"timed_out": True, "progress": _tail(log)}
-        time.sleep(POLL_S)
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
 
 
 def _within(path: str, folder: str) -> bool:
@@ -260,8 +267,10 @@ def stop(arguments: dict) -> int:
     if _exit_code(capture) is None:
         _request(capture, "stop")
     deadline = time.monotonic() + arguments.get("timeout_s", 600)
+    attempt = 0
     while (code := _exit_code(capture)) is None and time.monotonic() < deadline:
-        time.sleep(POLL_S)
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
     log = os.path.join(capture, "progress.log")
     if code is None:
         return _say({"timed_out": True, "progress": _tail(log)})
@@ -449,18 +458,28 @@ def escalate():
 def stop_owned():
     """Finish the signal sequence for the leader and same-session children."""
     global leader_unsettled
+    wait_attempt = 0
     while child is not None and child.poll() is None:
         if escalate():
             if child.poll() is None or live_owned_members():
                 leader_unsettled = True
             return
-        time.sleep(0.2)
+        if stop_requested():
+            time.sleep(min(0.2, 0.005 * (2 ** min(wait_attempt, 6))))
+            wait_attempt += 1
+        else:
+            try:
+                child.wait(timeout=0.05)
+            except subprocess.TimeoutExpired:
+                pass
+    wait_attempt = 0
     while stop_requested() and live_owned_members():
         if escalate():
             if live_owned_members():
                 leader_unsettled = True
             return
-        time.sleep(0.2)
+        time.sleep(min(0.2, 0.005 * (2 ** min(wait_attempt, 6))))
+        wait_attempt += 1
 
 def abandon_drain():
     """Wait out stderr, and keep stopping same-session children after it closes.
@@ -625,8 +644,10 @@ def run_poll(arguments: dict) -> int:
     if not _owns_run(job, arguments["token"]):
         return _say({"error": "the command job ownership is not confirmed"})
     deadline = time.monotonic() + arguments.get("timeout_s", 30)
+    attempt = 0
     while (result := _run_result(job)) is None and time.monotonic() < deadline:
-        time.sleep(POLL_S)
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
     if result is None:
         pending = {"pending": True, "timed_out": os.path.exists(os.path.join(job, "timed_out"))}
         progress = _tail(os.path.join(job, "supervisor.log"))

@@ -136,6 +136,7 @@ cliTest(
     expect(result.json).toMatchObject({
       code: "resource_constraint",
       details: {
+        reported_limits: { boundary: "max_strings", maximum: 1 },
         partial_observation: {
           kind: "file-snapshot-hash",
           path,

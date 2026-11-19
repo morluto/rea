@@ -12,13 +12,19 @@ import {
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { err } from "../domain/result.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
-import { MachoCommandNamesLimitError } from "../domain/apple/machoCommandNames.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
 } from "../../tests/fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectionImage } from "./NativeMachoInspection.fixture.js";
+
+const commandBudgetFailure = () =>
+  decodeLimit("macho", "Controlled load-command record allowance", {
+    name: "macho_load_command_records",
+    maximum: 23,
+  });
 
 const control = vi.hoisted(() => ({
   read: undefined as undefined | (() => Promise<never>),
@@ -217,6 +223,47 @@ vi.mock("../domain/apple/machoCommandNames.js", async (importOriginal) => {
   };
 });
 
+it("reports the projected load-command allowance for a bounded Mach-O read", async () => {
+  const root = await createTestTempDirectory("rea-macho-projection-limit-");
+  const path = join(root, "fixture.macho");
+  const sections = 50_000;
+  const segment = new Uint8Array(72 + 80 * sections);
+  const header = new DataView(segment.buffer);
+  header.setUint32(0, 0x19, true); // LC_SEGMENT_64
+  header.setUint32(4, segment.length, true);
+  header.setUint32(64, sections, true);
+  await writeFile(path, inspectionImage({ commands: [segment] }));
+  const target = await nativeMachoTargetForFile(path);
+  const client = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner({
+      lipo: `Non-fat file: ${path} is architecture: arm64\n`,
+    }),
+    "darwin",
+  ).createClient(target);
+  onTestFinished(async () => {
+    await client.close();
+  });
+
+  const result = await client.execute("inspect_macho", {});
+  if (result.ok) throw new Error("Expected a Mach-O capacity refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      operation: "inspect_macho",
+      resource: "memory",
+      reason:
+        "Mach-O load-command projected bytes exceed the retained output budget",
+      reported_limits: {
+        boundary: "macho_load_command_projected_bytes",
+        maximum: 64 * 1024 * 1024,
+      },
+    },
+  });
+  expect(result.error.cleanupIncomplete).toBe(false);
+});
+
 it("reports target mutation after a throwing binary reader and retains the producer failure", async () => {
   const root = await createTestTempDirectory("rea-macho-target-mutation-");
   const path = join(root, "fixture.macho");
@@ -230,7 +277,7 @@ it("reports target mutation after a throwing binary reader and retains the produ
   ).createClient(await nativeMachoTargetForFile(path));
   control.read = async () => {
     await writeFile(path, "changed source bytes!");
-    throw new MachoCommandNamesLimitError(23, "records");
+    throw commandBudgetFailure();
   };
   try {
     const result = await client.execute("inspect_macho", {});
@@ -268,7 +315,7 @@ it("retains cancellation and a throwing reader's failure through final verificat
   const reason = new Error("cancel after reader failure");
   control.read = async () => {
     controller.abort(reason);
-    throw new MachoCommandNamesLimitError(23, "records");
+    throw commandBudgetFailure();
   };
   try {
     const result = await client.execute(
@@ -324,7 +371,7 @@ it("retains mutation and reader failure while descriptor cleanup is retried", as
     });
   control.read = async () => {
     await writeFile(path, "changed source bytes!");
-    throw new MachoCommandNamesLimitError(23, "records");
+    throw commandBudgetFailure();
   };
   onTestFinished(async () => {
     control.read = undefined;

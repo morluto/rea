@@ -236,7 +236,10 @@ export const runSolveHelper = async (options: {
       report ??= line.ok
         ? parseReport(line.value)
         : {
-            error: "REA's solve helper's report is too long",
+            error:
+              line.error._tag === "ControlLineMalformedUtf8"
+                ? "REA's solve helper's report is not valid UTF-8"
+                : "REA's solve helper's report is too long",
             cleanup: { unknown: true, sandboxes: [] },
           };
   })().catch(() => undefined);

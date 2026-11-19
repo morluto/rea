@@ -12,25 +12,21 @@ const cdpFrameEventFacts = (event: CdpEvent) => {
 };
 
 describe("CDP frame identity ownership", () => {
-  it.each([
-    ["missing", {}],
-    ["null", { frame: null }],
-    ["non-object", { frame: "frame" }],
-  ])("does not infer a root from a %s frame object", (_label, params) => {
-    expect(
-      selectCdpFrameIdentity(
-        cdpFrameEventFacts({ method: "Page.frameNavigated", params }),
-        "selected-main",
-      ),
-    ).toMatchObject({
-      applicability: "applicable",
-      selection: "unknown",
-      isRootReplacement: false,
-      identityIssue: "missing_frame",
-      parentRelation: "unknown",
-      parentId: null,
-      parentIssue: null,
-    });
+  it("keeps missing or malformed frame objects from becoming root evidence", () => {
+    for (const params of [{}, { frame: null }, { frame: "frame" }]) {
+      expect(
+        selectCdpFrameIdentity(
+          cdpFrameEventFacts({ method: "Page.frameNavigated", params }),
+          "selected-main",
+        ),
+      ).toMatchObject({
+        selection: "unknown",
+        frameId: null,
+        identityIssue: "missing_frame",
+        parentRelation: "unknown",
+        isRootReplacement: false,
+      });
+    }
   });
 
   it("recognizes a valid frame with no parent property as a root", () => {

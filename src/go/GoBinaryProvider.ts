@@ -1,5 +1,9 @@
+import { basename } from "node:path";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
@@ -95,17 +99,12 @@ const failureForPrimary = (
         : cause.boundary === "build-info"
           ? "max_build_info_bytes"
           : undefined;
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       cause.boundary === "search" ? "cpu" : "memory",
-      `Selected artifact ${path}: ${cause.message}`,
+      cause,
       {
-        boundary: cause.boundary,
-        maximum_bytes: cause.maximum_bytes,
-        ...(parameter === undefined ? {} : { parameter, unit: "bytes" }),
-      },
-      {
-        cause,
+        path,
         ...(parameter === undefined
           ? fixedAllowanceOptions(
               "The Go structural decoding allowance",
@@ -354,6 +353,7 @@ export class GoBinaryProvider implements GoBinaryPort {
           ...publicImage,
           artifact: {
             path: input.path,
+            file_name: basename(input.path),
             sha256: snapshot.sha256,
             bytes: snapshot.bytes.length,
           },

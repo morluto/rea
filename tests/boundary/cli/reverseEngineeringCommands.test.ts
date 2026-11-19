@@ -1,6 +1,7 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import pino from "pino";
-import { Cli } from "incur";
 import { z } from "zod";
 import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
@@ -64,39 +65,7 @@ const runObjdump = async (
     maxOutputBytes?: number;
   } = {},
 ) => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: { path: string; operation: string };
-        options: {
-          followDebugLinks: boolean;
-          symbol?: string;
-          commandTimeoutMs?: number;
-          maxOutputBytes?: number;
-        };
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (
-      name: string,
-      definition: {
-        run(input: {
-          args: { path: string; operation: string };
-          options: {
-            followDebugLinks: boolean;
-            symbol?: string;
-            commandTimeoutMs?: number;
-            maxOutputBytes?: number;
-          };
-        }): Promise<unknown>;
-      },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(
     cli,
     pino({ enabled: false }),
@@ -104,10 +73,14 @@ const runObjdump = async (
     undefined,
     () => service as ReverseEngineeringService,
   );
-  const command = commands.get(cliCommandFor("inspect_with_objdump"));
+  const command = cliCommand(
+    cli,
+    cliCommandFor("inspect_with_objdump"),
+  )?.definition;
   if (command === undefined)
     throw new Error("objdump CLI command was not registered");
   return command.run({
+    formatExplicit: false,
     args: { path, operation: selection.operation ?? "file_headers" },
     options: {
       followDebugLinks: false,
@@ -166,27 +139,8 @@ it("forwards selected objdump resource budgets and preserves omission", async ()
 it("lists objdump architectures without inventing an artifact path", async () => {
   const evidence = observation("complete");
   const inspectWithObjdump = vi.fn(async (_input: unknown) => ok(evidence));
-  const commands = new Map<
-    string,
-    {
-      readonly args?: { safeParse(input: unknown): { success: boolean } };
-      run(input: { args?: unknown; options?: unknown }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (_name: string, definition: unknown) => {
-      commands.set(
-        _name,
-        definition as {
-          readonly args?: {
-            safeParse(input: unknown): { success: boolean };
-          };
-          run(input: { args?: unknown; options?: unknown }): Promise<unknown>;
-        },
-      );
-      return cli;
-    },
-  } as unknown as CliInstance;
+
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(
     cli,
     pino({ enabled: false }),
@@ -198,18 +152,28 @@ it("lists objdump architectures without inventing an artifact path", async () =>
         close: vi.fn(async () => undefined),
       }) as unknown as ReverseEngineeringService,
   );
-  const command = commands.get(CLI_COMMANDS.listObjdumpArchitectures);
+  const command = cliCommand(
+    cli,
+    CLI_COMMANDS.listObjdumpArchitectures,
+  )?.definition;
   if (command === undefined)
     throw new Error("architecture command was not registered");
 
-  const result = await command.run({ options: { detail: "complete" } });
+  const result = await command.run({
+    formatExplicit: false,
+    args: {},
+    options: { detail: "complete" },
+  });
 
   expect(result).toEqual(evidence);
   expect(inspectWithObjdump).toHaveBeenCalledWith(
     { operation: "architectures" },
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
-  const artifactCommand = commands.get(cliCommandFor("inspect_with_objdump"));
+  const artifactCommand = cliCommand(
+    cli,
+    cliCommandFor("inspect_with_objdump"),
+  )?.definition;
   expect(
     artifactCommand?.args?.safeParse({
       path: "/tmp/sample",
@@ -477,29 +441,8 @@ it.each([false, true])(
   "passes the Rizin TTY and uses final cleanup outcome (retry=%s)",
   async (retryClose) => {
     process.exitCode = 0;
-    const commands = new Map<
-      string,
-      {
-        run(input: {
-          args: Record<string, unknown>;
-          options: Record<string, unknown>;
-        }): Promise<unknown>;
-      }
-    >();
-    const cli = {
-      command: (
-        name: string,
-        definition: {
-          run(input: {
-            args: Record<string, unknown>;
-            options: Record<string, unknown>;
-          }): Promise<unknown>;
-        },
-      ) => {
-        commands.set(name, definition);
-        return cli;
-      },
-    } as unknown as CliInstance;
+
+    const cli = createCommandCli();
     const evidence = createEvidence(
       unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
@@ -550,11 +493,12 @@ it.each([false, true])(
       undefined,
     );
     registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
-    const command = commands.get(CLI_COMMANDS.debugWithRizin);
+    const command = cliCommand(cli, CLI_COMMANDS.debugWithRizin)?.definition;
     if (command === undefined)
       throw new Error("Rizin CLI command was not registered");
 
     await command.run({
+      formatExplicit: false,
       args: { path: "./sample.bin", command: "dr" },
       options: { inferiorTty: "/dev/pts/7" },
     });
@@ -570,15 +514,16 @@ it.each([false, true])(
       expect.any(AbortSignal),
     );
 
-    const parserCli = Cli.create("rea-test", { version: "1.0.0", sync: false });
+    const parserCli = createCommandCli();
     registerReverseEngineeringCommands(
       parserCli as unknown as CliInstance,
       pino({ enabled: false }),
       {},
     );
-    const commandContract = Cli.toCommands
-      .get(parserCli)
-      ?.get(CLI_COMMANDS.debugWithRizin);
+    const commandContract = cliCommand(
+      parserCli,
+      CLI_COMMANDS.debugWithRizin,
+    )?.definition;
     expect(commandContract).toBeDefined();
     const argsSchema =
       commandContract === undefined
@@ -612,19 +557,7 @@ const retainedRizinCleanup = {
 it.each(["incomplete", "interrupt", "control"] as const)(
   "reports final Rizin cleanup %s as a typed outcome",
   async (mode) => {
-    const commands = new Map<
-      string,
-      { run(input: unknown): Promise<unknown> }
-    >();
-    const cli = {
-      command(
-        name: string,
-        definition: { run(input: unknown): Promise<unknown> },
-      ) {
-        commands.set(name, definition);
-        return cli;
-      },
-    } as unknown as CliInstance;
+    const cli = createCommandCli();
     const previous = process.exitCode;
     const evidence = createEvidence(
       unknownTarget("not-observed"),
@@ -712,12 +645,13 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         );
       });
     registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
-    const command = commands.get(CLI_COMMANDS.debugWithRizin);
+    const command = cliCommand(cli, CLI_COMMANDS.debugWithRizin)?.definition;
     if (command === undefined)
       throw new Error("Rizin CLI command was not registered");
     try {
       process.exitCode = 0;
       const result = await command.run({
+        formatExplicit: false,
         args: { path: "./sample.bin", command: "dr" },
         options: { inferiorTty: "/dev/pts/7" },
       });

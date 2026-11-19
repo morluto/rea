@@ -18,10 +18,12 @@ import {
   createFlutterApk,
   createDuplicateFlutterApk,
 } from "../fixtures/flutterApk.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "CLI and stdio MCP preserve AOT facts and exact artifact identity across ignored DT_BIND_NOW values",

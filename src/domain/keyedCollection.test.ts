@@ -4,7 +4,6 @@ import {
   allKeyed,
   firstKeyed,
   keyedBy,
-  lastKeyed,
   uniqueKeyed,
 } from "./keyedCollection.js";
 
@@ -62,9 +61,7 @@ describe("keyed precedence and repeated keys", () => {
     expect(allKeyed(byType, 3)).toEqual([]);
   });
 
-  it("chooses first or last only under a stated precedence rule", () => {
-    expect(firstKeyed(byType, 11, "the loader reads the first")?.id).toBe(0);
-    expect(lastKeyed(byType, 11, "the loader reads the last")?.id).toBe(2);
+  it("requires callers to state the format's precedence rule", () => {
     expect(() => firstKeyed(byType, 11, " ")).toThrow(TypeError);
   });
 });

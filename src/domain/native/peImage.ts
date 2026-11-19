@@ -1,7 +1,11 @@
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
 import { readPeOptionalHeader } from "../peMachine.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import {
+  PE_SECTION_HEADER_BYTES,
+  peSectionTableExtent,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
@@ -109,20 +113,25 @@ export const readPeImage = (bytes: Buffer): PeImage => {
     offset: 0,
     size: Math.min(sizeOfHeaders, bytes.length),
   };
-  const start = reader.table(
-    BigInt(optional + optionalSize),
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    optional,
+    optionalSize,
     count,
-    40,
+  );
+  const { offset: tableAt, size: tableSize } = reader.fileRange(
+    BigInt(sectionTableOffset),
+    BigInt(sectionTableBytes),
     "PE sections",
   );
+  const sectionTable = bytes.subarray(tableAt, tableAt + tableSize);
   const mappings: FileMapping[] = [];
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   const sections: PeImageSection[] = [];
   for (let index = 0; index < count; index++) {
-    const entry = start + index * 40;
+    const entry = index * PE_SECTION_HEADER_BYTES;
     const section = readPeSectionHeader(
-      reader.range(entry, 40, "PE section header"),
+      sectionTable.subarray(entry, entry + PE_SECTION_HEADER_BYTES),
     );
     if (!section.ok)
       throw new BinaryFormatFailure(section.error.kind, section.error.message);

@@ -197,3 +197,41 @@ it.each(["sections", "programs", "section names"] as const)(
     );
   },
 );
+
+it("detects PT_INTERP in program headers and records hasInterpreter for RISC-V", async () => {
+  const fixture = image(64, true);
+  fixture.u16(18, 243); // EM_RISCV
+  fixture.u16(16, 3); // ET_DYN
+  const withoutInterp = await admit(fixture.bytes);
+  expect(withoutInterp.ok).toBe(true);
+  if (!withoutInterp.ok) throw withoutInterp.error;
+  expect(withoutInterp.value.architecture).toBe("riscv");
+  if (withoutInterp.value.architecture === "riscv") {
+    expect(withoutInterp.value.riscv.hasInterpreter).toBeUndefined();
+  }
+
+  fixture.u32(fixture.program, 3); // PT_INTERP
+  const withInterp = await admit(fixture.bytes);
+  expect(withInterp.ok).toBe(true);
+  if (!withInterp.ok) throw withInterp.error;
+  expect(withInterp.value.architecture).toBe("riscv");
+  if (withInterp.value.architecture === "riscv") {
+    expect(withInterp.value.riscv.hasInterpreter).toBe(true);
+  }
+});
+
+it.each([0n, 1n])(
+  "refuses an implausibly short PT_INTERP range (%s bytes)",
+  async (size) => {
+    const fixture = image(64, true);
+    fixture.u32(fixture.program, 3);
+    fixture.word(fixture.program + 32, size);
+    expect(await admit(fixture.bytes)).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "file_format_rejected",
+        reason: "invalid ELF PT_INTERP file size",
+      },
+    });
+  },
+);

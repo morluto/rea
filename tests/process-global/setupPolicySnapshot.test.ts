@@ -32,10 +32,8 @@ import {
   configureClientConfiguration,
   inspectClientConfiguration,
 } from "../../src/application/SetupClientConfiguration.js";
-import {
-  supportedClientRegistrationProfile,
-  type SetupClient,
-} from "../../src/application/SupportedClients.js";
+import type { SetupClient } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {

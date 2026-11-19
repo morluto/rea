@@ -567,7 +567,7 @@ it.each([
       response_body: false,
       header_values: false,
     },
-    reads: [1, 0, 0, 0],
+    reads: [1, 1, 0, 0],
     phases: ["request"],
   },
   {
@@ -576,7 +576,7 @@ it.each([
       response_body: true,
       header_values: false,
     },
-    reads: [0, 0, 1, 0],
+    reads: [0, 0, 1, 1],
     phases: ["response"],
   },
   {
@@ -589,7 +589,7 @@ it.each([
     phases: ["request", "response"],
   },
 ])(
-  "reads only the selected content $selection",
+  "reads selected bodies and the headers needed for their type $selection",
   async ({ selection: selected, reads, phases }) => {
     const { collector, events } = harness(selected);
     const request = new RequestFixture("input");
@@ -609,6 +609,12 @@ it.each([
         .filter((event) => event.kind === "network-content")
         .map((event) => event.phase),
     ).toEqual(phases);
+    if (!selected.header_values)
+      expect(
+        events
+          .filter((event) => event.kind === "network-content")
+          .map(({ headers }) => headers),
+      ).toEqual([{ state: "not_requested" }]);
   },
 );
 
@@ -985,19 +991,20 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
 
-it("redacts declared encodings in body media metadata", async () => {
+it("keeps a redacted declaration out of body media metadata", async () => {
   const { collector, events } = harness({
     request_body: false,
     response_body: true,
-    header_values: false,
+    header_values: true,
   });
   const request = new RequestFixture("input");
   const response = new ResponseFixture(request, "ordinary-bytes");
-  const headers = response.headers();
-  response.headers = () => ({
-    ...headers,
-    "content-type": `text/plain; fixture=${encodeURIComponent("私密")}`,
-  });
+  response.headersArray = async () => [
+    {
+      name: "Content-Type",
+      value: `text/plain; fixture=${encodeURIComponent("私密")}`,
+    },
+  ];
   collector.request(request);
   collector.response(response);
   collector.finished(request);
@@ -1006,13 +1013,93 @@ it("redacts declared encodings in body media metadata", async () => {
     expect.objectContaining({
       kind: "network-content",
       phase: "response",
+      headers: {
+        state: "captured",
+        items: [
+          {
+            name: "Content-Type",
+            value: "text/plain; fixture=[REDACTED:declared]",
+            redacted: true,
+          },
+        ],
+      },
       body: expect.objectContaining({
         state: "captured",
-        media_type: "text/plain; fixture=[REDACTED:declared]",
+        media_type: null,
       }),
     }),
   );
 });
+
+it.each([
+  {
+    declarations: [
+      "application/json; charset=utf-8",
+      "application/octet-stream",
+    ],
+    type: null,
+  },
+  {
+    declarations: [
+      "application/octet-stream",
+      "application/json; charset=utf-8",
+    ],
+    type: null,
+  },
+  {
+    declarations: ["application/json; charset=utf-8, application/octet-stream"],
+    type: null,
+  },
+  {
+    declarations: ["application/json", "application/json"],
+    type: "application/json",
+  },
+  {
+    declarations: ['application/json; note="one,two"'],
+    type: 'application/json; note="one,two"',
+  },
+  { declarations: null, type: null },
+])(
+  "derives body type once from retained declarations $declarations",
+  async ({ declarations, type }) => {
+    const { collector, events } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("input");
+    const response = new ResponseFixture(request, '{"value":"\\u79c1\\u5bc6"}');
+    response.headers = () => ({
+      "content-type": declarations?.join(", ") ?? "application/json",
+    });
+    response.headersArray = async () => {
+      response.headerReads += 1;
+      if (declarations === null) throw new Error("Headers unavailable");
+      return declarations.map((value) => ({ name: "Content-Type", value }));
+    };
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(response.headerReads).toBe(1);
+    expect(content).toMatchObject({
+      headers: { state: "not_requested" },
+      body: {
+        state: "captured",
+        media_type: type,
+        media_type_source: "content-type-header",
+      },
+    });
+    if (content?.kind !== "network-content")
+      throw new Error("Missing response content");
+    expect(JSON.parse(bodyText(content))).toEqual({
+      value: "[REDACTED:declared]",
+    });
+  },
+);
 
 it("bounds admitted transactions before invoking content producers", async () => {
   const { collector, events } = harness();

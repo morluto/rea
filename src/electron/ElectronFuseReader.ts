@@ -1,5 +1,9 @@
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
-import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import {
+  malformedInput,
+  unsupportedInput,
+  type LimitRef,
+} from "../domain/parseFailure.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
 import { decodePeMachine } from "../domain/peMachine.js";
@@ -63,7 +67,9 @@ interface SliceRange {
 /** A measured bound was hit before a complete fuse report could be returned. */
 export class ElectronFuseResourceFailure extends Error {
   constructor(
-    readonly boundary: "file-size" | "capacity",
+    readonly limit: LimitRef & {
+      readonly name: "maximum_input_bytes" | "maximum_sentinels_per_slice";
+    },
     message: string,
   ) {
     super(message);
@@ -126,7 +132,10 @@ export const readElectronFuseImage = async (
     );
   if (before.size > BigInt(ELECTRON_FUSE_LIMITS.maximumFileBytes))
     throw new ElectronFuseResourceFailure(
-      "file-size",
+      {
+        name: "maximum_input_bytes",
+        maximum: ELECTRON_FUSE_LIMITS.maximumFileBytes,
+      },
       `Selected artifact exceeds ${ELECTRON_FUSE_LIMITS.maximumFileBytes} bytes: ${path}`,
     );
   const size = Number(before.size);
@@ -345,7 +354,10 @@ const absorbChunk = (
       if (!state.hits.includes(sentinelOffset)) {
         if (state.hits.length >= ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice)
           throw new ElectronFuseResourceFailure(
-            "capacity",
+            {
+              name: "maximum_sentinels_per_slice",
+              maximum: ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
+            },
             `Slice ${state.slice.index} contains more than ${ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice} Electron fuse sentinels.`,
           );
         state.hits.push(sentinelOffset);

@@ -279,6 +279,8 @@ class TimelineCapture {
       case "Inspector.targetCrashed":
         this.targetTerminated();
         return;
+      default:
+        return;
     }
   }
 

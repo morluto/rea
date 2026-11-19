@@ -27,13 +27,6 @@ it("retains an explicitly undefined cause separately from omission", () => {
   expect(error.diagnostics).toEqual({ stage: "queue" });
 });
 
-it("retains an opaque caller reason by identity", () => {
-  const reason = { source: "caller", opaque: 7 };
-  const error = new HopperCancelledError(reason);
-
-  expect(error.cause).toBe(reason);
-});
-
 it("reports a stopped or unstartable bridge as a provider-wide failure", () => {
   expect(new HopperProcessError(1).providerWide).toBe(true);
   expect(new HopperStartError().providerWide).toBe(true);

@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionFailure } from "./OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -593,14 +594,17 @@ const processFailureReason = (
 
 const processCaptureFromSnapshot = (
   snapshot: ProviderProcessSnapshot,
-): ProcessCapture => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdoutBytes: snapshot.stdout.bytes,
-  stderrBytes: snapshot.stderr.bytes,
-  exitCode: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-});
+): ProcessCapture => {
+  const captured = capturedProviderOutput(snapshot);
+  return {
+    stdout: captured.stdout,
+    stderr: captured.stderr,
+    stdoutBytes: snapshot.stdout.bytes,
+    stderrBytes: snapshot.stderr.bytes,
+    exitCode: captured.exit_code ?? null,
+    signal: captured.signal ?? null,
+  };
+};
 
 const hashFile = (path: string, signal?: AbortSignal): Promise<string> =>
   new Promise((resolve, reject) => {

@@ -96,6 +96,19 @@ export const cliOperationFailureIdentity = (
 ): CliFailureIdentity | undefined =>
   isRecord(value) ? loggedFailures.get(value)?.identity : undefined;
 
+/** Keep failure classification and recovery identity when a CLI wrapper projects an error record. */
+export const rebindLoggedCliFailure = (
+  previous: unknown,
+  next: unknown,
+): void => {
+  if (previous === next || !isRecord(previous) || !isRecord(next)) return;
+  if (!loggedFailures.has(previous)) return;
+  loggedFailures.set(
+    next,
+    inferCliOperationFailure(next) ?? loggedFailures.get(previous),
+  );
+};
+
 /** Log one CLI command with duration and a stable success or failure status. */
 export const logCliCommand = async <Value>(
   logger: Logger,

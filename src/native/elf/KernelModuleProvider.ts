@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -96,19 +99,15 @@ const kernelModuleFailurePrimary = (
 ) => {
   const { cause, origin } = facts;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       "memory",
-      cause.message,
-      { boundary: cause.boundary, maximum_bytes: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The ELF structural decoding allowance",
-          "parser",
-          binaryResourceCeiling(cause),
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(
+        "The ELF structural decoding allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
     );
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;

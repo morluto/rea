@@ -24,10 +24,10 @@ const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
  * complete CLI must answer, as it does for shell completion, which has no
  * global arguments. A standalone version or retired per-command MCP query
  * needs no registrar. Help, schemas, `--llms`, completions, other
- * Incur builtins, unknown names ("did you mean"), and a missing or unusable
+ * CLI builtins, unknown names ("did you mean"), and a missing or unusable
  * recording all describe or search every command.
  */
-export const selectCliRegistrations = (
+const selectCliRegistrations = (
   global: CliGlobalArguments | undefined,
   recorded: Readonly<Record<string, string>> | undefined,
 ): readonly CliCommandRegistrationId[] | undefined => {

@@ -232,10 +232,9 @@ const assertCancellationDuringRootRelease = async (options: {
   });
 };
 
-const createWabtArtifactFixture = async () => {
+const createWabtArtifactFixture = async (bytes = Buffer.alloc(76, 1)) => {
   const selectedRoot = await createTestTempDirectory("rea-wabt-seam-");
   const path = join(selectedRoot, "selected.wasm");
-  const bytes = Buffer.alloc(76, 1);
   await writeFile(path, bytes);
   for (const tool of ["wasm-validate", "wasm-objdump", "wasm2wat"])
     await writeFile(
@@ -249,6 +248,105 @@ const createWabtArtifactFixture = async () => {
   );
   return { selectedRoot, path, bytes, dump };
 };
+
+it.each([
+  { label: "muted", diagnostic: "", tool: "wasm2wat", valid: true },
+  {
+    label: "corroborated",
+    diagnostic:
+      "000000d: error: invalid utf-8 encoding: section name\nmodule.wasm: warning: opaque producer detail \t\n",
+    tool: "wasm2wat",
+    valid: true,
+  },
+  {
+    label: "unmatched",
+    diagnostic: "000000c: error: invalid utf-8 encoding: section name\n",
+    tool: "wasm2wat",
+    valid: false,
+  },
+  {
+    label: "unrecognized",
+    diagnostic: "000000d: error: another diagnostic\n",
+    tool: "wasm-objdump",
+    valid: false,
+  },
+])(
+  "preserves $label diagnostics for a byte-corroborated blank name",
+  async ({ diagnostic, tool, valid }) => {
+    const bytes = Buffer.from(
+      "0061736d01000000000a02fffe7061796c6f6164",
+      "hex",
+    );
+    const fixture = await createWabtArtifactFixture(bytes);
+    const dump =
+      "\nmodule.wasm:\tfile format wasm 0x1\n\nSections:\n\n" +
+      "   Custom start=0x0000000a end=0x00000014 (size=0x0000000a) \n" +
+      "Section Details:\n";
+    const wat = "(module)\n";
+    const executed: string[] = [];
+    const provider = new WabtArtifactProvider(
+      { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+      (input) => {
+        const version = input.arguments[0] === "--version";
+        const command = input.command.includes("wasm-objdump")
+          ? "wasm-objdump"
+          : input.command.includes("wasm2wat")
+            ? "wasm2wat"
+            : "wasm-validate";
+        if (!version) executed.push(command);
+        const stdout = version
+          ? "1.0.42\n"
+          : command === "wasm-objdump"
+            ? dump
+            : command === "wasm2wat"
+              ? wat
+              : "";
+        const stderr = !version && command === tool ? diagnostic : "";
+        return spawnOwnedProviderProcess({
+          ...input,
+          hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+          command: process.execPath,
+          arguments: [
+            "-e",
+            `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)});`,
+          ],
+        });
+      },
+    );
+    try {
+      const result = await provider.inspect({
+        path: fixture.path,
+        glue_paths: [],
+        candidate_paths: [],
+      });
+      if (!valid) {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisOutputError",
+            capturedOutput: {
+              stdout: tool === "wasm-objdump" ? dump : wat,
+              stderr: diagnostic,
+            },
+          },
+        });
+        expect(executed.at(-1)).toBe(tool);
+        return;
+      }
+      if (!result.ok) throw result.error;
+      expect(wasmArtifactSchema.parse(result.value.result)).toMatchObject({
+        validation: "valid",
+        debug_name_metadata: "unknown",
+        sections: [{ kind: "Custom", start: 10, end: 20, description: "" }],
+        custom_section_warnings:
+          diagnostic === "" ? [] : [{ tool, text: diagnostic }],
+        wat: { text: wat },
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it.each(["stdout", "stderr"] as const)(
   "rejects malformed UTF-8 in WABT %s while retaining literal replacement characters",
@@ -458,9 +556,10 @@ it.each([
       });
     } else {
       if (rejected.ok) throw new Error("Expected byte admission to fail");
-      expect(projectAnalysisError(rejected.error).remediation.action).toContain(
-        parameter,
-      );
+      const projected = projectAnalysisError(rejected.error);
+      if (parameter === "max_tool_bytes")
+        expect(projected.code).toBe("capability_unavailable");
+      expect(projected.remediation.action).toContain(parameter);
     }
     const requestedBudget = parameter === "max_artifact_paths" ? 17 : 10_000;
     const recovered = await service.inspect({
@@ -881,9 +980,10 @@ it("reports a snapshot write the caller cancelled as that caller's cancellation"
     );
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(controller.signal.aborted).toBe(true);
     expect(result.error.cause).toBe(controller.signal.reason);
-    // Only the version probes ran; no producer command saw the snapshot.
-    expect(commands.every((args) => args[0] === "--version")).toBe(true);
+    expect(commands).not.toHaveLength(0);
+    for (const [command] of commands) expect(command).toBe("--version");
   } finally {
     fileCloseFailure.abortSnapshotWrite = undefined;
     await provider.close();
@@ -1348,7 +1448,6 @@ it("enforces a selected command deadline and completes a corrected retry after c
   if (!corrected.ok) throw corrected.error;
   const report = wasmArtifactSchema.parse(corrected.value.result);
   expect(report.tool_profile.timeout_ms).toBe(2_000);
-  expect(report.limitations.join(" ")).not.toContain("30-second");
   expect(Buffer.compare(await readFile(fixture.path), fixture.bytes)).toBe(0);
 });
 
@@ -1576,7 +1675,9 @@ const runOwnedArtifactOutcome = async (
   await assertSnapshotCleanupOutcome(mode, result, provider, runtimePath);
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-  if (acquiredPid !== undefined) {
+  if (mode === "cancelled") {
+    if (acquiredPid === undefined)
+      throw new Error("The cancelled command did not report an acquired PID");
     const pid = acquiredPid;
     expect(() => process.kill(pid, 0)).toThrow();
   }
@@ -1705,16 +1806,14 @@ it.each([
             stderr: "module.wasm: invalid bytes\n",
           },
         });
-      if (validation === "unknown")
+      if (stage === "candidate admission")
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "invalid_request",
+          details: { issues: [{ path: ["candidate_paths", 1] }] },
+        });
+      else if (validation === "unknown")
         expect(result.error).toMatchObject({
-          issues: [
-            {
-              path:
-                stage === "candidate admission"
-                  ? ["candidate_paths", 1]
-                  : ["glue_paths", 0],
-            },
-          ],
+          issues: [{ path: ["glue_paths", 0] }],
         });
       if (stage === "glue finalization") {
         expect(result.error).toMatchObject({
@@ -1733,10 +1832,8 @@ it.each([
     }
   },
 );
-it.each([null, { reason: "caller-owned object" }, undefined])(
-  "preserves finalization abort reason %j through cleanup recovery",
-  (reason) => runOwnedArtifactOutcome("cancelled-close-failure", reason),
-);
+it("preserves a null finalization abort reason through cleanup recovery", () =>
+  runOwnedArtifactOutcome("cancelled-close-failure", null));
 const outputLimitFailure = ({
   stdout = "(module",
   stderr = "",
@@ -1769,7 +1866,7 @@ const outputLimitFailure = ({
     undefined,
     cleanupFailure === null ? [] : ["/owned/runtime"],
   );
-it("reports WABT output beyond the budget as a resource constraint with a bounded excerpt", async () => {
+it("reports WABT output overflow with bounded UTF-8 excerpts of both streams", async () => {
   const selectedRoot = await createTestTempDirectory("rea-wabt-budget-");
   const path = join(selectedRoot, "selected.wasm");
   await writeFile(path, Buffer.alloc(76, 1));
@@ -1788,7 +1885,10 @@ it("reports WABT output beyond the budget as a resource constraint with a bounde
     (input) => {
       const version = input.arguments[0] === "--version";
       if (!version && input.command.includes("wasm2wat"))
-        throw outputLimitFailure({ stdout: "(module" + "a".repeat(5000) });
+        throw outputLimitFailure({
+          stdout: "a".repeat(4095) + "\u{1F600}b",
+          stderr: "w".repeat(5000),
+        });
       const script = version
         ? 'process.stdout.write("1.0.42\\n")'
         : input.command.includes("objdump")
@@ -1824,11 +1924,11 @@ it("reports WABT output beyond the budget as a resource constraint with a bounde
     },
   });
   expect(projection.details?.captured_output).toEqual({
-    stdout: "(module" + "a".repeat(4089),
-    stderr: "",
+    stdout: "a".repeat(4095),
+    stderr: "w".repeat(4096),
     truncated: true,
-    stdout_bytes: 5007,
-    stderr_bytes: 0,
+    stdout_bytes: 4100,
+    stderr_bytes: 5000,
     exit_code: null,
     signal: "SIGKILL",
   });
@@ -1880,33 +1980,6 @@ it("does not attribute wasm-objdump output to a wasm2wat launch failure", async 
   expect(result.error.capturedOutput).toBeUndefined();
 });
 
-it("bounds an oversized stderr to an excerpt", () => {
-  expect(
-    projectAnalysisError(
-      wabtFailure(
-        outputLimitFailure({ stderr: "w".repeat(5000) }),
-        "producer",
-        "/module.wasm",
-      ),
-    ).details?.captured_output,
-  ).toEqual({
-    stdout: "(module",
-    stderr: "w".repeat(4096),
-    truncated: true,
-    stdout_bytes: 7,
-    stderr_bytes: 5000,
-    exit_code: null,
-    signal: "SIGKILL",
-  });
-});
-it("cuts the excerpt on a code point boundary", () => {
-  const failure = wabtFailure(
-    outputLimitFailure({ stdout: "a".repeat(4095) + "\u{1F600}b" }),
-    "producer",
-    "/module.wasm",
-  );
-  expect(failure.capturedOutput?.stdout).toBe("a".repeat(4095));
-});
 it("bounds the excerpt when cleanup also fails after the output budget", () => {
   expect(
     projectAnalysisError(

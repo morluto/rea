@@ -127,27 +127,24 @@ TypeScript versions.
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
 The build also records `dist/mcp-catalog.json` (compact inputs) from the
 canonical SDK registrations and binds it to the runtime with its SHA-256
-digest. These are
-runtime artifacts, separate from the test catalog below. Default target-free
-MCP startup serves its schemas without constructing analysis validators;
-the first tool or guided-workflow request materializes the canonical runtime
-on that same SDK server. Explicit compact/full input selections preserve
-their advertised schemas throughout materialization. Initial-target,
-HTTP and output-schema-off startup keep the eager path; source runs without
-recorded artifacts also use eager composition. Compare memory both after discovery and after a completed
-request; report diagnostic GC separately from normal resident memory.
+digest. Target-free stdio MCP startup with the default catalog and output
+profiles serves its schemas without constructing analysis validators, including
+when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The first tool or guided-workflow request materializes the canonical runtime
+on that same SDK server. It preserves the advertised schemas throughout
+materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold
+startup use eager composition, as do source runs without recorded artifacts.
+Compare memory both after discovery and after a completed request; report
+diagnostic GC separately from normal resident memory.
 
 Turbo's strict task environment preserves caller-selected `GOMAXPROCS`,
 `GOMEMLIMIT`, and `UV_THREADPOOL_SIZE` for resource-constrained builds and
 checks. These execution controls do not change artifact content, so changing
 their values retains cache reuse. They control individual runtimes; monitor
 the complete process family separately when enforcing a total memory budget.
-`npm run test:prepare` also generates the MCP contract test catalog, product
-catalog, and portable managed evidence used by the complete suite. Focused
-tests prepare those extra outputs only when their selected files consume them.
-The MCP test catalog is JSON in `.cache/mcp-tool-catalog.json`; the tracked
-test loader supplies its types without making generation a source-check
-prerequisite. Run `npm run mcp-catalog:generate` to refresh it independently.
+`npm run test:prepare` also generates the product catalog and portable managed
+evidence used by the complete suite. Focused tests prepare those extra outputs
+only when their selected files consume them.
 Documentation generation and managed conformance run through their separate
 `docs:generate` and `evidence:generate` task graphs.
 
@@ -199,11 +196,11 @@ Its reason argument is required: an aborted `AbortSignal`, an earlier
 `AnalysisCancelledError`, a `carriedReason(...)` recovered from an inner
 failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
 architecture guard rejects a direct `new AnalysisCancelledError(` outside that
-module. Files that still construct one directly are listed with their counts in
-`scripts/verify/baselines/analysis-cancelled-constructor.json`; a file may not
-exceed its count, and after removing copies run
-`node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
-Each counted guard keeps its baseline in its own
+module. No file is allowed one, so this guard has no baseline file; a guard
+without one allows zero copies. Other counted guards still list the files that
+keep copies, with their counts; a file may not exceed its count, and after
+removing copies run `node scripts/verify/architecture-guards.mjs --shrink-baselines`
+to lower it. Each counted guard keeps its baseline in its own
 `scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
 changes to different guards never edit the same file. Resolve a conflict in one
 of these files by keeping both sides' entries (the higher count where they
@@ -544,9 +541,14 @@ relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
 
-Pull-request scans are cancelled when superseded. Active scans on `main` finish
-so frequent pushes cannot prevent a complete baseline from being uploaded.
-Cancelled runs skip the SARIF artifact upload when no report was produced.
+Pull-request scans are cancelled when superseded, skip pure test/prose diffs via
+`paths-ignore`, and select only the CodeQL languages (`javascript-typescript`,
+`python`, `actions`) whose production inputs changed (failing closed to all
+three languages on shared CodeQL configuration or unclassified paths). Active
+scans on `main`, weekly schedules, and manual dispatches always analyze all
+three languages so frequent pushes cannot prevent a complete baseline from being
+uploaded. Cancelled runs skip the SARIF artifact upload when no report was
+produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
@@ -612,8 +614,8 @@ affected consumer.
 Every provider capability that `src/composition/capabilityDeclarations.ts`
 binds to a provider needs an entry in
 `tests/conformance/providerCapabilityCases.ts`. The entry is either a
-CLI, MCP or acceptance test that names one of the capability's operations, or an
-exemption that states why no such case exists.
+CLI, MCP or acceptance test that exercises one of the capability's operations,
+or an exemption that states why no such case exists.
 `tests/conformance/providerCapabilityConformance.test.ts` iterates the
 declarations, so a new capability fails the suite until it has one.
 
@@ -736,6 +738,13 @@ consumers. Add [lifecycle regressions](#lifecycle-regressions) when resource
 ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
+When consolidating interpretation across consumers, use the same authored
+input and an independently specified expected fact at the boundary where
+each consumer previously made its own decision. Allow differences in
+recovery or display when those belong to the consumer. For generated
+installers and verifiers, exercise the emitted artifact in its supported
+runtime so the test covers the code that actually receives the input.
+
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |
@@ -753,9 +762,11 @@ control that keeps completed Evidence inline and preserves the original failure.
 
 For a seekable file with a known extent, distinguish a provably impossible wire
 extent from an independent representation limit. Pair the malformed declaration
-with a structurally possible over-limit control. A count-only truncated fixture
-does not establish capacity behavior. This does not require decoding an opaque
-compressed payload merely to apply its declared expansion limit.
+with a structurally possible over-limit control. Include a length that fits the
+remaining bytes by itself but would consume the framing required for a later
+field or row. A count-only truncated fixture does not establish capacity
+behavior. This does not require decoding an opaque compressed payload merely
+to apply its declared expansion limit.
 
 When producer order is unspecified, synchronize fixtures on the observed request
 or completion event. A filename, generated key, or fixed delay does not prove
@@ -862,6 +873,12 @@ the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
 
+To assert that a POSIX process or process group has stopped, use
+`processHasStopped` or `processGroupHasStopped` from
+`tests/support/process/observePosixProcess.ts`, not signal 0. Signal 0 still
+reaches a zombie, and an orphan stays one wherever PID 1 does not reap it, as in
+a container started without an init process.
+
 | Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                                                             |
@@ -906,7 +923,10 @@ For ZIP extraction, replace the pathname after inventory reader close while the
 admitted root descriptor remains owned. Verify that identical member bytes in a
 different carrier, a directory, or a missing pathname cannot switch the
 materialized source. Exercise descriptor close failure and retry before output
-publication.
+publication. Inject a producer finalization failure after its output sink
+closes and verify that the consumer observes the failure. Successful EOF
+requires the producer to settle successfully, even when all output bytes have
+arrived.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
 Include a physical I/O failure reused as the abort reason and genuine
@@ -1168,7 +1188,7 @@ or qualify the release revision for mutation coverage.
 
 Fast CI starts the source-only projects after classification, independently of
 build and static checks, and runs twelve built-dependent shards after the build.
-Those thirteen test jobs still select every portable test. Full qualification keeps six
+Those thirteen test jobs still select every portable test. Full qualification keeps twelve
 complete Vitest shards with coverage. Neither tier retries tests. Canonical
 project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled
@@ -1177,7 +1197,9 @@ Source and built blobs have separate labels to prevent merge collisions.
 Each test job emits a blob report; the merge job produces JUnit and JSON diagnostics, a module timing
 report, plus aggregate coverage during full qualification. It retains available
 reports even when a shard fails, uploads available diagnostics, and writes the
-slowest files to the workflow summary. Partial reports are marked diagnostic
+slowest files to the workflow summary. When a merged run fails, the summary
+and job log also list up to 20 reported failed test files and the count of
+unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
 Only a successful complete merge on the default branch publishes shard history,
@@ -1249,11 +1271,13 @@ separate and grows when more shard jobs compete for runners. The npm download
 cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
 Hosted CI jobs use four workers; other hosts stay at two
-because they are shared with other checks. Full qualification keeps six covered
+because they are shared with other checks. Full qualification keeps twelve covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs
-hourly or on manual dispatch. It uploads `ci-job-timings-batch` with raw API pages and
+every six hours or on manual dispatch, and snapshots pull-request CI health across
+the preceding twelve hours using full ISO 8601 timestamps within a ten-page
+(1,000-run) API budget. It uploads `ci-job-timings-batch` with raw API pages and
 a normalized point-in-time report for each collected workflow attempt, plus a
 batch manifest describing examined coverage, failures, and limits. Overlapping
 lookback windows may collect an attempt again; identify records by run ID and
@@ -1283,9 +1307,18 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
-the same workflow's Turbo cache for portable compiled JavaScript, skills, and
-catalogs. The key parser retains the validated `test:prepare` task identities in
+POSIX native package jobs, documentation checks, Go binary verification, and the
+Apple artifact lane reuse the same workflow's portable Turbo cache
+(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+(`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
+than Linux's accelerated `tsrs` checker, so they restore and publish a separate
+Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to
+two generations by `cache-retention.mjs`). `windows-native-build` caches
+cross-compiled MinGW outputs keyed by source/fixture hashes, runner
+`ImageOS`/`ImageVersion`, and UTC date (bounding lifetime to 24 hours so
+upstream toolchain updates refresh daily) while running
+`npm run verify:windows-native:artifact` unconditionally on every cache hit. The
+key parser retains the validated `test:prepare` task identities in
 `.cache/ci-build-plan.json`; staging reads this plan without starting another
 Turbo run that could evict cache entries. The producer stages matching archives,
 metadata, and available manifests into `.cache/ci-build-cache/`.
@@ -1355,24 +1388,32 @@ revision and selects:
   fake provider process;
 - tests whose text names a changed path.
 
-Verifier scripts (`scripts/verify-*.mjs`, `scripts/verify/**/*.mjs`) are traced
-like source modules. Changed Markdown outside `src/` and `tests/` selects only
-the tests that name it. Declarations, guard baselines
-(`scripts/verify/baselines/*.json`) and advertised-schema summaries select no
-tests, because the static and build jobs check them.
+Verifier scripts (`scripts/verify-*.mjs`, `scripts/verify/**/*.mjs`) and shared
+script libraries (`scripts/lib/*`, when no untraced consumer imports or names
+them) are traced like source modules. Changed Markdown, non-code `docs/` assets,
+issue templates, `LICENSE`, and `licenses/` inventories outside `src/` and
+`tests/` select only the tests that name them. Declarations, guard and layer
+baselines (`scripts/verify/baselines/*.json`,
+`scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
+analysis-efficiency test scripts, and advertised-schema summaries select no
+portable Vitest tests unless named by path, because static, Python, and build
+jobs check them. Non-module CLI parity fixtures with a single known test suite
+are bound in `EXPLICIT_FIXTURE_OWNERS` and fail closed if their owner is missing.
 
 The PR falls back to the complete fast suite when it cannot decide:
 
-- a shared boundary (`src/process/`, `src/filesystem/`, `src/contracts/tool*`,
-  `src/server/createServer*`, `src/cli.ts`, `scripts/ci/`) changed;
+- a shared production boundary (`src/process/`, `src/filesystem/`,
+  `src/contracts/tool*`, `src/server/createServer*`, `src/cli.ts`,
+  `scripts/ci/`) changed;
 - any other changed input is not traced, such as workflows, package metadata,
-  build and test-runner scripts, `scripts/lib/`, fixtures or data;
+  build and test-runner scripts, untraced `scripts/lib/` consumers, or unmapped
+  fixtures and data;
 - no test is selected;
-- more than 150 test files are selected;
+- more than 400 test files are selected;
 - a selected file has no single owning test project.
 
-A selection runs as one `Test shard (k/n)` job per group of up to 40 files, at
-most four jobs, using exact file identity (`scripts/ci/test-group.mjs selected`).
+A selection runs as one `Test shard (k/n)` job per group of up to 50 files, at
+most eight jobs, using exact file identity (`scripts/ci/test-group.mjs selected`).
 The separate `Source tests` job does not run, because the groups include the
 selected source tests. The `Classify changes` summary gives the mode and its
 reason.

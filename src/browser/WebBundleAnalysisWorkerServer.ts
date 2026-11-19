@@ -34,6 +34,8 @@ import {
 } from "./WebBundleAnalysisWorkerProtocol.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { decodeLimit, isHostLimitFailure } from "../domain/parseFailure.js";
+import { isParseLimit } from "../domain/parseFailureAnalysisError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface WebBundleScriptAnalyzer {
@@ -46,6 +48,7 @@ export interface WebBundleScriptAnalyzer {
 
 class WebBundleWorkerInputError extends Error {}
 class WebBundleWorkerOutputError extends Error {}
+const WEB_BUNDLE_RESULT_FORMAT = "web-bundle-worker-result";
 
 const send = async (input: WebBundleWorkerMessage): Promise<void> => {
   const value = webBundleWorkerMessageSchema.parse(input);
@@ -82,10 +85,13 @@ export const serveWebBundleAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      if (!next.value.ok)
+      if (!next.value.ok) {
+        if (next.value.error._tag === "ControlLineMalformedUtf8")
+          throw new TypeError("Web bundle worker request is not valid UTF-8");
         throw new RangeError(
           "Web bundle worker request exceeds its byte budget",
         );
+      }
       const raw: unknown = JSON.parse(next.value.value);
       const request = webBundleWorkerRequestSchema.parse(raw);
       const continueServing = await analyzeJob(
@@ -192,8 +198,14 @@ const analyzeJob = async (
           const chunk = Buffer.from(part);
           bytes += chunk.length;
           if (bytes > request.result_budget_bytes)
-            throw new RangeError(
+            throw decodeLimit(
+              WEB_BUNDLE_RESULT_FORMAT,
               "Web bundle worker result exceeds its admitted byte budget",
+              {
+                name: "result_budget_bytes",
+                maximum: request.result_budget_bytes,
+                required: bytes,
+              },
             );
           hash.update(chunk);
           let offset = 0;
@@ -221,7 +233,10 @@ const analyzeJob = async (
   } catch (cause: unknown) {
     const refusal =
       cause instanceof AnalysisResourceConstraintError ? cause : undefined;
-    const resource = cause instanceof RangeError || refusal !== undefined;
+    const resource =
+      isHostLimitFailure(cause) ||
+      isParseLimit(cause, WEB_BUNDLE_RESULT_FORMAT) ||
+      refusal !== undefined;
     const input = cause instanceof WebBundleWorkerInputError;
     const fatalCleanupFailure =
       cause instanceof ArtifactReaderFailure &&

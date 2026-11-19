@@ -1,3 +1,4 @@
+import { isRecord } from "../kernel/isRecord.js";
 import {
   JsonSchemaReferences,
   type JsonSchemaScope,
@@ -41,10 +42,7 @@ const enumValueTypes = (values: readonly unknown[]): readonly string[] => [
   ),
 ];
 
-export const isSchemaObject = (
-  value: unknown,
-): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+export const isSchemaObject = isRecord;
 
 export const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");

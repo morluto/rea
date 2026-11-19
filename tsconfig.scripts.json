@@ -29,7 +29,8 @@
     "scripts/verify/managed/manifest-parser.mjs",
     "scripts/verify/managed/manifest.mjs",
     "scripts/verify/managed/oracles.mjs",
-    "scripts/verify/managed/support.mjs"
+    "scripts/verify/managed/support.mjs",
+    "scripts/verify/typed-script-declarations-guard.mjs"
   ],
   "include": []
 }

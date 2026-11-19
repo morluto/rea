@@ -11,12 +11,14 @@ import {
 import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
+  machoCommandTableIssue,
   readMachoHeaderDeclarations,
   readMachoCommandStringBytes,
   readMachoLinkeditDataCommand,
   type MachoCommandStringFailure,
 } from "./machoLoadCommands.js";
 import {
+  hasJvmClassHeader,
   MAX_JVM_CLASS_IDENTITY_BYTES,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "./jvmClassFile.js";
@@ -36,7 +38,6 @@ import {
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
-  readFatHeaderPrefix,
   readFatSliceDeclarations,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
@@ -151,9 +152,7 @@ export const readMachoContainer = async (
           reason: "Mach-O header is truncated",
         }
       : { kind: "not-mach-o" };
-  const fatPrefix = readFatHeaderPrefix(head);
-  const mayBeJvmClass =
-    fatPrefix.state === "parsed" && !fatPrefix.wide && !fatPrefix.littleEndian;
+  const mayBeJvmClass = hasJvmClassHeader(head);
   let header: FatContainerHeader;
   if (mayBeJvmClass && size <= MAX_JVM_CLASS_IDENTITY_BYTES) {
     const complete = await readAt(0, size);
@@ -462,16 +461,19 @@ export const readSliceCommandTable = async (
     commandCount,
     commandBytes,
   };
+  const issue = machoCommandTableIssue(parsed.value, length);
+  if (issue !== null)
+    return failed(
+      "malformed",
+      issue.kind === "extent"
+        ? "load commands extend beyond the Mach-O slice"
+        : issue.message,
+      header,
+    );
   if (header.commandBytes > MAX_LOAD_COMMAND_BYTES)
     return failed(
       "unsupported",
       `load commands occupy ${header.commandBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
-      header,
-    );
-  if (header.headerSize + header.commandBytes > length)
-    return failed(
-      "malformed",
-      "load commands extend beyond the Mach-O slice",
       header,
     );
   const bytes = await readAt(base + header.headerSize, header.commandBytes);
@@ -796,7 +798,10 @@ const decodeCommand = (
     return decodeLazyLoadDylibInfoCommand(body, index);
   const name = machoDependencyCommand(command);
   if (name !== null)
-    return { kind: "parsed", value: decodeDependency(name, body, index) };
+    return {
+      kind: "parsed",
+      value: decodeDependency(name, command, body, index),
+    };
   return undefined;
 };
 
@@ -1058,10 +1063,11 @@ const payloadString = (
 
 const decodeDependency = (
   command: MachoDependency["command"],
+  code: number,
   body: Uint8Array,
   index: number,
 ): MachoDependency => {
-  const parsed = readMachoDylibCommandFacts(body, true);
+  const parsed = readMachoDylibCommandFacts(body, code, true);
   if (!parsed.ok) {
     if (parsed.error._tag === "InvalidMachoDylibCommand")
       throw machoIssue(

@@ -1,6 +1,7 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { decode } from "@msgpack/msgpack";
 import {
+  BinaryReader,
   BinaryResourceFailure,
   BinaryFormatFailure,
 } from "../domain/binaryContainer.js";
@@ -17,6 +18,7 @@ const AMD_METADATA_VALUE_BYTES = 65536;
 const utf8 = strictUtf8Decoder("preserve");
 const preflight = (bytes: Buffer): Set<string> => {
   const strings = new Set<string>();
+  const reader = new BinaryReader(bytes, false, "amdgpu-metadata");
   let at = 0,
     values = 0;
   const take = (size: number): number => {
@@ -51,14 +53,12 @@ const preflight = (bytes: Buffer): Set<string> => {
     else if ((code & 0xf0) === 0x90) count = code & 15;
     else if ((code & 0xf0) === 0x80) count = (code & 15) * 2;
     else if (code === 0xdc || code === 0xde)
-      count = bytes.readUInt16BE(take(2)) * (code === 0xde ? 2 : 1);
+      count = reader.u16(take(2)) * (code === 0xde ? 2 : 1);
     else if (code === 0xdd || code === 0xdf)
-      count = bytes.readUInt32BE(take(4)) * (code === 0xdf ? 2 : 1);
+      count = reader.u32(take(4)) * (code === 0xdf ? 2 : 1);
     else if (code === 0xd9 || code === 0xc4) payload = bytes[take(1)]!;
-    else if (code === 0xda || code === 0xc5)
-      payload = bytes.readUInt16BE(take(2));
-    else if (code === 0xdb || code === 0xc6)
-      payload = bytes.readUInt32BE(take(4));
+    else if (code === 0xda || code === 0xc5) payload = reader.u16(take(2));
+    else if (code === 0xdb || code === 0xc6) payload = reader.u32(take(4));
     else {
       const widths: Readonly<Record<number, number>> = {
         0xca: 4,

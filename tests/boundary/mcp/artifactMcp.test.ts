@@ -184,14 +184,13 @@ it.for([
               .digest("hex"),
             unpacked,
             integrity_check: "declared-digest",
+            related_parameters: ["integrity_policy"],
           },
           retryable: false,
           remediation: { action: projected.error.message },
         },
       });
-      expect(projected.error.message).toContain(
-        "--integrity-policy record-and-continue",
-      );
+      expect(projected.error.message).not.toContain("--integrity-policy");
       if (unpacked)
         expect(projected.error.message).toMatch(
           /unpacked entry main\.js.*companion file/iu,
@@ -295,6 +294,7 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({
         logical_path: "╟╤▒█.txt",
+        hash_status: "verified",
         limitations: [
           expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
         ],
