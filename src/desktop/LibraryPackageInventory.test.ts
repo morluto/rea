@@ -351,6 +351,59 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "retains valid owner rows from a partial query without treating damaged paths as unowned",
+  async () => {
+    const root = await createTestTempDirectory("rea-library-owner-bytes-");
+    const bin = join(root, "bin");
+    const lib = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(lib)]);
+    const known = join(lib, "known.so");
+    const unknown = join(lib, "damaged-�.so");
+    const executable = join(bin, "app");
+    await Promise.all([
+      writeFile(known, elfImage({})),
+      writeFile(unknown, elfImage({})),
+      writeFile(executable, elfImage({ needed: [known, unknown] })),
+    ]);
+    const raw = Buffer.concat([
+      Buffer.from(
+        `local diversion from: ${known}\nactual-owner: ${known}\nwrong-owner: ${lib}/damaged-`,
+      ),
+      Buffer.from([0xff]),
+      Buffer.from(".so\n"),
+    ]);
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args, _signal, options) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        expect([command, ...args]).toEqual([
+          "dpkg-query",
+          "-S",
+          known,
+          unknown,
+        ]);
+        expect(options?.locale).toBe("C.UTF-8");
+        return {
+          stdout: raw.toString("utf8"),
+          ...(options?.preserveStdoutBytes ? { stdoutBuffer: raw } : {}),
+          exitCode: 1,
+        };
+      },
+      undefined,
+    );
+    expect(result).toEqual({
+      library_packages: ["actual-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+      library_packages_reason: expect.stringContaining(
+        "unreadable ownership records",
+      ),
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "keeps ownership unknown for paths dpkg would interpret as patterns",
   async () => {
     const root = await createTestTempDirectory("rea-library-pattern-");
