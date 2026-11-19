@@ -35,8 +35,6 @@
   "src/domain/elfRelocation.ts": 6,
   "src/domain/elfSectionHeader.ts": 6,
   "src/domain/elfSymbol.ts": 8,
-  "src/domain/firmware/devicetreeParser.ts": 4,
-  "src/domain/firmware/fitImage.ts": 1,
   "src/domain/gamecubeDol.ts": 6,
   "src/domain/il2cpp/il2cppMetadataHeaderPrefix.ts": 3,
   "src/domain/inesContainer.ts": 5,
