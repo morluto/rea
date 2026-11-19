@@ -8,12 +8,30 @@ import {
   SessionObservations,
   observedSession,
   recordWindows,
+  sampleOpenFiles,
   sampleProcesses,
   sampleTokenCarriers,
   trackProcess,
   type SessionProcfs,
 } from "./DesktopSessionObservations.js";
 import type { ObservedWindow } from "../ports/DesktopApplicationSession.js";
+
+const descriptorTargets = vi.hoisted(() => new Map<string, () => string>());
+
+vi.mock("node:fs/promises", async (original) => {
+  const native = await original<typeof import("node:fs/promises")>();
+  return {
+    ...native,
+    readdir: async (...args: Parameters<typeof native.readdir>) =>
+      descriptorTargets.has(`${String(args[0])}/3`)
+        ? ["3"]
+        : native.readdir(...args),
+    readlink: async (...args: Parameters<typeof native.readlink>) => {
+      const target = descriptorTargets.get(String(args[0]));
+      return target === undefined ? native.readlink(...args) : target();
+    },
+  };
+});
 
 interface FakeProcess {
   readonly parentPid: number;
@@ -311,6 +329,30 @@ describe("sampleTokenCarriers", () => {
     expect(await sampleTokenCarriers(observations, signal)).toBe(false);
     expect(observations.liveProcessIds()).toEqual([]);
   });
+});
+
+it("records open files only from the observed process generation", async () => {
+  const table = new Map<number, FakeProcess>([
+    [100, { parentPid: 1, startTime: "10", runId: "run" }],
+    [101, { parentPid: 100, startTime: "11", runId: "run" }],
+  ]);
+  const observations = observe(table);
+  await trackProcess(observations, 100, signal);
+  await trackProcess(observations, 101, signal);
+  descriptorTargets.set("/proc/100/fd/3", () => "/scope/stable (deleted)");
+  descriptorTargets.set("/proc/101/fd/3", () => {
+    table.set(101, { parentPid: 100, startTime: "22" });
+    return "/scope/replacement";
+  });
+
+  try {
+    await sampleOpenFiles(observations, ["/scope"], signal);
+    expect(
+      observedSession(observations).opened_files.map(({ path }) => path),
+    ).toEqual(["/scope/stable"]);
+  } finally {
+    descriptorTargets.clear();
+  }
 });
 
 it("keeps a failed optional token-table probe unknown", async () => {

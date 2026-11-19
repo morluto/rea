@@ -1,5 +1,5 @@
 import { readProcessInspectionFile } from "../ProcessInspectionFile.js";
-import { readdir } from "node:fs/promises";
+import { readdir, readlink } from "node:fs/promises";
 import { parseLinuxProcessStat } from "../LinuxProcessStat.js";
 import type { ProcessLifecycle } from "../ProcessLifecycle.js";
 import {
@@ -212,6 +212,36 @@ export const readLinuxCommand = async (
     command.value?.toString().replaceAll("\0", " ").trim() ?? "",
     command.diagnostics,
   );
+};
+
+/** Read named file targets from procfs. Callers attribute them through the process identity bracket. */
+export const readLinuxOpenFiles = async (
+  pid: number,
+  signal: AbortSignal,
+): Promise<SamplingObservation<readonly string[]>> => {
+  const directory = `/proc/${String(pid)}/fd`;
+  const listing = await readProcSamplingSource(directory, signal, () =>
+    readdir(directory),
+  );
+  const paths: string[] = [];
+  let diagnostics = listing.diagnostics;
+  for (const descriptor of listing.value ?? []) {
+    if (signal.aborted) {
+      diagnostics = mergeSamplingDiagnostics(
+        diagnostics,
+        samplingInterrupted(),
+      );
+      break;
+    }
+    const path = `${directory}/${descriptor}`;
+    const target = await readProcSamplingSource(path, signal, () =>
+      readlink(path),
+    );
+    diagnostics = mergeSamplingDiagnostics(diagnostics, target.diagnostics);
+    if (target.value?.startsWith("/"))
+      paths.push(target.value.replace(/ \(deleted\)$/u, ""));
+  }
+  return samplingObservation(paths, diagnostics);
 };
 
 /** Inspect a ps-discovered PID without trusting ps for Linux identity or command. */

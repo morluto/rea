@@ -1,5 +1,3 @@
-import { readdir, readlink } from "node:fs/promises";
-
 import type {
   DesktopProcess,
   DesktopSession,
@@ -10,6 +8,7 @@ import { ellipsisExcerpt } from "../domain/excerpt.js";
 import {
   readLinuxChildren,
   readLinuxCommand,
+  readLinuxOpenFiles,
   readLinuxProcessStat,
   readStableLinuxProcessDetails,
   type LinuxProcessStatRow,
@@ -277,17 +276,26 @@ export const sampleTokenCarriers = async (
 export const sampleOpenFiles = async (
   observations: SessionObservations,
   roots: readonly string[],
+  signal: AbortSignal,
 ): Promise<void> => {
+  if (roots.length === 0) return;
   for (const pid of observations.liveProcessIds()) {
-    const descriptors = await readdir(`/proc/${String(pid)}/fd`).catch(
-      () => [] as string[],
+    const readStat = () => observations.procfs.stat(pid, signal);
+    const initial = await readStat();
+    assertProcessOwnershipInspectionActive(signal);
+    if (
+      !running(initial.value) ||
+      initial.value.startTime !== observations.tracked(pid)?.startTime
+    )
+      continue;
+    const { value: observed } = await readStableLinuxProcessDetails(
+      initial,
+      readStat,
+      () => readLinuxOpenFiles(pid, signal),
     );
-    for (const descriptor of descriptors) {
-      const target = await readlink(
-        `/proc/${String(pid)}/fd/${descriptor}`,
-      ).catch(() => undefined);
-      if (target === undefined || !target.startsWith("/")) continue;
-      const path = target.replace(/ \(deleted\)$/u, "");
+    assertProcessOwnershipInspectionActive(signal);
+    if (observed === undefined) continue;
+    for (const path of observed.details) {
       if (isWithinAny(path, roots) && !observations.openedFiles.has(path))
         observations.openedFiles.set(path, observations.now());
     }
