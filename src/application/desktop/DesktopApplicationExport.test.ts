@@ -319,13 +319,17 @@ it.skipIf(process.platform === "win32")(
         argv: [
           "env",
           `XDG_CONFIG_HOME=${base}`,
+          "MODE=dark",
           "sh",
           "-c",
-          'cat "$XDG_CONFIG_HOME/notes/settings.ini" "$1"',
+          'test "$MODE" = dark && test "$2" = --theme=dark && test "$3" = --line=10 && cat "$XDG_CONFIG_HOME/notes/settings.ini" "$1" "$4"',
           "notes",
           `${logical}/settings.ini`,
+          "--theme=dark",
+          "--line=10",
+          "settings.ini",
         ],
-        working_directory: home,
+        working_directory: logical,
         state_directories: [{ path: logical, exists_at_start: true }],
       },
       state: {
@@ -372,7 +376,7 @@ subprocess.run(command, env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, check=
       join(directory, "envs/notes/notes_app.py"),
       replay,
     ]);
-    expect(stdout).toBe(text.repeat(2));
+    expect(stdout).toBe(text.repeat(3));
   },
 );
 

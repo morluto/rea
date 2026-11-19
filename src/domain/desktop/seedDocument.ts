@@ -64,12 +64,14 @@ const homePathOf = (
   if (parsedUrl === undefined && mapTraversal !== undefined) {
     // Only filesystem paths can traverse a captured symlink. File URLs
     // above have already been interpreted under their URL rules.
-    const raw = posix.isAbsolute(input)
-      ? input
-      : `${workingDirectory}/${input}`;
+    const absolute = posix.isAbsolute(input);
+    const raw = absolute ? input : `${workingDirectory}/${input}`;
     const replayed = mapTraversal(raw);
-    if (replayed !== undefined)
+    if (replayed !== undefined) {
+      // A mapped working directory alone cannot identify a relative argument as a path.
+      if (!absolute && !knownSeed(replayed)) return undefined;
       return { seedPath: replayed, source: raw, url: undefined };
+    }
   }
   const path = posix.resolve(workingDirectory, input);
   if (path.startsWith(`${home}/`))
