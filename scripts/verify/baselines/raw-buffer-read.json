@@ -11,7 +11,6 @@
   "src/domain/binaryTarget.ts": 10,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/elfRelocation.ts": 6,
-  "src/domain/inesContainer.ts": 1,
   "src/domain/managed/managedMetadataHeaps.ts": 4,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/managed/managedMetadataLayout.ts": 7,
