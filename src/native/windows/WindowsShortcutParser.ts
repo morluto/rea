@@ -120,6 +120,14 @@ const EXTRA_SIGNATURE_NAMES = {
   0xa000000c: "VistaAndAboveIDListDataBlock",
 } as const;
 
+// MS-SHLLINK §2.5.7 and §2.5.8 specify minimum sizes including the 8-byte header.
+const OPAQUE_EXTRA_MIN_PAYLOAD_BYTES: Readonly<
+  Partial<Record<number, number>>
+> = {
+  0xa0000008: 128,
+  0xa0000009: 4,
+};
+
 const extraSignatureName = (signature: number): string | null => {
   const names: Readonly<Partial<Record<number, string>>> =
     EXTRA_SIGNATURE_NAMES;
@@ -1134,13 +1142,20 @@ const decodeExtra = (
       item_offset: payload.readUInt32LE(16),
     };
   }
-  if (signature === 0xa0000009)
-    return {
-      kind: "property_store",
-      bytes: payload.length,
-      sha256: sha256Hex(payload),
-    };
-  return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
+  const minimum = OPAQUE_EXTRA_MIN_PAYLOAD_BYTES[signature];
+  const belowMinimum = minimum !== undefined && payload.length < minimum;
+  if (belowMinimum)
+    note(
+      walk,
+      "malformed_structure",
+      offset,
+      `${extraSignatureName(signature)} payload is shorter than ${String(minimum)} bytes`,
+    );
+  return {
+    kind: signature === 0xa0000009 && !belowMinimum ? "property_store" : "raw",
+    bytes: payload.length,
+    sha256: sha256Hex(payload),
+  };
 };
 
 const parseIdList = async (

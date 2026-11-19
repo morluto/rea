@@ -110,6 +110,9 @@ A LinkInfo, VolumeID, or network-name string offset that points inside its
 structure header or outside its structure is reported at the offset field itself,
 so every issue offset lies inside the file.
 Coverage is never `complete` when issues are present.
+A PropertyStoreDataBlock shorter than 12 bytes or a ShimDataBlock shorter than
+136 bytes makes coverage partial. The report retains the block's signature,
+size, and payload digest and continues to following blocks.
 
 The selected path must be a regular file. Symbolic links are rejected.
 UNC paths and other host-prefixed device paths, such as `\\server\share\a.lnk`

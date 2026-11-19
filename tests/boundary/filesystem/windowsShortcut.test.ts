@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -526,3 +527,69 @@ describe("Windows shortcut deep parent paths", () => {
     expect(lstatCalls).not.toHaveBeenCalledWith("C:\\missing\\a");
   });
 });
+
+it.each([
+  { carrier: "PropertyStore", payloadBytes: 0, status: "partial", kind: "raw" },
+  { carrier: "PropertyStore", payloadBytes: 3, status: "partial", kind: "raw" },
+  {
+    carrier: "PropertyStore",
+    payloadBytes: 4,
+    status: "complete",
+    kind: "property_store",
+  },
+  { carrier: "Shim", payloadBytes: 126, status: "partial", kind: "raw" },
+  { carrier: "Shim", payloadBytes: 128, status: "complete", kind: "raw" },
+])(
+  "reports $status coverage for a $carrier block with $payloadBytes payload bytes",
+  async ({ carrier, payloadBytes, status, kind }) => {
+    const root = await createTestTempDirectory("rea-shortcut-extra-carrier-");
+    const path = join(root, "shortcut.lnk");
+    const shim = carrier === "Shim";
+    const flags = shim ? 0x00020000 : 0;
+    const signature = shim ? 0xa0000008 : 0xa0000009;
+    const payload = Buffer.alloc(payloadBytes);
+    if (shim) Buffer.from("FixtureLayer", "utf16le").copy(payload);
+    const bytes = windowsShortcutBytes({
+      flags,
+      idList: null,
+      linkInfo: null,
+      extraData: [
+        { kind: "unknown", signature, payload },
+        { kind: "console_fe", codePage: 437 },
+      ],
+    });
+    await writeFile(path, bytes);
+    const result = await createWindowsShortcutService().inspect({ path });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      header: {
+        link_flags: { raw: flags, decoded: shim ? ["RunWithShimLayer"] : [] },
+      },
+      coverage: { status, failing_offset: status === "partial" ? 76 : null },
+      issues:
+        status === "partial"
+          ? [{ code: "malformed_structure", offset: 76 }]
+          : [],
+      extra_data: {
+        blocks: [
+          {
+            offset: 76,
+            size: 8 + payloadBytes,
+            signature,
+            signature_name: `${carrier}DataBlock`,
+            decoded: {
+              kind,
+              bytes: payloadBytes,
+              sha256: createHash("sha256").update(payload).digest("hex"),
+            },
+          },
+          {
+            offset: 84 + payloadBytes,
+            decoded: { kind: "console_fe", code_page: 437 },
+          },
+        ],
+        terminal_offset: bytes.length - 4,
+      },
+    });
+  },
+);
