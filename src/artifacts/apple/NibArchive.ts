@@ -106,7 +106,12 @@ export const decodeNibArchive = (
   // count can fit its own table before charging any projected representation.
   assertTableExtent("object", objectCount, 3, keysOffset - objectsOffset);
   assertTableExtent("key", keyCount, 1, valuesOffset - keysOffset);
-  assertTableExtent("value", valueCount, 2, classesOffset - valuesOffset);
+  assertTableExtent(
+    "value",
+    valueCount,
+    MINIMUM_VALUE_ROW_BYTES,
+    classesOffset - valuesOffset,
+  );
   assertTableExtent("class", classCount, 2, bytes.length - classesOffset);
   const objectRecords = readObjects(
     bytes,
@@ -134,7 +139,7 @@ export const decodeNibArchive = (
   );
   const neededValues = valueIndexes(objectRecords, valueCount);
   const values = parseValues(
-    bytes,
+    header,
     valuesOffset,
     classesOffset,
     valueCount,
@@ -379,8 +384,11 @@ const parseClasses = (
   return output;
 };
 
+// A value row starts with a key index and a type tag.
+const MINIMUM_VALUE_ROW_BYTES = 2;
+
 const parseValues = (
-  bytes: Buffer,
+  reader: BinaryReader,
   start: number,
   end: number,
   count: number,
@@ -388,194 +396,88 @@ const parseValues = (
   needed: ReadonlySet<number>,
   budget: InterfaceBuilderDecodeBudget,
 ): Map<number, NibValueRecord> => {
+  const { bytes } = reader;
   const cursor = { offset: start };
   const output = new Map<number, NibValueRecord>();
   for (let index = 0; index < count; index += 1) {
-    const keyIndex = readVarint(bytes, cursor, end);
+    const rowEnd = end - (count - index - 1) * MINIMUM_VALUE_ROW_BYTES;
+    const keyIndex = readVarint(bytes, cursor, rowEnd);
     if (keyIndex >= keyCount)
       throw malformedInput(
         "nib-archive",
         `NIBArchive value ${index} references an invalid key`,
       );
-    ensureRange(cursor.offset, 1, end, `value ${index} type`);
-    const type = bytes[cursor.offset++] ?? -1;
-    if (!needed.has(index)) {
-      skipValue(bytes, cursor, end, type, index);
-      continue;
-    }
+    ensureRange(cursor.offset, 1, rowEnd, `value ${index} type`);
+    const type = bytes[cursor.offset++]!;
+    const layout = nibValueLayouts[type];
+    if (layout === undefined)
+      throw unsupportedInput(
+        "nib-archive",
+        `NIBArchive value ${index} has unsupported type ${type}`,
+        { undecodedContent: true },
+      );
+    const length = layout.width ?? readVarint(bytes, cursor, rowEnd);
+    const payloadStart = cursor.offset;
+    cursor.offset = checkedEnd(payloadStart, length, rowEnd, `value ${index}`);
+    if (!needed.has(index)) continue;
+
     budget.reserve(
       64,
       "NIBArchive decoded values exceed the aggregate Interface Builder decode budget",
     );
-    const value = readValue(bytes, cursor, end, type, index, budget);
-    output.set(index, { key_index: keyIndex, value });
-  }
-  if (cursor.offset > end)
-    throw malformedInput(
-      "nib-archive",
-      "NIBArchive value table overlaps the next table",
-    );
-  return output;
-};
-
-/**
- * Value type tags in a NIBArchive value table. The two boolean tags carry no
- * payload; AppKit's own nib decoder reads tag 4 as NO and tag 5 as YES.
- */
-const NibValueType = {
-  int8: 0,
-  int16: 1,
-  int32: 2,
-  int64: 3,
-  booleanFalse: 4,
-  booleanTrue: 5,
-  float32: 6,
-  float64: 7,
-  data: 8,
-  nil: 9,
-  objectReference: 10,
-} as const;
-
-const readValue = (
-  bytes: Buffer,
-  cursor: { offset: number },
-  end: number,
-  type: number,
-  index: number,
-  budget: InterfaceBuilderDecodeBudget,
-): JsonValue => {
-  switch (type) {
-    case NibValueType.int8:
-      ensureRange(cursor.offset, 1, end, `value ${index}`);
-      return bytes.readInt8(cursor.offset++);
-    case NibValueType.int16:
-      ensureRange(cursor.offset, 2, end, `value ${index}`);
-      {
-        const value = bytes.readInt16LE(cursor.offset);
-        cursor.offset += 2;
-        return value;
-      }
-    case NibValueType.int32:
-      ensureRange(cursor.offset, 4, end, `value ${index}`);
-      {
-        const value = bytes.readInt32LE(cursor.offset);
-        cursor.offset += 4;
-        return value;
-      }
-    case NibValueType.int64:
-      ensureRange(cursor.offset, 8, end, `value ${index}`);
-      {
-        const value = bytes.readBigInt64LE(cursor.offset);
-        cursor.offset += 8;
-        return value <= BigInt(Number.MAX_SAFE_INTEGER) &&
-          value >= BigInt(Number.MIN_SAFE_INTEGER)
-          ? Number(value)
-          : value.toString();
-      }
-    case NibValueType.booleanFalse:
-      return false;
-    case NibValueType.booleanTrue:
-      return true;
-    case NibValueType.float32:
-      ensureRange(cursor.offset, 4, end, `value ${index}`);
-      {
-        const value = bytes.readFloatLE(cursor.offset);
-        cursor.offset += 4;
-        return value;
-      }
-    case NibValueType.float64:
-      ensureRange(cursor.offset, 8, end, `value ${index}`);
-      {
-        const value = bytes.readDoubleLE(cursor.offset);
-        cursor.offset += 8;
-        return value;
-      }
-    case NibValueType.data: {
-      const length = readVarint(bytes, cursor, end);
-      const next = checkedEnd(
-        cursor.offset,
-        length,
-        end,
-        `value ${index} data`,
-      );
+    if (layout.width === null)
       budget.reserve(
         32 + 4 * Math.ceil(length / 3),
         `NIBArchive data value ${index} exceeds the aggregate Interface Builder decode budget`,
       );
-      const encoded = bytes.subarray(cursor.offset, next).toString("base64");
-      cursor.offset = next;
-      return { $nib_data_base64: encoded };
-    }
-    case NibValueType.nil:
-      return null;
-    case NibValueType.objectReference:
-      ensureRange(cursor.offset, 4, end, `value ${index} reference`);
-      {
-        const objectIndex = bytes.readUInt32LE(cursor.offset);
-        cursor.offset += 4;
-        return { $nib_object_ref: objectIndex };
-      }
-    default:
-      throw unsupportedInput(
-        "nib-archive",
-        `NIBArchive value ${index} has unsupported type ${type}`,
-        { undecodedContent: true },
-      );
+    output.set(index, {
+      key_index: keyIndex,
+      value: layout.decode(reader, payloadStart, length),
+    });
   }
+  return output;
 };
 
-const skipValue = (
-  bytes: Buffer,
-  cursor: { offset: number },
-  end: number,
-  type: number,
-  index: number,
-): void => {
-  switch (type) {
-    case NibValueType.int8:
-      ensureRange(cursor.offset, 1, end, `value ${index}`);
-      cursor.offset += 1;
-      return;
-    case NibValueType.int16:
-      ensureRange(cursor.offset, 2, end, `value ${index}`);
-      cursor.offset += 2;
-      return;
-    case NibValueType.int32:
-    case NibValueType.objectReference:
-      ensureRange(cursor.offset, 4, end, `value ${index}`);
-      cursor.offset += 4;
-      return;
-    case NibValueType.int64:
-    case NibValueType.float64:
-      ensureRange(cursor.offset, 8, end, `value ${index}`);
-      cursor.offset += 8;
-      return;
-    case NibValueType.float32:
-      ensureRange(cursor.offset, 4, end, `value ${index}`);
-      cursor.offset += 4;
-      return;
-    case NibValueType.booleanFalse:
-    case NibValueType.booleanTrue:
-    case NibValueType.nil:
-      return;
-    case NibValueType.data: {
-      const length = readVarint(bytes, cursor, end);
-      cursor.offset = checkedEnd(
-        cursor.offset,
-        length,
-        end,
-        `value ${index} data`,
-      );
-      return;
-    }
-    default:
-      throw unsupportedInput(
-        "nib-archive",
-        `NIBArchive value ${index} has unsupported type ${type}`,
-        { undecodedContent: true },
-      );
-  }
-};
+/** Value table tags in wire order. Tag 4 is NO and tag 5 is YES. */
+const nibValueLayouts: readonly {
+  readonly width: number | null;
+  readonly decode: (
+    reader: BinaryReader,
+    offset: number,
+    length: number,
+  ) => JsonValue;
+}[] = [
+  { width: 1, decode: (reader, offset) => reader.i8(offset) },
+  { width: 2, decode: (reader, offset) => reader.i16(offset) },
+  { width: 4, decode: (reader, offset) => reader.i32(offset) },
+  {
+    width: 8,
+    decode: (reader, offset) => {
+      const value = reader.i64(offset);
+      return value <= BigInt(Number.MAX_SAFE_INTEGER) &&
+        value >= BigInt(Number.MIN_SAFE_INTEGER)
+        ? Number(value)
+        : value.toString();
+    },
+  },
+  { width: 0, decode: () => false },
+  { width: 0, decode: () => true },
+  { width: 4, decode: (reader, offset) => reader.f32(offset) },
+  { width: 8, decode: (reader, offset) => reader.f64(offset) },
+  {
+    width: null,
+    decode: (reader, offset, length) => ({
+      $nib_data_base64: reader
+        .range(offset, length, "NIBArchive data")
+        .toString("base64"),
+    }),
+  },
+  { width: 0, decode: () => null },
+  {
+    width: 4,
+    decode: (reader, offset) => ({ $nib_object_ref: reader.u32(offset) }),
+  },
+];
 
 const valueIndexes = (
   objects: readonly NibObjectRecord[],

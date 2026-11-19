@@ -124,6 +124,45 @@ it("decodes numeric fields at nonzero buffer offsets and preserves malformed and
   });
 });
 
+it.each([true, false])(
+  "decodes signed and floating-point fields with little-endian set to %s",
+  (little) => {
+    const signedBytes = Buffer.from(
+      little ? "feffffffffffffff" : "fffffffffffffffe",
+      "hex",
+    );
+    const signed = new BinaryReader(signedBytes, little, "fixture");
+    expect(signed.i8(little ? 0 : 7)).toBe(-2);
+    expect(signed.i16(little ? 0 : 6)).toBe(-2);
+    expect(signed.i32(little ? 0 : 4)).toBe(-2);
+    expect(signed.i64(0)).toBe(-2n);
+
+    const floats = new BinaryReader(
+      Buffer.from(
+        little ? "00000080000000000000f83f" : "800000003ff8000000000000",
+        "hex",
+      ),
+      little,
+      "fixture",
+    );
+    expect(floats.f32(0)).toBe(-0);
+    expect(floats.f64(4)).toBe(1.5);
+    for (const read of [
+      () => signed.i64(1),
+      () => floats.f64(5),
+      () => floats.f32(9),
+    ])
+      expect(read).toThrow(
+        expect.objectContaining({
+          failure: expect.objectContaining({
+            kind: "truncated",
+            format: "fixture",
+          }),
+        }),
+      );
+  },
+);
+
 it("distinguishes a mapped string read allowance from malformed bytes", () => {
   const bytes = Buffer.from("long-name\0");
   const index = createFileMappingIndex([
