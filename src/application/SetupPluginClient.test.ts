@@ -19,7 +19,7 @@ import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { supportedClientRegistrationProfile } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 it("reports an explicit capture limit for valid inventory above 64 KiB", async () => {
   const resources = new ArtifactResourceScope();

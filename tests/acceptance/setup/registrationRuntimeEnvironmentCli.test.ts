@@ -369,6 +369,9 @@ cliTest.for([
         [process.execPath, resolve("scripts/rea.mjs"), "mcp"],
         env,
       );
+      // A current dsh registration records its tool call deadline; without
+      // it doctor reports the registration stale rather than healthy.
+      if (scenario.format === "dsh") entry.toolCallTimeoutMs = 3_600_000;
       if (scenario.position === "expression name")
         entry.env = Object.fromEntries(
           Object.entries(env).map(([key, value]) => {

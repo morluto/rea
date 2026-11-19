@@ -53,7 +53,8 @@ they do not claim a destination directory. Their `relative_offset` and
 Every declared span must end before the PYZ table of contents.
 Malformed CArchive TOC rows identify their zero-based table index and byte offset
 within the TOC, including truncated headers, invalid names, compression flags,
-and type codes. The failure retains its original format reason.
+and type codes. The failure retains its original format reason. A TOC name
+requires a NUL terminator, and all remaining bytes in the record must be zero.
 PYZ `compression_flag` is derived from storage: nonempty payloads are compressed,
 including legacy namespaces; an empty namespace has no compressed payload.
 

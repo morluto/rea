@@ -103,5 +103,15 @@ it("derives NuGet folder roles from ZIP names", () => {
   expect(nugetNupkgEntryRole("Demo.Package.nuspec")).toBe("nuspec");
   expect(nugetNupkgEntryRole("_rels/.rels")).toBe("opc");
   expect(nugetNupkgEntryRole("[Content_Types].xml")).toBe("opc");
+  expect(
+    nugetNupkgEntryRole(
+      "package/services/metadata/core-properties/0f07893ec48a4e929e4f9637270a574f.psmdcp",
+    ),
+  ).toBe("opc");
+  expect(nugetNupkgEntryRole("PACKAGE\\services\\metadata\\x.psmdcp")).toBe(
+    "opc",
+  );
+  expect(nugetNupkgEntryRole("package.txt")).toBe("unknown");
+  expect(nugetNupkgEntryRole("lib/package/Demo.dll")).toBe("lib");
   expect(nugetNupkgEntryRole("README.md")).toBe("unknown");
 });

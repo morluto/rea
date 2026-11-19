@@ -43,7 +43,11 @@ unverified.
 `inspect_android_package` also returns a static inventory of declared
 activities, aliases, services, receivers and providers from the decoded
 manifest. The binary XML decoder preserves component class spelling, including
-`$` in nested classes, without applying JADX class aliases. `declared_name`
+`$` in nested classes, without applying JADX class aliases. The component
+inventory and [Apktool metadata](apktool-resource-analysis.md) read the same
+decoded manifest structure. The document root must be `<manifest>` in no
+namespace, and the package comes from its unqualified `package` attribute.
+A missing or empty attribute leaves the package unknown. `declared_name`
 preserves the decoded source attribute; `name` resolves a
 relative name only when the manifest package is known and the resolved copy
 fits the UTF-8 byte budget. An unresolved package or exhausted name budget
@@ -63,8 +67,7 @@ references are not expanded at this parser boundary. Repeated inherited
 values share one inventory-wide byte budget.
 Provider `android:readPermission` and `android:writePermission` overrides are
 not projected as separate fields; their presence marks the inventory partial
-and is called out in `limitations`. Relative component names are not resolved
-against a manifest package with surrounding whitespace.
+and is called out in `limitations`.
 Class-name segments follow DEX `SimpleName` characters, including a leading
 digit or hyphen, rather than Java source identifier rules. Relative-name
 expansion does not prove class existence, DEX-version compatibility or runtime
@@ -307,8 +310,9 @@ overload even when Java code generation renames a method. If the selected Java
 body was omitted, including a method merged into a synthetic bridge, REA returns
 its original smali with the `java_body_unavailable` marker. The marker describes
 missing Java; it does not infer why the method was omitted or name a replacement.
-Unresolved or duplicate disassembly identities fail instead of attributing another
-method's instructions to the selection.
+If disassembly cannot establish one complete block for the selected method, the
+result keeps that method's identity and reports `body_status: "not_available"`
+with a `body_unavailable_reason`. Both `representation` and `source` are null.
 
 Native and abstract methods are identified from access flags
 captured before code generation. They report `body_status: "not_available"`, an
@@ -429,8 +433,11 @@ and their relocation sources. JNI exports follow the
 failed escaping does not acquire an invented export match. Tables require
 NUL-terminated [Modified UTF-8 strings](https://docs.oracle.com/en/java/javase/21/docs/specs/jni/types.html#modified-utf-8-strings),
 valid descriptors and executable load mappings. REL, RELA and RELR retain
-separate provenance; unsupported packed relocations and unresolved pointer
-spans stay explicit unknowns.
+separate provenance. RELR accepts standard and older Android dynamic tags. Android APS2-compressed REL/RELA records keep their logical
+`encoding` and add `packing: { format: "aps2", group_entry_index: ... }`;
+`record_file_offset` identifies the shared group header and the index identifies
+the member within it. APS1 and unresolved pointer spans stay explicit unknowns.
+APS2 uses the [shared ELF decode-work allowance](../native/native-initializers.md#paging-and-limits).
 
 A static `JNINativeMethod` entry names no class. Attribute it uniquely only
 when exactly one declaration in the complete recorded native inventory has

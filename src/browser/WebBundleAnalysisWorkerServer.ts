@@ -85,10 +85,13 @@ export const serveWebBundleAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      if (!next.value.ok)
+      if (!next.value.ok) {
+        if (next.value.error._tag === "ControlLineMalformedUtf8")
+          throw new TypeError("Web bundle worker request is not valid UTF-8");
         throw new RangeError(
           "Web bundle worker request exceeds its byte budget",
         );
+      }
       const raw: unknown = JSON.parse(next.value.value);
       const request = webBundleWorkerRequestSchema.parse(raw);
       const continueServing = await analyzeJob(

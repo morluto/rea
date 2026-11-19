@@ -25,10 +25,8 @@ import { runSetup } from "./Setup.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
 import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 import { MCP_BOOTSTRAP_FILES } from "../../scripts/lib/cli-runtime-files.mjs";
-import {
-  supportedClientRegistrationProfile,
-  type SupportedClientName,
-} from "./SupportedClients.js";
+import type { SupportedClientName } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 const writeDownloadedPackage = async (
   prefix: string,

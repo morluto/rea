@@ -27,8 +27,14 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import { controller } from "../../desktop/BuildComputerController.js";
+import {
+  readComputerScreenshotBytes,
+  type AgentEnvComputer,
+} from "../../desktop/AgentEnvComputer.js";
+import {
+  controller,
+  parseBuildComputerJson,
+} from "../../desktop/BuildComputerController.js";
 import type {
   BuildControllerAnswer,
   ControlledComputer,
@@ -79,12 +85,10 @@ const keepScreenshot = async (
       CHECKPOINT_SHOT,
       signal,
     );
-    const image = shot.content.find((block) => block.type === "image")?.data;
-    if (shot.isError || typeof image !== "string") return;
+    const image = readComputerScreenshotBytes(shot);
+    if (image === undefined) return;
     await computer.addHomeFiles(
-      new Map([
-        [`${folder}/screens/${name}.jpg`, Buffer.from(image, "base64")],
-      ]),
+      new Map([[`${folder}/screens/${name}.jpg`, image]]),
       signal,
     );
   } catch (cause: unknown) {
@@ -177,10 +181,8 @@ const checkExportRuntime = async (
       );
     let rawSchema: unknown;
     try {
-      rawSchema = JSON.parse(content.toString("utf8"));
+      rawSchema = parseBuildComputerJson(content, "REA export schema");
     } catch {
-      // Parser errors can quote only a fragment of a credential, which cannot
-      // be removed reliably by exact-token redaction.
       return err(
         adapterError(
           START,

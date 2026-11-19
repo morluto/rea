@@ -5,10 +5,8 @@ import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { setupOutcomeSnapshot } from "./SetupCancellation.js";
 import { SetupSkillInstallError } from "./SetupSkill.js";
-import {
-  supportedClientRegistrationProfile,
-  type SupportedClientName,
-} from "./SupportedClients.js";
+import type { SupportedClientName } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 it.each(["initial", "approval", "client", "skill", "hopper", "close"] as const)(
   "stops later setup writes after cancellation during %s and awaits close",

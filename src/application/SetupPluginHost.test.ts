@@ -5,10 +5,8 @@ import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { preferPluginSetup, withPluginSetup } from "./SetupPluginHost.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
-import {
-  supportedClientRegistrationProfile,
-  type SupportedClientName,
-} from "./SupportedClients.js";
+import type { SupportedClientName } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 it.each([
   { client: "cursor", args: ["plugin", "list", "--json"] },

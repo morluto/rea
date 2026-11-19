@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /**
  * Streaming SHA-256 over canonical JSON. Hashing owner (avoids assembling
@@ -10,6 +11,14 @@ export const digestCanonicalValue = (
   value: unknown,
   context = "Comparison",
 ): string => {
+  if (typeof value === "number" && !Number.isFinite(value))
+    throw new CanonicalDigestError(Number.isNaN(value) ? "nan" : "infinity");
+  if (value === null || typeof value !== "object") {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined)
+      throw new TypeError(`${context} could not canonicalize data`);
+    return sha256Hex(encoded);
+  }
   const hash = createHash("sha256");
   // Batch small emitted parts to cut hash.update crossings. A large part is
   // hashed as is: appending it to the buffer would hold a second copy of it
@@ -86,14 +95,23 @@ const emitCanonical = (
     } else {
       emit("{");
       let first = true;
-      // Match canonicalize/RFC 8785, including supplementary-plane keys.
-      for (const key of Object.keys(value).sort()) {
-        if (
-          Reflect.get(value, key) === undefined ||
-          typeof Reflect.get(value, key) === "symbol"
-        )
+      const record = value as Readonly<Record<string, unknown>>;
+      const keys = Object.keys(record);
+      if (keys.length === 2) {
+        if (keys[0]! > keys[1]!) {
+          const firstKey = keys[0]!;
+          keys[0] = keys[1]!;
+          keys[1] = firstKey;
+        }
+      } else if (keys.length > 2) {
+        // Match canonicalize/RFC 8785, including supplementary-plane keys.
+        keys.sort();
+      }
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index]!;
+        if (record[key] === undefined || typeof record[key] === "symbol")
           continue;
-        const item: unknown = Reflect.get(value, key);
+        const item: unknown = record[key];
         if (!first) emit(",");
         first = false;
         emit(JSON.stringify(key));

@@ -25,6 +25,7 @@ import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {
   hasUnityFsHeader,
   readUnityFsHeaderFacts,
+  UNITYFS_HEADER_PREFIX_BYTES,
 } from "../domain/unityfsFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -69,7 +70,7 @@ class DesktopProbeLimit extends ArtifactReaderFailure {
   }
 }
 
-/** Inspect selected ranges on an already admitted descriptor; never hash payloads. */
+/** Inspect and hash selected ranges on an already admitted descriptor. */
 export const inspectDesktopFile = async (
   file: FileHandle,
   row: DesktopFile,
@@ -171,8 +172,18 @@ export const inspectDesktopFile = async (
       },
     });
   }
-  if (prefix.length >= 20 && hasUnityFsHeader(prefix)) {
-    const unityfsHeader = readUnityFsHeaderFacts(prefix);
+  if (hasUnityFsHeader(prefix)) {
+    let unityfsHeader = readUnityFsHeaderFacts(prefix);
+    const headerPrefixBytes = Math.min(size, UNITYFS_HEADER_PREFIX_BYTES);
+    // The generic probe can end inside a version string or the fixed tail.
+    // Continue only for UnityFS and charge the additional range to the same budget.
+    if (unityfsHeader === undefined && prefix.length < headerPrefixBytes)
+      unityfsHeader = readUnityFsHeaderFacts(
+        Buffer.concat([
+          prefix,
+          await read(prefix.length, headerPrefixBytes - prefix.length),
+        ]),
+      );
     if (unityfsHeader !== undefined)
       fact({
         kind: "unityfs-header",

@@ -143,7 +143,7 @@ const SHORTHAND_NON_ASCII: Readonly<Record<string, NonAscii>> = {
 
 class Projector {
   #index = 0;
-  #wider = false;
+  #widenings = 0;
 
   constructor(private readonly source: string) {}
 
@@ -165,7 +165,7 @@ class Projector {
       completed.length === 1
         ? `^${completed[0]!}$`
         : `^(?:${completed.join("|")})$`;
-    return { kind: this.#wider ? "wider" : "exact", pattern };
+    return { kind: this.#widenings > 0 ? "wider" : "exact", pattern };
   }
 
   #peek(offset = 0): string {
@@ -173,15 +173,21 @@ class Projector {
   }
 
   #widen = (): void => {
-    this.#wider = true;
+    this.#widenings++;
   };
 
   #disjunction(): string[][] {
+    const wideningsBefore = this.#widenings;
     const alternatives = [this.#alternative()];
     while (this.#peek() === "|") {
       this.#index++;
       alternatives.push(this.#alternative());
     }
+    // Widening can make disjoint alternatives overlap. Repeating such a
+    // group, including through a parent group, can backtrack exponentially.
+    // Omit the advertisement rather than assume those branches stay disjoint.
+    if (alternatives.length > 1 && this.#widenings > wideningsBefore)
+      throw new Unexpressible();
     return alternatives;
   }
 
