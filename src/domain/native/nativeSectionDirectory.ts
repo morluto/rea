@@ -6,6 +6,7 @@ import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
 } from "../dosMz.js";
+import { elfFixedHeaderWidth } from "../elfFixedHeader.js";
 import { readElfSectionHeader } from "../elfSectionHeader.js";
 import { readElfProgramHeader } from "../elfProgramHeader.js";
 import { observePeCoffFrame, PE_COFF_FRAME_BYTES } from "../peCoffHeader.js";
@@ -160,7 +161,7 @@ export function* readElfSectionDirectory(
   fileSize: number,
 ): Generator<NativeReadRequest, ElfSectionDirectory, Buffer> {
   const prefix = yield request(fileSize, 0n, 16n);
-  const headerSize = prefix[4] === 1 ? 52 : 64;
+  const headerSize = elfFixedHeaderWidth(prefix[4] === 1 ? 32 : 64);
   const bytes = yield request(fileSize, 0n, BigInt(headerSize));
   const parsed = yield* readElfTableDeclarations(bytes, fileSize);
   if (!parsed.ok) return reject(parsed.error);

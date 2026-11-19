@@ -14,6 +14,7 @@ import {
 } from "../../src/domain/artifactGraph.js";
 import { ANDROID_OTA_MAX_SIGNATURE_BYTES } from "../../src/domain/firmware/androidOtaPayload.js";
 import {
+  androidOtaSignatureBlob,
   buildAndroidOtaPayload,
   deltaAndroidOtaPayload,
   fullAndroidOtaPayload,
@@ -76,6 +77,57 @@ cliTest.for([
     expect(
       (await readFile(join(result.output_root, "boot.img"))).equals(data),
     ).toBe(true);
+  },
+);
+
+cliTest(
+  "retains verified operation data beside an incomplete oversized payload signature",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-ota-truncated-signature-cli-",
+    );
+    const source = join(root, "payload.bin");
+    const payloadSignature = androidOtaSignatureBlob(
+      Buffer.alloc(ANDROID_OTA_MAX_SIGNATURE_BYTES),
+    );
+    const image = buildAndroidOtaPayload({
+      payloadSignature,
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+    });
+    await writeFile(source, image);
+    const complete = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(complete.exitCode).toBe(1);
+    expect(complete.json).toMatchObject({
+      details: { reason: "limit", boundary: "capacity" },
+    });
+
+    await writeFile(source, image.subarray(0, -1));
+    const incomplete = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(incomplete.exitCode, incomplete.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(incomplete.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(
+      graph.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      blob_truncated: true,
+      payload_signature_blob_size: payloadSignature.length,
+      payload_signature_count: null,
+    });
+    expect(
+      graph.occurrences.find((row) => row.logical_path === "boot.img")
+        ?.hash_status,
+    ).toBe("verified");
   },
 );
 
