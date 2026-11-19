@@ -445,12 +445,16 @@ export const localEntryData = (
     return err({
       detail: `local header at byte ${String(at)} is out of range`,
     });
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (dv.getUint32(at, true) !== LOCAL_SIGNATURE)
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
+  if (reader.u32(at) !== LOCAL_SIGNATURE)
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
-  const flags = dv.getUint16(at + 6, true);
+  const flags = reader.u16(at + 6);
   const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
   if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
     return err({
@@ -463,13 +467,13 @@ export const localEntryData = (
       ["compressed size", 18, entry.compressedSize],
       ["uncompressed size", 22, entry.uncompressedSize],
     ] as const) {
-      const local = dv.getUint32(at + offset, true);
+      const local = reader.u32(at + offset);
       if (local !== expected)
         return err({
           detail: `local header ${field} ${String(local)} differs from the central directory's ${String(expected)}`,
         });
     }
-  const nameLength = dv.getUint16(at + 26, true);
+  const nameLength = reader.u16(at + 26);
   const nameStart = at + LOCAL_FIXED_SIZE;
   if (
     nameStart + nameLength > limit ||
@@ -483,7 +487,7 @@ export const localEntryData = (
     return err({
       detail: "local header name differs from the central directory's",
     });
-  const start = nameStart + nameLength + dv.getUint16(at + 28, true);
+  const start = nameStart + nameLength + reader.u16(at + 28);
   const end = start + entry.compressedSize;
   if (end > limit)
     return err({

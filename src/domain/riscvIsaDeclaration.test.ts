@@ -104,7 +104,7 @@ describe("RISC-V .riscv.attributes", () => {
     },
   );
 
-  it("skips tags it does not use by the psABI's odd-string, even-integer rule", () => {
+  it("skips known unused tags and optional tags with their psABI value framing", () => {
     expect(
       parseRiscvAttributes(
         section([
@@ -117,10 +117,12 @@ describe("RISC-V .riscv.attributes", () => {
           0x01, // two-byte ULEB128
           5,
           ...text("rv32i2p1"),
-          7,
-          ...text("future string tag"),
+          65,
+          ...text("future optional string tag"),
           14,
           3, // Tag_RISCV_atomic_abi
+          16,
+          0, // Tag_RISCV_x3_reg_usage
         ]),
         true,
       ),

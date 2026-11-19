@@ -13,6 +13,47 @@ import {
 
 const EM_X86_64 = 62;
 
+it("applies PT_DYNAMIC capacity only to backed whole entries", () => {
+  const maximum = 16 * 1024 * 1024;
+  const bytes = Buffer.alloc(maximum + 16);
+  const read = (file: Buffer, size: bigint) => {
+    const steps = readElfRelocationWritesSteps(file, {
+      bits: 64,
+      little: true,
+      machine: EM_X86_64,
+      dynamicSegments: [{ offset: 0n, size }],
+      mappings: [],
+      zeroFills: [],
+    });
+    let next = steps.next();
+    while (!next.done) next = steps.next();
+    return next.value;
+  };
+
+  const malformed = expect.objectContaining({
+    reason: "malformed-container",
+    message: "PT_DYNAMIC is truncated or outside the file",
+  });
+  expect(() => read(bytes.subarray(0, 16), BigInt(bytes.length))).toThrow(
+    malformed,
+  );
+  expect(() => read(bytes, BigInt(maximum + 1))).toThrow(malformed);
+  expect(() => read(bytes, BigInt(bytes.length))).toThrow(
+    expect.objectContaining({
+      reason: "native-index-capacity",
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "native-index-capacity", maximum },
+      }),
+      unit: "bytes",
+    }),
+  );
+  expect(read(bytes, BigInt(maximum))).toMatchObject({
+    dynamic_present: true,
+    pointer_coverage_known: true,
+  });
+});
+
 const image = (): Buffer => {
   const bytes = Buffer.alloc(0x400);
   const dynamic: [bigint, bigint][] = [

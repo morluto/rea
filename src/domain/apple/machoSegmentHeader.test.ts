@@ -93,10 +93,14 @@ it("admits a segment's VM sizes, section table and file range", () => {
     protection: 1,
     headerSize: 72,
     sectionCount: 1,
+    flags: 0,
   };
   const admit = (facts: typeof segment, commandBytes = 152, image = 24) =>
     admitMachoSegmentCommand(facts, commandBytes, 64, image);
-  expect(admit(segment)).toEqual({ ok: true, value: { unmapped: false } });
+  expect(admit(segment)).toMatchObject({
+    ok: true,
+    value: { unmapped: false },
+  });
   expect(admit({ ...segment, memorySize: 15n }).ok).toBe(false);
   expect(admit(segment, 151).ok).toBe(false);
   expect(admit(segment, 152, 23).ok).toBe(false);

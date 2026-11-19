@@ -3155,6 +3155,61 @@ describe("managed member type selection", () => {
 });
 
 describe("managed member method paging", () => {
+  it("records a checked unresolved MethodDef only inside the source interval and selected type", () => {
+    const bytes = buildManagedPeFixture({ methodRowCount: 3 });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "fixture"),
+      size,
+    );
+    const first = metadataRowOffset(layout, 6, 1);
+    const third = metadataRowOffset(layout, 6, 3);
+    bytes.writeUInt16LE(0xffff, first + 8);
+    bytes.writeUInt16LE(0, third + 8);
+    const target = managedPeFixtureTarget(bytes);
+    const report = inspectManagedMembersBytes(bytes, target, {
+      typeNames: ["Fixture.Program"],
+      methodOffset: 1,
+      methodLimit: 2,
+    });
+    expect(report.method_rows).toEqual({ offset: 1, count: 2, total: 3 });
+    expect(report.methods.map(({ token }) => token)).toEqual(["0x06000002"]);
+    expect(report.unresolved_definitions).toEqual({
+      method_names_examined: true,
+      rows: [
+        {
+          kind: "MethodDef",
+          token: "0x06000003",
+          row_offset: third,
+          declaring_type_token: "0x02000001",
+          rva: bytes.readUInt32LE(third),
+          failed_fields: [
+            {
+              field: "Name",
+              field_offset: third + 8,
+              heap_index: 0,
+              reason: "empty-required-name",
+            },
+          ],
+        },
+      ],
+    });
+    expect(
+      inspectManagedMembersBytes(bytes, target, { typeNames: ["Other.Type"] })
+        .unresolved_definitions,
+    ).toEqual({ method_names_examined: true, rows: [] });
+    const invalid = structuredClone(report);
+    if (invalid.unresolved_definitions?.rows[0] === undefined)
+      throw new Error("Missing MethodDef coordinate");
+    invalid.unresolved_definitions.rows[0].token = "0x06000001";
+    expect(managedMemberInspectionSchema.safeParse(invalid).success).toBe(
+      false,
+    );
+  });
+
   it("returns only the requested MethodDef rows", () => {
     const image = buildMultiMethodManagedPeFixture({
       methods: [

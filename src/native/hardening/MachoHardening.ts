@@ -5,6 +5,7 @@ import {
   machoKnownArm64Subtype,
 } from "../../domain/apple/machoCpuIdentity.js";
 import {
+  admitMachoSymtabRanges,
   MACHO_HEADER_FLAGS_OFFSET,
   readMachoLinkeditDataCommand,
   readMachoSymtabCommand,
@@ -34,7 +35,10 @@ import {
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
 import { assertArtifactReadActive } from "../../resources/index.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../../domain/binaryContainer.js";
 import { readMachoEncryption } from "../../domain/apple/machoEncryptionReader.js";
 import {
   frameLoadCommands,
@@ -569,44 +573,40 @@ const stackRow = (
     );
   const fields = readMachoSymtabCommand(symtab.body, true);
   if (fields === null) malformed("Mach-O LC_SYMTAB command is truncated");
-  const { symoff, nsyms, stroff, strsize } = fields;
-  // One oversized symbol table must not drop the header rows or sibling slices.
-  if (nsyms > MAX_BINARY_HARDENING_TABLE_ENTRIES) return unknownStackBudget();
-  const width = wide ? 16 : 12;
-  if (
-    symoff > ref.size ||
-    stroff > ref.size ||
-    nsyms * width > ref.size - symoff ||
-    strsize > ref.size - stroff
-  )
+  const { symoff, nsyms, stroff } = fields;
+  const ranges = admitMachoSymtabRanges(fields, wide, ref.size);
+  if (ranges === null)
     malformed("Mach-O symbol or string table extends outside the slice");
-  const symbolAt = ref.offset + symoff;
-  const stringAt = ref.offset + stroff;
+  const { width, symbolsEnd, stringsEnd } = ranges;
   if (
-    nsyms * width > bytes.length - symbolAt ||
-    strsize > bytes.length - stringAt
+    symbolsEnd > bytes.length - ref.offset ||
+    stringsEnd > bytes.length - ref.offset
   )
     malformed("Mach-O symbol or string table extends outside the file");
-  const strings = bytes.subarray(stringAt, stringAt + strsize);
+  // Keep header rows and sibling slices when the backed table exceeds the scan limit.
+  if (nsyms > MAX_BINARY_HARDENING_TABLE_ENTRIES) return unknownStackBudget();
+  const symbols = new BinaryReader(
+    bytes.subarray(ref.offset + symoff, ref.offset + symbolsEnd),
+    true,
+    "macho",
+  );
+  const stringAt = ref.offset + stroff;
+  const strings = bytes.subarray(stringAt, ref.offset + stringsEnd);
   let scanned = 0;
   let unterminated = false;
   let found: BinaryHardeningRow | null = null;
   for (let index = 0; index < nsyms; index += 1) {
-    const entry = symbolAt + index * width;
-    const nameOffset = bytes.readUInt32LE(entry);
+    const entry = index * width;
+    const nameOffset = symbols.u32(entry);
     if (nameOffset === 0) continue;
     // N_STAB records use a different type namespace. Only an ordinary N_EXT
     // with N_TYPE clear is an undefined external; defined exports are not imports.
-    const nType = bytes.readUInt8(entry + 4);
+    const nType = symbols.u8(entry + 4);
     if ((nType & 0xe0) !== 0 || (nType & 0x0e) !== 0 || (nType & 0x01) === 0)
       continue;
     // A common definition shares those type bits but carries its size in
     // n_value, so only a zero n_value names an import.
-    if (
-      bytes.readUInt32LE(entry + 8) !== 0 ||
-      (wide && bytes.readUInt32LE(entry + 12) !== 0)
-    )
-      continue;
+    if (symbols.word(entry + 8, wide ? 64 : 32) !== 0n) continue;
     // After a match, later records are still admitted so symbol order cannot
     // hide a damaged table; their names need not be read.
     if (found !== null) {
