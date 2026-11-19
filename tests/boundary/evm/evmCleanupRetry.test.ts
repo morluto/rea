@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+const LIMITS_PATH = "/proc/self/limits";
 const limitReport = [
   "Max address space         unlimited            unlimited            bytes",
   "Max cpu time              unlimited            unlimited            seconds",
@@ -12,6 +13,7 @@ const limitReport = [
 
 const closeState = vi.hoisted(() => ({
   path: "",
+  kernelReport: "",
   failures: 0,
   onClosed: undefined as (() => void) | undefined,
   onClosing: undefined as (() => void) | undefined,
@@ -24,7 +26,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...fs,
     open: async (...args: Parameters<typeof fs.open>) => {
-      const handle = await fs.open(...args);
+      const isLimits = args[0] === LIMITS_PATH;
+      if (isLimits) closeState.onLimits?.();
+      const handle = await fs.open(
+        isLimits ? closeState.kernelReport : args[0],
+        args[1],
+        args[2],
+      );
       if (args[0] !== closeState.path) return handle;
       const close = handle.close.bind(handle);
       if (closeState.readFailure !== undefined)
@@ -42,11 +50,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       };
       return handle;
     },
-    readFile: async (...args: Parameters<typeof fs.readFile>) => {
-      if (args[0] !== "/proc/self/limits") return fs.readFile(...args);
-      closeState.onLimits?.();
-      return limitReport;
-    },
   };
 });
 
@@ -59,6 +62,72 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+
+let limitsWorkspace = "";
+beforeAll(async () => {
+  limitsWorkspace = await mkdtemp(join(tmpdir(), "rea-evm-kernel-limits-"));
+  closeState.kernelReport = join(limitsWorkspace, "limits");
+  await writeFile(closeState.kernelReport, limitReport);
+});
+afterAll(async () => {
+  closeState.kernelReport = "";
+  await rm(limitsWorkspace, { recursive: true, force: true });
+});
+
+it.each(["completed", "invalid", "cancelled"] as const)(
+  "retains and retries the limit descriptor after %s admission",
+  async (scenario) => {
+    const controller = new AbortController();
+    const reason = { requested: "stop at limit descriptor close" };
+    const createRuntime = vi.fn(async () => {
+      throw new Error("Worker must not start before its limits are admitted");
+    });
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      undefined,
+      createRuntime,
+      SIMULATED_LINUX_X64,
+    );
+    closeState.path = LIMITS_PATH;
+    closeState.failures = 2;
+    if (scenario === "invalid")
+      await writeFile(
+        closeState.kernelReport,
+        limitReport.replace("seconds", "bytes"),
+      );
+    if (scenario === "cancelled")
+      closeState.onClosing = () => controller.abort(reason);
+    try {
+      const outcome = await provider.inspect(
+        { path: "/selected.hex", encoding: "hex" },
+        { signal: controller.signal },
+      );
+      if (outcome.ok)
+        throw new Error("Expected limit descriptor cleanup failure");
+      expect(outcome.error.cleanupResources).toEqual([LIMITS_PATH]);
+      expect(outcome.error.cleanupIncomplete).toBe(true);
+      if (scenario === "invalid")
+        expect(outcome.error.cleanupPrimary?.message).toContain(
+          "Malformed inherited Linux resource limit: Max cpu time.",
+        );
+      if (scenario === "cancelled")
+        expect(outcome.error.cleanupPrimary?.cause).toBe(reason);
+      await expect(provider.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [LIMITS_PATH],
+      });
+      await provider.close();
+      expect(outcome.error.cleanupIncomplete).toBe(false);
+      expect(createRuntime).not.toHaveBeenCalled();
+    } finally {
+      closeState.path = "";
+      closeState.failures = 0;
+      closeState.onClosing = undefined;
+      await provider.close();
+      await writeFile(closeState.kernelReport, limitReport);
+    }
+  },
+);
 
 it.each(["pre-aborted", "admission", "close"] as const)(
   "preserves opaque caller reasons through service cancellation at %s",

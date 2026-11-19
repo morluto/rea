@@ -300,6 +300,7 @@ describe("plugin release pins", () => {
     const nextVersion = nextReleaseVersion(packageJson.version);
     const version = Version.parse(nextVersion);
     const config = (await readJson("release-please-config.json")) as {
+      versioning: string;
       packages: {
         ".": {
           "extra-files": Array<{
@@ -310,24 +311,62 @@ describe("plugin release pins", () => {
         };
       };
     };
+    expect(config.versioning).toBe("always-bump-minor");
     const updated = new Map<string, string>();
 
     for (const extraFile of config.packages["."]["extra-files"]) {
-      if (extraFile.type !== "json" || extraFile.jsonpath === undefined)
-        continue;
+      const updater =
+        extraFile.type === "generic"
+          ? new Generic({ version })
+          : extraFile.type === "json" && extraFile.jsonpath !== undefined
+            ? new GenericJson(extraFile.jsonpath, version)
+            : undefined;
+      if (updater === undefined) continue;
       const content =
         updated.get(extraFile.path) ?? (await readFile(extraFile.path, "utf8"));
-      updated.set(
-        extraFile.path,
-        new GenericJson(extraFile.jsonpath, version).updateContent(content),
-      );
+      updated.set(extraFile.path, updater.updateContent(content));
     }
 
-    const updatedJson = new Map<string, unknown>(
-      [...updated].map(
-        ([path, content]) => [path, JSON.parse(content) as unknown] as const,
-      ),
+    const installation = "docs/getting-started/installation.md";
+    const installationBefore = await readFile(installation, "utf8");
+    const installationAfter = updated.get(installation) ?? "";
+    for (const example of [
+      /npx -y rea-agents@(\S+) doctor --provider ghidra --json/gu,
+      /"command":\s*"npx",\s*"args":\s*\["-y",\s*"rea-agents@([^"]+)",\s*"mcp"\]/gu,
+    ]) {
+      expect(
+        [...installationBefore.matchAll(example)].map((match) => match[1]),
+      ).toEqual([packageJson.version]);
+      expect(
+        [...installationAfter.matchAll(example)].map((match) => match[1]),
+      ).toEqual([nextVersion]);
+    }
+    for (const [content, pin] of [
+      [installationBefore, packageJson.version],
+      [installationAfter, nextVersion],
+    ] as const) {
+      for (const [block] of content.matchAll(
+        /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/gu,
+      ))
+        expect(new Set(block.match(/rea-agents@[^\s"`]+/gu))).toEqual(
+          new Set([`rea-agents@${pin}`]),
+        );
+    }
+
+    expect(updated.get("src/generatedPackageMetadata.ts")).toContain(
+      `version: "${nextVersion}"`,
     );
+    const updatedJson = new Map<string, unknown>(
+      [...updated]
+        .filter(([path]) => path.endsWith(".json"))
+        .map(
+          ([path, content]) => [path, JSON.parse(content) as unknown] as const,
+        ),
+    );
+    expect(updatedJson.get("server.json")).toMatchObject({
+      version: nextVersion,
+      packages: [{ identifier: "rea-agents", version: nextVersion }],
+    });
     expect(updatedJson.get(".claude-plugin/plugin.json")).toMatchObject({
       version: nextVersion,
       mcpServers: {
@@ -378,6 +417,12 @@ describe("plugin release pins", () => {
         },
       ],
     });
+    expect(updated.get(versionedCursorSkill)).toContain(
+      `rea-agents@${nextVersion}`,
+    );
+    expect(updated.get(versionedCursorSkill)).not.toContain(
+      `rea-agents@${packageJson.version}`,
+    );
   });
 
   it("pins the plugin server launch from the shared MCP declaration", async () => {

@@ -25,3 +25,13 @@ it.each(["a[0", "a[0,1", "a[0],b[", "]a,[0"])(
     });
   },
 );
+
+it.each(["rows[0,1,2].name", "name,rows[-1,2,]"])(
+  "refuses surplus slice bounds in %j",
+  (expression) => {
+    expect(parseOutputFilter(expression)).toEqual({
+      ok: false,
+      error: { kind: "extra_slice_bounds" },
+    });
+  },
+);

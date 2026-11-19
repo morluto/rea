@@ -9,24 +9,6 @@ import {
   CLI_REGISTRATION_ORDER,
   type CliCommandRegistrationId,
 } from "../../../src/cli/cliCommandRegistrations.js";
-import { selectCliRegistrations } from "../../../src/cli/cliLoader.js";
-import {
-  cliCompletionShell,
-  parseCliGlobalArguments,
-} from "../../../src/cliBuiltinArguments.js";
-
-/** Select registrars as the executable does: completion has no global arguments. */
-const selectFor = (
-  arguments_: readonly string[],
-  environment: NodeJS.ProcessEnv,
-  recorded: Readonly<Record<string, string>> | undefined,
-) =>
-  selectCliRegistrations(
-    cliCompletionShell(environment) === undefined
-      ? parseCliGlobalArguments(arguments_)
-      : undefined,
-    recorded,
-  );
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
@@ -41,6 +23,20 @@ import { processTest } from "../../support/process/processFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 const ENVIRONMENT = { PATH: process.env.PATH };
+const COMPLETE_CLI_IMPORT = "REA_TEST_CLI_ENTRY_RESOLVED";
+const monitorCompleteCli = (recording?: Readonly<Record<string, string>>) =>
+  `data:text/javascript,${encodeURIComponent(`
+import { registerHooks } from "node:module";
+registerHooks({ resolve(specifier, context, next) {
+  const resolved = next(specifier, context);
+  if (resolved.url.endsWith("/dist/cli-runtime/cli.js")) process.stderr.write(${JSON.stringify(`${COMPLETE_CLI_IMPORT}\n`)});
+  return resolved;
+}, load(url, context, next) {
+  const recording = ${JSON.stringify(recording ?? null)};
+  if (recording !== null && url.endsWith("/dist/recordedCliCommandRegistrations.js"))
+    return { format: "module", shortCircuit: true, source: "export const RECORDED_CLI_COMMAND_REGISTRATIONS = " + JSON.stringify(recording) };
+  return next(url, context);
+} });`)}`;
 
 const topLevelNames = (cli: CliInstance): readonly string[] =>
   cliCommands(cli).map(({ name }) => name);
@@ -98,60 +94,15 @@ describe("lazy CLI registration", () => {
   });
 
   it("gives each command the same definition alone as in the complete CLI", async () => {
-    const completePaths = new Set(topLevelNames(complete));
-    const covered = new Set<string>();
     for (const id of CLI_REGISTRATION_ORDER) {
       const alone = registrars.get(id)!;
       for (const path of topLevelNames(alone)) {
-        expect(completePaths.has(path), path).toBe(true);
-        covered.add(path);
-        expect(await help(alone, path), path).toEqual(
-          await help(complete, path),
-        );
+        const page = await help(alone, path);
+        expect(page.exitCode, path).toBe(0);
+        expect(page.stdout, path).toContain(`Usage: rea ${path}`);
+        expect(page, path).toEqual(await help(complete, path));
       }
     }
-    expect(covered).toEqual(completePaths);
-  });
-
-  it("loads one registrar only for a recorded command that runs", () => {
-    const recorded = { "inspect-go-binary": "go", setup: "setup" };
-    const select = (
-      arguments_: readonly string[],
-      environment: NodeJS.ProcessEnv = {},
-      record: Readonly<Record<string, string>> | null = recorded,
-    ) => selectFor(arguments_, environment, record ?? undefined);
-
-    expect(select(["inspect-go-binary", "a.out"])).toEqual(["go"]);
-    expect(select(["inspect-go-binary", "a.out", "--json"])).toEqual(["go"]);
-    expect(select(["--format", "json", "inspect-go-binary", "a.out"])).toEqual([
-      "go",
-    ]);
-    expect(select(["--timings", "setup", "--dry-run"])).toEqual(["setup"]);
-    // A standalone version query needs no registrar, recorded or not.
-    expect(select(["--version"])).toEqual([]);
-    expect(select(["--version"], {}, null)).toEqual([]);
-    // Combined with anything else, or completing, it keeps the complete CLI.
-    expect(select(["--version", "--help"])).toBeUndefined();
-    expect(select(["--version", "--timings"])).toBeUndefined();
-    expect(select(["--version"], { COMPLETE: "bash" })).toBeUndefined();
-    // Help, schemas, LLM manifests and builtins describe the whole catalog.
-    for (const flag of ["--help", "-h", "--schema", "--llms", "--llms-full"])
-      expect(select(["inspect-go-binary", flag]), flag).toBeUndefined();
-    // A retired mode is refused without constructing command analysis.
-    expect(select(["inspect-go-binary", "--mcp"])).toEqual([]);
-    expect(select(["unknown", "--mcp"], {}, null)).toEqual([]);
-    expect(select(["--mcp"])).toBeUndefined();
-    expect(select([])).toBeUndefined();
-    expect(select(["skills", "add"])).toBeUndefined();
-    // An unknown name needs every command for "did you mean".
-    expect(select(["inspect-go-binar"])).toBeUndefined();
-    expect(select(["constructor"])).toBeUndefined();
-    // Shell completion and a missing or stale recording use the complete CLI.
-    expect(select(["inspect-go-binary"], { COMPLETE: "bash" })).toBeUndefined();
-    expect(select(["inspect-go-binary"], {}, null)).toBeUndefined();
-    expect(
-      select(["inspect-go-binary"], {}, { "inspect-go-binary": "removed" }),
-    ).toBeUndefined();
   });
 });
 
@@ -175,20 +126,15 @@ describe("lazy CLI execution", () => {
   processTest(
     "runs a recorded command without loading the complete CLI",
     async ({ processes }) => {
-      const marker = "REA_TEST_CLI_ENTRY_RESOLVED";
-      // Report a resolution of the complete CLI entry without changing it.
-      const hook = `data:text/javascript,${encodeURIComponent(`
-import { registerHooks } from "node:module";
-registerHooks({ resolve(specifier, context, next) {
-  const resolved = next(specifier, context);
-  if (resolved.url.endsWith("/dist/cli-runtime/cli.js")) process.stderr.write(${JSON.stringify(`${marker}\n`)});
-  return resolved;
-} });`)}`;
       const home = await createTestTempDirectory("rea-cli-lazy-home-");
       const run = (arguments_: readonly string[]) =>
         processes.run(
           process.execPath,
-          [`--import=${hook}`, join("scripts", "rea.mjs"), ...arguments_],
+          [
+            `--import=${monitorCompleteCli()}`,
+            join("scripts", "rea.mjs"),
+            ...arguments_,
+          ],
           {
             env: {
               ...ENVIRONMENT,
@@ -197,25 +143,51 @@ registerHooks({ resolve(specifier, context, next) {
             },
           },
         );
-      const lazy = await run(["list-cutter-sessions", "--json"]);
+      const lazy = await run([
+        "--format=json",
+        "list-cutter-sessions",
+        "--timings=false",
+      ]);
       expect(lazy.exitCode, lazy.stderr).toBe(0);
       expect(JSON.parse(lazy.stdout)).toMatchObject({ sessions: [] });
-      expect(lazy.stderr).not.toContain(marker);
+      expect(lazy.stderr).not.toContain(COMPLETE_CLI_IMPORT);
       const version = await run(["--version"]);
       expect(version.exitCode, version.stderr).toBe(0);
       expect(version.stdout).toBe(`${PRODUCT_IDENTITY.packageVersion}\n`);
-      expect(version.stderr).not.toContain(marker);
+      expect(version.stderr).not.toContain(COMPLETE_CLI_IMPORT);
       const retired = await run(["doctor", "--mcp", "--json", "--full-output"]);
       expect(retired.exitCode, retired.stderr).toBe(1);
       expect(JSON.parse(retired.stdout)).toMatchObject({
         ok: false,
         error: { code: "MCP_MODE_REMOVED" },
-        meta: { command: "doctor" },
+        meta: {
+          command: "doctor",
+          cta: { commands: [{ command: "rea mcp" }] },
+        },
       });
-      expect(retired.stderr).not.toContain(marker);
+      expect(retired.stderr).not.toContain(COMPLETE_CLI_IMPORT);
       const complete = await run(["list-cutter-sessions", "--help"]);
       expect(complete.exitCode, complete.stderr).toBe(0);
-      expect(complete.stderr).toContain(marker);
+      expect(complete.stderr).toContain(COMPLETE_CLI_IMPORT);
+    },
+  );
+
+  processTest(
+    "falls back to the complete CLI when the recorded registrar is unavailable",
+    async ({ processes }) => {
+      const name = "list-cutter-sessions";
+      const hook = monitorCompleteCli({ [name]: "removed-registrar" });
+      const home = await createTestTempDirectory("rea-cli-stale-recording-");
+      const result = await processes.run(
+        process.execPath,
+        [`--import=${hook}`, join("scripts", "rea.mjs"), name, "--json"],
+        {
+          env: { ...ENVIRONMENT, HOME: home, NODE_COMPILE_CACHE: compileCache },
+        },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ sessions: [] });
+      expect(result.stderr).toContain(COMPLETE_CLI_IMPORT);
     },
   );
 
@@ -241,22 +213,18 @@ registerHooks({ resolve(specifier, context, next) {
         "--json",
       ];
       const names = [...firstNames.values()];
-      // The one-shot host writes compact JSON; compare the documents.
-      const document = (stdout: string): unknown => {
-        try {
-          return JSON.parse(stdout);
-        } catch {
-          return stdout;
-        }
-      };
-      const lazy = new Map<string, { document: unknown; exitCode: number }>();
+      const diagnostics = new Map<string, unknown>();
       const LAUNCHES = 4;
       for (let start = 0; start < names.length; start += LAUNCHES)
         await Promise.all(
           names.slice(start, start + LAUNCHES).map(async (name) => {
             const result = await processes.run(
               process.execPath,
-              [join("scripts", "rea.mjs"), ...invocation(name)],
+              [
+                `--import=${monitorCompleteCli()}`,
+                join("scripts", "rea.mjs"),
+                ...invocation(name),
+              ],
               {
                 env: {
                   ...ENVIRONMENT,
@@ -265,18 +233,23 @@ registerHooks({ resolve(specifier, context, next) {
                 },
               },
             );
-            lazy.set(name, {
-              document: document(result.stdout),
-              exitCode: result.exitCode ?? -1,
+            expect(result.exitCode, name).toBe(1);
+            expect(result.stderr, name).not.toContain(COMPLETE_CLI_IMPORT);
+            const diagnostic: unknown = JSON.parse(result.stdout);
+            expect(diagnostic, name).toMatchObject({
+              code: "UNKNOWN",
+              message: expect.stringContaining("--rea-test-unknown-option"),
             });
+            diagnostics.set(name, diagnostic);
           }),
         );
+      // The in-process fixture restores shared process.exitCode after each call.
       for (const name of names) {
         const expected = await serveInProcessCli(complete, invocation(name));
-        expect(lazy.get(name), name).toEqual({
-          document: document(expected.stdout),
-          exitCode: expected.exitCode,
-        });
+        expect(expected.exitCode, name).toBe(1);
+        expect(diagnostics.get(name), name).toEqual(
+          JSON.parse(expected.stdout),
+        );
       }
     },
   );

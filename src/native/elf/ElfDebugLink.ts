@@ -41,7 +41,6 @@ const DEBUG_SECTION_NAMES = [
   ".gnu_debugdata",
 ] as const;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
-const CRC_CHUNK = 65536;
 const GNU_BUILD_ID_NOTE_TYPE = 3;
 
 const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
@@ -81,26 +80,11 @@ const untrustedName = (
 const crc32Hex = (value: number): string =>
   (value >>> 0).toString(16).padStart(8, "0");
 
-/** GNU debuglink CRC32 of one bounded buffer. Continuation matches one-shot. */
-export const gnuDebuglinkCrc32 = (bytes: Buffer): number => {
-  let value = 0;
-  for (let offset = 0; offset < bytes.length; offset += CRC_CHUNK)
-    value = crc32(
-      bytes.subarray(offset, Math.min(offset + CRC_CHUNK, bytes.length)),
-      value,
-    );
-  return value >>> 0;
-};
-
 /** Continue a GNU debuglink CRC32 over the next streamed chunk. */
 export const continueGnuDebuglinkCrc32 = (
   value: number,
   chunk: Buffer,
 ): number => crc32(chunk, value) >>> 0;
-
-/** Eight lowercase hex digits for a GNU debuglink CRC32. */
-export const gnuDebuglinkCrc32Hex = (bytes: Buffer): string =>
-  crc32Hex(gnuDebuglinkCrc32(bytes));
 
 const isRethrownBudget = (cause: unknown): boolean =>
   isParseLimit(cause, "elf") ||

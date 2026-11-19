@@ -24,7 +24,12 @@ const report: ErlangBeam = {
   lambdas: null,
   code: null,
   module: null,
-  coverage: { status: "complete", examined_chunks: 0, atoms: 0 },
+  coverage: {
+    status: "complete",
+    examined_chunks: 0,
+    atoms: 0,
+    trailing_bytes: 0,
+  },
   limitations: ["No atom table was present."],
 };
 

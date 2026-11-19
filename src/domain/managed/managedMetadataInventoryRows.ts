@@ -70,7 +70,7 @@ export const readModule = (
   const table = layout.table(0);
   if (table === undefined || table.rowCount === 0) return null;
   const cursor = metadataRowCursor(bytes, layout, 0, 1);
-  const generation = cursor.readUInt16();
+  const generation = cursor.u16();
   const name = readMetadataString(
     bytes,
     layout,
@@ -111,14 +111,11 @@ export const readAssembly = (
   const table = layout.table(32);
   if (table === undefined || table.rowCount === 0) return null;
   const cursor = metadataRowCursor(bytes, layout, 32, 1);
-  const hashAlgorithm = cursor.readUInt32();
-  const version = [
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-  ].join(".");
-  const flags = cursor.readUInt32();
+  const hashAlgorithm = cursor.u32();
+  const version = [cursor.u16(), cursor.u16(), cursor.u16(), cursor.u16()].join(
+    ".",
+  );
+  const flags = cursor.u32();
   const key = readMetadataBlob(
     bytes,
     layout,
@@ -160,16 +157,13 @@ const assemblyReferenceHeader = (
   row: number,
 ) => {
   const cursor = metadataRowCursor(bytes, layout, 35, row);
-  const version = [
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-  ].join(".");
+  const version = [cursor.u16(), cursor.u16(), cursor.u16(), cursor.u16()].join(
+    ".",
+  );
   return {
     cursor,
     version,
-    flags: cursor.readUInt32(),
+    flags: cursor.u32(),
     keyIndex: cursor.readIndex(layout.blobIndexSize),
     nameIndex: cursor.readIndex(layout.stringIndexSize),
   };
@@ -536,8 +530,8 @@ export const readResource = ({
   issues,
 }: ReadResourceContext): ManagedResource => {
   const cursor = metadataRowCursor(bytes, layout, 40, row);
-  const declaredOffset = cursor.readUInt32();
-  const flags = cursor.readUInt32();
+  const declaredOffset = cursor.u32();
+  const flags = cursor.u32();
   const name = readMetadataString(
     bytes,
     layout,

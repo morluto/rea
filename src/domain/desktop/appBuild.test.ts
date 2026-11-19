@@ -62,7 +62,7 @@ describe("build bundle renderer", () => {
       { id: "env", type: "deploy_env", env_id: "mousepad" },
     ]);
     const script = text(bundle.files, "envs/mousepad/install-rea.sh");
-    expect(script).toContain("/opt/rea/payload/*/scripts/rea.mjs");
+    expect(script).toContain('ln -sfn "$launcher" /opt/rea/rea.mjs');
     expect(script).toContain(
       `/opt/rea/node-v${BUILD_NODE_VERSION}-linux-*/bin/node`,
     );

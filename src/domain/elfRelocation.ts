@@ -13,6 +13,12 @@ interface ElfRelocationFailure {
   readonly message: string;
 }
 
+/** The class-specific r_info split, shared by fixed and Android packed records. */
+export const decodeElfRelocationInfo = (info: bigint, bits: 32 | 64) => ({
+  type: Number(info & (bits === 64 ? 0xffffffffn : 0xffn)),
+  symbolIndex: Number(info >> (bits === 64 ? 32n : 8n)),
+});
+
 export function readElfRelocationEntry(
   bytes: Uint8Array,
   bits: 32 | 64,
@@ -49,8 +55,7 @@ export function readElfRelocationEntry(
       : BigInt(view.getUint32(wordBytes, littleEndian));
   const entry = {
     offset,
-    type: Number(info & (bits === 64 ? 0xffffffffn : 0xffn)),
-    symbolIndex: Number(info >> (bits === 64 ? 32n : 8n)),
+    ...decodeElfRelocationInfo(info, bits),
   };
   if (encoding === "rel") return ok(entry);
   const addend =

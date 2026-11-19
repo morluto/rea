@@ -380,9 +380,16 @@ export const appendAvbFooter = (
   return out;
 };
 
-/** Drop the final byte. The view is a copy, so the source image stays intact. */
-export const truncateImage = (image: Buffer): Buffer =>
-  Buffer.from(image.subarray(0, Math.max(0, image.length - 1)));
+/**
+ * Drop the final page padding and the last declared byte, so the image ends
+ * inside its last component. That component must end with a nonzero byte.
+ * The view is a copy, so the source image stays intact.
+ */
+export const truncateImage = (image: Buffer): Buffer => {
+  let end = image.length;
+  while (end > 0 && image[end - 1] === 0) end -= 1;
+  return Buffer.from(image.subarray(0, Math.max(0, end - 1)));
+};
 
 /**
  * Rewrite a v4 vendor table count. `entry_size` stays 108 and `table_size`

@@ -64,6 +64,8 @@ import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
 import {
   decodeSwiftNominalTypes,
   createSwiftContextReader,
+  SWIFT_TYPE_RECORD_SECTIONS,
+  type SwiftTypeRecord,
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
@@ -256,9 +258,9 @@ export function* decodeAppleDispatchMetadataSteps(
     budget,
     result,
   });
-  const typeEntries: bigint[] = [];
-  for (const section of sections.filter(
-    ({ name }) => name === "__swift5_types",
+  const typeEntries: SwiftTypeRecord[] = [];
+  for (const section of sections.filter(({ name }) =>
+    SWIFT_TYPE_RECORD_SECTIONS.has(name),
   )) {
     if (section.size % 4 !== 0)
       throw new BinaryFormatFailure(
@@ -266,7 +268,10 @@ export function* decodeAppleDispatchMetadataSteps(
         "Misaligned Swift type section",
       );
     for (let index = 0; index < section.size / 4 && index < maxRecords; index++)
-      typeEntries.push(section.address + BigInt(index * 4));
+      typeEntries.push({
+        address: section.address + BigInt(index * 4),
+        section: section.name,
+      });
     if (section.size / 4 > maxRecords) budget.truncated = true;
   }
   const admit = () => budget.admit();
