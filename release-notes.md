@@ -258,6 +258,7 @@
 * **ci:** repair Python catalog test and deep static check failures ([8ffea11](https://github.com/morluto/rea/commit/8ffea11ee30d5e0d442a8d14b27e05b0441b9e18))
 * **ci:** repair shared progress, cleanup and verifier failures ([#11727](https://github.com/morluto/rea/issues/11727)) ([552d1c7](https://github.com/morluto/rea/commit/552d1c7108b99d1c9ec15d8b629ae07dc56d4714))
 * **ci:** require coverage for each changed shared script module ([#12417](https://github.com/morluto/rea/issues/12417)) ([5094c38](https://github.com/morluto/rea/commit/5094c38152487fd3490879f0111e230bda0da713))
+* **ci:** require passing provider test files ([#12424](https://github.com/morluto/rea/issues/12424)) ([e79e575](https://github.com/morluto/rea/commit/e79e57552f8eebc9643269e960794bce1e28b113))
 * **ci:** restore formatting for JavaScript tests ([#11951](https://github.com/morluto/rea/issues/11951)) ([2b26bd1](https://github.com/morluto/rea/commit/2b26bd107e8ca0d236f34e5c62d9e0f94d235acf))
 * **ci:** retain the website manifest reader in Knip ([#12392](https://github.com/morluto/rea/issues/12392)) ([11bfc72](https://github.com/morluto/rea/commit/11bfc727d3ec35ca9dd0e638e2010b99ad6a8327))
 * **ci:** retain Turbo cache generations per Git ref ([#12381](https://github.com/morluto/rea/issues/12381)) ([947ff63](https://github.com/morluto/rea/commit/947ff63602462ed18b250407e3336e617b5d7eb7))
