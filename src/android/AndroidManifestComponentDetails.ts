@@ -6,7 +6,7 @@ import type {
   androidIntentFilterSchema,
   androidComponentMetadataSchema,
 } from "../domain/android/androidManifestComponents.js";
-import { isUnqualifiedManifestElement } from "../domain/android/decodedAndroidManifest.js";
+import { isUnqualifiedXmlElement } from "../domain/xmlDocument.js";
 import {
   androidAttribute,
   createManifestLocationReader,
@@ -37,7 +37,7 @@ const declaresAction = (filter: Element): boolean => {
   for (let index = 0; index < filter.childNodes.length; index += 1) {
     const member = filter.childNodes.item(index);
     if (
-      isUnqualifiedManifestElement(member) &&
+      isUnqualifiedXmlElement(member) &&
       member.nodeName === "action" &&
       androidAttribute(member, "name") !== null
     )
@@ -116,7 +116,7 @@ export const createAndroidManifestDetailsReader = (
     let actionFilter = false;
     for (let index = 0; index < component.childNodes.length; index += 1) {
       const child = component.childNodes.item(index);
-      if (!isUnqualifiedManifestElement(child)) continue;
+      if (!isUnqualifiedXmlElement(child)) continue;
       if (child.nodeName === "meta-data") {
         if (admit())
           metadata.push({
@@ -141,7 +141,7 @@ export const createAndroidManifestDetailsReader = (
       const priority = take(androidAttribute(child, "priority"));
       for (let at = 0; at < child.childNodes.length; at += 1) {
         const member = child.childNodes.item(at);
-        if (!isUnqualifiedManifestElement(member)) continue;
+        if (!isUnqualifiedXmlElement(member)) continue;
         if (member.nodeName === "action" || member.nodeName === "category") {
           const value = androidAttribute(member, "name");
           if (value === null) continue;

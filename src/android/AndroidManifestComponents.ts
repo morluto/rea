@@ -1,7 +1,5 @@
-import {
-  isUnqualifiedManifestElement,
-  parseDecodedAndroidManifest,
-} from "../domain/android/decodedAndroidManifest.js";
+import { parseDecodedAndroidManifest } from "../domain/android/decodedAndroidManifest.js";
+import { isUnqualifiedXmlElement } from "../domain/xmlDocument.js";
 import { androidAttribute, childNodes } from "./AndroidManifestXml.js";
 import type { KnownCoverageStatus } from "../domain/coverage.js";
 import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDetails.js";
@@ -212,7 +210,7 @@ export const parseAndroidManifestComponents = (
   let targetSdkDeclared = false;
   let minimumSdkDeclared = false;
   for (const child of children) {
-    if (!isUnqualifiedManifestElement(child) || child.nodeName !== "uses-sdk")
+    if (!isUnqualifiedXmlElement(child) || child.nodeName !== "uses-sdk")
       continue;
     // Match the bridge's declaration owner: the last uses-sdk supplies values.
     targetSdkDeclared = androidAttribute(child, "targetSdkVersion") !== null;
@@ -230,7 +228,7 @@ export const parseAndroidManifestComponents = (
   // Parse the effective SDK once even when hundreds of providers share it.
   const providerDefault = targetSdkLevel === null ? null : targetSdkLevel <= 16;
   for (const node of children) {
-    if (!isUnqualifiedManifestElement(node)) continue;
+    if (!isUnqualifiedXmlElement(node)) continue;
     const element = node;
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
@@ -252,7 +250,7 @@ export const parseAndroidManifestComponents = (
         ? null
         : Buffer.byteLength(applicationPermission);
     for (const child of childNodes(element)) {
-      if (!isUnqualifiedManifestElement(child)) continue;
+      if (!isUnqualifiedXmlElement(child)) continue;
       const component = child;
       if (!isComponentKind(component.nodeName)) continue;
       // Every declaration counts against the bound, named or not, so an
