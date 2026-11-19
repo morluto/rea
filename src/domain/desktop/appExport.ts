@@ -202,11 +202,20 @@ export const ownedPaths = (
   );
 };
 
+/** Build bundle names from logical aliases without changing filesystem traversal. */
+const exportHomeRelative = (home: string, path: string): string | null => {
+  if (!path.startsWith(`${home}/`)) return null;
+  const parts = path.slice(home.length + 1).split("/");
+  // A parent segment can traverse a symlink. Use the observed physical
+  // spelling instead of guessing its destination lexically.
+  if (parts.includes("..")) return null;
+  return parts.filter((part) => part !== "" && part !== ".").join("/") || null;
+};
+
 /** A captured path's home-relative path, in the innermost walked state directory's own spelling unless that leaves the home. */
 const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   const { home } = capture.host;
-  const relative = (path: string) =>
-    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+  const relative = (path: string) => exportHomeRelative(home, path);
   const logical = capture.application.state_directories;
   const walked = capture.state.state_directories ?? [];
   // The capture records one walked spelling per state directory, in order; lists of other lengths cannot be paired.
@@ -318,8 +327,7 @@ const capturedStateAliases = (
   const walked = capture.state.state_directories ?? [];
   const roots = capture.application.state_directories;
   if (walked.length !== roots.length) return [];
-  const relative = (path: string) =>
-    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+  const relative = (path: string) => exportHomeRelative(home, path);
   const aliases = (capture.state.selected_paths ?? []).flatMap(
     ({ path, physical, kind }) => {
       const index = walked.indexOf(physical);

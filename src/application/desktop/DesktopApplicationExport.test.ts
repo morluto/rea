@@ -287,6 +287,52 @@ describe("exportDesktopApplication", () => {
   });
 });
 
+it.each([
+  [".config/./notes", ".config/notes", ".config/notes"],
+  [".config//notes", ".config/notes", ".config/notes"],
+  ["profiles/current/../notes", "resolved/notes", "resolved/notes"],
+])(
+  "exports a safe seed from the recorded state root %s",
+  async (logical, physical, seed) => {
+    const local = capture();
+    const walked = `${HOME}/${physical}`;
+    const settings = `${walked}/settings.ini`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        state_directories: [
+          { path: `${HOME}/${logical}`, exists_at_start: true },
+        ],
+      },
+      state: {
+        ...local.state,
+        roots: [HOME, walked],
+        content_roots: [walked],
+        state_directories: [walked],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(settings, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result.seed_files).toEqual([
+      `${seed}/settings.ini`,
+    ]);
+    expect(
+      await readFile(
+        join(directory, "envs/notes/seed", seed, "settings.ini"),
+        "utf8",
+      ),
+    ).toBe("[ui]\nwrap=false\n");
+  },
+);
+
 it("seeds the app's state at its own path and retains a selected alias", async () => {
   const local = capture();
   const physical = `${HOME}/.config/notes`;
