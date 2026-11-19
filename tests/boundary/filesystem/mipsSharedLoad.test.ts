@@ -124,6 +124,24 @@ for (const little of [true, false]) {
       },
     });
   });
+  it(`retains the dynamic PIE flag and refuses the shared-library lane (${little ? "LE" : "BE"})`, async () => {
+    const bytes = fixture(little);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    view.setUint32(36, 0x70001005, little); // Standard MIPS32r2 o32, without MIPS16 ASE.
+    view.setUint32(100, 40, little);
+    view.setUint32(104, 40, little);
+    view.setUint32(280, 0x6ffffffb, little); // DT_FLAGS_1
+    view.setUint32(284, 0x08000000, little); // DF_1_PIE
+    const target = await resolve(bytes);
+    assert.ok(
+      target.mips.sharedLoad?.status === "complete" &&
+        target.mips.sharedLoad.declaresPie,
+    );
+    assert.match(
+      ghidraMipsUnsupportedReason(target) ?? "",
+      /position-independent executables/u,
+    );
+  });
   it(`retains and refuses symbol-bearing REL32 without repairing the mode tag (${little ? "LE" : "BE"})`, async () => {
     const bytes = fixture(little);
     if (little) bytes.writeUInt32LE(0x103, relOffset + 12);

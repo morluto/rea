@@ -4,10 +4,15 @@ import {
   createRustImage,
   createRustImageWithGoSection,
   createRustHashOverflowImage,
+  createRustWasmModule,
+  createWasmSectionFlood,
   compressRustElfSectionNames,
   rustElfSectionNameFixture,
   RUSTC_HASH,
   rustDependencyPayload,
+  WASM_MODULE_HEADER,
+  wasmCustomSection,
+  wasmSection,
 } from "../../fixtures/rust/image.js";
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
 import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
@@ -143,6 +148,175 @@ it("reads a Mach-O __DATA,.dep-v0 section", () => {
       hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
     },
   });
+});
+
+it("reads a .dep-v0 custom section and a data-section rustc hash from a WebAssembly module", () => {
+  const bytes = createRustWasmModule();
+  expect(readRustBinaryImage(bytes)).toEqual({
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+    auditable_metadata: expect.objectContaining({
+      section_name: ".dep-v0",
+      file_offset: bytes.indexOf(rustDependencyPayload()),
+      section_bytes: rustDependencyPayload().length,
+      format_version: 1,
+      root_package_index: 1,
+      packages,
+      dependency_edges: [{ from_index: 1, to_index: 0 }],
+    }),
+    rustc_commit: {
+      evidence_kind: "inferred",
+      hashes: [{ hash: RUSTC_HASH, file_offset: bytes.indexOf("/rustc/") }],
+    },
+  });
+});
+
+it("returns null metadata for a WebAssembly module without .dep-v0", () => {
+  const bytes = createRustWasmModule({ omitSection: true });
+  const image = readRustBinaryImage(bytes);
+  expect(image).toMatchObject({ format: "wasm", bits: null });
+  expect(image.auditable_metadata).toBeNull();
+  expect(image.rustc_commit?.hashes).toEqual([
+    { hash: RUSTC_HASH, file_offset: bytes.indexOf("/rustc/") },
+  ]);
+});
+
+it.each([
+  [
+    "a component",
+    Buffer.from("0061736d0d000100", "hex"),
+    { kind: "unsupported", format: "wasm", offset: 6, field: "layer" },
+  ],
+  [
+    "a pre-release core module",
+    Buffer.from("0061736d0d000000", "hex"),
+    { kind: "unsupported", format: "wasm", offset: 4, field: "version" },
+  ],
+  [
+    "a truncated header",
+    WASM_MODULE_HEADER.subarray(0, 6),
+    { kind: "truncated", format: "wasm", offset: 0 },
+  ],
+  [
+    "a section past the end of the file",
+    Buffer.concat([WASM_MODULE_HEADER, Buffer.from([0x01, 0x05, 0x00])]),
+    { kind: "truncated", format: "wasm", offset: 8, field: "section" },
+  ],
+  [
+    "a section size cut off by the end of the file",
+    Buffer.concat([WASM_MODULE_HEADER, Buffer.from([0x00, 0x80])]),
+    { kind: "truncated", format: "wasm", offset: 9, field: "section size" },
+  ],
+  [
+    "a custom name length cut off by its section",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmSection(0, Buffer.from([0x80])),
+      wasmSection(1, Buffer.from([0x00])),
+    ]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name length",
+    },
+  ],
+  [
+    "a custom name length cut off by the final section",
+    Buffer.concat([WASM_MODULE_HEADER, wasmSection(0, Buffer.from([0x80]))]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name length",
+    },
+  ],
+  [
+    "a section size over 32 bits",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      Buffer.from([0x00, 0xff, 0xff, 0xff, 0xff, 0x1f]),
+    ]),
+    { kind: "malformed", format: "wasm", offset: 9, field: "section size" },
+  ],
+  [
+    "a custom name past its section",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmSection(0, Buffer.from([0x05, 0x61])),
+    ]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name",
+    },
+  ],
+  [
+    "a non-UTF-8 custom section name",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmCustomSection(Buffer.from([0xff]), Buffer.alloc(0)),
+    ]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 11,
+      field: "custom section name",
+    },
+  ],
+  [
+    "a duplicate .dep-v0 custom section",
+    createRustWasmModule({
+      sections: [wasmCustomSection(".dep-v0", rustDependencyPayload())],
+    }),
+    { kind: "malformed", format: "rust-auditable" },
+  ],
+  [
+    "a second data section",
+    createRustWasmModule({ sections: [wasmSection(11, Buffer.from([0]))] }),
+    { kind: "malformed", format: "wasm", field: "data section" },
+  ],
+] as const)("refuses WebAssembly with %s", (_name, bytes, failure) => {
+  expect(() => readRustBinaryImage(bytes)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining(failure),
+    }),
+  );
+});
+
+it("reports a duplicate .dep-v0 section ahead of the section bound that follows it", () => {
+  const bytes = createRustWasmModule({
+    sections: [
+      wasmCustomSection(".dep-v0", rustDependencyPayload()),
+      createWasmSectionFlood(65_537).subarray(WASM_MODULE_HEADER.length),
+    ],
+  });
+  expect(() => readRustBinaryImage(bytes)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "malformed",
+        format: "rust-auditable",
+      }),
+    }),
+  );
+});
+
+it("bounds the synchronous WebAssembly section walk", () => {
+  expect(
+    readRustBinaryImage(createWasmSectionFlood(65_536)).auditable_metadata,
+  ).toBeNull();
+  expect(() => readRustBinaryImage(createWasmSectionFlood(65_537))).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "wasm",
+        limit: { name: "max_wasm_sections", maximum: 65_536 },
+      }),
+    }),
+  );
 });
 
 it("preserves the arm64_32 Mach-O CPU family when dependency metadata is absent", () => {

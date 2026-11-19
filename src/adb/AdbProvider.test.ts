@@ -1703,6 +1703,9 @@ exit 1`,
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence).toMatchObject({
     operation: "push_adb_file",
+    // The retained receipt names the service authority, not the subject-derived
+    // default a partial observation would otherwise fall back to.
+    authority: "external-service",
     normalized_result: {
       local_path: localFile,
       device_path: "/data/local/tmp/payload.bin",
@@ -2698,7 +2701,12 @@ exit 1`,
     code: "resource_constraint",
     details: { operation: "push_adb_file" },
   });
-  expect(result.error.partialObservation).toBeDefined();
+  // The retained receipt names the service authority, not the subject-derived
+  // default a partial observation would otherwise fall back to.
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "push_adb_file",
+    authority: "external-service",
+  });
 });
 
 it("attributes version capture failures to the public operation and retains the prerequisite", async () => {
@@ -2727,7 +2735,8 @@ it("refuses a device file name the selected Windows host cannot store before pul
 exit 0`,
   );
   const provider = new AdbProvider({
-    environment: { REA_ADB_PATH: binary },
+    // A double leading slash gives Win32 a UNC root and still opens the POSIX fixture.
+    environment: { REA_ADB_PATH: `/${binary}` },
     platform: "win32",
   });
   const result = await provider.execute({

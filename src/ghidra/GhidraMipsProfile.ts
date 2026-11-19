@@ -22,7 +22,7 @@ const isGhidraMips16SharedTarget = (target: BinaryTarget): boolean =>
   target.mips.type === MIPS_ET_DYN &&
   (target.mips.flags & 0x0f000000) === MIPS16_HEADER_ASE;
 
-/** Plain MIPS32 PIC shared image (libraries, PIE): no compressed-ISA ASE declared. */
+/** Candidate for plain MIPS32 PIC shared-library admission: no compressed-ISA ASE declared. */
 const isGhidraMipsStandardSharedTarget = (target: BinaryTarget): boolean =>
   target.kind === "executable" &&
   target.architecture === "mips" &&
@@ -135,6 +135,13 @@ export const ghidraMipsUnsupportedReason = (
     return "MIPS analysis requires ELF header metadata; a family name alone does not select an ISA or ABI.";
   const shared = isGhidraMips16SharedTarget(target);
   const standardShared = isGhidraMipsStandardSharedTarget(target);
+  if (
+    standardShared &&
+    (metadata.hasInterpreter === true ||
+      (metadata.sharedLoad?.status === "complete" &&
+        metadata.sharedLoad.declaresPie === true))
+  )
+    return "MIPS32 position-independent executables need separate load verification; this lane verifies shared libraries.";
   if (metadata.elfClass !== 32)
     return "This Ghidra MIPS lane supports ELF32 only; MIPS64 and n64 remain unsupported.";
   const gnuAttributesReason =

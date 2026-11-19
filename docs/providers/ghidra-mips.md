@@ -161,10 +161,10 @@ npm run verify:ghidra:mips-shared
 
 ### MIPS32 shared images
 
-A third profile admits plain MIPS32 position-independent shared images
-(`ET_DYN` with no ASE encoding flag): shared libraries and executables linked as
-`ET_DYN`, either byte order, with explicit o32 and MIPS32r2 and the same ABI
-flags record requirements as the executable lane. As for MIPS16, source
+A third profile admits plain MIPS32 position-independent shared libraries
+(`ET_DYN` with no ASE encoding flag) in either byte order, with explicit o32
+and MIPS32r2 and the same ABI flags record requirements as the executable lane.
+Images declaring `PT_INTERP` or `DF_1_PIE` require separate verification. As for MIPS16, source
 inspection must examine the complete dynamic relocation declarations. This
 profile verifies `R_MIPS_NONE`, symbol-index-zero and symbol-bearing
 `R_MIPS_REL32`, and the TLS loader slots `R_MIPS_TLS_DTPMOD32`,

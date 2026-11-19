@@ -882,6 +882,21 @@ describe("MIPS32 shared-image profile", () => {
       },
       "prelink trailer",
     ],
+    [{ hasInterpreter: true }, "position-independent executables"],
+    [
+      {
+        sharedLoad: {
+          status: "complete",
+          declaresPie: true,
+          relocationCount: 0,
+          relocationTypes: [],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      },
+      "position-independent executables",
+    ],
     [{ abiFlags: null }, "inspected ABI flags"],
     [{ flags: 0x72001007 }, "ET_EXEC and ET_REL"],
     [{ flags: 0x50001007 }, "32R2"],

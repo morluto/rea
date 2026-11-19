@@ -8,6 +8,7 @@ import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
+  pkcs7DualSignedTimestampedFixture,
   pkcs7SignedDataFixture,
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "./PeCertificates.fixture.js";
@@ -21,6 +22,7 @@ import { parsePeCertificates } from "./PeCertificateParser.js";
 // Independent boundary examples: changing an allowance requires reviewing
 // both the admitted and rejected certificate shapes.
 const ASN1_NODE_BUDGET = 16_384;
+const ASN1_DEPTH_BUDGET = 64;
 const MAX_OID_BYTES = 256;
 const MAX_OID_ARC_BYTES = 32;
 const MAX_DECODED_NAME_BYTES = 65_536;
@@ -735,6 +737,82 @@ it("stops decoding a certificate payload at the ASN.1 node budget", () => {
   expect(() => parse(peCertificateFixture(false, payload))).toThrow(
     /node budget/u,
   );
+});
+
+it("reads a dual-signed, timestamped signature as deep as signed Windows binaries", () => {
+  const report = parse(
+    peCertificateFixture(true, pkcs7DualSignedTimestampedFixture()),
+  );
+  expect(report.entries[0]?.pkcs7?.signers).toEqual([
+    expect.objectContaining({
+      serial_hex: "11223344",
+      unsigned_attribute_oids: ["1.3.6.1.4.1.311.2.4.1"],
+    }),
+  ]);
+  // The nested signature and its timestamp are not inventoried yet.
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    certificates: 1,
+  });
+  expect(report.limitations).toContain(
+    "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+  );
+});
+
+it("stops decoding a certificate payload at the ASN.1 depth budget", () => {
+  let nested: Buffer = Buffer.from([0x05, 0x00]);
+  for (let level = 0; level <= ASN1_DEPTH_BUDGET; level += 1)
+    nested = der(0x30, nested);
+  expect(() => readAsn1(nested)).toThrow(
+    `ASN.1 nesting exceeds ${String(ASN1_DEPTH_BUDGET)} levels.`,
+  );
+});
+
+// Walks definite-length DER on its own, so the fixture's depth does not depend
+// on the reader under test. The outermost value is level 0, as in the reader.
+const derDepth = (bytes: Buffer, level = 0): number => {
+  let deepest = level;
+  let at = 0;
+  while (at < bytes.length) {
+    const constructed = ((bytes[at] ?? 0) & 0x20) !== 0;
+    const first = bytes[at + 1] ?? 0;
+    const lengthBytes = first < 0x80 ? 0 : first & 0x7f;
+    const length =
+      lengthBytes === 0 ? first : bytes.readUIntBE(at + 2, lengthBytes);
+    const content = bytes.subarray(
+      at + 2 + lengthBytes,
+      at + 2 + lengthBytes + length,
+    );
+    if (constructed) deepest = Math.max(deepest, derDepth(content, level + 1));
+    at += 2 + lengthBytes + length;
+  }
+  return deepest;
+};
+
+it("builds the dual-signed fixture one level past the shared reader's default", () => {
+  // The shared reader admits level 32 by default. A shallower fixture would
+  // pass without the PE depth budget and prove nothing.
+  expect(derDepth(pkcs7DualSignedTimestampedFixture())).toBe(33);
+});
+
+it("admits ASN.1 nesting at the depth budget and refuses one level more", () => {
+  const nestedTo = (depth: number): Buffer => {
+    let node: Buffer = Buffer.from([0x05, 0x00]);
+    for (let level = 0; level < depth; level += 1) node = der(0x30, node);
+    return node;
+  };
+  expect(derDepth(nestedTo(ASN1_DEPTH_BUDGET))).toBe(ASN1_DEPTH_BUDGET);
+  expect(() => readAsn1(nestedTo(ASN1_DEPTH_BUDGET))).not.toThrow();
+  let refusal: unknown;
+  try {
+    readAsn1(nestedTo(ASN1_DEPTH_BUDGET + 1));
+  } catch (cause: unknown) {
+    refusal = cause;
+  }
+  expect(refusal).toBeInstanceOf(PeCertificateAsn1Failure);
+  expect(refusal).toMatchObject({
+    exhausted: { allowance: "asn1-depth", limit: ASN1_DEPTH_BUDGET },
+  });
 });
 
 it("rejects headers whose section table does not fit SizeOfHeaders", () => {

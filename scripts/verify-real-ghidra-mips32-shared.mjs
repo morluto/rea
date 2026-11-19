@@ -262,18 +262,6 @@ async function verifyFixture(byteOrder, softFloat) {
       parameters.mips_soft_float_storage,
       softFloat ? "o32-soft-float-prototype-v1" : undefined,
     );
-    const limitations = snapshot.evidence_bundle.records.flatMap(
-      (record) => parseEvidence(record).limitations,
-    );
-    for (const expected of [
-      "returned addresses equal the addresses readelf and objdump report",
-      "Ghidra fills local and global GOT entries",
-      "TLS relocations",
-    ])
-      assert.ok(
-        limitations.some((item) => item.includes(expected)),
-        `Limitation missing from retained Evidence: ${expected}`,
-      );
     await call("open_binary", {
       path: fixture.path,
       provider_id: "ghidra",

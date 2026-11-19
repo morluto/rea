@@ -78,6 +78,10 @@ scenario whose declared variables are unset still validates; the missing-value
 failure belongs to capture. A schema-valid scenario does not prove that the
 executable or target is available on the host.
 
+For a locator with `kind: "role"`, set `name` to the element's exact full
+accessible name. Use the name shown in accessibility evidence, which can include
+text beyond the visible label. A partial name does not match.
+
 ## Minimal launch example
 
 Save this as `browser-scenario.json`, replacing the executable path with an

@@ -123,7 +123,22 @@ export const readMipsElfSharedLoad = async (
   // Bound temporary storage, not admitted artifact size. ELF32 records are
   // exact eight-byte structures; every declared record is examined or refused.
   const chunkBytes = 64 * 1024;
-  const relevant = new Set([2, 7, 8, 9, 17, 18, 19, 20, 23, 35, 36, 37]);
+  const DT_FLAGS_1 = 0x6ffffffb;
+  const relevant = new Set([
+    2,
+    7,
+    8,
+    9,
+    17,
+    18,
+    19,
+    20,
+    23,
+    35,
+    36,
+    37,
+    DT_FLAGS_1,
+  ]);
   const tags = new Map<number, number>();
   let terminated = false;
   for (
@@ -156,6 +171,14 @@ export const readMipsElfSharedLoad = async (
     }
   }
   if (!terminated) return err("MIPS dynamic table has no DT_NULL terminator");
+  const DF_1_PIE = 0x08000000;
+  const imageFacts = {
+    loadAddresses,
+    prelinkBase,
+    ...(((tags.get(DT_FLAGS_1) ?? 0) & DF_1_PIE) === 0
+      ? {}
+      : { declaresPie: true as const }),
+  };
   if ([35, 36, 37].some((tag) => tags.has(tag)))
     return err(
       "MIPS shared RELR relocation declarations require separate verification",
@@ -198,8 +221,7 @@ export const readMipsElfSharedLoad = async (
           relocationCount: 0,
           relocationTypes: [],
           symbolRelativeCount: 0,
-          loadAddresses,
-          prelinkBase,
+          ...imageFacts,
         })
       : err(reason);
   };
@@ -256,7 +278,6 @@ export const readMipsElfSharedLoad = async (
     relocationCount: size / 8,
     relocationTypes: [...types].sort((left, right) => left - right),
     symbolRelativeCount,
-    loadAddresses,
-    prelinkBase,
+    ...imageFacts,
   });
 };
