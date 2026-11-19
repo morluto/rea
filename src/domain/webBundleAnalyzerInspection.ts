@@ -24,6 +24,7 @@ import {
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticIntrinsicInstances.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   semanticStaticPropertyKey,
   isNullishJavaScriptSyntax,
@@ -243,7 +244,13 @@ const inspectCall = (
       node,
       accumulator,
     });
-  if (name === "importScripts" || name.endsWith(".importScripts"))
+  if (
+    !t.isNewExpression(node) &&
+    (name === "importScripts" ||
+      name === "self.importScripts" ||
+      name === "globalThis.importScripts") &&
+    isUnmodifiedGlobalReference(node.callee, bindings, "importScripts")
+  )
     for (const argument of node.arguments) {
       const specifier = stringValue(argument);
       if (specifier === undefined) continue;

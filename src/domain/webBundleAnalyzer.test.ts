@@ -1735,6 +1735,38 @@ it("retains each literal importScripts argument in source order", () => {
   ).toEqual(["first.js", "second.js"]);
 });
 
+it("requires an ambient worker importScripts call for worker chunk edges", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      importScripts("direct.js");
+      self.importScripts("self.js");
+      globalThis["importScripts"]("global.js");
+      const vendor = { importScripts() {} };
+      vendor.importScripts("vendor.js");
+      function load(importScripts) { importScripts("local.js"); }
+      function loadFrom(self) { self.importScripts("shadowed.js"); }
+      window.importScripts("window.js");
+      new importScripts("constructor.js");
+    `),
+  );
+  expect(
+    result.observations.chunks.edges
+      .filter(({ kind }) => kind === "worker_import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(["direct.js", "self.js", "global.js"]);
+});
+
+it("omits worker chunk edges when a captured script replaces importScripts", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      self.importScripts = function record() {};
+      importScripts("local.js");
+      globalThis.importScripts("global.js");
+    `),
+  );
+  expect(result.observations.chunks.edges).toEqual([]);
+});
+
 describe("web metadata key semantics", () => {
   it("keeps computed metadata keys and overwrite order conservative", () => {
     const result = analyzeWebBundleFixture(
