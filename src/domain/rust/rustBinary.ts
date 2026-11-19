@@ -168,6 +168,8 @@ export const rustBinarySchema = z
   .strictObject({
     artifact: z.strictObject({
       path: localPathStringSchema,
+      /** Source-host basename, retained for projection on other hosts. Older Evidence may omit it. */
+      file_name: localPathStringSchema.exactOptional(),
       sha256: digestSchema,
       bytes: index,
     }),

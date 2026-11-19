@@ -44,7 +44,8 @@ type FormatsWithReaders =
   | "esp-flash-image"
   | "fit"
   | "ntfs-mft"
-  | "auditd-log";
+  | "auditd-log"
+  | "uefi";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;

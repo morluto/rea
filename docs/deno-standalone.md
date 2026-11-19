@@ -12,7 +12,10 @@ In MCP, open the executable with `open_binary`, then call `inspect_artifact`. Us
 The recognized carriers are a Mach-O `__SUI` section named `d3n0l4nd`, an Intel Mach-O `<~sui-data~>` trailer, an ELF `PT_NOTE` or `SHT_NOTE` owned by `SUI` with type `0x53554901` and descriptor name `d3n0l4nd`, and a PE `RT_RCDATA` resource named `D3N0L4ND`. These are structural layouts. The metadata JSON has no Deno version field, so the compiler version stays unknown unless another record establishes it. Other layouts, including older eszip trailers, are unsupported.
 
 The PE probe follows the DOS header's PE offset and reads the declared header
-records and matching resource directories by file position.
+records and matching resource directories by file position. After confirming
+the resource name, it reports malformed ranges separately from the fixed
+65,536-entry inspection allowance. It validates the declared extent of a
+different-length name without reading that name's bytes.
 
 The ELF probe skips malformed section tables, including tables with a reserved
 direct `e_shnum` count, and still checks independently readable program

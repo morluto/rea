@@ -107,30 +107,32 @@ const candidatePath = (script: CapturedWebScript): CandidatePath => {
   };
 };
 
-// Register every exact prefix so a repeated path, or a file that is also a
-// directory prefix, isolates every affected source. Case-distinct spellings
-// stay distinct until the destination filesystem reports a collision.
+// Sort file paths with a separator that precedes every portable segment
+// character. Repetitions and descendants then follow their file prefix
+// contiguously, without allocating a string for every directory prefix.
 const conflictingPaths = (
   candidates: readonly CandidatePath[],
 ): Set<number> => {
-  const prefixes = new Map<string, { indices: number[]; files: number[] }>();
-  candidates.forEach(({ path }, index) => {
-    if (path === undefined) return;
-    const parts = path.split("/");
-    parts.forEach((_, position) => {
-      const spelling = parts.slice(0, position + 1).join("/");
-      const entry = prefixes.get(spelling) ?? { indices: [], files: [] };
-      entry.indices.push(index);
-      if (position === parts.length - 1) entry.files.push(index);
-      prefixes.set(spelling, entry);
-    });
-  });
+  const sorted = candidates.flatMap(({ path }, index) =>
+    path === undefined ? [] : [{ key: path.replaceAll("/", "\0"), index }],
+  );
+  sorted.sort((left, right) =>
+    left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
+  );
   const conflicts = new Set<number>();
-  for (const entry of prefixes.values())
+  let root: (typeof sorted)[number] | undefined;
+  for (const candidate of sorted) {
     if (
-      entry.files.length > 1 ||
-      (entry.files.length > 0 && entry.indices.length > entry.files.length)
-    )
-      for (const index of entry.indices) conflicts.add(index);
+      root !== undefined &&
+      (candidate.key === root.key ||
+        (candidate.key.charCodeAt(root.key.length) === 0 &&
+          candidate.key.startsWith(root.key)))
+    ) {
+      conflicts.add(root.index);
+      conflicts.add(candidate.index);
+    } else {
+      root = candidate;
+    }
+  }
   return conflicts;
 };

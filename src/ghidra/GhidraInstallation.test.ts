@@ -802,6 +802,20 @@ describe("Ghidra configuration directory identity", () => {
 });
 
 describe("Ghidra release line and JDK bounds", () => {
+  it.each(["#", "!"])(
+    "keeps the version after a Java Properties %s comment following an empty continuation",
+    (marker) => {
+      const properties = ghidraApplicationProperties(
+        [
+          "   " + "\\",
+          `  ${marker} comment ` + "\\",
+          "application.version=12.1.4",
+        ].join("\n"),
+      );
+      expect(properties.providerVersion).toBe("12.1.4");
+    },
+  );
+
   it("uses Java Properties last-key, delimiter, escape, and continuation rules", () => {
     const properties = ghidraApplicationProperties(
       [

@@ -13,6 +13,8 @@ type ExecFileOutputOptions = Omit<
   "encoding" | "maxBuffer"
 > & {
   readonly maxBuffer?: number;
+  /** Retain raw stdout for callers that parse admitted nonzero exits. */
+  readonly preserveFailedStdout?: true;
   /**
    * Signal that stops the process on abort or timeout. On POSIX the command
    * leads its own process group, and the stop signal goes to that group
@@ -83,9 +85,12 @@ const invalidTimeout = (timeout: number): RangeError | undefined => {
   return error;
 };
 
+const failedStdoutBuffers = new WeakMap<Error, Buffer>();
+
 /** Captured subprocess output read from an execFileOutput rejection. */
 export interface ExecFileOutputFailure {
   readonly stdout: string;
+  readonly stdoutBuffer?: Buffer;
   readonly stderr: string;
   readonly code: string | number | null;
   readonly signal: string | null;
@@ -104,6 +109,7 @@ export const execFileOutputFailure = (
 ): ExecFileOutputFailure | undefined => {
   if (!(cause instanceof Error)) return undefined;
   const stdout = Reflect.get(cause, "stdout");
+  const stdoutBuffer = failedStdoutBuffers.get(cause);
   const stderr = Reflect.get(cause, "stderr");
   const code = Reflect.get(cause, "code");
   const signal = Reflect.get(cause, "signal");
@@ -117,6 +123,7 @@ export const execFileOutputFailure = (
     return undefined;
   return {
     stdout,
+    ...(stdoutBuffer === undefined ? {} : { stdoutBuffer }),
     stderr,
     ...(typeof stdoutBytes === "number" &&
     Number.isSafeInteger(stdoutBytes) &&
@@ -190,8 +197,14 @@ export const execFileBytes = (
   options: ExecFileOutputOptions = {},
 ): Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> =>
   new Promise((resolve, reject) => {
-    const { stopSignal, signal, timeout, lifetimePipe, ...execOptions } =
-      options;
+    const {
+      stopSignal,
+      signal,
+      timeout,
+      lifetimePipe,
+      preserveFailedStdout,
+      ...execOptions
+    } = options;
     if (lifetimePipe === true && stopSignal === undefined) {
       reject(new TypeError("lifetimePipe requires stopSignal"));
       return;
@@ -212,6 +225,7 @@ export const execFileBytes = (
     ): void => {
       if (error !== null) {
         admitSpawnFailure(error);
+        if (preserveFailedStdout) failedStdoutBuffers.set(error, stdout);
         Reflect.set(error, "stdout", stdout.toString("utf8"));
         Reflect.set(error, "stderr", stderr.toString("utf8"));
         Reflect.set(error, "stdoutBytes", stdout.byteLength);

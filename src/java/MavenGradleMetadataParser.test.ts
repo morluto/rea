@@ -114,6 +114,27 @@ const expectFailure = (
   }
 };
 
+it("classifies a Maven qualifier with parentheses as a literal version", () => {
+  const report = parse(`
+    <project><modelVersion>4.0.0</modelVersion>
+      <groupId>example</groupId><artifactId>consumer</artifactId><version>1</version>
+      <dependencies>
+        <dependency><groupId>example</groupId><artifactId>literal</artifactId><version>1.0-release(build)</version></dependency>
+        <dependency><groupId>example</groupId><artifactId>range</artifactId><version>(,2.0]</version></dependency>
+      </dependencies>
+    </project>
+  `);
+  expect(
+    report.dependencies.map(({ version, version_kind }) => [
+      version,
+      version_kind,
+    ]),
+  ).toEqual([
+    ["1.0-release(build)", "literal"],
+    ["(,2.0]", "range"],
+  ]);
+});
+
 it("reads Maven coordinates, parent, BOM import, exclusions, ranges and unresolved properties", () => {
   const report = parse(mavenPomFixture);
   expect(report.format).toBe("maven-pom");
