@@ -902,6 +902,34 @@ export const parseElfNotes = (
   const tables: ElfNotes["tables"] = [];
   const parsed: ReturnType<typeof toEntry>[] = [];
   const examined = { count: 0 };
+  const noteSections = [];
+  const compressedNoteRanges = new Set<string>();
+  const sectionTableOverlapsHeader = shnum !== 0 && shoff < header.headerSize;
+  if (!sectionTableOverlapsHeader) {
+    for (let index = 0; index < shnum; index += 1) {
+      const at = shoff + index * shentsize;
+      const declaration = readElfSectionHeader(
+        bytes.subarray(at, at + shentsize),
+        header.elfClass,
+        reader.little,
+      );
+      if (!declaration.ok) return fail(declaration.error.message);
+      const section = declaration.value;
+      const storage = elfNoteSectionStorage(section);
+      if (storage === "not-note") continue;
+      const { nameOffset, offset, size, alignment } = section;
+      noteSections.push({
+        index,
+        nameOffset,
+        offset,
+        size,
+        alignment,
+        storage,
+      });
+      if (storage === "compressed")
+        compressedNoteRanges.add(`${offset}:${size}`);
+    }
+  }
   if (phnum !== 0) {
     if (phoff < header.headerSize)
       return fail("ELF program header table overlaps the native header.");
@@ -923,6 +951,15 @@ export const parseElfNotes = (
         return fail("ELF offset or size exceeds a safe integer.");
       const fileOffset = Number(program.offset);
       const fileSize = Number(program.fileSize);
+      // An exact program alias does not turn compressed storage into a note
+      // stream. The section still owns the unsupported-storage outcome.
+      if (
+        compressedNoteRanges.size > 0 &&
+        compressedNoteRanges.has(`${program.offset}:${program.fileSize}`)
+      ) {
+        reader.require(fileOffset, fileSize);
+        continue;
+      }
       const alignment = noteAlignment(Number(program.alignment));
       tables.push({
         kind: "program",
@@ -943,61 +980,55 @@ export const parseElfNotes = (
         parsed.push(toEntry(note, "program", index, header, text, fdo));
     }
   }
-  if (shnum !== 0) {
-    if (shoff < header.headerSize)
-      return fail("ELF section header table overlaps the native header.");
-    for (let index = 0; index < shnum; index += 1) {
-      const at = shoff + index * shentsize;
-      const parsedSection = readElfSectionHeader(
-        bytes.subarray(at, at + shentsize),
-        header.elfClass,
-        reader.little,
+  if (sectionTableOverlapsHeader)
+    return fail("ELF section header table overlaps the native header.");
+  for (const {
+    index,
+    nameOffset,
+    offset,
+    size,
+    alignment: declaredAlignment,
+    storage,
+  } of noteSections) {
+    if (
+      offset > BigInt(Number.MAX_SAFE_INTEGER) ||
+      size > BigInt(Number.MAX_SAFE_INTEGER)
+    )
+      return fail("ELF offset or size exceeds a safe integer.");
+    const fileOffset = Number(offset);
+    const fileSize = Number(size);
+    reader.require(fileOffset, fileSize);
+    if (storage === "compressed")
+      throw new BinaryFormatFailure(
+        "unsupported",
+        "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",
       );
-      if (!parsedSection.ok) return fail(parsedSection.error.message);
-      const section = parsedSection.value;
-      const storage = elfNoteSectionStorage(section);
-      if (storage === "not-note") continue;
-      const nameOffset = section.nameOffset;
-      if (
-        section.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
-        section.size > BigInt(Number.MAX_SAFE_INTEGER)
-      )
-        return fail("ELF offset or size exceeds a safe integer.");
-      const fileOffset = Number(section.offset);
-      const fileSize = Number(section.size);
-      reader.require(fileOffset, fileSize);
-      if (storage === "compressed")
-        throw new BinaryFormatFailure(
-          "unsupported",
-          "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",
-        );
-      if (section.alignment > BigInt(Number.MAX_SAFE_INTEGER))
-        return fail("ELF offset or size exceeds a safe integer.");
-      const alignment = noteAlignment(Number(section.alignment));
-      const sectionName =
-        shstrtab === null
-          ? { name: null, limitation: null }
-          : reader.cString(shstrtab, nameOffset, text);
-      if (sectionName.limitation !== null)
-        sectionNameLimitations.add(sectionName.limitation);
-      tables.push({
-        kind: "section",
-        index,
-        name: sectionName.name,
-        location: { offset: fileOffset, bytes: fileSize },
-        alignment,
-      });
-      for (const note of parseNoteStream(
-        reader,
-        fileOffset,
-        fileSize,
-        alignment,
-        input.max_entries,
-        examined,
-        text,
-      ))
-        parsed.push(toEntry(note, "section", index, header, text, fdo));
-    }
+    if (declaredAlignment > BigInt(Number.MAX_SAFE_INTEGER))
+      return fail("ELF offset or size exceeds a safe integer.");
+    const alignment = noteAlignment(Number(declaredAlignment));
+    const sectionName =
+      shstrtab === null
+        ? { name: null, limitation: null }
+        : reader.cString(shstrtab, nameOffset, text);
+    if (sectionName.limitation !== null)
+      sectionNameLimitations.add(sectionName.limitation);
+    tables.push({
+      kind: "section",
+      index,
+      name: sectionName.name,
+      location: { offset: fileOffset, bytes: fileSize },
+      alignment,
+    });
+    for (const note of parseNoteStream(
+      reader,
+      fileOffset,
+      fileSize,
+      alignment,
+      input.max_entries,
+      examined,
+      text,
+    ))
+      parsed.push(toEntry(note, "section", index, header, text, fdo));
   }
   const absent = tables.length === 0;
   return {
