@@ -1,4 +1,3 @@
-import { win32 } from "node:path";
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import {
@@ -118,7 +117,11 @@ type CycloneDxDocument = z.output<typeof cycloneDxDocumentSchema>;
 type CycloneDxProperty = z.output<typeof propertySchema>;
 type SourceCoverage = z.output<typeof cycloneDxSourceCoverageSchema>;
 type ReportSubject = {
-  readonly artifact: { readonly path: string; readonly sha256: string };
+  readonly artifact: {
+    readonly path: string;
+    readonly sha256: string;
+    readonly file_name?: string;
+  };
   readonly architecture: string;
   readonly limitations: readonly string[];
   readonly selected_slice?: MachoTargetSelection;
@@ -153,15 +156,8 @@ const cycloneDxSerialNumber = (evidenceDigest: string): string => {
   return `urn:uuid:${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
 
-/**
- * Final segment of a recorded artifact path. Windows separators count on every
- * host, so Evidence that names `C:\a\b.exe` produces the same component name
- * everywhere.
- */
-const fileComponentName = (path: string): string => {
-  const name = win32.basename(path);
-  return name.length > 0 ? name : path;
-};
+const FILE_NAME_UNKNOWN =
+  "The parent does not record artifact.file_name; the source host's filename semantics are unknown. The CycloneDX file component retains the complete recorded artifact path as its name.";
 
 const presentSum = (sum: string | null): string | undefined =>
   sum !== null && sum.length > 0 ? sum : undefined;
@@ -395,10 +391,14 @@ const projectSizedDocument = (
   AnalysisError
 > => {
   const unknowns = boundedViewMessages(
-    unknownValues,
+    report.artifact.file_name === undefined
+      ? [...unknownValues, FILE_NAME_UNKNOWN]
+      : unknownValues,
     parent.evidenceId,
     "unknowns",
-    requiredUnknowns,
+    report.artifact.file_name === undefined
+      ? [...requiredUnknowns, FILE_NAME_UNKNOWN]
+      : requiredUnknowns,
   );
   const limitations = boundedViewMessages(
     [...extraLimitations, ...parent.limitations, ...report.limitations],
@@ -417,7 +417,7 @@ const projectSizedDocument = (
       component: {
         type: "file" as const,
         "bom-ref": binaryRef,
-        name: fileComponentName(report.artifact.path),
+        name: report.artifact.file_name ?? report.artifact.path,
         hashes: [{ alg: "SHA-256" as const, content: report.artifact.sha256 }],
         ...(sliceProperties.length > 0 ? { properties: sliceProperties } : {}),
       },
