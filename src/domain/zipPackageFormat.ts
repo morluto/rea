@@ -33,6 +33,10 @@ export const ZIP_SIGNATURES = [
   [0x50, 0x4b, 0x07, 0x08],
 ] as const;
 
+/** A local file header can identify a ZIP before a complete end record is available. */
+export const hasZipLocalHeader = (bytes: Uint8Array): boolean =>
+  ZIP_SIGNATURES[0].every((byte, index) => bytes[index] === byte);
+
 /** Recognize a ZIP signature, not directory validity or supported storage. */
 export const hasZipSignature = (bytes: Uint8Array): boolean =>
   bytes.length >= 4 &&

@@ -9,7 +9,7 @@ import {
 } from "./desktopViewPolicy.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
-import { hasZipSignature } from "../zipPackageFormat.js";
+import { hasZipLocalHeader, hasZipSignature } from "../zipPackageFormat.js";
 import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 import {
   declaredDocumentType,
@@ -39,8 +39,6 @@ export const SQLITE_SIDECARS = [
   { suffix: "-journal", label: "rollback journal" },
 ] as const;
 const GVDB_HEADER = "GVariant";
-/** A zip archive's local file header, which FreeCAD, ODF, OOXML, EPUB and JAR files begin with. */
-const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 /** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
 export const XML_POLICY = {
@@ -347,7 +345,7 @@ export const detectStateFormat = (
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
   if (
-    header.startsWith(ZIP_HEADER) ||
+    hasZipLocalHeader(bytes) ||
     (bytes.length >= ZIP_EOCD_BYTES && hasZipSignature(bytes))
   )
     return "zip";
