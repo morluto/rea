@@ -222,10 +222,11 @@ it("reads an unreferenced UTF-16BE string and data object", () => {
     wide,
     data,
   ]);
-  const { text: decoded, complete } = decodeBinaryPlistText(bytes, budget);
-  expect(decoded).toContain("é!");
-  expect(decoded).toContain("blob");
-  expect(complete).toBe(true);
+  // The final data payload ends exactly at the start of the offset table.
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept\né!\nblob",
+    complete: true,
+  });
 });
 
 it("honors a byte order mark in a data object", () => {

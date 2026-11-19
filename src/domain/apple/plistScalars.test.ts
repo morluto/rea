@@ -7,6 +7,7 @@ import { projectPlistValue } from "./plistValue.js";
 import { readBinaryPlistLayout } from "./binaryPlistLayout.js";
 import {
   binaryDateRequiresExactSeconds,
+  binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
 } from "./plistScalars.js";
@@ -14,6 +15,15 @@ import {
   estimateBinaryPlistExpansion,
   isPlistDecodeBudgetFailure,
 } from "./propertyListDecodeBudget.js";
+
+it("requires the full stored text payload within its declared byte range", () => {
+  // A two-byte string followed by a separate byte. The declared enclosing
+  // range determines whether the string fits even when its bytes are present.
+  const bytes = Buffer.from([0x52, 0x61, 0x62, 0x00]);
+  expect(binaryPlistObjectEnd(bytes, 0, bytes.length, 1)).toBe(3);
+  expect(binaryPlistObjectEnd(bytes, 0, 3, 1)).toBe(3);
+  expect(binaryPlistObjectEnd(bytes, 0, 2, 1)).toBeUndefined();
+});
 
 const dataObjectWithUnusedOverlappingInteger = (): Buffer => {
   const bytes = Buffer.alloc(66);
