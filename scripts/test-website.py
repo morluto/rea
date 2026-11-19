@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 
@@ -518,6 +518,32 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
 
 class WebsiteTranslationChecks(unittest.TestCase):
     """Exercise source edits, translated evidence and language editions at their consumers."""
+
+    def test_language_picker_links_encode_the_same_route_as_alternates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copytree(ROOT / "website/templates", root / "website/templates")
+            locales = root / "website/locales"
+            locales.mkdir()
+            shutil.copyfile(ROOT / "website/locales/languages.json", locales / "languages.json")
+            path = WEBSITE.new_page(root, "guides/Notes #1?", "Fixture", "Fixture guide.")
+            source = path.read_text()
+            path.write_text(source.replace('    <meta name="robots" content="noindex" />\n', ""))
+            WEBSITE.sync_pages(root)
+
+            document = Document(path.read_text())
+            canon, = [node.attrs["href"] for node in document.nodes if node.attrs.get("rel") == "canonical"]
+            links = {
+                node.attrs["data-language"]: urljoin(canon, node.attrs["href"])
+                for node in document.nodes if "data-language" in node.attrs
+            }
+            alternates = {
+                node.attrs["hreflang"]: node.attrs["href"]
+                for node in document.nodes if "hreflang" in node.attrs and node.attrs["hreflang"] != "x-default"
+            }
+            self.assertEqual(canon, "https://rea.tools/guides/Notes%20%231%3F/")
+            self.assertEqual(links, alternates)
+            self.assertEqual(links["zh-CN"], "https://rea.tools/zh-CN/guides/Notes%20%231%3F/")
 
     def test_language_inventory_preserves_script_identity(self):
         with tempfile.TemporaryDirectory() as directory:

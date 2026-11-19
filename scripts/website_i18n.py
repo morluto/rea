@@ -109,7 +109,7 @@ def language_markup(root, relative, code="en", available=None):
     choices, alternates = [], []
     for item in inventory:
         target = ("" if item["code"] == "en" else item["code"] + "/") + route
-        href = escape(base + target, quote=True)
+        href = quote(base + target, safe="/")
         active = ' aria-current="true"' if item["code"] == code else ""
         fallback = " · English" if item["code"] not in available else ""
         choices.append(f'<a href="{href}" lang="{item["code"]}" dir="{item["dir"]}" data-language="{item["code"]}"{active}>{escape(item["name"])}{fallback}</a>')
