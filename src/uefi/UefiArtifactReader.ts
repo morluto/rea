@@ -202,10 +202,7 @@ export class UefiArtifactReader implements ArtifactReader {
       const entry: ArtifactEntry = {
         path: name,
         kind: "file",
-        declaredSize: Math.min(
-          fileHeader.declaredLength,
-          region.end - fileHeader.localBase,
-        ),
+        declaredSize: fileHeader.observedLength,
         compressedSize: null,
         executable: false,
         encrypted: false,
@@ -222,7 +219,13 @@ export class UefiArtifactReader implements ArtifactReader {
         ],
         adapterKey: `uefi-ffs:${hex(fileHeader.absoluteBase)}`,
       };
+      if (fileHeader.extentIssue !== null)
+        omit(
+          name,
+          `Incomplete FFS extent at ${hex(fileHeader.absoluteBase)}: declared ${fileHeader.declaredLength} bytes, observed ${fileHeader.observedLength} (${fileHeader.extentIssue}).`,
+        );
       yield entry;
+      if (fileHeader.extentIssue === "declared-length-truncates-region") break;
       const next = nextFfsFileLocal(fileHeader, header.localBase);
       if (next <= local) break;
       local = next;

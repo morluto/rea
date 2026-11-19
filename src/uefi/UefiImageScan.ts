@@ -14,6 +14,7 @@ import type {
 import {
   FFS_TYPE_NAME_BY_CODE,
   FV_HEADER_LAYOUT,
+  SECTION_LAYOUT,
   SECTION_TYPE_NAME_BY_CODE,
 } from "./UefiCodeTables.js";
 import {
@@ -30,6 +31,7 @@ import {
   walkSections,
 } from "./FfsSections.js";
 import {
+  parseFirmwareVolumeHeader,
   scanFirmwareVolumes,
   type FirmwareVolumeHeader,
   unsupportedVolumeBodyReason,
@@ -527,14 +529,11 @@ export const scanUefiImage = async (
         ]);
       }
       const logicalPath = `${volume.logical_path}/FFS:${fileHeader.nameGuid ?? "unknown"}@${hex(fileHeader.absoluteBase)}`;
-      const observedEnd = Math.min(
-        fileHeader.localBase + fileHeader.declaredLength,
-        fileArea.end,
-      );
+      const observedEnd = fileHeader.localBase + fileHeader.observedLength;
       const truncatesArea =
-        fileHeader.localBase + fileHeader.declaredLength > fileArea.end;
+        fileHeader.extentIssue === "declared-length-truncates-region";
       const declaredBelowHeader =
-        fileHeader.declaredLength < fileHeader.headerLength;
+        fileHeader.extentIssue === "declared-length-below-header";
       if (truncatesArea || declaredBelowHeader) incompleteFraming = true;
       if (declaredBelowHeader) {
         noteIntegrity(
@@ -587,7 +586,7 @@ export const scanUefiImage = async (
         sliceRegion(
           parentRegion,
           fileHeader.absoluteBase,
-          observedEnd - fileHeader.localBase,
+          fileHeader.observedLength,
         ) ?? Buffer.alloc(0);
 
       const sections: SectionBuilder[] = [];
@@ -630,7 +629,7 @@ export const scanUefiImage = async (
         source_stream: fileArea.sourceStream ?? null,
         offset: fileHeader.absoluteBase,
         header_length: fileHeader.headerLength,
-        length: Math.max(1, observedEnd - fileHeader.localBase),
+        length: fileHeader.observedLength,
         declared_length: fileHeader.declaredLength,
         guid: fileHeader.nameGuid ?? "ffffffff-ffff-ffff-ffff-ffffffffffff",
         type_code: fileHeader.typeCode,
@@ -700,7 +699,7 @@ export const scanUefiImage = async (
       region,
       start,
       end,
-      (code) => SECTION_TYPE_NAME_BY_CODE[code] ?? "unknown",
+      sectionTypeNameFor,
       reserve,
     );
     if (walked.remainder !== null) {
@@ -811,19 +810,35 @@ export const scanUefiImage = async (
           origin: 0,
           sourceStream: logicalPath,
         };
-        const nested = await scanVolumesInRegion(
-          decodedRegion,
-          depth + 1,
-          volumeOffset,
-          `${logicalPath}/${decoded.format}`,
-          false,
-        );
-        record.sub_volumes = nested.map((entry) => entry.logical_path);
-        // Decode can yield a complete FV, a section chain or an opaque blob.
+        // Select the outer framing before scanning for embedded volume magic.
+        const sectionCandidate = hasRecognizedSectionType(decodedRegion);
+        const leadingSection =
+          sectionCandidate && startsWithSectionFrame(decodedRegion);
+        const rootVolume = leadingSection
+          ? parseFirmwareVolumeHeader(
+              decodedRegion,
+              decodedRegion.start,
+              reserve,
+            )
+          : null;
+        const sectionsFirst =
+          leadingSection &&
+          (rootVolume === null || rootVolume.implausibilities.length > 0);
+        if (!sectionsFirst) {
+          const nested = await scanVolumesInRegion(
+            decodedRegion,
+            depth + 1,
+            volumeOffset,
+            `${logicalPath}/${decoded.format}`,
+            false,
+          );
+          record.sub_volumes = nested.map((entry) => entry.logical_path);
+        }
         if (
-          nested.length === 0 &&
-          !structuralLimitReached &&
-          isSectionChain(decodedRegion)
+          sectionsFirst ||
+          (sectionCandidate &&
+            record.sub_volumes.length === 0 &&
+            !structuralLimitReached)
         ) {
           const childUi = await walkSectionChain(
             decodedRegion,
@@ -963,12 +978,28 @@ const subRegion = (
   origin: absoluteOffset(region, start),
 });
 
-/** A recognized first frame distinguishes section streams from opaque decoded bytes. */
-const isSectionChain = (region: ScanRegion): boolean => {
-  const typeCode = region.buffer[3];
+const sectionTypeNameFor = (code: number): string =>
+  SECTION_TYPE_NAME_BY_CODE[code] ?? "unknown";
+
+const hasRecognizedSectionType = (region: ScanRegion): boolean => {
+  const typeOffset = region.start + SECTION_LAYOUT.typeOffset;
+  const typeCode = region.buffer[typeOffset];
   return (
-    typeCode !== undefined && SECTION_TYPE_NAME_BY_CODE[typeCode] !== undefined
+    typeOffset < region.end &&
+    typeCode !== undefined &&
+    SECTION_TYPE_NAME_BY_CODE[typeCode] !== undefined
   );
+};
+
+/** A complete leading frame takes precedence over volume magic in its body. */
+const startsWithSectionFrame = (region: ScanRegion): boolean => {
+  const probe = new Budget(1);
+  const {
+    sections: [first],
+  } = walkSections(region, region.start, region.end, sectionTypeNameFor, () =>
+    probe.tryCharge(1),
+  );
+  return first !== undefined && !first.truncated && !first.malformed;
 };
 
 const decodeUiString = (payload: Buffer): string | null => {

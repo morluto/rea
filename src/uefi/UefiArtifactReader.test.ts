@@ -213,3 +213,33 @@ it("reports an unreadable extended FFS header after a valid file", async () => {
     await reader.close();
   }
 });
+
+it("retains the readable prefix of a truncated FFS body and reports unknown coverage", async () => {
+  const file = buildFfsFile({
+    guid: DRIVER_GUID,
+    typeCode: 0x07,
+    payload: Buffer.from("payload"),
+  });
+  file.writeUIntLE(8192, 20, 3);
+  const reader = await openReader(buildFv({ files: [file] }).buffer);
+  const onOmission = vi.fn();
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, { onOmission, onCoverage });
+    const retained = entries.find(({ kind }) => kind === "file");
+    expect(retained).toMatchObject({ byteOffset: 72, declaredSize: 4024 });
+    if (retained === undefined) throw new Error("readable FFS bytes were lost");
+    const bytes = await readAll(await reader.open(retained));
+    expect(bytes.length).toBe(4024);
+    expect(onOmission).toHaveBeenCalledWith({
+      path: retained.path,
+      kind: "unsupported",
+    });
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: [expect.stringMatching(/0x48.*8192.*4024/u)],
+    });
+  } finally {
+    await reader.close();
+  }
+});

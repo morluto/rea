@@ -1053,3 +1053,60 @@ it("limits coverage to the section that contains depth-limited children", async 
     await provider.close();
   }
 });
+
+it("maps a decoded FV-image section and its PE32 sibling in the original chain", async () => {
+  const embedded = buildSection(0x17, buildFv({ files: [] }).buffer);
+  const peerBytes = Buffer.from("independently selectable PE32 body");
+  const decoded = Buffer.concat([embedded, buildSection(0x10, peerBytes)]);
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: amdZlibSection(decoded),
+  });
+  const directory = await createTestTempDirectory(
+    "rea-uefi-mixed-decoded-chain-",
+  );
+  const path = join(directory, "image.fd");
+  await writeFile(path, buildFv({ files: [file] }).buffer);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspection = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    const outer = inspection.firmware_volumes[0]?.ffs_files[0]?.sections;
+    const embeddedSection = outer?.find(({ type_code }) => type_code === 0x17);
+    const pe = outer?.find(({ type_code }) => type_code === 0x10);
+    expect(embeddedSection?.sub_volumes).toEqual([
+      inspection.firmware_volumes[1]?.logical_path,
+    ]);
+    expect(pe).toMatchObject({
+      offset: embedded.length,
+      source_stream: outer?.[0]?.logical_path,
+    });
+    expect(inspection.coverage).toBe("complete");
+    if (pe === undefined) throw new Error("decoded sibling was lost");
+
+    const extraction = expectOk(
+      await provider.execute(
+        extractRequest(path, join(directory, "out"), {
+          target: {
+            kind: "section",
+            offset: embedded.length,
+            source_stream: pe.source_stream,
+          },
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(extraction.coverage).toBe("complete");
+    expect(extraction.extraction_gaps).toEqual([]);
+    expect(extraction.files).toMatchObject([
+      {
+        sha256: sha256(peerBytes),
+        source_stream: pe.source_stream,
+        source_range: { offset: embedded.length + 4, length: peerBytes.length },
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});

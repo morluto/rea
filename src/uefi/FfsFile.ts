@@ -26,6 +26,11 @@ export interface FfsFileHeader {
   readonly localBase: number;
   readonly headerLength: number;
   readonly declaredLength: number;
+  readonly observedLength: number;
+  readonly extentIssue:
+    | "declared-length-below-header"
+    | "declared-length-truncates-region"
+    | null;
   readonly nameGuid: string | null;
   readonly typeCode: number;
   readonly attributes: number;
@@ -84,12 +89,17 @@ export function parseFfsFileHeader(
     if (declaredCompact !== 0)
       implausibilities.push("large-file-compact-size-is-nonzero");
   }
-  if (declaredLength < headerLength) {
-    implausibilities.push("declared-length-below-header");
-  }
-  if (localBase + declaredLength > region.end) {
-    implausibilities.push("declared-length-truncates-region");
-  }
+  const extentIssue =
+    declaredLength < headerLength
+      ? "declared-length-below-header"
+      : declaredLength > available
+        ? "declared-length-truncates-region"
+        : null;
+  if (extentIssue !== null) implausibilities.push(extentIssue);
+  const observedLength = Math.min(
+    Math.max(declaredLength, headerLength),
+    available,
+  );
 
   const rawState =
     region.buffer[localBase + FFS_HEADER_LAYOUT.stateOffset] ?? 0;
@@ -115,6 +125,8 @@ export function parseFfsFileHeader(
     localBase,
     headerLength,
     declaredLength,
+    observedLength,
+    extentIssue,
     nameGuid: formatGuidLittleEndian(
       region.buffer.subarray(localBase, localBase + 16),
       0,
