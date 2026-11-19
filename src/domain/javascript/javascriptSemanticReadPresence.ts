@@ -12,6 +12,7 @@ import {
 import { semanticBindingPrecedesCapture } from "./javascriptSemanticMutationInitializers.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { semanticKnownArrayIteration } from "./javascriptSemanticReferenceSources.js";
+import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import {
   resolveSemanticBindingState,
@@ -23,6 +24,20 @@ import {
 interface ReadPresenceOrigin {
   readonly binding: JavaScriptSemanticBindingState;
   readonly value: t.Node;
+}
+
+type ReadOwnData = (
+  path: readonly string[],
+  beforeIterator?: t.Node,
+) => t.Node | undefined;
+
+interface ReadPresence {
+  readonly read: ReadOwnData;
+  readonly readNestedArray?: (
+    path: readonly string[],
+    fromRhs: readonly string[],
+    acquisition: t.ArrayPattern,
+  ) => ReadOwnData | undefined;
 }
 
 /** Prove a direct data slot in its source at the time of the read. */
@@ -104,7 +119,7 @@ export const createSemanticReadPresenceQuery = (
     bindingId: string | null,
     capture: t.Node,
     iterationPath?: readonly string[],
-  ) => {
+  ): ReadPresence | undefined => {
     const binding =
       bindingId === null ? undefined : state.bindingsById.get(bindingId);
     const initializer = binding?.initializers[0];
@@ -135,37 +150,30 @@ export const createSemanticReadPresenceQuery = (
     )
       return undefined;
     const { value } = origin;
-    // An identifier RHS in an object pattern can select numeric own data
-    // without starting an iterator, even when a later read closes one.
-    const arrayPath =
-      iterationPath ??
-      (t.isArrayExpression(value) &&
-      t.isIdentifier(unwrapJavaScriptExpression(capture).node)
-        ? []
-        : undefined);
-    if (arrayPath !== undefined) {
-      // The RHS must select an own data value before numeric array slots can
-      // explain the binding. Temporal checks still use the full origin path.
+    const arraySlots = (
+      arrayPath: readonly string[],
+      fromRhs: readonly string[],
+      acquisition: t.Node | undefined,
+    ): ReadOwnData | undefined => {
       const literal = ownDataAtPath(value, arrayPath);
       if (!t.isArrayExpression(literal)) return undefined;
-      const array = evaluateSemanticExpression(
-        capture,
-        state,
-        capture,
-        "query",
-      );
+      const base = evaluateSemanticExpression(capture, state, capture, "query");
+      const selectedArray = semanticSlotAtPath(base, fromRhs);
+      const array = selectedArray.value;
       if (
+        selectedArray.presence !== "present" ||
         array.status !== "array" ||
         array.unknownItems ||
-        (iterationPath !== undefined &&
-          !semanticKnownArrayIteration(array, state, capture))
+        (acquisition !== undefined &&
+          !semanticKnownArrayIteration(array, state, acquisition))
       )
         return undefined;
-      return (
-        path: readonly string[],
-        beforeIterator?: t.Node,
-      ): t.Node | undefined => {
-        if (beforeIterator !== undefined) return undefined;
+      return (path, beforeIterator) => {
+        if (
+          beforeIterator !== undefined ||
+          (fromRhs.length > 0 && path.length !== arrayPath.length + 1)
+        )
+          return undefined;
         const key = path[arrayPath.length];
         if (key === undefined) return undefined;
         const index = semanticArrayIndex(key);
@@ -193,12 +201,25 @@ export const createSemanticReadPresenceQuery = (
           ? undefined
           : selected;
       };
+    };
+    // An identifier RHS in an object pattern can select numeric own data
+    // without starting an iterator, even when a later read closes one.
+    const arrayPath =
+      iterationPath ??
+      (t.isArrayExpression(value) &&
+      t.isIdentifier(unwrapJavaScriptExpression(capture).node)
+        ? []
+        : undefined);
+    if (arrayPath !== undefined) {
+      const read = arraySlots(
+        arrayPath,
+        [],
+        iterationPath === undefined ? undefined : capture,
+      );
+      return read === undefined ? undefined : { read };
     }
     if (!t.isObjectExpression(value)) return undefined;
-    return (
-      path: readonly string[],
-      beforeIterator?: t.Node,
-    ): t.Node | undefined => {
+    const read: ReadOwnData = (path, beforeIterator) => {
       if (path.length === 0) return undefined;
       const selected = ownDataAtPath(value, path);
       if (selected === undefined) return undefined;
@@ -218,5 +239,6 @@ export const createSemanticReadPresenceQuery = (
             );
       return stillPresent ? selected : undefined;
     };
+    return { read, readNestedArray: arraySlots };
   };
 };

@@ -1650,3 +1650,131 @@ it.each([
       ).toEqual(["parent", "next", "mode"]);
   },
 );
+
+it.each([
+  [
+    "direct nested array",
+    'const box={items:["one"]};const {items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "nested array through a const alias",
+    'const box={items:["one"]};const alias=box;const {items:[selected]}=alias;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "nested array assignment",
+    'const box={items:["one"]};let selected;({items:[selected]}=box);box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "nested object prefix",
+    'const box={prefix:{items:["one"]}};const {prefix:{items:[selected]}}=box;box.prefix.items[0]="later";',
+    ["prefix", "items", "0"],
+    "resolved",
+  ],
+  [
+    "projected object RHS",
+    'const box={prefix:{items:["one"]}};const {items:[selected]}=box.prefix;box.prefix.items[0]="later";',
+    ["prefix", "items", "0"],
+    "resolved",
+  ],
+  [
+    "earlier own read",
+    'const box={label:0,items:["one"]};const {label,items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "native nested elision",
+    'const box={items:[0,"one"]};const {items:[,selected]}=box;box.items[1]="later";',
+    ["items", "1"],
+    "resolved",
+  ],
+  [
+    "earlier write through alias",
+    'const box={items:["one"]};const alias=box;alias.items[0]="earlier";const {items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier default",
+    'const box={items:["one"]};const {missing=(box.items[0]="earlier"),items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier getter",
+    'const box={items:["one"],get label(){box.items[0]="earlier";return 0;}};const {label,items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "inherited array receiver",
+    'const box={__proto__:{items:["one"]}};const {items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "aliased array receiver",
+    'const items=["one"];const box={items};const {items:[selected]}=box;items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "custom own iterator",
+    'const box={items:["one"]};box.items[Symbol.iterator]=function*(){yield "other";};const {items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "shared next changed before capture",
+    'const box={items:["one"]};Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});const {items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "shared next changed after capture",
+    'const box={items:["one"]};const {items:[selected]}=box;Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "earlier iterator close reaching this array",
+    'const box={first:[0],items:["one"]};box.first[1]=box.items;Object.getPrototypeOf([].values()).return=function(){const value=this.next().value;if(value)delete value[0];return {};};const {first:[used],items:[selected]}=box;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier member target in the iterator",
+    'const box={items:["one","two"]};const target={set value(_){box.items[1]="earlier";}};let selected;({items:[target.value,selected]}=box);',
+    ["items", "1"],
+    "candidate",
+  ],
+  [
+    "second nested iterator comes after first close",
+    'const box={first:[0],items:["one"]};const {first:[used],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+] as const)(
+  "owns a single native iterator below an object for %s",
+  (_name, code, path, resolution) => {
+    const graph = graphForJavaScript(code);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (r) =>
+        r.relation === "destructures" && r.target_node_id === selected?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find((n) => n.node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);
