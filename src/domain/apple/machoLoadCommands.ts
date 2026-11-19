@@ -8,7 +8,11 @@ import {
 
 const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
 
-const wordReader = (bytes: Uint8Array, littleEndian: boolean): BinaryReader =>
+/** Read numeric fields from exactly the supplied Mach-O view. */
+export const machoWordReader = (
+  bytes: Uint8Array,
+  littleEndian: boolean,
+): BinaryReader =>
   new BinaryReader(
     Buffer.isBuffer(bytes)
       ? bytes
@@ -47,7 +51,7 @@ export const readMachoHeaderDeclarations = (
     return err(
       `truncated Mach-O header: a ${wide ? 64 : 32}-bit header needs ${headerSize} bytes; the file has ${fileSize}`,
     );
-  const reader = wordReader(bytes, littleEndian);
+  const reader = machoWordReader(bytes, littleEndian);
   const commandBytes = reader.u32(20);
   return ok({
     headerSize,
@@ -145,7 +149,7 @@ export class MachoLoadCommandCursor {
       bytes.byteLength < MACHO_LOAD_COMMAND_HEADER_BYTES
     )
       return err(`load command ${this.#index} starts beyond sizeofcmds`);
-    const reader = wordReader(bytes, littleEndian);
+    const reader = machoWordReader(bytes, littleEndian);
     const size = reader.u32(4);
     if (
       size < MACHO_LOAD_COMMAND_HEADER_BYTES ||
@@ -269,7 +273,7 @@ export const decodeMachoFixedWordFields = (
   const names = FIXED_WORD_FIELDS.get(command);
   if (names === undefined) return undefined;
   if (fieldBytes.byteLength < names.length * 4) return null;
-  const reader = wordReader(fieldBytes, littleEndian);
+  const reader = machoWordReader(fieldBytes, littleEndian);
   return Object.fromEntries(
     names.map((name, index) => [name, reader.u32(index * 4)]),
   );
@@ -367,7 +371,7 @@ export const readMachoCommandStringBytes = (
       _tag: "InvalidMachoCommandString",
       reason: "truncated-offset",
     });
-  const reader = wordReader(body, littleEndian);
+  const reader = machoWordReader(body, littleEndian);
   const offset = reader.u32(8);
   if (offset < minimumOffset || offset >= body.byteLength)
     return err({
