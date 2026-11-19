@@ -97,7 +97,10 @@ const arrayExtent = (token: string | undefined): number | null => {
 };
 const alignmentValue = (token: string | undefined): number | null => {
   const value = integer(token);
-  return value !== null && value > 0 && Number.isInteger(Math.log2(value))
+  // A logarithm can round a neighboring large integer to a whole exponent.
+  return value !== null &&
+    value > 0 &&
+    2 ** Math.round(Math.log2(value)) === value
     ? value
     : null;
 };
@@ -248,13 +251,9 @@ const declaration = (
       layoutKnown = false;
     else size *= count;
   }
-  if (
-    name === null ||
-    align === null ||
-    align <= 0 ||
-    !Number.isInteger(Math.log2(align)) ||
-    !layoutKnown
-  )
+  // Explicit alignment was checked at admission. Natural alignment comes
+  // from the supported power-of-two scalar and vector sizes.
+  if (align === null || !layoutKnown)
     return { name, type, size: null, align: null };
   return { name, type, size, align };
 };
@@ -317,14 +316,12 @@ export function* readPtxKernels(
       if (
         parameterBytes !== null &&
         value.size !== null &&
-        value.align !== null &&
-        value.align > 0 &&
-        Number.isSafeInteger(value.align)
+        value.align !== null
       ) {
-        offset = Math.ceil(parameterBytes / value.align) * value.align;
-        parameterBytes = Number.isSafeInteger(offset + value.size)
-          ? offset + value.size
-          : null;
+        const aligned = Math.ceil(parameterBytes / value.align) * value.align;
+        const end = aligned + value.size;
+        offset = Number.isSafeInteger(aligned) ? aligned : null;
+        parameterBytes = Number.isSafeInteger(end) ? end : null;
       } else parameterBytes = null;
       parameters.push({
         ordinal: parameters.length,
@@ -455,12 +452,7 @@ export function* readPtxKernels(
           declarationTokens.push(t.value);
         }
         const value = declaration(declarationTokens);
-        if (
-          shared === null ||
-          value.size === null ||
-          value.align === null ||
-          value.align === 0
-        )
+        if (shared === null || value.size === null || value.align === null)
           shared = null;
         else {
           const total =
