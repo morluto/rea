@@ -206,6 +206,85 @@ it("collects failed default-branch pushes before a saturated PR sample", async (
   expect(calls[2][1]).toContain("per_page=5");
 });
 
+it.each(["request error", "mismatched runs"])(
+  "keeps the original CI and Release samples after supplemental %s",
+  async (mode) => {
+    const createdAt = new Date().toISOString();
+    const failedPush = {
+      id: 201,
+      run_attempt: 1,
+      status: "completed",
+      event: "push",
+      head_branch: "main",
+      conclusion: "failure",
+      created_at: createdAt,
+    };
+    const fixture = await createFixture([
+      {
+        workflow_runs: Array.from({ length: 100 }, (_, index) => ({
+          ...failedPush,
+          id: index + 1,
+          event: "pull_request",
+          head_branch: "feature",
+        })),
+      },
+      { workflow_runs: [{ ...failedPush, id: 101 }] },
+      mode === "request error"
+        ? { error: true }
+        : {
+            workflow_runs: [
+              { ...failedPush, head_branch: "feature" },
+              { ...failedPush, id: 202, created_at: "2000-01-01T00:00:00Z" },
+            ],
+          },
+    ]);
+    await executeWorkflowFixture(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+        const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(batchScript).href)});
+        await collectJobTimingsBatch({
+          repository: "example/rea",
+          defaultBranch: "main",
+          outputDirectory: process.env.CI_JOB_TIMINGS_DIRECTORY,
+          collect: async () => ({ rawPath: "jobs.json", reportPath: "report.json" }),
+        });
+      `,
+      ],
+      { cwd: fixture.directory, env: fixtureEnvironment(fixture) },
+    );
+    const manifest = JSON.parse(
+      await readFile(
+        join(fixture.outputDirectory, "batch-manifest.json"),
+        "utf8",
+      ),
+    );
+    expect(manifest.coverage).toMatchObject({
+      selectedRuns: 101,
+      collectedRuns: 101,
+    });
+    expect(manifest.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
+        expect.objectContaining({
+          id: 101,
+          workflow: "Release",
+          status: "collected",
+        }),
+      ]),
+    );
+    expect(manifest.errors).toHaveLength(mode === "request error" ? 1 : 2);
+    for (const error of manifest.errors)
+      expect(error.scope).toBe("workflow:CI default-branch failures");
+    if (mode === "mismatched runs")
+      expect(
+        manifest.errors.map(({ runId }: { runId: number }) => runId),
+      ).toEqual([201, 202]);
+  },
+);
+
 it("records listing and per-run errors without claiming complete coverage", async () => {
   const recent = new Date().toISOString();
   const fixture = await createFixture([
