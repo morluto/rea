@@ -88,6 +88,7 @@
 * **flutter:** carry the value of each fixed Flutter allowance ([#11641](https://github.com/morluto/rea/issues/11641)) ([2a31e06](https://github.com/morluto/rea/commit/2a31e064f35e53b40915cfc3ee3d698295d93715))
 * **gdb:** bind sessions to an optional executable ([230db70](https://github.com/morluto/rea/commit/230db70fb473dd15928ae6c1a885f7e8a5507dae))
 * **gdb:** name why close requires an explicit inferior disposition ([#11652](https://github.com/morluto/rea/issues/11652)) ([162097b](https://github.com/morluto/rea/commit/162097b95add4a14110e32b1d55010c354c2ac82))
+* **ghidra:** admit plain MIPS32 PIC shared images ([#2362](https://github.com/morluto/rea/issues/2362)) ([170429e](https://github.com/morluto/rea/commit/170429eb7d9b7e02072638a4abed8802640e5606))
 * **ghidra:** admit RISC-V position-independent executables ([#4487](https://github.com/morluto/rea/issues/4487)) ([#4811](https://github.com/morluto/rea/issues/4811)) ([8d22625](https://github.com/morluto/rea/commit/8d226251a7830e2159f208bbdaef4a87c9472535))
 * **ghidra:** import recognized DOS COM files with ComLoader ([#12086](https://github.com/morluto/rea/issues/12086)) ([86cf894](https://github.com/morluto/rea/commit/86cf8942dea23cca4d84b2e359631e49affce616))
 * **ghidra:** verify the bridge on Ghidra 12.2 ([#12081](https://github.com/morluto/rea/issues/12081)) ([5c59bdc](https://github.com/morluto/rea/commit/5c59bdc8a6635fe51eabc6d3eb8b71273419cc3f))
