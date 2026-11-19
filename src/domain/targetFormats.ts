@@ -59,3 +59,13 @@ export const targetFormatsOfKind = <Kind extends TargetKind>(
     (format): format is TargetFormatsOfKind<Kind> =>
       BINARY_TARGET_FORMAT_KINDS[format] === kind,
   );
+
+/** Formats for which the caller may select the interpretation explicitly. */
+export const TARGET_FORMAT_HINTS = [
+  "dos-com",
+  "raw-binary",
+  "gamecube-dol",
+  "esp-flash-image",
+] as const satisfies readonly TargetFormat[];
+
+export type TargetFormatHint = (typeof TARGET_FORMAT_HINTS)[number];
