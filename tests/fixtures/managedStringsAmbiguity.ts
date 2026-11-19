@@ -35,6 +35,8 @@ export const managedStringsAmbiguity = (
   if (options.nilName === true) bytes.writeUInt16LE(0, module.offset + 2);
   bytes.writeUInt16LE(options.invalidEnc === true ? 2 : 1, module.offset + 6);
   const nameIndex = bytes.readUInt16LE(module.offset + 2);
+  if (options.multipleModules === true)
+    bytes.writeUInt16LE(0, module.offset + module.rowSize + 4);
   const source =
     options.ambiguousGuid === true
       ? duplicateManagedHeap(bytes, "#GUID", Buffer.alloc(16, 0x22), "forward")
