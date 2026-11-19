@@ -940,6 +940,37 @@ describe("scalar identifier list ownership and ambiguity", () => {
     expect(result.normalised.ids).toBe(0);
   });
 
+  it("recovers literal survivors without rematching an independent learned chain", () => {
+    const map = new IdMap();
+    for (const id of [1, 2, 10, 11, 12]) map.learn(id, id + 1);
+    const result = compareAnswers(
+      answer({ books: { ids: [1, 1, 2, 2, 10, 11, 12, 50] } }),
+      answer({ books: { ids: [1, 1, 2, 2, 11, 12, 13] } }),
+      map,
+      entity,
+    );
+    expect(result.differences).toEqual([
+      expect.objectContaining({ category: "length", pointer: "/books/ids" }),
+    ]);
+    expect(result.normalised.ids).toBe(3);
+  });
+
+  it("recovers all typed literal and mapped survivors competing for the same ID", () => {
+    const map = new IdMap();
+    map.learn(4, 5);
+    map.learn(5, 6);
+    const result = compareAnswers(
+      answer({ books: { ids: [5, 5, "4", "4", 2] } }),
+      answer({ books: { ids: [5, 5, "5", "5"] } }),
+      map,
+      entity,
+    );
+    expect(result.differences).toEqual([
+      expect.objectContaining({ category: "length", pointer: "/books/ids" }),
+    ]);
+    expect(result.normalised.ids).toBe(2);
+  });
+
   it("keeps unrelated numeric and string literal representations distinct", () => {
     const result = compareAnswers(
       answer({ data: { ids: [101], counts: [101] } }),

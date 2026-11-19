@@ -1,6 +1,7 @@
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { IdMap } from "./environmentCompareIds.js";
 import {
+  completePairingByLiteral,
   identifierListKeys as keysOf,
   recoverIdentifierListSurvivors,
   type EnvironmentListIdentity,
@@ -21,38 +22,6 @@ const environmentIdentity = (value: JsonValue): EnvironmentListIdentity => ({
       ? identityKey(value)
       : undefined,
 });
-
-/** Try the absolute upper bound by retaining mapped-only matches and filling the rest by literal equality. */
-const completePairingByLiteral = (
-  identities: readonly Identity[],
-  available: ReadonlyMap<string, { readonly indices: number[] }>,
-  survivors: ReadonlyMap<number, number>,
-  limit: number,
-): Map<number, number> | undefined => {
-  const literal = new Map<number, number>();
-  const occupied = new Set<number>();
-  for (const [left, right] of survivors) {
-    const key = identities[left]!.literal;
-    if (key !== undefined && available.has(key)) continue;
-    literal.set(left, right);
-    occupied.add(right);
-  }
-  const next = new Map<string, number>();
-  for (const [left, identity] of identities.entries()) {
-    const key = identity.literal;
-    if (key === undefined || literal.has(left)) continue;
-    const candidates = available.get(key)?.indices ?? [];
-    let index = next.get(key) ?? 0;
-    while (index < candidates.length && occupied.has(candidates[index]!))
-      index++;
-    const right = candidates[index];
-    if (right === undefined) continue;
-    literal.set(left, right);
-    if (literal.size === limit) return literal;
-    next.set(key, index + 1);
-  }
-  return undefined;
-};
 
 /** Compare one scalar identifier list using the call's proven collection ownership. */
 export const compareIdentifierList = (
@@ -159,12 +128,14 @@ export const compareIdentifierList = (
       identities,
       available,
       survivors,
+      identities.keys(),
       upperBound,
     );
     if (literal === undefined)
       recoverIdentifierListSurvivors(
         identities,
         envIdentities,
+        available,
         survivors,
         assigned,
       );

@@ -14,6 +14,101 @@ export const identifierListKeys = ({
 }: IdentifierListIdentity): string[] =>
   [literal, mapped].filter((key) => key !== undefined);
 
+type Buckets = ReadonlyMap<string, { readonly indices: readonly number[] }>;
+
+/** Attain the maximum possible matches when literals and mapped-only matches suffice. */
+export const completePairingByLiteral = (
+  identities: readonly IdentifierListIdentity[],
+  available: Buckets,
+  survivors: ReadonlyMap<number, number>,
+  liveIndices: Iterable<number>,
+  limit: number,
+): Map<number, number> | undefined => {
+  const literal = new Map<number, number>();
+  const occupied = new Set<number>();
+  for (const [left, right] of survivors) {
+    const key = identities[left]!.literal;
+    if (key !== undefined && available.has(key)) continue;
+    literal.set(left, right);
+    occupied.add(right);
+  }
+  const next = new Map<string, number>();
+  for (const left of liveIndices) {
+    const key = identities[left]!.literal;
+    if (key === undefined || literal.has(left)) continue;
+    const candidates = available.get(key)?.indices ?? [];
+    let index = next.get(key) ?? 0;
+    while (index < candidates.length && occupied.has(candidates[index]!))
+      index++;
+    const right = candidates[index];
+    next.set(key, right === undefined ? index : index + 1);
+    if (right === undefined) continue;
+    literal.set(left, right);
+    if (literal.size === limit) return literal;
+  }
+  return undefined;
+};
+
+interface Component {
+  readonly live: number[];
+  readonly env: number[];
+}
+
+/** Only components containing a free entry on each side can add matches. */
+const conflictComponents = (
+  identities: readonly IdentifierListIdentity[],
+  envIdentities: readonly EnvironmentListIdentity[],
+  available: Buckets,
+  survivors: ReadonlyMap<number, number>,
+  assigned: ReadonlySet<number>,
+): Iterable<Component> => {
+  const parent = Int32Array.from(envIdentities, (_, index) => index);
+  const rank = new Uint8Array(envIdentities.length);
+  const find = (index: number): number => {
+    while (parent[index] !== index) {
+      parent[index] = parent[parent[index]!]!;
+      index = parent[index]!;
+    }
+    return index;
+  };
+  const join = (one: number, two: number): void => {
+    const a = find(one);
+    const b = find(two);
+    if (a === b) return;
+    if (rank[a]! < rank[b]!) parent[a] = b;
+    else {
+      parent[b] = a;
+      if (rank[a] === rank[b]) rank[a] = rank[a]! + 1;
+    }
+  };
+  const first = (key: string | undefined): number | undefined =>
+    key === undefined ? undefined : available.get(key)?.indices[0];
+  // Each key represents an entire bucket of equivalent environment items.
+  for (const [index, { literal, mapped }] of envIdentities.entries())
+    join(index, first(mapped ?? literal)!);
+  const liveAnchor = identities.map(({ literal, mapped }) => {
+    const raw = first(literal);
+    const learned = first(mapped);
+    if (raw !== undefined && learned !== undefined) join(raw, learned);
+    return raw ?? learned;
+  });
+  const freeEnv = new Set<number>();
+  for (const index of envIdentities.keys())
+    if (!assigned.has(index)) freeEnv.add(find(index));
+  const components = new Map<number, Component>();
+  for (const [index, anchor] of liveAnchor.entries()) {
+    if (anchor === undefined || survivors.has(index)) continue;
+    const root = find(anchor);
+    if (freeEnv.has(root) && !components.has(root))
+      components.set(root, { live: [], env: [] });
+  }
+  for (const [index, anchor] of liveAnchor.entries())
+    if (anchor !== undefined) components.get(find(anchor))?.live.push(index);
+  for (const index of envIdentities.keys())
+    components.get(find(index))?.env.push(index);
+  return components.values();
+};
+
 interface Group {
   readonly indices: number[];
   readonly edges: Edge[];
@@ -96,28 +191,36 @@ const fill = (start: Group, blocked: Set<Group>): boolean => {
 };
 
 /** Maximize the survivor count with one capacity per distinct identity, then assign original positions. */
-export const recoverIdentifierListSurvivors = (
+const fillComponent = (
+  component: Component,
   identities: readonly IdentifierListIdentity[],
   envIdentities: readonly EnvironmentListIdentity[],
   survivors: Map<number, number>,
   assigned: Set<number>,
 ): void => {
   const liveGroups = new Map<string, Group>();
-  const liveByIndex = identities.map(({ literal, mapped }, index) =>
-    groupOf(liveGroups, JSON.stringify([literal, mapped]), index),
-  );
+  const liveByIndex = new Map<number, Group>();
+  for (const index of component.live) {
+    const { literal, mapped } = identities[index]!;
+    liveByIndex.set(
+      index,
+      groupOf(liveGroups, JSON.stringify([literal, mapped]), index),
+    );
+  }
   const envGroups = new Map<string, Group>();
   const envByKey = new Map<string, Group[]>();
-  const envByIndex = envIdentities.map((identity, index) => {
+  const envByIndex = new Map<number, Group>();
+  for (const index of component.env) {
+    const identity = envIdentities[index]!;
     const group = groupOf(envGroups, identity.literal, index);
+    envByIndex.set(index, group);
     if (group.indices.length === 1)
       for (const key of identifierListKeys(identity)) {
         const candidates = envByKey.get(key);
         if (candidates === undefined) envByKey.set(key, [group]);
         else candidates.push(group);
       }
-    return group;
-  });
+  }
   for (const live of liveGroups.values()) {
     const identity = identities[live.indices[0]!]!;
     const candidates = new Set(
@@ -130,7 +233,9 @@ export const recoverIdentifierListSurvivors = (
     }
   }
   const matchEdge = (left: number, right: number): Edge =>
-    liveByIndex[left]!.edges.find((edge) => edge.env === envByIndex[right])!;
+    liveByIndex
+      .get(left)!
+      .edges.find((edge) => edge.env === envByIndex.get(right))!;
 
   for (const [left, right] of survivors) {
     const edge = matchEdge(left, right);
@@ -164,4 +269,53 @@ export const recoverIdentifierListSurvivors = (
         survivors.set(left, right);
         assigned.add(right);
       }
+};
+
+export const recoverIdentifierListSurvivors = (
+  identities: readonly IdentifierListIdentity[],
+  envIdentities: readonly EnvironmentListIdentity[],
+  available: Buckets,
+  survivors: Map<number, number>,
+  assigned: Set<number>,
+): void => {
+  for (const component of conflictComponents(
+    identities,
+    envIdentities,
+    available,
+    survivors,
+    assigned,
+  )) {
+    const local = new Map<number, number>();
+    for (const left of component.live) {
+      const right = survivors.get(left);
+      if (right !== undefined) local.set(left, right);
+    }
+    const limit = Math.min(component.live.length, component.env.length);
+    const literal = completePairingByLiteral(
+      identities,
+      available,
+      local,
+      component.live,
+      limit,
+    );
+    const recovered = literal ?? local;
+    if (literal === undefined)
+      fillComponent(
+        component,
+        identities,
+        envIdentities,
+        recovered,
+        new Set(local.values()),
+      );
+    for (const left of component.live) {
+      const right = survivors.get(left);
+      if (right === undefined) continue;
+      survivors.delete(left);
+      assigned.delete(right);
+    }
+    for (const [left, right] of recovered) {
+      survivors.set(left, right);
+      assigned.add(right);
+    }
+  }
 };
