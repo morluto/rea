@@ -25,8 +25,6 @@
   "src/jeb/JebMcpConnectionOwner.ts": 1,
   "src/jeb/JebProvider.ts": 1,
   "src/kuna/KunaProjectCache.ts": 1,
-  "src/kuna/KunaSessionClient.ts": 1,
-  "src/kuna/KunaTargetCommands.ts": 1,
   "src/native/LldbCallTracer.ts": 3,
   "src/native/NativeCommandAnalysisError.ts": 1,
   "src/native/NativeMacOSProvider.ts": 2,
