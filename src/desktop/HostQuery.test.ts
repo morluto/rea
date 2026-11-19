@@ -13,6 +13,23 @@ it("returns an inert Node query's actual output and status", async () => {
   ).toEqual({ stdout: "query result", exitCode: 0 });
 });
 
+it("retains raw stdout on a completed nonzero exit when requested", async () => {
+  const output = await runHostQuery(
+    process.execPath,
+    [
+      "-e",
+      "process.stdout.write(Buffer.from([0x61, 0xff])); process.exitCode = 1;",
+    ],
+    undefined,
+    { preserveStdoutBytes: true },
+  );
+  expect(output).toEqual({
+    stdout: "a�",
+    stdoutBuffer: Buffer.from([0x61, 0xff]),
+    exitCode: 1,
+  });
+});
+
 it("preserves cancellation recorded by the actual command owner", async () => {
   const reason = new Error("caller cancelled host query");
   const failure = await runHostQuery(

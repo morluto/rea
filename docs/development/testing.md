@@ -127,14 +127,15 @@ TypeScript versions.
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
 The build also records `dist/mcp-catalog.json` (compact inputs) from the
 canonical SDK registrations and binds it to the runtime with its SHA-256
-digest. Default target-free
-MCP startup serves its schemas without constructing analysis validators;
-the first tool or guided-workflow request materializes the canonical runtime
-on that same SDK server. Explicit compact/full input selections preserve
-their advertised schemas throughout materialization. Initial-target,
-HTTP and output-schema-off startup keep the eager path; source runs without
-recorded artifacts also use eager composition. Compare memory both after discovery and after a completed
-request; report diagnostic GC separately from normal resident memory.
+digest. Target-free stdio MCP startup with the default catalog and output
+profiles serves its schemas without constructing analysis validators, including
+when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The first tool or guided-workflow request materializes the canonical runtime
+on that same SDK server. It preserves the advertised schemas throughout
+materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold
+startup use eager composition, as do source runs without recorded artifacts.
+Compare memory both after discovery and after a completed request; report
+diagnostic GC separately from normal resident memory.
 
 Turbo's strict task environment preserves caller-selected `GOMAXPROCS`,
 `GOMEMLIMIT`, and `UV_THREADPOOL_SIZE` for resource-constrained builds and
@@ -761,9 +762,11 @@ control that keeps completed Evidence inline and preserves the original failure.
 
 For a seekable file with a known extent, distinguish a provably impossible wire
 extent from an independent representation limit. Pair the malformed declaration
-with a structurally possible over-limit control. A count-only truncated fixture
-does not establish capacity behavior. This does not require decoding an opaque
-compressed payload merely to apply its declared expansion limit.
+with a structurally possible over-limit control. Include a length that fits the
+remaining bytes by itself but would consume the framing required for a later
+field or row. A count-only truncated fixture does not establish capacity
+behavior. This does not require decoding an opaque compressed payload merely
+to apply its declared expansion limit.
 
 When producer order is unspecified, synchronize fixtures on the observed request
 or completion event. A filename, generated key, or fixed delay does not prove

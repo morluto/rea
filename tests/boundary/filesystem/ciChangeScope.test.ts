@@ -242,6 +242,7 @@ it.each([
   ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
   ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
   ["scripts/verify-pcap.mjs", "packet_capture"],
+  [".github/actions/ubuntu-archive/action.yml", "signal_recording"],
   ["src/signals/RecordingProvider.ts", "signal_recording"],
   ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
   ["src/process/LinuxResourceLimits.ts", "packet_capture"],
@@ -2275,3 +2276,21 @@ it.each([
     });
   },
 );
+
+it("reads a Git blob whose path contains a line break alongside an ordinary blob", async ({
+  skip,
+}) => {
+  skip(
+    process.platform === "win32",
+    "Windows paths cannot contain line breaks",
+  );
+  const { directory } = await fixture();
+  const path = "src/two\nlines.test.ts";
+  const head = await change(directory, [path], "multiline path\n");
+  expect(gitRepository(directory).readFiles(head, [path, "README.md"])).toEqual(
+    new Map([
+      [path, "multiline path\n"],
+      ["README.md", "Initial fixture content\n"],
+    ]),
+  );
+});

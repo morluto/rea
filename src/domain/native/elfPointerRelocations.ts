@@ -302,6 +302,29 @@ const RELOCATION_KINDS = [
       [260, 8],
       [261, 4],
       [262, 2],
+      // Link-time kinds that patch one 32-bit instruction.
+      [273, 4], // LD_PREL_LO19
+      [274, 4], // ADR_PREL_LO21
+      [275, 4], // ADR_PREL_PG_HI21
+      [277, 4], // ADD_ABS_LO12_NC
+      [278, 4], // LDST8_ABS_LO12_NC
+      [282, 4], // JUMP26
+      [283, 4], // CALL26
+      [284, 4], // LDST16_ABS_LO12_NC
+      [285, 4], // LDST32_ABS_LO12_NC
+      [286, 4], // LDST64_ABS_LO12_NC
+      [299, 4], // LDST128_ABS_LO12_NC
+      [309, 4], // GOT_LD_PREL19
+      [311, 4], // ADR_GOT_PAGE
+      [312, 4], // LD64_GOT_LO12_NC
+      [541, 4], // TLSIE_ADR_GOTTPREL_PAGE21
+      [542, 4], // TLSIE_LD64_GOTTPREL_LO12_NC
+      [543, 4], // TLSIE_LD_GOTTPREL_PREL19
+      [549, 4], // TLSLE_ADD_TPREL_HI12
+      [551, 4], // TLSLE_ADD_TPREL_LO12_NC
+      [562, 4], // TLSDESC_ADR_PAGE21
+      [563, 4], // TLSDESC_LD64_LO12
+      [564, 4], // TLSDESC_ADD_LO12
       [1025, 8],
       [1026, 8],
       [1028, 8],
@@ -321,16 +344,29 @@ const RELOCATION_KINDS = [
     widths: new Map([
       [1, 8],
       [2, 4],
+      [4, 4], // PLT32
       [6, 8],
       [7, 8],
+      [9, 4], // GOTPCREL
       [10, 4],
       [11, 4],
       [16, 8],
       [17, 8],
       [18, 8],
+      [19, 4], // TLSGD
+      [20, 4], // TLSLD
+      [21, 4], // DTPOFF32
+      [22, 4], // GOTTPOFF
+      [23, 4], // TPOFF32
       [24, 8],
+      [25, 8], // GOTOFF64
+      [27, 8], // GOT64
+      [29, 8], // GOTPC64
+      [34, 4], // GOTPC32_TLSDESC
       [36, 16],
       [37, 8],
+      [41, 4], // GOTPCRELX
+      [42, 4], // REX_GOTPCRELX
     ]),
   },
   {

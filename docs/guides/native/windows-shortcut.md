@@ -46,7 +46,11 @@ original system ANSI code page is unobserved.
 `string_data` reports name, relative path, working directory, command-line
 arguments, and icon location according to `LinkFlags`, each with encoding,
 `CountCharacters`, byte length, and the decoded value. `IsUnicode` selects
-UTF-16LE; otherwise the Latin1 projection is used.
+UTF-16LE, with a Latin1 projection for ANSI. A stored count above 260 makes
+coverage partial for name, relative path, working directory, or icon location.
+The report retains readable values and following fields. Command-line arguments
+are exempt from that format limit and count toward the retained string budget.
+[MS-SHLLINK StringData](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-shllink/17b69472-0f34-4bcf-b290-eccdb8de224b)
 
 `extra_data` enumerates every block: signature, size, and offset.
 `EnvironmentVariableDataBlock` and `IconEnvironmentDataBlock` expose ANSI and

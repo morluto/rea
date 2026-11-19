@@ -48,17 +48,29 @@ describe("dpkg output", () => {
     ]);
   });
 
-  it("reads every owner of a path and skips diversions", () => {
+  it("reads full owner rows and exact paths, and skips both kinds of diversion", () => {
+    const editor = "/usr/bin/editor";
+    const nested = "/opt/catalog: /usr/bin/editor";
+    const missing = "/usr/bin/absent";
     expect(
       parseDpkgOwners(
         [
-          "diversion by foo from: /usr/bin/editor",
+          "local diversion from: /usr/bin/editor",
+          "local diversion to: /usr/bin/editor.old",
+          "diversion by other from: /usr/bin/editor",
           "editor-common, editor:amd64: /usr/bin/editor",
-          "other: /usr/bin/editor-extra",
+          "other: /opt/catalog: /usr/bin/editor",
         ].join("\n"),
-        "/usr/bin/editor",
+        [editor, nested, missing],
       ),
-    ).toEqual(["editor-common", "editor:amd64"]);
+    ).toEqual({
+      complete: true,
+      owners: new Map([
+        [editor, ["editor-common", "editor:amd64"]],
+        [nested, ["other"]],
+        [missing, []],
+      ]),
+    });
   });
 
   it("reads one status line", () => {

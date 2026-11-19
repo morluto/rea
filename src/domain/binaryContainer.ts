@@ -282,6 +282,16 @@ export class BinaryReader {
     return this.bytes.subarray(offset, offset + size);
   }
 
+  u8(offset: number): number {
+    this.#checkRange(offset, 1, "8-bit field");
+    return this.bytes.readUInt8(offset);
+  }
+
+  i8(offset: number): number {
+    this.#checkRange(offset, 1, "8-bit field");
+    return this.bytes.readInt8(offset);
+  }
+
   u16(offset: number): number {
     this.#checkRange(offset, 2, "16-bit field");
     return this.little
@@ -289,11 +299,46 @@ export class BinaryReader {
       : this.bytes.readUInt16BE(offset);
   }
 
+  i16(offset: number): number {
+    this.#checkRange(offset, 2, "16-bit field");
+    return this.little
+      ? this.bytes.readInt16LE(offset)
+      : this.bytes.readInt16BE(offset);
+  }
+
   u32(offset: number): number {
     this.#checkRange(offset, 4, "32-bit field");
     return this.little
       ? this.bytes.readUInt32LE(offset)
       : this.bytes.readUInt32BE(offset);
+  }
+
+  i32(offset: number): number {
+    this.#checkRange(offset, 4, "32-bit field");
+    return this.little
+      ? this.bytes.readInt32LE(offset)
+      : this.bytes.readInt32BE(offset);
+  }
+
+  i64(offset: number): bigint {
+    this.#checkRange(offset, 8, "64-bit field");
+    return this.little
+      ? this.bytes.readBigInt64LE(offset)
+      : this.bytes.readBigInt64BE(offset);
+  }
+
+  f32(offset: number): number {
+    this.#checkRange(offset, 4, "32-bit field");
+    return this.little
+      ? this.bytes.readFloatLE(offset)
+      : this.bytes.readFloatBE(offset);
+  }
+
+  f64(offset: number): number {
+    this.#checkRange(offset, 8, "64-bit field");
+    return this.little
+      ? this.bytes.readDoubleLE(offset)
+      : this.bytes.readDoubleBE(offset);
   }
 
   word(offset: number, bits: 32 | 64): bigint {
@@ -332,6 +377,7 @@ export class BinaryReader {
 
   table(offset: bigint, count: number, width: number, label: string): number {
     const size = BigInt(count) * BigInt(width);
+    const range = this.fileRange(offset, size, label);
     if (size > 16n * 1024n * 1024n)
       throw new BinaryResourceFailure(
         "structure",
@@ -340,7 +386,7 @@ export class BinaryReader {
         "structure",
         "bytes",
       );
-    return this.fileRange(offset, size, label).offset;
+    return range.offset;
   }
 }
 
