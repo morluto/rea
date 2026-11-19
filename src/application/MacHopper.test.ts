@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { err, ok } from "../domain/result.js";
@@ -40,6 +41,43 @@ it("bounds the system host's Hopper minimum-version plist read", async () => {
     },
     message: expect.stringContaining("67108864-byte input allowance"),
   });
+});
+
+it("retains the system host's minimum-version plist descriptor until close can retry it", async () => {
+  const root = await createTestTempDirectory("rea-hopper-plist-cleanup-");
+  const app = join(root, "Hopper.app");
+  const plist = join(app, "Contents", "Info.plist");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(
+    plist,
+    "<plist><dict><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>",
+  );
+  const host = systemMacHopperInstallHost(root, {}, async () => "15.0");
+  const closeHandle = OwnedFileHandle.prototype.close;
+  const attempts: OwnedFileHandle[] = [];
+  let denied = true;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      attempts.push(this);
+      if (denied) throw new Error("controlled Info.plist close denial");
+      await closeHandle.call(this);
+    });
+  try {
+    await expect(host.minimumSystemVersion(app)).rejects.toBeDefined();
+    await expect(host.close?.()).resolves.toMatchObject({ resources: [plist] });
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toBe(attempts[1]);
+    denied = false;
+    await expect(host.close?.()).resolves.toBeUndefined();
+    expect(attempts[0]!.handle.fd).toBe(-1);
+    await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
+  } finally {
+    denied = false;
+    await host.close?.();
+    await Promise.all(attempts.map((owner) => closeHandle.call(owner)));
+    close.mockRestore();
+  }
 });
 
 class FakeMacHopperHost implements MacHopperInstallHost {
