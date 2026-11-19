@@ -325,6 +325,7 @@
 * **environment:** preserve HAR body source identity and scan coverage ([#11829](https://github.com/morluto/rea/issues/11829)) ([5ccb7c5](https://github.com/morluto/rea/commit/5ccb7c59c84e2297fd2c0ecb691154e410b285f2))
 * **environment:** refuse incomplete browser probes of body-taking tools ([#11115](https://github.com/morluto/rea/issues/11115)) ([206a2e0](https://github.com/morluto/rea/commit/206a2e067fd19390824b7f4b0fabd1ca808c20c0))
 * **environment:** reject invalid dates in write inference ([#12188](https://github.com/morluto/rea/issues/12188)) ([b2c508e](https://github.com/morluto/rea/commit/b2c508eaa7a86e8a3dbe87279c45ad53bba955f7))
+* **erlang:** disclose BEAM bytes trailing the declared FOR1 form ([#9673](https://github.com/morluto/rea/issues/9673)) ([93c8e0c](https://github.com/morluto/rea/commit/93c8e0c0c8e80e3c2379a1c7d2c2a956331cc8e8))
 * **errors:** name rea doctor only for providers it can check ([#10565](https://github.com/morluto/rea/issues/10565)) ([4aefe2d](https://github.com/morluto/rea/commit/4aefe2daec12bbf7e9e4ed7e994d92ac245dea28))
 * **errors:** rethrow internal invariant violations from plist consumers and the native output projection ([#11029](https://github.com/morluto/rea/issues/11029)) ([63b0426](https://github.com/morluto/rea/commit/63b0426e409339a5efbc8ea7bbdea0b4502ec935))
 * **evidence:** derive default authority from subject binding ([#10321](https://github.com/morluto/rea/issues/10321)) ([b99e773](https://github.com/morluto/rea/commit/b99e7737de1d6813e698759e2b024e155e8d1776))
