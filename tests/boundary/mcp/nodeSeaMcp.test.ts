@@ -45,7 +45,8 @@ it.each(["compact"] as const)(
       path,
       nodeSeaPe({
         codePath: "main.js",
-        main: "throw 1;",
+        mainCodeFormat: 1,
+        main: "export const marker = 1;",
         fuse: "set",
         assets: [{ name: "data.txt", body: "data" }],
       }),
@@ -78,6 +79,7 @@ it.each(["compact"] as const)(
         carrier: "pe",
         fuse_state: "set",
         code_path: "main.js",
+        main_code_format: "module",
       });
       const bundleReply = await call("get_evidence_bundle", {
         detail: "complete",
