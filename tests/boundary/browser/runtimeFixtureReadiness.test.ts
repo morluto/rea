@@ -209,3 +209,75 @@ it("interrupts pending discovery when the owned fixture exits", async () => {
     await server.close();
   }
 });
+
+type SourceProbe = {
+  send(
+    method: string,
+    params: unknown,
+    session: undefined,
+    signal: AbortSignal,
+  ): Promise<{ result: { value: unknown }; exceptionDetails?: unknown }>;
+};
+type WaitForSources = (
+  connection: SourceProbe,
+  timeoutMs?: number,
+) => Promise<void>;
+
+const waitForSources = async () =>
+  z
+    .object({
+      waitForRuntimeFixtureSources: z.custom<WaitForSources>(
+        (value) => typeof value === "function",
+      ),
+    })
+    .parse(
+      await import(
+        new URL(
+          "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
+          import.meta.url,
+        ).href
+      ),
+    ).waitForRuntimeFixtureSources;
+
+it("waits for both external fixture scripts", async () => {
+  const state = {
+    readyState: "interactive",
+    chosenLoaded: true,
+    untouchedLoaded: false,
+  };
+  const send = vi
+    .fn<SourceProbe["send"]>()
+    .mockResolvedValueOnce({ result: { value: state } })
+    .mockResolvedValueOnce({
+      result: { value: { ...state, untouchedLoaded: true } },
+    });
+  const wait = await waitForSources();
+  await wait({ send });
+  expect(send).toHaveBeenCalledTimes(2);
+});
+
+it("cancels a pending source probe at the deadline and retains the last page state", async () => {
+  const state = {
+    readyState: "loading",
+    chosenLoaded: true,
+    untouchedLoaded: false,
+  };
+  const pendingProbe = phaseArrival();
+  const send = vi
+    .fn<SourceProbe["send"]>()
+    .mockResolvedValueOnce({ result: { value: state } })
+    .mockImplementationOnce(async (_method, _params, _session, signal) => {
+      pendingProbe.arrive();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      signal.throwIfAborted();
+      return { result: { value: null } };
+    });
+  const wait = await waitForSources();
+  const pending = wait({ send }, 500);
+  const rejection = expect(pending).rejects.toThrow(JSON.stringify(state));
+  await pendingProbe.reached(pending, "second source probe");
+  await rejection;
+  expect(send).toHaveBeenCalledTimes(2);
+});
