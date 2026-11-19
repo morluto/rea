@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { isStaticEvidenceAttempt } from "./artifacts.mjs";
 import { collectJobTimings } from "./job-timings.mjs";
+import { isStaticEvidenceAttempt } from "./static-evidence-attempt.mjs";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_DIRECTORY = join(".cache", "ci-job-timings");

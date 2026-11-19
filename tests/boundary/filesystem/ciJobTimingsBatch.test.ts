@@ -5,11 +5,40 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import { executeWorkflowFixture } from "../../support/workflowGit.js";
 
 const batchScript = fileURLToPath(
   new URL("../../../scripts/ci/job-timings-batch.mjs", import.meta.url),
 );
+
+it("loads the timing batch from a tree with no installed dependencies", async () => {
+  const root = await createTestTempDirectory("rea-ci-job-timings-clean-");
+  const files = await copyScriptsWithImports(
+    ["scripts/ci/job-timings-batch.mjs"],
+    root,
+  );
+  expect(files).toEqual([
+    "scripts/ci/job-timings-batch.mjs",
+    "scripts/ci/job-timings.mjs",
+    "scripts/ci/static-evidence-attempt.mjs",
+  ]);
+  const imported = await executeWorkflowFixture(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(join(root, "scripts/ci/job-timings-batch.mjs")).href)});
+      process.stdout.write(JSON.stringify({
+        started: typeof collectJobTimingsBatch === "function",
+      }));
+      `,
+    ],
+    { cwd: root, env: { PATH: process.env.PATH ?? "" } },
+  );
+  expect(JSON.parse(imported.stdout)).toEqual({ started: true });
+});
 
 it("collects the latest attempt for recent completed CI and Release runs into a bounded manifest", async () => {
   const recent = new Date().toISOString();

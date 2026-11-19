@@ -7,7 +7,6 @@ import {
   diagnosticPaths,
   isEligibleMainRun,
   isFailedConclusion,
-  isStaticEvidenceAttempt,
   pullRequestBaseSha,
   readStaticCheckArtifact,
   safeSha,
@@ -16,6 +15,7 @@ import {
   validRepoPath,
 } from "./artifacts.mjs";
 import { createGhApiRequest } from "./github-api.mjs";
+import { isStaticEvidenceAttempt } from "./static-evidence-attempt.mjs";
 import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
 const OUTPUT_DIRECTORY = join(".cache", "ci-failures");
