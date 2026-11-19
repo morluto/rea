@@ -262,19 +262,21 @@ definitions use it.
 
 ## Verification and limits
 
-Ghidra 12.1.4 PUBLIC with a 64-bit JDK 21+ is required, and on macOS the release
-tree ships no host decompiler binary, so `Decompiler/os/<platform>/decompile` and
+Ghidra 12.2 PUBLIC with a 64-bit JDK 25+ is required, and on macOS the official
+release zip ships no host decompiler binary, so `Decompiler/os/<platform>/decompile` and
 `sleigh` must come from your own build; see
-[installation](../getting-started/installation.md#ghidra).
+[installation](../getting-started/installation.md#ghidra) and
+[#7018](https://github.com/morluto/rea/issues/7018) /
+[#7019](https://github.com/morluto/rea/issues/7019).
 
-Run `npm run verify:ghidra:riscv` with an existing Ghidra 12.1.4 installation,
-JDK 21+, and a RISC-V-capable Clang, LLD, LLVM readelf and LLVM objdump. The
+Run `npm run verify:ghidra:riscv` with an existing Ghidra 12.2 installation,
+JDK 25+, and a RISC-V-capable Clang, LLD, LLVM readelf and LLVM objdump. The
 verifier acquires no tools and never executes target code. Select installed
 tools explicitly when they are not on `PATH`:
 
 ```sh
-GHIDRA_INSTALL_DIR=/path/to/ghidra_12.1.4_PUBLIC \
-JAVA_HOME=/path/to/jdk-21 \
+GHIDRA_INSTALL_DIR=/path/to/ghidra_12.2_PUBLIC \
+JAVA_HOME=/path/to/jdk-25 \
 REA_RISCV_CLANG=/path/to/llvm/bin/clang \
 REA_RISCV_LLD=/path/to/lld/bin/ld.lld \
 REA_RISCV_READELF=/path/to/llvm/bin/llvm-readelf \

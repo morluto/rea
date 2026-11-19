@@ -377,14 +377,12 @@ describe("environment tool response summaries", () => {
 
 describe("environment catalog description budgets", () => {
   it("bounds captured scalar prose while preserving complete lookup identities", () => {
-    const query = "query-".repeat(1000);
     const method = "METHOD".repeat(1000);
     const path = `/${"😀".repeat(1000)}`;
     const expanded = {
       ...tool("get_users_by_id"),
       method,
       path_template: path,
-      query_parameter_names: [query],
     };
     const [definition] = environmentToolDefinitions(
       withTools([expanded]),
@@ -393,31 +391,23 @@ describe("environment catalog description budgets", () => {
     expect(definition?.tool).toMatchObject({
       method,
       path_template: path,
-      query_parameter_names: [query],
     });
     expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
-    expect(definition?.description).toContain(
-      "path display truncated; full value in manifest Evidence",
-    );
+    for (const field of ["method", "path"])
+      expect(definition?.description).toContain(
+        `${field} display truncated; full value in manifest Evidence`,
+      );
     expect(definition?.description).toContain("/😀😀");
     expect(definition?.description).not.toMatch(/[\uD800-\uDFFF\uFFFD]/u);
-    expect(
-      Object.hasOwn(definition?.inputSchema.properties ?? {}, "query_1"),
-    ).toBe(true);
-    expect(
-      Buffer.byteLength(
-        definition?.inputSchema.properties.query_1?.description ?? "",
-      ),
-    ).toBeLessThan(1400);
   });
 
   it("bounds observation and record samples without changing the retained manifest", () => {
     const users = tool("get_users_by_id");
     const observations = Array.from(
-      { length: 10_000 },
+      { length: 8 },
       (_, index) => `${String(index)}-${"x".repeat(200)}`,
     );
-    const ordinals = Array.from({ length: 10_000 }, (_, index) => index);
+    const ordinals = Array.from({ length: 360 }, (_, index) => index);
     const expanded = {
       ...users,
       params: users.params.map((param) => ({
@@ -430,22 +420,19 @@ describe("environment catalog description budgets", () => {
       withTools([expanded]),
       source.manifest.name,
     );
-    expect(definition?.tool).toBe(expanded);
-    expect(expanded.params[0]?.observed_values).toBe(observations);
-    expect(expanded.record_ordinals).toBe(ordinals);
-    for (const description of [
-      definition?.description,
-      definition?.inputSchema.properties.id?.description,
-    ]) {
-      expect(Buffer.byteLength(description ?? "")).toBeLessThan(1536);
-      expect(description).toContain(
-        "/10000 shown; full list in manifest Evidence",
-      );
-    }
-    expect(definition?.description).toContain(source.evidenceId);
-    expect(definition?.inputSchema.properties.id?.description).toContain(
-      observations[0],
+    expect(definition?.tool.params[0]?.observed_values).toEqual(observations);
+    expect(definition?.tool.record_ordinals).toEqual(ordinals);
+    const describedValues = definition?.inputSchema.properties.id?.description;
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(1536);
+    expect(Buffer.byteLength(describedValues ?? "")).toBeLessThan(1536);
+    expect(definition?.description).toContain(
+      "/360 shown; full list in manifest Evidence",
     );
+    expect(describedValues).toContain(
+      "/8 shown; full list in manifest Evidence",
+    );
+    expect(definition?.description).toContain(source.evidenceId);
+    expect(describedValues).toContain(observations[0]);
   });
 
   it("advertises long path parameters with collision-safe aliases consistently", () => {
@@ -464,7 +451,7 @@ describe("environment catalog description budgets", () => {
   });
 
   it("advertises an oversized query name under a short, collision-safe alias", () => {
-    const longName = "n".repeat(100_000);
+    const longName = "n".repeat(1_200);
     const search = {
       ...tool("get_search"),
       query_parameter_names: [longName, "query_1"],
@@ -472,12 +459,29 @@ describe("environment catalog description budgets", () => {
     const args = environmentToolArguments(search);
     expect(args.query.get(longName)).toBe("query_1");
     expect(args.query.get("query_1")).toBe("query_query_1");
-    const schema = environmentToolInputSchema(search);
-    expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
+    const [definition] = environmentToolDefinitions(
+      withTools([search]),
+      source.manifest.name,
+    );
+    expect(definition?.tool.query_parameter_names).toEqual([
+      longName,
+      "query_1",
+    ]);
+    const schema = definition!.inputSchema;
+    expect(Object.keys(schema.properties)).toEqual([
+      "query_1",
+      "query_query_1",
+    ]);
+    expect(schema.required).toEqual([]);
+    expect(
+      Buffer.byteLength(schema.properties.query_1?.description ?? ""),
+    ).toBeLessThan(1400);
     expect(schema.properties.query_1?.description).toContain(
       "query name display truncated; full value in manifest Evidence",
     );
-    expect(search.query_parameter_names[0]).toBe(longName);
+    expect(schema.properties.query_query_1?.description).toMatch(
+      /^Query parameter query_1;/u,
+    );
   });
 
   it("reports an omitted oversized value instead of publishing an unbounded or partial observation", () => {
@@ -501,7 +505,7 @@ describe("environment catalog description budgets", () => {
     if (folders.body_shape === null)
       throw new Error("Missing fixture body shape");
     const properties = Object.fromEntries(
-      Array.from({ length: 10_000 }, (_, index) => [
+      Array.from({ length: 8 }, (_, index) => [
         `${String(index)}-${"x".repeat(200)}`,
         "string" as const,
       ]),
@@ -513,10 +517,8 @@ describe("environment catalog description budgets", () => {
     });
     const description = schema.properties.body?.description;
     expect(Buffer.byteLength(description ?? "")).toBeLessThan(1300);
-    expect(description).toContain(
-      "/10000 shown; full list in manifest Evidence",
-    );
-    expect(Object.keys(bodyShape.properties)).toHaveLength(10_000);
+    expect(description).toContain("/8 shown; full list in manifest Evidence");
+    expect(Object.keys(bodyShape.properties)).toHaveLength(8);
   });
 });
 

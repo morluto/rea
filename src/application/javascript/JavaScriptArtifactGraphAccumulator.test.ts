@@ -51,7 +51,7 @@ it("updates held nodes and deduplicates observations across finalization", () =>
   expect(identifiers).toEqual(identifiers.toSorted());
 
   accumulator.addNode(nodeInput("later"));
-  accumulator.addNode(first);
+  accumulator.addNode(alpha);
   expect(labels()).toEqual(["alpha", "beta", "later", "雪😀"]);
   const published = accumulator.nodes();
   expect(

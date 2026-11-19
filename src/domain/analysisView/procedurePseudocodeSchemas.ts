@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 /** A decompile attempt the caller may request instead of a retained result. */
-export const decompileAnalysisSchema = z.enum(["independent_fresh"]);
+export const decompileAnalysisSchema = z.enum([
+  "independent_fresh",
+  "call_destination",
+]);
 
 /** The selection a pseudocode observation answered, as its parameters record it. */
 export const procedurePseudocodeSelectionSchema = z.strictObject({

@@ -177,6 +177,17 @@ describe("expandDesktopExec", () => {
 });
 
 describe("unwrapDesktopCommand", () => {
+  it("keeps an env operand named -- after an assignment distinct from the option terminator", () => {
+    expect(
+      unwrapDesktopCommand(["env", "MODE=selected", "--", "notes"]),
+    ).toEqual({
+      kind: "direct",
+      program: "--",
+      environment: { MODE: "selected" },
+      index: 2,
+      argumentIndex: 3,
+    });
+  });
   it("keeps env assignments as the program's environment", () => {
     expect(
       unwrapDesktopCommand([
@@ -190,6 +201,7 @@ describe("unwrapDesktopCommand", () => {
       kind: "direct",
       program: "notes",
       index: 4,
+      argumentIndex: 5,
       environment: {
         BAMF_DESKTOP_FILE_HINT: "/x.desktop",
         PATH: "/opt/notes/bin",
@@ -216,6 +228,7 @@ describe("unwrapDesktopCommand", () => {
     ).toEqual({
       kind: "flatpak",
       program: "/usr/bin/flatpak",
+      argumentIndex: 5,
       environment: {},
       application_id: "net.cozic.joplin_desktop",
     });

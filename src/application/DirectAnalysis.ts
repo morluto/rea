@@ -53,7 +53,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { access, stat } from "node:fs/promises";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
-  requestsFreshIndependentDecompile,
+  requestsStandaloneDecompile,
   requiresNativeSourceAdmissionBeforeReplay,
 } from "./binary/AnalysisSnapshotCache.js";
 import {
@@ -470,7 +470,7 @@ const runAnalysis = async (
         ) &&
         tool !== "trace_native_ui_action" &&
         tool !== "decompile_all" &&
-        !requestsFreshIndependentDecompile(tool, arguments_) &&
+        !requestsStandaloneDecompile(tool, arguments_) &&
         routeAllowsSnapshotReplay(route, tool)
       ) {
         const cached = snapshotEvidenceForQuery(snapshot, {

@@ -54,6 +54,27 @@ export const mavenPomFixture = `<?xml version="1.0" encoding="UTF-8"?>
 </project>
 `;
 
+/** Maven property keys keep their prefixes even when XML namespace URIs agree. */
+export const qualifiedMavenPropertiesFixture = `<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:a="urn:revisions" xmlns:b="urn:revisions">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example</groupId>
+  <artifactId>qualified-properties</artifactId>
+  <version>\${a:revision}</version>
+  <properties>
+    <revision>0</revision>
+    <a:revision>11</a:revision>
+    <b:revision>22</b:revision>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>example</groupId>
+      <artifactId>dependency</artifactId>
+      <version>\${b:revision}</version>
+    </dependency>
+  </dependencies>
+</project>
+`;
+
 /** Tiny Gradle Module Metadata 1.1 document with library and platform variants. */
 export const gradleModuleFixture = `{
   "formatVersion": "1.1",

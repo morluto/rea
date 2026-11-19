@@ -147,6 +147,7 @@ const globalOptionRows = ({ formats, root }: GlobalOptionsHelp): Row[] =>
     },
     { label: `--format <${formats.join("|")}>`, description: "Output format" },
     { label: "--help", description: "Show help" },
+    { label: "--json", description: "Shorthand for --format json" },
     {
       label: "--llms, --llms-full",
       description: "Print LLM-readable manifest",
