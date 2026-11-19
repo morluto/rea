@@ -596,6 +596,7 @@
 * **ntfs:** reject unaligned USN v4 extents ([#11969](https://github.com/morluto/rea/issues/11969)) ([7c25842](https://github.com/morluto/rea/commit/7c25842bae6906de375406b99717e20807ec0ca4))
 * **nuget:** match the manifest relationship type exactly ([#11934](https://github.com/morluto/rea/issues/11934)) ([754589d](https://github.com/morluto/rea/commit/754589d4bf1053369fa5250fd05c0cb3ae595df6))
 * **nuget:** read packaging parts and dependency groups as NuGet does ([#11845](https://github.com/morluto/rea/issues/11845)) ([9c1e98f](https://github.com/morluto/rea/commit/9c1e98f1cdc7452347ba816f0bb5c943f5abe144))
+* **nuget:** require the OPC namespace for manifest relationships ([#12492](https://github.com/morluto/rea/issues/12492)) ([77d2c62](https://github.com/morluto/rea/commit/77d2c62d4d5e6f18a2a1288e565695d9a921b8d1))
 * **ota:** merge partition info without discarding integrity claims ([#11836](https://github.com/morluto/rea/issues/11836)) ([75482a9](https://github.com/morluto/rea/commit/75482a9ef972ed628c13757d8ca679c9740f1886))
 * **packaging:** include the linked dinosaur notice ([#11793](https://github.com/morluto/rea/issues/11793)) ([aaacdc0](https://github.com/morluto/rea/commit/aaacdc0ef7128def5e08f3d992ca5e0f6444f15d))
 * **parsers:** keep each ParseFailure constructor's kind in its return type ([#10746](https://github.com/morluto/rea/issues/10746)) ([59cd555](https://github.com/morluto/rea/commit/59cd5552c109ddaaac31b95cc3e4651db6dedf68))
@@ -776,7 +777,9 @@
 * **zip:** corroborate member extents before claiming complete coverage ([#11855](https://github.com/morluto/rea/issues/11855)) ([ad02201](https://github.com/morluto/rea/commit/ad02201d0b63d5a51830459f8669e5d6512fe875))
 * **zip:** publish EOF after extraction finalization ([#12164](https://github.com/morluto/rea/issues/12164)) ([ca3f35d](https://github.com/morluto/rea/commit/ca3f35dcbb9942c8d0432cee9c588b9c4996ab26))
 * **zip:** require complete local headers in trailing archive probes ([#12182](https://github.com/morluto/rea/issues/12182)) ([13e9ac3](https://github.com/morluto/rea/commit/13e9ac3871f3c0cded8b974adee82e83b3ca6ae4))
+* **zip:** require complete Zstandard member frames ([7fd50eb](https://github.com/morluto/rea/commit/7fd50eb3614aec28849d3f68ac65be9c3c5f8ca2))
 * **zip:** share desktop and APK framing and preserve bounded ZIP64 views ([#12157](https://github.com/morluto/rea/issues/12157)) ([3d313b5](https://github.com/morluto/rea/commit/3d313b56bc16b3c132c91a1eeb313f4744ef2f0b))
+* **zstd:** share exact-frame Zstandard decoding across ELF and OTA ([#12416](https://github.com/morluto/rea/issues/12416)) ([7fd50eb](https://github.com/morluto/rea/commit/7fd50eb3614aec28849d3f68ac65be9c3c5f8ca2))
 
 
 ### Performance Improvements
