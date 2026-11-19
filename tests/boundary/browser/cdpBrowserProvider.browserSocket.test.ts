@@ -217,7 +217,7 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
   });
 });
 
-it("retains browser-socket siblings and reports invalid attachment as unknown, not omitted", async () => {
+it("retains browser-socket siblings and identifies malformed rows by their discovery position", async () => {
   const browser = await startFakeCdpBrowser({
     commandResult: ({ method }) =>
       method === "Target.getTargets"
@@ -238,9 +238,8 @@ it("retains browser-socket siblings and reports invalid attachment as unknown, n
                 attached: false,
               },
               {
-                targetId: 1,
+                targetId: "missing-url",
                 type: "page",
-                url: "https://example.test/invalid",
               },
               { id: "alias", type: "page", url: "https://example.test/alias" },
             ],
@@ -266,17 +265,22 @@ it("retains browser-socket siblings and reports invalid attachment as unknown, n
       ["first", null, ""],
       ["second", false, "Good"],
     ]);
-    const limitations = result.value.limitations.join("\n");
-    expect(limitations).toContain(
-      'reported malformed attached metadata "unknown"',
+    expect(result.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          'CDP Target.getTargets row 0 target first reported malformed attached metadata "unknown"',
+        ),
+        expect.stringContaining(
+          "CDP Target.getTargets row 0 target first reported malformed title metadata 3",
+        ),
+        expect.stringContaining(
+          "CDP Target.getTargets row 2 was excluded because its target identity is malformed",
+        ),
+        expect.stringContaining(
+          "CDP Target.getTargets row 3 was excluded because its target identity is malformed",
+        ),
+      ]),
     );
-    expect(limitations).toContain("reported malformed title metadata 3");
-    expect(
-      result.value.limitations.filter((item) =>
-        item.includes("target identity is malformed"),
-      ),
-    ).toHaveLength(2);
-    expect(limitations).not.toContain("omitted attachment");
   } finally {
     await provider.close();
   }
@@ -323,29 +327,53 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
-  it("rejects malformed browser-socket discovery and closes the socket", async () => {
+  it("rejects malformed discovery replies and admits an explicitly empty inventory", async () => {
+    let malformed:
+      | { method: string; reply: Record<string, unknown> }
+      | undefined;
     const browser = await startFakeCdpBrowser({
-      commandResult: ({ method }) =>
-        method === "Browser.getVersion"
-          ? { product: "FakeChrome/1.0" }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-      }),
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BrowserObservationError",
-        operation: "list_browser_targets",
-        reason: "invalid_endpoint_response",
+      commandResult: ({ method }) => {
+        if (method === malformed?.method) return malformed.reply;
+        return method === "Target.getTargets" ? { targetInfos: [] } : undefined;
       },
     });
-    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    const input = listBrowserTargetsInputSchema.parse({
+      cdp_endpoint: browser.browserWebSocketUrl,
+    });
+    try {
+      for (const invalidReply of [
+        {
+          method: "Browser.getVersion",
+          reply: { product: "FakeChrome/1.0", protocolVersion: "" },
+        },
+        { method: "Target.getTargets", reply: { targetInfos: null } },
+      ]) {
+        malformed = invalidReply;
+        expect(await provider.listTargets(input)).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "BrowserObservationError",
+            operation: "list_browser_targets",
+            reason: "invalid_endpoint_response",
+            detail: expect.stringContaining(`CDP ${invalidReply.method}`),
+          },
+        });
+        await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      }
+
+      malformed = undefined;
+      expect(await provider.listTargets(input)).toMatchObject({
+        ok: true,
+        value: {
+          targets: [],
+          excluded: { disallowed_origin: 0, non_page: 0, unsupported_url: 0 },
+        },
+      });
+    } finally {
+      await provider.close();
+    }
   });
 
   it("reports a refused browser socket as unreachable", async () => {

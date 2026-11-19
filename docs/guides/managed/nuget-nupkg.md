@@ -29,7 +29,9 @@ requires an absolute filesystem path and preserves that exact selection:
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 `identity` reports `id`, `version`, `authors`, and `description` as present in
-the `.nuspec` metadata. Missing fields are `null`. When no `.nuspec` can be
+the `.nuspec` metadata. Missing fields are `null`. The `.nuspec` and OPC
+relationships go through XML end-of-line handling, as NuGet's reader applies
+it: CRLF and lone CR read as LF. When no `.nuspec` can be
 selected, `identity` is `null`.
 
 `license` reports the `.nuspec` license element: `type` is `expression` or
@@ -44,15 +46,21 @@ relationship diagnostics apply the same exclusion.
 `dependency_groups` lists each `.nuspec` dependency group with its
 `target_framework` and dependencies (`id`, `version` range as spelled,
 `include`, `exclude`, `development_dependency`). Ungrouped dependencies appear
-as a group with `target_framework: null`. Version ranges are recorded as text;
-restore results are unknown.
+as a group with `target_framework: null` when the `.nuspec` has no `<group>`.
+Beside `<group>` elements, in any `<dependencies>` element, they are omitted and
+a limitation gives their count: NuGet's restore-time reader ignores them, and
+`nuget pack` refuses that mix. Version ranges are recorded as text; restore
+results are unknown.
 
 `contents` lists file ZIP members with the stored ZIP `name`, a logical `path`
 (backslashes as `/`, leading `./` removed), uncompressed and compressed sizes,
 an `encrypted` flag, and a `path`-derived `role` (`lib`, `ref`, `runtimes`,
 `native`, `analyzers`, `build`, `buildTransitive`, `buildMultiTargeting`,
-`content`, `contentFiles`, `tools`, `nuspec`, `opc`, or `unknown`). Directory
-markers are omitted. Encrypted members are listed and not extracted.
+`content`, `contentFiles`, `tools`, `nuspec`, `opc`, or `unknown`). `opc` marks
+OPC packaging parts: `[Content_Types].xml`, `.rels` relationship parts, and
+members under `_rels/` or `package/`, where `nuget pack` writes the core
+properties `.psmdcp`. Directory markers are omitted. Encrypted members are
+listed and not extracted.
 Unflagged non-ASCII names use the ZIP CP437 fallback unless a valid Unicode Path
 extra field supplies the name. For fallback names, limitations identify the
 member, retain the exact raw filename bytes as hex, and mark the source encoding
@@ -64,8 +72,8 @@ came from an OPC `_rels/.rels` manifest relationship or a unique root `.nuspec`.
 When selection is missing or ambiguous, `nuspec` is `null` and the inventory
 still succeeds with a limitation.
 
-The `.nuspec` is chosen from a unique OPC relationship whose Type ends in
-`/manifest` when that target exists in the ZIP. Otherwise a unique `.nuspec` at
+The `.nuspec` is chosen from a unique OPC relationship with Type
+`http://schemas.microsoft.com/packaging/2010/07/manifest` when that target exists in the ZIP. Otherwise a unique `.nuspec` at
 the package root is used. Multiple conflicting manifests are not decoded.
 
 ## Limits and failures

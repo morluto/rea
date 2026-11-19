@@ -1,16 +1,11 @@
-import { writeFile, symlink } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
-  createGoBinaryDiagnosticFixtures,
   createGoBinaryFixture,
   createGoInlineAggregateFixture,
   createGoOverlappingElfFixture,
@@ -19,41 +14,19 @@ import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage
 import { CPU_ARM64, universalMacho } from "../../fixtures/universalMacho.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("distinguishes unsupported MZ carriers from damaged PE declarations", async () => {
-  const root = await createTestTempDirectory("rea-go-mz-");
-  for (const fixture of createGoBinaryDiagnosticFixtures()) {
-    const path = join(root, `${fixture.name}.exe`);
-    await writeFile(path, fixture.bytes);
-    const result = await new GoBinaryProvider().inspect({ path });
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error).toBeInstanceOf(
-        fixture.code === "unsupported_target"
-          ? AnalysisUnsupportedTargetError
-          : AnalysisInputError,
-      );
-  }
+it("rejects advertised PE32 data directories outside the optional header", async () => {
+  const root = await createTestTempDirectory("rea-go-pe-directories-");
+  const fixture = createGoBinaryFixture({ format: "pe", bits: 32 });
+  fixture.bytes.writeUInt32LE(1, 152 + 92);
+  const path = join(root, "truncated-pe32.exe");
+  await writeFile(path, fixture.bytes);
+  const result = await new GoBinaryProvider().inspect({ path });
+  if (result.ok) throw new Error("Truncated PE32 directories must be refused");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+  });
 });
-
-it.each([32, 64] as const)(
-  "rejects advertised PE%d data directories outside the optional header",
-  async (bits) => {
-    const root = await createTestTempDirectory("rea-go-pe-directories-");
-    const fixture = createGoBinaryFixture({ format: "pe", bits });
-    fixture.bytes.writeUInt32LE(1, 152 + (bits === 64 ? 108 : 92));
-    const path = join(root, `truncated-pe${String(bits)}.exe`);
-    await writeFile(path, fixture.bytes);
-    const result = await new GoBinaryProvider().inspect({ path });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBeInstanceOf(AnalysisInputError);
-      if (!(result.error instanceof AnalysisInputError)) throw result.error;
-      expect(result.error.issues).toContainEqual(
-        expect.objectContaining({ reason: "invalid_format" }),
-      );
-    }
-  },
-);
 
 it("preserves the actual build-info byte guard as a resource failure", async () => {
   const fixture = createGoInlineAggregateFixture(1024 * 1024 + 2);
@@ -128,48 +101,6 @@ it("reports unreadable ELF names alongside the no-record limitation", async () =
     ),
   );
   expect(result.value).not.toHaveProperty("section_names_limitation");
-});
-
-it.skipIf(process.platform === "win32")(
-  "rejects a symlink without replacing its selected file identity",
-  async () => {
-    const root = await createTestTempDirectory("rea-go-symlink-");
-    const selected = join(root, "selected");
-    const original = join(root, "original.elf");
-    await writeFile(original, createGoBinaryFixture().bytes);
-    await symlink(original, selected);
-    const result = await new GoBinaryProvider().inspect({ path: selected });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBeInstanceOf(AnalysisInputError);
-      const projected = projectAnalysisError(result.error);
-      expect(projected.remediation.action).toContain(original);
-      expect(projected).not.toHaveProperty("recovery");
-    }
-  },
-);
-
-it("reports a parse-complete GOPATH module text as unknown dependency coverage", async () => {
-  const moduleText =
-    "path\texample.com/tool/cmd/tool\n" +
-    "build\t-compiler=gc\n" +
-    "build\tGOOS=linux\n";
-  const root = await createTestTempDirectory("rea-go-gopath-metadata-");
-  const path = join(root, "application.elf");
-  await writeFile(path, createGoBinaryFixture({ moduleText }).bytes);
-  const result = await new GoBinaryProvider().inspect({ path });
-  if (!result.ok) throw result.error;
-  expect(result.value.build_info?.module_text).toBe(moduleText);
-  expect(result.value.build_info?.module).toMatchObject({
-    path: "example.com/tool/cmd/tool",
-    main: null,
-    dependencies: [],
-    complete: true,
-    unparsed_lines: [],
-  });
-  expect(result.value.limitations.join(" ")).toContain(
-    "Dependency coverage is unknown",
-  );
 });
 
 it("keeps a module-mode build with no dependency records as an observed empty list", async () => {

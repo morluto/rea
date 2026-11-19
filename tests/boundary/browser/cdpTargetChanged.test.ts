@@ -325,8 +325,9 @@ describe("screenshot capture", () => {
 
   it("reports a navigation that fails the screenshot command as target_changed", async () => {
     const browser = await start({
+      eventsBeforeReply: ["Page.captureScreenshot"],
       commandEvents: (command, origin) =>
-        command.method === "Page.getLayoutMetrics"
+        command.method === "Page.captureScreenshot"
           ? [
               frameNavigated(command, {
                 id: "frame-main",
@@ -348,8 +349,15 @@ describe("screenshot capture", () => {
       }),
     );
     if (result.ok) throw new Error("Expected target_changed");
-    expect(result.error).toMatchObject({ reason: "target_changed" });
-    expect(result.error.cause).toBeDefined();
+    expect(result.error).toMatchObject({
+      reason: "target_changed",
+      cause: {
+        reason: "protocol_error",
+        command: "Page.captureScreenshot",
+        code: -32_000,
+        reportedMessage: "Target navigated",
+      },
+    });
   });
 });
 

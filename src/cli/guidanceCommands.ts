@@ -18,39 +18,20 @@ import type { CliInstance } from "./types.js";
 import { cliDecimalField } from "./options.js";
 import { ownCliProcessResource } from "./cliResources.js";
 
-/** Guidance descriptors owned by one CLI host. */
-export class CliGuidanceResources {
-  #retained: ArtifactResourceScope | undefined;
-
-  resources(): ArtifactResourceScope {
-    this.#retained ??= new ArtifactResourceScope();
-    return this.#retained;
-  }
-
-  /** Release this host's descriptors, retaining failed cleanup for retry. */
-  async close(): Promise<void> {
-    const resources = this.#retained;
-    if (resources === undefined) return;
-    await resources.close();
-    if (this.#retained === resources) this.#retained = undefined;
-  }
-}
-
-/** Process CLI host used when a caller does not pass its own resources. */
-const processGuidanceResources = new CliGuidanceResources();
+let retainedResources: ArtifactResourceScope | undefined;
 
 /** Release CLI-owned guidance descriptors, retaining failed cleanup for retry. */
-export const closeCliGuidanceResources = (
-  resources: CliGuidanceResources = processGuidanceResources,
-): Promise<void> => resources.close();
-
-ownCliProcessResource("guidance", () => closeCliGuidanceResources());
+ownCliProcessResource("guidance", async () => {
+  const resources = retainedResources;
+  if (resources === undefined) return;
+  await resources.close();
+  if (retainedResources === resources) retainedResources = undefined;
+});
 
 /** Register offline search and retrieval for the installed REA guide bundle. */
 export const registerGuidanceCommands = (
   cli: CliInstance,
   logger: Logger,
-  resources: CliGuidanceResources = processGuidanceResources,
 ): void => {
   registerCliCommand(
     cli,
@@ -114,6 +95,7 @@ export const registerGuidanceCommands = (
         }),
       run: ({ options }) =>
         logCliCommand(logger, CLI_COMMANDS.guidance, async () => {
+          const resources = (retainedResources ??= new ArtifactResourceScope());
           const result =
             options.action === "search"
               ? await searchGuidance(
@@ -128,13 +110,13 @@ export const registerGuidanceCommands = (
                       ? {}
                       : { cursor: options.cursor }),
                   },
-                  resources.resources(),
+                  resources,
                 )
               : await readGuidanceSection(
                   {
                     locator: options.locator,
                   },
-                  resources.resources(),
+                  resources,
                 );
           return result.ok ? result.value : projectAnalysisError(result.error);
         }),

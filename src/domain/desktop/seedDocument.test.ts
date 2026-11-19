@@ -340,20 +340,40 @@ describe("openSeedDocument settings spelling", () => {
     });
   });
 
-  it("remaps a captured path in an env assignment and leaves the program", () => {
-    expect(
-      openSeedDocument(["env", `GNUPGHOME=${HOME}/storage/profile`, "gpa"], {
-        ...AT_HOME,
-        exec: "gpa",
-        documents: [],
-        isCaptured: (path) => path === "storage/profile" || path === ".gnupg",
-        spell: (path) => (path === "storage/profile" ? ".gnupg" : path),
-      }),
-    ).toEqual({
-      argv: ["env", `GNUPGHOME=${HOME}/.gnupg`, "gpa"],
-      opens: { kind: "empty" },
-    });
-  });
+  it.each([
+    { terminated: false, application: ["gpa"] },
+    { terminated: true, application: ["gpa"] },
+    {
+      terminated: true,
+      application: ["flatpak", "run", "--branch", "stable", "org.example.Gpa"],
+    },
+  ])(
+    "remaps a captured path in an env assignment and leaves $application (terminated prefix $terminated)",
+    ({ terminated, application }) => {
+      const delimiter = terminated ? ["--"] : [];
+      expect(
+        openSeedDocument(
+          [
+            "env",
+            ...delimiter,
+            `GNUPGHOME=${HOME}/storage/profile`,
+            ...application,
+          ],
+          {
+            ...AT_HOME,
+            exec: "gpa",
+            documents: [],
+            isCaptured: (path) =>
+              path === "storage/profile" || path === ".gnupg",
+            spell: (path) => (path === "storage/profile" ? ".gnupg" : path),
+          },
+        ),
+      ).toEqual({
+        argv: ["env", ...delimiter, `GNUPGHOME=${HOME}/.gnupg`, ...application],
+        opens: { kind: "empty" },
+      });
+    },
+  );
 
   it("leaves an empty env value empty when the working directory moves", () => {
     expect(

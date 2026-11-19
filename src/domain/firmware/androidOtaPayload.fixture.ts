@@ -5,7 +5,6 @@ import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 
 import {
   ANDROID_OTA_DEFAULT_BLOCK_SIZE,
-  ANDROID_OTA_HEADER_V1_BYTES,
   ANDROID_OTA_HEADER_V2_BYTES,
   ANDROID_OTA_MAGIC,
 } from "./androidOtaPayload.js";
@@ -20,6 +19,7 @@ export interface AndroidOtaOperationFixture {
   readonly data?: Uint8Array;
   readonly dataOffset?: number;
   readonly dataLength?: number;
+  readonly dataHash?: Uint8Array;
   readonly dstExtents?: readonly AndroidOtaExtentFixture[];
   readonly srcExtents?: readonly AndroidOtaExtentFixture[];
 }
@@ -30,6 +30,9 @@ export interface AndroidOtaPartitionFixture {
   readonly newHash?: Uint8Array;
   readonly oldSize?: number;
   readonly oldHash?: Uint8Array;
+  /** Exact occurrences of the singular message, for protobuf merge controls. */
+  readonly oldInfoFragments?: readonly AndroidOtaPartitionInfoFixture[];
+  readonly newInfoFragments?: readonly AndroidOtaPartitionInfoFixture[];
   readonly version?: string;
   readonly runPostinstall?: boolean;
   readonly postinstallPath?: string;
@@ -38,6 +41,11 @@ export interface AndroidOtaPartitionFixture {
   readonly mergeOperations?: number;
   readonly estimateCowSize?: number;
   readonly omitNewHash?: boolean;
+}
+
+interface AndroidOtaPartitionInfoFixture {
+  readonly size?: number;
+  readonly hash?: Uint8Array;
 }
 
 export interface AndroidOtaGroupFixture {
@@ -184,6 +192,8 @@ const encodeOperation = (
     encodeExtent(writer, extent);
     writer.join();
   }
+  if (operation.dataHash !== undefined)
+    writer.tag(8, WireType.LengthDelimited).bytes(operation.dataHash);
 };
 
 const encodePartition = (
@@ -199,9 +209,14 @@ const encodePartition = (
     writer.tag(3, WireType.LengthDelimited).string(partition.postinstallPath);
   if (partition.filesystemType !== undefined)
     writer.tag(4, WireType.LengthDelimited).string(partition.filesystemType);
-  if (partition.oldSize !== undefined || partition.oldHash !== undefined) {
+  const oldInfos =
+    partition.oldInfoFragments ??
+    (partition.oldSize !== undefined || partition.oldHash !== undefined
+      ? [{ size: partition.oldSize, hash: partition.oldHash }]
+      : []);
+  for (const info of oldInfos) {
     writer.tag(6, WireType.LengthDelimited).fork();
-    encodePartitionInfo(writer, partition.oldSize, partition.oldHash);
+    encodePartitionInfo(writer, info.size, info.hash);
     writer.join();
   }
   const image = partitionImage(partition, blockSize);
@@ -212,9 +227,14 @@ const encodePartition = (
       (image === undefined
         ? undefined
         : createHash("sha256").update(image).digest()));
-  if (newSize !== undefined || newHash !== undefined) {
+  const newInfos =
+    partition.newInfoFragments ??
+    (newSize !== undefined || newHash !== undefined
+      ? [{ size: newSize, hash: newHash }]
+      : []);
+  for (const info of newInfos) {
     writer.tag(7, WireType.LengthDelimited).fork();
-    encodePartitionInfo(writer, newSize, newHash);
+    encodePartitionInfo(writer, info.size, info.hash);
     writer.join();
   }
   for (const operation of partition.operations) {
@@ -365,7 +385,7 @@ export const buildAndroidOtaPayload = (
     signaturesSize,
   );
   if (major === 1) {
-    const header = Buffer.alloc(ANDROID_OTA_HEADER_V1_BYTES);
+    const header = Buffer.alloc(20);
     header.write(ANDROID_OTA_MAGIC, 0, "latin1");
     header.writeBigUInt64BE(1n, 4);
     header.writeBigUInt64BE(BigInt(manifest.length), 12);

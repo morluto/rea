@@ -164,6 +164,8 @@ export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
+  /** Verbatim selected spelling when it differs from the inspected file path. */
+  readonly callerInputPath?: string;
   /** Selected artifact spelling determines name-based format hints and external companions. */
   readonly artifactSelectedPath?: string;
   /** Info.plist of the app bundle the target was resolved from. */

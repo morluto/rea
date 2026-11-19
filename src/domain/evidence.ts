@@ -356,7 +356,7 @@ export const evidenceSubjectDisplay = (evidence: {
     : undefined;
 };
 
-type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
+export type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
 export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;
@@ -529,6 +529,8 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
 /** Ownership policy for the freshly parsed Evidence snapshot. */
 export interface EvidenceCreationOptions {
   readonly immutable?: boolean;
+  /** Selected spelling is recorded only when this target matches the subject. */
+  readonly callerTarget?: BinaryTarget | null | undefined;
 }
 
 /** Admit payloads into deterministic Evidence bound to an immutable artifact subject. */
@@ -542,6 +544,7 @@ export const createEvidence = (
     target,
     provider,
     observation,
+    options?.callerTarget,
   );
   const evidence = {
     ...normalized,
@@ -590,9 +593,20 @@ export const evidenceEnvelopeForAdmission = (
   target: EvidenceSubjectInput,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) => {
   const subject = evidenceSubject(target);
+  const callerInputPath =
+    callerTarget?.callerInputPath !== undefined &&
+    isFileSubject(subject) &&
+    subject.local_path === callerTarget.path &&
+    sameTargetIdentity(subject.identity, binaryTargetIdentity(callerTarget))
+      ? callerTarget.callerInputPath
+      : undefined;
   return {
+    ...(callerInputPath === undefined
+      ? {}
+      : { caller_input_path: callerInputPath }),
     evidence_id: `ev_${"0".repeat(64)}`,
     evidence_format: EVIDENCE_FORMAT_REVISION,
     subject,
@@ -608,7 +622,13 @@ export const evidenceEnvelopeForAdmission = (
     raw_result: observation.rawResult ?? null,
     normalized_result: observation.result,
     confidence: observation.confidence ?? "observed",
-    authority: observation.authority ?? "shipped-artifact",
+    // Only a subject that names an identified target can support shipment
+    // authority; an unknown target names no artifact and claims none.
+    authority:
+      observation.authority ??
+      (subject.identity.kind === "unknown"
+        ? "analyst-inference"
+        : "shipped-artifact"),
     environment: observation.environment ?? null,
     limitations: observation.limitations ?? [],
     ...(observation.relationshipCoverage === undefined
@@ -623,8 +643,14 @@ const normalizeEvidenceObservation = (
   target: EvidenceSubjectInput,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) => {
-  const envelope = evidenceEnvelopeForAdmission(target, provider, observation);
+  const envelope = evidenceEnvelopeForAdmission(
+    target,
+    provider,
+    observation,
+    callerTarget,
+  );
   const sharedResult =
     typeof observation.result === "object" &&
     observation.result !== null &&

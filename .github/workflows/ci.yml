@@ -483,7 +483,6 @@ jobs:
           path: |
             dist/
             skills/
-            .cache/mcp-tool-catalog.json
             .cache/ci-test-history/test-results.json
             docs/public/product-catalog.json
             docs/verification/managed-conformance-*.json
@@ -700,10 +699,10 @@ jobs:
       - name: Compute Windows native cache key
         id: windows-native-key
         env:
-          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', 'package.json') }}
+          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', '.github/actions/windows-cross-compiler/action.yml', '.github/actions/ubuntu-archive/action.yml', 'package.json') }}
         run: |
           utc_date="$(date -u +%Y-%m-%d)"
-          printf 'key=rea-windows-native-v2-%s-%s-%s-%s-%s-%s\n' \
+          printf 'key=rea-windows-native-v3-%s-%s-%s-%s-%s-%s\n' \
             "${RUNNER_OS}" "${RUNNER_ARCH}" "${ImageOS:-ubuntu}" "${ImageVersion:-rolling}" "${utc_date}" "${SOURCE_HASH}" \
             >> "${GITHUB_OUTPUT}"
       - name: Restore Windows native build outputs
@@ -717,16 +716,7 @@ jobs:
           key: ${{ steps.windows-native-key.outputs.key }}
       - name: Prepare cross compiler
         if: steps.windows-native-cache.outputs.cache-hit != 'true'
-        run: |
-          # Slow Azure archive transfers can exhaust the job before compilation.
-          # Keep the same signed packages and avoid slow HTTP mirror fallback.
-          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$source" ]; then
-              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+        uses: ./.github/actions/windows-cross-compiler
       - if: steps.windows-native-cache.outputs.cache-hit != 'true'
         run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
