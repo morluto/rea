@@ -211,6 +211,7 @@
 * **build:** apply the release patch from the dependency directory ([#11768](https://github.com/morluto/rea/issues/11768)) ([4c76284](https://github.com/morluto/rea/commit/4c76284bf109f9bbefe4539d8fbca9a2a0635bba))
 * **bun:** admit Mach-O graph segments within their image ([#12275](https://github.com/morluto/rea/issues/12275)) ([a9ad920](https://github.com/morluto/rea/commit/a9ad92001d5dacb0c0bb4faacea67e224817a739))
 * **bun:** append segment claims without call arguments ([d8554c1](https://github.com/morluto/rea/commit/d8554c1c84a1ffb84c0586283370a471a5b060ab)), closes [#10342](https://github.com/morluto/rea/issues/10342)
+* **bun:** validate graph extents before payload limits ([#12330](https://github.com/morluto/rea/issues/12330)) ([00170c7](https://github.com/morluto/rea/commit/00170c74bb26a108d5afc1c315d0e99527eaa8ab))
 * **bun:** validate named ELF graph section backing ([#12260](https://github.com/morluto/rea/issues/12260)) ([241ef45](https://github.com/morluto/rea/commit/241ef45c127e617d53b8aeb1abe7b67400b608d5))
 * **bun:** validate raw PE graph section bounds ([#12282](https://github.com/morluto/rea/issues/12282)) ([93ed538](https://github.com/morluto/rea/commit/93ed53845afd09fbb844da08ca681c9f3069a2cb))
 * **captures:** append admitted numeric exclusions without call spreads ([fd3e613](https://github.com/morluto/rea/commit/fd3e613d23795f693e9231102249390228cab35f))
