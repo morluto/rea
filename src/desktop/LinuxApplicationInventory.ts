@@ -407,6 +407,19 @@ const envApplicationDirectory = async (
   }
 };
 
+const directLaunchStateHome = (
+  wrapper: ReturnType<typeof unwrapDesktopCommand>,
+  packageKind: Package["kind"],
+  hostHome: string,
+): string => {
+  // Sandbox-managed directories continue to use the host home.
+  if (wrapper.kind !== "direct" || packageKind === "snap") return hostHome;
+  const launchHome = wrapper.environment.HOME;
+  return launchHome !== undefined && isAbsolute(launchHome)
+    ? launchHome
+    : hostHome;
+};
+
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -500,7 +513,10 @@ export const inspectLinuxApplication = async (
       package: package_,
       state_directories: await stateDirectories(
         names,
-        { environment, home: request.home },
+        {
+          environment,
+          home: directLaunchStateHome(wrapper, package_.kind, request.home),
+        },
         sandboxDirectories,
       ),
     },
