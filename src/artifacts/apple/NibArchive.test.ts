@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { decodeNibArchive } from "./NibArchive.js";
+import { InterfaceBuilderDecodeBudget } from "./InterfaceBuilderDecodeBudget.js";
 import { encodeNibArchiveFixture as encodeArchive } from "./NibArchive.fixture.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 
@@ -189,6 +190,37 @@ describe("NIBArchive decoder", () => {
     );
   });
 });
+
+it.each([
+  { table: "object", countOffset: 18 },
+  { table: "key", countOffset: 26 },
+  { table: "value", countOffset: 34 },
+  { table: "class", countOffset: 42 },
+])(
+  "refuses an impossible $table table before charging the decode budget",
+  ({ countOffset }) => {
+    const budget = new InterfaceBuilderDecodeBudget(95);
+    const valid = encodeArchive({
+      classes: ["NSObject"],
+      objects: [{ classIndex: 0, values: { x: true } }],
+    });
+    const truncated = Buffer.from(valid);
+    truncated.writeUInt32LE(32, countOffset);
+    expect(() => decodeNibArchive(truncated, budget)).toThrow(
+      expect.objectContaining({
+        kind: "truncated",
+        failure: expect.objectContaining({ format: "nib-archive" }),
+      }),
+    );
+    expect(budget.usedBytes).toBe(0);
+    expect(() => decodeNibArchive(valid, budget)).toThrow(
+      expect.objectContaining({
+        kind: "limit",
+        failure: expect.objectContaining({ format: "nib-archive" }),
+      }),
+    );
+  },
+);
 
 it("retains repeated serialized collection fields in source order", () => {
   const decoded = decodeNibArchive(

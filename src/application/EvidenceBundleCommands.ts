@@ -6,6 +6,7 @@ import {
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { withInheritedCleanupOwnership } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisInputError,
   cancelledBy,
@@ -151,14 +152,19 @@ export const publishEvidenceDelivery = async (input: {
     // command retains its own overwrite-capable recovery guidance.
     const failure =
       original instanceof EvidenceFileError && original.reason === "exists"
-        ? new EvidenceFileError(original.operation, original.reason, {
-            cause: original,
-            ...(original.path === undefined ? {} : { path: original.path }),
-            userMessage:
-              "Evidence file already exists. Choose another output path.",
-            cleanup: original.cleanup,
-            diagnostics: original.diagnostics,
-          }).bindCleanupDependencies([original])
+        ? withInheritedCleanupOwnership(
+            new EvidenceFileError(original.operation, original.reason, {
+              cause: original,
+              ...(original.path === undefined ? {} : { path: original.path }),
+              userMessage:
+                "Evidence file already exists. Choose another output path.",
+              ...(original.cleanupIncomplete
+                ? { cleanup: original.cleanup }
+                : {}),
+              diagnostics: original.diagnostics,
+            }),
+            original,
+          )
         : original;
     return err(failure.retainPartialObservation(input.complete));
   }
