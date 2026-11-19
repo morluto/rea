@@ -1,5 +1,6 @@
 import { isUtf8 } from "node:buffer";
 import { ArtifactReaderFailure } from "../resources/index.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   type ErlangBeam,
@@ -39,16 +40,6 @@ const requireRange = (bytes: Buffer, offset: number, length: number): void => {
     fail(
       `BEAM range ${String(offset)} + ${String(length)} leaves the artifact.`,
     );
-};
-
-const u32 = (bytes: Buffer, offset: number): number => {
-  requireRange(bytes, offset, 4);
-  return bytes.readUInt32BE(offset);
-};
-
-const chunkName = (bytes: Buffer, offset: number): string => {
-  requireRange(bytes, offset, 4);
-  return bytes.subarray(offset, offset + 4).toString("latin1");
 };
 
 const atomAt = (
@@ -137,8 +128,8 @@ const parseAtoms = (
   // Only AtU8 supports OTP 28+'s negated count and compact name lengths.
   // Historical Atom uses an unsigned count and single-byte lengths.
   const encoding = format === "AtU8" ? "utf8" : "latin1";
-  const declared =
-    format === "AtU8" ? payload.readInt32BE(0) : payload.readUInt32BE(0);
+  const rawCount = new BinaryReader(payload, false, "beam").u32(0);
+  const declared = format === "AtU8" ? rawCount | 0 : rawCount;
   const compact = format === "AtU8" && declared < 0;
   const count = compact ? -declared : declared;
   // Every entry needs at least one length byte, regardless of the layout.
@@ -171,7 +162,7 @@ const parseAtoms = (
 
 const tableCount = (payload: Buffer, width: number, label: string): number => {
   if (payload.length < 4) fail(`BEAM ${label} table is truncated.`);
-  const count = u32(payload, 0);
+  const count = new BinaryReader(payload, false, "beam").u32(0);
   if (count > Math.floor((payload.length - 4) / (width * 4)))
     fail(`BEAM ${label} table is truncated.`);
   return count;
@@ -182,12 +173,13 @@ const parseRows = (
   width: number,
   count: number,
 ): number[][] => {
+  const reader = new BinaryReader(payload, false, "beam");
   const rows: number[][] = [];
   for (let index = 0; index < count; index += 1) {
     const row: number[] = [];
     const start = 4 + index * width * 4;
     for (let field = 0; field < width; field += 1)
-      row.push(u32(payload, start + field * 4));
+      row.push(reader.u32(start + field * 4));
     rows.push(row);
   }
   return rows;
@@ -198,15 +190,16 @@ const parseCode = (
   chunkOffset: number,
 ): NonNullable<ErlangBeam["code"]> => {
   if (payload.length < 20) fail("BEAM Code chunk is truncated.");
-  const infoSize = u32(payload, 0);
+  const reader = new BinaryReader(payload, false, "beam");
+  const infoSize = reader.u32(0);
   if (infoSize < 16 || infoSize > payload.length - 4)
     fail("BEAM Code header size is invalid.");
   const instructionsOffset = 4 + infoSize;
   return {
-    instruction_set: u32(payload, 4),
-    opcode_max: u32(payload, 8),
-    labels: u32(payload, 12),
-    functions: u32(payload, 16),
+    instruction_set: reader.u32(4),
+    opcode_max: reader.u32(8),
+    labels: reader.u32(12),
+    functions: reader.u32(16),
     extra_header_bytes: infoSize - 16,
     instructions: {
       offset: chunkOffset + 8 + instructionsOffset,
@@ -224,30 +217,37 @@ export const parseErlangBeam = (
   requireRange(bytes, 0, 12);
   if (bytes.subarray(0, 4).toString("latin1") !== "FOR1")
     fail("Expected a FOR1 IFF container.");
-  const formSize = u32(bytes, 4);
+  const carrier = new BinaryReader(bytes, false, "beam");
+  const formSize = carrier.u32(4);
   if (formSize < 4) fail("BEAM form size is shorter than the BEAM tag.");
   requireRange(bytes, 8, formSize);
   if (bytes.subarray(8, 12).toString("latin1") !== "BEAM")
     fail("Expected a BEAM form type.");
   const formEnd = 8 + formSize;
+  const form = new BinaryReader(
+    carrier.range(0, formEnd, "BEAM form"),
+    false,
+    "beam",
+  );
   const chunks: ErlangBeam["chunks"] = [];
   const payloads = new Map<string, { payload: Buffer; offset: number }>();
   let at = 12;
   while (at < formEnd) {
     if (formEnd - at < 8) fail("BEAM chunk header is truncated.");
+    const size = form.u32(at + 4);
+    const payloadOffset = at + 8;
+    if (size > formEnd - payloadOffset)
+      fail("BEAM chunk payload exceeds the form.");
+    const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
+    if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
     if (chunks.length >= input.max_chunks)
       throw new BeamCapacityFailure(
         "chunks",
         input.max_chunks,
         `BEAM form exceeds the ${String(input.max_chunks)}-chunk budget.`,
       );
-    const name = chunkName(bytes, at);
-    const size = u32(bytes, at + 4);
-    const payloadOffset = at + 8;
-    requireRange(bytes, payloadOffset, size);
-    const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
-    if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
-    const payload = bytes.subarray(payloadOffset, payloadOffset + size);
+    const name = form.range(at, 4, "BEAM chunk name").toString("latin1");
+    const payload = form.range(payloadOffset, size, "BEAM chunk payload");
     chunks.push({
       index: chunks.length,
       name,
@@ -341,6 +341,9 @@ export const parseErlangBeam = (
     codeChunk === undefined
       ? null
       : parseCode(codeChunk.payload, codeChunk.offset);
+  // A conformant FOR1 form sizes itself to the file; any surplus bytes trail an
+  // unexamined region. Disclose them instead of reporting complete coverage.
+  const trailingBytes = bytes.length - formEnd;
   return {
     artifact,
     form: { location: { offset: 0, bytes: formEnd }, size: formSize },
@@ -353,10 +356,17 @@ export const parseErlangBeam = (
     code,
     module: atoms?.[0]?.name ?? null,
     coverage: {
-      status: "complete",
+      status: trailingBytes > 0 ? "partial" : "complete",
       examined_chunks: chunks.length,
       atoms: atoms?.length ?? 0,
+      trailing_bytes: trailingBytes,
     },
-    limitations: [...LIMITATIONS],
+    limitations:
+      trailingBytes > 0
+        ? [
+            ...LIMITATIONS,
+            `The declared FOR1 form ends at offset ${String(formEnd)}; ${String(trailingBytes)} trailing ${trailingBytes === 1 ? "byte was" : "bytes were"} not examined.`,
+          ]
+        : [...LIMITATIONS],
   };
 };
