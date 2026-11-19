@@ -34,7 +34,10 @@ const installCliRuntime = async (
       JSON.stringify({ type: "module", version: "1.0.0" }),
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
-    workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    workspace.write(
+      "dist/cli-runtime/cliResultOutput.js",
+      `export { cliOutputCancellationStatus } from ${JSON.stringify(pathToFileURL(resolve("dist/cli-runtime/cliResultOutput.js")).href)};\n${resultOutput}`,
+    ),
     // Without a recording, every command loads the replaced complete CLI.
     workspace.write(
       "dist/recordedCliCommandRegistrations.js",
@@ -279,7 +282,7 @@ describe("executable dispatcher", () => {
       await Promise.all([
         workspace.write(
           "dist/mcp/main.js",
-          'export const runEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp" })); export const runMcpHttpEntrypoint = (args) => process.stdout.write(JSON.stringify({ adapter: "mcp-http", args }));\n',
+          'export const runEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp" })); export const runMcpHttpEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp-http" }));\n',
         ),
         workspace.write(
           "dist/cli-runtime/mcpDoctor.js",
@@ -330,7 +333,6 @@ describe("executable dispatcher", () => {
       ])
         await expect(invoke(args)).resolves.toEqual({
           adapter: "mcp-http",
-          args: args.slice(1),
         });
       await expect(invoke(["mcp", "doctor", "--http"])).resolves.toEqual({
         adapter: "mcp-doctor",
@@ -340,6 +342,10 @@ describe("executable dispatcher", () => {
       await expect(invoke(["mcp", "add", "--http"])).resolves.toEqual({
         adapter: "cli",
         args: ["mcp", "add", "--http"],
+      });
+      await expect(invoke(["mcp", "--", "--http"])).resolves.toEqual({
+        adapter: "cli",
+        args: ["mcp", "--", "--http"],
       });
     },
   );
