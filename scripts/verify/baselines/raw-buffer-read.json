@@ -12,7 +12,6 @@
   "src/domain/apkSignature/apkV1Signature.ts": 5,
   "src/domain/apple/appleMachoFixups.ts": 22,
   "src/domain/apple/appleMachoSelection.ts": 2,
-  "src/domain/apple/diskImageFormat.ts": 4,
   "src/domain/apple/jvmClassFile.ts": 2,
   "src/domain/apple/machoCommandNames.ts": 35,
   "src/domain/apple/machoContainer.ts": 13,

@@ -445,6 +445,10 @@ describe("raw disk image signatures", () => {
       bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 92)),
     },
     {
+      layout: "a GPT header whose declared bytes end at EOF",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 92), 512 + 92),
+    },
+    {
       layout: "an Apple partition map",
       bytes: rawImage((bytes) => {
         bytes.write("ER", 0, "ascii");
@@ -500,6 +504,10 @@ describe("raw disk image signatures", () => {
     {
       blob: "a GPT header shorter than its defined fields",
       bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 91)),
+    },
+    {
+      blob: "an extended GPT header missing its final declared byte",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 128), 512 + 127),
     },
     {
       blob: "a driver descriptor without a partition map entry",
