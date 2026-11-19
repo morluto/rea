@@ -528,3 +528,217 @@ it.each([
     ).toMatchObject({ resolution });
   },
 );
+
+const objectAliasRead = "const { mode: selected } = alias;";
+const arrayAliasRead = "let selected; [selected] = alias;";
+
+it.each([
+  [
+    "object write through the original after the read",
+    false,
+    objectAliasRead + "base.mode = 2;",
+    "resolved",
+  ],
+  [
+    "object write through the alias after the read",
+    false,
+    objectAliasRead + "alias.mode = 2;",
+    "resolved",
+  ],
+  [
+    "object write through the original before the read",
+    false,
+    "base.mode = 2;" + objectAliasRead,
+    "candidate",
+  ],
+  [
+    "object write through the alias before the read",
+    false,
+    "alias.mode = 2;" + objectAliasRead,
+    "candidate",
+  ],
+  [
+    "object delete through the original before the read",
+    false,
+    "delete base.mode;" + objectAliasRead,
+    "candidate",
+  ],
+  [
+    "object delete through the alias before the read",
+    false,
+    "delete alias.mode;" + objectAliasRead,
+    "candidate",
+  ],
+  [
+    "object write to an unrelated slot",
+    false,
+    "alias.other = 2;" + objectAliasRead + "base.mode = 2;",
+    "resolved",
+  ],
+  [
+    "object multi-hop aliases",
+    false,
+    "const lifted = alias; const final = lifted; const {mode: selected} = final; base.mode = 2;",
+    "resolved",
+  ],
+  [
+    "object alias passed to opaque code",
+    false,
+    "mutate(alias);" + objectAliasRead + "base.mode = 2;",
+    "candidate",
+  ],
+  [
+    "array write through the original after the read",
+    true,
+    arrayAliasRead + "base[0] = 2;",
+    "resolved",
+  ],
+  [
+    "array write through the alias after the read",
+    true,
+    arrayAliasRead + "alias[0] = 2;",
+    "resolved",
+  ],
+  [
+    "array write through the original before the read",
+    true,
+    "base[0] = 2;" + arrayAliasRead,
+    "candidate",
+  ],
+  [
+    "array write through the alias before the read",
+    true,
+    "alias[0] = 2;" + arrayAliasRead,
+    "candidate",
+  ],
+  [
+    "array shortened through the original before the read",
+    true,
+    "base.length = 0;" + arrayAliasRead + "alias[0] = 2;",
+    "candidate",
+  ],
+  [
+    "array shortened through the alias before the read",
+    true,
+    "alias.length = 0;" + arrayAliasRead + "base[0] = 2;",
+    "candidate",
+  ],
+  [
+    "array multi-hop aliases",
+    true,
+    "const lifted = alias; let selected; [selected] = lifted; alias[0] = 2;",
+    "resolved",
+  ],
+  [
+    "array instance iterator replaced through the original",
+    true,
+    "base[Symbol.iterator] = replacement;" + arrayAliasRead + "alias[0] = 2;",
+    "candidate",
+  ],
+  [
+    "array instance iterator replaced through the alias",
+    true,
+    "alias[Symbol.iterator] = replacement;" + arrayAliasRead + "base[0] = 2;",
+    "candidate",
+  ],
+  [
+    "array prototype iterator replaced before the read",
+    true,
+    "Array.prototype[Symbol.iterator] = replacement;" +
+      arrayAliasRead +
+      "base[0] = 2;",
+    "candidate",
+  ],
+  [
+    "shared iterator next replaced before the read",
+    true,
+    "Object.getPrototypeOf([].values()).next = replacement;" +
+      arrayAliasRead +
+      "base[0] = 2;",
+    "candidate",
+  ],
+  [
+    "shared iterator next replaced after the read",
+    true,
+    arrayAliasRead +
+      "Object.getPrototypeOf([].values()).next = replacement; base[0] = 2;",
+    "resolved",
+  ],
+] as const)(
+  "keeps read-time dependencies for %s",
+  (_name, array, reads, resolution) => {
+    const graph = graphForJavaScript(`
+      const replacement = () => ({ value: 3, done: false });
+      const base = ${array ? "[1, 0]" : "{ mode: 1, other: 0 }"};
+      const alias = base;
+      ${reads}
+    `);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === selected?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  [
+    "getter",
+    "const base = { get mode() { return 1; } }; const alias = base; " +
+      objectAliasRead +
+      "alias.mode = 2;",
+  ],
+  [
+    "rebound source",
+    "let base = { mode: 1 }; const alias = base; base = { mode: 2 }; " +
+      objectAliasRead +
+      "alias.mode = 3;",
+  ],
+  [
+    "rebound alias",
+    "const base = { mode: 1 }; let alias = base; alias = { mode: 2 }; " +
+      objectAliasRead +
+      "alias.mode = 3;",
+  ],
+  [
+    "read before source initializer",
+    "const alias = base; const base = { mode: 1 }; " +
+      objectAliasRead +
+      "base.mode = 2;",
+  ],
+] as const)("leaves %s uncertain in the const alias proof", (_name, source) => {
+  const graph = graphForJavaScript(source);
+  const selected = graph.nodes.find(
+    ({ kind, label }) => kind === "binding" && label === "selected",
+  );
+  expect(
+    graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === selected?.node_id,
+    ),
+  ).toMatchObject({ resolution: "candidate" });
+});
+
+it.each([
+  ["", "base.mode = 2;", "resolved"],
+  ["base.mode = 2;", "", "candidate"],
+] as const)(
+  "uses the allocation's effect ordering for a direct alias property read (%s)",
+  (before, after, resolution) => {
+    const graph = graphForJavaScript(`
+      const base = { mode: 1 };
+      const alias = base;
+      ${before}
+      const selected = alias.mode;
+      ${after}
+    `);
+    expect(
+      graph.relations.find(({ relation }) => relation === "reads-property"),
+    ).toMatchObject({ resolution });
+  },
+);
