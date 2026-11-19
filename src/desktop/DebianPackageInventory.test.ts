@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   access,
   chmod,
@@ -27,7 +28,11 @@ import {
 import { exportInstall } from "../domain/desktop/appExportInstall.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { QueryOutcome, QueryRunner } from "./HostQuery.js";
+import {
+  runHostQuery,
+  type QueryOutcome,
+  type QueryRunner,
+} from "./HostQuery.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
 
 const NOBLE = "http://ports.ubuntu.com/ubuntu-ports noble/main arm64 Packages";
@@ -374,6 +379,58 @@ it.skipIf(process.platform === "win32")(
     const plan = exportInstall(installed, "typora", "arm64");
     if (!plan.ok) throw new Error(plan.error.reason);
     expect(plan.value.libraryPackages).toEqual(["libnspr4", "libnss3"]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "does not join a lossy installed source to a different index with a literal replacement character",
+  async () => {
+    const uri = "https://vendor.invalid/a\ufffdb";
+    const source = `${uri} ./ Packages`;
+    const repository = {
+      ...TYPORA,
+      source,
+      line: () => "deb https://vendor.invalid/a%EF%BF%BDb ./\n",
+      indexTarget: TYPORA.indexTarget.replaceAll(
+        "https://downloads.typora.io/linux",
+        uri,
+      ),
+    };
+    const { inspect, runQuery } = await vendorFixture({ repository });
+    const result = await inspect(async (command, argv, signal, options) => {
+      if (
+        command !== "apt-cache" ||
+        argv.length !== 2 ||
+        argv[1] !== "typora:arm64"
+      )
+        return runQuery(command, argv, signal, options);
+      const outcome = await runQuery(command, argv, signal, options);
+      if (typeof outcome !== "object")
+        throw new Error("Fixture did not return APT policy");
+      const malformed = Buffer.from(
+        outcome.stdout.replace("\ufffd", "ÿ"),
+        "latin1",
+      );
+      return runHostQuery(
+        process.execPath,
+        [
+          "-e",
+          'process.stdout.write(Buffer.from(process.argv[1], "base64"))',
+          malformed.toString("base64"),
+        ],
+        signal,
+        options,
+      );
+    });
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      name: "typora",
+      sources: [],
+    });
+    expect(result.value.inventory.package.apt_repositories).toEqual([]);
+    expect(result.value.limitations).toContain(
+      "apt-cache policy contained unreadable UTF-8, so the installed version's repository sources are unknown.",
+    );
   },
 );
 
@@ -879,6 +936,61 @@ const writerFixture = async () => {
   };
   return { root, runQuery, inspect };
 };
+
+it
+  .skipIf(
+    process.platform !== "linux" ||
+      !existsSync("/usr/bin/apt-cache") ||
+      !existsSync("/usr/bin/apt-config"),
+  )
+  .each(["installed status", "installed status ", "installed\nstatus"])(
+  "does not turn APT's configured database %j into a vendor repository",
+  async (name) => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const status = join(root, name);
+    const lists = join(root, "private-lists");
+    await mkdir(lists);
+    await writeFile(
+      status,
+      `Package: libreoffice-writer\nStatus: install ok installed\nArchitecture: arm64\nVersion: ${WRITER_VERSION}\nDescription: Owned installed-package fixture\n`,
+    );
+    let repositoryQueries = 0;
+    const query: QueryRunner = async (command, argv, signal) => {
+      if (command === "apt-cache" || command === "apt-config")
+        return runHostQuery(
+          `/usr/bin/${command}`,
+          [
+            "-o",
+            `Dir::State::status=${status}`,
+            "-o",
+            `Dir::State::lists=${lists}`,
+            "-o",
+            "Dir::Etc::sourcelist=-",
+            "-o",
+            "Dir::Etc::sourceparts=-",
+            "-o",
+            "APT::Architecture=arm64",
+            ...argv,
+          ],
+          signal,
+        );
+      if (command === "apt-get") repositoryQueries++;
+      return runQuery(command, argv, signal);
+    };
+    const { installed } = await inspect(
+      { desktopEntry: "libreoffice-writer" },
+      { run: query },
+    );
+    expect(installed).toMatchObject({
+      name: "libreoffice-writer",
+      version: WRITER_VERSION,
+      sources: [],
+      source_origins: [],
+      apt_repositories: [],
+    });
+    expect(repositoryQueries).toBe(0);
+  },
+);
 
 describe.skipIf(process.platform === "win32")("desktop entry package", () => {
   it("records the package that owns the launched entry, and the program's when it differs", async () => {

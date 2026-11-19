@@ -217,6 +217,7 @@ export interface AndroidOtaInstallOperation {
   readonly typeName: string;
   readonly dataOffset: number;
   readonly dataLength: number;
+  readonly dataHashHex: string | null;
   readonly srcExtents: readonly AndroidOtaExtent[];
   readonly dstExtents: readonly AndroidOtaExtent[];
 }
@@ -277,6 +278,10 @@ export interface AndroidOtaPayload {
   readonly metadataSignatureBlobSize: number;
   readonly metadataSignatureCount: number | null;
   readonly payloadSignatureBlobSize: number | null;
+  readonly payloadSignatureRange: {
+    readonly offset: number;
+    readonly bytes: number;
+  } | null;
   readonly payloadSignatureCount: number | null;
   readonly partitions: readonly AndroidOtaPartition[];
   readonly dynamicPartitionGroups: readonly AndroidOtaDynamicGroup[];
@@ -428,6 +433,7 @@ interface OperationDraft {
   typeCode: number;
   dataOffset: number;
   dataLength: number;
+  dataHashHex: string | null;
   srcExtents: ExtentDraft[];
   dstExtents: ExtentDraft[];
 }
@@ -512,8 +518,10 @@ const decodeExtent = (
 
 const decodePartitionInfo = (
   bytes: Uint8Array,
+  info: PartitionInfoDraft,
 ): Result<PartitionInfoDraft, AndroidOtaPayloadParseError> => {
-  const info = emptyPartitionInfo();
+  // Protobuf singular messages merge across occurrences. Only fields present
+  // in this occurrence replace earlier values; an empty message erases none.
   const walked = walk(bytes, (field, wire, reader) => {
     if (field === 1 && wire === WireType.Varint) {
       info.size = unwrap(asSafeUint(reader.uint64(), "partition size"));
@@ -537,6 +545,7 @@ const decodeOperation = (
     typeCode: 0,
     dataOffset: 0,
     dataLength: 0,
+    dataHashHex: null,
     srcExtents: [],
     dstExtents: [],
   };
@@ -567,6 +576,13 @@ const decodeOperation = (
       (field === 4 ? operation.srcExtents : operation.dstExtents).push(
         unwrap(decodeExtent(reader.bytes())),
       );
+      return;
+    }
+    if (field === 8 && wire === WireType.LengthDelimited) {
+      const digest = reader.bytes();
+      if (digest.length !== 0 && digest.length !== 32)
+        fail(malformed("operation data_sha256_hash must be 32 bytes or empty"));
+      operation.dataHashHex = digest.length === 0 ? null : hex(digest);
       return;
     }
     reader.skip(wire);
@@ -612,11 +628,18 @@ const decodePartition = (
       return;
     }
     if (field === 6 && wire === WireType.LengthDelimited) {
-      partition.oldPartitionInfo = unwrap(decodePartitionInfo(reader.bytes()));
+      partition.oldPartitionInfo = unwrap(
+        decodePartitionInfo(
+          reader.bytes(),
+          partition.oldPartitionInfo ?? emptyPartitionInfo(),
+        ),
+      );
       return;
     }
     if (field === 7 && wire === WireType.LengthDelimited) {
-      partition.newPartitionInfo = unwrap(decodePartitionInfo(reader.bytes()));
+      partition.newPartitionInfo = unwrap(
+        decodePartitionInfo(reader.bytes(), partition.newPartitionInfo),
+      );
       return;
     }
     if (field === 8 && wire === WireType.LengthDelimited) {
@@ -834,16 +857,9 @@ const decodeManifest = (
       return;
     }
     if (field === 5 && wire === WireType.Varint) {
-      const size = unwrap(asSafeUint(reader.uint64(), "signatures_size"));
-      if (size > ANDROID_OTA_MAX_SIGNATURE_BYTES)
-        fail(
-          capacity(
-            "payload signature size",
-            ANDROID_OTA_MAX_SIGNATURE_BYTES,
-            "byte",
-          ),
-        );
-      draft.signaturesSize = size;
+      draft.signaturesSize = unwrap(
+        asSafeUint(reader.uint64(), "signatures_size"),
+      );
       return;
     }
     if (field === 12 && wire === WireType.Varint) {
@@ -976,47 +992,49 @@ export const parseAndroidOtaPayload = (
       metadataSignatureCount = counted.value;
     }
   }
+  // The manifest declares a payload signature only when both coordinates
+  // are present. Keep each raw field available for inventory.
+  const { signaturesOffset, signaturesSize } = manifest.value;
+  const signatureDeclaration =
+    signaturesOffset === null || signaturesSize === null
+      ? null
+      : { blobOffset: signaturesOffset, size: signaturesSize };
   let payloadSignatureCount: number | null = null;
-  let payloadSignatureBlobSize: number | null = manifest.value.signaturesSize;
-  const signatureSlice = (): Uint8Array | undefined => {
-    if (payloadSignatureBytes !== undefined) return payloadSignatureBytes;
-    if (
-      manifest.value.signaturesOffset === null ||
-      manifest.value.signaturesSize === null ||
-      manifest.value.signaturesSize === 0
-    )
-      return undefined;
-    const start = header.value.blobOffset + manifest.value.signaturesOffset;
-    const end = start + manifest.value.signaturesSize;
-    if (!Number.isSafeInteger(end) || end > bytes.length) return undefined;
-    return bytes.subarray(start, end);
-  };
-  const payloadSignatureSlice = signatureSlice();
-  if (
-    payloadSignatureSlice !== undefined &&
-    manifest.value.signaturesSize !== null
-  ) {
-    if (payloadSignatureSlice.length !== manifest.value.signaturesSize)
+  let payloadSignatureRange: AndroidOtaPayload["payloadSignatureRange"] = null;
+  let blobTruncated = fileSize < header.value.blobOffset;
+  if (signatureDeclaration !== null) {
+    const { blobOffset, size } = signatureDeclaration;
+    if (size > ANDROID_OTA_MAX_SIGNATURE_BYTES)
       return err(
-        malformed(
-          "payload signature blob length does not match signatures_size",
+        capacity(
+          "payload signature size",
+          ANDROID_OTA_MAX_SIGNATURE_BYTES,
+          "byte",
         ),
       );
-    const counted = countAndroidOtaSignatures(payloadSignatureSlice);
-    if (!counted.ok) return counted;
-    payloadSignatureCount = counted.value;
-  } else if (
-    payloadSignatureSlice !== undefined &&
-    payloadSignatureSlice.length > 0
-  ) {
-    const counted = countAndroidOtaSignatures(payloadSignatureSlice);
-    if (!counted.ok) return counted;
-    payloadSignatureCount = counted.value;
-    payloadSignatureBlobSize = payloadSignatureSlice.length;
+    const offset = header.value.blobOffset + blobOffset;
+    const end = offset + size;
+    if (!Number.isSafeInteger(end) || end > fileSize) blobTruncated = true;
+    else if (size > 0) payloadSignatureRange = { offset, bytes: size };
+    const signature =
+      payloadSignatureBytes ??
+      (payloadSignatureRange !== null && end <= bytes.length
+        ? bytes.subarray(offset, end)
+        : undefined);
+    if (signature !== undefined) {
+      if (signature.length !== size)
+        return err(
+          malformed(
+            "payload signature blob length does not match signatures_size",
+          ),
+        );
+      const counted = countAndroidOtaSignatures(signature);
+      if (!counted.ok) return counted;
+      payloadSignatureCount = counted.value;
+    }
   }
 
   const blobAvailable = Math.max(0, fileSize - header.value.blobOffset);
-  let blobTruncated = fileSize < header.value.blobOffset;
   for (const partition of manifest.value.partitions) {
     for (const operation of partition.operations) {
       if (operation.dataLength === 0) continue;
@@ -1024,26 +1042,16 @@ export const parseAndroidOtaPayload = (
       if (!Number.isSafeInteger(end) || end < operation.dataOffset)
         return err(malformed("operation data extent overflows"));
       if (
-        manifest.value.signaturesOffset !== null &&
-        end > manifest.value.signaturesOffset
+        signatureDeclaration !== null &&
+        end > signatureDeclaration.blobOffset
       )
         return err(
           malformed(
-            `operation data extent ${String(operation.dataOffset)}+${String(operation.dataLength)} overruns the ${String(manifest.value.signaturesOffset)}-byte payload blob`,
+            `operation data extent ${String(operation.dataOffset)}+${String(operation.dataLength)} overruns the ${String(signatureDeclaration.blobOffset)}-byte payload blob`,
           ),
         );
       if (end > blobAvailable) blobTruncated = true;
     }
-  }
-  if (
-    manifest.value.signaturesOffset !== null &&
-    manifest.value.signaturesSize !== null
-  ) {
-    const declaredEnd =
-      header.value.blobOffset +
-      manifest.value.signaturesOffset +
-      manifest.value.signaturesSize;
-    if (fileSize < declaredEnd) blobTruncated = true;
   }
 
   const nameState: PartitionNameState = {
@@ -1058,6 +1066,7 @@ export const parseAndroidOtaPayload = (
           typeName: INSTALL_OPERATION_NAMES[operation.typeCode] ?? "unknown",
           dataOffset: operation.dataOffset,
           dataLength: operation.dataLength,
+          dataHashHex: operation.dataHashHex,
           srcExtents: operation.srcExtents.map((extent) => ({
             startBlock: extent.startBlock,
             numBlocks: extent.numBlocks,
@@ -1151,7 +1160,8 @@ export const parseAndroidOtaPayload = (
     signaturesSize: manifest.value.signaturesSize,
     metadataSignatureBlobSize: header.value.metadataSignatureSize,
     metadataSignatureCount,
-    payloadSignatureBlobSize,
+    payloadSignatureBlobSize: signatureDeclaration?.size ?? null,
+    payloadSignatureRange,
     payloadSignatureCount,
     partitions,
     dynamicPartitionGroups: manifest.value.groups.map((group) => ({
@@ -1393,9 +1403,9 @@ const hasCompleteExtentCoverage = (
 };
 
 /**
- * Rebuild a full-payload partition image. A declared-hash mismatch fails
- * unless `verifyDeclaredHash` is false, which leaves that decision to a caller
- * that applies its own integrity policy to the returned bytes.
+ * Rebuild a full-payload partition image after checking declared blob hashes.
+ * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
+ * which leaves that decision to a caller applying its own integrity policy.
  */
 export const reconstructAndroidOtaPartition = (
   partition: AndroidOtaPartition,
@@ -1409,8 +1419,10 @@ export const reconstructAndroidOtaPartition = (
   const budget = chargeReconstructionWork(partition.operations, blockSize);
   if (!budget.ok) return budget;
   const image = Buffer.alloc(size);
+  // The reader shares one byte array for repeated references to the same blob.
+  const blobHashes = new WeakMap<Uint8Array, string>();
   try {
-    for (const operation of partition.operations) {
+    for (const [index, operation] of partition.operations.entries()) {
       if (operation.typeCode === 6) {
         const written = writeExtents(
           image,
@@ -1432,6 +1444,17 @@ export const reconstructAndroidOtaPartition = (
             `operation data for ${partition.name} is truncated: expected ${String(operation.dataLength)} bytes`,
           ),
         );
+      if (operation.dataHashHex !== null) {
+        const observed = blobHashes.get(raw) ?? sha256Hex(raw);
+        blobHashes.set(raw, observed);
+        if (operation.dataHashHex !== observed)
+          return err({
+            _tag: "AndroidOtaPayloadIntegrityFailure",
+            message: `Android OTA partition ${partition.name} operation ${String(index)} data hash mismatch`,
+            declaredHashHex: operation.dataHashHex,
+            observedHashHex: observed,
+          });
+      }
       let payload: Uint8Array = raw;
       if (operation.typeCode === 14) {
         const dstBytes = destinationExtentBytes(

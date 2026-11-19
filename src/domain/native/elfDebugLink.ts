@@ -13,6 +13,8 @@ const buildIdHex = z.string().regex(/^(?:[0-9a-f]{2}){1,256}$/u);
 export const MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES = 536870912;
 /** Hard ceiling on note entries read while collecting GNU build-ids. */
 export const MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES = 256;
+/** Default note entry budget; admits distribution glibc and its SystemTap probe notes. */
+export const DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES = 128;
 /** Retained debuglink and debugaltlink file-name length. */
 export const MAX_ELF_DEBUG_LINK_NAME_BYTES = 4096;
 /** Retained build-id length for debugaltlink and GNU notes. */
@@ -185,7 +187,7 @@ export const inspectElfDebugLinkInputSchema = z.strictObject({
     .int()
     .min(1)
     .max(MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES)
-    .default(32)
+    .default(DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES)
     .describe(
       "Maximum note entries to examine while reading GNU build-ids; an image exceeding the budget fails without partial success, and a candidate exceeding it leaves its build-id check unavailable",
     ),

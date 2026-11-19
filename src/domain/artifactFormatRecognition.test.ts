@@ -10,6 +10,7 @@ import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "./firmware/androidOtaPayload.fixture.js";
+import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
@@ -111,3 +112,59 @@ it("recognizes a CrAU v2 payload after the uImage magic check", () => {
     format: "android-ota-payload",
   });
 });
+
+it.each([16, 17])(
+  "recognizes FIT from an FDT v%s structure in a bounded prefix",
+  (version) => {
+    const bytes = devicetreeFixture(
+      { name: "", children: [{ name: "images" }] },
+      version,
+    );
+    const structureOffset = bytes.readUInt32BE(8);
+    const prefix = bytes.subarray(0, structureOffset + 20);
+    expect(
+      recognizeArtifactFormat({
+        prefix,
+        fileSize: bytes.length,
+        espFlashLayout: false,
+      }),
+    ).toMatchObject({ state: "recognized", format: "fit" });
+  },
+);
+
+it("keeps FIT recognition within the v16 structure block before the strings block", () => {
+  const bytes = devicetreeFixture(
+    { name: "", children: [{ name: "images" }] },
+    16,
+  );
+  const strings = bytes.readUInt32BE(8) + 8;
+  bytes.writeUInt32BE(strings, 12);
+  bytes.writeUInt32BE(bytes.length - strings, 32);
+  expect(recognize(bytes)).toBeUndefined();
+});
+
+it.each([16, 17])(
+  "leaves an overlapping v%s structure and strings declaration unclaimed",
+  (version) => {
+    const bytes = devicetreeFixture(
+      { name: "", children: [{ name: "images" }] },
+      version,
+    );
+    const structure = bytes.readUInt32BE(8);
+    bytes.writeUInt32BE(structure - 8, 12);
+    bytes.writeUInt32BE(16, 32);
+    expect(recognize(bytes)).toBeUndefined();
+  },
+);
+
+it.each([8, 12, 19])(
+  "does not recognize FIT when the declared structure ends after %s bytes",
+  (structureSize) => {
+    const bytes = devicetreeFixture({
+      name: "",
+      children: [{ name: "images" }],
+    });
+    bytes.writeUInt32BE(structureSize, 36);
+    expect(recognize(bytes)).toBeUndefined();
+  },
+);

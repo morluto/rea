@@ -154,6 +154,70 @@ it("keeps exhausted Bun recognition distinct from a native ELF inventory and rec
   });
 });
 
+it.each([
+  { declaration: "file-backed .bun", format: "bun-standalone" },
+  { declaration: "SHT_NOBITS .bun", format: "elf" },
+  { declaration: "inactive .bun", format: "elf" },
+  { declaration: "non-string section-name table", format: "elf" },
+  { declaration: "unterminated .bun name", format: "elf" },
+  { declaration: "truncated section-name table", format: "elf" },
+  { declaration: "truncated section-header table", format: "elf" },
+] as const)(
+  "inventories an ELF carrier with $declaration as $format",
+  async ({ declaration, format }) => {
+    const bytes = elfBunSection(
+      bunPrefixedPayload(
+        bunModuleGraphPayload({
+          modules: [
+            { name: "main.js", contents: Buffer.from("fixture member") },
+          ],
+        }),
+      ),
+    );
+    const sectionTable = Number(bytes.readBigUInt64LE(40));
+    if (declaration === "SHT_NOBITS .bun")
+      bytes.writeUInt32LE(8, sectionTable + 128 + 4);
+    if (declaration === "inactive .bun")
+      bytes.writeUInt32LE(0, sectionTable + 128 + 4);
+    if (declaration === "non-string section-name table")
+      bytes.writeUInt32LE(1, sectionTable + 64 + 4);
+    const stringTableSize = sectionTable + 64 + 32;
+    if (declaration === "truncated section-name table") {
+      const stringTableOffset = bytes.readBigUInt64LE(sectionTable + 64 + 24);
+      bytes.writeBigUInt64LE(
+        BigInt(bytes.length) - stringTableOffset + 1n,
+        stringTableSize,
+      );
+    }
+    if (declaration === "unterminated .bun name") {
+      bytes.writeBigUInt64LE(
+        bytes.readBigUInt64LE(stringTableSize) - 1n,
+        stringTableSize,
+      );
+    }
+    const path = join(
+      await createTestTempDirectory("rea-bun-elf-section-"),
+      "app",
+    );
+    await writeFile(
+      path,
+      declaration === "truncated section-header table"
+        ? bytes.subarray(0, -1)
+        : bytes,
+    );
+    const scope = new ArtifactResourceScope();
+    try {
+      const result = await inventoryArtifact(path, { resourceScope: scope });
+      expect(result.manifest.root_format).toBe(format);
+      expect(result.occurrences.map((entry) => entry.logical_path)).toEqual(
+        format === "bun-standalone" ? [".", "main.js"] : ["."],
+      );
+    } finally {
+      await scope.close();
+    }
+  },
+);
+
 async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
   const result: T[] = [];
   for await (const value of values) result.push(value);

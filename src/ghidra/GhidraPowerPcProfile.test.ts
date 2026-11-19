@@ -131,6 +131,9 @@ describe("bounded Ghidra PowerPC admission", () => {
 
   it.each([
     [{ elfClass: 64 }, "ELF32"],
+    [{ elfClass: 64, byteOrder: "little", flags: 2 }, "PPC64"],
+    [{ elfClass: 64, byteOrder: "little", type: 3, flags: 2 }, "PPC64"],
+    [{ elfClass: 64, type: 3, flags: 1 }, "PPC64"],
     [{ byteOrder: "little" }, "big-endian"],
     [{ type: 1 }, "ET_EXEC"],
     [{ type: 3 }, "ET_EXEC"],
@@ -161,5 +164,8 @@ describe("bounded Ghidra PowerPC admission", () => {
     expect(hopperLoaderArgsForTarget(target()).ok).toBe(false);
     const ida = new IdaProvider(config, {});
     expect(ida.inspectTargetSupport(target()).status).toBe("unsupported");
+    const ppc64 = target({ elfClass: 64, byteOrder: "little", flags: 2 });
+    expect(hopper.inspectTargetSupport(ppc64).status).toBe("unsupported");
+    expect(ida.inspectTargetSupport(ppc64).status).toBe("unsupported");
   });
 });

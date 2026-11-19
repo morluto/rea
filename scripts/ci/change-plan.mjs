@@ -15,7 +15,6 @@ import { planTestSelection, testShards } from "./test-selection.mjs";
 const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/codeql.yml",
   ".github/workflows/pr-title.yml",
-  ".github/workflows/pr-readiness.yml",
   ".github/workflows/ci-full-pr.yml",
   ".github/workflows/release.yml",
   ".github/workflows/release-recovery.yml",
@@ -451,11 +450,11 @@ export const gitRepository = (cwd = process.cwd()) => {
       git("ls-tree", "-r", "-z", "--name-only", revision, "--", ...directories)
         .split("\0")
         .filter(Boolean),
-    // One batch process reads every requested blob.
+    // NUL-terminate requests so a line break in a path remains part of its name.
     readFiles: (revision, paths) => {
-      const output = execFileSync("git", ["cat-file", "--batch"], {
+      const output = execFileSync("git", ["cat-file", "--batch", "-z"], {
         cwd,
-        input: paths.map((path) => `${revision}:${path}\n`).join(""),
+        input: paths.map((path) => `${revision}:${path}\0`).join(""),
         maxBuffer: 512 * 1024 * 1024,
       });
       const contents = new Map();

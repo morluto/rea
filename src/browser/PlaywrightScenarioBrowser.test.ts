@@ -18,6 +18,7 @@ import { DEFAULT_CDP_COMMAND_TIMEOUT_MS } from "../domain/browserDeadline.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS } from "./PlaywrightExecutionBoundary.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   attachedScenarioLeaseKey,
   failBrowserScenarioOperation,
@@ -50,41 +51,53 @@ it("locks one attached browser across loopback spellings of one endpoint", () =>
   );
 });
 
-it("passes the selected environment to the actual browser launch boundary", async () => {
-  vi.stubEnv("LANG", "ambient-language");
-  const selected = {
-    LANG: "selected-language",
-    PATH: "/selected/bin",
-    REA_PRIVATE_VALUE: "not-a-launch-setting",
-  };
-  let launchedEnvironment: unknown;
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: [
-      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-    ],
-  });
-  await expect(
-    openPlaywrightScenarioBrowser(scenario, selected, {
-      launcher: {
-        connectOverCDP: async () => {
-          throw new Error("Unexpected connection");
-        },
-        launchPersistentContext: async (_profile, options) => {
-          launchedEnvironment = options?.env;
-          throw new Error("launch boundary reached");
-        },
+it.each([
+  { platform: "win32", systemRootKey: "SYSTEMROOT" },
+  { platform: "linux", systemRootKey: "SystemRoot" },
+] as const)(
+  "passes the selected environment to the $platform browser launch boundary",
+  async ({ platform, systemRootKey }) => {
+    vi.stubEnv("LANG", "ambient-language");
+    const selected = snapshotEnvironment(
+      {
+        LANG: "selected-language",
+        PATH: "/selected/bin",
+        SystemRoot: "C:/WINDOWS",
+        REA_PRIVATE_VALUE: "not-a-launch-setting",
       },
-    }),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-  expect(launchedEnvironment).toEqual({
-    LANG: "selected-language",
-    PATH: "/selected/bin",
-  });
-});
+      platform,
+    );
+    let launchedEnvironment: unknown;
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: process.execPath },
+      start_url: { url: "https://example.test" },
+      actions: [
+        { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+    });
+    await expect(
+      openPlaywrightScenarioBrowser(scenario, selected, {
+        platform,
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (_profile, options) => {
+            launchedEnvironment = options?.env;
+            throw new Error("launch boundary reached");
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+    });
+    expect(launchedEnvironment).toEqual({
+      LANG: "selected-language",
+      PATH: "/selected/bin",
+      [systemRootKey]: "C:/WINDOWS",
+    });
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "passes the caller-selected symlink-parent executable to the launch boundary",

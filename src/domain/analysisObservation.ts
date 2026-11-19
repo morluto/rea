@@ -3,6 +3,7 @@ import {
   createEvidence,
   evidenceEnvelopeForAdmission,
   type Evidence,
+  type EvidenceAuthority,
   type EvidenceCreationOptions,
   type EvidenceLocation,
   type EvidenceProvider,
@@ -29,6 +30,11 @@ export interface AnalysisObservation {
    * its caller. Explicit null means the observation has no file subject.
    */
   readonly subject?: EvidenceSubjectTarget | null;
+  /**
+   * The authority the observation itself supports. Missing derives it from the
+   * subject, which a service REA does not own cannot name.
+   */
+  readonly authority?: EvidenceAuthority;
 }
 
 /** Build the single borrowed observation used for admission and commitment. */
@@ -49,6 +55,9 @@ const analysisExecutionEvidenceInput = (
   ...(execution.relationshipCoverage === undefined
     ? {}
     : { relationshipCoverage: execution.relationshipCoverage }),
+  ...(execution.authority === undefined
+    ? {}
+    : { authority: execution.authority }),
   locations: execution.locations,
   confidence,
 });
@@ -58,12 +67,13 @@ export const analysisExecutionEnvelopeForAdmission = (
   operation: string,
   input: unknown,
   execution: AnalysisObservation,
-  confidence: "observed" | "derived",
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) =>
   evidenceEnvelopeForAdmission(
     execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
-    analysisExecutionEvidenceInput(operation, input, execution, confidence),
+    analysisExecutionEvidenceInput(operation, input, execution, "observed"),
+    callerTarget,
   );
 
 /** Commit identical facts on success and when retaining a completed observation after cancellation. */

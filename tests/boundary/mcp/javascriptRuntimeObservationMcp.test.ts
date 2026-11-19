@@ -250,8 +250,9 @@ function registerRetainedRuntimeEvidence(
       code: "target_unavailable",
     });
     expect(inspector.commands).toEqual([]);
+    const operation = "observe_javascript_runtime";
     const observedRuntime = await client.callTool({
-      name: "observe_javascript_runtime",
+      name: operation,
       arguments: {
         inspector_endpoint: inspector.endpoint,
         target_id: inspector.targetId,
@@ -260,7 +261,13 @@ function registerRetainedRuntimeEvidence(
       },
     });
     expect(observedRuntime.isError).not.toBe(true);
-    await assertSdkObservationSchema(client, observedRuntime.structuredContent);
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const schema = canonicalOutputSchema(operation);
+    expect(ajv.validateSchema(schema)).toBe(true);
+    expect(
+      ajv.validate(schema, observedRuntime.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
     expect(observedRuntime.structuredContent).toMatchObject({
       normalized_result: {
         target: {
@@ -299,23 +306,6 @@ function registerRetainedRuntimeEvidence(
     expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
   });
 }
-
-const assertSdkObservationSchema = async (
-  client: Client,
-  content: unknown,
-): Promise<void> => {
-  const observeTool = (await client.listTools()).tools.find(
-    ({ name }) => name === "observe_javascript_runtime",
-  );
-  if (observeTool === undefined)
-    throw new Error("Missing Inspector observation output schema");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const schema: Record<string, unknown> = canonicalOutputSchema(
-    observeTool.name,
-  );
-  expect(ajv.validateSchema(schema)).toBe(true);
-  expect(ajv.validate(schema, content), JSON.stringify(ajv.errors)).toBe(true);
-};
 
 const createObservationClient = async (
   root: string,

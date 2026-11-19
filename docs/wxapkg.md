@@ -23,9 +23,9 @@ plain header. They keep their format identity but report `encrypted`
 directory status with unknown coverage: member identities and bytes remain
 unknown and no decryption is attempted, so extraction refuses with a typed
 error rather than producing ciphertext. Declared tables or data regions
-that exceed the file, member extents outside the declared data region,
-truncated rows, invalid UTF-8 names, and counts that cannot fit their table
-are malformed-input errors.
+that exceed the file, truncated rows, invalid UTF-8 names, and counts that
+cannot fit their table are malformed-input errors. All member extents must
+fit the data region declared by one index-length convention.
 
 ## Resource bounds
 

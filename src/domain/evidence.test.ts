@@ -832,6 +832,29 @@ it("binds an explicit unknown-subject reason into the semantic Evidence identity
   expect(parseEvidence(explicit)).toEqual(explicit);
 });
 
+it("derives the default authority from whether the subject names a target", () => {
+  const observation = { operation: "health", parameters: {}, result: true };
+  expect(createEvidence(TARGET, PROVIDER, observation).authority).toBe(
+    "shipped-artifact",
+  );
+  expect(
+    createEvidence(unknownTarget("not-observed"), PROVIDER, observation)
+      .authority,
+  ).toBe("analyst-inference");
+  expect(
+    createEvidence(unknownTarget("not-observed"), PROVIDER, {
+      ...observation,
+      authority: "controlled-replay",
+    }).authority,
+  ).toBe("controlled-replay");
+  expect(
+    createEvidence(TARGET, PROVIDER, {
+      ...observation,
+      authority: "external-service",
+    }).authority,
+  ).toBe("external-service");
+});
+
 it("derives byte-stable bundle manifests independent of record order", () => {
   const artifactEvidence = createEvidence(TARGET, PROVIDER, {
     operation: "health",

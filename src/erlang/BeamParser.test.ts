@@ -251,6 +251,34 @@ it("fails a FOR1 form that is not BEAM", () => {
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
 });
 
+it("discloses bytes that trail the declared FOR1 form", () => {
+  const valid = erlangBeamFixture("trailing_probe");
+  const clean = parse(valid);
+  expect(clean.coverage.status).toBe("complete");
+  expect(clean.coverage.trailing_bytes).toBe(0);
+
+  // Append foreign bytes past the declared form; a conformant file ends there.
+  const trailing = Buffer.concat([valid, Buffer.from("APPENDEDOVERLAY!")]);
+  const report = parse(trailing);
+  expect(report.form.location.bytes).toBe(valid.length);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.coverage.trailing_bytes).toBe(16);
+  // The surplus bytes are not misread as a chunk; examined facts are unchanged.
+  expect(report.chunks).toEqual(clean.chunks);
+  expect(report.coverage.examined_chunks).toBe(clean.coverage.examined_chunks);
+  expect(report.limitations).toEqual([
+    ...clean.limitations,
+    `The declared FOR1 form ends at offset ${String(valid.length)}; 16 trailing bytes were not examined.`,
+  ]);
+
+  const single = parse(Buffer.concat([valid, Buffer.from("!")]));
+  expect(single.coverage.status).toBe("partial");
+  expect(single.coverage.trailing_bytes).toBe(1);
+  expect(single.limitations.at(-1)).toBe(
+    `The declared FOR1 form ends at offset ${String(valid.length)}; 1 trailing byte was not examined.`,
+  );
+});
+
 it("rejects a short remainder inside the BEAM form", () => {
   const bytes = Buffer.alloc(16);
   bytes.write("FOR1");
@@ -417,5 +445,31 @@ it.each([
       injection.mockRestore();
       await provider.close();
     }
+  },
+);
+
+it.each([
+  ["Atom", Buffer.from([0, 0, 0, 1, 1, 0x61])],
+  ["AtU8", Buffer.from([0, 0, 0, 1, 1, 0x61])],
+  ["AtU8", Buffer.from([0xff, 0xff, 0xff, 0xff, 0x10, 0x61])],
+  ["ExpT", Buffer.alloc(4)],
+  ["ImpT", Buffer.alloc(4)],
+  ["FunT", Buffer.alloc(4)],
+] as const)(
+  "reports unexamined bytes inside a selected %s table",
+  (name, payload) => {
+    const control = parse(erlangBeamChunksFixture([[name, payload]]));
+    const extended = Buffer.concat([payload, Buffer.from([0x61])]);
+    const report = parse(erlangBeamChunksFixture([[name, extended]]));
+    expect(control.coverage.status).toBe("complete");
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      trailing_bytes: 0,
+    });
+    expect(report.limitations).toContain(
+      `The selected ${name} table has 1 trailing byte that was not examined.`,
+    );
+    for (const field of ["atoms", "exports", "imports", "lambdas"] as const)
+      expect(report[field]).toEqual(control[field]);
   },
 );

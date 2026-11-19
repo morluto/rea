@@ -59,9 +59,15 @@ it("binds the lipo row to one FAT entry and its selected thin header", async () 
       header: { ...binary.header, cpuSubtype: 1 },
     }),
   ).toThrow("disagrees");
-  await expect(resolveSelectedMachoSlice(source, selected, 1)).rejects.toThrow(
-    "records exceed",
-  );
+  await expect(
+    resolveSelectedMachoSlice(source, selected, 1),
+  ).rejects.toMatchObject({
+    message: "Mach-O FAT slice records exceed the selected-slice table budget",
+    failure: {
+      kind: "limit",
+      limit: { name: "macho_fat_slice_records", maximum: 1 },
+    },
+  });
   const missingRange = { ...selected, file_offset: null, size: null };
   await expect(
     resolveSelectedMachoSlice(source, missingRange, 2),

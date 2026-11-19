@@ -129,6 +129,10 @@ export const runDeferred = async (
   // `main.ts` defers only the default output profile, which omits output
   // schemas from listings; the recorded catalog keeps them for validation.
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
+  const toolFamilies =
+    config.mcpToolFamilies === undefined
+      ? undefined
+      : new Set(config.mcpToolFamilies);
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
@@ -210,6 +214,7 @@ export const runDeferred = async (
               {
                 maximumInputElements: config.mcpMaxInputElements,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                toolFamilies,
                 identity: {
                   ...catalog.identity,
                   digests:

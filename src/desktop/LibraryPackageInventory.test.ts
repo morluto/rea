@@ -1,6 +1,6 @@
 import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { existsSync } from "node:fs";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,102 @@ import { runHostQuery } from "./HostQuery.js";
 import { inspectLibraryPackages } from "./LibraryPackageInventory.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+
+it.skipIf(process.platform === "win32").each(["/", "/.", "/.."])(
+  "preserves a dependency's trailing directory requirement: %s",
+  async (suffix) => {
+    const root = await createTestTempDirectory("rea-library-trailing-");
+    const bin = join(root, "bin"),
+      lib = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(lib)]);
+    const executable = join(bin, "app"),
+      invalid = join(lib, "invalid.so"),
+      valid = join(lib, "valid.so");
+    const request = invalid + suffix;
+    await Promise.all([
+      writeFile(executable, elfImage({ needed: [request, valid] })),
+      writeFile(invalid, elfImage({})),
+      writeFile(valid, elfImage({})),
+    ]);
+    const queried: string[] = [];
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .map(
+              (path) =>
+                `${path === valid ? "valid-owner" : "invalid-owner"}: ${path}`,
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(result.library_packages).toEqual(["valid-owner"]);
+    expect(result.library_packages_reason).toContain(request);
+    expect(result.missing_libraries).toEqual([]);
+    expect(queried).toContain(valid);
+    expect(queried).not.toContain(invalid);
+  },
+);
+
+it.skipIf(process.platform === "win32").each([true, false])(
+  "walks a DSO through its first load path only when aliases share an inode: %s",
+  async (hardLinked) => {
+    const root = await createTestTempDirectory("rea-library-hardlink-");
+    const bin = join(root, "bin"),
+      first = join(root, "first"),
+      second = join(root, "second");
+    await Promise.all([mkdir(bin), mkdir(first), mkdir(second)]);
+    const executable = join(bin, "app"),
+      a = join(first, "parent.so"),
+      b = join(second, "parent.so");
+    const childA = join(first, "child.so"),
+      childB = join(second, "child.so");
+    const parent = elfImage({ needed: ["$ORIGIN/child.so"] });
+    await Promise.all([
+      writeFile(executable, elfImage({ needed: [a, b] })),
+      writeFile(a, parent),
+      writeFile(childA, elfImage({})),
+      writeFile(childB, elfImage({})),
+    ]);
+    if (hardLinked) await link(a, b);
+    else await writeFile(b, parent);
+    const queried: string[] = [];
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .map(
+              (path) =>
+                `${path === childB ? "second-child" : "first-owner"}: ${path}`,
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(result.library_packages).toEqual(
+      hardLinked ? ["first-owner"] : ["first-owner", "second-child"],
+    );
+    expect(result.missing_libraries).toEqual([]);
+    expect(result.library_packages_reason).toBeUndefined();
+    expect(queried).toEqual(expect.arrayContaining([a, b, childA]));
+    expect(queried.includes(childB)).toBe(!hardLinked);
+  },
+);
 
 describe.skipIf(process.platform === "win32")(
   "literal ELF origin paths",
