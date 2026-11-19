@@ -225,6 +225,7 @@ const parserOptionsForLoader = (
   // semantic context. Recovery options must not admit a wrapper return in ESM.
   const parserOptions: ParserOptions = {
     ...options,
+    plugins: parserPluginsForPath(sourcePath),
     ...(module
       ? {
           sourceType: "module",
@@ -431,27 +432,27 @@ const parseWithRuntimeContext = (
  *   `a<b>(c)` as a generic call), so it must not select their meaning.
  * - JSX enabled for `.tsx` and unknown paths; disabled for plain
  *   `.ts/.cts/.mts` (angle-bracket assertions, not JSX) and for all
- *   declaration files. `.mts` (including `.d.mts`) sets
- *   `disallowAmbiguousJSXLike`, matching tsc's `.mts` mode.
+ *   declaration files. `.cts/.mts` and their declaration files use Babel's
+ *   explicit-module-suffix restrictions for JSX-like TypeScript syntax.
  * - `sourcePhaseImports` retains Node-supported WASM source imports as AST data.
  * - `decorators-legacy` always present: without it decorated sources fail
  *   hard instead of reporting recovered syntax, losing every derived fact.
  * - Unknown paths retain the existing JSX- and TypeScript-capable contract
  *   (best-effort parse; failures surface via `errorRecovery`).
  */
-export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
+const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   const path = sourcePath ?? "";
   const syntax: ParserPlugin[] = ["decorators-legacy", "sourcePhaseImports"];
   if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return [...syntax, "jsx"];
   const dts = /\.d\.(?:ts|mts|cts)$/iu.test(path);
   const isTsLike = /\.(?:ts|cts|mts)$/iu.test(path);
   const isTsx = /\.tsx$/iu.test(path);
-  const isMts = /\.mts$/iu.test(path);
+  const explicitModuleSuffix = /\.[cm]ts$/iu.test(path);
   const typescript: ParserPlugin = [
     "typescript",
     {
       dts,
-      ...(isMts ? { disallowAmbiguousJSXLike: true } : {}),
+      ...(explicitModuleSuffix ? { disallowAmbiguousJSXLike: true } : {}),
     },
   ];
   const jsxCapable = !dts && (isTsx || !isTsLike);
@@ -495,7 +496,7 @@ export interface RecoveredJavaScriptParse {
 export const parseRecoveredJavaScript = (
   source: string,
   sourcePath: string | undefined,
-  options: Omit<ParserOptions, "sourceType" | "errorRecovery">,
+  options: Omit<ParserOptions, "sourceType" | "errorRecovery" | "plugins">,
   observedPackageType?: JavaScriptPackageType,
 ): RecoveredJavaScriptParse => {
   const filenameType = runtimeSourceTypeForPath(sourcePath);
@@ -583,7 +584,6 @@ export const parseJavaScriptSource = (
     const options = {
       errorRecovery: true,
       attachComment: false,
-      plugins: parserPluginsForPath(sourcePath),
     };
     const file = parseWithRuntimeContext(
       source,
